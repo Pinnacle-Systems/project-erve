@@ -1,0 +1,10 @@
+{
+  "extends": "@erve/config/tsconfig.node.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src"]
+}

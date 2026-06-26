@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+coverage/
+.turbo/
+.vite/
+.cache/
+
+# Mobile / Capacitor
+apps/mobile/android/
+apps/mobile/ios/
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/

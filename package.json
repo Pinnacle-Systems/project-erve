@@ -1,0 +1,28 @@
+{
+  "name": "project-erve",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Distributor Inventory & Dispatch Tracking System",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev:api": "pnpm --filter @erve/api dev",
+    "dev:web": "pnpm --filter @erve/web dev",
+    "dev:mobile": "pnpm --filter @erve/mobile dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "prisma:generate": "pnpm --filter @erve/api prisma:generate",
+    "prisma:migrate": "pnpm --filter @erve/api prisma:migrate"
+  },
+  "devDependencies": {
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  },
+  "packageManager": "pnpm@10.33.2"
+}
