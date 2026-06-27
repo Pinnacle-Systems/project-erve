@@ -1,7 +1,6 @@
 import { createId } from '@erve/shared';
 import type { Role } from '@erve/types';
-import type { UserStatus } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
+import { prisma, type UserStatus } from '../db/prisma.js';
 import { hashPassword } from '../auth/password.js';
 import { signAccessToken } from '../auth/jwt.js';
 

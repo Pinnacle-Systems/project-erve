@@ -1,6 +1,5 @@
 import { createId } from '@erve/shared';
-import type { Prisma } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
+import { prisma, type Prisma } from '../db/prisma.js';
 
 export interface AuditLogEntry {
   actorId: string | null;

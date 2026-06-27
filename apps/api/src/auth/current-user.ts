@@ -1,4 +1,4 @@
-import type { Prisma, UserStatus } from '@prisma/client';
+import type { Prisma, UserStatus } from '../db/prisma.js';
 import type { Role } from '@erve/types';
 
 export const currentUserSelect = {

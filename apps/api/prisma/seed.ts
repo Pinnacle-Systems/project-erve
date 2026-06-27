@@ -1,6 +1,5 @@
 import { createId } from '@erve/shared';
-import type { RoleName } from '@prisma/client';
-import { prisma } from '../src/db/prisma.js';
+import { prisma, type RoleName } from '../src/db/prisma.js';
 import { hashPassword } from '../src/auth/password.js';
 
 // Transporter delivery access is handled later via tokenized public
