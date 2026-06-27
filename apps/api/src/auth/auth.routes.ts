@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { errorResponse } from '@erve/shared';
+import { errorResponse } from '../utils/response.js';
 
 export const authRouter = Router();
 

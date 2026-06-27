@@ -1,17 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
-import { errorResponse } from '@erve/shared';
-
-export class HttpError extends Error {
-  constructor(
-    public statusCode: number,
-    public code: string,
-    message: string,
-    public details?: unknown,
-  ) {
-    super(message);
-  }
-}
+import { errorResponse } from '../utils/response.js';
+import { HttpError } from '../errors/http-error.js';
 
 export function notFoundHandler(req: Request, res: Response): void {
   res.status(404).json(errorResponse('NOT_FOUND', `Route ${req.method} ${req.path} not found`));

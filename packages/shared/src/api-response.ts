@@ -4,6 +4,10 @@ export function successResponse<T>(data: T, message?: string): ApiSuccessRespons
   return { success: true, data, message };
 }
 
-export function errorResponse(code: string, message: string, details?: unknown): ApiErrorResponse {
+export function errorResponse(
+  code: string,
+  message: string,
+  details: unknown = {},
+): ApiErrorResponse {
   return { success: false, error: { code, message, details } };
 }

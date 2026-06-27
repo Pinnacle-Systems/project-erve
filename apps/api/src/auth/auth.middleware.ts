@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { Role } from '@erve/types';
-import { verifyAccessToken } from '../lib/jwt.js';
-import { HttpError } from './error-handler.js';
+import { verifyAccessToken } from './jwt.js';
+import { HttpError } from '../errors/http-error.js';
 
 declare global {
   // `namespace` is required here for declaration merging with Express's own types
@@ -13,11 +13,13 @@ declare global {
   }
 }
 
+// Base placeholder: verifies the bearer token and attaches the caller to
+// req.user. Feature routes compose this with requireRole for authorization.
 export function requireAuth(req: Request, _res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
 
   if (!header?.startsWith('Bearer ')) {
-    next(new HttpError(401, 'UNAUTHORIZED', 'Missing or invalid authorization header'));
+    next(HttpError.unauthorized('Missing or invalid authorization header'));
     return;
   }
 
@@ -28,6 +30,6 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
     req.user = { id: payload.sub, role: payload.role };
     next();
   } catch {
-    next(new HttpError(401, 'UNAUTHORIZED', 'Invalid or expired token'));
+    next(HttpError.unauthorized('Invalid or expired token'));
   }
 }

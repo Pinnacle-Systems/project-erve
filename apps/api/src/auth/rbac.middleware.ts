@@ -1,17 +1,19 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { Role } from '@erve/types';
 import { hasRole } from '@erve/shared';
-import { HttpError } from './error-handler.js';
+import { HttpError } from '../errors/http-error.js';
 
+// Placeholder: gates a route to a set of roles. Must run after requireAuth
+// so req.user is populated.
 export function requireRole(...allowed: Role[]) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {
-      next(new HttpError(401, 'UNAUTHORIZED', 'Authentication required'));
+      next(HttpError.unauthorized());
       return;
     }
 
     if (!hasRole(req.user.role, allowed)) {
-      next(new HttpError(403, 'FORBIDDEN', 'You do not have permission to access this resource'));
+      next(HttpError.forbidden());
       return;
     }
 
