@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { ROLES } from '@erve/types';
 import { DashboardPage } from '../pages/DashboardPage.js';
 import { LoginPage } from '../pages/LoginPage.js';
 import { RoleRoute } from './RoleRoute.js';
@@ -10,7 +11,7 @@ export function AppRoutes() {
       <Route
         path="/dashboard"
         element={
-          <RoleRoute allowed={['ADMIN', 'DISTRIBUTOR', 'DISPATCHER', 'DRIVER']}>
+          <RoleRoute allowed={ROLES}>
             <DashboardPage />
           </RoleRoute>
         }

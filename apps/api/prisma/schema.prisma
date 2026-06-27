@@ -7,21 +7,405 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+// Transporter delivery access is out of scope for this enum in the MVP — it
+// will be handled via secure, tokenized public delivery links, not a normal
+// logged-in role.
+enum RoleName {
   ADMIN
+  MERCHANDISER
+  FACTORY_USER
+  QA_USER
+  ACCOUNTANT
   DISTRIBUTOR
-  DISPATCHER
-  DRIVER
+  SENIOR_MANAGEMENT
 }
 
-model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  name         String
-  role         Role     @default(DISPATCHER)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
 
+enum DistributorStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum FactoryStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum StyleStatus {
+  ACTIVE
+  INACTIVE
+  DISCONTINUED
+}
+
+enum SizeRangeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PriceListStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+}
+
+enum ProcessFlowStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// DRAFT versions may be edited freely. Once a version is ACTIVE or RETIRED,
+// application logic must treat it as immutable (no stage edits/inserts) —
+// create a new version instead.
+enum ProcessFlowVersionStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+}
+
+enum ProcessStageStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// ---------------------------------------------------------------------------
+// Authentication & Access
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  name         String
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  userRoles        UserRole[]
+  userDistributors UserDistributor[]
+  userFactories    UserFactory[]
+  uploadedFiles    File[]            @relation("FileUploadedBy")
+  auditLogs        AuditLog[]        @relation("AuditLogActor")
+
+  @@index([status])
   @@map("users")
+}
+
+model Role {
+  id          String   @id
+  name        RoleName @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  userRoles UserRole[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  id        String   @id
+  userId    String   @map("user_id")
+  roleId    String   @map("role_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model Distributor {
+  id           String            @id
+  code         String            @unique
+  name         String
+  contactName  String?           @map("contact_name")
+  contactEmail String?           @map("contact_email")
+  contactPhone String?           @map("contact_phone")
+  addressLine1 String?           @map("address_line1")
+  addressLine2 String?           @map("address_line2")
+  city         String?
+  state        String?
+  country      String?
+  postalCode   String?           @map("postal_code")
+  status       DistributorStatus @default(ACTIVE)
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+
+  userDistributors UserDistributor[]
+  priceLists       PriceList[]
+
+  @@index([status])
+  @@map("distributors")
+}
+
+model Factory {
+  id           String        @id
+  code         String        @unique
+  name         String
+  contactName  String?       @map("contact_name")
+  contactEmail String?       @map("contact_email")
+  contactPhone String?       @map("contact_phone")
+  addressLine1 String?       @map("address_line1")
+  addressLine2 String?       @map("address_line2")
+  city         String?
+  state        String?
+  country      String?
+  postalCode   String?       @map("postal_code")
+  status       FactoryStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  userFactories UserFactory[]
+
+  @@index([status])
+  @@map("factories")
+}
+
+model UserDistributor {
+  id            String   @id
+  userId        String   @map("user_id")
+  distributorId String   @map("distributor_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  distributor Distributor @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, distributorId])
+  @@index([userId])
+  @@index([distributorId])
+  @@map("user_distributors")
+}
+
+model UserFactory {
+  id        String   @id
+  userId    String   @map("user_id")
+  factoryId String   @map("factory_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  factory Factory @relation(fields: [factoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, factoryId])
+  @@index([userId])
+  @@index([factoryId])
+  @@map("user_factories")
+}
+
+// ---------------------------------------------------------------------------
+// Master Data
+// ---------------------------------------------------------------------------
+
+model Style {
+  id             String      @id
+  styleNumber    String      @unique @map("style_number")
+  styleName      String      @map("style_name")
+  description    String?
+  colour         String?
+  lmixNumber     String?     @map("lmix_number")
+  licensor       String?
+  ipReference    String?     @map("ip_reference")
+  hsnCode        String?     @map("hsn_code")
+  hsnDescription String?     @map("hsn_description")
+  mrp            Decimal     @db.Decimal(12, 2)
+  status         StyleStatus @default(ACTIVE)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  images          StyleImage[]
+  styleSizeRanges StyleSizeRange[]
+  priceListLines  PriceListLine[]
+
+  @@index([status])
+  @@map("styles")
+}
+
+model StyleImage {
+  id        String   @id
+  styleId   String   @map("style_id")
+  fileId    String   @map("file_id")
+  sortOrder Int      @default(0) @map("sort_order")
+  isPrimary Boolean  @default(false) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  style Style @relation(fields: [styleId], references: [id], onDelete: Cascade)
+  file  File  @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  @@index([styleId])
+  @@index([fileId])
+  @@map("style_images")
+}
+
+model SizeRange {
+  id          String          @id
+  code        String          @unique
+  name        String
+  description String?
+  sizes       String[]
+  status      SizeRangeStatus @default(ACTIVE)
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  styleSizeRanges StyleSizeRange[]
+
+  @@index([status])
+  @@map("size_ranges")
+}
+
+model StyleSizeRange {
+  id          String   @id
+  styleId     String   @map("style_id")
+  sizeRangeId String   @map("size_range_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  style     Style     @relation(fields: [styleId], references: [id], onDelete: Cascade)
+  sizeRange SizeRange @relation(fields: [sizeRangeId], references: [id], onDelete: Cascade)
+
+  @@unique([styleId, sizeRangeId])
+  @@index([styleId])
+  @@index([sizeRangeId])
+  @@map("style_size_ranges")
+}
+
+model PriceList {
+  id            String          @id
+  code          String          @unique
+  name          String
+  distributorId String?         @map("distributor_id")
+  effectiveFrom DateTime?       @map("effective_from")
+  effectiveTo   DateTime?       @map("effective_to")
+  status        PriceListStatus @default(DRAFT)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  distributor Distributor?    @relation(fields: [distributorId], references: [id], onDelete: SetNull)
+  lines       PriceListLine[]
+
+  @@index([distributorId])
+  @@index([status])
+  @@map("price_lists")
+}
+
+model PriceListLine {
+  id          String   @id
+  priceListId String   @map("price_list_id")
+  styleId     String   @map("style_id")
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(12, 2)
+  currency    String   @default("INR")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  priceList PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  style     Style     @relation(fields: [styleId], references: [id], onDelete: Restrict)
+
+  @@unique([priceListId, styleId])
+  @@index([priceListId])
+  @@index([styleId])
+  @@map("price_list_lines")
+}
+
+// ---------------------------------------------------------------------------
+// Process Flow
+// ---------------------------------------------------------------------------
+
+model ProcessFlow {
+  id          String            @id
+  code        String            @unique
+  name        String
+  description String?
+  status      ProcessFlowStatus @default(ACTIVE)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  versions ProcessFlowVersion[]
+
+  @@index([status])
+  @@map("process_flows")
+}
+
+model ProcessFlowVersion {
+  id            String                   @id
+  processFlowId String                   @map("process_flow_id")
+  versionNumber Int                      @map("version_number")
+  status        ProcessFlowVersionStatus @default(DRAFT)
+  effectiveFrom DateTime?                @map("effective_from")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
+
+  processFlow ProcessFlow               @relation(fields: [processFlowId], references: [id], onDelete: Cascade)
+  stages      ProcessFlowVersionStage[]
+
+  @@unique([processFlowId, versionNumber])
+  @@index([processFlowId])
+  @@index([status])
+  @@map("process_flow_versions")
+}
+
+model ProcessFlowVersionStage {
+  id                   String             @id
+  processFlowVersionId String             @map("process_flow_version_id")
+  sequence             Int
+  name                 String
+  code                 String?
+  status               ProcessStageStatus @default(ACTIVE)
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  processFlowVersion ProcessFlowVersion @relation(fields: [processFlowVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([processFlowVersionId, sequence])
+  @@index([processFlowVersionId])
+  @@map("process_flow_version_stages")
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id
+  actorId    String?  @map("actor_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor User? @relation("AuditLogActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model File {
+  id           String   @id
+  fileName     String   @map("file_name")
+  mimeType     String   @map("mime_type")
+  sizeBytes    Int      @map("size_bytes")
+  storageKey   String   @map("storage_key")
+  url          String?
+  uploadedById String?  @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  uploadedBy  User?        @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  styleImages StyleImage[]
+
+  @@index([storageKey])
+  @@index([uploadedById])
+  @@map("files")
 }
