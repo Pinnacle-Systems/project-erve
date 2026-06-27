@@ -1,16 +1,11 @@
 import type { AuthUser } from './user.js';
 
 export interface LoginRequest {
-  email: string;
+  identifier: string;
   password: string;
 }
 
-export interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-}
-
 export interface LoginResponse {
+  accessToken: string;
   user: AuthUser;
-  tokens: AuthTokens;
 }

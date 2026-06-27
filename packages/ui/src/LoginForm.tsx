@@ -3,7 +3,7 @@ import { Button } from './Button.js';
 import { Input } from './Input.js';
 
 export interface LoginFormValues {
-  email: string;
+  identifier: string;
   password: string;
 }
 
@@ -14,23 +14,23 @@ export interface LoginFormProps {
 }
 
 export function LoginForm({ onSubmit, isSubmitting = false, errorMessage }: LoginFormProps) {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSubmit({ email, password });
+    onSubmit({ identifier, password });
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <Input
-        id="email"
-        type="email"
-        label="Email"
-        autoComplete="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
+        id="identifier"
+        type="text"
+        label="Email or mobile number"
+        autoComplete="username"
+        value={identifier}
+        onChange={(e) => setIdentifier(e.target.value)}
         required
       />
       <Input

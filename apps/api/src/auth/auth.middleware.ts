@@ -1,35 +1,53 @@
 import type { NextFunction, Request, Response } from 'express';
-import type { Role } from '@erve/types';
-import { verifyAccessToken } from './jwt.js';
+import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
+import { asyncHandler } from '../middleware/async-handler.js';
+import { verifyAccessToken } from './jwt.js';
+import { currentUserSelect, toCurrentUser, type CurrentUser } from './current-user.js';
 
 declare global {
   // `namespace` is required here for declaration merging with Express's own types
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      user?: { id: string; role: Role };
+      user?: CurrentUser;
     }
   }
 }
 
-// Base placeholder: verifies the bearer token and attaches the caller to
-// req.user. Feature routes compose this with requireRole for authorization.
-export function requireAuth(req: Request, _res: Response, next: NextFunction): void {
-  const header = req.headers.authorization;
+// Verifies the bearer token, then re-loads the user and their roles from
+// user_roles on every request — role changes and deactivation take effect
+// immediately, without waiting for the token to expire.
+export const requireAuth = asyncHandler(
+  async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    const header = req.headers.authorization;
 
-  if (!header?.startsWith('Bearer ')) {
-    next(HttpError.unauthorized('Missing or invalid authorization header'));
-    return;
-  }
+    if (!header?.startsWith('Bearer ')) {
+      next(HttpError.unauthorized('Missing or invalid authorization header'));
+      return;
+    }
 
-  const token = header.slice('Bearer '.length);
+    const token = header.slice('Bearer '.length);
 
-  try {
-    const payload = verifyAccessToken(token);
-    req.user = { id: payload.sub, role: payload.role };
+    let payload;
+    try {
+      payload = verifyAccessToken(token);
+    } catch {
+      next(HttpError.unauthorized('Invalid or expired token'));
+      return;
+    }
+
+    const record = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: currentUserSelect,
+    });
+
+    if (!record || record.status !== 'ACTIVE') {
+      next(HttpError.unauthorized('Invalid or expired token'));
+      return;
+    }
+
+    req.user = toCurrentUser(record);
     next();
-  } catch {
-    next(HttpError.unauthorized('Invalid or expired token'));
-  }
-}
+  },
+);

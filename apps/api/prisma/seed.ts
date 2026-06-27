@@ -1,6 +1,7 @@
 import { createId } from '@erve/shared';
 import type { RoleName } from '@prisma/client';
 import { prisma } from '../src/db/prisma.js';
+import { hashPassword } from '../src/auth/password.js';
 
 // Transporter delivery access is handled later via tokenized public
 // delivery links, not a normal logged-in role — do not add it here.
@@ -22,6 +23,36 @@ async function seedRoles(): Promise<void> {
       create: { id: createId(), name: role.name, description: role.description },
     });
   }
+}
+
+// Dev-only bootstrap account so the first ADMIN can sign in and create
+// real users via the API. Override via env before seeding anywhere
+// other than local development, and rotate the password immediately.
+const DEFAULT_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@erve.local';
+const DEFAULT_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe123!';
+
+async function seedDefaultAdminUser(): Promise<void> {
+  const existing = await prisma.user.findUnique({ where: { email: DEFAULT_ADMIN_EMAIL } });
+  if (existing) {
+    return;
+  }
+
+  const adminRole = await prisma.role.findUniqueOrThrow({ where: { name: 'ADMIN' } });
+  const passwordHash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+
+  await prisma.user.create({
+    data: {
+      id: createId(),
+      email: DEFAULT_ADMIN_EMAIL,
+      name: 'Default Admin',
+      passwordHash,
+      userRoles: { create: { id: createId(), roleId: adminRole.id } },
+    },
+  });
+
+  console.log(
+    `Seeded bootstrap admin "${DEFAULT_ADMIN_EMAIL}" — change this password outside local development.`,
+  );
 }
 
 const DEFAULT_SIZE_RANGES = [
@@ -95,6 +126,7 @@ async function seedDefaultProcessFlow(): Promise<void> {
 
 async function main(): Promise<void> {
   await seedRoles();
+  await seedDefaultAdminUser();
   await seedSizeRanges();
   await seedDefaultProcessFlow();
 }

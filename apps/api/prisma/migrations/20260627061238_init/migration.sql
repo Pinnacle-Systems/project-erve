@@ -32,6 +32,7 @@ CREATE TYPE "ProcessStageStatus" AS ENUM ('ACTIVE', 'INACTIVE');
 CREATE TABLE "users" (
     "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
+    "mobile" TEXT,
     "password_hash" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "status" "UserStatus" NOT NULL DEFAULT 'ACTIVE',
@@ -279,6 +280,9 @@ CREATE TABLE "files" (
 
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_mobile_key" ON "users"("mobile");
 
 -- CreateIndex
 CREATE INDEX "users_status_idx" ON "users"("status");

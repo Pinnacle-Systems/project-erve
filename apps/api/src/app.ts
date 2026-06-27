@@ -7,7 +7,8 @@ import { asyncHandler } from './middleware/async-handler.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { successResponse } from './utils/response.js';
-import { authRouter } from './auth/auth.routes.js';
+import { authRouter } from './modules/auth/auth.routes.js';
+import { usersRouter } from './modules/users/users.routes.js';
 
 export function createApp() {
   const app = express();
@@ -29,7 +30,8 @@ export function createApp() {
     }),
   );
 
-  app.use('/api/auth', authRouter);
+  app.use('/auth', authRouter);
+  app.use('/users', usersRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -1,13 +1,24 @@
+import { createId } from '@erve/shared';
+import type { Prisma } from '@prisma/client';
+import { prisma } from '../db/prisma.js';
+
 export interface AuditLogEntry {
   actorId: string | null;
   action: string;
-  entity: string;
+  entityType: string;
   entityId: string;
-  metadata?: Record<string, unknown>;
+  metadata?: Prisma.InputJsonValue;
 }
 
-// Placeholder: logs to stdout for now. Once an AuditLog model is added to
-// the Prisma schema, swap this for a write via db/prisma.ts.
 export async function recordAuditLog(entry: AuditLogEntry): Promise<void> {
-  console.log('[audit]', entry);
+  await prisma.auditLog.create({
+    data: {
+      id: createId(),
+      actorId: entry.actorId,
+      action: entry.action,
+      entityType: entry.entityType,
+      entityId: entry.entityId,
+      metadata: entry.metadata,
+    },
+  });
 }

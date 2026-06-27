@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 
 export interface AccessTokenPayload {
   sub: string;
-  role: Role;
+  roles: Role[];
 }
 
 export function signAccessToken(payload: AccessTokenPayload): string {

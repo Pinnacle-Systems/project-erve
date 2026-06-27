@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
 import type { Role } from '@erve/types';
-import { hasRole } from '@erve/shared';
+import { hasAnyRole } from '@erve/shared';
 import { useAuth } from '../auth/AuthContext.js';
 
 export function RoleRoute({
@@ -17,7 +17,7 @@ export function RoleRoute({
     return <Navigate to="/login" replace />;
   }
 
-  if (!hasRole(user.role, allowed)) {
+  if (!hasAnyRole(user, allowed)) {
     return <Navigate to="/login" replace />;
   }
 
