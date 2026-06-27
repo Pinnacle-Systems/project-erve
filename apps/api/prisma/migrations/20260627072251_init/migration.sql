@@ -14,7 +14,16 @@ CREATE TYPE "FactoryStatus" AS ENUM ('ACTIVE', 'INACTIVE');
 CREATE TYPE "StyleStatus" AS ENUM ('ACTIVE', 'INACTIVE', 'DISCONTINUED');
 
 -- CreateEnum
-CREATE TYPE "SizeRangeStatus" AS ENUM ('ACTIVE', 'INACTIVE');
+CREATE TYPE "SizeType" AS ENUM ('AGE', 'ALPHA', 'NUMERIC', 'WAIST', 'FREE_SIZE');
+
+-- CreateEnum
+CREATE TYPE "SizeStatus" AS ENUM ('ACTIVE', 'INACTIVE');
+
+-- CreateEnum
+CREATE TYPE "StyleSizeStatus" AS ENUM ('ACTIVE', 'INACTIVE');
+
+-- CreateEnum
+CREATE TYPE "StyleFactoryMappingStatus" AS ENUM ('ACTIVE', 'INACTIVE');
 
 -- CreateEnum
 CREATE TYPE "PriceListStatus" AS ENUM ('DRAFT', 'ACTIVE', 'EXPIRED');
@@ -131,13 +140,16 @@ CREATE TABLE "styles" (
     "style_number" TEXT NOT NULL,
     "style_name" TEXT NOT NULL,
     "description" TEXT,
+    "category_description" TEXT,
+    "item_name_group" TEXT,
+    "ip_name" TEXT,
+    "licensor" TEXT,
     "colour" TEXT,
     "lmix_number" TEXT,
-    "licensor" TEXT,
-    "ip_reference" TEXT,
     "hsn_code" TEXT,
     "hsn_description" TEXT,
-    "mrp" DECIMAL(12,2) NOT NULL,
+    "final_mrp" DECIMAL(12,2) NOT NULL,
+    "royalty_percentage" DECIMAL(5,2),
     "status" "StyleStatus" NOT NULL DEFAULT 'ACTIVE',
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
@@ -159,27 +171,43 @@ CREATE TABLE "style_images" (
 );
 
 -- CreateTable
-CREATE TABLE "size_ranges" (
+CREATE TABLE "sizes" (
     "id" TEXT NOT NULL,
     "code" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "description" TEXT,
-    "sizes" TEXT[],
-    "status" "SizeRangeStatus" NOT NULL DEFAULT 'ACTIVE',
+    "label" TEXT NOT NULL,
+    "size_type" "SizeType" NOT NULL,
+    "sort_order" INTEGER NOT NULL,
+    "status" "SizeStatus" NOT NULL DEFAULT 'ACTIVE',
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "size_ranges_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "sizes_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
-CREATE TABLE "style_size_ranges" (
+CREATE TABLE "style_sizes" (
     "id" TEXT NOT NULL,
     "style_id" TEXT NOT NULL,
-    "size_range_id" TEXT NOT NULL,
+    "size_id" TEXT NOT NULL,
+    "imported_size_range_label" TEXT,
+    "status" "StyleSizeStatus" NOT NULL DEFAULT 'ACTIVE',
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "style_size_ranges_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "style_sizes_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "style_factory_mappings" (
+    "id" TEXT NOT NULL,
+    "style_id" TEXT NOT NULL,
+    "factory_id" TEXT NOT NULL,
+    "ex_factory_price" DECIMAL(12,2) NOT NULL,
+    "status" "StyleFactoryMappingStatus" NOT NULL DEFAULT 'ACTIVE',
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "style_factory_mappings_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -342,19 +370,31 @@ CREATE INDEX "style_images_style_id_idx" ON "style_images"("style_id");
 CREATE INDEX "style_images_file_id_idx" ON "style_images"("file_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "size_ranges_code_key" ON "size_ranges"("code");
+CREATE UNIQUE INDEX "sizes_code_key" ON "sizes"("code");
 
 -- CreateIndex
-CREATE INDEX "size_ranges_status_idx" ON "size_ranges"("status");
+CREATE INDEX "sizes_status_idx" ON "sizes"("status");
 
 -- CreateIndex
-CREATE INDEX "style_size_ranges_style_id_idx" ON "style_size_ranges"("style_id");
+CREATE INDEX "sizes_size_type_idx" ON "sizes"("size_type");
 
 -- CreateIndex
-CREATE INDEX "style_size_ranges_size_range_id_idx" ON "style_size_ranges"("size_range_id");
+CREATE INDEX "style_sizes_style_id_idx" ON "style_sizes"("style_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "style_size_ranges_style_id_size_range_id_key" ON "style_size_ranges"("style_id", "size_range_id");
+CREATE INDEX "style_sizes_size_id_idx" ON "style_sizes"("size_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "style_sizes_style_id_size_id_key" ON "style_sizes"("style_id", "size_id");
+
+-- CreateIndex
+CREATE INDEX "style_factory_mappings_style_id_idx" ON "style_factory_mappings"("style_id");
+
+-- CreateIndex
+CREATE INDEX "style_factory_mappings_factory_id_idx" ON "style_factory_mappings"("factory_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "style_factory_mappings_style_id_factory_id_key" ON "style_factory_mappings"("style_id", "factory_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "price_lists_code_key" ON "price_lists"("code");
@@ -435,10 +475,16 @@ ALTER TABLE "style_images" ADD CONSTRAINT "style_images_style_id_fkey" FOREIGN K
 ALTER TABLE "style_images" ADD CONSTRAINT "style_images_file_id_fkey" FOREIGN KEY ("file_id") REFERENCES "files"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "style_size_ranges" ADD CONSTRAINT "style_size_ranges_style_id_fkey" FOREIGN KEY ("style_id") REFERENCES "styles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "style_sizes" ADD CONSTRAINT "style_sizes_style_id_fkey" FOREIGN KEY ("style_id") REFERENCES "styles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "style_size_ranges" ADD CONSTRAINT "style_size_ranges_size_range_id_fkey" FOREIGN KEY ("size_range_id") REFERENCES "size_ranges"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "style_sizes" ADD CONSTRAINT "style_sizes_size_id_fkey" FOREIGN KEY ("size_id") REFERENCES "sizes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "style_factory_mappings" ADD CONSTRAINT "style_factory_mappings_style_id_fkey" FOREIGN KEY ("style_id") REFERENCES "styles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "style_factory_mappings" ADD CONSTRAINT "style_factory_mappings_factory_id_fkey" FOREIGN KEY ("factory_id") REFERENCES "factories"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "price_lists" ADD CONSTRAINT "price_lists_distributor_id_fkey" FOREIGN KEY ("distributor_id") REFERENCES "distributors"("id") ON DELETE SET NULL ON UPDATE CASCADE;
