@@ -14,11 +14,16 @@ import { StyleListPage } from '../pages/master-data/StyleListPage.js';
 import { PurchaseOrderListPage } from '../pages/purchase-orders/PurchaseOrderListPage.js';
 import { PurchaseOrderFormPage } from '../pages/purchase-orders/PurchaseOrderFormPage.js';
 import { PurchaseOrderDetailPage } from '../pages/purchase-orders/PurchaseOrderDetailPage.js';
+import { JobOrderCreatePage } from '../pages/job-orders/JobOrderCreatePage.js';
+import { JobOrderDetailPage } from '../pages/job-orders/JobOrderDetailPage.js';
+import { JobOrderListPage } from '../pages/job-orders/JobOrderListPage.js';
 import { AppLayout } from '../pages/AppLayout.js';
 import { RoleRoute } from './RoleRoute.js';
 
 const PO_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'] as const;
 const PO_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER', 'DISTRIBUTOR'] as const;
+const JOB_ORDER_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'] as const;
+const JOB_ORDER_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const;
 
 export function AppRoutes() {
   return (
@@ -134,6 +139,26 @@ export function AppRoutes() {
             </RoleRoute>
           }
         />
+      </Route>
+
+      <Route
+        path="/job-orders"
+        element={
+          <RoleRoute allowed={JOB_ORDER_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<JobOrderListPage />} />
+        <Route
+          path="new"
+          element={
+            <RoleRoute allowed={JOB_ORDER_MANAGE_ROLES}>
+              <JobOrderCreatePage />
+            </RoleRoute>
+          }
+        />
+        <Route path=":id" element={<JobOrderDetailPage />} />
       </Route>
 
       <Route path="/" element={<Navigate to="/login" replace />} />

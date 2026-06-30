@@ -118,6 +118,32 @@ enum ProcessStageStatus {
   INACTIVE
 }
 
+enum JobOrderStatus {
+  DRAFT
+  SENT_TO_FACTORY
+  CONFIRMED_BY_FACTORY
+  IN_PRODUCTION
+  PRODUCTION_COMPLETE
+  READY_FOR_QA
+  QA_IN_PROGRESS
+  QA_PASSED
+  PARTIALLY_QA_PASSED
+  CLOSED
+  CANCELLED
+}
+
+enum FactoryConfirmationStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+enum ProductionStageStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
 // ---------------------------------------------------------------------------
 // Authentication & Access
 // ---------------------------------------------------------------------------
@@ -139,6 +165,9 @@ model User {
   auditLogs        AuditLog[]        @relation("AuditLogActor")
   createdPurchaseOrders     DistributorPurchaseOrder[] @relation("POCreator")
   merchandisedPurchaseOrders DistributorPurchaseOrder[] @relation("POMerchandiser")
+  createdJobOrders           JobOrder[] @relation("JobOrderCreator")
+  confirmedJobOrders         JobOrder[] @relation("JobOrderConfirmer")
+  completedJobOrderStages    JobOrderStageStatus[] @relation("JobOrderStageCompleter")
 
   @@index([status])
   @@map("users")
@@ -215,6 +244,7 @@ model Factory {
 
   userFactories        UserFactory[]
   styleFactoryMappings StyleFactoryMapping[]
+  jobOrders            JobOrder[]
 
   @@index([status])
   @@map("factories")
@@ -278,6 +308,7 @@ model Style {
   styleFactoryMappings StyleFactoryMapping[]
   priceListLines       PriceListLine[]
   purchaseOrderLines   DistributorPurchaseOrderLine[]
+  jobOrderLines        JobOrderLine[]
 
   @@index([status])
   @@map("styles")
@@ -312,6 +343,7 @@ model Size {
 
   styleSizes         StyleSize[]
   purchaseOrderLineSizes DistributorPurchaseOrderLineSize[]
+  jobOrderLineSizes JobOrderLineSize[]
 
   @@index([status])
   @@index([sizeType])
@@ -424,6 +456,7 @@ model ProcessFlowVersion {
 
   processFlow ProcessFlow               @relation(fields: [processFlowId], references: [id], onDelete: Cascade)
   stages      ProcessFlowVersionStage[]
+  jobOrders   JobOrder[]
 
   @@unique([processFlowId, versionNumber])
   @@index([processFlowId])
@@ -442,6 +475,7 @@ model ProcessFlowVersionStage {
   updatedAt            DateTime           @updatedAt @map("updated_at")
 
   processFlowVersion ProcessFlowVersion @relation(fields: [processFlowVersionId], references: [id], onDelete: Cascade)
+  jobOrderStageStatuses JobOrderStageStatus[]
 
   @@unique([processFlowVersionId, sequence])
   @@index([processFlowVersionId])
@@ -470,6 +504,7 @@ model DistributorPurchaseOrder {
   merchandiser User?                          @relation("POMerchandiser", fields: [merchandiserId], references: [id], onDelete: SetNull)
   creator      User                           @relation("POCreator", fields: [createdBy], references: [id], onDelete: Restrict)
   lines        DistributorPurchaseOrderLine[]
+  jobOrders    JobOrder[]
 
   @@index([distributorId])
   @@index([status])
@@ -489,6 +524,7 @@ model DistributorPurchaseOrderLine {
   purchaseOrder DistributorPurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   style         Style                            @relation(fields: [styleId], references: [id], onDelete: Restrict)
   sizes         DistributorPurchaseOrderLineSize[]
+  jobOrderLines JobOrderLine[]
 
   @@unique([purchaseOrderId, styleId])
   @@index([purchaseOrderId])
@@ -514,11 +550,117 @@ model DistributorPurchaseOrderLineSize {
 
   purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Cascade)
   size              Size                         @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+  jobOrderLineSizes JobOrderLineSize[]
 
   @@unique([purchaseOrderLineId, sizeId])
   @@index([purchaseOrderLineId])
   @@index([sizeId])
   @@map("distributor_purchase_order_line_sizes")
+}
+
+// ---------------------------------------------------------------------------
+// Job Orders
+// ---------------------------------------------------------------------------
+
+model JobOrder {
+  id                        String                    @id
+  jobOrderNumber            String                    @unique @map("job_order_number")
+  purchaseOrderId           String                    @map("purchase_order_id")
+  factoryId                 String                    @map("factory_id")
+  processFlowVersionId      String                    @map("process_flow_version_id")
+  status                    JobOrderStatus            @default(DRAFT)
+  factoryConfirmationStatus FactoryConfirmationStatus @default(PENDING) @map("factory_confirmation_status")
+  confirmedBy               String?                   @map("confirmed_by")
+  confirmedAt               DateTime?                 @map("confirmed_at")
+  productionStartedAt       DateTime?                 @map("production_started_at")
+  productionCompletedAt     DateTime?                 @map("production_completed_at")
+  preparedQuantityTotal     Int                       @default(0) @map("prepared_quantity_total")
+  createdBy                 String                    @map("created_by")
+  createdAt                 DateTime                  @default(now()) @map("created_at")
+  updatedAt                 DateTime                  @updatedAt @map("updated_at")
+
+  purchaseOrder      DistributorPurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  factory            Factory                  @relation(fields: [factoryId], references: [id], onDelete: Restrict)
+  processFlowVersion ProcessFlowVersion       @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
+  confirmer          User?                    @relation("JobOrderConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
+  creator            User                     @relation("JobOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  lines              JobOrderLine[]
+  stageStatuses      JobOrderStageStatus[]
+
+  @@index([purchaseOrderId])
+  @@index([factoryId])
+  @@index([processFlowVersionId])
+  @@index([status])
+  @@index([factoryConfirmationStatus])
+  @@map("job_orders")
+}
+
+model JobOrderLine {
+  id                    String             @id
+  jobOrderId            String             @map("job_order_id")
+  purchaseOrderLineId   String             @map("purchase_order_line_id")
+  styleId               String             @map("style_id")
+  orderedQuantityTotal  Int                @map("ordered_quantity_total")
+  preparedQuantityTotal Int                @default(0) @map("prepared_quantity_total")
+  status                JobOrderStatus     @default(DRAFT)
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  jobOrder          JobOrder                     @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
+  purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
+  style             Style                        @relation(fields: [styleId], references: [id], onDelete: Restrict)
+  sizes             JobOrderLineSize[]
+
+  @@unique([jobOrderId, purchaseOrderLineId])
+  @@index([jobOrderId])
+  @@index([purchaseOrderLineId])
+  @@index([styleId])
+  @@map("job_order_lines")
+}
+
+model JobOrderLineSize {
+  id                      String   @id
+  jobOrderLineId          String   @map("job_order_line_id")
+  purchaseOrderLineSizeId String   @map("purchase_order_line_size_id")
+  sizeId                  String   @map("size_id")
+  orderedQuantity         Int      @map("ordered_quantity")
+  preparedQuantity        Int      @default(0) @map("prepared_quantity")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  jobOrderLine          JobOrderLine                    @relation(fields: [jobOrderLineId], references: [id], onDelete: Cascade)
+  purchaseOrderLineSize DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict)
+  size                  Size                            @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+
+  @@unique([jobOrderLineId, purchaseOrderLineSizeId])
+  @@index([jobOrderLineId])
+  @@index([purchaseOrderLineSizeId])
+  @@index([sizeId])
+  @@map("job_order_line_sizes")
+}
+
+model JobOrderStageStatus {
+  id                        String                @id
+  jobOrderId                String                @map("job_order_id")
+  processFlowVersionStageId String                @map("process_flow_version_stage_id")
+  stageSequence             Int                   @map("stage_sequence")
+  stageNameSnapshot         String                @map("stage_name_snapshot")
+  status                    ProductionStageStatus @default(NOT_STARTED)
+  completedBy               String?               @map("completed_by")
+  completedAt               DateTime?             @map("completed_at")
+  remarks                   String?
+  createdAt                 DateTime              @default(now()) @map("created_at")
+  updatedAt                 DateTime              @updatedAt @map("updated_at")
+
+  jobOrder                JobOrder                @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
+  processFlowVersionStage ProcessFlowVersionStage @relation(fields: [processFlowVersionStageId], references: [id], onDelete: Restrict)
+  completer               User?                   @relation("JobOrderStageCompleter", fields: [completedBy], references: [id], onDelete: SetNull)
+
+  @@unique([jobOrderId, processFlowVersionStageId])
+  @@index([jobOrderId])
+  @@index([processFlowVersionStageId])
+  @@index([status])
+  @@map("job_order_stage_statuses")
 }
 
 // ---------------------------------------------------------------------------

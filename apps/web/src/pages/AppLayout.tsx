@@ -10,6 +10,9 @@ export function AppLayout() {
   const canViewMasterData = user?.roles.some((r) =>
     ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER'].includes(r),
   ) ?? false;
+  const canViewJobOrders = user?.roles.some((r) =>
+    ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'].includes(r),
+  ) ?? false;
 
   return (
     <div className="min-h-screen bg-background">
@@ -54,6 +57,16 @@ export function AppLayout() {
               }
             >
               + New PO
+            </NavLink>
+          )}
+          {canViewJobOrders && (
+            <NavLink
+              to="/job-orders"
+              className={({ isActive }) =>
+                `block rounded-md px-3 py-2 text-sm ${isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface-muted'}`
+              }
+            >
+              Job Orders
             </NavLink>
           )}
         </nav>

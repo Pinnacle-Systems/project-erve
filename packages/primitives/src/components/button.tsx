@@ -77,6 +77,21 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     ref,
   ) => {
     const Comp = asChild ? Slot : "button";
+    if (asChild) {
+      return (
+        <Comp
+          ref={ref}
+          data-width={width}
+          className={cn(buttonVariants({ variant, density, width }), className)}
+          disabled={disabled || loading}
+          aria-busy={loading || undefined}
+          {...props}
+        >
+          {children}
+        </Comp>
+      );
+    }
+
     return (
       <Comp
         ref={ref}

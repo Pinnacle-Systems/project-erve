@@ -76,6 +76,7 @@ export function PurchaseOrderDetailPage() {
 
   const isDraft = po.status === 'DRAFT';
   const canCancel = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW'].includes(po.status);
+  const canCreateJobOrder = !['DRAFT', 'CANCELLED', 'CLOSED'].includes(po.status);
 
   return (
     <div className="space-y-6">
@@ -103,6 +104,11 @@ export function PurchaseOrderDetailPage() {
               loading={submitMutation.isPending}
             >
               Submit
+            </Button>
+          )}
+          {canCreateJobOrder && (
+            <Button asChild>
+              <Link to={`/job-orders/new?purchaseOrderId=${po.id}`}>Create Job Order</Link>
             </Button>
           )}
           {canCancel && (

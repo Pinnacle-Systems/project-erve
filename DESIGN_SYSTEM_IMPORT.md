@@ -44,6 +44,9 @@ The first-pass screen migration covered:
 - `PurchaseOrderListPage`
 - `PurchaseOrderFormPage`
 - `PurchaseOrderDetailPage`
+- `JobOrderListPage`
+- `JobOrderCreatePage`
+- `JobOrderDetailPage`
 
 ## Commonly Used Components
 
@@ -80,7 +83,8 @@ The migrated screens now commonly use:
 
 - `EditableGrid` is intentionally deferred.
 - Advanced editable PO quantity grids are still using lower-level primitives for now.
-- Job-order balance, fulfilment summary, and audit sections remain placeholder panels where backend/module support is incomplete.
+- Job-order quantity entry uses `DataTable` plus field primitives for the first pass.
+- Audit sections remain placeholder panels until a read API for audit logs is exposed.
 
 ## Tailwind Compatibility
 
@@ -97,11 +101,12 @@ Full manual browser console and layout verification is still pending because bro
 The following verification commands passed after the migration:
 
 ```sh
-pnpm -r typecheck
-pnpm -r lint
-pnpm --filter @erve/web build
-pnpm --filter @erve/api test
-pnpm --filter @erve/mobile build
+pnpm typecheck
+pnpm lint
+pnpm build
+pnpm --filter @erve/api exec vitest run
+pnpm --filter @erve/api prisma:seed
+pnpm --filter @erve/api prisma:seed
 ```
 
-API tests required local PostgreSQL access. The web shell and API health endpoint were also smoke-checked over HTTP during verification.
+API tests and seed verification required local PostgreSQL access. The Job Order Planning module was verified after applying `20260630090000_add_job_orders` with `prisma migrate deploy`.

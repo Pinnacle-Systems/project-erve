@@ -18,6 +18,7 @@ import {
   stylesRouter,
 } from './modules/master-data/master-data.routes.js';
 import { purchaseOrdersRouter } from './modules/purchase-orders/purchase-orders.routes.js';
+import { jobOrdersRouter } from './modules/job-orders/job-orders.routes.js';
 
 export function createApp() {
   const app = express();
@@ -48,6 +49,7 @@ export function createApp() {
   app.use('/process-flows', processFlowsRouter);
   app.use('/process-flow-versions', processFlowVersionsRouter);
   app.use('/purchase-orders', purchaseOrdersRouter);
+  app.use('/job-orders', jobOrdersRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

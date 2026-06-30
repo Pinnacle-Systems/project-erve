@@ -376,6 +376,7 @@ export async function getJobOrderBalance(user: CurrentUser, id: string) {
     styleNumber: line.style.styleNumber,
     styleName: line.style.styleName,
     sizes: line.sizes.map((s) => ({
+      purchaseOrderLineSizeId: s.id,
       sizeId: s.sizeId,
       sizeCode: s.size.code,
       sizeLabel: s.size.label,
