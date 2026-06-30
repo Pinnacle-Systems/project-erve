@@ -9,6 +9,15 @@ import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { successResponse } from './utils/response.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
+import {
+  distributorsRouter,
+  factoriesRouter,
+  processFlowsRouter,
+  processFlowVersionsRouter,
+  sizesRouter,
+  stylesRouter,
+} from './modules/master-data/master-data.routes.js';
+import { purchaseOrdersRouter } from './modules/purchase-orders/purchase-orders.routes.js';
 
 export function createApp() {
   const app = express();
@@ -32,6 +41,13 @@ export function createApp() {
 
   app.use('/auth', authRouter);
   app.use('/users', usersRouter);
+  app.use('/styles', stylesRouter);
+  app.use('/sizes', sizesRouter);
+  app.use('/factories', factoriesRouter);
+  app.use('/distributors', distributorsRouter);
+  app.use('/process-flows', processFlowsRouter);
+  app.use('/process-flow-versions', processFlowVersionsRouter);
+  app.use('/purchase-orders', purchaseOrdersRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

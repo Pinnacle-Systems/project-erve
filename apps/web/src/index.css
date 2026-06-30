@@ -1,3 +1,18 @@
+@import '@erve/theme/theme.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    font-family: var(--erp-font-family-sans);
+    background: var(--erp-color-app-bg);
+    color: var(--erp-color-foreground);
+  }
+
+  body {
+    min-height: 100vh;
+    background: var(--erp-color-app-bg);
+  }
+}

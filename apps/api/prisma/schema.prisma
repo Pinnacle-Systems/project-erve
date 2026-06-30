@@ -77,6 +77,28 @@ enum PriceListStatus {
   EXPIRED
 }
 
+enum PurchaseMode {
+  OUTRIGHT
+  SALE_RETURN
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  PARTIALLY_JOB_ORDERED
+  FULLY_JOB_ORDERED
+  PARTIALLY_FULFILLED
+  FULLY_FULFILLED
+  CLOSED
+  CANCELLED
+}
+
+enum PurchaseOrderLineStatus {
+  ACTIVE
+  CANCELLED
+}
+
 enum ProcessFlowStatus {
   ACTIVE
   INACTIVE
@@ -115,6 +137,8 @@ model User {
   userFactories    UserFactory[]
   uploadedFiles    File[]            @relation("FileUploadedBy")
   auditLogs        AuditLog[]        @relation("AuditLogActor")
+  createdPurchaseOrders     DistributorPurchaseOrder[] @relation("POCreator")
+  merchandisedPurchaseOrders DistributorPurchaseOrder[] @relation("POMerchandiser")
 
   @@index([status])
   @@map("users")
@@ -164,8 +188,9 @@ model Distributor {
   createdAt    DateTime          @default(now()) @map("created_at")
   updatedAt    DateTime          @updatedAt @map("updated_at")
 
-  userDistributors UserDistributor[]
-  priceLists       PriceList[]
+  userDistributors      UserDistributor[]
+  priceLists            PriceList[]
+  purchaseOrders        DistributorPurchaseOrder[]
 
   @@index([status])
   @@map("distributors")
@@ -252,6 +277,7 @@ model Style {
   styleSizes           StyleSize[]
   styleFactoryMappings StyleFactoryMapping[]
   priceListLines       PriceListLine[]
+  purchaseOrderLines   DistributorPurchaseOrderLine[]
 
   @@index([status])
   @@map("styles")
@@ -284,7 +310,8 @@ model Size {
   createdAt DateTime   @default(now()) @map("created_at")
   updatedAt DateTime   @updatedAt @map("updated_at")
 
-  styleSizes StyleSize[]
+  styleSizes         StyleSize[]
+  purchaseOrderLineSizes DistributorPurchaseOrderLineSize[]
 
   @@index([status])
   @@index([sizeType])
@@ -419,6 +446,79 @@ model ProcessFlowVersionStage {
   @@unique([processFlowVersionId, sequence])
   @@index([processFlowVersionId])
   @@map("process_flow_version_stages")
+}
+
+// ---------------------------------------------------------------------------
+// Distributor Purchase Orders
+// ---------------------------------------------------------------------------
+
+model DistributorPurchaseOrder {
+  id                  String              @id
+  poNumber            String              @unique @map("po_number")
+  distributorId       String              @map("distributor_id")
+  merchandiserId      String?             @map("merchandiser_id")
+  poDate              DateTime            @map("po_date") @db.Date
+  requiredDeliveryDate DateTime?          @map("required_delivery_date") @db.Date
+  purchaseMode        PurchaseMode        @map("purchase_mode")
+  status              PurchaseOrderStatus @default(DRAFT)
+  remarks             String?
+  createdBy           String              @map("created_by")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  distributor  Distributor                    @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  merchandiser User?                          @relation("POMerchandiser", fields: [merchandiserId], references: [id], onDelete: SetNull)
+  creator      User                           @relation("POCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  lines        DistributorPurchaseOrderLine[]
+
+  @@index([distributorId])
+  @@index([status])
+  @@index([poDate])
+  @@map("distributor_purchase_orders")
+}
+
+model DistributorPurchaseOrderLine {
+  id              String                 @id
+  purchaseOrderId String                 @map("purchase_order_id")
+  styleId         String                 @map("style_id")
+  lineStatus      PurchaseOrderLineStatus @default(ACTIVE) @map("line_status")
+  remarks         String?
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+
+  purchaseOrder DistributorPurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  style         Style                            @relation(fields: [styleId], references: [id], onDelete: Restrict)
+  sizes         DistributorPurchaseOrderLineSize[]
+
+  @@unique([purchaseOrderId, styleId])
+  @@index([purchaseOrderId])
+  @@index([styleId])
+  @@map("distributor_purchase_order_lines")
+}
+
+model DistributorPurchaseOrderLineSize {
+  id                  String   @id
+  purchaseOrderLineId String   @map("purchase_order_line_id")
+  sizeId              String   @map("size_id")
+  orderedQuantity     Int      @map("ordered_quantity")
+  jobOrderedQuantity  Int      @default(0) @map("job_ordered_quantity")
+  qaPassedQuantity    Int      @default(0) @map("qa_passed_quantity")
+  saleOrderedQuantity Int      @default(0) @map("sale_ordered_quantity")
+  dispatchedQuantity  Int      @default(0) @map("dispatched_quantity")
+  deliveredQuantity   Int      @default(0) @map("delivered_quantity")
+  actualSoldQuantity  Int      @default(0) @map("actual_sold_quantity")
+  returnedQuantity    Int      @default(0) @map("returned_quantity")
+  reassignedQuantity  Int      @default(0) @map("reassigned_quantity")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Cascade)
+  size              Size                         @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+
+  @@unique([purchaseOrderLineId, sizeId])
+  @@index([purchaseOrderLineId])
+  @@index([sizeId])
+  @@map("distributor_purchase_order_line_sizes")
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,12 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { resetDatabase, createTestUserAndToken } from '../../test/helpers.js';
+import {
+  resetDatabase,
+  createTestUserAndToken,
+  createTestDistributor,
+  createTestFactory,
+} from '../../test/helpers.js';
 
 const app = createApp();
 
@@ -112,5 +117,61 @@ describe('POST /users/:id/roles', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.roles.sort()).toEqual(['ACCOUNTANT', 'MERCHANDISER', 'QA_USER'].sort());
+  });
+});
+
+describe('POST /users/:id/distributors', () => {
+  it('allows an ADMIN to map a user to a distributor', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { userId: targetId } = await createTestUserAndToken({
+      email: 'distributor-user@test.local',
+      password: 'target-password',
+      roles: ['DISTRIBUTOR'],
+    });
+    const distributor = await createTestDistributor({ code: 'D-001', name: 'Acme Distribution' });
+
+    const res = await request(app)
+      .post(`/users/${targetId}/distributors`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ distributorId: distributor.id });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.distributors).toEqual([
+      { id: distributor.id, code: distributor.code, name: distributor.name },
+    ]);
+    expect(JSON.stringify(res.body)).not.toContain('passwordHash');
+  });
+});
+
+describe('POST /users/:id/factories', () => {
+  it('allows an ADMIN to map a user to a factory', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { userId: targetId } = await createTestUserAndToken({
+      email: 'factory-user@test.local',
+      password: 'target-password',
+      roles: ['FACTORY_USER'],
+    });
+    const factory = await createTestFactory({ code: 'F-001', name: 'Acme Factory' });
+
+    const res = await request(app)
+      .post(`/users/${targetId}/factories`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ factoryId: factory.id });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.factories).toEqual([
+      { id: factory.id, code: factory.code, name: factory.name },
+    ]);
+    expect(JSON.stringify(res.body)).not.toContain('passwordHash');
   });
 });

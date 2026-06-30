@@ -1,16 +1,62 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import type { AuthUser } from '@erve/types';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { isAxiosError } from 'axios';
+import type { ApiSuccessResponse, AuthUser } from '@erve/types';
+import { apiClient, clearStoredToken, getStoredToken, setStoredToken } from '@erve/client';
+
+type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
 interface AuthContextValue {
   user: AuthUser | null;
-  setUser: (user: AuthUser | null) => void;
+  status: AuthStatus;
+  login: (accessToken: string, user: AuthUser) => void;
+  logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const value = useMemo(() => ({ user, setUser }), [user]);
+  const [status, setStatus] = useState<AuthStatus>('loading');
+
+  useEffect(() => {
+    const token = getStoredToken();
+    if (!token) {
+      setStatus('unauthenticated');
+      return;
+    }
+
+    apiClient
+      .get<ApiSuccessResponse<AuthUser>>('/auth/me')
+      .then((response) => {
+        setUser(response.data.data);
+        setStatus('authenticated');
+      })
+      .catch((error: unknown) => {
+        if (isAxiosError(error)) {
+          clearStoredToken();
+        }
+        setUser(null);
+        setStatus('unauthenticated');
+      });
+  }, []);
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      user,
+      status,
+      login: (accessToken, nextUser) => {
+        setStoredToken(accessToken);
+        setUser(nextUser);
+        setStatus('authenticated');
+      },
+      logout: () => {
+        clearStoredToken();
+        setUser(null);
+        setStatus('unauthenticated');
+      },
+    }),
+    [user, status],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

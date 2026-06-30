@@ -8,10 +8,22 @@ import { signAccessToken } from '../auth/jwt.js';
 // only the per-test rows need clearing between tests.
 export async function resetDatabase(): Promise<void> {
   await prisma.auditLog.deleteMany();
+  await prisma.distributorPurchaseOrderLineSize.deleteMany();
+  await prisma.distributorPurchaseOrderLine.deleteMany();
+  await prisma.distributorPurchaseOrder.deleteMany();
+  await prisma.processFlowVersionStage.deleteMany();
+  await prisma.processFlowVersion.deleteMany();
+  await prisma.processFlow.deleteMany();
+  await prisma.styleFactoryMapping.deleteMany();
+  await prisma.styleSize.deleteMany();
+  await prisma.style.deleteMany();
+  await prisma.size.deleteMany();
   await prisma.userRole.deleteMany();
   await prisma.userDistributor.deleteMany();
   await prisma.userFactory.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.factory.deleteMany();
+  await prisma.distributor.deleteMany();
 }
 
 export interface CreateTestUserOptions {
@@ -56,4 +68,26 @@ export async function createTestUserAndToken(
   const userId = await createTestUser(options);
   const token = signAccessToken({ sub: userId, roles: options.roles ?? [] });
   return { userId, token };
+}
+
+export async function createTestDistributor(overrides?: {
+  code?: string;
+  name?: string;
+}): Promise<{ id: string; code: string; name: string }> {
+  const id = createId();
+  const code = overrides?.code ?? `DIST-${id}`;
+  const name = overrides?.name ?? 'Test Distributor';
+  await prisma.distributor.create({ data: { id, code, name } });
+  return { id, code, name };
+}
+
+export async function createTestFactory(overrides?: {
+  code?: string;
+  name?: string;
+}): Promise<{ id: string; code: string; name: string }> {
+  const id = createId();
+  const code = overrides?.code ?? `FAC-${id}`;
+  const name = overrides?.name ?? 'Test Factory';
+  await prisma.factory.create({ data: { id, code, name } });
+  return { id, code, name };
 }

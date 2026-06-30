@@ -11,9 +11,15 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@erve/client": "workspace:*",
+    "@erve/app-components": "workspace:*",
+    "@erve/data-display": "workspace:*",
+    "@erve/layout": "workspace:*",
+    "@erve/primitives": "workspace:*",
     "@erve/shared": "workspace:*",
+    "@erve/theme": "workspace:*",
+    "@erve/tokens": "workspace:*",
     "@erve/types": "workspace:*",
-    "@erve/ui": "workspace:*",
     "@tanstack/react-query": "^5.56.2",
     "axios": "^1.7.7",
     "react": "^18.3.1",

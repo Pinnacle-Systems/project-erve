@@ -11,7 +11,11 @@ export function RoleRoute({
   allowed: readonly Role[];
   children: ReactNode;
 }) {
-  const { user } = useAuth();
+  const { user, status } = useAuth();
+
+  if (status === 'loading') {
+    return null;
+  }
 
   if (!user) {
     return <Navigate to="/login" replace />;

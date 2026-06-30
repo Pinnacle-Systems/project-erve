@@ -1,8 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
+import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { resetDatabase, createTestUser } from '../../test/helpers.js';
+import {
+  resetDatabase,
+  createTestUser,
+  createTestDistributor,
+  createTestFactory,
+} from '../../test/helpers.js';
 
 const app = createApp();
 
@@ -83,6 +89,40 @@ describe('GET /auth/me', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.email).toBe('multi-role@test.local');
     expect(res.body.data.roles.sort()).toEqual(['ADMIN', 'MERCHANDISER'].sort());
+    expect(JSON.stringify(res.body)).not.toContain('passwordHash');
+  });
+
+  it('returns distributor and factory mappings alongside the user', async () => {
+    const userId = await createTestUser({
+      email: 'mapped-user@test.local',
+      password: 'correct-password',
+      roles: ['DISTRIBUTOR', 'FACTORY_USER'],
+    });
+    const distributor = await createTestDistributor({ code: 'D-002', name: 'Northwind Distribution' });
+    const factory = await createTestFactory({ code: 'F-002', name: 'Northwind Factory' });
+
+    await prisma.userDistributor.create({
+      data: { id: createId(), userId, distributorId: distributor.id },
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId, factoryId: factory.id },
+    });
+
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ identifier: 'mapped-user@test.local', password: 'correct-password' });
+
+    const res = await request(app)
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${login.body.data.accessToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.distributors).toEqual([
+      { id: distributor.id, code: distributor.code, name: distributor.name },
+    ]);
+    expect(res.body.data.factories).toEqual([
+      { id: factory.id, code: factory.code, name: factory.name },
+    ]);
     expect(JSON.stringify(res.body)).not.toContain('passwordHash');
   });
 });

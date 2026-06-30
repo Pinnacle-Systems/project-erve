@@ -1,13 +1,41 @@
-import { Card } from '@erve/ui';
+import { useNavigate } from 'react-router-dom';
+import { PageHeader } from '@erve/app-components';
+import { Button } from '@erve/primitives';
+import { Card } from '@erve/layout';
+import { useAuth } from '../auth/AuthContext.js';
 
 export function DashboardPage() {
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="space-y-5">
+      <PageHeader
+        title="Dashboard"
+        subtitle="Inventory and dispatch tracking features will appear here."
+        secondaryActions={
+          <Button
+            variant="secondary"
+            onClick={() => {
+              logout();
+              navigate('/login');
+            }}
+          >
+            Log out
+          </Button>
+        }
+      />
       <Card>
-        <h1 className="text-lg font-semibold text-gray-900">Dashboard</h1>
-        <p className="mt-2 text-sm text-gray-500">
-          Inventory and dispatch tracking features will appear here.
-        </p>
+        <div className="flex items-start justify-between">
+          <div>
+            {user ? <p className="text-sm text-muted-foreground">Signed in as {user.name}</p> : null}
+            <div className="mt-5">
+              <Button variant="secondary" onClick={() => navigate('/master-data/styles')}>
+                Master Data
+              </Button>
+            </div>
+          </div>
+        </div>
       </Card>
     </div>
   );

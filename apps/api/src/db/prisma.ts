@@ -5,7 +5,20 @@ import { env } from '../config/env.js';
 // Re-exported so the rest of the app imports the generated client through
 // this single module instead of reaching into src/generated/ directly.
 export { Prisma };
-export type { UserStatus, RoleName } from '../generated/prisma/client.js';
+export type {
+  DistributorStatus,
+  FactoryStatus,
+  ProcessFlowStatus,
+  ProcessFlowVersionStatus,
+  PurchaseMode,
+  PurchaseOrderLineStatus,
+  PurchaseOrderStatus,
+  RoleName,
+  SizeStatus,
+  SizeType,
+  StyleStatus,
+  UserStatus,
+} from '../generated/prisma/client.js';
 
 declare global {
   var __prisma: PrismaClient | undefined;

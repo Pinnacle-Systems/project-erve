@@ -6,7 +6,7 @@ export const createUserSchema = z.object({
   email: z.string().email(),
   mobile: z.string().min(1).optional(),
   password: z.string().min(8),
-  roles: z.array(z.enum(ROLES)).optional(),
+  roles: z.array(z.enum(ROLES)).min(1, 'At least one role is required'),
 });
 
 export const updateStatusSchema = z.object({

@@ -1,11 +1,31 @@
+import { useState, type FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import { Card, LoginForm, type LoginFormValues } from '@erve/ui';
+import { useNavigate } from 'react-router-dom';
+import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Card } from '@erve/layout';
+import type { ApiSuccessResponse, LoginResponse } from '@erve/types';
 import { apiClient } from '../lib/api-client.js';
+import { useAuth } from '../auth/AuthContext.js';
+
+interface LoginFormValues {
+  identifier: string;
+  password: string;
+}
 
 export function LoginPage() {
+  const navigate = useNavigate();
+  const { login } = useAuth();
+  const [values, setValues] = useState<LoginFormValues>({ identifier: '', password: '' });
+
   const mutation = useMutation({
-    mutationFn: (values: LoginFormValues) => apiClient.post('/auth/login', values),
+    mutationFn: (values: LoginFormValues) =>
+      apiClient.post<ApiSuccessResponse<LoginResponse>>('/auth/login', values),
+    onSuccess: (response) => {
+      const { accessToken, user } = response.data.data;
+      login(accessToken, user);
+      navigate('/dashboard');
+    },
   });
 
   const errorMessage =
@@ -14,17 +34,47 @@ export function LoginPage() {
         'Unable to sign in. Please try again.'
       : undefined;
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    mutation.mutate(values);
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <Card className="w-full max-w-sm">
-        <h1 className="mb-1 text-xl font-semibold text-gray-900">Erve</h1>
-        <p className="mb-6 text-sm text-gray-500">Sign in to your distributor account</p>
-        <LoginForm
-          onSubmit={(values) => mutation.mutate(values)}
-          isSubmitting={mutation.isPending}
-          errorMessage={errorMessage}
-        />
-      </Card>
+    <div className="flex min-h-screen items-center justify-center bg-[var(--erp-color-app-bg)] px-4 py-12">
+      <div className="w-full max-w-md">
+        <div className="mb-8 text-center">
+          <h1 className="text-3xl font-bold text-foreground">Erve</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Sign in to your distributor account</p>
+        </div>
+        <Card>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <TextField
+              id="identifier"
+              type="text"
+              label="Email or mobile number"
+              autoComplete="username"
+              value={values.identifier}
+              onChange={(event) => setValues((current) => ({ ...current, identifier: event.target.value }))}
+              required
+              width="fill"
+            />
+            <TextField
+              id="password"
+              type="password"
+              label="Password"
+              autoComplete="current-password"
+              value={values.password}
+              onChange={(event) => setValues((current) => ({ ...current, password: event.target.value }))}
+              required
+              width="fill"
+            />
+            {errorMessage ? <ValidationMessage tone="error">{errorMessage}</ValidationMessage> : null}
+            <Button type="submit" loading={mutation.isPending} disabled={mutation.isPending} width="fill">
+              Sign in
+            </Button>
+          </form>
+        </Card>
+      </div>
     </div>
   );
 }

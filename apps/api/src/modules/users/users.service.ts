@@ -59,18 +59,16 @@ export interface CreateUserInput {
   email: string;
   mobile?: string;
   password: string;
-  roles?: Role[];
+  roles: Role[];
 }
 
 export async function createUser(actor: CurrentUser, input: CreateUserInput): Promise<UserView> {
   const passwordHash = await hashPassword(input.password);
   const userId = createId();
 
-  const roles = input.roles?.length
-    ? await prisma.role.findMany({ where: { name: { in: input.roles } } })
-    : [];
+  const roles = await prisma.role.findMany({ where: { name: { in: input.roles } } });
 
-  if (input.roles?.length && roles.length !== input.roles.length) {
+  if (roles.length !== input.roles.length) {
     throw HttpError.badRequest('One or more roles are invalid');
   }
 
@@ -82,9 +80,7 @@ export async function createUser(actor: CurrentUser, input: CreateUserInput): Pr
         email: input.email,
         mobile: input.mobile,
         passwordHash,
-        userRoles: roles.length
-          ? { create: roles.map((role) => ({ id: createId(), roleId: role.id })) }
-          : undefined,
+        userRoles: { create: roles.map((role) => ({ id: createId(), roleId: role.id })) },
       },
     });
   } catch (error) {
