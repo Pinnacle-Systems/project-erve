@@ -20,3 +20,8 @@ apps/mobile/ios/
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Local agent/tooling config
+.agents/
+.claude/
+.codex/
