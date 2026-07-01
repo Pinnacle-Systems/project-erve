@@ -34,10 +34,12 @@ export function AppRoutes() {
         path="/dashboard"
         element={
           <RoleRoute allowed={ROLES}>
-            <DashboardPage />
+            <AppLayout />
           </RoleRoute>
         }
-      />
+      >
+        <Route index element={<DashboardPage />} />
+      </Route>
       <Route
         path="/master-data"
         element={

@@ -6,24 +6,13 @@ import { useAuth } from '../auth/AuthContext.js';
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Dashboard"
         subtitle="Inventory and dispatch tracking features will appear here."
-        secondaryActions={
-          <Button
-            variant="secondary"
-            onClick={() => {
-              logout();
-              navigate('/login');
-            }}
-          >
-            Log out
-          </Button>
-        }
       />
       <Card>
         <div className="flex items-start justify-between">

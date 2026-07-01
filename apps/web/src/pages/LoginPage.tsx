@@ -43,7 +43,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-[var(--erp-color-app-bg)] px-4 py-12">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold text-foreground">Erve</h1>
+          <img src="/erve-logo.png" alt="Erve" className="mx-auto h-14 w-auto max-w-full" />
           <p className="mt-2 text-sm text-muted-foreground">Sign in to your distributor account</p>
         </div>
         <Card>

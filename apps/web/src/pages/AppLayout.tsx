@@ -17,7 +17,9 @@ export function AppLayout() {
   return (
     <div className="min-h-screen bg-background">
       <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-border bg-surface px-5 py-6 md:block">
-        <div className="text-base font-semibold text-foreground">Erve</div>
+        <NavLink to="/dashboard" className="flex items-center" aria-label="Erve dashboard">
+          <img src="/erve-logo.png" alt="Erve" className="h-8 w-auto" />
+        </NavLink>
         <nav className="mt-8 space-y-1">
           <NavLink
             to="/dashboard"
