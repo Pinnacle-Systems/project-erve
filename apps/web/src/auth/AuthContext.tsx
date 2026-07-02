@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse, AuthUser } from '@erve/types';
-import { apiClient } from '../lib/api-client.js';
+import { AUTH_EXPIRED_EVENT, apiClient } from '../lib/api-client.js';
 import { clearStoredToken, getStoredToken, setStoredToken } from './token-storage.js';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
@@ -42,6 +42,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setStatus('unauthenticated');
       });
+  }, []);
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setUser(null);
+      setStatus('unauthenticated');
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   }, []);
 
   const value = useMemo<AuthContextValue>(

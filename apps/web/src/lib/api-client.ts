@@ -1,1 +1,1 @@
-export { apiClient } from '@erve/client';
+export { AUTH_EXPIRED_EVENT, apiClient } from '@erve/client';
