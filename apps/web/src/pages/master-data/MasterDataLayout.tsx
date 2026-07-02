@@ -7,6 +7,14 @@ export function MasterDataLayout() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const canManage = user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER') ?? false;
+  const transactionLinks = [
+    ...(user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT' || role === 'DISTRIBUTOR')
+      ? [{ to: '/purchase-orders', label: 'Purchase Orders' }]
+      : []),
+    ...(user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT' || role === 'FACTORY_USER' || role === 'QA_USER')
+      ? [{ to: '/job-orders', label: 'Job Orders' }]
+      : []),
+  ];
   const links = [
     ...(user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT')
       ? [{ to: '/master-data/styles', label: 'Styles' }]
@@ -49,6 +57,24 @@ export function MasterDataLayout() {
               {link.label}
             </NavLink>
           ))}
+          {transactionLinks.length > 0 && (
+            <div className="px-3 pb-1 pt-4 text-xs font-semibold uppercase text-muted-foreground">
+              Orders
+            </div>
+          )}
+          {transactionLinks.map((link) => (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              className={({ isActive }) =>
+                `block rounded-control px-3 py-2 text-sm ${
+                  isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface-muted hover:text-foreground'
+                }`
+              }
+            >
+              {link.label}
+            </NavLink>
+          ))}
         </Stack>
       </aside>
       <div className="md:pl-64">
@@ -69,7 +95,7 @@ export function MasterDataLayout() {
             </Button>
           </div>
           <nav className="mt-3 flex gap-2 overflow-x-auto md:hidden">
-            {links.map((link) => (
+            {[...links, ...transactionLinks].map((link) => (
               <NavLink
                 key={link.to}
                 to={link.to}
