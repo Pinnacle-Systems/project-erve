@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { isAxiosError } from 'axios';
-import type { ApiSuccessResponse, AuthUser } from '@erve/types';
-import { AUTH_EXPIRED_EVENT, apiClient } from '../lib/api-client.js';
-import { clearStoredToken, getStoredToken, setStoredToken } from './token-storage.js';
+import type { ApiSuccessResponse, AuthUser, RefreshResponse } from '@erve/types';
+import { AUTH_EXPIRED_EVENT, apiClient, logoutSession } from '../lib/api-client.js';
+import { clearStoredToken, setStoredToken } from './token-storage.js';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -10,7 +10,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   status: AuthStatus;
   login: (accessToken: string, user: AuthUser) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -19,29 +19,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
 
-  // Restores the session on page refresh by trading a stored token for the
-  // current user — if the token is missing or no longer valid, fall back
-  // to the unauthenticated state instead of leaving the app stuck loading.
+  // Restores the session by validating the HttpOnly refresh cookie first.
+  // A stored access token alone is not trusted as proof of a live session.
   useEffect(() => {
-    const token = getStoredToken();
-    if (!token) {
-      setStatus('unauthenticated');
-      return;
-    }
+    let cancelled = false;
 
-    apiClient
-      .get<ApiSuccessResponse<AuthUser>>('/auth/me')
-      .then((response) => {
-        setUser(response.data.data);
+    async function restoreSession() {
+      try {
+        const refresh = await apiClient.post<ApiSuccessResponse<RefreshResponse>>(
+          '/auth/refresh',
+          undefined,
+          { withCredentials: true },
+        );
+        setStoredToken(refresh.data.data.accessToken);
+
+        const me = await apiClient.get<ApiSuccessResponse<AuthUser>>('/auth/me');
+
+        if (cancelled) {
+          return;
+        }
+
+        setUser(me.data.data);
         setStatus('authenticated');
-      })
-      .catch((error: unknown) => {
+      } catch (error: unknown) {
+        if (cancelled) {
+          return;
+        }
+
         if (isAxiosError(error)) {
           clearStoredToken();
         }
+
         setUser(null);
         setStatus('unauthenticated');
-      });
+      }
+    }
+
+    void restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -63,8 +81,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(nextUser);
         setStatus('authenticated');
       },
-      logout: () => {
-        clearStoredToken();
+      logout: async () => {
+        await logoutSession();
         setUser(null);
         setStatus('unauthenticated');
       },

@@ -86,8 +86,8 @@ export function MasterDataLayout() {
             </div>
             <Button
               variant="secondary"
-              onClick={() => {
-                logout();
+              onClick={async () => {
+                await logout();
                 navigate('/login');
               }}
             >

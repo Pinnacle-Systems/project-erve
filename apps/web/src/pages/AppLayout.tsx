@@ -82,8 +82,8 @@ export function AppLayout() {
             </div>
             <Button
               variant="secondary"
-              onClick={() => {
-                logout();
+              onClick={async () => {
+                await logout();
                 navigate('/login');
               }}
             >
