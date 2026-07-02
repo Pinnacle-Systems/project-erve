@@ -1,10 +1,10 @@
 import bcrypt from 'bcryptjs';
-import type { AuthUser, LoginResponse, Role } from '@erve/types';
+import type { AuthUser, Role } from '@erve/types';
 import { prisma } from '../../db/prisma.js';
 import { HttpError } from '../../errors/http-error.js';
 import { verifyPassword } from '../../auth/password.js';
-import { signAccessToken } from '../../auth/jwt.js';
-import { currentUserSelect, toCurrentUser, type CurrentUser } from '../../auth/current-user.js';
+import { currentUserSelect, toCurrentUser } from '../../auth/current-user.js';
+import { createRefreshSession, issueTokenResponse, type TokenResponse } from './refresh-session.service.js';
 
 const INVALID_CREDENTIALS_MESSAGE = 'Invalid email/mobile number or password';
 
@@ -13,17 +13,7 @@ const INVALID_CREDENTIALS_MESSAGE = 'Invalid email/mobile number or password';
 // keeping failure timing indistinguishable from a wrong-password failure.
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('no-such-account', 12);
 
-function toAuthUser(user: CurrentUser): AuthUser {
-  return {
-    id: user.id,
-    email: user.email,
-    mobile: user.mobile,
-    name: user.name,
-    roles: user.roles,
-  };
-}
-
-export async function login(identifier: string, password: string): Promise<LoginResponse> {
+export async function login(identifier: string, password: string): Promise<TokenResponse> {
   const record = await prisma.user.findFirst({
     where: { OR: [{ email: identifier }, { mobile: identifier }] },
     select: { ...currentUserSelect, passwordHash: true },
@@ -36,9 +26,9 @@ export async function login(identifier: string, password: string): Promise<Login
   }
 
   const currentUser = toCurrentUser(record);
-  const accessToken = signAccessToken({ sub: currentUser.id, roles: currentUser.roles });
+  const refreshToken = await createRefreshSession(currentUser.id);
 
-  return { accessToken, user: toAuthUser(currentUser) };
+  return issueTokenResponse(currentUser, refreshToken);
 }
 
 export interface MeResponse extends AuthUser {

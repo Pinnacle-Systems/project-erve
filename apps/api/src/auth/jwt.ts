@@ -7,6 +7,12 @@ export interface AccessTokenPayload {
   roles: Role[];
 }
 
+export interface RefreshTokenPayload {
+  sub: string;
+  sessionId: string;
+  tokenId: string;
+}
+
 export function signAccessToken(payload: AccessTokenPayload): string {
   const options: jwt.SignOptions = {
     expiresIn: env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions['expiresIn'],
@@ -14,9 +20,9 @@ export function signAccessToken(payload: AccessTokenPayload): string {
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, options);
 }
 
-export function signRefreshToken(payload: AccessTokenPayload): string {
+export function signRefreshToken(payload: RefreshTokenPayload): string {
   const options: jwt.SignOptions = {
-    expiresIn: env.JWT_REFRESH_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+    expiresIn: `${env.JWT_REFRESH_ABSOLUTE_TIMEOUT_HOURS}h` as jwt.SignOptions['expiresIn'],
   };
   return jwt.sign(payload, env.JWT_REFRESH_SECRET, options);
 }
@@ -25,6 +31,6 @@ export function verifyAccessToken(token: string): AccessTokenPayload {
   return jwt.verify(token, env.JWT_ACCESS_SECRET) as AccessTokenPayload;
 }
 
-export function verifyRefreshToken(token: string): AccessTokenPayload {
-  return jwt.verify(token, env.JWT_REFRESH_SECRET) as AccessTokenPayload;
+export function verifyRefreshToken(token: string): RefreshTokenPayload {
+  return jwt.verify(token, env.JWT_REFRESH_SECRET) as RefreshTokenPayload;
 }
