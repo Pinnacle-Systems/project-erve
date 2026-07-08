@@ -1,1 +1,1 @@
-export { AUTH_EXPIRED_EVENT, apiClient, logoutSession } from '@erve/client';
+export { AUTH_EXPIRED_EVENT, apiClient, logoutSession, refreshAccessToken } from '@erve/client';

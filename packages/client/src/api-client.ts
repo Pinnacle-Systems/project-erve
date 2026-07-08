@@ -34,7 +34,7 @@ function notifyAuthExpired(): void {
   }
 }
 
-async function refreshAccessToken(): Promise<string> {
+export async function refreshAccessToken(): Promise<string> {
   refreshPromise ??= apiClient
     .post<ApiSuccessResponse<RefreshResponse>>('/auth/refresh', undefined, {
       withCredentials: true,

@@ -12,7 +12,7 @@ export function LoginPage() {
 
   const mutation = useMutation({
     mutationFn: (values: LoginFormValues) =>
-      apiClient.post<ApiSuccessResponse<LoginResponse>>('/auth/login', values),
+      apiClient.post<ApiSuccessResponse<LoginResponse>>('/auth/login', values, { withCredentials: true }),
     onSuccess: (response) => {
       const { accessToken, user } = response.data.data;
       login(accessToken, user);

@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse, AuthUser } from '@erve/types';
-import { apiClient, clearStoredToken, getStoredToken, setStoredToken } from '@erve/client';
+import { apiClient, clearStoredToken, setStoredToken } from '@erve/client';
+import { AUTH_EXPIRED_EVENT, logoutSession, refreshAccessToken } from '../lib/api-client.js';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -9,7 +10,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   status: AuthStatus;
   login: (accessToken: string, user: AuthUser) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -19,25 +20,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
 
   useEffect(() => {
-    const token = getStoredToken();
-    if (!token) {
-      setStatus('unauthenticated');
-      return;
-    }
+    let cancelled = false;
 
-    apiClient
-      .get<ApiSuccessResponse<AuthUser>>('/auth/me')
-      .then((response) => {
-        setUser(response.data.data);
+    async function restoreSession() {
+      try {
+        await refreshAccessToken();
+
+        const me = await apiClient.get<ApiSuccessResponse<AuthUser>>('/auth/me');
+
+        if (cancelled) {
+          return;
+        }
+
+        setUser(me.data.data);
         setStatus('authenticated');
-      })
-      .catch((error: unknown) => {
+      } catch (error: unknown) {
+        if (cancelled) {
+          return;
+        }
+
         if (isAxiosError(error)) {
           clearStoredToken();
         }
+
         setUser(null);
         setStatus('unauthenticated');
-      });
+      }
+    }
+
+    void restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      clearStoredToken();
+      setUser(null);
+      setStatus('unauthenticated');
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   }, []);
 
   const value = useMemo<AuthContextValue>(
@@ -49,8 +75,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(nextUser);
         setStatus('authenticated');
       },
-      logout: () => {
-        clearStoredToken();
+      logout: async () => {
+        await logoutSession();
         setUser(null);
         setStatus('unauthenticated');
       },

@@ -1,6 +1,6 @@
 import { AxiosError, type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiClient, AUTH_EXPIRED_EVENT, logoutSession } from './api-client.js';
+import { apiClient, AUTH_EXPIRED_EVENT, logoutSession, refreshAccessToken } from './api-client.js';
 import { clearStoredToken, getStoredToken, setStoredToken } from './token-storage.js';
 
 interface MockLocalStorage {
@@ -157,6 +157,25 @@ describe('apiClient refresh session integration', () => {
 
     expect(refreshCalls).toBe(1);
     expect(getStoredToken()).toBe('shared-token');
+  });
+
+  it('shares one refresh call across parallel startup refresh attempts', async () => {
+    let refreshCalls = 0;
+
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/auth/refresh') {
+        refreshCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return ok(config, { success: true, data: { accessToken: 'startup-token' } });
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    }) satisfies AxiosAdapter;
+
+    await Promise.all([refreshAccessToken(), refreshAccessToken()]);
+
+    expect(refreshCalls).toBe(1);
+    expect(getStoredToken()).toBe('startup-token');
   });
 
   it('does not recursively refresh login, refresh, or logout failures', async () => {

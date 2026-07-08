@@ -10,8 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "cap:sync": "cap sync",
-    "cap:add:android": "cap add android",
-    "cap:add:ios": "cap add ios"
+    "cap:add:android": "cap add android"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",

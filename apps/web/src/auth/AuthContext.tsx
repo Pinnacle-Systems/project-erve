@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { isAxiosError } from 'axios';
-import type { ApiSuccessResponse, AuthUser, RefreshResponse } from '@erve/types';
-import { AUTH_EXPIRED_EVENT, apiClient, logoutSession } from '../lib/api-client.js';
+import type { ApiSuccessResponse, AuthUser } from '@erve/types';
+import { AUTH_EXPIRED_EVENT, apiClient, logoutSession, refreshAccessToken } from '../lib/api-client.js';
 import { clearStoredToken, setStoredToken } from './token-storage.js';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
@@ -26,12 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     async function restoreSession() {
       try {
-        const refresh = await apiClient.post<ApiSuccessResponse<RefreshResponse>>(
-          '/auth/refresh',
-          undefined,
-          { withCredentials: true },
-        );
-        setStoredToken(refresh.data.data.accessToken);
+        await refreshAccessToken();
 
         const me = await apiClient.get<ApiSuccessResponse<AuthUser>>('/auth/me');
 
