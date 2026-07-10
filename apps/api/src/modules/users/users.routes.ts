@@ -37,7 +37,7 @@ usersRouter.get(
 usersRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const user = await usersService.getUserById(req.params.id!);
+    const user = await usersService.getUserById(req.params.id! as string);
     res.status(200).json(successResponse(user));
   }),
 );
@@ -46,7 +46,7 @@ usersRouter.patch(
   '/:id/status',
   asyncHandler(async (req, res) => {
     const { status } = updateStatusSchema.parse(req.body);
-    const user = await usersService.updateUserStatus(req.user!, req.params.id!, status);
+    const user = await usersService.updateUserStatus(req.user!, req.params.id! as string, status);
     res.status(200).json(successResponse(user));
   }),
 );
@@ -55,7 +55,7 @@ usersRouter.post(
   '/:id/roles',
   asyncHandler(async (req, res) => {
     const { roleName } = assignRoleSchema.parse(req.body);
-    const user = await usersService.assignRole(req.user!, req.params.id!, roleName);
+    const user = await usersService.assignRole(req.user!, req.params.id! as string, roleName);
     res.status(200).json(successResponse(user));
   }),
 );
@@ -64,7 +64,7 @@ usersRouter.delete(
   '/:id/roles/:roleName',
   asyncHandler(async (req, res) => {
     const roleName = roleNameSchema.parse(req.params.roleName);
-    const user = await usersService.removeRole(req.user!, req.params.id!, roleName);
+    const user = await usersService.removeRole(req.user!, req.params.id! as string, roleName);
     res.status(200).json(successResponse(user));
   }),
 );
@@ -73,7 +73,7 @@ usersRouter.post(
   '/:id/distributors',
   asyncHandler(async (req, res) => {
     const { distributorId } = distributorMappingSchema.parse(req.body);
-    const user = await usersService.addDistributorMapping(req.user!, req.params.id!, distributorId);
+    const user = await usersService.addDistributorMapping(req.user!, req.params.id! as string, distributorId);
     res.status(200).json(successResponse(user));
   }),
 );
@@ -83,8 +83,8 @@ usersRouter.delete(
   asyncHandler(async (req, res) => {
     const user = await usersService.removeDistributorMapping(
       req.user!,
-      req.params.id!,
-      req.params.distributorId!,
+      req.params.id! as string,
+      req.params.distributorId! as string,
     );
     res.status(200).json(successResponse(user));
   }),
@@ -94,7 +94,7 @@ usersRouter.post(
   '/:id/factories',
   asyncHandler(async (req, res) => {
     const { factoryId } = factoryMappingSchema.parse(req.body);
-    const user = await usersService.addFactoryMapping(req.user!, req.params.id!, factoryId);
+    const user = await usersService.addFactoryMapping(req.user!, req.params.id! as string, factoryId);
     res.status(200).json(successResponse(user));
   }),
 );
@@ -104,8 +104,8 @@ usersRouter.delete(
   asyncHandler(async (req, res) => {
     const user = await usersService.removeFactoryMapping(
       req.user!,
-      req.params.id!,
-      req.params.factoryId!,
+      req.params.id! as string,
+      req.params.factoryId! as string,
     );
     res.status(200).json(successResponse(user));
   }),

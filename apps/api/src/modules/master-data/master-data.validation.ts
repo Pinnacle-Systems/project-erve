@@ -61,7 +61,7 @@ export const createFactorySchema = z.object({
   code: z.string().trim().min(1),
   name: z.string().trim().min(1),
   contactName: optionalText,
-  contactEmail: z.string().trim().email().optional().nullable(),
+  contactEmail: z.string().trim().pipe(z.email()).optional().nullable(),
   contactPhone: optionalText,
   addressLine1: optionalText,
   addressLine2: optionalText,
