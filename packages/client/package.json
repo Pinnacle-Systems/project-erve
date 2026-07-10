@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@erve/types": "workspace:*",
-    "@tanstack/react-query": "^5.56.2",
+    "@tanstack/react-query": "^5.101.2",
     "axios": "^1.7.7"
   },
   "devDependencies": {

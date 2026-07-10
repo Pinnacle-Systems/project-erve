@@ -74,7 +74,7 @@ stylesRouter.get(
   '/:id',
   canViewStyles,
   asyncHandler(async (req, res) => {
-    const style = await masterDataService.getStyleById(req.params.id!);
+    const style = await masterDataService.getStyleById(req.params.id! as string);
     res.status(200).json(successResponse(style));
   }),
 );
@@ -84,7 +84,7 @@ stylesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = updateStyleSchema.parse(req.body);
-    const style = await masterDataService.updateStyle(req.user!, req.params.id!, input);
+    const style = await masterDataService.updateStyle(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(style));
   }),
 );
@@ -94,7 +94,7 @@ stylesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const { status } = updateStyleStatusSchema.parse(req.body);
-    const style = await masterDataService.updateStyleStatus(req.user!, req.params.id!, status);
+    const style = await masterDataService.updateStyleStatus(req.user!, req.params.id! as string, status);
     res.status(200).json(successResponse(style));
   }),
 );
@@ -104,7 +104,7 @@ stylesRouter.post(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = styleSizeSchema.parse(req.body);
-    const style = await masterDataService.addStyleSize(req.user!, req.params.id!, input);
+    const style = await masterDataService.addStyleSize(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(style));
   }),
 );
@@ -113,7 +113,7 @@ stylesRouter.delete(
   '/:id/sizes/:sizeId',
   canManageMasterData,
   asyncHandler(async (req, res) => {
-    const style = await masterDataService.removeStyleSize(req.user!, req.params.id!, req.params.sizeId!);
+    const style = await masterDataService.removeStyleSize(req.user!, req.params.id! as string, req.params.sizeId! as string);
     res.status(200).json(successResponse(style));
   }),
 );
@@ -123,7 +123,7 @@ stylesRouter.post(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = styleFactorySchema.parse(req.body);
-    const style = await masterDataService.addStyleFactory(req.user!, req.params.id!, input);
+    const style = await masterDataService.addStyleFactory(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(style));
   }),
 );
@@ -134,8 +134,8 @@ stylesRouter.delete(
   asyncHandler(async (req, res) => {
     const style = await masterDataService.removeStyleFactory(
       req.user!,
-      req.params.id!,
-      req.params.factoryId!,
+      req.params.id! as string,
+      req.params.factoryId! as string,
     );
     res.status(200).json(successResponse(style));
   }),
@@ -145,7 +145,7 @@ stylesRouter.post(
   '/:id/images',
   canManageMasterData,
   asyncHandler(async (req, res) => {
-    await masterDataService.createStyleImagePlaceholder(req.params.id!);
+    await masterDataService.createStyleImagePlaceholder(req.params.id! as string);
     res.status(501).json(successResponse(null));
   }),
 );
@@ -174,7 +174,7 @@ sizesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = updateSizeSchema.parse(req.body);
-    const size = await masterDataService.updateSize(req.params.id!, input);
+    const size = await masterDataService.updateSize(req.params.id! as string, input);
     res.status(200).json(successResponse(size));
   }),
 );
@@ -184,7 +184,7 @@ sizesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const { status } = updateSizeStatusSchema.parse(req.body);
-    const size = await masterDataService.updateSizeStatus(req.params.id!, status);
+    const size = await masterDataService.updateSizeStatus(req.params.id! as string, status);
     res.status(200).json(successResponse(size));
   }),
 );
@@ -213,7 +213,7 @@ factoriesRouter.get(
   '/:id',
   canViewFactories,
   asyncHandler(async (req, res) => {
-    const factory = await masterDataService.getFactoryById(req.user!, req.params.id!);
+    const factory = await masterDataService.getFactoryById(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(factory));
   }),
 );
@@ -223,7 +223,7 @@ factoriesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = updateFactorySchema.parse(req.body);
-    const factory = await masterDataService.updateFactory(req.params.id!, input);
+    const factory = await masterDataService.updateFactory(req.params.id! as string, input);
     res.status(200).json(successResponse(factory));
   }),
 );
@@ -233,7 +233,7 @@ factoriesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const { status } = updateFactoryStatusSchema.parse(req.body);
-    const factory = await masterDataService.updateFactoryStatus(req.params.id!, status);
+    const factory = await masterDataService.updateFactoryStatus(req.params.id! as string, status);
     res.status(200).json(successResponse(factory));
   }),
 );
@@ -261,7 +261,7 @@ processFlowsRouter.get(
   '/:id',
   canManageMasterData,
   asyncHandler(async (req, res) => {
-    const flow = await masterDataService.getProcessFlowById(req.params.id!);
+    const flow = await masterDataService.getProcessFlowById(req.params.id! as string);
     res.status(200).json(successResponse(flow));
   }),
 );
@@ -271,7 +271,7 @@ processFlowsRouter.post(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = createProcessFlowVersionSchema.parse(req.body);
-    const version = await masterDataService.createProcessFlowVersion(req.params.id!, input);
+    const version = await masterDataService.createProcessFlowVersion(req.params.id! as string, input);
     res.status(201).json(successResponse(version));
   }),
 );
@@ -280,7 +280,7 @@ processFlowVersionsRouter.get(
   '/:id',
   canManageMasterData,
   asyncHandler(async (req, res) => {
-    const version = await masterDataService.getProcessFlowVersionById(req.params.id!);
+    const version = await masterDataService.getProcessFlowVersionById(req.params.id! as string);
     res.status(200).json(successResponse(version));
   }),
 );
@@ -289,7 +289,7 @@ processFlowVersionsRouter.post(
   '/:id/activate',
   canManageMasterData,
   asyncHandler(async (req, res) => {
-    const version = await masterDataService.activateProcessFlowVersion(req.params.id!);
+    const version = await masterDataService.activateProcessFlowVersion(req.params.id! as string);
     res.status(200).json(successResponse(version));
   }),
 );

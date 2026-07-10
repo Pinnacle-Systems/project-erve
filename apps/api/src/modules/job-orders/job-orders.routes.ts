@@ -42,7 +42,7 @@ jobOrdersRouter.get(
   '/:id',
   canViewJobOrders,
   asyncHandler(async (req, res) => {
-    const jobOrder = await jobOrdersService.getJobOrderDetail(req.user!, req.params.id!);
+    const jobOrder = await jobOrdersService.getJobOrderDetail(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(jobOrder));
   }),
 );
@@ -51,7 +51,7 @@ jobOrdersRouter.post(
   '/:id/actions/send-to-factory',
   canCreateJobOrders,
   asyncHandler(async (req, res) => {
-    const jobOrder = await jobOrdersService.sendJobOrderToFactory(req.user!, req.params.id!);
+    const jobOrder = await jobOrdersService.sendJobOrderToFactory(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(jobOrder));
   }),
 );
@@ -60,7 +60,7 @@ jobOrdersRouter.post(
   '/:id/actions/confirm',
   canWorkflowJobOrders,
   asyncHandler(async (req, res) => {
-    const jobOrder = await jobOrdersService.confirmJobOrder(req.user!, req.params.id!);
+    const jobOrder = await jobOrdersService.confirmJobOrder(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(jobOrder));
   }),
 );
@@ -70,7 +70,7 @@ jobOrdersRouter.post(
   canWorkflowJobOrders,
   asyncHandler(async (req, res) => {
     const input = completeStageSchema.parse(req.body);
-    const jobOrder = await jobOrdersService.completeProductionStage(req.user!, req.params.id!, input);
+    const jobOrder = await jobOrdersService.completeProductionStage(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(jobOrder));
   }),
 );
@@ -80,7 +80,7 @@ jobOrdersRouter.post(
   canWorkflowJobOrders,
   asyncHandler(async (req, res) => {
     const input = updatePreparedQuantitySchema.parse(req.body);
-    const jobOrder = await jobOrdersService.updatePreparedQuantity(req.user!, req.params.id!, input);
+    const jobOrder = await jobOrdersService.updatePreparedQuantity(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(jobOrder));
   }),
 );
@@ -89,7 +89,7 @@ jobOrdersRouter.get(
   '/:id/stages',
   canViewJobOrders,
   asyncHandler(async (req, res) => {
-    const stages = await jobOrdersService.getJobOrderStages(req.user!, req.params.id!);
+    const stages = await jobOrdersService.getJobOrderStages(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(stages));
   }),
 );
@@ -98,7 +98,7 @@ jobOrdersRouter.get(
   '/:id/variance',
   canViewJobOrders,
   asyncHandler(async (req, res) => {
-    const variance = await jobOrdersService.calculateVariance(req.user!, req.params.id!);
+    const variance = await jobOrdersService.calculateVariance(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(variance));
   }),
 );

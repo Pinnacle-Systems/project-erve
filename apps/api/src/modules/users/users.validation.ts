@@ -3,7 +3,7 @@ import { ROLES } from '@erve/types';
 
 export const createUserSchema = z.object({
   name: z.string().min(1),
-  email: z.string().email(),
+  email: z.email(),
   mobile: z.string().min(1).optional(),
   password: z.string().min(8),
   roles: z.array(z.enum(ROLES)).min(1, 'At least one role is required'),

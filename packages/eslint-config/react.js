@@ -16,7 +16,9 @@ export default [
       },
     },
     settings: {
-      react: { version: 'detect' },
+      // Pinned explicitly: eslint-plugin-react@7.37.5's 'detect' mode calls
+      // context.getFilename(), which ESLint 10 removed from the rule context API.
+      react: { version: '19.2.7' },
     },
     rules: {
       ...react.configs.recommended.rules,

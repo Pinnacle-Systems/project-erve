@@ -68,6 +68,9 @@ export function PurchaseOrderFormPage() {
   useEffect(() => {
     if (!poQuery.data) return;
     const po = poQuery.data;
+    // Hydrates the edit form from an async-loaded record; the data isn't available
+    // for a lazy initial-state computation, so this can't be done without an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDistributorId(po.distributor.id);
     setPoDate(po.poDate.slice(0, 10));
     setRequiredDeliveryDate(po.requiredDeliveryDate?.slice(0, 10) ?? '');

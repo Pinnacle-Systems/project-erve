@@ -88,6 +88,9 @@ export function StyleFormPage() {
     if (!styleQuery.data) {
       return;
     }
+    // Hydrates the edit form from an async-loaded record; the data isn't available
+    // for a lazy initial-state computation, so this can't be done without an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm({
       styleNumber: styleQuery.data.styleNumber,
       styleName: styleQuery.data.styleName,
