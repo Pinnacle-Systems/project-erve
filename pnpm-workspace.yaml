@@ -1,6 +1,9 @@
 packages:
   - "apps/*"
   - "packages/*"
+strictPeerDependencies: false
+autoInstallPeers: true
+shamefullyHoist: false
 allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
