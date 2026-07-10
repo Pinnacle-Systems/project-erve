@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Distributor Inventory & Dispatch Tracking System",
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=24.0.0 <25",
     "pnpm": ">=9.0.0"
   },
   "scripts": {
