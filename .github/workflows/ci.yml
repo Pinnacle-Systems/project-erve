@@ -58,7 +58,7 @@ jobs:
       # apps/api imports a generated Prisma client (gitignored, codegen-only,
       # no DB connection required) that must exist before typecheck/lint/build.
       - name: Generate Prisma client
-        run: pnpm --filter @erve/api exec prisma generate
+        run: pnpm --filter @erve/api prisma:generate
 
       - name: Typecheck all packages
         run: pnpm -r typecheck
@@ -138,17 +138,17 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma client
-        run: pnpm --filter @erve/api exec prisma generate
+        run: pnpm --filter @erve/api prisma:generate
 
       # Applies committed migrations only — never generates new ones, unlike
       # the dev-oriented "prisma:migrate" package script.
       - name: Apply database migrations
-        run: pnpm --filter @erve/api exec prisma migrate deploy
+        run: pnpm --filter @erve/api prisma:migrate:deploy
 
       # Seeds reference data (roles, etc.) that tests build on top of, into
       # this job's own ephemeral Postgres service container only.
       - name: Seed reference data
-        run: pnpm --filter @erve/api exec prisma db seed
+        run: pnpm --filter @erve/api prisma:seed
 
       - name: Run API tests
         run: pnpm --filter @erve/api test
