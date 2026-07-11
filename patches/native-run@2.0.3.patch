@@ -1,0 +1,57 @@
+diff --git a/dist/android/utils/adb.js b/dist/android/utils/adb.js
+index a4b4ec5597e891dbfacc3e9b4a26cfe639872028..0a2d4da7e803e3e761ac0ec55b7d6fc844186d88 100644
+--- a/dist/android/utils/adb.js
++++ b/dist/android/utils/adb.js
+@@ -21,7 +21,7 @@ async function getDevices(sdk) {
+     const debug = Debug(`${modulePrefix}:${getDevices.name}`);
+     const args = ['devices', '-l'];
+     debug('Invoking adb with args: %O', args);
+-    const stdout = await execAdb(sdk, args, { timeout: 5000 });
++    const stdout = await execAdb(sdk, args, { timeout: 60000 });
+     const devices = parseAdbDevices(stdout);
+     await Promise.all(devices.map(async (device) => {
+         const properties = await getDeviceProperties(sdk, device);
+@@ -40,7 +40,7 @@ async function getDeviceProperty(sdk, device, property) {
+     const debug = Debug(`${modulePrefix}:${getDeviceProperty.name}`);
+     const args = ['-s', device.serial, 'shell', 'getprop', property];
+     debug('Invoking adb with args: %O', args);
+-    const stdout = await execAdb(sdk, args, { timeout: 5000 });
++    const stdout = await execAdb(sdk, args, { timeout: 60000 });
+     return stdout.trim();
+ }
+ exports.getDeviceProperty = getDeviceProperty;
+@@ -48,7 +48,7 @@ async function getDeviceProperties(sdk, device) {
+     const debug = Debug(`${modulePrefix}:${getDeviceProperties.name}`);
+     const args = ['-s', device.serial, 'shell', 'getprop'];
+     debug('Invoking adb with args: %O', args);
+-    const stdout = await execAdb(sdk, args, { timeout: 5000 });
++    const stdout = await execAdb(sdk, args, { timeout: 60000 });
+     const re = /^\[([a-z0-9.]+)\]: \[(.*)\]$/;
+     const propAllowList = [...ADB_GETPROP_MAP.keys()];
+     const properties = {};
+@@ -209,7 +209,7 @@ async function startActivity(sdk, device, packageName, activityName) {
+     const debug = Debug(`${modulePrefix}:${startActivity.name}`);
+     const args = ['-s', device.serial, 'shell', 'am', 'start', '-W', '-n', `${packageName}/${activityName}`];
+     debug('Invoking adb with args: %O', args);
+-    await execAdb(sdk, args, { timeout: 5000 });
++    await execAdb(sdk, args, { timeout: 60000 });
+ }
+ exports.startActivity = startActivity;
+ function parseAdbDevices(output) {
+@@ -263,14 +263,14 @@ async function forwardPorts(sdk, device, ports) {
+     const debug = Debug(`${modulePrefix}:${forwardPorts.name}`);
+     const args = ['-s', device.serial, 'reverse', `tcp:${ports.device}`, `tcp:${ports.host}`];
+     debug('Invoking adb with args: %O', args);
+-    await execAdb(sdk, args, { timeout: 5000 });
++    await execAdb(sdk, args, { timeout: 60000 });
+ }
+ exports.forwardPorts = forwardPorts;
+ async function unforwardPorts(sdk, device, ports) {
+     const debug = Debug(`${modulePrefix}:${unforwardPorts.name}`);
+     const args = ['-s', device.serial, 'reverse', '--remove', `tcp:${ports.device}`];
+     debug('Invoking adb with args: %O', args);
+-    await execAdb(sdk, args, { timeout: 5000 });
++    await execAdb(sdk, args, { timeout: 60000 });
+ }
+ exports.unforwardPorts = unforwardPorts;
+ async function execAdb(sdk, args, options = {}) {

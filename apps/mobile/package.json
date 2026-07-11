@@ -10,12 +10,14 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "cap:sync": "cap sync",
-    "cap:add:android": "cap add android"
+    "cap:add:android": "cap add android",
+    "cap:run:android": "cap run android",
+    "cap:run:android:live": "adb reverse tcp:4000 tcp:4000 && cap run android --live-reload --host localhost --port 5174 --forwardPorts 5174:5174"
   },
   "dependencies": {
-    "@capacitor/android": "^6.1.2",
-    "@capacitor/core": "^6.1.2",
-    "@capacitor/ios": "^6.1.2",
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1",
     "@erve/client": "workspace:*",
     "@erve/shared": "workspace:*",
     "@erve/types": "workspace:*",
@@ -27,7 +29,7 @@
     "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.1.2",
+    "@capacitor/cli": "^8.4.1",
     "@erve/config": "workspace:*",
     "@erve/eslint-config": "workspace:*",
     "@types/react": "^19.2.17",
