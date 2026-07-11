@@ -5,7 +5,7 @@
   "description": "Distributor Inventory & Dispatch Tracking System",
   "engines": {
     "node": ">=24.0.0 <25",
-    "pnpm": ">=9.0.0"
+    "pnpm": ">=11.0.0 <12"
   },
   "scripts": {
     "dev:api": "pnpm --filter @erve/api dev",
@@ -16,6 +16,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @erve/client test",
     "prisma:generate": "pnpm --filter @erve/api prisma:generate",
     "prisma:migrate": "pnpm --filter @erve/api prisma:migrate"
   },

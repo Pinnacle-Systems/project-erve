@@ -2,7 +2,6 @@
   "name": "@erve/config",
   "private": true,
   "version": "0.1.0",
-  "main": "index.js",
   "files": [
     "tsconfig.base.json",
     "tsconfig.node.json",

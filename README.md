@@ -26,8 +26,9 @@ needed to start building features.
 
 ## Prerequisites
 
-- Node.js >= 20
-- pnpm >= 9 (`corepack enable` or `npm install -g pnpm`)
+- Node.js 24 (see `engines` in `package.json`)
+- pnpm 11 — run `corepack enable` and pnpm will activate the version pinned in
+  `packageManager` automatically
 - PostgreSQL (local install or Docker)
 
 ## 1. Install dependencies
@@ -58,17 +59,15 @@ cp apps/mobile/.env.example apps/mobile/.env
 DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public"
 ```
 
-If you don't have PostgreSQL running locally, the quickest option is Docker:
+If you don't have PostgreSQL running locally, the quickest option is the included
+Docker Compose file:
 
 ```bash
-docker run --name erve-postgres \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=erve_dev \
-  -p 5432:5432 -d postgres:16
+docker compose up -d
 ```
 
-That matches the default in `apps/api/.env.example`:
+That starts `postgres:18` with the same user/password/database as the default in
+`apps/api/.env.example`:
 
 ```
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/erve_dev?schema=public"
@@ -148,4 +147,10 @@ pnpm lint           # lint all packages
 pnpm typecheck       # type-check all packages
 pnpm format          # format the whole repo with Prettier
 pnpm build           # build all apps/packages
+pnpm test            # run @erve/client's test suite
 ```
+
+Note: `pnpm test` intentionally only runs `@erve/client`'s tests. `apps/api` has its own
+integration test suite (`pnpm --filter @erve/api test`) that requires a running
+PostgreSQL database and truncates its tables between test cases — don't run it against
+a database you care about.
