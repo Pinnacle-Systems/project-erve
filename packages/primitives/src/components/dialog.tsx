@@ -19,7 +19,7 @@ export const DialogOverlay = forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-[var(--erp-surface-overlay)] backdrop-blur-sm",
+      "fixed inset-0 z-50 bg-[var(--erp-surface-overlay)] backdrop-blur-xs",
       className,
     )}
     {...props}

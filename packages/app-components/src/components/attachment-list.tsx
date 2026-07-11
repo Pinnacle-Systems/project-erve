@@ -68,12 +68,12 @@ export const AttachmentList = React.forwardRef<HTMLUListElement, AttachmentListP
                   {item.name}
                 </span>
                 {item.status === "failed" && (
-                  <span className="text-xs font-medium text-red-600 px-1.5 py-0.5 rounded-sm bg-red-100">
+                  <span className="text-xs font-medium text-red-600 px-1.5 py-0.5 rounded-xs bg-red-100">
                     Failed
                   </span>
                 )}
                 {item.status === "pending" && (
-                  <span className="text-xs font-medium text-amber-600 px-1.5 py-0.5 rounded-sm bg-amber-100">
+                  <span className="text-xs font-medium text-amber-600 px-1.5 py-0.5 rounded-xs bg-amber-100">
                     Pending
                   </span>
                 )}

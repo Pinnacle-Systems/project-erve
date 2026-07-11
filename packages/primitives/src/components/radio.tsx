@@ -5,7 +5,7 @@ import { cn } from "../lib/utils";
 import { ValidationMessage } from "./validation-message";
 
 const radioVariants = cva(
-  "aspect-square rounded-full border border-[var(--erp-color-primary)] text-primary ring-offset-background focus:outline-none focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:cursor-not-allowed disabled:opacity-50",
+  "aspect-square rounded-full border border-[var(--erp-color-primary)] text-primary ring-offset-background focus:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:cursor-not-allowed disabled:opacity-50",
   {
     variants: {
       density: {
