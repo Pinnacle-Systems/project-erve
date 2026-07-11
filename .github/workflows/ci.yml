@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # Placeholder only — prisma generate reads the schema, it does not
+  # connect to a database, so this never needs to be a real connection.
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erve_ci
+
+jobs:
+  build:
+    name: Typecheck, lint, build, client tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Resolve pnpm version from packageManager field
+        id: pnpm-version
+        run: |
+          PNPM_VERSION=$(node -p "require('./package.json').packageManager.split('@')[1].split('+')[0]")
+          echo "Resolved pnpm version: $PNPM_VERSION"
+          echo "version=$PNPM_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Activate pnpm via Corepack
+        run: corepack prepare pnpm@${{ steps.pnpm-version.outputs.version }} --activate
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # apps/api imports a generated Prisma client (gitignored, codegen-only,
+      # no DB connection required) that must exist before typecheck/lint/build.
+      - name: Generate Prisma client
+        run: pnpm --filter @erve/api exec prisma generate
+
+      - name: Typecheck all packages
+        run: pnpm -r typecheck
+
+      - name: Lint all packages
+        run: pnpm -r lint
+
+      # Only apps/api, apps/mobile, and apps/web define a "build" script —
+      # internal @erve/* packages are source-only and are validated above by
+      # typecheck instead. pnpm -r skips packages without the script.
+      - name: Build all packages
+        run: pnpm -r build
+
+      - name: Run @erve/client tests
+        run: pnpm --filter @erve/client test
+
+  api-tests:
+    name: API integration tests (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erve_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d erve_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # DATABASE_URL is inherited from the workflow-level env above and
+      # matches this service container's credentials/db name exactly.
+      # Throwaway values for this ephemeral, job-scoped database only — not
+      # real secrets, and never used outside this CI run.
+      JWT_ACCESS_SECRET: ci-only-access-token-secret-value-not-used-anywhere-else
+      JWT_REFRESH_SECRET: ci-only-refresh-token-secret-value-not-used-anywhere-else
+      NODE_ENV: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Resolve pnpm version from packageManager field
+        id: pnpm-version
+        run: |
+          PNPM_VERSION=$(node -p "require('./package.json').packageManager.split('@')[1].split('+')[0]")
+          echo "Resolved pnpm version: $PNPM_VERSION"
+          echo "version=$PNPM_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Activate pnpm via Corepack
+        run: corepack prepare pnpm@${{ steps.pnpm-version.outputs.version }} --activate
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @erve/api exec prisma generate
+
+      # Applies committed migrations only — never generates new ones, unlike
+      # the dev-oriented "prisma:migrate" package script.
+      - name: Apply database migrations
+        run: pnpm --filter @erve/api exec prisma migrate deploy
+
+      # Seeds reference data (roles, etc.) that tests build on top of, into
+      # this job's own ephemeral Postgres service container only.
+      - name: Seed reference data
+        run: pnpm --filter @erve/api exec prisma db seed
+
+      - name: Run API tests
+        run: pnpm --filter @erve/api test
