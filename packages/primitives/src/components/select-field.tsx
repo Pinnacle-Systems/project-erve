@@ -47,7 +47,7 @@ const triggerVariants = cva(
     "flex w-full items-center justify-between gap-2 rounded-control border bg-surface-raised",
     "text-foreground font-sans",
     "transition-colors duration-150 ease-out",
-    "focus:outline-none focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)] focus:ring-offset-[var(--erp-focus-ring-offset)]",
+    "focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)] focus:ring-offset-[var(--erp-focus-ring-offset)]",
     "disabled:pointer-events-none disabled:opacity-[var(--erp-disabled-opacity)] disabled:bg-[var(--erp-form-field-disabled-bg)] disabled:text-[var(--erp-text-disabled)] disabled:border-[var(--erp-border-disabled)]",
     "data-placeholder:text-muted-foreground",
   ].join(" "),
@@ -143,8 +143,8 @@ export const SelectItem = forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-sm",
-      "py-1.5 pl-8 pr-2 text-sm text-foreground outline-none",
+      "relative flex w-full cursor-default select-none items-center rounded-xs",
+      "py-1.5 pl-8 pr-2 text-sm text-foreground outline-hidden",
       "transition-colors duration-150 ease-out",
       "hover:bg-[var(--erp-surface-hover)] hover:text-foreground",
       "focus:bg-[var(--erp-surface-hover)] focus:text-foreground",

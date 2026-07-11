@@ -78,7 +78,7 @@ export function MasterDataLayout() {
         </Stack>
       </aside>
       <div className="md:pl-64">
-        <header className="sticky top-0 z-10 border-b border-border-subtle bg-surface/95 px-4 py-3 backdrop-blur md:px-8">
+        <header className="sticky top-0 z-10 border-b border-border-subtle bg-surface/95 px-4 py-3 backdrop-blur-sm md:px-8">
           <div className="flex items-center justify-between gap-4">
             <div>
               <div className="text-sm font-medium text-foreground">{user?.name}</div>

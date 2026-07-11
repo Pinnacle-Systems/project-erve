@@ -1,8 +1,11 @@
+@import 'tailwindcss';
 @import '@erve/theme/theme.css';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@source '../../../packages/primitives/src';
+@source '../../../packages/layout/src';
+@source '../../../packages/app-components/src';
+@source '../../../packages/data-display/src';
+@source '../../../packages/theme/src';
 
 @layer base {
   html {
