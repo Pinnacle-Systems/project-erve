@@ -126,7 +126,7 @@ export const Breadcrumbs = ({
           const isCurrent = item.current ?? originalIndex === items.length - 1;
           const interactive = Boolean(item.href || item.onClick || onNavigate);
           const itemClassName = cn(
-            "min-w-0 max-w-48 truncate rounded-sm outline-none transition-colors",
+            "min-w-0 max-w-48 truncate rounded-xs outline-hidden transition-colors",
             compact ? "px-0.5 py-0" : "px-1 py-0.5",
             isCurrent
               ? "font-medium text-foreground"

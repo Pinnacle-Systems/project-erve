@@ -5,7 +5,7 @@ import { cn } from "../lib/utils";
 import { ValidationMessage } from "./validation-message";
 
 const checkboxVariants = cva(
-  "peer shrink-0 rounded-sm border border-[var(--erp-color-primary)] ring-offset-background focus-visible:outline-none focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
+  "peer shrink-0 rounded-xs border border-[var(--erp-color-primary)] ring-offset-background focus-visible:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
   {
     variants: {
       density: {

@@ -83,7 +83,7 @@ const DataTableInner = <T extends Record<string, unknown>>(
   const isClickable = !!onRowClick;
 
   return (
-    <div className={cn("w-full overflow-auto rounded-panel border border-border bg-surface shadow-sm", containerClassName)}>
+    <div className={cn("w-full overflow-auto rounded-panel border border-border bg-surface shadow-xs", containerClassName)}>
       <table
         ref={ref}
         className={cn("w-full caption-bottom text-sm", className)}
@@ -128,7 +128,7 @@ const DataTableInner = <T extends Record<string, unknown>>(
                 tabIndex={isClickable ? 0 : undefined}
                 className={cn(
                   "transition-colors",
-                  isClickable && "cursor-pointer hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-inset",
+                  isClickable && "cursor-pointer hover:bg-surface-muted focus-visible:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-inset",
                   variant === "striped" && "even:bg-surface-muted",
                   isSelected && "bg-surface-raised"
                 )}

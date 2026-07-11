@@ -40,8 +40,8 @@ export const DropdownMenuItem = forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm",
-      "text-foreground outline-none transition-colors",
+      "relative flex cursor-pointer select-none items-center rounded-xs px-2 py-1.5 text-sm",
+      "text-foreground outline-hidden transition-colors",
       "hover:bg-[var(--erp-surface-hover)] hover:text-foreground",
       "focus:bg-[var(--erp-surface-hover)] focus:text-foreground",
       "data-[highlighted]:bg-[var(--erp-surface-hover)] data-[highlighted]:text-foreground",

@@ -22,7 +22,7 @@ export const GridCellInput = forwardRef<HTMLInputElement, GridCellInputProps>(
         "transition-colors duration-150 ease-out",
         "shadow-[inset_0_-1px_0_var(--color-border-subtle)]",
         "hover:border-border-subtle hover:bg-surface-muted hover:shadow-none",
-        "focus-visible:outline-none focus-visible:border-primary focus-visible:bg-surface-selected",
+        "focus-visible:outline-hidden focus-visible:border-primary focus-visible:bg-surface-selected",
         "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary",
         "disabled:pointer-events-none disabled:opacity-50",
         "read-only:shadow-none read-only:bg-transparent read-only:hover:border-transparent read-only:hover:bg-transparent read-only:cursor-default",

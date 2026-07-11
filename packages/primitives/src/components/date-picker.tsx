@@ -19,7 +19,7 @@ const datePickerFieldVariants = cva(
   [
     "flex w-full items-center gap-2 rounded-control border bg-surface-raised font-sans text-foreground",
     "ring-offset-background transition duration-150 ease-out",
-    "focus-within:outline-none focus-within:ring-[length:var(--erp-focus-ring-width)] focus-within:ring-[var(--erp-focus-ring)] focus-within:ring-offset-[var(--erp-focus-ring-offset)]",
+    "focus-within:outline-hidden focus-within:ring-[length:var(--erp-focus-ring-width)] focus-within:ring-[var(--erp-focus-ring)] focus-within:ring-offset-[var(--erp-focus-ring-offset)]",
     "disabled:cursor-not-allowed disabled:border-[var(--erp-border-disabled)] disabled:bg-[var(--erp-form-field-disabled-bg)] disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]",
   ].join(" "),
   {
@@ -45,7 +45,7 @@ const popoverClassName =
   "fixed z-50 w-[20rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-surface p-3 shadow-popover";
 
 const dayButtonClassName = [
-  "flex h-8 w-8 items-center justify-center rounded-sm text-sm text-foreground outline-none",
+  "flex h-8 w-8 items-center justify-center rounded-xs text-sm text-foreground outline-hidden",
   "transition-colors duration-150 ease-out",
   "hover:bg-[var(--erp-surface-hover)] hover:text-foreground",
   "focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground",
@@ -552,7 +552,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             onChange={handleTextInputChange}
             onBlur={handleTextInputBlur}
             onKeyDown={handleTextInputKeyDown}
-            className="min-w-0 flex-1 bg-transparent text-inherit outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
+            className="min-w-0 flex-1 bg-transparent text-inherit outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed"
           />
           <button
             ref={triggerRef}
@@ -570,7 +570,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
               }
             }}
             onKeyDown={handleCalendarButtonKeyDown}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)]"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)]"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -606,7 +606,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 aria-label="Previous year"
                 disabled={!canMovePreviousYear}
-                className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
+                className="flex h-8 w-8 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
                 onClick={() => moveYear(-1)}
               >
                 <span aria-hidden="true">«</span>
@@ -615,7 +615,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 aria-label="Previous month"
                 disabled={!canMovePreviousMonth}
-                className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
+                className="flex h-8 w-8 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
                 onClick={() => moveMonth(-1)}
               >
                 <span aria-hidden="true">‹</span>
@@ -627,7 +627,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 aria-label="Month"
                 value={visibleMonth.getMonth()}
                 onChange={handleMonthChange}
-                className="h-8 min-w-0 rounded-sm border border-border bg-surface px-2 text-sm font-semibold text-foreground outline-none transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]"
+                className="h-8 min-w-0 rounded-xs border border-border bg-surface px-2 text-sm font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]"
               >
                 {monthNames.map((month, index) => (
                   <option key={month} value={index}>{month}</option>
@@ -637,7 +637,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 aria-label="Year"
                 value={visibleMonth.getFullYear()}
                 onChange={handleYearChange}
-                className="h-8 rounded-sm border border-border bg-surface px-2 text-sm font-semibold text-foreground outline-none transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]"
+                className="h-8 rounded-xs border border-border bg-surface px-2 text-sm font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]"
               >
                 {yearOptions.map((year) => (
                   <option key={year} value={year}>{year}</option>
@@ -647,7 +647,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 aria-label="Next month"
                 disabled={!canMoveNextMonth}
-                className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
+                className="flex h-8 w-8 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
                 onClick={() => moveMonth(1)}
               >
                 <span aria-hidden="true">›</span>
@@ -656,7 +656,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 aria-label="Next year"
                 disabled={!canMoveNextYear}
-                className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
+                className="flex h-8 w-8 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
                 onClick={() => moveYear(1)}
               >
                 <span aria-hidden="true">»</span>
@@ -702,7 +702,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
               <button
                 type="button"
-                className="text-sm font-medium text-[var(--erp-text-link)] underline-offset-4 outline-none hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]"
+                className="text-sm font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]"
                 aria-label="Clear selected date"
                 onClick={() => {
                   setDraftValue("");
@@ -717,7 +717,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 disabled={todayDisabled}
                 aria-label="Select today"
-                className="text-sm font-medium text-[var(--erp-text-link)] underline-offset-4 outline-none hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:no-underline disabled:opacity-[var(--erp-disabled-opacity)]"
+                className="text-sm font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:no-underline disabled:opacity-[var(--erp-disabled-opacity)]"
                 onClick={() => {
                   if (today) selectDate(today);
                 }}

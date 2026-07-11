@@ -57,7 +57,7 @@ export const Pagination = forwardRef<HTMLDivElement, PaginationProps>(
               <span className="hidden sm:inline-block">Rows per page:</span>
               <select
                 aria-label="Rows per page"
-                className="h-8 rounded-[var(--erp-radius-md)] border border-border bg-surface px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)]"
+                className="h-8 rounded-[var(--erp-radius-md)] border border-border bg-surface px-2 py-1 text-sm text-foreground focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)]"
                 value={pageSize}
                 onChange={(e) => onPageSizeChange(Number(e.target.value))}
               >
