@@ -9,3 +9,5 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   prisma: true
+patchedDependencies:
+  native-run@2.0.3: patches/native-run@2.0.3.patch
