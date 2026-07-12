@@ -4,6 +4,17 @@ packages:
 strictPeerDependencies: false
 autoInstallPeers: true
 shamefullyHoist: false
+# Supply-chain hardening: hold newly published registry versions for 1 day
+# before pnpm will resolve/install them, giving the ecosystem time to catch
+# and pull compromised releases. This matches pnpm 11's own built-in default
+# (kept explicit here so the policy is visible and intentional rather than
+# implicit); a wider window (e.g. 3 days) was tried but rejected packages
+# already in the committed lockfile from routine recent upgrades, which
+# would have made --frozen-lockfile installs fail with no way to remediate
+# other than waiting.
+# @erve/* workspace packages are unaffected — they're linked via "workspace:*"
+# and never resolved from the registry, so no exclude entry is needed for them.
+minimumReleaseAge: 1440
 allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
