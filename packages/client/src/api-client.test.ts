@@ -3,14 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient, AUTH_EXPIRED_EVENT, logoutSession, refreshAccessToken } from './api-client.js';
 import { clearStoredToken, getStoredToken, setStoredToken } from './token-storage.js';
 
-interface MockLocalStorage {
+interface MockSessionStorage {
   getItem: ReturnType<typeof vi.fn>;
   setItem: ReturnType<typeof vi.fn>;
   removeItem: ReturnType<typeof vi.fn>;
   clear: ReturnType<typeof vi.fn>;
 }
 
-function createStorage(): MockLocalStorage {
+function createStorage(): MockSessionStorage {
   const values = new Map<string, string>();
 
   return {
@@ -49,12 +49,12 @@ function unauthorized(config: InternalAxiosRequestConfig): never {
 
 describe('apiClient refresh session integration', () => {
   let originalAdapter: typeof apiClient.defaults.adapter;
-  let storage: MockLocalStorage;
+  let storage: MockSessionStorage;
 
   beforeEach(() => {
     originalAdapter = apiClient.defaults.adapter;
     storage = createStorage();
-    vi.stubGlobal('localStorage', storage);
+    vi.stubGlobal('sessionStorage', storage);
     vi.stubGlobal('window', new EventTarget());
     clearStoredToken();
   });

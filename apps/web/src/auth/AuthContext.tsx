@@ -1,8 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse, AuthUser } from '@erve/types';
-import { AUTH_EXPIRED_EVENT, apiClient, logoutSession, refreshAccessToken } from '../lib/api-client.js';
-import { clearStoredToken, setStoredToken } from './token-storage.js';
+import { AUTH_EXPIRED_EVENT, apiClient, logoutSession } from '../lib/api-client.js';
+import { clearStoredToken, getStoredToken, setStoredToken } from './token-storage.js';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -19,15 +18,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
 
-  // Restores the session by validating the HttpOnly refresh cookie first.
-  // A stored access token alone is not trusted as proof of a live session.
+  // Restores the session from a sessionStorage-scoped access token only.
+  // No token means no prior session in this tab — start unauthenticated
+  // without calling /auth/refresh just because an HttpOnly refresh cookie
+  // might still exist. When a token is present, /auth/me validates it, and
+  // the apiClient response interceptor transparently refreshes-and-retries
+  // on a 401.
   useEffect(() => {
     let cancelled = false;
 
     async function restoreSession() {
-      try {
-        await refreshAccessToken();
+      const token = getStoredToken();
 
+      if (!token) {
+        setStatus('unauthenticated');
+        return;
+      }
+
+      try {
         const me = await apiClient.get<ApiSuccessResponse<AuthUser>>('/auth/me');
 
         if (cancelled) {
@@ -36,13 +44,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setUser(me.data.data);
         setStatus('authenticated');
-      } catch (error: unknown) {
+      } catch {
         if (cancelled) {
           return;
-        }
-
-        if (isAxiosError(error)) {
-          clearStoredToken();
         }
 
         setUser(null);
@@ -59,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleAuthExpired = () => {
+      clearStoredToken();
       setUser(null);
       setStatus('unauthenticated');
     };

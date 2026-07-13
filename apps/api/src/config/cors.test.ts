@@ -7,8 +7,11 @@ import { createCorsOptions, isOriginAllowed } from './cors.js';
 // The Capacitor Android WebView origin observed via runtime inspection
 // (see CAPACITOR_AUTH_TESTING.md) — kept in sync with apps/api/.env.example.
 const WEB_DEV_ORIGIN = 'http://localhost:5173';
+// Mobile app's Capacitor live-reload dev flow (`cap:run:android:live`),
+// which serves the WebView content from the Vite dev server.
+const MOBILE_LIVE_RELOAD_ORIGIN = 'http://localhost:5174';
 const CAPACITOR_ANDROID_ORIGIN = 'http://localhost';
-const ALLOWLIST = [WEB_DEV_ORIGIN, CAPACITOR_ANDROID_ORIGIN];
+const ALLOWLIST = [WEB_DEV_ORIGIN, MOBILE_LIVE_RELOAD_ORIGIN, CAPACITOR_ANDROID_ORIGIN];
 
 function buildTestApp(allowlist: readonly string[] = ALLOWLIST) {
   const app = express();
@@ -54,6 +57,15 @@ describe('CORS middleware', () => {
 
     expect(res.status).toBe(200);
     expect(res.headers['access-control-allow-origin']).toBe(CAPACITOR_ANDROID_ORIGIN);
+    expect(res.headers['access-control-allow-credentials']).toBe('true');
+  });
+
+  it('allows the mobile Capacitor live-reload origin', async () => {
+    const app = buildTestApp();
+    const res = await request(app).get('/health').set('Origin', MOBILE_LIVE_RELOAD_ORIGIN);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe(MOBILE_LIVE_RELOAD_ORIGIN);
     expect(res.headers['access-control-allow-credentials']).toBe('true');
   });
 

@@ -1,8 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse, AuthUser } from '@erve/types';
-import { apiClient, clearStoredToken, setStoredToken } from '@erve/client';
-import { AUTH_EXPIRED_EVENT, logoutSession, refreshAccessToken } from '../lib/api-client.js';
+import { apiClient, clearStoredToken, getStoredToken, setStoredToken } from '@erve/client';
+import { AUTH_EXPIRED_EVENT, logoutSession } from '../lib/api-client.js';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -19,13 +18,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
 
+  // Restores the session from a sessionStorage-scoped access token only.
+  // No token means no prior session in this WebView session — start
+  // unauthenticated without calling /auth/refresh just because an HttpOnly
+  // refresh cookie might still exist. When a token is present, /auth/me
+  // validates it, and the apiClient response interceptor transparently
+  // refreshes-and-retries on a 401.
   useEffect(() => {
     let cancelled = false;
 
     async function restoreSession() {
-      try {
-        await refreshAccessToken();
+      const token = getStoredToken();
 
+      if (!token) {
+        setStatus('unauthenticated');
+        return;
+      }
+
+      try {
         const me = await apiClient.get<ApiSuccessResponse<AuthUser>>('/auth/me');
 
         if (cancelled) {
@@ -34,13 +44,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setUser(me.data.data);
         setStatus('authenticated');
-      } catch (error: unknown) {
+      } catch {
         if (cancelled) {
           return;
-        }
-
-        if (isAxiosError(error)) {
-          clearStoredToken();
         }
 
         setUser(null);

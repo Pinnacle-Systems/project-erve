@@ -2,7 +2,11 @@
 
 The mobile app currently uses the backend's HttpOnly refresh cookie flow. It
 does not store refresh tokens in localStorage, sessionStorage, or frontend
-state.
+state. The access token itself is kept in `sessionStorage` (via
+`@erve/client`'s shared token-storage module, also used by the web app) —
+not `localStorage` — so it survives a page/WebView reload of the same
+session but not a closed tab, a destroyed WebView/process, or a fresh
+app launch.
 
 Before shipping mobile auth changes, verify on Android and iOS devices or
 emulators:
@@ -91,7 +95,7 @@ process.
 1. Start Postgres and apply migrations/seed as usual for `apps/api`.
 2. In `apps/api/.env`, set `CORS_ORIGIN` to include the origin(s) you're
    testing against (see "Observed Capacitor Android origin" above), e.g.
-   `CORS_ORIGIN=http://localhost:5173,https://localhost`.
+   `CORS_ORIGIN=http://localhost:5173,http://localhost:5174,https://localhost`.
 3. `pnpm --filter @erve/api dev`.
 4. Forward the API port into the emulator/device:
    `adb reverse tcp:4000 tcp:4000` (the app's `VITE_API_URL` defaults to
