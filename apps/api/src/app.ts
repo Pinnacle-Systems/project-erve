@@ -2,7 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 import type { HealthCheckResponse } from '@erve/types';
-import { env } from './config/env.js';
+import { corsOptions } from './config/cors.js';
 import { asyncHandler } from './middleware/async-handler.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
@@ -24,7 +24,7 @@ export function createApp() {
   const app = express();
 
   app.use(helmet());
-  app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+  app.use(cors(corsOptions));
   app.use(express.json());
   app.use(requestLogger);
 
