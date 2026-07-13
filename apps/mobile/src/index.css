@@ -1,10 +1,29 @@
 @import 'tailwindcss';
+@import '@erve/theme/theme.css';
 
+@source '../../../packages/primitives/src';
+@source '../../../packages/layout/src';
+@source '../../../packages/app-components/src';
+@source '../../../packages/theme/src';
 @source '../../../packages/ui/src';
 
-body {
-  padding-top: env(safe-area-inset-top);
-  padding-right: env(safe-area-inset-right);
-  padding-bottom: env(safe-area-inset-bottom);
-  padding-left: env(safe-area-inset-left);
+@layer base {
+  html {
+    font-family: var(--erp-font-family-sans);
+    background: var(--erp-color-app-bg);
+    color: var(--erp-color-foreground);
+  }
+
+  body {
+    min-height: 100vh;
+    background: var(--erp-color-app-bg);
+    padding-top: env(safe-area-inset-top);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+  }
+
+  #root {
+    min-height: 100vh;
+  }
 }

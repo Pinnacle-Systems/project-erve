@@ -2,13 +2,52 @@ import {
   createContext,
   type CSSProperties,
   type ReactNode,
+  useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useState,
 } from "react";
+
+import { colorTokens, crimsonTokens } from "@erve/tokens";
+
+import {
+  resolveTheme,
+  supportedThemeModes,
+  type ResolvedTheme,
+  type ThemeMode,
+} from "./mode.js";
+import {
+  getSystemPrefersDark,
+  subscribeToSystemPreference,
+} from "./system-preference.js";
+import {
+  getStoredThemePreference,
+  setStoredThemePreference,
+} from "./preference.js";
+
+export type { ThemeMode, ResolvedTheme } from "./mode.js";
+export { isThemeMode, resolveTheme, supportedThemeModes } from "./mode.js";
+export {
+  getSystemPrefersDark,
+  subscribeToSystemPreference,
+  type SystemPreferenceListener,
+} from "./system-preference.js";
+export {
+  getStoredThemePreference,
+  setStoredThemePreference,
+  THEME_STORAGE_KEY,
+} from "./preference.js";
 
 export type ThemeName = "default" | "clientA" | "clientB";
 export type Density = "compact" | "comfortable" | "touch";
-export type ColorMode = "light" | "dark" | "system";
+/**
+ * Kept as the historical name for the theme-mode type. `ThemeMode` (from
+ * `./mode.js`) is now the platform-neutral canonical definition; `ColorMode`
+ * is an alias so every existing `@erve/theme` import keeps compiling
+ * unchanged.
+ */
+export type ColorMode = ThemeMode;
 
 export type ThemeTokens = {
   name: ThemeName;
@@ -111,25 +150,45 @@ export const defaultTheme: ThemeTokens = {
     borderStrong: "#c6d1de",
     muted: "#475569",
     subtle: "#475569",
-    accent: "#2563eb",
-    accentHover: "#1d4ed8",
-    accentActive: "#1e40af",
-    accentSoft: "#eaf3ff",
-    accentBorder: "#bfd8ff",
-    focusRing: "rgb(37 99 235 / 0.28)",
-    danger: "#b91c1c",
-    dangerHover: "#b91c1c",
-    dangerSoft: "#fef2f2",
-    dangerBorder: "#fecaca",
+    // Erve brand primary — sourced from @erve/tokens' crimsonTokens ramp
+    // (approved base: 500 #e21838, approved solid-fill: 600 #c21530; see
+    // packages/tokens/src/index.ts for full derivation/contrast notes).
+    // `accent` is the SOLID-FILL step (buttons, checked controls), not the
+    // raw sampled hue — 500 only clears WCAG AA's 4.5:1 white-text
+    // threshold by a negligible margin (~4.75:1), while 600 gives real
+    // headroom (~6.09:1).
+    accent: crimsonTokens[600],
+    accentHover: crimsonTokens[700],
+    accentActive: crimsonTokens[800],
+    accentSoft: crimsonTokens[50],
+    accentBorder: crimsonTokens[100],
+    // Translucent version of the solid-fill step (600), mirroring the
+    // pre-existing pattern where focusRing was a low-alpha rgb() of
+    // whatever the primary color was.
+    focusRing: "rgb(194 21 48 / 0.28)",
+    // Danger/info have an exact 1:1 match in @erve/tokens' generic
+    // red/blue scales, so they're sourced from there. Success/warning do
+    // NOT have an exact-matching step in the current amber/green scales
+    // (nearest neighbors are amber.700/#b45309 and green.700/#15803d,
+    // both visibly different from the values already shipping in
+    // production) — changing them to force a token match would alter
+    // unrelated, already-shipped UI colors, which is out of scope here,
+    // so they remain hand-authored literals. Information stays blue;
+    // danger stays on the generic destructive-red family — neither is
+    // replaced by the brand crimson.
+    danger: colorTokens.red[700],
+    dangerHover: colorTokens.red[700],
+    dangerSoft: colorTokens.red[50],
+    dangerBorder: colorTokens.red[100],
     warning: "#92400e",
     warningSoft: "#fffbeb",
     warningBorder: "#fde68a",
     success: "#166534",
     successSoft: "#f0fdf4",
     successBorder: "#bbf7d0",
-    info: "#2563eb",
-    infoSoft: "#eff6ff",
-    infoBorder: "#bfdbfe",
+    info: colorTokens.blue[600],
+    infoSoft: colorTokens.blue[50],
+    infoBorder: colorTokens.blue[100],
   },
   radius: {
     xs: "0.125rem",
@@ -144,7 +203,7 @@ export const defaultTheme: ThemeTokens = {
     xs: "0 1px 2px rgb(15 23 42 / 0.06)",
     sm: "0 1px 3px rgb(15 23 42 / 0.12), 0 1px 2px rgb(15 23 42 / 0.08)",
     md: "0 10px 25px rgb(15 23 42 / 0.12)",
-    focus: "0 0 0 3px rgb(37 99 235 / 0.28)",
+    focus: "0 0 0 3px rgb(194 21 48 / 0.28)",
     focusError: "0 0 0 3px rgb(185 28 28 / 0.20)",
   },
 };
@@ -263,7 +322,7 @@ export const getDensity = (density: Density = "comfortable"): DensityTokens =>
 
 export const supportedThemeNames = Object.keys(themes) as ThemeName[];
 export const supportedDensities = Object.keys(densityTokens) as Density[];
-export const supportedColorModes = ["light", "dark", "system"] as const satisfies readonly ColorMode[];
+export const supportedColorModes = supportedThemeModes;
 export const productionColorMode: ColorMode = "light";
 
 export const requiredThemeVariables = [
@@ -284,6 +343,7 @@ export const requiredThemeVariables = [
   "--erp-color-primary",
   "--erp-color-primary-foreground",
   "--erp-color-primary-hover",
+  "--erp-color-primary-active",
   "--erp-color-primary-soft",
   "--erp-color-primary-border",
   "--erp-color-secondary",
@@ -316,6 +376,7 @@ export const requiredThemeVariables = [
   "--erp-text-disabled",
   "--erp-text-inverse",
   "--erp-text-link",
+  "--erp-text-accent",
   "--erp-text-danger",
   "--erp-text-warning",
   "--erp-text-success",
@@ -559,6 +620,7 @@ export const getThemeVariables = (
     "--erp-color-primary": t.colors.accent,
     "--erp-color-primary-foreground": "#ffffff",
     "--erp-color-primary-hover": t.colors.accentHover,
+    "--erp-color-primary-active": t.colors.accentActive,
     "--erp-color-primary-soft": t.colors.accentSoft,
     "--erp-color-primary-border": t.colors.accentBorder,
     "--erp-color-secondary": t.colors.surface,
@@ -591,6 +653,11 @@ export const getThemeVariables = (
     "--erp-text-disabled": t.colors.fgSubtle,
     "--erp-text-inverse": t.colors.fgInverse,
     "--erp-text-link": t.colors.accentHover,
+    // Dedicated accent-foreground-text role (see theme.css's --erp-text-accent
+    // doc comment) — same source value as --erp-text-link, kept as a
+    // separate name so components read a role that isn't the solid-fill
+    // --erp-color-primary token.
+    "--erp-text-accent": t.colors.accentHover,
     "--erp-text-danger": t.colors.danger,
     "--erp-text-warning": t.colors.warning,
     "--erp-text-success": t.colors.success,
@@ -916,8 +983,14 @@ export type ThemeContextValue = {
   density: DensityTokens;
   themeName: ThemeName;
   densityName: Density;
+  /** The user's selected mode — may be "system"; not the resolved appearance. */
   colorMode: ColorMode;
+  /** The actual light/dark appearance after resolving "system" against the device/OS. */
+  resolvedTheme: ResolvedTheme;
+  setColorMode: (mode: ThemeMode) => void;
 };
+
+const noopSetColorMode = (_mode: ThemeMode): void => {};
 
 const ThemeContext = createContext<ThemeContextValue>({
   theme: defaultTheme,
@@ -925,65 +998,169 @@ const ThemeContext = createContext<ThemeContextValue>({
   themeName: "default",
   densityName: "comfortable",
   colorMode: productionColorMode,
+  resolvedTheme: "light",
+  setColorMode: noopSetColorMode,
 });
 
 export interface ThemeProviderProps {
-  theme?: ThemeName;
+  theme?: ThemeName | ThemeTokens;
   density?: Density;
-  colorMode?: ColorMode;
-  children?: ReactNode;
-  className?: string;
-  style?: CSSProperties;
+  /** Controlled selected mode. When supplied, ThemeProvider never changes it internally. */
+  colorMode?: ThemeMode;
+  /** Initial selected mode for uncontrolled usage; ignored when `colorMode` is supplied. */
+  defaultColorMode?: ThemeMode;
+  /** Notified on every `setColorMode()` call, in both controlled and uncontrolled usage. */
+  onColorModeChange?: (mode: ThemeMode) => void;
+  children: ReactNode;
 }
 
+/**
+ * ThemeProvider is a GLOBAL singleton by design: it writes `.dark`,
+ * `data-theme`, `data-density`, `data-color-mode` (and, for custom
+ * ThemeTokens objects, CSS variables) directly onto `document.documentElement`
+ * so that Radix portal content (Dialog/DropdownMenu/Tooltip — mounted as
+ * siblings of `document.body`, outside any inner React wrapper) inherits the
+ * same theme. Two ThemeProviders mounted at once would fight over that same
+ * global DOM state, so mounting more than one only warns (never throws) —
+ * mount exactly one at the application root.
+ */
+let activeProviderCount = 0;
+
 export const ThemeProvider = ({
-  theme,
-  density,
+  theme = "default",
+  density = "comfortable",
   colorMode,
+  defaultColorMode,
+  onColorModeChange,
   children,
-  className,
-  style,
 }: ThemeProviderProps) => {
-  const parentTheme = useTheme();
-  const themeName = theme ?? parentTheme.themeName;
-  const densityName = density ?? parentTheme.densityName;
-  const resolvedColorMode = colorMode ?? parentTheme.colorMode;
-  const themeTokens = getTheme(themeName);
-  const densityToken = getDensity(densityName);
-  const themeStyle = useMemo(() => {
-    const isCustomTheme = typeof theme === "object" && theme !== null;
-    if (isCustomTheme) {
-      return { ...createThemeStyle(themeTokens, densityName, resolvedColorMode), ...style };
+  const isControlled = colorMode !== undefined;
+  const [uncontrolledMode, setUncontrolledMode] = useState<ThemeMode>(
+    () => defaultColorMode ?? getStoredThemePreference(),
+  );
+  const selectedMode = isControlled ? colorMode : uncontrolledMode;
+
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() =>
+    getSystemPrefersDark(),
+  );
+  useEffect(() => subscribeToSystemPreference(setSystemPrefersDark), []);
+
+  const resolvedTheme = resolveTheme(selectedMode, systemPrefersDark);
+
+  const setColorMode = useCallback(
+    (mode: ThemeMode) => {
+      if (!isControlled) {
+        setUncontrolledMode(mode);
+        setStoredThemePreference(mode);
+      }
+      onColorModeChange?.(mode);
+    },
+    [isControlled, onColorModeChange],
+  );
+
+  const isCustomTheme = typeof theme === "object" && theme !== null;
+  const themeTokens = getTheme(theme);
+  const themeName = themeTokens.name;
+  const densityToken = getDensity(density);
+
+  // Warn (never throw) on multiple simultaneously-mounted providers — see
+  // the doc comment on `activeProviderCount` above.
+  useEffect(() => {
+    activeProviderCount += 1;
+    if (activeProviderCount > 1) {
+      console.warn(
+        "[@erve/theme] More than one ThemeProvider is mounted at once. " +
+          "ThemeProvider is a global singleton (it writes to document.documentElement) " +
+          "— mount exactly one at the application root.",
+      );
     }
-    // For predefined themes, rely on CSS variables defined in theme.css (data-theme and data-density)
-    // This allows CSS rules like .dark to successfully override the variables.
-    return { ...style };
-  }, [themeTokens, densityName, resolvedColorMode, style, theme]);
+    return () => {
+      activeProviderCount -= 1;
+    };
+  }, []);
+
+  // Snapshot pre-mount <html> state ONCE and restore it on true unmount only
+  // (not on every re-render), so unrelated classes/attributes on <html>
+  // survive this provider's lifecycle untouched. Declared BEFORE the
+  // marker-application effect below so its snapshot runs first on mount —
+  // React runs same-commit effects in declaration order, and if this ran
+  // second it would snapshot the marker-application effect's OWN changes
+  // instead of the true pre-mount state.
+  useEffect(() => {
+    const root = document.documentElement;
+    const previousDataTheme = root.getAttribute("data-theme");
+    const previousDataDensity = root.getAttribute("data-density");
+    const previousDataColorMode = root.getAttribute("data-color-mode");
+    const hadDarkClass = root.classList.contains("dark");
+    const previousColorScheme = root.style.colorScheme;
+
+    return () => {
+      restoreAttribute(root, "data-theme", previousDataTheme);
+      restoreAttribute(root, "data-density", previousDataDensity);
+      restoreAttribute(root, "data-color-mode", previousDataColorMode);
+      root.classList.toggle("dark", hadDarkClass);
+      root.style.colorScheme = previousColorScheme;
+    };
+  }, []);
+
+  // Global markers on <html> so Radix portals (mounted under document.body,
+  // outside any inner wrapper) inherit theme/density/mode identically to the
+  // rest of the app. `color-scheme` is set here too (not left to a
+  // web-specific effect) since it's a direct, platform-neutral function of
+  // `resolvedTheme` — native form controls, scrollbars, and other
+  // browser-drawn UI need it on both web and a future mobile WebView.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute("data-theme", themeName);
+    root.setAttribute("data-density", density);
+    root.setAttribute("data-color-mode", selectedMode);
+    root.classList.toggle("dark", resolvedTheme === "dark");
+    root.style.colorScheme = resolvedTheme;
+  }, [themeName, density, selectedMode, resolvedTheme]);
+
+  // Custom ThemeTokens objects have no theme.css block to fall back on, so
+  // their variables are applied directly to <html> (globally, so portal
+  // content receives them too) and fully reverted — not merely overwritten —
+  // whenever the custom theme changes or the provider unmounts, so switching
+  // back to a predefined theme never leaves stale custom variables behind.
+  useEffect(() => {
+    if (!isCustomTheme) return undefined;
+
+    const root = document.documentElement;
+    const variables = getThemeVariables(themeTokens, density, resolvedTheme);
+    const previousValues = Object.keys(variables).map(
+      (name) => [name, root.style.getPropertyValue(name)] as const,
+    );
+
+    for (const [name, value] of Object.entries(variables)) {
+      root.style.setProperty(name, value);
+    }
+
+    return () => {
+      for (const [name, value] of previousValues) {
+        if (value) {
+          root.style.setProperty(name, value);
+        } else {
+          root.style.removeProperty(name);
+        }
+      }
+    };
+  }, [isCustomTheme, themeTokens, density, resolvedTheme]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
       theme: themeTokens,
       density: densityToken,
       themeName,
-      densityName,
-      colorMode: resolvedColorMode,
+      densityName: density,
+      colorMode: selectedMode,
+      resolvedTheme,
+      setColorMode,
     }),
-    [themeTokens, densityToken, themeName, densityName, resolvedColorMode],
+    [themeTokens, densityToken, themeName, density, selectedMode, resolvedTheme, setColorMode],
   );
 
-  return (
-    <ThemeContext.Provider value={value}>
-      <div
-        data-theme={themeName}
-        data-density={densityName}
-        data-color-mode={resolvedColorMode}
-        className={className}
-        style={themeStyle}
-      >
-        {children}
-      </div>
-    </ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 };
 
 ThemeProvider.displayName = "ThemeProvider";

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Canonical light-mode Android color resources for apps/mobile/android
+  (which is gitignored/generated — see apps/mobile/scripts/configure-android-theme.mjs).
+  Values here mirror packages/theme/src/theme.css's `:root` (light) block —
+  do not hand-edit the generated copy under android/, edit this file and
+  rerun `pnpm run native:theme:android` from apps/mobile.
+-->
+<resources>
+    <!-- Mirrors erp-color-primary (light) -->
+    <color name="erve_primary">#C21530</color>
+    <!-- Mirrors erp-color-app-bg (light) -->
+    <color name="erve_window_background">#EEF3F8</color>
+    <color name="erve_status_bar_background">#EEF3F8</color>
+    <color name="erve_navigation_bar_background">#EEF3F8</color>
+    <!-- Mirrors erp-color-app-bg (light). The splash icon itself is now the
+         purpose-built @drawable/erve_splash_icon (see
+         apps/mobile/branding/README.md), not the launcher foreground. -->
+    <color name="erve_splash_background">#EEF3F8</color>
+
+    <!-- Adaptive/legacy launcher icon background. Mirrors
+         erp-color-surface-raised (light) — a near-white neutral, not pure
+         #ffffff, so the mark reads as part of the Erve surface system.
+         Intentionally NOT values-night-specific: the home-screen icon is a
+         static brand asset, unlike the in-app window/splash backgrounds
+         which do follow system dark/light mode. See
+         apps/mobile/scripts/generate-branding.mjs for how the foreground
+         mark laid over this background is produced. -->
+    <color name="erve_launcher_background">#FBFCFE</color>
+
+    <!-- Overrides the indigo/pink Material scaffold defaults that otherwise
+         merge in from the AppCompat/Cordova AARs (colorPrimary #3F51B5,
+         colorAccent #FF4081, colorPrimaryDark #303F9F) with the approved
+         Erve brand color, since app-module resources win over library AARs
+         during resource merging. -->
+    <color name="colorPrimary">@color/erve_primary</color>
+    <color name="colorPrimaryDark">@color/erve_primary</color>
+    <color name="colorAccent">@color/erve_primary</color>
+</resources>

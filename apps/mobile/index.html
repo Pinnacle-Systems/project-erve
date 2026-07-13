@@ -2,10 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Classic (non-module) script: executes synchronously, in document
+      order, before the deferred `type="module"` bundle entry point below,
+      regardless of their relative order. This is what guarantees the
+      correct theme is applied before first paint. See public/theme-init.js
+      for the full explanation and the canonical shared implementation it
+      mirrors (byte-for-byte, apps/web/public/theme-init.js).
+    -->
+    <script src="/theme-init.js"></script>
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
     />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" data-erve-theme-color content="#eef3f8" />
     <title>Erve</title>
   </head>
   <body>

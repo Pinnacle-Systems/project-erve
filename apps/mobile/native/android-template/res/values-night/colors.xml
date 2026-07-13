@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Canonical dark-mode (values-night) Android color resources — see the
+  values/colors.xml sibling file for the generation/persistence notes.
+  Values here mirror packages/theme/src/theme.css's `.dark` block.
+-->
+<resources>
+    <!-- Mirrors erp-color-primary (.dark) — same solid-fill step as light -->
+    <color name="erve_primary">#C21530</color>
+    <!-- Mirrors erp-color-app-bg (.dark) -->
+    <color name="erve_window_background">#020617</color>
+    <color name="erve_status_bar_background">#020617</color>
+    <color name="erve_navigation_bar_background">#020617</color>
+    <!-- Mirrors erp-color-surface (.dark), one step lighter than the app
+         background, used only behind the placeholder splash icon so it
+         isn't pure black-on-black; see final report's splash-branding
+         limitation note. -->
+    <color name="erve_splash_background">#0F172A</color>
+
+    <color name="colorPrimary">@color/erve_primary</color>
+    <color name="colorPrimaryDark">@color/erve_primary</color>
+    <color name="colorAccent">@color/erve_primary</color>
+</resources>

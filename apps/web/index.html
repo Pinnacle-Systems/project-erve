@@ -2,10 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Classic (non-module) script: executes synchronously, in document
+      order, at this point in parsing — before the deferred `type="module"`
+      bundle entry point below, regardless of their relative order. This is
+      what guarantees the correct theme is applied before first paint. See
+      public/theme-init.js for the full explanation and the canonical
+      shared implementation it mirrors.
+    -->
+    <script src="/theme-init.js"></script>
     <link rel="icon" type="image/png" href="/erve-favicon.png" />
     <link rel="apple-touch-icon" href="/erve-favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" data-erve-theme-color content="#eef3f8" />
     <title>Erve | Distributor Inventory & Dispatch Tracking</title>
   </head>
   <body>

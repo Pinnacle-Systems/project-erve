@@ -4,10 +4,16 @@ import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthContext.js';
 import { queryClient } from './lib/query-client.js';
 import { AppRoutes } from './routes/AppRoutes.js';
+import { ThemeDocumentMeta } from './theme/ThemeDocumentMeta.js';
 
 export function App() {
   return (
-    <ThemeProvider theme="default" density="comfortable" colorMode="light">
+    // No `colorMode` prop: ThemeProvider runs uncontrolled, defaulting to
+    // the persisted preference (or "system") — see packages/theme's
+    // getStoredThemePreference(). Do not reintroduce a controlled prop here
+    // without also removing the user-facing selector (ThemeModeMenu).
+    <ThemeProvider theme="default" density="comfortable">
+      <ThemeDocumentMeta />
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <BrowserRouter>

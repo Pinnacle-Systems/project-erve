@@ -41,3 +41,6 @@ export type { ApprovalActionBarProps, ApprovalActionConfig } from "./components/
 
 export { TotalsPanel } from "./components/totals-panel";
 export type { TotalsPanelProps, TotalsPanelItem } from "./components/totals-panel";
+
+export { ThemeModeControl } from "./components/theme-mode-control";
+export type { ThemeModeControlProps, ThemeModeControlValue } from "./components/theme-mode-control";

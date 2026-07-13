@@ -12,7 +12,7 @@ export interface IconChipProps {
 }
 
 const chipToneClass: Record<IconChipTone, string> = {
-  primary: "bg-[var(--erp-color-primary-soft)] text-[var(--erp-color-primary)]",
+  primary: "bg-[var(--erp-color-primary-soft)] text-[var(--erp-text-accent)]",
   success: "bg-[var(--erp-status-success-bg)] text-[var(--erp-status-success-fg)]",
   warning: "bg-[var(--erp-status-warning-bg)] text-[var(--erp-status-warning-fg)]",
   danger: "bg-[var(--erp-status-danger-bg)] text-[var(--erp-status-danger-fg)]",

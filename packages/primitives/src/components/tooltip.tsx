@@ -16,7 +16,7 @@ export const TooltipContent = forwardRef<
       sideOffset={sideOffset}
       className={cn(
         "z-50 overflow-hidden rounded-control bg-[var(--erp-surface-inverse)] px-3 py-1.5",
-        "text-xs text-primary-foreground shadow-control select-none",
+        "text-xs text-[var(--erp-text-inverse)] shadow-control select-none",
         "max-w-xs leading-snug",
         className,
       )}

@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { Button } from '@erve/primitives';
 import { useAuth } from '../auth/AuthContext.js';
+import { ThemeModeMenu } from '../theme/ThemeModeMenu.js';
 
 export function AppLayout() {
   const navigate = useNavigate();
@@ -80,15 +81,18 @@ export function AppLayout() {
               <div className="text-sm font-medium text-foreground">{user?.name}</div>
               <div className="text-xs text-muted-foreground">{user?.roles.join(', ')}</div>
             </div>
-            <Button
-              variant="secondary"
-              onClick={async () => {
-                await logout();
-                navigate('/login');
-              }}
-            >
-              Log out
-            </Button>
+            <div className="flex items-center gap-4">
+              <ThemeModeMenu />
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  await logout();
+                  navigate('/login');
+                }}
+              >
+                Log out
+              </Button>
+            </div>
           </div>
         </header>
         <main className="px-4 py-6 md:px-8">

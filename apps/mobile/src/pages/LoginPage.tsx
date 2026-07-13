@@ -1,10 +1,12 @@
 import { useMutation } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { LoginForm, type LoginFormValues } from '@erve/ui';
+import { Card } from '@erve/layout';
 import type { ApiSuccessResponse, LoginResponse } from '@erve/types';
 import { apiClient } from '../lib/api-client.js';
 import { useAuth } from '../auth/AuthContext.js';
+import { LoginForm, type LoginFormValues } from '../components/LoginForm.js';
+import erveLogo from '../../branding/erve-logo.png';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -27,17 +29,22 @@ export function LoginPage() {
       : undefined;
 
   return (
-    <div className="flex min-h-screen flex-col bg-white">
-      <div className="bg-blue-600 px-6 pb-12 pt-16">
-        <h1 className="text-2xl font-bold text-white">Erve</h1>
-        <p className="mt-1 text-sm text-blue-100">Sign in to your distributor account</p>
+    <div className="flex min-h-screen flex-col bg-background">
+      {/* Neutral surface, not bg-primary: the full logo's "erve" wordmark is
+          rendered in the same crimson as --erp-color-primary, so it would be
+          unreadable on a crimson banner. */}
+      <div className="flex flex-col items-center gap-2 bg-surface px-6 pb-10 pt-16">
+        <img src={erveLogo} alt="Erve India" className="h-auto w-48 max-w-full" />
+        <p className="text-sm text-muted-foreground">Sign in to your distributor account</p>
       </div>
       <div className="flex-1 px-6 py-8">
-        <LoginForm
-          onSubmit={(values) => mutation.mutate(values)}
-          isSubmitting={mutation.isPending}
-          errorMessage={errorMessage}
-        />
+        <Card>
+          <LoginForm
+            onSubmit={(values) => mutation.mutate(values)}
+            isSubmitting={mutation.isPending}
+            errorMessage={errorMessage}
+          />
+        </Card>
       </div>
     </div>
   );

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Canonical Erve adaptive launcher icon — see apps/mobile/branding/README.md
+  for source asset provenance and apps/mobile/scripts/generate-branding.mjs
+  for how the mipmap layers referenced below are produced. Do not hand-edit
+  the generated copy under android/, edit this file (and its
+  ic_launcher_round.xml sibling) and rerun `pnpm run native:theme:android`.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/erve_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome"/>
+</adaptive-icon>

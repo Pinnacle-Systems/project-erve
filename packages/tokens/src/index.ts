@@ -47,6 +47,102 @@ export const colorTokens = {
   },
 } as const;
 
+/**
+ * PROVISIONAL — candidate Erve brand ramp. NOT wired into `defaultTheme`,
+ * `theme.css`, `apps/web`, or `apps/mobile`. Do not consume this export
+ * until an authoritative brand color has been confirmed (see the doc
+ * comment on `crimsonTokens` below for how the base value was derived and
+ * why it is not yet a confirmed brand specification).
+ *
+ * This ramp is intentionally separate from `colorTokens.red` above:
+ * `colorTokens.red` is the generic "danger" semantic hue and must keep
+ * meaning "destructive/error" independently of whatever the confirmed
+ * Erve brand color turns out to be — collapsing the two into one scale
+ * would make it impossible to visually distinguish "primary brand action"
+ * from "destructive action" once both are shades of red.
+ */
+export const crimsonTokens = {
+  /**
+   * Base value derivation (informational, not authoritative):
+   * - `apps/web/public/erve-logo.png` (1117x153 raster wordmark): pixel
+   *   decode found a single dominant fill color, rgb(226, 24, 56) / #e21838,
+   *   across ~51,000 sampled non-transparent pixels — the logo is
+   *   effectively monochrome, so this is a clean, high-confidence sample
+   *   of *a* red the logo uses, not proof of an official brand hex.
+   * - `apps/web/public/erve-favicon.png` (107x107 raster icon): a
+   *   pixel-weighted average of the top 10 dominant colors gave
+   *   rgb(231, 18, 54) / #e71236 — consistent with the logo sample within
+   *   normal PNG/anti-aliasing noise.
+   * - No SVG, vector master, or documented style guide exists anywhere in
+   *   this repository to sample instead. A raster favicon/logo PNG is not
+   *   an official brand specification — this ramp must be treated as a
+   *   candidate pending explicit design/brand sign-off, not a confirmed
+   *   Erve brand color. (THEME-01: prepared for approval, not activated.)
+   *
+   * Ramp steps (derived from the #e21838 base by mixing toward white for
+   * lighter steps and toward black for darker steps — same tint/shade
+   * technique `colorTokens`' other scales appear to follow). Every
+   * contrast ratio below was computed with the standard WCAG relative-
+   * luminance formula against the specific surface named, not eyeballed.
+   *
+   * — Approved for application use as of this batch (THEME-02/05): the
+   *   `500` (raw logo hue) and `600` (solid-fill primary) base values
+   *   below have been explicitly approved. `50/100/200/300/400/700/800`
+   *   are consistently derived from that approved `500` base using the
+   *   same tint/shade technique and were not independently re-sampled —
+   *   they inherit the same "candidate, not brand-guideline" caveat as
+   *   the base itself.
+   *
+   * - `50`  (#fdf1f3) — soft background (e.g. selected-row/soft-accent
+   *   fills). Not intended for text.
+   * - `100` (#fbdce1) — subtle border (e.g. soft-accent borders,
+   *   `primary-border`). Not intended for text.
+   * - `200` (#f6b5bf) — reserved; not currently wired to a semantic role.
+   *   Kept as a ramp step between `100` and `300` for future use.
+   * - `300` (#f08798) — **dark-mode primary link / foreground accent.**
+   *   Contrast against the dark theme's surfaces: 8.27:1 on app
+   *   background `#020617`, 7.32:1 on mid surface `#0f172a`, 6.00:1 on
+   *   raised surface `#1e293b` — clears the 4.5:1 normal-text threshold
+   *   on all three with real margin. `400` was evaluated first but fails
+   *   against the raised surface (3.92:1 < 4.5:1), so `300` is the
+   *   correct step for this role, not `400`.
+   * - `400` (#e84b64) — **dark-mode focus border/ring.** Contrast against
+   *   the same three dark surfaces: 5.41:1 / 4.79:1 / 3.92:1 — all clear
+   *   the 3:1 non-text/UI-boundary threshold (focus indicators use 3:1,
+   *   not 4.5:1, so `400`'s sub-4.5 result against the raised surface is
+   *   not a failure for this specific role).
+   * - `500` (#e21838) — raw logo hue / brand reference. Contrast vs.
+   *   white text ~4.75:1 (usable as a light-mode foreground color, but
+   *   see `600` below for solid fills) and vs. the dark app background
+   *   `#020617` ~4.25:1 (does *not* clear 4.5:1 as dark-mode text — do
+   *   not use this step for dark-mode foreground/link text; use `300`).
+   * - `600` (#c21530) — **approved solid-fill primary**, used as the
+   *   `--erp-color-primary` background in both light and dark mode
+   *   (contrast vs. white text ~6.09:1 in either mode, since a solid
+   *   button's internal contrast doesn't depend on the surrounding page
+   *   background). Also used for `--erp-border-focus`/link-adjacent
+   *   roles on light surfaces (~5.72–6.09:1 against light page/white).
+   * - `700` (#9e1127) — hover step for the solid primary; also reused as
+   *   the light-mode link/foreground-accent color (~7.69–8.18:1 against
+   *   light surfaces), mirroring the pre-existing convention where
+   *   `--erp-text-link` aliased the theme's hover shade.
+   * - `800` (#7f0d1f) — active/pressed step; strong emphasis.
+   *
+   * `200` is included to keep the ramp's step sequence complete/future-
+   * proof but has no consumer as of this batch — documented here rather
+   * than silently omitted.
+   */
+  50: "#fdf1f3",
+  100: "#fbdce1",
+  200: "#f6b5bf",
+  300: "#f08798",
+  400: "#e84b64",
+  500: "#e21838",
+  600: "#c21530",
+  700: "#9e1127",
+  800: "#7f0d1f",
+} as const;
+
 export const semanticColorTokens = {
   background: {
     app: colorTokens.neutral[50],
@@ -535,6 +631,8 @@ export const zIndexTokens = {
 } as const;
 
 export type ColorTokens = typeof colorTokens;
+/** Provisional — see the doc comment on `crimsonTokens`. */
+export type CrimsonTokens = typeof crimsonTokens;
 export type SemanticColorTokens = typeof semanticColorTokens;
 export type SurfaceTokens = typeof surfaceTokens;
 export type TextTokens = typeof textTokens;

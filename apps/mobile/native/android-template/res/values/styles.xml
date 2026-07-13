@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Canonical light-mode Android theme — see values/colors.xml for the
+  generation/persistence notes. Do not hand-edit the generated copy under
+  android/, edit this file and rerun the native theme config script.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Base application theme (kept for parity with the stock Capacitor
+         scaffold; not applied directly by the manifest). -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+    </style>
+
+    <!-- Post-splash application theme: the WebView activity's real window. -->
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/erve_window_background</item>
+        <item name="android:statusBarColor">@color/erve_status_bar_background</item>
+        <item name="android:navigationBarColor">@color/erve_navigation_bar_background</item>
+        <!-- Dark icons on our light background. Ignored on API 35+, where
+             edge-to-edge is enforced and bars are forced transparent — see
+             final report for how icon contrast is handled there instead
+             (NativeThemeSurfaces.tsx via @capacitor/status-bar). -->
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    </style>
+
+    <!-- Launch theme, shown natively before any JavaScript runs. Uses the
+         AndroidX Core SplashScreen compat theme so `values-night` alone
+         (no JS) picks the correct background at cold start. -->
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/erve_splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/erve_splash_icon</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+        <item name="android:statusBarColor">@color/erve_splash_background</item>
+        <item name="android:navigationBarColor">@color/erve_splash_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    </style>
+</resources>

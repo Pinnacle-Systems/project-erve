@@ -25,7 +25,7 @@ export const EmptyState = ({
     )}
   >
     {icon && (
-      <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[var(--erp-color-primary-soft)] text-[var(--erp-color-primary)]">
+      <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[var(--erp-color-primary-soft)] text-[var(--erp-text-accent)]">
         {icon}
       </div>
     )}

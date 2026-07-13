@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Button } from './Button.js';
-import { Input } from './Input.js';
+import { Button, TextField } from '@erve/primitives';
 
 export interface LoginFormValues {
   identifier: string;
@@ -24,7 +23,7 @@ export function LoginForm({ onSubmit, isSubmitting = false, errorMessage }: Logi
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <Input
+      <TextField
         id="identifier"
         type="text"
         label="Email or mobile number"
@@ -33,7 +32,7 @@ export function LoginForm({ onSubmit, isSubmitting = false, errorMessage }: Logi
         onChange={(e) => setIdentifier(e.target.value)}
         required
       />
-      <Input
+      <TextField
         id="password"
         type="password"
         label="Password"
@@ -42,8 +41,8 @@ export function LoginForm({ onSubmit, isSubmitting = false, errorMessage }: Logi
         onChange={(e) => setPassword(e.target.value)}
         required
       />
-      {errorMessage && <p className="text-sm text-red-600">{errorMessage}</p>}
-      <Button type="submit" disabled={isSubmitting}>
+      {errorMessage && <p className="text-sm text-danger">{errorMessage}</p>}
+      <Button type="submit" variant="default" disabled={isSubmitting}>
         {isSubmitting ? 'Signing in…' : 'Sign in'}
       </Button>
     </form>

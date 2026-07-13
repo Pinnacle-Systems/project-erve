@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Canonical dark-mode (values-night) Android theme — see the values/styles.xml
+  sibling for notes. Only the light/dark icon-appearance booleans and the
+  color resources they reference (values-night/colors.xml) differ from light.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+    </style>
+
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/erve_window_background</item>
+        <item name="android:statusBarColor">@color/erve_status_bar_background</item>
+        <item name="android:navigationBarColor">@color/erve_navigation_bar_background</item>
+        <!-- Light icons on our dark background. -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/erve_splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/erve_splash_icon</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+        <item name="android:statusBarColor">@color/erve_splash_background</item>
+        <item name="android:navigationBarColor">@color/erve_splash_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+</resources>
