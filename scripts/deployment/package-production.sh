@@ -34,6 +34,11 @@ cp -r apps/web/dist/. "$RELEASE_DIR/web/"
 
 erve_log "Assembling API artifact"
 cp apps/api/dist-bundle/server.js "$RELEASE_DIR/api/server.js"
+# prisma.config.ts supplies datasource.url (schema.prisma's datasource block
+# deliberately has no `url`) — without it on the VPS, `prisma migrate deploy`
+# fails with "The datasource.url property is required in your Prisma config
+# file", since there is nowhere else for it to come from.
+cp apps/api/prisma.config.ts "$RELEASE_DIR/api/prisma.config.ts"
 mkdir -p "$RELEASE_DIR/api/prisma"
 cp apps/api/prisma/schema.prisma "$RELEASE_DIR/api/prisma/schema.prisma"
 cp -r apps/api/prisma/migrations "$RELEASE_DIR/api/prisma/migrations"
