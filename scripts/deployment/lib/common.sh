@@ -120,6 +120,32 @@ erve_release_lock() {
   fi
 }
 
+# --- Postgres URL handling -----------------------------------------------
+
+# erve_libpq_url DATABASE_URL
+# Strips the `schema` query parameter from a Postgres connection URL.
+# `schema` is a Prisma-only extension (used by the app and by `prisma
+# migrate deploy`) that libpq does not recognize — passing it straight
+# through to psql/pg_dump fails with "invalid URI query parameter:
+# schema". Any other query parameters (e.g. sslmode) are left untouched.
+erve_libpq_url() {
+  local url="$1" base="${1%%\?*}" query part joined=""
+  query="${url#*\?}"
+  [ "$query" = "$url" ] && { printf '%s' "$url"; return; }
+  local IFS='&'
+  for part in $query; do
+    case "$part" in
+      schema=*) ;;
+      *) joined="${joined:+$joined&}$part" ;;
+    esac
+  done
+  if [ -n "$joined" ]; then
+    printf '%s?%s' "$base" "$joined"
+  else
+    printf '%s' "$base"
+  fi
+}
+
 # --- disk space preflight ----------------------------------------------------
 
 # erve_check_disk_space TARGET_DIR ARTIFACT_SIZE_BYTES

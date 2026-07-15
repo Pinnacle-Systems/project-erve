@@ -35,10 +35,11 @@ TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_FILE="$BACKUP_DIR/erve-${TIMESTAMP}.dump"
 
 erve_log "Verifying database connectivity before backup"
-psql "$DATABASE_URL" -tAc "SELECT 1;" >/dev/null || erve_die "Cannot connect to the database to take a backup"
+LIBPQ_URL="$(erve_libpq_url "$DATABASE_URL")"
+psql "$LIBPQ_URL" -tAc "SELECT 1;" >/dev/null || erve_die "Cannot connect to the database to take a backup"
 
 erve_log "Creating backup: $BACKUP_FILE"
-pg_dump --format=custom --file="$BACKUP_FILE" "$DATABASE_URL"
+pg_dump --format=custom --file="$BACKUP_FILE" "$LIBPQ_URL"
 
 if [ ! -s "$BACKUP_FILE" ]; then
   rm -f "$BACKUP_FILE"

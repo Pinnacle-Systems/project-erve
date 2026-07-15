@@ -83,7 +83,7 @@ set -a
 . "$SHARED_DIR/api.env"
 set +a
 erve_require_env DATABASE_URL
-psql "$DATABASE_URL" -tAc "SELECT 1;" >/dev/null || erve_die "Could not connect to the production database"
+psql "$(erve_libpq_url "$DATABASE_URL")" -tAc "SELECT 1;" >/dev/null || erve_die "Could not connect to the production database"
 
 erve_log "Backing up the production database before migrating"
 "$SCRIPT_DIR/backup-database.sh"
