@@ -110,6 +110,12 @@ describe('POST /auth/login', () => {
     expect(getSetCookieHeaders(res).join('\n')).toContain(`${REFRESH_TOKEN_COOKIE_NAME}=`);
     expect(getSetCookieHeaders(res).join('\n')).toContain('HttpOnly');
     expect(getSetCookieHeaders(res).join('\n')).toContain('SameSite=Lax');
+    // Path=/ (not the Express-internal "/auth" mount point) is what makes
+    // this cookie reachable at both "/auth/refresh" (local dev, direct
+    // Express) and "/api/auth/refresh" (production, behind the Nginx
+    // "/api/" proxy that strips the prefix) without any environment-
+    // specific configuration.
+    expect(getSetCookieHeaders(res).join('\n')).toContain('Path=/;');
     expect(JSON.stringify(res.body)).not.toContain('passwordHash');
   });
 
@@ -180,6 +186,7 @@ describe('POST /auth/refresh', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.accessToken).toBeTypeOf('string');
     expect(res.body.data.refreshToken).toBeUndefined();
+    expect(getSetCookieHeaders(res).join('\n')).toContain('Path=/;');
     const nextRefreshToken = getRefreshTokenFromSetCookie(res);
     expect(nextRefreshToken).not.toBe(firstRefreshToken);
 
@@ -260,6 +267,11 @@ describe('POST /auth/logout', () => {
 
     expect(res.status).toBe(200);
     expect(getSetCookieHeaders(res).join('\n')).toContain(`${REFRESH_TOKEN_COOKIE_NAME}=;`);
+    // The clearing cookie must use the same Path=/ as the cookie it clears
+    // — a browser only honors Set-Cookie deletion when Path (and Domain)
+    // match the original cookie exactly, otherwise the original cookie
+    // remains active.
+    expect(getSetCookieHeaders(res).join('\n')).toContain('Path=/;');
     await expect(prisma.refreshSession.findFirstOrThrow()).resolves.toMatchObject({
       revokedAt: expect.any(Date),
     });

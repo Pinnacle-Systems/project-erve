@@ -152,3 +152,42 @@ jobs:
 
       - name: Run API tests
         run: pnpm --filter @erve/api test
+
+  validate-deployment:
+    name: Validate deployment scripts and workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ubuntu-latest ships ShellCheck preinstalled; no download needed.
+      - name: ShellCheck deployment scripts
+        run: |
+          shellcheck --version
+          shellcheck -x -P scripts/deployment -P scripts/deployment/lib \
+            scripts/deployment/*.sh \
+            scripts/deployment/lib/*.sh \
+            scripts/deployment/test/*.sh
+
+      - name: Syntax-check deployment scripts (bash -n)
+        run: |
+          for f in scripts/deployment/*.sh scripts/deployment/lib/*.sh scripts/deployment/test/*.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      # Official install method from https://github.com/rhysd/actionlint —
+      # a single self-contained binary, not a marketplace action, kept
+      # consistent with this repo's preference for minimal workflow
+      # dependencies.
+      - name: Install actionlint
+        run: bash <(curl -fsS https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) latest .
+
+      - name: Lint workflow files
+        run: ./actionlint -color
+
+      # Fixture-based tests for cleanup-releases.sh / cleanup-backups.sh —
+      # require real symlink support, which this Linux runner has natively
+      # (unlike an unprivileged Windows dev machine).
+      - name: Run deployment script fixture tests
+        run: bash scripts/deployment/test/run-tests.sh

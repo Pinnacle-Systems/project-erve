@@ -3,3 +3,8 @@ export interface HealthCheckResponse {
   uptimeSeconds: number;
   timestamp: string;
 }
+
+export interface ReadyCheckResponse {
+  status: 'ok' | 'error';
+  timestamp: string;
+}

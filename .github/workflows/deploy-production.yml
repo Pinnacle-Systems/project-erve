@@ -1,0 +1,327 @@
+name: Deploy to production
+
+# Manual only. There is exactly one production target (see DEPLOYMENT.md) —
+# this is not a per-environment matrix and does not run on every push.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Only one production deployment may run at a time. Deliberately NOT
+# cancel-in-progress: a deployment that has already started changing
+# production state (extracting a release, migrating the database) must be
+# allowed to finish or fail cleanly, not be killed mid-way.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  # Placeholder only for steps that need a syntactically valid DATABASE_URL
+  # without connecting (e.g. `prisma generate`). Never the production URL.
+  DATABASE_URL: postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci
+
+jobs:
+  build-and-verify:
+    name: Build, test, and package
+    runs-on: ubuntu-latest
+    # Same Postgres major version policy as ci.yml — keep these in sync,
+    # and re-check against `SHOW server_version;` on the VPS periodically.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: erve_ci
+          POSTGRES_PASSWORD: erve_ci
+          POSTGRES_DB: erve_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U erve_ci -d erve_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    outputs:
+      artifact-name: ${{ steps.artifact-name.outputs.value }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Resolve pnpm version from packageManager field
+        id: pnpm-version
+        run: |
+          PNPM_VERSION=$(node -p "require('./package.json').packageManager.split('@')[1].split('+')[0]")
+          echo "version=$PNPM_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Activate pnpm via Corepack
+        run: corepack prepare pnpm@${{ steps.pnpm-version.outputs.version }} --activate
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @erve/api prisma:generate
+
+      - name: Typecheck all packages
+        run: pnpm -r typecheck
+
+      - name: Lint all packages
+        run: pnpm -r lint
+
+      - name: Run @erve/client tests
+        run: pnpm --filter @erve/client test
+
+      # Applies the committed migration history to a blank disposable
+      # database, proving a fresh Postgres instance can reach the expected
+      # schema, then seeds and runs the API's own test suite against it.
+      # This container is destroyed with the job — it is never the
+      # production database and this workflow never receives production
+      # database credentials.
+      - name: Apply database migrations (disposable CI database)
+        env:
+          JWT_ACCESS_SECRET: ci-only-access-token-secret-value-not-used-anywhere-else
+          JWT_REFRESH_SECRET: ci-only-refresh-token-secret-value-not-used-anywhere-else
+        run: pnpm --filter @erve/api prisma:migrate:deploy
+
+      - name: Seed reference data (disposable CI database)
+        env:
+          JWT_ACCESS_SECRET: ci-only-access-token-secret-value-not-used-anywhere-else
+          JWT_REFRESH_SECRET: ci-only-refresh-token-secret-value-not-used-anywhere-else
+        run: pnpm --filter @erve/api prisma:seed
+
+      - name: Run API tests (disposable CI database)
+        env:
+          JWT_ACCESS_SECRET: ci-only-access-token-secret-value-not-used-anywhere-else
+          JWT_REFRESH_SECRET: ci-only-refresh-token-secret-value-not-used-anywhere-else
+          NODE_ENV: test
+        run: pnpm --filter @erve/api test
+
+      # The API test suite truncates users/styles/etc. between every test
+      # (see apps/api/src/test/helpers.ts resetDatabase), which wipes out
+      # the seeded admin user and reference data seeded above. Re-seed
+      # (idempotent — every seed step upserts or no-ops if already present)
+      # so the packaged-artifact smoke test below has known, real data and
+      # a known login to exercise.
+      - name: Re-seed reference data before packaging
+        env:
+          JWT_ACCESS_SECRET: ci-only-access-token-secret-value-not-used-anywhere-else
+          JWT_REFRESH_SECRET: ci-only-refresh-token-secret-value-not-used-anywhere-else
+        run: pnpm --filter @erve/api prisma:seed
+
+      - name: Build API (tsc)
+        run: pnpm --filter @erve/api build
+
+      - name: Package production artifact
+        id: package
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: bash scripts/deployment/package-production.sh
+
+      # Boots the exact artifact that will be shipped (esbuild bundle + its
+      # own installed node_modules, not the monorepo's — no monorepo
+      # TypeScript source and no workspace package resolution is available
+      # or used here) against the same disposable database used for API
+      # tests above, and proves it actually serves real, DB-backed traffic:
+      # Prisma connectivity, a real query, the bundled @erve/shared and
+      # @erve/types runtime code, and production config loading via the
+      # app's own dotenv/config mechanism. This is what proves the
+      # packaging approach itself works, not just that `tsc`/typecheck
+      # pass. A failure here fails the job and blocks the deploy job below.
+      - name: Smoke-test the packaged artifact against the disposable database
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/release/api
+          NODE_ENV=production HOST=127.0.0.1 PORT=4500 \
+            DATABASE_URL="postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci" \
+            JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else \
+            JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else \
+            CORS_ORIGIN="https://smoke-test.invalid" \
+            node server.js &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          ok=0
+          for _ in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:4500/health >/dev/null; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ok" -eq 1 ] || { echo "Bundled artifact never became healthy"; exit 1; }
+
+          echo "--- /health ---"
+          curl -fsS http://127.0.0.1:4500/health
+          echo
+
+          echo "--- /ready (must be 200 against the migrated+seeded CI database) ---"
+          READY_STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4500/ready)
+          if [ "$READY_STATUS" != "200" ]; then
+            echo "Expected /ready to return 200, got $READY_STATUS"
+            exit 1
+          fi
+          echo "OK ($READY_STATUS)"
+
+          # Representative database-backed request: log in as the seeded
+          # bootstrap admin (apps/api/prisma/seed.ts), then read the seeded
+          # styles list. This exercises Prisma connectivity, a real SELECT,
+          # password verification, JWT signing, and the bundled
+          # @erve/shared / @erve/types runtime code end to end through the
+          # packaged artifact — not just a bare SELECT 1.
+          echo "--- POST /auth/login (seeded admin) ---"
+          LOGIN_BODY=$(curl -fsS -X POST http://127.0.0.1:4500/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"identifier":"admin@erve.local","password":"ChangeMe123!"}')
+          echo "$LOGIN_BODY"
+          ACCESS_TOKEN=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).data.accessToken)' "$LOGIN_BODY")
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "undefined" ]; then
+            echo "Login did not return an access token"
+            exit 1
+          fi
+
+          echo "--- GET /styles (seeded data, DB read through the bundled artifact) ---"
+          STYLES_BODY=$(curl -fsS http://127.0.0.1:4500/styles -H "Authorization: Bearer $ACCESS_TOKEN")
+          echo "$STYLES_BODY"
+          if ! printf '%s' "$STYLES_BODY" | grep -q '"styleNumber":"39026006"'; then
+            echo "Expected to find the seeded style 39026006 in the response"
+            exit 1
+          fi
+
+          echo "Smoke test passed: /health, /ready, login, and a real DB-backed route all worked through the packaged artifact"
+
+      - name: Compute artifact name
+        id: artifact-name
+        run: echo "value=erve-release-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact-name.outputs.value }}
+          path: |
+            .deploy-build/erve-release-${{ github.sha }}.tar.gz
+            .deploy-build/erve-release-${{ github.sha }}.tar.gz.sha256
+          retention-days: 14
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy to VPS
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Checkout (deployment scripts only)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            scripts/deployment
+          sparse-checkout-cone-mode: false
+
+      - name: Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-and-verify.outputs.artifact-name }}
+          path: artifact
+
+      - name: Verify artifact checksum
+        run: |
+          set -Eeuo pipefail
+          cd artifact
+          EXPECTED="$(cat "erve-release-${{ github.sha }}.tar.gz.sha256")"
+          ACTUAL="$(sha256sum "erve-release-${{ github.sha }}.tar.gz" | awk '{print $1}')"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "Checksum mismatch: expected $EXPECTED, got $ACTUAL"
+            exit 1
+          fi
+          echo "Checksum verified: $ACTUAL"
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/erve_deploy_key
+          chmod 600 ~/.ssh/erve_deploy_key
+          # Pinned to the fingerprint stored in the production Environment,
+          # never generated from a live ssh-keyscan inside this workflow.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/erve_deploy_key
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+      - name: Upload artifact to the VPS
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
+        run: |
+          set -Eeuo pipefail
+          SSH_OPTS="-p $DEPLOY_PORT -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
+          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" \
+            "mkdir -p '$DEPLOY_ROOT/.deploy/incoming' '$DEPLOY_ROOT/.deploy/scripts'"
+          scp -P "$DEPLOY_PORT" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o StrictHostKeyChecking=yes \
+            "artifact/erve-release-${{ github.sha }}.tar.gz" \
+            "artifact/erve-release-${{ github.sha }}.tar.gz.sha256" \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_ROOT/.deploy/incoming/"
+          # Deployment scripts are copied fresh on every run so they always
+          # match the exact commit being deployed. This is a targeted copy
+          # of scripts/deployment only — never a Git clone/pull on the VPS.
+          scp -P "$DEPLOY_PORT" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o StrictHostKeyChecking=yes -r \
+            scripts/deployment/. \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_ROOT/.deploy/scripts/"
+
+      - name: Run remote deployment
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
+          APP_PORT: ${{ vars.APP_PORT }}
+          ERVE_BASE_URL: ${{ vars.ERVE_BASE_URL }}
+          ERVE_RELEASE_RETENTION: ${{ vars.ERVE_RELEASE_RETENTION }}
+          ERVE_DB_BACKUP_RETENTION: ${{ vars.ERVE_DB_BACKUP_RETENTION }}
+        run: |
+          set -Eeuo pipefail
+          SSH_OPTS="-p $DEPLOY_PORT -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
+          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" \
+            "chmod +x '$DEPLOY_ROOT/.deploy/scripts'/*.sh '$DEPLOY_ROOT/.deploy/scripts/lib'/*.sh && \
+             DEPLOY_ROOT='$DEPLOY_ROOT' APP_PORT='$APP_PORT' ERVE_BASE_URL='$ERVE_BASE_URL' \
+             ERVE_RELEASE_RETENTION='$ERVE_RELEASE_RETENTION' ERVE_DB_BACKUP_RETENTION='$ERVE_DB_BACKUP_RETENTION' \
+             '$DEPLOY_ROOT/.deploy/scripts/deploy-release.sh' '${{ github.sha }}'"
+
+      - name: Report deployment
+        env:
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
+        run: |
+          echo "Deployed commit ${{ github.sha }} to $DEPLOY_ROOT/releases/${{ github.sha }}"
