@@ -136,7 +136,7 @@ Record the major version — it should match the `postgres:<major>` image used i
 ### 3.2 Generate the application password
 
 ```bash
-openssl rand -base64 32
+openssl rand -hex 32
 ```
 
 Copy it somewhere secure (e.g. your password manager) — not into a file in this repo, not into shell history you keep, not into GitHub.
