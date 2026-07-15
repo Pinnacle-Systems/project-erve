@@ -16,7 +16,9 @@
     "prisma:migrate": "prisma migrate dev && prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "admin:bootstrap": "tsx src/cli/admin-bootstrap.cli.ts",
+    "roles:bootstrap": "tsx src/cli/roles-bootstrap.cli.ts"
   },
   "dependencies": {
     "@erve/shared": "workspace:*",

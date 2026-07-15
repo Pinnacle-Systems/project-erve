@@ -24,8 +24,15 @@ const pkg = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf8'
 const external = Object.keys(pkg.dependencies ?? {}).filter((name) => !name.startsWith('@erve/'));
 
 await build({
-  entryPoints: [path.join(__dirname, 'src/server.ts')],
-  outfile: path.join(__dirname, 'dist-bundle/server.js'),
+  entryPoints: [
+    { in: path.join(__dirname, 'src/server.ts'), out: 'server' },
+    // Same bundling approach as the server: a self-contained ESM CLI so
+    // the production artifact needs no TS loader/devDependencies to run
+    // the admin bootstrap command (see DEPLOYMENT.md).
+    { in: path.join(__dirname, 'src/cli/admin-bootstrap.cli.ts'), out: 'admin-bootstrap' },
+    { in: path.join(__dirname, 'src/cli/roles-bootstrap.cli.ts'), out: 'roles-bootstrap' },
+  ],
+  outdir: path.join(__dirname, 'dist-bundle'),
   bundle: true,
   platform: 'node',
   format: 'esm',

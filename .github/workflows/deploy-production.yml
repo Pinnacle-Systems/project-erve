@@ -213,6 +213,96 @@ jobs:
 
           echo "Smoke test passed: /health, /ready, login, and a real DB-backed route all worked through the packaged artifact"
 
+      # Proves the admin bootstrap CLI actually works from the packaged
+      # artifact itself (bundled JS + its own installed node_modules), not
+      # only from tsx against monorepo source — the disposable CI database
+      # here is separate from the seeded bootstrap admin used above, so this
+      # exercises the "roles table is still empty" path that production is
+      # actually in today (see DEPLOYMENT.md, "Admin user bootstrap").
+      - name: Smoke-test the packaged admin-bootstrap CLI against the disposable database
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/release/api
+
+          export NODE_ENV=production
+          export DATABASE_URL="postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci"
+          export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
+          export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          export ADMIN_EMAIL="artifact-admin@smoke.invalid"
+          export ADMIN_NAME="Artifact Smoke Admin"
+          export ADMIN_PASSWORD="ArtifactSmokeTest123!"
+
+          echo "--- first run: expect 'created' ---"
+          FIRST_OUTPUT="$(node admin-bootstrap.js --confirm-production)"
+          echo "$FIRST_OUTPUT"
+          echo "$FIRST_OUTPUT" | grep -q '^created:' || { echo "Expected 'created' on first run"; exit 1; }
+          if echo "$FIRST_OUTPUT" | grep -qF "$ADMIN_PASSWORD"; then
+            echo "Plaintext password leaked into CLI output"; exit 1
+          fi
+
+          echo "--- second run: expect 'already configured' (idempotent) ---"
+          SECOND_OUTPUT="$(node admin-bootstrap.js --confirm-production)"
+          echo "$SECOND_OUTPUT"
+          echo "$SECOND_OUTPUT" | grep -q '^already configured:' || { echo "Expected 'already configured' on second run"; exit 1; }
+
+          echo "--- verify the created user can actually log in through the packaged artifact's own auth logic ---"
+          NODE_ENV=production HOST=127.0.0.1 PORT=4501 CORS_ORIGIN="https://smoke-test.invalid" node server.js &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          ok=0
+          for _ in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:4501/health >/dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          [ "$ok" -eq 1 ] || { echo "Server never became healthy"; exit 1; }
+
+          LOGIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:4501/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"identifier\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}")
+          if [ "$LOGIN_STATUS" != "200" ]; then
+            echo "Expected the bootstrapped admin to log in with 200, got $LOGIN_STATUS"
+            exit 1
+          fi
+
+          echo "Admin-bootstrap CLI smoke test passed: created, idempotent, and the resulting user can log in — all through the packaged artifact"
+
+      # Standalone counterpart to the admin-bootstrap check above: proves
+      # roles-bootstrap.js also works from the packaged artifact on its
+      # own (production dependencies only), independent of ever running
+      # admin-bootstrap. By this point in the job all 7 roles already
+      # exist (admin-bootstrap.js ensures them as a side effect above), so
+      # this specifically exercises the idempotent "already there" path
+      # for every role in a single run.
+      - name: Smoke-test the packaged roles-bootstrap CLI against the disposable database
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/release/api
+
+          export NODE_ENV=production
+          export DATABASE_URL="postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci"
+          export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
+          export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+
+          echo "--- without --confirm-production: must refuse ---"
+          if node roles-bootstrap.js; then
+            echo "Expected roles-bootstrap.js to fail without --confirm-production"; exit 1
+          fi
+
+          echo "--- run 1 ---"
+          FIRST_OUTPUT="$(node roles-bootstrap.js --confirm-production)"
+          echo "$FIRST_OUTPUT"
+
+          echo "--- run 2: idempotent, same roles reported, no error ---"
+          SECOND_OUTPUT="$(node roles-bootstrap.js --confirm-production)"
+          echo "$SECOND_OUTPUT"
+
+          for role in ADMIN MERCHANDISER FACTORY_USER QA_USER ACCOUNTANT DISTRIBUTOR SENIOR_MANAGEMENT; do
+            echo "$FIRST_OUTPUT" | grep -qF "$role" || { echo "Missing $role in first run output"; exit 1; }
+            echo "$SECOND_OUTPUT" | grep -qF "$role" || { echo "Missing $role in second run output"; exit 1; }
+          done
+
+          echo "Roles-bootstrap CLI smoke test passed: guard enforced, all 7 roles ensured, idempotent — all through the packaged artifact"
+
       - name: Compute artifact name
         id: artifact-name
         run: echo "value=erve-release-${{ github.sha }}" >> "$GITHUB_OUTPUT"

@@ -414,7 +414,156 @@ sudo -u postgres dropdb erve_restore_test
 
 ---
 
-## 12. Troubleshooting
+## 12. Production bootstrap: roles and the admin user
+
+The general reference-data seed (`apps/api/prisma/seed.ts`, `pnpm --filter @erve/api prisma:seed`) is **deliberately never run against production** — besides the bootstrap admin, it also inserts demo/master data (sample factories, styles, sizes, a default process flow) that has no place in real production data. Because of that, a freshly deployed production database has an **empty `roles` table and no admin user at all**. This is not just a login problem: `apps/api/src/modules/users/users.service.ts`'s `createUser` and `assignRole` both *expect* the target `Role` row to already exist (they reject with a 400 rather than creating one on demand), so an empty `roles` table also blocks creating or role-assigning *any* user, admin or not, through the normal API.
+
+Two dedicated, idempotent, production-safe commands exist for this:
+
+```text
+admin-bootstrap.js     creates/repairs the one bootstrap ADMIN user — and, as part of the
+                        same transaction, idempotently ensures ALL 7 supported roles exist
+                        (ADMIN, MERCHANDISER, FACTORY_USER, QA_USER, ACCOUNTANT,
+                        DISTRIBUTOR, SENIOR_MANAGEMENT), not only ADMIN
+roles-bootstrap.js     standalone: idempotently ensures all 7 roles exist, without
+                        creating or touching any user
+```
+
+Neither command ever touches factories, styles, sizes, process flows, or any user/role other than what's described above.
+
+### 12.1 Bootstrap order
+
+**For a first deployment (or any time the `roles` table might be empty), running `admin-bootstrap.js` alone is sufficient** — it ensures all 7 roles *and* creates the admin user, in one transaction:
+
+```bash
+cd "$DEPLOY_ROOT/current/api"
+ADMIN_EMAIL="<admin email>" ADMIN_NAME="<admin display name>" ADMIN_PASSWORD_FILE=/path/to/password.txt \
+  node admin-bootstrap.js --confirm-production
+```
+
+`roles-bootstrap.js` only needs to be run **on its own** in narrower cases: you want role reference data in place so non-admin users can be created through the API without creating/touching the admin account (e.g. re-running it after some inconsistency, or preparing roles ahead of the first admin-bootstrap run for operational-ordering reasons). It is never required in addition to `admin-bootstrap.js` — running `admin-bootstrap.js` alone already leaves every role usable.
+
+### 12.2 Admin user bootstrap
+
+#### Where it runs
+
+Through the `current` symlink, from the release's `api/` directory, as `SITE_USER`:
+
+```bash
+cd "$DEPLOY_ROOT/current/api"
+```
+
+#### Required input
+
+```text
+ADMIN_EMAIL     the admin's login email
+ADMIN_NAME      the admin's display name
+```
+
+Password, in order of precedence:
+
+1. `ADMIN_PASSWORD_FILE=/path/to/file` — a file containing only the password (safest for automation; the file is read once and never echoed).
+2. `ADMIN_PASSWORD=...` — documented plaintext fallback. Avoid this on a shared/logged shell; prefer the file or the interactive prompt.
+3. Neither set, run from an interactive terminal — the command prompts with a non-echoing password prompt.
+
+A password is only ever requested when one is actually needed (creating a new user, or `--reset-password` against an existing one) — checking an already-configured admin never prompts.
+
+#### Production confirmation
+
+`NODE_ENV=production` (already set in `shared/api.env`) requires an explicit `--confirm-production` flag. Without it, the command prints the target database host/name (never the password) and exits non-zero without touching the database:
+
+```text
+Target database: erve on 127.0.0.1:5432
+Production execution requires --confirm-production.
+```
+
+#### Example invocation
+
+```bash
+cd "$DEPLOY_ROOT/current/api"
+ADMIN_EMAIL="<admin email>" \
+ADMIN_NAME="<admin display name>" \
+ADMIN_PASSWORD_FILE=/path/to/a/root-owned/tmp/password.txt \
+  node admin-bootstrap.js --confirm-production
+```
+
+Delete the password file afterward — the command never deletes it for you.
+
+#### Expected output
+
+```text
+created: admin user "<email>" created with the ADMIN role
+already configured: "<email>" already has the ADMIN role — no changes made
+admin role added: "<email>" was missing the ADMIN role — added it
+password reset: "<email>"
+```
+
+Any of the four lines above can additionally end with `(ensured missing role reference data: MERCHANDISER, ...)` when this run created one or more of the 6 non-`ADMIN` role rows — this can happen on any outcome, including "already configured" (e.g. the admin account itself needed no change, but some other role row was still missing).
+
+Exit code is `0` on any of the above, non-zero on any validation or database error (missing input, invalid email, password under 8 characters, production guard, an existing account found in a non-`ACTIVE` status, or a database/transaction failure). The plaintext password is never printed or logged, by the command itself or by this documentation.
+
+#### Flags
+
+```text
+--reset-password       only then is an existing user's password changed; omitted, the password is left untouched
+--confirm-production   required whenever NODE_ENV=production
+```
+
+#### Idempotency
+
+Safe to run repeatedly and safe to re-run after a failed attempt. Locating the user reuses the exact same lookup the login endpoint uses (`prisma.user.findUnique({ where: { email } })` — an exact match, not case-normalized, since the application itself does not normalize email case). Every successful run — including "already configured", where nothing about the user changes at all — ensures all 7 role reference rows first, inside the same transaction as whatever user/role-mapping write follows. This matters because the admin account can be fully configured while some other role row is still missing (e.g. it was bootstrapped by an older version of this command, or a role row was otherwise removed) — role reference data is never left depending on the admin account itself needing a change on a given run. A failure partway through the transaction leaves neither a partial user nor a duplicate role mapping. Unrelated fields (status, other roles, distributor/factory mappings) are never touched, and existing role rows/ids are never deleted or recreated. The one exception: a refusal (non-`ACTIVE` matching account, or the production guard) makes zero database writes at all, including no role-reference ensure — a refusal never has side effects.
+
+#### Verification
+
+```bash
+curl -s https://DOMAIN_NAME/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"identifier":"<admin email>","password":"<the password you set>"}'
+```
+
+A `200` with an `accessToken` in the response confirms the account works. Do not leave the password in shell history any longer than necessary.
+
+#### Do not
+
+- Do not insert or update the `users`/`roles`/`user_roles` tables directly with `psql`/SQL — this command exists specifically so no one has to hand-compute a bcrypt hash or reason about the role-mapping schema by hand.
+- Do not run `pnpm --filter @erve/api prisma:seed` against production "just to get the admin user" — it inserts unrelated demo/master data alongside the admin.
+- Do not commit `ADMIN_PASSWORD`, a password file, or its contents anywhere in this repository.
+
+#### Local development
+
+From the monorepo (not the packaged artifact):
+
+```bash
+ADMIN_EMAIL=admin@example.test ADMIN_NAME="Local Admin" ADMIN_PASSWORD=whatever-you-like \
+  pnpm --filter @erve/api admin:bootstrap
+```
+
+### 12.3 Roles bootstrap (standalone)
+
+Ensures every supported role exists as a `Role` row (idempotent upsert per role, keyed on the unique `name` column) — nothing else. Never creates or modifies a user. Runs the same way as admin-bootstrap (§12.2) — through the `current` symlink from the release's `api/` directory, as `SITE_USER` — and shares the same production-confirmation guard (`NODE_ENV=production` requires `--confirm-production`, printing only the target database host/name first). Takes no other input: no email, name, or password. Prefer `admin-bootstrap.js` unless you specifically want role reference data in place without touching the admin account (§12.1).
+
+```bash
+cd "$DEPLOY_ROOT/current/api"
+node roles-bootstrap.js --confirm-production
+```
+
+Expected output on success:
+
+```text
+roles ensured: ADMIN, MERCHANDISER, FACTORY_USER, QA_USER, ACCOUNTANT, DISTRIBUTOR, SENIOR_MANAGEMENT
+```
+
+Exit code `0` on success, non-zero on the production guard or a database error. Safe to run repeatedly — each role is upserted independently, keyed on its unique `name`; an existing role's `id` and `description` are left as originally created, and running this after `admin-bootstrap.js` has already ensured all roles is a no-op.
+
+Local development (from the monorepo, not the packaged artifact):
+
+```bash
+pnpm --filter @erve/api roles:bootstrap
+```
+
+---
+
+## 13. Troubleshooting
 
 | Symptom | Likely cause / first check |
 |---|---|
@@ -440,3 +589,4 @@ sudo -u postgres dropdb erve_restore_test
 | `/api/ready` returns 503 | Real DB connectivity issue — check `psql "${DATABASE_URL%%\?*}" -tAc "SELECT 1;"` on the VPS directly (`deploy-release.sh`/`backup-database.sh` use the same check via `erve_libpq_url`; the `?schema=` suffix is Prisma-only and must be stripped before handing the URL to psql/pg_dump) |
 | Rollback fails | `rollback-release.sh` auto-restores the previously active release and refuses to leave the box on a failed target — check `pm2 logs` for the target release's own startup errors |
 | `cleanup-releases.sh` "refuses unsafe deletion" | Working as intended — it only deletes directories directly under `releases/` named as a full Git SHA, and never the currently active one; if you need to remove something else, do it manually with `realpath` sanity checks of your own |
+| Cannot log in to a freshly deployed environment / login always 401s | Expected on a brand-new production database — the general seed (which creates the bootstrap admin) is deliberately never run against production, so `roles`/`users` start empty. Run §12's `admin-bootstrap` once |

@@ -58,7 +58,7 @@ erve_log "Extracting artifact into $PARTIAL_DIR"
 tar -xzf "$ARTIFACT_PATH" -C "$PARTIAL_DIR" --strip-components=1
 
 erve_log "Validating extracted release structure"
-for required in api/server.js api/package.json api/prisma.config.ts api/prisma/schema.prisma api/ecosystem.config.cjs web/index.html deployment-metadata.json; do
+for required in api/server.js api/admin-bootstrap.js api/roles-bootstrap.js api/package.json api/prisma.config.ts api/prisma/schema.prisma api/ecosystem.config.cjs web/index.html deployment-metadata.json; do
   if [ ! -e "$PARTIAL_DIR/$required" ]; then
     rm -rf "$PARTIAL_DIR"
     erve_die "Extracted release is missing required path: $required — a partially extracted release must never become active"
