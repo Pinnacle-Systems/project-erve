@@ -287,8 +287,11 @@ jobs:
           DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
         run: |
           set -Eeuo pipefail
-          SSH_OPTS="-p $DEPLOY_PORT -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
-          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" \
+          SSH_OPTS=(-p "$DEPLOY_PORT" -o "UserKnownHostsFile=$HOME/.ssh/known_hosts" -o StrictHostKeyChecking=yes)
+          # DEPLOY_ROOT is a client-side GitHub Actions var expanded intentionally
+          # before being sent as the remote command string.
+          # shellcheck disable=SC2029
+          ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
             "mkdir -p '$DEPLOY_ROOT/.deploy/incoming' '$DEPLOY_ROOT/.deploy/scripts'"
           scp -P "$DEPLOY_PORT" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o StrictHostKeyChecking=yes \
             "artifact/erve-release-${{ github.sha }}.tar.gz" \
@@ -313,8 +316,11 @@ jobs:
           ERVE_DB_BACKUP_RETENTION: ${{ vars.ERVE_DB_BACKUP_RETENTION }}
         run: |
           set -Eeuo pipefail
-          SSH_OPTS="-p $DEPLOY_PORT -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
-          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" \
+          SSH_OPTS=(-p "$DEPLOY_PORT" -o "UserKnownHostsFile=$HOME/.ssh/known_hosts" -o StrictHostKeyChecking=yes)
+          # DEPLOY_ROOT/APP_PORT/etc. are client-side GitHub Actions vars expanded
+          # intentionally before being sent as the remote command string.
+          # shellcheck disable=SC2029
+          ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
             "chmod +x '$DEPLOY_ROOT/.deploy/scripts'/*.sh '$DEPLOY_ROOT/.deploy/scripts/lib'/*.sh && \
              DEPLOY_ROOT='$DEPLOY_ROOT' APP_PORT='$APP_PORT' ERVE_BASE_URL='$ERVE_BASE_URL' \
              ERVE_RELEASE_RETENTION='$ERVE_RELEASE_RETENTION' ERVE_DB_BACKUP_RETENTION='$ERVE_DB_BACKUP_RETENTION' \
