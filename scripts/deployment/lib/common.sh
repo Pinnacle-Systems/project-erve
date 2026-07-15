@@ -64,6 +64,33 @@ erve_assert_inside_dir() {
   esac
 }
 
+# erve_resolve_release_dir LINK PARENT_DIR
+# Resolves LINK (e.g. the `current` symlink) to its canonical target and
+# fails closed unless that target is a real, existing directory located
+# directly inside PARENT_DIR — covering a missing link, a link that isn't
+# actually a symlink, a broken symlink (target doesn't exist), and a
+# target (relative or absolute) that resolves outside PARENT_DIR. Prints
+# the canonical resolved path on success. Callers that skip this in favor
+# of ad-hoc `readlink -f` lose these guarantees.
+erve_resolve_release_dir() {
+  local link="$1" parent_dir="$2" resolved
+  [ -L "$link" ] || erve_die "Not a symlink (cannot safely resolve which release is active): $link"
+  resolved="$(realpath -e "$link")" || erve_die "Broken symlink, target does not exist: $link"
+  erve_assert_inside_dir "$resolved" "$parent_dir"
+  printf '%s' "$resolved"
+}
+
+# erve_contains NEEDLE [STRAW...]
+# True if NEEDLE equals one of the following arguments.
+erve_contains() {
+  local needle="$1" straw
+  shift
+  for straw in "$@"; do
+    [ "$straw" = "$needle" ] && return 0
+  done
+  return 1
+}
+
 # --- NVM / Node 24 ----------------------------------------------------------
 
 # erve_load_node24

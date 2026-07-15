@@ -58,7 +58,7 @@ erve_log "Extracting artifact into $PARTIAL_DIR"
 tar -xzf "$ARTIFACT_PATH" -C "$PARTIAL_DIR" --strip-components=1
 
 erve_log "Validating extracted release structure"
-for required in api/server.js api/package.json api/prisma/schema.prisma api/ecosystem.config.cjs web/index.html deployment-metadata.json; do
+for required in api/server.js api/package.json api/prisma.config.ts api/prisma/schema.prisma api/ecosystem.config.cjs web/index.html deployment-metadata.json; do
   if [ ! -e "$PARTIAL_DIR/$required" ]; then
     rm -rf "$PARTIAL_DIR"
     erve_die "Extracted release is missing required path: $required — a partially extracted release must never become active"
@@ -96,8 +96,13 @@ if ! (cd "$RELEASE_DIR/api" && ./node_modules/.bin/prisma migrate deploy --schem
 fi
 
 PREVIOUS_TARGET=""
-if [ -L "$CURRENT_LINK" ]; then
-  PREVIOUS_TARGET="$(readlink -f "$CURRENT_LINK")"
+# -e alone would miss a broken symlink (readlink -f target that no longer
+# exists); -L alone would miss a wrong-type entry (e.g. a plain directory
+# where a symlink should be). Together they mean "something exists at
+# this path" as opposed to "genuinely nothing yet" (first-ever deploy),
+# in which case erve_resolve_release_dir's fail-closed validation applies.
+if [ -L "$CURRENT_LINK" ] || [ -e "$CURRENT_LINK" ]; then
+  PREVIOUS_TARGET="$(erve_resolve_release_dir "$CURRENT_LINK" "$RELEASES_DIR")"
 fi
 
 erve_log "Atomically activating release $SHA"
@@ -121,6 +126,12 @@ if ! "$SCRIPT_DIR/verify-release.sh" local "$APP_PORT"; then
   mkdir -p "$FAILED_DIR"
   mv "$RELEASE_DIR" "$FAILED_DIR/${SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
   erve_die "Deployment failed post-activation health checks; rolled back to previous release${PREVIOUS_TARGET:+ ($PREVIOUS_TARGET)}. NOTE: any migration applied above was not reversed."
+fi
+
+if [ -n "$PREVIOUS_TARGET" ]; then
+  erve_log "Recording previous known-good release for retention cleanup: $PREVIOUS_TARGET"
+  printf '%s\n' "$(basename "$PREVIOUS_TARGET")" > "$DEPLOY_ROOT/.deploy/previous-release.tmp"
+  mv -T "$DEPLOY_ROOT/.deploy/previous-release.tmp" "$DEPLOY_ROOT/.deploy/previous-release"
 fi
 
 if [ -n "${ERVE_BASE_URL:-}" ]; then

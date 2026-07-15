@@ -6,10 +6,11 @@
 # Requires a POSIX filesystem that supports real symlinks for `ln -sfn`
 # (Linux — GitHub Actions runners and the VPS both qualify). On Windows
 # without Developer Mode / elevated privileges, `ln -sfn` silently falls
-# back to creating a plain directory instead of a symlink, which makes the
-# "current" detection tests (anything using set_current) produce false
-# failures here even though scripts/deployment/cleanup-releases.sh's own
-# `[ -L "$CURRENT_LINK" ] && readlink -f ...` logic is correct — verify by
+# back to creating a plain directory instead of a symlink. cleanup-releases.sh
+# now fails closed (refuses to run) whenever `current` isn't a real,
+# resolvable symlink, so on such a machine every test that depends on
+# `set_current` will report a failure here (a different assertion than the
+# one intended) even though the script's own logic is correct — verify by
 # code review on such a machine and re-run this suite in CI/on the VPS.
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,6 +48,12 @@ set_current() {
   ln -sfn "$root/releases/$sha" "$root/current"
 }
 
+set_previous_marker() {
+  local root="$1" sha="$2"
+  mkdir -p "$root/.deploy"
+  printf '%s\n' "$sha" > "$root/.deploy/previous-release"
+}
+
 run_cleanup() {
   local root="$1" retention="${2:-10}"
   DEPLOY_ROOT="$root" ERVE_RELEASE_RETENTION="$retention" bash "$DEPLOYMENT_DIR/cleanup-releases.sh" \
@@ -62,6 +69,8 @@ count_present() {
 }
 
 # --- more than ten releases -> exactly 10 kept in total ---------------------
+# Also exercises: current is the newest release, and an absolute symlink
+# target (set_current always uses one).
 test_more_than_ten_releases() {
   local root; root="$(make_fixture_root)"
   # sha 12 is newest (1 minute ago) ... sha 1 is oldest (12 minutes ago)
@@ -99,7 +108,8 @@ test_current_among_older_timestamps() {
   rm -rf "$root"
 }
 
-# --- previous known-good release survives at a tight retention boundary -----
+# --- previous known-good release survives at a tight retention boundary,
+# inferred purely by mtime (no explicit previous-release marker present) ----
 test_previous_among_older_timestamps() {
   local root; root="$(make_fixture_root)"
   make_release "$root" "$(fake_sha 1)" 1000  # much older "previous known-good"
@@ -150,6 +160,123 @@ test_retention_below_two_is_normalized() {
   rm -rf "$root"
 }
 
+# --- current symlink missing entirely -> cleanup refuses to run, deletes
+# nothing (fail closed rather than clean up without current protection) -----
+test_current_missing_refuses_cleanup() {
+  local root; root="$(make_fixture_root)"
+  make_release "$root" "$(fake_sha 1)" 10
+  make_release "$root" "$(fake_sha 2)" 1
+  # deliberately no set_current call — $root/current does not exist
+
+  if run_cleanup "$root" 10; then
+    fail "current_missing_refuses_cleanup: cleanup should have refused to run without a current symlink"
+  fi
+  local kept; kept="$(count_present "$root" 2)"
+  [ "$kept" -eq 2 ] || fail "current_missing_refuses_cleanup: no release should be deleted when cleanup refuses to run, got $kept kept"
+
+  rm -rf "$root"
+}
+
+# --- current symlink is broken (target does not exist) -> cleanup refuses --
+test_current_broken_symlink_refuses_cleanup() {
+  local root; root="$(make_fixture_root)"
+  make_release "$root" "$(fake_sha 1)" 10
+  make_release "$root" "$(fake_sha 2)" 1
+  ln -sfn "$root/releases/$(fake_sha 99)" "$root/current" # sha 99 was never created
+
+  if run_cleanup "$root" 10; then
+    fail "current_broken_symlink_refuses_cleanup: cleanup should have refused to run with a broken current symlink"
+  fi
+  local kept; kept="$(count_present "$root" 2)"
+  [ "$kept" -eq 2 ] || fail "current_broken_symlink_refuses_cleanup: no release should be deleted when cleanup refuses to run, got $kept kept"
+
+  rm -rf "$root"
+}
+
+# --- current points outside releases/ -> cleanup refuses --------------------
+test_current_outside_releases_dir_refuses_cleanup() {
+  local root; root="$(make_fixture_root)"
+  make_release "$root" "$(fake_sha 1)" 10
+  mkdir -p "$root/outside"
+  ln -sfn "$root/outside" "$root/current"
+
+  if run_cleanup "$root" 10; then
+    fail "current_outside_releases_dir_refuses_cleanup: cleanup should have refused when current points outside releases/"
+  fi
+  [ -d "$root/releases/$(fake_sha 1)" ] || fail "current_outside_releases_dir_refuses_cleanup: release incorrectly deleted after refusal"
+
+  rm -rf "$root"
+}
+
+# --- current is a relative symlink target, resolved against its own dir ----
+test_current_relative_symlink_target() {
+  local root; root="$(make_fixture_root)"
+  make_release "$root" "$(fake_sha 1)" 500
+  for i in $(seq 2 12); do
+    make_release "$root" "$(fake_sha "$i")" "$((13 - i))"
+  done
+  ln -sfn "releases/$(fake_sha 1)" "$root/current" # relative target
+
+  run_cleanup "$root" 10
+
+  [ -d "$root/releases/$(fake_sha 1)" ] || fail "current_relative_symlink_target: current (relative symlink target) incorrectly deleted"
+
+  rm -rf "$root"
+}
+
+# --- explicit previous-release marker protects the true previous known-good
+# release even when an orphaned/never-activated release directory (e.g. left
+# behind by a failed migration) has a newer mtime and would otherwise squat
+# the "previous" slot ---------------------------------------------------------
+test_previous_marker_protects_against_orphaned_release() {
+  local root; root="$(make_fixture_root)"
+  make_release "$root" "$(fake_sha 1)" 100 # true previous known-good, older
+  make_release "$root" "$(fake_sha 2)" 50  # orphaned release, never activated, newer mtime
+  make_release "$root" "$(fake_sha 3)" 1   # current
+  set_current "$root" "$(fake_sha 3)"
+  set_previous_marker "$root" "$(fake_sha 1)"
+
+  run_cleanup "$root" 2
+
+  [ -d "$root/releases/$(fake_sha 1)" ] || fail "previous_marker_protects_against_orphaned_release: explicitly recorded previous known-good release was incorrectly deleted"
+  [ -d "$root/releases/$(fake_sha 3)" ] || fail "previous_marker_protects_against_orphaned_release: current release was incorrectly deleted"
+  [ -d "$root/releases/$(fake_sha 2)" ] && fail "previous_marker_protects_against_orphaned_release: orphaned release should have been removed"
+
+  rm -rf "$root"
+}
+
+# --- a corrupted previous-release marker (not a valid full SHA) is never
+# used to build a path -> cleanup refuses to run -----------------------------
+test_previous_marker_invalid_content_refuses_cleanup() {
+  local root; root="$(make_fixture_root)"
+  make_release "$root" "$(fake_sha 1)" 10
+  set_current "$root" "$(fake_sha 1)"
+  mkdir -p "$root/.deploy"
+  echo "not-a-sha" > "$root/.deploy/previous-release"
+
+  if run_cleanup "$root" 10; then
+    fail "previous_marker_invalid_content_refuses_cleanup: cleanup should refuse a corrupted previous-release marker"
+  fi
+  [ -d "$root/releases/$(fake_sha 1)" ] || fail "previous_marker_invalid_content_refuses_cleanup: release incorrectly deleted after refusal"
+
+  rm -rf "$root"
+}
+
+# --- a previous-release marker naming a release that no longer exists on
+# disk is non-fatal (nothing extra to protect) -------------------------------
+test_previous_marker_stale_target_is_non_fatal() {
+  local root; root="$(make_fixture_root)"
+  make_release "$root" "$(fake_sha 1)" 5
+  set_current "$root" "$(fake_sha 1)"
+  set_previous_marker "$root" "$(fake_sha 99)" # never created on disk
+
+  run_cleanup "$root" 10
+
+  [ -d "$root/releases/$(fake_sha 1)" ] || fail "previous_marker_stale_target_is_non_fatal: current release incorrectly deleted"
+
+  rm -rf "$root"
+}
+
 # --- cleanup is only ever invoked after a successful post-deploy health
 # check (contract test against deploy-release.sh's own call ordering) -------
 test_cleanup_only_called_after_health_check_in_deploy_script() {
@@ -175,6 +302,13 @@ test_current_among_older_timestamps
 test_previous_among_older_timestamps
 test_invalid_directory_names_ignored
 test_retention_below_two_is_normalized
+test_current_missing_refuses_cleanup
+test_current_broken_symlink_refuses_cleanup
+test_current_outside_releases_dir_refuses_cleanup
+test_current_relative_symlink_target
+test_previous_marker_protects_against_orphaned_release
+test_previous_marker_invalid_content_refuses_cleanup
+test_previous_marker_stale_target_is_non_fatal
 test_cleanup_only_called_after_health_check_in_deploy_script
 
 if [ "$FAILED" -ne 0 ]; then
