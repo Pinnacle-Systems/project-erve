@@ -4,7 +4,6 @@ import { DashboardPage } from '../pages/DashboardPage.js';
 import { ForbiddenPage } from '../pages/ForbiddenPage.js';
 import { LoginPage } from '../pages/LoginPage.js';
 import { FactoryListPage } from '../pages/master-data/FactoryListPage.js';
-import { MasterDataLayout } from '../pages/master-data/MasterDataLayout.js';
 import { ProcessFlowDetailPage } from '../pages/master-data/ProcessFlowDetailPage.js';
 import { ProcessFlowListPage } from '../pages/master-data/ProcessFlowListPage.js';
 import { SizeListPage } from '../pages/master-data/SizeListPage.js';
@@ -44,7 +43,7 @@ export function AppRoutes() {
         path="/master-data"
         element={
           <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER']}>
-            <MasterDataLayout />
+            <AppLayout />
           </RoleRoute>
         }
       >

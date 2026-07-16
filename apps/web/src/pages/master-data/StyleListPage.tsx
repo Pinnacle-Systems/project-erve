@@ -2,10 +2,9 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem, TextField } from '@erve/primitives';
-import { Card } from '@erve/layout';
-import { DataTable, LoadingState } from '@erve/data-display';
+import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
+import { Button } from '@erve/primitives';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { Status, Style } from './types.js';
 
@@ -34,16 +33,23 @@ export function StyleListPage() {
         }
       />
 
-      <Card className="rounded-md p-4">
-        <div className="grid gap-3 md:grid-cols-[1fr_180px]">
-          <TextField label="Search" value={search} onChange={(event) => setSearch(event.target.value)} width="fill" />
-          <SelectField label="Status" value={status || 'ALL'} onValueChange={(value) => setStatus(value === 'ALL' ? '' : (value as Status))} width="fill">
-            <SelectItem value="ALL">All</SelectItem>
-            <SelectItem value="ACTIVE">Active</SelectItem>
-            <SelectItem value="INACTIVE">Inactive</SelectItem>
-          </SelectField>
-        </div>
-      </Card>
+      <FilterBar
+        searchValue={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search styles"
+        statusOptions={[
+          { label: 'All statuses', value: 'ALL' },
+          { label: 'Active', value: 'ACTIVE' },
+          { label: 'Inactive', value: 'INACTIVE' },
+        ]}
+        statusValue={status || 'ALL'}
+        onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as Status))}
+        hasActiveFilters={Boolean(search || status)}
+        onClearFilters={() => {
+          setSearch('');
+          setStatus('');
+        }}
+      />
 
       <DataTable
         columns={[
@@ -73,7 +79,12 @@ export function StyleListPage() {
         data={stylesQuery.data ?? []}
         loading={stylesQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading styles" />}
-        emptyState="No styles found."
+        emptyState={<EmptyState title="No styles found" description="Style records will appear here." />}
+        error={
+          stylesQuery.isError ? (
+            <ErrorState title="Unable to load styles" description={stylesQuery.error.message} />
+          ) : undefined
+        }
       />
     </div>
   );

@@ -1,104 +1,44 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Button } from '@erve/primitives';
+import { Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.js';
-import { ThemeModeMenu } from '../theme/ThemeModeMenu.js';
+import { AppShell, type AppShellNavSection } from './AppShell.js';
 
 export function AppLayout() {
-  const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
   const canManagePOs = user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'DISTRIBUTOR'].includes(r)) ?? false;
-  const canViewMasterData = user?.roles.some((r) =>
-    ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER'].includes(r),
-  ) ?? false;
+  const canManageMasterData = user?.roles.some((r) => ['ADMIN', 'MERCHANDISER'].includes(r)) ?? false;
+  const canViewStyles = user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(r)) ?? false;
+  const canViewFactories = user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'FACTORY_USER'].includes(r)) ?? false;
   const canViewJobOrders = user?.roles.some((r) =>
     ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'].includes(r),
   ) ?? false;
 
+  const navSections: AppShellNavSection[] = [
+    {
+      items: [{ to: '/dashboard', label: 'Dashboard' }],
+    },
+    {
+      heading: 'Master Data',
+      items: [
+        ...(canViewStyles ? [{ to: '/master-data/styles', label: 'Styles' }] : []),
+        ...(canManageMasterData ? [{ to: '/master-data/sizes', label: 'Sizes' }] : []),
+        ...(canViewFactories ? [{ to: '/master-data/factories', label: 'Factories' }] : []),
+        ...(canManageMasterData ? [{ to: '/master-data/process-flows', label: 'Process Flows' }] : []),
+      ],
+    },
+    {
+      heading: 'Orders',
+      items: [
+        { to: '/purchase-orders', label: 'Purchase Orders', end: true },
+        ...(canManagePOs ? [{ to: '/purchase-orders/new', label: '+ New PO' }] : []),
+        ...(canViewJobOrders ? [{ to: '/job-orders', label: 'Job Orders' }] : []),
+      ],
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-background">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-border bg-surface px-5 py-6 md:block">
-        <NavLink to="/dashboard" className="flex items-center" aria-label="Erve dashboard">
-          <img src="/erve-logo.png" alt="Erve" className="h-8 w-auto" />
-        </NavLink>
-        <nav className="mt-8 space-y-1">
-          <NavLink
-            to="/dashboard"
-            className={({ isActive }) =>
-              `block rounded-md px-3 py-2 text-sm ${isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface-muted'}`
-            }
-          >
-            Dashboard
-          </NavLink>
-          {canViewMasterData && (
-            <NavLink
-              to="/master-data"
-              className={({ isActive }) =>
-                `block rounded-md px-3 py-2 text-sm ${isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface-muted'}`
-              }
-            >
-              Master Data
-            </NavLink>
-          )}
-          <div className="px-3 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Orders
-          </div>
-          <NavLink
-            to="/purchase-orders"
-            end
-            className={({ isActive }) =>
-              `block rounded-md px-3 py-2 text-sm ${isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface-muted'}`
-            }
-          >
-            Purchase Orders
-          </NavLink>
-          {canManagePOs && (
-            <NavLink
-              to="/purchase-orders/new"
-              className={({ isActive }) =>
-                `block rounded-md px-3 py-2 text-sm ${isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface-muted'}`
-              }
-            >
-              + New PO
-            </NavLink>
-          )}
-          {canViewJobOrders && (
-            <NavLink
-              to="/job-orders"
-              className={({ isActive }) =>
-                `block rounded-md px-3 py-2 text-sm ${isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface-muted'}`
-              }
-            >
-              Job Orders
-            </NavLink>
-          )}
-        </nav>
-      </aside>
-      <div className="md:pl-64">
-        <header className="sticky top-0 z-10 border-b border-border bg-surface/95 px-4 py-3 backdrop-blur-sm md:px-8">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-sm font-medium text-foreground">{user?.name}</div>
-              <div className="text-xs text-muted-foreground">{user?.roles.join(', ')}</div>
-            </div>
-            <div className="flex items-center gap-4">
-              <ThemeModeMenu />
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  await logout();
-                  navigate('/login');
-                }}
-              >
-                Log out
-              </Button>
-            </div>
-          </div>
-        </header>
-        <main className="px-4 py-6 md:px-8">
-          <Outlet />
-        </main>
-      </div>
-    </div>
+    <AppShell navSections={navSections}>
+      <Outlet />
+    </AppShell>
   );
 }
