@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
+import { ClipboardList, Hammer, LayoutDashboard } from 'lucide-react';
 import type { AuthUser } from '@erve/types';
 import { ThemeProvider } from '@erve/theme';
 import { apiClient } from '../lib/api-client.js';
@@ -30,12 +31,12 @@ class ResizeObserverStub {
 }
 
 const NAV_SECTIONS: AppShellNavSection[] = [
-  { items: [{ to: '/dashboard', label: 'Dashboard' }] },
+  { items: [{ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }] },
   {
     heading: 'Orders',
     items: [
-      { to: '/purchase-orders', label: 'Purchase Orders', end: true },
-      { to: '/job-orders', label: 'Job Orders' },
+      { to: '/purchase-orders', label: 'Purchase Orders', end: true, icon: ClipboardList },
+      { to: '/job-orders', label: 'Job Orders', icon: Hammer },
     ],
   },
 ];
@@ -178,5 +179,132 @@ describe('AppShell', () => {
     });
 
     expect(logoutCalls).toBe(1);
+  });
+
+  it('renders Pinnacle "Powered by" branding at the bottom of the expanded sidebar, subordinate to the Erve logo', async () => {
+    await renderShell();
+
+    expect(container.textContent).toContain('Powered by');
+    const pinnacleLogo = container.querySelector('img[alt=""]') as HTMLImageElement;
+    expect(pinnacleLogo).not.toBeNull();
+    expect(pinnacleLogo.getAttribute('src')).toBe('/pinnacle-logo-on-light.png');
+
+    const erveLogo = container.querySelector('img[alt="Erve"]') as HTMLImageElement;
+    // Structural, non-pixel-brittle check that Erve stays the visually
+    // larger/primary mark: its height utility class is a bigger Tailwind
+    // step than the Pinnacle row logo's.
+    expect(erveLogo.className).toContain('h-8');
+    expect(pinnacleLogo.className).toContain('h-6');
+  });
+
+  it('collapses the sidebar on toggle, persists the preference, and shows the compact branding treatment', async () => {
+    await renderShell();
+
+    const toggle = container.querySelector('button[aria-label="Collapse sidebar"]') as HTMLElement;
+    expect(toggle).not.toBeNull();
+
+    act(() => {
+      toggle.click();
+    });
+
+    const aside = container.querySelector('aside') as HTMLElement;
+    expect(aside.className).toContain('--erp-shell-sidebar-collapsed-width');
+    expect(localStorage.getItem('erve.sidebarCollapsed')).toBe('true');
+
+    // Row branding (visible "Powered by" text) is gone once collapsed...
+    const sidebarText = aside.textContent ?? '';
+    expect(sidebarText).not.toContain('Powered by');
+
+    // ...replaced by the compact, alt-text-only treatment, which remains
+    // fully accessible via its own alt attribute.
+    const compactLogo = aside.querySelector('img[alt="Powered by Pinnacle Systems"]');
+    expect(compactLogo).not.toBeNull();
+
+    const expandToggle = container.querySelector(
+      'button[aria-label="Expand sidebar"]',
+    ) as HTMLElement;
+    act(() => {
+      expandToggle.click();
+    });
+    expect(localStorage.getItem('erve.sidebarCollapsed')).toBe('false');
+    expect((container.querySelector('aside') as HTMLElement).className).not.toContain(
+      '--erp-shell-sidebar-collapsed-width',
+    );
+  });
+
+  it('keeps the full nav label available as the accessible name when the sidebar is collapsed', async () => {
+    await renderShell();
+
+    act(() => {
+      (container.querySelector('button[aria-label="Collapse sidebar"]') as HTMLElement).click();
+    });
+
+    // Scoped to <nav> specifically: the sidebar's Erve-logo link is also
+    // `to="/dashboard"` and precedes the nav in DOM order, but carries no
+    // text (just the logo image), so an unscoped selector would find it
+    // instead of the actual nav item.
+    const dashboardLink = container.querySelector('aside nav a[href="/dashboard"]');
+    expect(dashboardLink?.getAttribute('aria-label')).toBe('Dashboard');
+    expect(dashboardLink?.querySelector('span')?.className).toContain('max-w-0');
+    expect(dashboardLink?.querySelector('span')?.className).toContain('whitespace-nowrap');
+  });
+
+  it('shows a decorative icon (not text initials) for every nav item once collapsed', async () => {
+    await renderShell();
+
+    act(() => {
+      (container.querySelector('button[aria-label="Collapse sidebar"]') as HTMLElement).click();
+    });
+
+    const navLinks = container.querySelectorAll('aside nav a');
+    expect(navLinks).toHaveLength(NAV_SECTIONS.flatMap((section) => section.items).length);
+    navLinks.forEach((link) => {
+      const icon = link.querySelector('svg[aria-hidden="true"]');
+      expect(icon).not.toBeNull();
+      // The full label remains in a clipped, non-wrapping wrapper while
+      // aria-label supplies the accessible name throughout the transition.
+      const label = link.querySelector('span[aria-hidden="true"]');
+      expect(label).not.toBeNull();
+      expect(label?.className).toContain('max-w-0');
+      expect(link.getAttribute('aria-label')).toBe(label?.textContent);
+    });
+  });
+
+  it('uses fixed shared nav geometry and scopes scrolling to the navigation region', async () => {
+    await renderShell();
+
+    const aside = container.querySelector('aside') as HTMLElement;
+    const nav = aside.querySelector('nav') as HTMLElement;
+    const heading = Array.from(nav.querySelectorAll('div')).find(
+      (element) => element.textContent === 'Orders',
+    ) as HTMLElement;
+    const expandedLinks = Array.from(nav.querySelectorAll('a'));
+
+    expect(aside.className).toContain('overflow-hidden');
+    expect(nav.className).toContain('min-h-0');
+    expect(nav.className).toContain('overflow-y-auto');
+    expect(nav.className).toContain('overflow-x-hidden');
+    expect(heading.className).toContain('h-9');
+    expandedLinks.forEach((link) => expect(link.className).toContain('h-10'));
+
+    act(() => {
+      (container.querySelector('button[aria-label="Collapse sidebar"]') as HTMLElement).click();
+    });
+
+    expect(heading.className).toContain('h-9');
+    expect(heading.className).toContain('invisible');
+    Array.from(nav.querySelectorAll('a')).forEach((link) => {
+      expect(link.className).toContain('h-10');
+      expect(link.className).toContain('justify-center');
+    });
+  });
+
+  it('starts collapsed when localStorage has a persisted collapsed preference', async () => {
+    localStorage.setItem('erve.sidebarCollapsed', 'true');
+    await renderShell();
+
+    const aside = container.querySelector('aside') as HTMLElement;
+    expect(aside.className).toContain('--erp-shell-sidebar-collapsed-width');
+    expect(container.querySelector('button[aria-label="Expand sidebar"]')).not.toBeNull();
   });
 });

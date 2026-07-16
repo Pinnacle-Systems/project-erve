@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom';
+import { CirclePlus, ClipboardList, Factory, Hammer, LayoutDashboard, Ruler, Shirt, Workflow } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext.js';
 import { AppShell, type AppShellNavSection } from './AppShell.js';
 
@@ -15,23 +16,25 @@ export function AppLayout() {
 
   const navSections: AppShellNavSection[] = [
     {
-      items: [{ to: '/dashboard', label: 'Dashboard' }],
+      items: [{ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }],
     },
     {
       heading: 'Master Data',
       items: [
-        ...(canViewStyles ? [{ to: '/master-data/styles', label: 'Styles' }] : []),
-        ...(canManageMasterData ? [{ to: '/master-data/sizes', label: 'Sizes' }] : []),
-        ...(canViewFactories ? [{ to: '/master-data/factories', label: 'Factories' }] : []),
-        ...(canManageMasterData ? [{ to: '/master-data/process-flows', label: 'Process Flows' }] : []),
+        ...(canViewStyles ? [{ to: '/master-data/styles', label: 'Styles', icon: Shirt }] : []),
+        ...(canManageMasterData ? [{ to: '/master-data/sizes', label: 'Sizes', icon: Ruler }] : []),
+        ...(canViewFactories ? [{ to: '/master-data/factories', label: 'Factories', icon: Factory }] : []),
+        ...(canManageMasterData
+          ? [{ to: '/master-data/process-flows', label: 'Process Flows', icon: Workflow }]
+          : []),
       ],
     },
     {
       heading: 'Orders',
       items: [
-        { to: '/purchase-orders', label: 'Purchase Orders', end: true },
-        ...(canManagePOs ? [{ to: '/purchase-orders/new', label: '+ New PO' }] : []),
-        ...(canViewJobOrders ? [{ to: '/job-orders', label: 'Job Orders' }] : []),
+        { to: '/purchase-orders', label: 'Purchase Orders', end: true, icon: ClipboardList },
+        ...(canManagePOs ? [{ to: '/purchase-orders/new', label: '+ New PO', icon: CirclePlus }] : []),
+        ...(canViewJobOrders ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }] : []),
       ],
     },
   ];
