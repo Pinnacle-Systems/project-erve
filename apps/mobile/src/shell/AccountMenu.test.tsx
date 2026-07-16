@@ -187,4 +187,24 @@ describe('AccountMenu', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(logoutCalls).toBe(0);
   });
+
+  it('renders "Powered by" Pinnacle branding as the last section, after Log out', async () => {
+    await renderAccountMenu();
+    openSheet();
+
+    const sheet = document.body.querySelector('[role="dialog"]') as HTMLElement;
+    expect(sheet.textContent).toContain('Powered by');
+
+    const logoutButton = Array.from(sheet.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Log out',
+    ) as HTMLElement;
+    const pinnacleLogo = sheet.querySelector('img[alt=""]') as HTMLElement;
+    expect(logoutButton).toBeDefined();
+    expect(pinnacleLogo).not.toBeNull();
+
+    // DOCUMENT_POSITION_FOLLOWING (4) means logoutButton comes before pinnacleLogo in DOM order.
+    expect(
+      logoutButton.compareDocumentPosition(pinnacleLogo) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });

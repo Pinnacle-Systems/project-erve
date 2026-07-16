@@ -23,6 +23,44 @@ edit the files here and rerun the generator.
   exists anywhere in the repo, so this raster extraction is the best
   available source per the asset-quality rule: vector > high-res mark
   extracted from the full logo > upscaled favicon.
+- `pinnacle-logo-on-dark.png` / `pinnacle-logo-on-light.png` — "Powered by
+  Pinnacle Systems" provider-branding lockups, duplicated byte-for-byte from
+  `apps/web/public/pinnacle-logo-on-dark.png` /
+  `apps/web/public/pinnacle-logo-on-light.png` (13971×3766, RGBA, wide
+  wordmark lockup, transparent background). `-on-dark` has light/white
+  lettering and is used when `useTheme().resolvedTheme === "dark"`;
+  `-on-light` has dark/black lettering and is used when `resolvedTheme ===
+  "light"`. Supplied directly by the brand owner (not generated); do not
+  crop, recolor, or regenerate. Used via the shared
+  `PoweredByPinnacle`/`PoweredByPinnacleBranding` components' "row" variant
+  (visible "Powered by" label + full lockup), not the Android
+  launcher/splash pipeline below.
+- `pinnacle-mark-on-dark.png` / `pinnacle-mark-on-light.png` — the
+  standalone triangular Pinnacle mark only (no "PINNACLE Systems"
+  wordmark), duplicated byte-for-byte from
+  `apps/web/public/pinnacle-mark-on-dark.png` /
+  `apps/web/public/pinnacle-mark-on-light.png` (512×446, RGBA, transparent
+  background). Brand-owner-supplied square mark exports (not cropped out of
+  the wide `pinnacle-logo-on-*.png` lockups — the full wordmark stops being
+  legible once scaled down much below its native footprint, so a separate
+  purpose-built mark asset is used instead of a shrunk copy of the lockup).
+  Sourced from two owner-supplied originals distinguished by which color
+  fills the triangle's solid bars (the diagonal orange accent strokes are
+  the same in both): the file with **white** bars is the dark-background
+  version (`-on-dark`, used when `useTheme().resolvedTheme === "dark"`);
+  the file with **black** bars is the light-background version (`-on-light`,
+  used when `resolvedTheme === "light"`) — verify by sampling a bar pixel's
+  RGB if re-deriving these, since the owner's own filenames for the two
+  originals don't reliably indicate which is which. Each was tight-cropped
+  to its non-transparent bounding box (dropping incidental export padding)
+  and downscaled from its ~3500px-square original to 512px wide (both
+  variants resized to the identical 512×446 box so swapping theme doesn't
+  shift the image's footprint by a stray pixel) — 512px is comfortably
+  above any rendered size this mark is used at, even at high-DPI. Used via
+  the shared `PoweredByPinnacle`/`PoweredByPinnacleBranding` components'
+  "compact" variant (collapsed sidebar and any other icon-only slot). Do
+  not recolor; re-derive from updated owner originals with the same
+  crop/resize recipe if the source mark ever changes.
 
 ## Generation
 

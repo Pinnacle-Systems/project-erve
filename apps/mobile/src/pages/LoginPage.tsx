@@ -6,6 +6,7 @@ import type { ApiSuccessResponse, LoginResponse } from '@erve/types';
 import { apiClient } from '../lib/api-client.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { LoginForm, type LoginFormValues } from '../components/LoginForm.js';
+import { PoweredByPinnacleBranding } from '../branding/PoweredByPinnacleBranding.js';
 import erveLogo from '../../branding/erve-logo.png';
 
 export function LoginPage() {
@@ -46,6 +47,9 @@ export function LoginPage() {
           />
         </Card>
       </div>
+      <footer className="flex items-center justify-center gap-2 border-t border-border px-6 py-6">
+        <PoweredByPinnacleBranding className="justify-center" logoClassName="h-8" />
+      </footer>
     </div>
   );
 }

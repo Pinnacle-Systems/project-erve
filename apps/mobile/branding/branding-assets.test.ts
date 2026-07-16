@@ -45,6 +45,47 @@ describe('canonical branding source assets', () => {
     expect(meta.width).toBeGreaterThanOrEqual(150);
     expect(meta.height).toBeGreaterThanOrEqual(100);
   });
+
+  it('pinnacle-logo-on-dark.png (mobile) is byte-identical to the web asset it was duplicated from', () => {
+    const mobileFile = readFileSync(path.join(MOBILE_ROOT, 'branding', 'pinnacle-logo-on-dark.png'));
+    const webFile = readFileSync(path.join(REPO_ROOT, 'apps', 'web', 'public', 'pinnacle-logo-on-dark.png'));
+    expect(mobileFile.equals(webFile)).toBe(true);
+  });
+
+  it('pinnacle-logo-on-light.png (mobile) is byte-identical to the web asset it was duplicated from', () => {
+    const mobileFile = readFileSync(path.join(MOBILE_ROOT, 'branding', 'pinnacle-logo-on-light.png'));
+    const webFile = readFileSync(path.join(REPO_ROOT, 'apps', 'web', 'public', 'pinnacle-logo-on-light.png'));
+    expect(mobileFile.equals(webFile)).toBe(true);
+  });
+
+  it('pinnacle-mark-on-dark.png (mobile) is byte-identical to the web asset it was duplicated from', () => {
+    const mobileFile = readFileSync(path.join(MOBILE_ROOT, 'branding', 'pinnacle-mark-on-dark.png'));
+    const webFile = readFileSync(path.join(REPO_ROOT, 'apps', 'web', 'public', 'pinnacle-mark-on-dark.png'));
+    expect(mobileFile.equals(webFile)).toBe(true);
+  });
+
+  it('pinnacle-mark-on-light.png (mobile) is byte-identical to the web asset it was duplicated from', () => {
+    const mobileFile = readFileSync(path.join(MOBILE_ROOT, 'branding', 'pinnacle-mark-on-light.png'));
+    const webFile = readFileSync(path.join(REPO_ROOT, 'apps', 'web', 'public', 'pinnacle-mark-on-light.png'));
+    expect(mobileFile.equals(webFile)).toBe(true);
+  });
+
+  it.each(['pinnacle-mark-on-dark.png', 'pinnacle-mark-on-light.png'])(
+    '%s is a transparent, non-trivial-resolution extraction distinct from the full lockup',
+    async (file) => {
+      const markMeta = await sharp(path.join(MOBILE_ROOT, 'branding', file)).metadata();
+      expect(markMeta.hasAlpha).toBe(true);
+      expect(markMeta.width).toBeGreaterThanOrEqual(150);
+      expect(markMeta.height).toBeGreaterThanOrEqual(100);
+      expect(await cornerAlpha(path.join(MOBILE_ROOT, 'branding', file))).toBe(0);
+
+      // The mark must be the cropped triangular motif, not the same asset as
+      // the full "PINNACLE Systems" wordmark lockup it was extracted from.
+      const logoFile = file.replace('pinnacle-mark-', 'pinnacle-logo-');
+      const logoMeta = await sharp(path.join(MOBILE_ROOT, 'branding', logoFile)).metadata();
+      expect(markMeta.width).toBeLessThan(logoMeta.width!);
+    },
+  );
 });
 
 describe('Android adaptive launcher icon resources', () => {

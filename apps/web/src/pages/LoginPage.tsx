@@ -7,6 +7,7 @@ import { Card } from '@erve/layout';
 import type { ApiSuccessResponse, LoginResponse } from '@erve/types';
 import { apiClient } from '../lib/api-client.js';
 import { useAuth } from '../auth/AuthContext.js';
+import { PoweredByPinnacleBranding } from '../branding/PoweredByPinnacleBranding.js';
 
 interface LoginFormValues {
   identifier: string;
@@ -40,41 +41,46 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--erp-color-app-bg)] px-4 py-12">
-      <div className="w-full max-w-md">
-        <div className="mb-8 text-center">
-          <img src="/erve-logo.png" alt="Erve" className="mx-auto h-14 w-auto max-w-full" />
-          <p className="mt-2 text-sm text-muted-foreground">Sign in to your distributor account</p>
+    <div className="flex min-h-screen flex-col bg-[var(--erp-color-app-bg)]">
+      <div className="flex flex-1 items-center justify-center px-4 py-12">
+        <div className="w-full min-w-0 max-w-md">
+          <div className="mb-8 text-center">
+            <img src="/erve-logo.png" alt="Erve" className="mx-auto h-auto w-full max-w-full" />
+            <p className="mt-2 text-sm text-muted-foreground">Sign in to your distributor account</p>
+          </div>
+          <Card>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <TextField
+                id="identifier"
+                type="text"
+                label="Email or mobile number"
+                autoComplete="username"
+                value={values.identifier}
+                onChange={(event) => setValues((current) => ({ ...current, identifier: event.target.value }))}
+                required
+                width="fill"
+              />
+              <TextField
+                id="password"
+                type="password"
+                label="Password"
+                autoComplete="current-password"
+                value={values.password}
+                onChange={(event) => setValues((current) => ({ ...current, password: event.target.value }))}
+                required
+                width="fill"
+              />
+              {errorMessage ? <ValidationMessage tone="error">{errorMessage}</ValidationMessage> : null}
+              <Button type="submit" loading={mutation.isPending} disabled={mutation.isPending} width="fill">
+                Sign in
+              </Button>
+            </form>
+          </Card>
         </div>
-        <Card>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <TextField
-              id="identifier"
-              type="text"
-              label="Email or mobile number"
-              autoComplete="username"
-              value={values.identifier}
-              onChange={(event) => setValues((current) => ({ ...current, identifier: event.target.value }))}
-              required
-              width="fill"
-            />
-            <TextField
-              id="password"
-              type="password"
-              label="Password"
-              autoComplete="current-password"
-              value={values.password}
-              onChange={(event) => setValues((current) => ({ ...current, password: event.target.value }))}
-              required
-              width="fill"
-            />
-            {errorMessage ? <ValidationMessage tone="error">{errorMessage}</ValidationMessage> : null}
-            <Button type="submit" loading={mutation.isPending} disabled={mutation.isPending} width="fill">
-              Sign in
-            </Button>
-          </form>
-        </Card>
       </div>
+      <footer className="flex items-center justify-center gap-2 border-t border-border px-4 py-6">
+        <PoweredByPinnacleBranding className="justify-center" logoClassName="h-8" />
+      </footer>
     </div>
   );
 }
