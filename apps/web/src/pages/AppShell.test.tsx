@@ -75,6 +75,14 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+// Radix's DropdownMenuTrigger opens on `pointerdown`, not `click` — a plain
+// `.click()` (a synthetic "click" event only) never triggers it in jsdom.
+function firePointerDown(element: HTMLElement): void {
+  element.dispatchEvent(
+    new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }),
+  );
+}
+
 async function renderShell(navSections: AppShellNavSection[] = NAV_SECTIONS): Promise<void> {
   setStoredToken('valid-token');
   apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
@@ -140,12 +148,18 @@ describe('AppShell', () => {
     await renderShell();
 
     act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
+      firePointerDown(container.querySelector('button[aria-label^="Theme:"]') as HTMLElement);
+    });
+    act(() => {
+      (document.body.querySelector('#theme-mode-dark') as HTMLElement).click();
     });
     expect(document.documentElement.classList.contains('dark')).toBe(true);
 
     act(() => {
-      (container.querySelector('#theme-mode-light') as HTMLElement).click();
+      firePointerDown(container.querySelector('button[aria-label^="Theme:"]') as HTMLElement);
+    });
+    act(() => {
+      (document.body.querySelector('#theme-mode-light') as HTMLElement).click();
     });
     expect(document.documentElement.classList.contains('dark')).toBe(false);
   });

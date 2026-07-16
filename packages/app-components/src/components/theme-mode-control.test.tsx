@@ -11,8 +11,12 @@ import { ThemeModeControl, type ThemeModeControlValue } from "./theme-mode-contr
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function flushTimers(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+/** DropdownMenu positions itself via Radix Popper, which calls
+ * ResizeObserver — unimplemented in jsdom. */
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
 }
 
 let container: HTMLDivElement;
@@ -30,7 +34,22 @@ function renderControl(
   });
 }
 
+// Radix's DropdownMenuTrigger opens on `pointerdown`, not `click` — a plain
+// `.click()` (a synthetic "click" event only) never triggers it in jsdom.
+function firePointerDown(element: HTMLElement): void {
+  element.dispatchEvent(
+    new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }),
+  );
+}
+
+function openMenu(): void {
+  act(() => {
+    firePointerDown(container.querySelector("button") as HTMLElement);
+  });
+}
+
 beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -41,29 +60,43 @@ afterEach(() => {
     root.unmount();
   });
   container.remove();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("ThemeModeControl", () => {
-  it("renders all three options", () => {
-    renderControl("light", vi.fn());
-    const radios = container.querySelectorAll('[role="radio"]');
-    expect(radios).toHaveLength(3);
+  it("renders a single trigger button labeled with the active mode", () => {
+    renderControl("dark", vi.fn());
+    const trigger = container.querySelector("button") as HTMLElement;
+    expect(trigger).not.toBeNull();
+    expect(trigger.getAttribute("aria-label")).toBe("Theme: Dark");
   });
 
-  it("marks the current value as selected", () => {
+  it("opens a menu with all three options on click", () => {
+    renderControl("light", vi.fn());
+    openMenu();
+
+    const options = document.body.querySelectorAll('[role="menuitemradio"]');
+    expect(options).toHaveLength(3);
+  });
+
+  it("marks the current value as checked", () => {
     renderControl("dark", vi.fn());
-    const darkRadio = container.querySelector('#theme-mode-dark');
-    const lightRadio = container.querySelector('#theme-mode-light');
-    expect(darkRadio?.getAttribute("aria-checked")).toBe("true");
-    expect(lightRadio?.getAttribute("aria-checked")).toBe("false");
+    openMenu();
+
+    const darkOption = document.body.querySelector("#theme-mode-dark");
+    const lightOption = document.body.querySelector("#theme-mode-light");
+    expect(darkOption?.getAttribute("aria-checked")).toBe("true");
+    expect(lightOption?.getAttribute("aria-checked")).toBe("false");
   });
 
   it("invokes onValueChange with 'dark' when the dark option is selected", () => {
     const onValueChange = vi.fn();
     renderControl("light", onValueChange);
+    openMenu();
 
     act(() => {
-      (container.querySelector("#theme-mode-dark") as HTMLElement).click();
+      (document.body.querySelector("#theme-mode-dark") as HTMLElement).click();
     });
 
     expect(onValueChange).toHaveBeenCalledWith("dark");
@@ -72,9 +105,10 @@ describe("ThemeModeControl", () => {
   it("invokes onValueChange with 'system' when 'Use device setting' is selected", () => {
     const onValueChange = vi.fn();
     renderControl("light", onValueChange);
+    openMenu();
 
     act(() => {
-      (container.querySelector("#theme-mode-system") as HTMLElement).click();
+      (document.body.querySelector("#theme-mode-system") as HTMLElement).click();
     });
 
     expect(onValueChange).toHaveBeenCalledWith("system");
@@ -83,53 +117,27 @@ describe("ThemeModeControl", () => {
   it("invokes onValueChange with 'light' when the light option is selected", () => {
     const onValueChange = vi.fn();
     renderControl("dark", onValueChange);
+    openMenu();
 
     act(() => {
-      (container.querySelector("#theme-mode-light") as HTMLElement).click();
+      (document.body.querySelector("#theme-mode-light") as HTMLElement).click();
     });
 
     expect(onValueChange).toHaveBeenCalledWith("light");
   });
 
-  it("supports keyboard interaction via the underlying RadioGroup's roving focus", async () => {
-    const onValueChange = vi.fn();
-    renderControl("light", onValueChange);
-
-    const lightRadio = container.querySelector("#theme-mode-light") as HTMLElement;
-    act(() => {
-      lightRadio.focus();
-    });
-    expect(document.activeElement).toBe(lightRadio);
-
-    act(() => {
-      lightRadio.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
-      );
-    });
-    // Radix's roving-focus group moves focus via an internal `setTimeout`,
-    // not synchronously within the keydown handler — flush it before
-    // asserting. Selection follows focus per the WAI-ARIA radio group
-    // pattern (Radix selects the newly-focused radio automatically).
-    await act(async () => {
-      await flushTimers();
-    });
-
-    expect(onValueChange).toHaveBeenCalledWith("dark");
-  });
-
-  it("shows the systemCaption text under the system option", () => {
+  it("shows the systemCaption text under the system option, inside the menu only", () => {
     renderControl("system", vi.fn(), { systemCaption: "Currently dark" });
-    expect(container.textContent).toContain("Currently dark");
+    expect(container.textContent).not.toContain("Currently dark");
+
+    openMenu();
+    expect(document.body.textContent).toContain("Currently dark");
   });
 
-  it("renders the disabled state on every option", () => {
+  it("disables the trigger when disabled is set", () => {
     renderControl("light", vi.fn(), { disabled: true });
-    const radios = container.querySelectorAll('[role="radio"]');
-    radios.forEach((radio) => {
-      expect(radio.hasAttribute("disabled") || radio.getAttribute("data-disabled") !== null).toBe(
-        true,
-      );
-    });
+    const trigger = container.querySelector("button") as HTMLButtonElement;
+    expect(trigger.disabled).toBe(true);
   });
 
   it("has no direct import dependency on @erve/theme", () => {

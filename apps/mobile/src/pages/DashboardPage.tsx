@@ -1,5 +1,4 @@
 import { Card } from '@erve/layout';
-import { ThemeModeMenu } from '../theme/ThemeModeMenu.js';
 
 export function DashboardPage() {
   return (
@@ -9,10 +8,6 @@ export function DashboardPage() {
         <p className="mt-2 text-sm text-muted-foreground">
           Inventory and dispatch tracking features will appear here.
         </p>
-      </Card>
-      <Card className="mt-4">
-        <h2 className="text-sm font-semibold text-foreground">Preferences</h2>
-        <ThemeModeMenu />
       </Card>
     </div>
   );

@@ -16,7 +16,7 @@ vi.mock('./lib/api-client.js', () => ({
 import { AuthProvider, useAuth } from './auth/AuthContext.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
-import { ThemeModeMenu } from './theme/ThemeModeMenu.js';
+import { ThemeModeSelector } from './theme/ThemeModeSelector.js';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -85,7 +85,9 @@ describe('Mobile App — theme applies without an explicit colorMode prop', () =
     expect(container.innerHTML).not.toMatch(/bg-gray-50|text-gray-900|text-gray-500/);
   });
 
-  it('the shared ThemeModeControl is reachable on the dashboard', () => {
+  it('does not render a Preferences section or inline theme selector on the dashboard', () => {
+    // Theme selection moved to the authenticated shell's account menu — the
+    // dashboard is page content and must not duplicate it.
     act(() => {
       root.render(
         <ThemeProvider theme="default" density="comfortable">
@@ -94,7 +96,8 @@ describe('Mobile App — theme applies without an explicit colorMode prop', () =
       );
     });
 
-    expect(container.querySelectorAll('[role="radio"]')).toHaveLength(3);
+    expect(container.textContent).not.toContain('Preferences');
+    expect(container.querySelectorAll('[role="radio"]')).toHaveLength(0);
   });
 });
 
@@ -131,7 +134,7 @@ describe('Mobile App — theme switching does not disturb unrelated app state', 
           <AuthProvider>
             <QueryClientProbe onClient={onClient} />
             <AuthStatusProbe onStatus={onStatus} />
-            <ThemeModeMenu />
+            <ThemeModeSelector />
           </AuthProvider>
         </QueryClientProvider>
       </ThemeProvider>

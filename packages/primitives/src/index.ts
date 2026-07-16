@@ -24,6 +24,7 @@ export {
   DialogTitle,
   DialogTrigger,
 } from "./components/dialog";
+export type { DialogContentProps, DialogContentVariant } from "./components/dialog";
 
 export {
   Tooltip,
@@ -39,6 +40,8 @@ export {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuPortal,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubTrigger,

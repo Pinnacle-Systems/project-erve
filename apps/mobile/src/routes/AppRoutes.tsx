@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { ROLES } from '@erve/types';
 import { DashboardPage } from '../pages/DashboardPage.js';
 import { LoginPage } from '../pages/LoginPage.js';
+import { AuthenticatedShell } from '../shell/AuthenticatedShell.js';
 import { RoleRoute } from './RoleRoute.js';
 
 export function AppRoutes() {
@@ -9,13 +10,14 @@ export function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route
-        path="/dashboard"
         element={
           <RoleRoute allowed={ROLES}>
-            <DashboardPage />
+            <AuthenticatedShell />
           </RoleRoute>
         }
-      />
+      >
+        <Route path="/dashboard" element={<DashboardPage />} />
+      </Route>
       <Route path="/" element={<Navigate to="/login" replace />} />
     </Routes>
   );

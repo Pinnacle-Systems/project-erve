@@ -44,3 +44,6 @@ export type { TotalsPanelProps, TotalsPanelItem } from "./components/totals-pane
 
 export { ThemeModeControl } from "./components/theme-mode-control";
 export type { ThemeModeControlProps, ThemeModeControlValue } from "./components/theme-mode-control";
+
+export { ThemeModeRadioList } from "./components/theme-mode-radio-list";
+export type { ThemeModeRadioListProps } from "./components/theme-mode-radio-list";

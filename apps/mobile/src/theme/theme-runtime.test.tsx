@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '@erve/theme';
 
-import { ThemeModeMenu } from './ThemeModeMenu.js';
+import { ThemeModeSelector } from './ThemeModeSelector.js';
 
 const STORAGE_KEY = 'erve.themePreference';
 
@@ -71,9 +71,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// ThemeModeSelector renders inline (no popover to open first), unlike web's
+// ThemeModeMenu — so options are directly clickable in the same container.
+function selectThemeOption(mode: 'light' | 'dark' | 'system'): void {
+  act(() => {
+    (container.querySelector(`#theme-mode-${mode}`) as HTMLElement).click();
+  });
+}
+
 function checkedRadio(): string | null {
   const checked = container.querySelector('[role="radio"][aria-checked="true"]');
-  return checked?.getAttribute('value') ?? null;
+  return checked?.id.replace(/^theme-mode-/, '') ?? null;
 }
 
 /** Mirrors apps/mobile's real App.tsx wiring: an uncontrolled ThemeProvider
@@ -83,7 +91,7 @@ function checkedRadio(): string | null {
 function Harness() {
   return (
     <ThemeProvider theme="default" density="comfortable">
-      <ThemeModeMenu />
+      <ThemeModeSelector />
     </ThemeProvider>
   );
 }
@@ -138,9 +146,7 @@ describe('Mobile theme runtime — runtime switching', () => {
     window.localStorage.setItem(STORAGE_KEY, 'light');
     render(<Harness />);
 
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
 
     expect(document.documentElement.classList.contains('dark')).toBe(true);
     expect(document.documentElement.style.colorScheme).toBe('dark');
@@ -150,9 +156,7 @@ describe('Mobile theme runtime — runtime switching', () => {
     window.localStorage.setItem(STORAGE_KEY, 'dark');
     render(<Harness />);
 
-    act(() => {
-      (container.querySelector('#theme-mode-light') as HTMLElement).click();
-    });
+    selectThemeOption('light');
 
     expect(document.documentElement.classList.contains('dark')).toBe(false);
     expect(document.documentElement.style.colorScheme).toBe('light');
@@ -187,17 +191,13 @@ describe('Mobile theme runtime — runtime switching', () => {
 describe('Mobile theme runtime — persistence', () => {
   it('selecting dark stores "dark"', () => {
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
   });
 
   it('a fresh mount ("app restart") picks up the persisted selection', () => {
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
 
     act(() => {
@@ -214,17 +214,13 @@ describe('Mobile theme runtime — persistence', () => {
 describe('Mobile theme runtime — DOM markers', () => {
   it('toggles .dark correctly', () => {
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
     expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
 
   it('data-color-mode reflects the SELECTED mode (may be "system")', () => {
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-system') as HTMLElement).click();
-    });
+    selectThemeOption('system');
     expect(document.documentElement.getAttribute('data-color-mode')).toBe('system');
   });
 
@@ -294,14 +290,12 @@ describe('Mobile theme runtime — no full remount on theme change', () => {
     render(
       <ThemeProvider theme="default" density="comfortable">
         <Sentinel />
-        <ThemeModeMenu />
+        <ThemeModeSelector />
       </ThemeProvider>,
     );
     expect(mountEffectCount).toBe(1);
 
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
 
     expect(mountEffectCount).toBe(1);
   });

@@ -106,9 +106,39 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// Radix's DropdownMenuTrigger opens on `pointerdown`, not `click` — a plain
+// `.click()` (a synthetic "click" event only) never triggers it in jsdom.
+function firePointerDown(element: HTMLElement): void {
+  element.dispatchEvent(
+    new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }),
+  );
+}
+
+function openThemeMenu(): void {
+  act(() => {
+    firePointerDown(container.querySelector('button[aria-label^="Theme:"]') as HTMLElement);
+  });
+}
+
+function selectThemeOption(mode: 'light' | 'dark' | 'system'): void {
+  openThemeMenu();
+  act(() => {
+    (document.body.querySelector(`#theme-mode-${mode}`) as HTMLElement).click();
+  });
+}
+
 function checkedRadio(): string | null {
-  const checked = container.querySelector('[role="radio"][aria-checked="true"]');
-  return checked?.getAttribute('value') ?? null;
+  openThemeMenu();
+  const checked = document.body.querySelector('[role="menuitemradio"][aria-checked="true"]');
+  // Radix's RadioItem doesn't forward `value` onto the DOM node, so recover
+  // it from the stable `id="theme-mode-{value}"` set on each option instead.
+  const value = checked?.id.replace(/^theme-mode-/, '') ?? null;
+  // Close the menu again so it doesn't linger open for the assertions/clicks
+  // that follow this helper call.
+  act(() => {
+    firePointerDown(container.querySelector('button[aria-label^="Theme:"]') as HTMLElement);
+  });
+  return value;
 }
 
 describe('Web theme runtime — initial mode', () => {
@@ -168,9 +198,7 @@ describe('Web theme runtime — runtime switching', () => {
     window.localStorage.setItem(STORAGE_KEY, 'light');
     render(<Harness />);
 
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
 
     expect(document.documentElement.classList.contains('dark')).toBe(true);
     expect(document.documentElement.style.colorScheme).toBe('dark');
@@ -180,9 +208,7 @@ describe('Web theme runtime — runtime switching', () => {
     window.localStorage.setItem(STORAGE_KEY, 'dark');
     render(<Harness />);
 
-    act(() => {
-      (container.querySelector('#theme-mode-light') as HTMLElement).click();
-    });
+    selectThemeOption('light');
 
     expect(document.documentElement.classList.contains('dark')).toBe(false);
     expect(document.documentElement.style.colorScheme).toBe('light');
@@ -194,9 +220,7 @@ describe('Web theme runtime — runtime switching', () => {
     render(<Harness />);
     expect(document.documentElement.classList.contains('dark')).toBe(false);
 
-    act(() => {
-      (container.querySelector('#theme-mode-system') as HTMLElement).click();
-    });
+    selectThemeOption('system');
 
     expect(checkedRadio()).toBe('system');
     expect(document.documentElement.classList.contains('dark')).toBe(true); // follows mql (true)
@@ -232,34 +256,26 @@ describe('Web theme runtime — runtime switching', () => {
 describe('Web theme runtime — persistence', () => {
   it('selecting light stores "light"', () => {
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-light') as HTMLElement).click();
-    });
+    selectThemeOption('light');
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('light');
   });
 
   it('selecting dark stores "dark"', () => {
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
   });
 
   it('selecting system stores "system"', () => {
     window.localStorage.setItem(STORAGE_KEY, 'light');
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-system') as HTMLElement).click();
-    });
+    selectThemeOption('system');
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('system');
   });
 
   it('a fresh mount ("reload") picks up the persisted selection', () => {
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
 
     act(() => {
@@ -276,21 +292,15 @@ describe('Web theme runtime — persistence', () => {
 describe('Web theme runtime — DOM markers', () => {
   it('toggles .dark correctly', () => {
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
     expect(document.documentElement.classList.contains('dark')).toBe(true);
-    act(() => {
-      (container.querySelector('#theme-mode-light') as HTMLElement).click();
-    });
+    selectThemeOption('light');
     expect(document.documentElement.classList.contains('dark')).toBe(false);
   });
 
   it('data-color-mode reflects the SELECTED mode (may be "system"), matching the documented ThemeProvider contract', () => {
     render(<Harness />);
-    act(() => {
-      (container.querySelector('#theme-mode-system') as HTMLElement).click();
-    });
+    selectThemeOption('system');
     expect(document.documentElement.getAttribute('data-color-mode')).toBe('system');
   });
 
@@ -400,12 +410,13 @@ describe('Web theme runtime — selector', () => {
     window.localStorage.setItem(STORAGE_KEY, 'system');
     const mql = stubMatchMedia(false);
     render(<Harness />);
-    expect(container.textContent).toContain('Currently light');
+    openThemeMenu();
+    expect(document.body.textContent).toContain('Currently light');
 
     act(() => {
       mql.emit(true);
     });
-    expect(container.textContent).toContain('Currently dark');
+    expect(document.body.textContent).toContain('Currently dark');
   });
 });
 
@@ -431,9 +442,7 @@ describe('Web theme runtime — no full remount on theme change', () => {
     );
     expect(mountEffectCount).toBe(1);
 
-    act(() => {
-      (container.querySelector('#theme-mode-dark') as HTMLElement).click();
-    });
+    selectThemeOption('dark');
 
     expect(mountEffectCount).toBe(1);
   });
