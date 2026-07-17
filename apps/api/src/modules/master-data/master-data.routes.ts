@@ -4,6 +4,7 @@ import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
 import {
+  createDistributorSchema,
   createFactorySchema,
   createProcessFlowSchema,
   createProcessFlowVersionSchema,
@@ -13,6 +14,8 @@ import {
   listStylesQuerySchema,
   styleFactorySchema,
   styleSizeSchema,
+  updateDistributorSchema,
+  updateDistributorStatusSchema,
   updateFactorySchema,
   updateFactoryStatusSchema,
   updateSizeSchema,
@@ -25,6 +28,8 @@ import * as masterDataService from './master-data.service.js';
 const canManageMasterData = requireRoles('ADMIN', 'MERCHANDISER');
 const canViewStyles = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT');
 const canViewFactories = requireRoles('ADMIN', 'MERCHANDISER', 'FACTORY_USER');
+const canViewDistributors = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR');
+const canManageDistributors = requireRoles('ADMIN');
 
 export const stylesRouter = Router();
 export const sizesRouter = Router();
@@ -42,11 +47,63 @@ distributorsRouter.use(requireAuth);
 
 distributorsRouter.get(
   '/',
-  requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'),
+  canViewDistributors,
   asyncHandler(async (req, res) => {
-    const status = req.query.status as string | undefined;
-    const distributors = await masterDataService.listDistributors({ status });
+    const filters = listStatusQuerySchema.parse(req.query);
+    const distributors = await masterDataService.listDistributors(req.user!, filters);
     res.status(200).json(successResponse(distributors));
+  }),
+);
+
+distributorsRouter.post(
+  '/',
+  canManageDistributors,
+  asyncHandler(async (req, res) => {
+    const input = createDistributorSchema.parse(req.body);
+    const distributor = await masterDataService.createDistributor(req.user!, input);
+    res.status(201).json(successResponse(distributor));
+  }),
+);
+
+distributorsRouter.get(
+  '/:id',
+  canViewDistributors,
+  asyncHandler(async (req, res) => {
+    const distributor = await masterDataService.getDistributorById(req.user!, req.params.id! as string);
+    res.status(200).json(successResponse(distributor));
+  }),
+);
+
+distributorsRouter.patch(
+  '/:id',
+  canManageDistributors,
+  asyncHandler(async (req, res) => {
+    const input = updateDistributorSchema.parse(req.body);
+    const distributor = await masterDataService.updateDistributor(req.user!, req.params.id! as string, input);
+    res.status(200).json(successResponse(distributor));
+  }),
+);
+
+distributorsRouter.patch(
+  '/:id/status',
+  canManageDistributors,
+  asyncHandler(async (req, res) => {
+    const { status } = updateDistributorStatusSchema.parse(req.body);
+    const distributor = await masterDataService.updateDistributorStatus(
+      req.user!,
+      req.params.id! as string,
+      status,
+    );
+    res.status(200).json(successResponse(distributor));
+  }),
+);
+
+distributorsRouter.get(
+  '/:id/users',
+  canManageDistributors,
+  asyncHandler(async (req, res) => {
+    const users = await masterDataService.listDistributorUsers(req.params.id! as string);
+    res.status(200).json(successResponse(users));
   }),
 );
 

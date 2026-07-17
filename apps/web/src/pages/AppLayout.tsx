@@ -1,5 +1,5 @@
 import { Outlet } from 'react-router-dom';
-import { CirclePlus, ClipboardList, Factory, Hammer, LayoutDashboard, Ruler, Shirt, Workflow } from 'lucide-react';
+import { CirclePlus, ClipboardList, Factory, Hammer, LayoutDashboard, Ruler, Shirt, Truck, Workflow } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext.js';
 import { AppShell, type AppShellNavSection } from './AppShell.js';
 
@@ -10,6 +10,8 @@ export function AppLayout() {
   const canManageMasterData = user?.roles.some((r) => ['ADMIN', 'MERCHANDISER'].includes(r)) ?? false;
   const canViewStyles = user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(r)) ?? false;
   const canViewFactories = user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'FACTORY_USER'].includes(r)) ?? false;
+  const canViewDistributorMaster =
+    user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(r)) ?? false;
   const canViewJobOrders = user?.roles.some((r) =>
     ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'].includes(r),
   ) ?? false;
@@ -24,6 +26,9 @@ export function AppLayout() {
         ...(canViewStyles ? [{ to: '/master-data/styles', label: 'Styles', icon: Shirt }] : []),
         ...(canManageMasterData ? [{ to: '/master-data/sizes', label: 'Sizes', icon: Ruler }] : []),
         ...(canViewFactories ? [{ to: '/master-data/factories', label: 'Factories', icon: Factory }] : []),
+        ...(canViewDistributorMaster
+          ? [{ to: '/master-data/distributors', label: 'Distributors', icon: Truck }]
+          : []),
         ...(canManageMasterData
           ? [{ to: '/master-data/process-flows', label: 'Process Flows', icon: Workflow }]
           : []),

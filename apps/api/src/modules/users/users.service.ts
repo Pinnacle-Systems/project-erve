@@ -200,25 +200,43 @@ export async function addDistributorMapping(
   distributorId: string,
 ): Promise<UserView> {
   const [user, distributor] = await Promise.all([
-    prisma.user.findUnique({ where: { id: userId } }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      include: { userRoles: { select: { role: { select: { name: true } } } } },
+    }),
     prisma.distributor.findUnique({ where: { id: distributorId } }),
   ]);
 
   if (!user) {
     throw HttpError.notFound('User not found');
   }
+  if (!user.userRoles.some((userRole) => userRole.role.name === 'DISTRIBUTOR')) {
+    throw HttpError.badRequest('Only users with the DISTRIBUTOR role can be mapped to a distributor');
+  }
   if (!distributor) {
     throw HttpError.badRequest('Unknown distributor');
   }
-
-  try {
-    await prisma.userDistributor.create({ data: { id: createId(), userId, distributorId } });
-  } catch (error) {
-    if (isUniqueConstraintError(error)) {
-      throw HttpError.conflict('User is already mapped to this distributor');
-    }
-    throw error;
+  if (distributor.status !== 'ACTIVE') {
+    throw HttpError.badRequest('Cannot map a user to an inactive distributor');
   }
+
+  // A distributor user belongs to exactly one distributor. The schema only
+  // guarantees uniqueness per (user, distributor) pair, so the one-mapping
+  // rule is enforced here: a per-user advisory lock serializes concurrent
+  // assignment attempts and the check-then-insert runs in one transaction.
+  await prisma.$transaction(async (tx) => {
+    // ::text because the pg adapter cannot deserialize the function's void return
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('user_distributor:' || ${userId}, 0))::text`;
+
+    const existing = await tx.userDistributor.findFirst({ where: { userId } });
+    if (existing) {
+      throw existing.distributorId === distributorId
+        ? HttpError.conflict('User is already mapped to this distributor')
+        : HttpError.conflict('User is already mapped to a different distributor');
+    }
+
+    await tx.userDistributor.create({ data: { id: createId(), userId, distributorId } });
+  });
 
   await recordAuditLog({
     actorId: actor.id,

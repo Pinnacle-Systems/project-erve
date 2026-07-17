@@ -2,6 +2,7 @@ import { createId } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { PurchaseMode, PurchaseOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
+import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 
@@ -105,7 +106,7 @@ function canViewAllPOs(user: CurrentUser): boolean {
 
 function assertPOViewAccess(user: CurrentUser, po: { distributorId: string }): void {
   if (canViewAllPOs(user)) return;
-  if (user.roles.includes('DISTRIBUTOR') && user.distributorIds.includes(po.distributorId)) return;
+  if (user.roles.includes('DISTRIBUTOR') && getSoleDistributorId(user) === po.distributorId) return;
   throw HttpError.forbidden('You do not have access to this purchase order');
 }
 
@@ -124,7 +125,7 @@ export async function getPurchaseOrderList(
 ) {
   const distributorIdFilter = canViewAllPOs(user)
     ? filters.distributorId
-    : user.distributorIds[0]; // DISTRIBUTOR users see only their own
+    : getSoleDistributorId(user); // DISTRIBUTOR users see only their own
 
   const where: Prisma.DistributorPurchaseOrderWhereInput = {
     distributorId: distributorIdFilter ?? undefined,
@@ -169,7 +170,7 @@ export async function createPurchaseOrder(
 ) {
   // DISTRIBUTOR users can only create POs for their mapped distributor
   if (actor.roles.includes('DISTRIBUTOR') && !actor.roles.some((r) => r === 'ADMIN' || r === 'MERCHANDISER')) {
-    if (!actor.distributorIds.includes(input.distributorId)) {
+    if (getSoleDistributorId(actor) !== input.distributorId) {
       throw HttpError.forbidden('You can only create purchase orders for your mapped distributor');
     }
   }

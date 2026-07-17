@@ -271,17 +271,18 @@ model Factory {
   @@map("factories")
 }
 
+// A distributor user belongs to exactly one distributor: distributor
+// isolation (PO visibility, distributor master reads) is scoped to that
+// single mapping, so the unique constraint on user_id is load-bearing.
 model UserDistributor {
   id            String   @id
-  userId        String   @map("user_id")
+  userId        String   @unique @map("user_id")
   distributorId String   @map("distributor_id")
   createdAt     DateTime @default(now()) @map("created_at")
 
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   distributor Distributor @relation(fields: [distributorId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, distributorId])
-  @@index([userId])
   @@index([distributorId])
   @@map("user_distributors")
 }

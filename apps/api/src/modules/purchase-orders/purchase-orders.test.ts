@@ -148,6 +148,52 @@ describe('purchase orders API', () => {
       expect(res.status).toBe(400);
     });
 
+    it('rejects an inactive distributor', async () => {
+      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const dist = await createTestDistributor({ status: 'INACTIVE' });
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const res = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toBe('Distributor is not active');
+    });
+
+    it('keeps existing purchase orders readable after their distributor is deactivated', async () => {
+      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const createRes = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 25 }] }],
+      });
+      expect(createRes.status).toBe(201);
+
+      await request(app)
+        .patch(`/distributors/${dist.id}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'INACTIVE' })
+        .expect(200);
+
+      const detail = await request(app)
+        .get(`/purchase-orders/${createRes.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`);
+      const list = await request(app).get('/purchase-orders').set('Authorization', `Bearer ${token}`);
+
+      expect(detail.status).toBe(200);
+      expect(detail.body.data.distributor.id).toBe(dist.id);
+      expect(list.status).toBe(200);
+      expect(list.body.data).toHaveLength(1);
+    });
+
     it('rejects size not valid for style', async () => {
       const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
       const dist = await createTestDistributor();
@@ -372,6 +418,36 @@ describe('purchase orders API', () => {
         .set('Authorization', `Bearer ${distToken}`);
 
       expect(res.status).toBe(403);
+    });
+
+    it('fails closed for a DISTRIBUTOR user with no distributor mapping', async () => {
+      const { token: adminToken } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token: distToken } = await createTestUserAndToken({ email: 'dist@test.local', password: 'pass', roles: ['DISTRIBUTOR'] });
+
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const createRes = await createPO(adminToken, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+
+      // An unmapped distributor account must see nothing — not every PO.
+      const listRes = await request(app).get('/purchase-orders').set('Authorization', `Bearer ${distToken}`);
+      const detailRes = await request(app)
+        .get(`/purchase-orders/${createRes.body.data.id}`)
+        .set('Authorization', `Bearer ${distToken}`);
+      const createAttempt = await createPO(distToken, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+
+      expect(listRes.status).toBe(403);
+      expect(listRes.body.error.message).toBe('No distributor is mapped to your account');
+      expect(detailRes.status).toBe(403);
+      expect(createAttempt.status).toBe(403);
     });
 
     it('ADMIN can view all POs', async () => {

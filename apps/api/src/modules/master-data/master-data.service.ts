@@ -9,6 +9,7 @@ import type {
   StyleStatus,
 } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
+import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 
@@ -624,10 +625,153 @@ export function assertProcessFlowVersionMutable(status: ProcessFlowVersionStatus
   }
 }
 
-export async function listDistributors(filters: { status?: string }) {
+function isDistributorScopedUser(actor: CurrentUser): boolean {
+  return (
+    actor.roles.includes('DISTRIBUTOR') &&
+    !actor.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT')
+  );
+}
+
+export async function listDistributors(actor: CurrentUser, filters: { status?: string; search?: string }) {
+  const soleDistributorId = isDistributorScopedUser(actor) ? getSoleDistributorId(actor) : undefined;
+
   return prisma.distributor.findMany({
-    where: { status: filters.status as DistributorStatus | undefined },
+    where: {
+      id: soleDistributorId,
+      status: filters.status as DistributorStatus | undefined,
+      OR: filters.search
+        ? [
+            { code: { contains: filters.search, mode: 'insensitive' } },
+            { name: { contains: filters.search, mode: 'insensitive' } },
+          ]
+        : undefined,
+    },
     orderBy: { name: 'asc' },
     select: { id: true, code: true, name: true, status: true, contactName: true, city: true },
   });
+}
+
+export async function getDistributorById(actor: CurrentUser, id: string) {
+  if (isDistributorScopedUser(actor) && getSoleDistributorId(actor) !== id) {
+    throw HttpError.forbidden();
+  }
+
+  const distributor = await prisma.distributor.findUnique({ where: { id } });
+  if (!distributor) {
+    throw HttpError.notFound('Distributor not found');
+  }
+  return distributor;
+}
+
+export async function createDistributor(
+  actor: CurrentUser,
+  input: Omit<Prisma.DistributorUncheckedCreateInput, 'id'>,
+) {
+  const existingByName = await prisma.distributor.findFirst({ where: { name: input.name } });
+  if (existingByName) {
+    throw HttpError.conflict('A distributor with this code or name already exists');
+  }
+
+  let distributor;
+  try {
+    distributor = await prisma.distributor.create({ data: { id: createId(), status: 'ACTIVE', ...input } });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw HttpError.conflict('A distributor with this code or name already exists');
+    }
+    throw error;
+  }
+
+  await recordAuditLog({
+    actorId: actor.id,
+    action: 'DISTRIBUTOR_CREATED',
+    entityType: 'Distributor',
+    entityId: distributor.id,
+  });
+
+  return distributor;
+}
+
+export async function updateDistributor(actor: CurrentUser, id: string, input: Record<string, unknown>) {
+  if (typeof input.name === 'string') {
+    const existingByName = await prisma.distributor.findFirst({ where: { name: input.name, NOT: { id } } });
+    if (existingByName) {
+      throw HttpError.conflict('A distributor with this code or name already exists');
+    }
+  }
+
+  let distributor;
+  try {
+    distributor = await prisma.distributor.update({
+      where: { id },
+      data: input as Prisma.DistributorUncheckedUpdateInput,
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      throw HttpError.notFound('Distributor not found');
+    }
+    if (isUniqueConstraintError(error)) {
+      throw HttpError.conflict('A distributor with this code or name already exists');
+    }
+    throw error;
+  }
+
+  await recordAuditLog({
+    actorId: actor.id,
+    action: 'DISTRIBUTOR_UPDATED',
+    entityType: 'Distributor',
+    entityId: id,
+  });
+
+  return distributor;
+}
+
+export async function updateDistributorStatus(actor: CurrentUser, id: string, status: DistributorStatus) {
+  const existing = await prisma.distributor.findUnique({ where: { id } });
+  if (!existing) {
+    throw HttpError.notFound('Distributor not found');
+  }
+
+  const distributor = await prisma.distributor.update({ where: { id }, data: { status } });
+
+  await recordAuditLog({
+    actorId: actor.id,
+    action: 'DISTRIBUTOR_STATUS_CHANGED',
+    entityType: 'Distributor',
+    entityId: id,
+    metadata: { from: existing.status, to: status },
+  });
+
+  return distributor;
+}
+
+export async function listDistributorUsers(distributorId: string) {
+  const distributor = await prisma.distributor.findUnique({ where: { id: distributorId } });
+  if (!distributor) {
+    throw HttpError.notFound('Distributor not found');
+  }
+
+  const mappings = await prisma.userDistributor.findMany({
+    where: { distributorId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          status: true,
+          userRoles: { select: { role: { select: { name: true } } } },
+        },
+      },
+    },
+    orderBy: { user: { name: 'asc' } },
+  });
+
+  return mappings.map((mapping) => ({
+    id: mapping.user.id,
+    name: mapping.user.name,
+    email: mapping.user.email,
+    status: mapping.user.status,
+    roles: mapping.user.userRoles.map((userRole) => userRole.role.name),
+  }));
 }

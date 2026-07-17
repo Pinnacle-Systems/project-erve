@@ -78,11 +78,12 @@ export async function createTestUserAndToken(
 export async function createTestDistributor(overrides?: {
   code?: string;
   name?: string;
+  status?: 'ACTIVE' | 'INACTIVE';
 }): Promise<{ id: string; code: string; name: string }> {
   const id = createId();
   const code = overrides?.code ?? `DIST-${id}`;
   const name = overrides?.name ?? 'Test Distributor';
-  await prisma.distributor.create({ data: { id, code, name } });
+  await prisma.distributor.create({ data: { id, code, name, status: overrides?.status ?? 'ACTIVE' } });
   return { id, code, name };
 }
 

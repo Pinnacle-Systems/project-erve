@@ -78,6 +78,29 @@ export const updateFactorySchema = createFactorySchema
 
 export const updateFactoryStatusSchema = z.object({ status: factoryStatusSchema });
 
+export const distributorStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
+
+export const createDistributorSchema = z.object({
+  code: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  contactName: optionalText,
+  contactEmail: z.string().trim().pipe(z.email()).optional().nullable(),
+  contactPhone: optionalText,
+  addressLine1: optionalText,
+  addressLine2: optionalText,
+  city: optionalText,
+  state: optionalText,
+  country: optionalText,
+  postalCode: optionalText,
+  status: distributorStatusSchema.optional(),
+});
+
+export const updateDistributorSchema = createDistributorSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, { message: 'At least one field is required' });
+
+export const updateDistributorStatusSchema = z.object({ status: distributorStatusSchema });
+
 const processStageSchema = z.object({
   sequence: z.coerce.number().int().positive(),
   name: z.string().trim().min(1),

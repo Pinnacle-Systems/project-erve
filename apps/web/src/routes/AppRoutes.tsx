@@ -3,6 +3,9 @@ import { ROLES } from '@erve/types';
 import { DashboardPage } from '../pages/DashboardPage.js';
 import { ForbiddenPage } from '../pages/ForbiddenPage.js';
 import { LoginPage } from '../pages/LoginPage.js';
+import { DistributorDetailPage } from '../pages/master-data/DistributorDetailPage.js';
+import { DistributorFormPage } from '../pages/master-data/DistributorFormPage.js';
+import { DistributorListPage } from '../pages/master-data/DistributorListPage.js';
 import { FactoryListPage } from '../pages/master-data/FactoryListPage.js';
 import { ProcessFlowDetailPage } from '../pages/master-data/ProcessFlowDetailPage.js';
 import { ProcessFlowListPage } from '../pages/master-data/ProcessFlowListPage.js';
@@ -79,6 +82,38 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'FACTORY_USER']}>
               <FactoryListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="distributors"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT']}>
+              <DistributorListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="distributors/new"
+          element={
+            <RoleRoute allowed={['ADMIN']}>
+              <DistributorFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="distributors/:id"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT']}>
+              <DistributorDetailPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="distributors/:id/edit"
+          element={
+            <RoleRoute allowed={['ADMIN']}>
+              <DistributorFormPage />
             </RoleRoute>
           }
         />

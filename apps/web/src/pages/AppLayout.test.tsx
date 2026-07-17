@@ -95,19 +95,21 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Styles');
     expect(labels).toContain('Sizes');
     expect(labels).toContain('Factories');
+    expect(labels).toContain('Distributors');
     expect(labels).toContain('Process Flows');
     expect(labels).toContain('Purchase Orders');
     expect(labels).toContain('+ New PO');
     expect(labels).toContain('Job Orders');
   });
 
-  it('SENIOR_MANAGEMENT sees Styles but not Sizes/Factories/Process Flows or +New PO', async () => {
+  it('SENIOR_MANAGEMENT sees Styles and Distributors but not Sizes/Factories/Process Flows or +New PO', async () => {
     await renderAppLayout(['SENIOR_MANAGEMENT']);
     const labels = sidebarLinkLabels();
 
     expect(labels).toContain('Styles');
     expect(labels).not.toContain('Sizes');
     expect(labels).not.toContain('Factories');
+    expect(labels).toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).toContain('Purchase Orders');
     expect(labels).not.toContain('+ New PO');
@@ -121,6 +123,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Styles');
     expect(labels).not.toContain('Sizes');
     expect(labels).toContain('Factories');
+    expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).toContain('Purchase Orders');
     expect(labels).not.toContain('+ New PO');
@@ -134,6 +137,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Styles');
     expect(labels).not.toContain('Sizes');
     expect(labels).not.toContain('Factories');
+    expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).toContain('Purchase Orders');
     expect(labels).toContain('+ New PO');

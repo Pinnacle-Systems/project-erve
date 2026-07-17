@@ -20,6 +20,44 @@ export interface Factory {
   status: Status;
 }
 
+export interface DistributorSummary {
+  id: string;
+  code: string;
+  name: string;
+  contactName: string | null;
+  city: string | null;
+  status: Status;
+}
+
+export interface Distributor extends DistributorSummary {
+  contactEmail: string | null;
+  contactPhone: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  state: string | null;
+  country: string | null;
+  postalCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DistributorUser {
+  id: string;
+  name: string;
+  email: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+  roles: string[];
+}
+
+export interface AdminUserSummary {
+  id: string;
+  name: string;
+  email: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+  roles: string[];
+  distributors: Array<{ id: string; code: string; name: string }>;
+}
+
 export interface Style {
   id: string;
   styleNumber: string;
