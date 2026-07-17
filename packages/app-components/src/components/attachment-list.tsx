@@ -29,7 +29,7 @@ export const AttachmentList = React.forwardRef<HTMLUListElement, AttachmentListP
   ) => {
     if (items.length === 0) {
       return (
-        <div className={cn("text-muted text-sm italic py-4", className)}>
+        <div className={cn("text-muted-foreground text-sm italic py-4", className)}>
           {emptyState ?? "No attachments."}
         </div>
       );
@@ -78,7 +78,7 @@ export const AttachmentList = React.forwardRef<HTMLUListElement, AttachmentListP
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 text-xs text-muted truncate">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground truncate">
                 {item.size && <span>{item.size}</span>}
                 {item.size && item.type && <span>&bull;</span>}
                 {item.type && <span>{item.type}</span>}

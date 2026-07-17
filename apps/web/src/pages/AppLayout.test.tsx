@@ -97,12 +97,13 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Factories');
     expect(labels).toContain('Distributors');
     expect(labels).toContain('Process Flows');
+    expect(labels).toContain('Price Lists');
     expect(labels).toContain('Purchase Orders');
     expect(labels).toContain('+ New PO');
     expect(labels).toContain('Job Orders');
   });
 
-  it('SENIOR_MANAGEMENT sees Styles and Distributors but not Sizes/Factories/Process Flows or +New PO', async () => {
+  it('SENIOR_MANAGEMENT sees Styles, Distributors and Price Lists but not Sizes/Factories/Process Flows or +New PO', async () => {
     await renderAppLayout(['SENIOR_MANAGEMENT']);
     const labels = sidebarLinkLabels();
 
@@ -111,6 +112,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Factories');
     expect(labels).toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
+    expect(labels).toContain('Price Lists');
     expect(labels).toContain('Purchase Orders');
     expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
@@ -125,12 +127,25 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Factories');
     expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
+    expect(labels).not.toContain('Price Lists');
     expect(labels).toContain('Purchase Orders');
     expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
   });
 
-  it('DISTRIBUTOR sees Purchase Orders and +New PO but no Master Data or Job Orders links', async () => {
+  it('ACCOUNTANT sees Price Lists but no other Master Data links', async () => {
+    await renderAppLayout(['ACCOUNTANT']);
+    const labels = sidebarLinkLabels();
+
+    expect(labels).not.toContain('Styles');
+    expect(labels).not.toContain('Sizes');
+    expect(labels).not.toContain('Factories');
+    expect(labels).not.toContain('Distributors');
+    expect(labels).not.toContain('Process Flows');
+    expect(labels).toContain('Price Lists');
+  });
+
+  it('DISTRIBUTOR sees Purchase Orders, +New PO and Price Lists but no other Master Data or Job Orders links', async () => {
     await renderAppLayout(['DISTRIBUTOR']);
     const labels = sidebarLinkLabels();
 
@@ -139,6 +154,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Factories');
     expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
+    expect(labels).toContain('Price Lists');
     expect(labels).toContain('Purchase Orders');
     expect(labels).toContain('+ New PO');
     expect(labels).not.toContain('Job Orders');

@@ -48,7 +48,7 @@ export const ApprovalActionBar = React.forwardRef<HTMLDivElement, ApprovalAction
               )}
             </div>
           )}
-          {message && <p className="text-sm text-muted">{message}</p>}
+          {message && <p className="text-sm text-muted-foreground">{message}</p>}
         </div>
 
         <div className="flex items-center gap-3">

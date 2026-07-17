@@ -43,7 +43,7 @@ export const TotalsPanel = React.forwardRef<HTMLDivElement, TotalsPanelProps>(
               </div>
             )}
             {description && (
-              <div className="text-sm text-muted">
+              <div className="text-sm text-muted-foreground">
                 {description}
               </div>
             )}
@@ -60,7 +60,7 @@ export const TotalsPanel = React.forwardRef<HTMLDivElement, TotalsPanelProps>(
 
             let emphasisClass = "font-normal";
             if (item.emphasis === "strong") emphasisClass = "font-bold text-base";
-            if (item.emphasis === "muted") emphasisClass = "text-muted text-sm";
+            if (item.emphasis === "muted") emphasisClass = "text-muted-foreground text-sm";
 
             return (
               <React.Fragment key={idx}>
@@ -78,13 +78,13 @@ export const TotalsPanel = React.forwardRef<HTMLDivElement, TotalsPanelProps>(
                       className={cn(
                         "text-sm",
                         item.emphasis === "strong" ? "font-semibold text-foreground" : "text-muted-foreground",
-                        item.emphasis === "muted" && "text-muted"
+                        item.emphasis === "muted" && "text-muted-foreground"
                       )}
                     >
                       {item.label}
                     </span>
                     {item.description && (
-                      <span className="text-xs text-muted">
+                      <span className="text-xs text-muted-foreground">
                         {item.description}
                       </span>
                     )}

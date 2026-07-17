@@ -10,6 +10,7 @@ export type {
   FactoryConfirmationStatus,
   FactoryStatus,
   JobOrderStatus,
+  PriceListStatus,
   ProcessFlowStatus,
   ProcessFlowVersionStatus,
   ProductionStageStatus,

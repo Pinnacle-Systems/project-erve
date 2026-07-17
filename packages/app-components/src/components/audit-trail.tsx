@@ -30,7 +30,7 @@ export const AuditTrail = React.forwardRef<HTMLOListElement, AuditTrailProps>(
   ({ items, density = "comfortable", emptyState, className, ...props }, ref) => {
     if (items.length === 0) {
       return (
-        <div className={cn("text-muted text-sm italic py-4", className)}>
+        <div className={cn("text-muted-foreground text-sm italic py-4", className)}>
           {emptyState ?? "No history available."}
         </div>
       );
@@ -63,7 +63,7 @@ export const AuditTrail = React.forwardRef<HTMLOListElement, AuditTrailProps>(
                 <div className="flex items-start justify-between gap-4">
                   <div className="text-sm font-medium text-foreground">{item.title}</div>
                   {item.timestamp && (
-                    <time className="text-xs text-muted whitespace-nowrap">
+                    <time className="text-xs text-muted-foreground whitespace-nowrap">
                       {item.timestamp}
                     </time>
                   )}
@@ -72,7 +72,7 @@ export const AuditTrail = React.forwardRef<HTMLOListElement, AuditTrailProps>(
                   <div className="text-xs font-medium text-foreground">{item.actor}</div>
                 )}
                 {item.description && (
-                  <div className="text-sm text-muted mt-1 leading-relaxed">
+                  <div className="text-sm text-muted-foreground mt-1 leading-relaxed">
                     {item.description}
                   </div>
                 )}

@@ -18,6 +18,8 @@ export async function resetDatabase(): Promise<void> {
   await prisma.processFlowVersionStage.deleteMany();
   await prisma.processFlowVersion.deleteMany();
   await prisma.processFlow.deleteMany();
+  await prisma.priceListLine.deleteMany();
+  await prisma.priceList.deleteMany();
   await prisma.styleFactoryMapping.deleteMany();
   await prisma.styleSize.deleteMany();
   await prisma.style.deleteMany();

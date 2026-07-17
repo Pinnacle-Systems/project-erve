@@ -411,18 +411,25 @@ model StyleFactoryMapping {
   @@map("style_factory_mappings")
 }
 
+// A price list is always distributor-specific (what Erve charges that
+// distributor) — there is no generic/global price list, so distributorId is
+// required and deletion is restricted to preserve pricing history.
+// Effective dates are day-granular (@db.Date) so "the applicable price for a
+// transaction date" is deterministic; a raw exclusion constraint in the
+// migration (price_lists_no_overlapping_active_periods) guarantees at most
+// one ACTIVE list per distributor covers any given date.
 model PriceList {
   id            String          @id
   code          String          @unique
   name          String
-  distributorId String?         @map("distributor_id")
-  effectiveFrom DateTime?       @map("effective_from")
-  effectiveTo   DateTime?       @map("effective_to")
+  distributorId String          @map("distributor_id")
+  effectiveFrom DateTime?       @map("effective_from") @db.Date
+  effectiveTo   DateTime?       @map("effective_to") @db.Date
   status        PriceListStatus @default(DRAFT)
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
 
-  distributor Distributor?    @relation(fields: [distributorId], references: [id], onDelete: SetNull)
+  distributor Distributor     @relation(fields: [distributorId], references: [id], onDelete: Restrict)
   lines       PriceListLine[]
 
   @@index([distributorId])

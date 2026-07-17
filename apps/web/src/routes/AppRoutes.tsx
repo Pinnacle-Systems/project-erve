@@ -13,6 +13,9 @@ import { SizeListPage } from '../pages/master-data/SizeListPage.js';
 import { StyleDetailPage } from '../pages/master-data/StyleDetailPage.js';
 import { StyleFormPage } from '../pages/master-data/StyleFormPage.js';
 import { StyleListPage } from '../pages/master-data/StyleListPage.js';
+import { PriceListDetailPage } from '../pages/price-lists/PriceListDetailPage.js';
+import { PriceListFormPage } from '../pages/price-lists/PriceListFormPage.js';
+import { PriceListListPage } from '../pages/price-lists/PriceListListPage.js';
 import { PurchaseOrderListPage } from '../pages/purchase-orders/PurchaseOrderListPage.js';
 import { PurchaseOrderFormPage } from '../pages/purchase-orders/PurchaseOrderFormPage.js';
 import { PurchaseOrderDetailPage } from '../pages/purchase-orders/PurchaseOrderDetailPage.js';
@@ -22,6 +25,8 @@ import { JobOrderListPage } from '../pages/job-orders/JobOrderListPage.js';
 import { AppLayout } from '../pages/AppLayout.js';
 import { RoleRoute } from './RoleRoute.js';
 
+const PRICE_LIST_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT', 'DISTRIBUTOR'] as const;
+const PRICE_LIST_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const;
 const PO_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'] as const;
 const PO_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER', 'DISTRIBUTOR'] as const;
 const JOB_ORDER_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'] as const;
@@ -130,6 +135,34 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
               <ProcessFlowDetailPage />
+            </RoleRoute>
+          }
+        />
+      </Route>
+
+      <Route
+        path="/price-lists"
+        element={
+          <RoleRoute allowed={PRICE_LIST_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<PriceListListPage />} />
+        <Route
+          path="new"
+          element={
+            <RoleRoute allowed={PRICE_LIST_MANAGE_ROLES}>
+              <PriceListFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route path=":id" element={<PriceListDetailPage />} />
+        <Route
+          path=":id/edit"
+          element={
+            <RoleRoute allowed={PRICE_LIST_MANAGE_ROLES}>
+              <PriceListFormPage />
             </RoleRoute>
           }
         />

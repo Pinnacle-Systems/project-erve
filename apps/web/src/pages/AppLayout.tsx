@@ -1,5 +1,5 @@
 import { Outlet } from 'react-router-dom';
-import { CirclePlus, ClipboardList, Factory, Hammer, LayoutDashboard, Ruler, Shirt, Truck, Workflow } from 'lucide-react';
+import { CirclePlus, ClipboardList, Factory, Hammer, LayoutDashboard, Ruler, Shirt, Tags, Truck, Workflow } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext.js';
 import { AppShell, type AppShellNavSection } from './AppShell.js';
 
@@ -15,6 +15,10 @@ export function AppLayout() {
   const canViewJobOrders = user?.roles.some((r) =>
     ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'].includes(r),
   ) ?? false;
+  const canViewPriceLists =
+    user?.roles.some((r) =>
+      ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT', 'DISTRIBUTOR'].includes(r),
+    ) ?? false;
 
   const navSections: AppShellNavSection[] = [
     {
@@ -32,6 +36,7 @@ export function AppLayout() {
         ...(canManageMasterData
           ? [{ to: '/master-data/process-flows', label: 'Process Flows', icon: Workflow }]
           : []),
+        ...(canViewPriceLists ? [{ to: '/price-lists', label: 'Price Lists', icon: Tags }] : []),
       ],
     },
     {
