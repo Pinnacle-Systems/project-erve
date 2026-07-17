@@ -12,6 +12,7 @@ import {
   createStyleSchema,
   listStatusQuerySchema,
   listStylesQuerySchema,
+  replaceProcessFlowVersionStagesSchema,
   styleFactorySchema,
   styleSizeSchema,
   updateDistributorSchema,
@@ -28,7 +29,12 @@ import * as masterDataService from './master-data.service.js';
 const canManageMasterData = requireRoles('ADMIN', 'MERCHANDISER');
 const canViewStyles = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT');
 const canViewFactories = requireRoles('ADMIN', 'MERCHANDISER', 'FACTORY_USER');
-const canViewDistributors = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR');
+const canViewDistributors = requireRoles(
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'DISTRIBUTOR',
+);
 const canManageDistributors = requireRoles('ADMIN');
 
 export const stylesRouter = Router();
@@ -69,7 +75,10 @@ distributorsRouter.get(
   '/:id',
   canViewDistributors,
   asyncHandler(async (req, res) => {
-    const distributor = await masterDataService.getDistributorById(req.user!, req.params.id! as string);
+    const distributor = await masterDataService.getDistributorById(
+      req.user!,
+      req.params.id! as string,
+    );
     res.status(200).json(successResponse(distributor));
   }),
 );
@@ -79,7 +88,11 @@ distributorsRouter.patch(
   canManageDistributors,
   asyncHandler(async (req, res) => {
     const input = updateDistributorSchema.parse(req.body);
-    const distributor = await masterDataService.updateDistributor(req.user!, req.params.id! as string, input);
+    const distributor = await masterDataService.updateDistributor(
+      req.user!,
+      req.params.id! as string,
+      input,
+    );
     res.status(200).json(successResponse(distributor));
   }),
 );
@@ -151,7 +164,11 @@ stylesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const { status } = updateStyleStatusSchema.parse(req.body);
-    const style = await masterDataService.updateStyleStatus(req.user!, req.params.id! as string, status);
+    const style = await masterDataService.updateStyleStatus(
+      req.user!,
+      req.params.id! as string,
+      status,
+    );
     res.status(200).json(successResponse(style));
   }),
 );
@@ -170,7 +187,11 @@ stylesRouter.delete(
   '/:id/sizes/:sizeId',
   canManageMasterData,
   asyncHandler(async (req, res) => {
-    const style = await masterDataService.removeStyleSize(req.user!, req.params.id! as string, req.params.sizeId! as string);
+    const style = await masterDataService.removeStyleSize(
+      req.user!,
+      req.params.id! as string,
+      req.params.sizeId! as string,
+    );
     res.status(200).json(successResponse(style));
   }),
 );
@@ -180,7 +201,11 @@ stylesRouter.post(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = styleFactorySchema.parse(req.body);
-    const style = await masterDataService.addStyleFactory(req.user!, req.params.id! as string, input);
+    const style = await masterDataService.addStyleFactory(
+      req.user!,
+      req.params.id! as string,
+      input,
+    );
     res.status(200).json(successResponse(style));
   }),
 );
@@ -309,7 +334,7 @@ processFlowsRouter.post(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = createProcessFlowSchema.parse(req.body);
-    const flow = await masterDataService.createProcessFlow(input);
+    const flow = await masterDataService.createProcessFlow(input, req.user!);
     res.status(201).json(successResponse(flow));
   }),
 );
@@ -328,7 +353,11 @@ processFlowsRouter.post(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = createProcessFlowVersionSchema.parse(req.body);
-    const version = await masterDataService.createProcessFlowVersion(req.params.id! as string, input);
+    const version = await masterDataService.createProcessFlowVersion(
+      req.params.id! as string,
+      input,
+      req.user!,
+    );
     res.status(201).json(successResponse(version));
   }),
 );
@@ -346,7 +375,24 @@ processFlowVersionsRouter.post(
   '/:id/activate',
   canManageMasterData,
   asyncHandler(async (req, res) => {
-    const version = await masterDataService.activateProcessFlowVersion(req.params.id! as string);
+    const version = await masterDataService.activateProcessFlowVersion(
+      req.params.id! as string,
+      req.user!,
+    );
+    res.status(200).json(successResponse(version));
+  }),
+);
+
+processFlowVersionsRouter.put(
+  '/:id/stages',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    const input = replaceProcessFlowVersionStagesSchema.parse(req.body);
+    const version = await masterDataService.replaceProcessFlowVersionStages(
+      req.params.id! as string,
+      input,
+      req.user!,
+    );
     res.status(200).json(successResponse(version));
   }),
 );

@@ -202,18 +202,224 @@ describe('factories API', () => {
 });
 
 describe('process flow API', () => {
-  it('activates draft process flow versions and retires the previous active version', async () => {
-    const { token } = await createTestUserAndToken({
-      email: 'admin@test.local',
-      password: 'admin-password',
-      roles: ['ADMIN'],
+  async function createManager(role: 'ADMIN' | 'MERCHANDISER' = 'ADMIN') {
+    return createTestUserAndToken({
+      email: `${role.toLowerCase()}@test.local`,
+      password: 'test-password',
+      roles: [role],
     });
+  }
 
-    const flow = await request(app)
+  function createFlow(token: string, suffix = '', overrides?: Record<string, unknown>) {
+    return request(app)
       .post('/process-flows')
       .set('Authorization', `Bearer ${token}`)
-      .send({ code: 'PROD', name: 'Production' })
-      .then((res) => res.body.data);
+      .send({
+        code: `PROD${suffix}`,
+        name: `Production${suffix}`,
+        description: 'Main production flow',
+        stages: [
+          { sequence: 1, name: 'Cutting' },
+          { sequence: 2, name: 'Sewing' },
+        ],
+        ...overrides,
+      });
+  }
+
+  async function holdProcessFlowLock(processFlowId: string) {
+    let signalAcquired!: () => void;
+    let signalRelease!: () => void;
+    const acquired = new Promise<void>((resolve) => {
+      signalAcquired = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      signalRelease = resolve;
+    });
+    const transaction = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('process_flow:' || ${processFlowId}, 0))::text`;
+        signalAcquired();
+        await release;
+      },
+      { timeout: 10_000 },
+    );
+
+    await acquired;
+    return async () => {
+      signalRelease();
+      await transaction;
+    };
+  }
+
+  async function waitForAdvisoryLockWaiters(expected: number) {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const [result] = await prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT count(*)::bigint AS count
+        FROM pg_stat_activity
+        WHERE pid <> pg_backend_pid()
+          AND wait_event_type = 'Lock'
+          AND query LIKE '%pg_advisory_xact_lock%'
+      `;
+      if (Number(result?.count ?? 0) >= expected) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Timed out waiting for ${expected} advisory-lock waiter(s)`);
+  }
+
+  it('creates a flow with an initial draft, normalizes stages, and records an audit log', async () => {
+    const { token, userId } = await createManager('MERCHANDISER');
+    const response = await createFlow(token).expect(201);
+    const flow = response.body.data;
+    const version = await request(app)
+      .get(`/process-flow-versions/${flow.versions[0].id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(flow.versions[0]).toMatchObject({ versionNumber: 1, status: 'DRAFT' });
+    expect(
+      version.body.data.stages.map((stage: { sequence: number; name: string }) => [
+        stage.sequence,
+        stage.name,
+      ]),
+    ).toEqual([
+      [1, 'Cutting'],
+      [2, 'Sewing'],
+    ]);
+    expect(
+      await prisma.auditLog.findFirst({ where: { action: 'PROCESS_FLOW_CREATED' } }),
+    ).toMatchObject({
+      actorId: userId,
+      entityId: flow.id,
+    });
+  });
+
+  it('validates creation, rejects duplicate code or name, and enforces mutation roles', async () => {
+    const { token } = await createManager();
+    await request(app)
+      .post('/process-flows')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: '', name: '', stages: [] })
+      .expect(400);
+    await createFlow(token).expect(201);
+    await createFlow(token, '-CODE', {
+      code: 'PROD',
+      name: 'Other',
+      stages: [{ name: 'Cutting' }],
+    }).expect(409);
+    await createFlow(token, '-NAME', {
+      code: 'OTHER',
+      name: 'production',
+      stages: [{ name: 'Cutting' }],
+    }).expect(409);
+
+    const { token: factoryToken } = await createTestUserAndToken({
+      email: 'factory@test.local',
+      password: 'test-password',
+      roles: ['FACTORY_USER'],
+    });
+    await createFlow(factoryToken, '-FORBIDDEN').expect(403);
+    await request(app).post('/process-flows').send({}).expect(401);
+  });
+
+  it('creates empty and copied versions without changing source stages', async () => {
+    const { token } = await createManager();
+    const flow = (await createFlow(token).expect(201)).body.data;
+    const sourceId = flow.versions[0].id;
+
+    const empty = await request(app)
+      .post(`/process-flows/${flow.id}/versions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+      .expect(201);
+    expect(empty.body.data).toMatchObject({ versionNumber: 2, status: 'DRAFT', stages: [] });
+
+    const copied = await request(app)
+      .post(`/process-flows/${flow.id}/versions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ copyFromVersionId: sourceId })
+      .expect(201);
+    expect(copied.body.data.versionNumber).toBe(3);
+    expect(copied.body.data.stages.map((stage: { name: string }) => stage.name)).toEqual([
+      'Cutting',
+      'Sewing',
+    ]);
+
+    await request(app)
+      .put(`/process-flow-versions/${copied.body.data.id}/stages`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ stages: [{ name: 'Packing' }] })
+      .expect(200);
+    const source = await request(app)
+      .get(`/process-flow-versions/${sourceId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(source.body.data.stages.map((stage: { name: string }) => stage.name)).toEqual([
+      'Cutting',
+      'Sewing',
+    ]);
+    expect(
+      await prisma.auditLog.findFirst({ where: { action: 'PROCESS_FLOW_VERSION_COPIED' } }),
+    ).not.toBeNull();
+  });
+
+  it('atomically adds, removes, and reorders draft stages with full-list validation', async () => {
+    const { token } = await createManager();
+    const flow = (await createFlow(token).expect(201)).body.data;
+    const versionId = flow.versions[0].id;
+
+    const replaced = await request(app)
+      .put(`/process-flow-versions/${versionId}/stages`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ stages: [{ name: 'Sewing' }, { name: 'Packing' }, { name: 'Cutting' }] })
+      .expect(200);
+    expect(
+      replaced.body.data.stages.map((stage: { sequence: number; name: string }) => [
+        stage.sequence,
+        stage.name,
+      ]),
+    ).toEqual([
+      [1, 'Sewing'],
+      [2, 'Packing'],
+      [3, 'Cutting'],
+    ]);
+
+    await request(app)
+      .put(`/process-flow-versions/${versionId}/stages`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ stages: [{ name: 'Cutting' }, { name: ' cutting ' }] })
+      .expect(400);
+    await request(app)
+      .put(`/process-flow-versions/${versionId}/stages`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ stages: [{ name: '   ' }] })
+      .expect(400);
+    await request(app)
+      .put(`/process-flow-versions/${versionId}/stages`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        stages: [
+          { sequence: 2, name: 'Cutting' },
+          { sequence: 1, name: 'Sewing' },
+        ],
+      })
+      .expect(400);
+
+    const persisted = await prisma.processFlowVersionStage.findMany({
+      where: { processFlowVersionId: versionId },
+      orderBy: { sequence: 'asc' },
+    });
+    expect(persisted.map((stage) => stage.name)).toEqual(['Sewing', 'Packing', 'Cutting']);
+    expect(
+      await prisma.auditLog.findFirst({ where: { action: 'PROCESS_FLOW_DRAFT_STAGES_REPLACED' } }),
+    ).not.toBeNull();
+  });
+
+  it('activates draft process flow versions and retires the previous active version', async () => {
+    const { token } = await createManager();
+    const flow = (await createFlow(token).expect(201)).body.data;
     const version1 = flow.versions[0];
 
     await request(app)
@@ -225,10 +431,7 @@ describe('process flow API', () => {
       .post(`/process-flows/${flow.id}/versions`)
       .set('Authorization', `Bearer ${token}`)
       .send({
-        stages: [
-          { sequence: 1, name: 'Cutting' },
-          { sequence: 2, name: 'Sewing' },
-        ],
+        stages: [{ name: 'Cutting' }, { name: 'Sewing' }, { name: 'Packing' }],
       })
       .then((res) => res.body.data);
 
@@ -244,6 +447,274 @@ describe('process flow API', () => {
 
     expect(first.status).toBe('RETIRED');
     expect(second.status).toBe('ACTIVE');
+    expect(
+      await prisma.processFlowVersion.count({
+        where: { processFlowId: flow.id, status: 'ACTIVE' },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.auditLog.findFirst({ where: { action: 'PROCESS_FLOW_VERSION_RETIRED' } }),
+    ).not.toBeNull();
+    expect(
+      await prisma.auditLog.findFirst({ where: { action: 'PROCESS_FLOW_VERSION_ACTIVATED' } }),
+    ).not.toBeNull();
+  });
+
+  it('rejects empty activation and makes active and retired stages immutable', async () => {
+    const { token } = await createManager();
+    const flow = (await createFlow(token).expect(201)).body.data;
+    const version1Id = flow.versions[0].id;
+    const empty = await request(app)
+      .post(`/process-flows/${flow.id}/versions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+      .then((response) => response.body.data);
+    await request(app)
+      .post(`/process-flow-versions/${empty.id}/activate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(400);
+
+    await request(app)
+      .post(`/process-flow-versions/${version1Id}/activate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    await request(app)
+      .put(`/process-flow-versions/${version1Id}/stages`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ stages: [{ name: 'Changed' }] })
+      .expect(409);
+
+    const version2 = await request(app)
+      .post(`/process-flows/${flow.id}/versions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ copyFromVersionId: version1Id })
+      .then((response) => response.body.data);
+    await request(app)
+      .post(`/process-flow-versions/${version2.id}/activate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    await request(app)
+      .put(`/process-flow-versions/${version1Id}/stages`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ stages: [{ name: 'Changed' }] })
+      .expect(409);
+  });
+
+  it('serializes concurrent version creation and activation', async () => {
+    const { token } = await createManager();
+    const flow = (await createFlow(token).expect(201)).body.data;
+    const requests = [1, 2].map(() =>
+      request(app)
+        .post(`/process-flows/${flow.id}/versions`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ stages: [{ name: 'Cutting' }] }),
+    );
+    const results = await Promise.all(requests);
+    expect(results.map((result) => result.status)).toEqual([201, 201]);
+    const versionNumbers = await prisma.processFlowVersion.findMany({
+      where: { processFlowId: flow.id },
+      orderBy: { versionNumber: 'asc' },
+      select: { versionNumber: true },
+    });
+    expect(versionNumbers.map(({ versionNumber }) => versionNumber)).toEqual([1, 2, 3]);
+
+    const draftId = results[0]!.body.data.id;
+    const activations = await Promise.all(
+      [1, 2].map(() =>
+        request(app)
+          .post(`/process-flow-versions/${draftId}/activate`)
+          .set('Authorization', `Bearer ${token}`),
+      ),
+    );
+    expect(activations.map((result) => result.status).sort()).toEqual([200, 409]);
+    expect(
+      await prisma.processFlowVersion.count({
+        where: { processFlowId: flow.id, status: 'ACTIVE' },
+      }),
+    ).toBe(1);
+  });
+
+  it('rejects one of two competing draft activations without retiring the winner', async () => {
+    const { token } = await createManager();
+    const flow = (await createFlow(token).expect(201)).body.data;
+    const previousActiveId = flow.versions[0].id as string;
+    await request(app)
+      .post(`/process-flow-versions/${previousActiveId}/activate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const drafts = await Promise.all(
+      ['Packing', 'Dispatch'].map((name) =>
+        request(app)
+          .post(`/process-flows/${flow.id}/versions`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ stages: [{ name }] })
+          .expect(201),
+      ),
+    );
+    const draftIds = drafts.map((response) => response.body.data.id as string);
+
+    const releaseLock = await holdProcessFlowLock(flow.id);
+    const activationsPromise = Promise.all(
+      draftIds.map((draftId) =>
+        request(app)
+          .post(`/process-flow-versions/${draftId}/activate`)
+          .set('Authorization', `Bearer ${token}`),
+      ),
+    );
+    try {
+      await waitForAdvisoryLockWaiters(2);
+    } finally {
+      await releaseLock();
+    }
+    const activations = await activationsPromise;
+
+    expect(activations.map(({ status }) => status).sort()).toEqual([200, 409]);
+    const winnerId = activations.find(({ status }) => status === 200)!.body.data.id as string;
+    const loserId = draftIds.find((draftId) => draftId !== winnerId)!;
+    const versions = await prisma.processFlowVersion.findMany({
+      where: { processFlowId: flow.id },
+      select: { id: true, status: true },
+    });
+    const statusById = new Map(versions.map((version) => [version.id, version.status]));
+
+    expect(statusById.get(winnerId)).toBe('ACTIVE');
+    expect(statusById.get(loserId)).toBe('DRAFT');
+    expect(statusById.get(previousActiveId)).toBe('RETIRED');
+    expect(versions.filter(({ status }) => status === 'ACTIVE')).toHaveLength(1);
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          action: 'PROCESS_FLOW_VERSION_ACTIVATED',
+          entityId: { in: draftIds },
+        },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'PROCESS_FLOW_VERSION_RETIRED', entityId: previousActiveId },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'PROCESS_FLOW_VERSION_ACTIVATED', entityId: loserId },
+      }),
+    ).toBe(0);
+  });
+
+  it('allows two pre-existing drafts to be activated deliberately in sequence', async () => {
+    const { token } = await createManager();
+    const flow = (await createFlow(token).expect(201)).body.data;
+    await request(app)
+      .post(`/process-flow-versions/${flow.versions[0].id}/activate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const draftIds: string[] = [];
+    for (const name of ['Packing', 'Dispatch']) {
+      const response = await request(app)
+        .post(`/process-flows/${flow.id}/versions`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ stages: [{ name }] })
+        .expect(201);
+      draftIds.push(response.body.data.id as string);
+    }
+
+    await request(app)
+      .post(`/process-flow-versions/${draftIds[0]}/activate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    await request(app)
+      .post(`/process-flow-versions/${draftIds[1]}/activate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const [first, second] = await Promise.all(
+      draftIds.map((draftId) =>
+        prisma.processFlowVersion.findUniqueOrThrow({ where: { id: draftId } }),
+      ),
+    );
+    expect(first!.status).toBe('RETIRED');
+    expect(second!.status).toBe('ACTIVE');
+  });
+
+  it('serializes draft-stage replacement against activation of that draft', async () => {
+    const { token } = await createManager();
+    const flow = (await createFlow(token).expect(201)).body.data;
+    const draftId = flow.versions[0].id as string;
+    const replacementStages = [{ name: 'Printing' }, { name: 'Packing' }];
+
+    const releaseLock = await holdProcessFlowLock(flow.id);
+    const replacementPromise = request(app)
+      .put(`/process-flow-versions/${draftId}/stages`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ stages: replacementStages });
+    const activationPromise = request(app)
+      .post(`/process-flow-versions/${draftId}/activate`)
+      .set('Authorization', `Bearer ${token}`);
+    const resultsPromise = Promise.all([replacementPromise, activationPromise]);
+    try {
+      await waitForAdvisoryLockWaiters(2);
+    } finally {
+      await releaseLock();
+    }
+    const [replacement, activation] = await resultsPromise;
+
+    expect(activation.status).toBe(200);
+    expect([200, 409]).toContain(replacement.status);
+    const persisted = await prisma.processFlowVersion.findUniqueOrThrow({
+      where: { id: draftId },
+      include: { stages: { orderBy: { sequence: 'asc' } } },
+    });
+    expect(persisted.status).toBe('ACTIVE');
+    const persistedStageNames = persisted.stages.map(({ name }) => name);
+    const replacementWon = replacement.status === 200;
+    expect(persistedStageNames).toEqual(
+      replacementWon ? ['Printing', 'Packing'] : ['Cutting', 'Sewing'],
+    );
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'PROCESS_FLOW_DRAFT_STAGES_REPLACED', entityId: draftId },
+      }),
+    ).toBe(replacementWon ? 1 : 0);
+    const activationAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'PROCESS_FLOW_VERSION_ACTIVATED', entityId: draftId },
+    });
+    expect(
+      (activationAudit.metadata as { stages: Array<{ name: string }> }).stages.map(
+        ({ name }) => name,
+      ),
+    ).toEqual(persistedStageNames);
+  });
+
+  it('keeps the partial unique index as an independent single-active backstop', async () => {
+    const { token } = await createManager();
+    const flow = (await createFlow(token).expect(201)).body.data;
+    const firstId = flow.versions[0].id as string;
+    const second = await request(app)
+      .post(`/process-flows/${flow.id}/versions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ stages: [{ name: 'Packing' }] })
+      .expect(201);
+    const secondId = second.body.data.id as string;
+
+    await prisma.processFlowVersion.update({
+      where: { id: firstId },
+      data: { status: 'ACTIVE' },
+    });
+    await expect(
+      prisma.processFlowVersion.update({
+        where: { id: secondId },
+        data: { status: 'ACTIVE' },
+      }),
+    ).rejects.toThrow();
+
+    expect(
+      await prisma.processFlowVersion.findMany({
+        where: { processFlowId: flow.id },
+        orderBy: { versionNumber: 'asc' },
+        select: { status: true },
+      }),
+    ).toEqual([{ status: 'ACTIVE' }, { status: 'DRAFT' }]);
   });
 
   it('treats active and retired process flow versions as immutable business objects', () => {
@@ -336,7 +807,10 @@ describe('distributors API', () => {
 
   it('updates a distributor, records an audit log, and rejects unknown ids', async () => {
     const { userId, token } = await createAdmin();
-    const distributor = await createTestDistributor({ code: 'DIST-001', name: 'Acme Distribution' });
+    const distributor = await createTestDistributor({
+      code: 'DIST-001',
+      name: 'Acme Distribution',
+    });
 
     const updated = await request(app)
       .patch(`/distributors/${distributor.id}`)
@@ -436,8 +910,12 @@ describe('distributors API', () => {
       data: { id: createId(), userId: distUserId, distributorId: own.id },
     });
 
-    const list = await request(app).get('/distributors').set('Authorization', `Bearer ${distToken}`);
-    const ownDetail = await request(app).get(`/distributors/${own.id}`).set('Authorization', `Bearer ${distToken}`);
+    const list = await request(app)
+      .get('/distributors')
+      .set('Authorization', `Bearer ${distToken}`);
+    const ownDetail = await request(app)
+      .get(`/distributors/${own.id}`)
+      .set('Authorization', `Bearer ${distToken}`);
     const otherDetail = await request(app)
       .get(`/distributors/${other.id}`)
       .set('Authorization', `Bearer ${distToken}`);
@@ -456,7 +934,9 @@ describe('distributors API', () => {
     });
     const distributor = await createTestDistributor();
 
-    const list = await request(app).get('/distributors').set('Authorization', `Bearer ${distToken}`);
+    const list = await request(app)
+      .get('/distributors')
+      .set('Authorization', `Bearer ${distToken}`);
     const detail = await request(app)
       .get(`/distributors/${distributor.id}`)
       .set('Authorization', `Bearer ${distToken}`);
@@ -495,7 +975,9 @@ describe('distributors API', () => {
     const distributor = await createTestDistributor();
 
     const anonymous = await request(app).get('/distributors');
-    const factoryList = await request(app).get('/distributors').set('Authorization', `Bearer ${factoryToken}`);
+    const factoryList = await request(app)
+      .get('/distributors')
+      .set('Authorization', `Bearer ${factoryToken}`);
     const factoryDetail = await request(app)
       .get(`/distributors/${distributor.id}`)
       .set('Authorization', `Bearer ${factoryToken}`);

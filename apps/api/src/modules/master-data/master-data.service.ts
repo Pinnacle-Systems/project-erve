@@ -192,7 +192,11 @@ export async function createStyle(
   return getStyleById(styleId);
 }
 
-export async function updateStyle(actor: CurrentUser, styleId: string, input: Record<string, unknown>) {
+export async function updateStyle(
+  actor: CurrentUser,
+  styleId: string,
+  input: Record<string, unknown>,
+) {
   const existing = await prisma.style.findUnique({ where: { id: styleId } });
   if (!existing) {
     throw HttpError.notFound('Style not found');
@@ -382,11 +386,17 @@ export async function listSizes(filters: { status?: string; search?: string }) {
   return sizes;
 }
 
-export async function createSize(
-  input: { code: string; label: string; sizeType: SizeType; sortOrder: number; status?: SizeStatus },
-) {
+export async function createSize(input: {
+  code: string;
+  label: string;
+  sizeType: SizeType;
+  sortOrder: number;
+  status?: SizeStatus;
+}) {
   try {
-    return await prisma.size.create({ data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' } });
+    return await prisma.size.create({
+      data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' },
+    });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('A size with this code already exists');
@@ -397,7 +407,10 @@ export async function createSize(
 
 export async function updateSize(id: string, input: Record<string, unknown>) {
   try {
-    return await prisma.size.update({ where: { id }, data: input as Prisma.SizeUncheckedUpdateInput });
+    return await prisma.size.update({
+      where: { id },
+      data: input as Prisma.SizeUncheckedUpdateInput,
+    });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
       throw HttpError.notFound('Size not found');
@@ -413,9 +426,13 @@ export async function updateSizeStatus(id: string, status: SizeStatus) {
   return updateSize(id, { status });
 }
 
-export async function listFactories(actor: CurrentUser, filters: { status?: string; search?: string }) {
+export async function listFactories(
+  actor: CurrentUser,
+  filters: { status?: string; search?: string },
+) {
   const factoryIds =
-    actor.roles.includes('FACTORY_USER') && !actor.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER')
+    actor.roles.includes('FACTORY_USER') &&
+    !actor.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER')
       ? actor.factoryIds
       : undefined;
 
@@ -469,14 +486,19 @@ export async function createFactory(input: Omit<Prisma.FactoryUncheckedCreateInp
 
 export async function updateFactory(id: string, input: Record<string, unknown>) {
   if (typeof input.name === 'string') {
-    const existingByName = await prisma.factory.findFirst({ where: { name: input.name, NOT: { id } } });
+    const existingByName = await prisma.factory.findFirst({
+      where: { name: input.name, NOT: { id } },
+    });
     if (existingByName) {
       throw HttpError.conflict('A factory with this code or name already exists');
     }
   }
 
   try {
-    return await prisma.factory.update({ where: { id }, data: input as Prisma.FactoryUncheckedUpdateInput });
+    return await prisma.factory.update({
+      where: { id },
+      data: input as Prisma.FactoryUncheckedUpdateInput,
+    });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
       throw HttpError.notFound('Factory not found');
@@ -490,6 +512,34 @@ export async function updateFactory(id: string, input: Record<string, unknown>) 
 
 export async function updateFactoryStatus(id: string, status: FactoryStatus) {
   return updateFactory(id, { status });
+}
+
+type ProcessStageInput = {
+  sequence?: number;
+  name: string;
+  code?: string | null;
+  status?: 'ACTIVE' | 'INACTIVE';
+};
+
+function normalizedStageData(stages: ProcessStageInput[]) {
+  return stages.map((stage, index) => ({
+    id: createId(),
+    sequence: index + 1,
+    name: stage.name.trim(),
+    code: stage.code?.trim() || null,
+    status: stage.status ?? 'ACTIVE',
+  }));
+}
+
+function stageSummary(
+  stages: Array<{ sequence: number; name: string; code?: string | null; status: string }>,
+) {
+  return stages.map(({ sequence, name, code, status }) => ({
+    sequence,
+    name,
+    code: code ?? null,
+    status,
+  }));
 }
 
 export async function listProcessFlows() {
@@ -508,45 +558,70 @@ export async function getProcessFlowById(id: string) {
   return toProcessFlowView(flow);
 }
 
-export async function createProcessFlow(input: {
-  code: string;
-  name: string;
-  description?: string | null;
-  status?: 'ACTIVE' | 'INACTIVE';
-  stages?: Array<{ sequence: number; name: string; code?: string | null; status?: 'ACTIVE' | 'INACTIVE' }>;
-}) {
-  const stages = input.stages ?? [
-    { sequence: 1, name: 'Cutting' },
-    { sequence: 2, name: 'Printing' },
-    { sequence: 3, name: 'Sewing' },
-    { sequence: 4, name: 'Finishing' },
-  ];
+export async function createProcessFlow(
+  input: {
+    code: string;
+    name: string;
+    description?: string | null;
+    status?: 'ACTIVE' | 'INACTIVE';
+    stages: ProcessStageInput[];
+  },
+  actor: CurrentUser,
+) {
+  const flowId = createId();
+  const versionId = createId();
+  const stages = normalizedStageData(input.stages);
 
   try {
-    const flow = await prisma.processFlow.create({
-      data: {
-        id: createId(),
-        code: input.code,
-        name: input.name,
-        description: input.description,
-        status: input.status ?? 'ACTIVE',
-        versions: {
-          create: {
-            id: createId(),
-            versionNumber: 1,
-            status: 'DRAFT',
-            stages: {
-              create: stages.map((stage) => ({ id: createId(), ...stage, status: stage.status ?? 'ACTIVE' })),
+    const flow = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('process_flow_identity', 0))::text`;
+      const duplicate = await tx.processFlow.findFirst({
+        where: {
+          OR: [
+            { code: { equals: input.code, mode: 'insensitive' } },
+            { name: { equals: input.name, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (duplicate) {
+        throw HttpError.conflict('A process flow with this code or name already exists');
+      }
+
+      const created = await tx.processFlow.create({
+        data: {
+          id: flowId,
+          code: input.code,
+          name: input.name,
+          description: input.description,
+          status: input.status ?? 'ACTIVE',
+          versions: {
+            create: {
+              id: versionId,
+              versionNumber: 1,
+              status: 'DRAFT',
+              stages: { create: stages },
             },
           },
         },
-      },
-      include: processFlowInclude,
+        include: processFlowInclude,
+      });
+      await recordAuditLog(
+        {
+          actorId: actor.id,
+          action: 'PROCESS_FLOW_CREATED',
+          entityType: 'ProcessFlow',
+          entityId: flowId,
+          metadata: { code: input.code, name: input.name, versionId, stages: stageSummary(stages) },
+        },
+        tx,
+      );
+      return created;
     });
     return toProcessFlowView(flow);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
-      throw HttpError.conflict('A process flow with this code already exists');
+      throw HttpError.conflict('A process flow with this code or name already exists');
     }
     throw error;
   }
@@ -555,34 +630,93 @@ export async function createProcessFlow(input: {
 export async function createProcessFlowVersion(
   processFlowId: string,
   input: {
-    stages: Array<{ sequence: number; name: string; code?: string | null; status?: 'ACTIVE' | 'INACTIVE' }>;
+    stages?: ProcessStageInput[];
+    copyFromVersionId?: string;
     effectiveFrom?: Date | null;
   },
+  actor: CurrentUser,
 ) {
-  const flow = await prisma.processFlow.findUnique({
-    where: { id: processFlowId },
-    include: { versions: { orderBy: { versionNumber: 'desc' }, take: 1 } },
-  });
-  if (!flow) {
-    throw HttpError.notFound('Process flow not found');
+  try {
+    const version = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('process_flow:' || ${processFlowId}, 0))::text`;
+      const flow = await tx.processFlow.findUnique({
+        where: { id: processFlowId },
+        include: { versions: { orderBy: { versionNumber: 'desc' }, take: 1 } },
+      });
+      if (!flow) {
+        throw HttpError.notFound('Process flow not found');
+      }
+
+      let source: Prisma.ProcessFlowVersionGetPayload<{ include: { stages: true } }> | null = null;
+      if (input.copyFromVersionId) {
+        source = await tx.processFlowVersion.findFirst({
+          where: { id: input.copyFromVersionId, processFlowId },
+          include: { stages: { orderBy: { sequence: 'asc' } } },
+        });
+        if (!source) {
+          throw HttpError.badRequest('Copy source must be a version of this process flow');
+        }
+      }
+
+      const sourceStages = source
+        ? source.stages.map(({ sequence, name, code, status }) => ({
+            sequence,
+            name,
+            code,
+            status,
+          }))
+        : (input.stages ?? []);
+      const stages = normalizedStageData(sourceStages);
+      const versionId = createId();
+      const created = await tx.processFlowVersion.create({
+        data: {
+          id: versionId,
+          processFlowId,
+          versionNumber: (flow.versions[0]?.versionNumber ?? 0) + 1,
+          status: 'DRAFT',
+          effectiveFrom: input.effectiveFrom,
+          stages: { create: stages },
+        },
+        include: processFlowVersionInclude,
+      });
+      await recordAuditLog(
+        {
+          actorId: actor.id,
+          action: 'PROCESS_FLOW_VERSION_CREATED',
+          entityType: 'ProcessFlowVersion',
+          entityId: versionId,
+          metadata: {
+            processFlowId,
+            versionNumber: created.versionNumber,
+            copyFromVersionId: source?.id ?? null,
+            stages: stageSummary(stages),
+          },
+        },
+        tx,
+      );
+      if (source) {
+        await recordAuditLog(
+          {
+            actorId: actor.id,
+            action: 'PROCESS_FLOW_VERSION_COPIED',
+            entityType: 'ProcessFlowVersion',
+            entityId: versionId,
+            metadata: { processFlowId, copyFromVersionId: source.id, stages: stageSummary(stages) },
+          },
+          tx,
+        );
+      }
+      return created;
+    });
+    return toProcessFlowVersionView(version);
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw HttpError.conflict(
+        'A process flow version was created concurrently; retry the request',
+      );
+    }
+    throw error;
   }
-
-  const nextVersionNumber = (flow.versions[0]?.versionNumber ?? 0) + 1;
-  const version = await prisma.processFlowVersion.create({
-    data: {
-      id: createId(),
-      processFlowId,
-      versionNumber: nextVersionNumber,
-      status: 'DRAFT',
-      effectiveFrom: input.effectiveFrom,
-      stages: {
-        create: input.stages.map((stage) => ({ id: createId(), ...stage, status: stage.status ?? 'ACTIVE' })),
-      },
-    },
-    include: processFlowVersionInclude,
-  });
-
-  return toProcessFlowVersionView(version);
 }
 
 export async function getProcessFlowVersionById(id: string) {
@@ -596,25 +730,147 @@ export async function getProcessFlowVersionById(id: string) {
   return toProcessFlowVersionView(version);
 }
 
-export async function activateProcessFlowVersion(id: string) {
-  const existing = await prisma.processFlowVersion.findUnique({ where: { id } });
-  if (!existing) {
+export async function replaceProcessFlowVersionStages(
+  id: string,
+  input: { stages: ProcessStageInput[] },
+  actor: CurrentUser,
+) {
+  const candidate = await prisma.processFlowVersion.findUnique({
+    where: { id },
+    select: { processFlowId: true },
+  });
+  if (!candidate) {
     throw HttpError.notFound('Process flow version not found');
   }
-  if (existing.status !== 'DRAFT') {
-    throw HttpError.badRequest('Only DRAFT process flow versions can be activated');
-  }
 
-  await prisma.$transaction([
-    prisma.processFlowVersion.updateMany({
-      where: { processFlowId: existing.processFlowId, status: 'ACTIVE' },
-      data: { status: 'RETIRED' },
-    }),
-    prisma.processFlowVersion.update({
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('process_flow:' || ${candidate.processFlowId}, 0))::text`;
+    const existing = await tx.processFlowVersion.findUnique({
       where: { id },
+      include: { stages: { orderBy: { sequence: 'asc' } } },
+    });
+    if (!existing) {
+      throw HttpError.notFound('Process flow version not found');
+    }
+    if (existing.status !== 'DRAFT') {
+      throw HttpError.conflict('This version is no longer a draft and cannot be edited');
+    }
+
+    const stages = normalizedStageData(input.stages);
+    const before = stageSummary(existing.stages);
+    await tx.processFlowVersionStage.deleteMany({ where: { processFlowVersionId: id } });
+    if (stages.length > 0) {
+      await tx.processFlowVersionStage.createMany({
+        data: stages.map((stage) => ({ ...stage, processFlowVersionId: id })),
+      });
+    }
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'PROCESS_FLOW_DRAFT_STAGES_REPLACED',
+        entityType: 'ProcessFlowVersion',
+        entityId: id,
+        metadata: { before, after: stageSummary(stages) },
+      },
+      tx,
+    );
+  });
+
+  return getProcessFlowVersionById(id);
+}
+
+export async function activateProcessFlowVersion(id: string, actor: CurrentUser) {
+  const candidate = await prisma.processFlowVersion.findUnique({
+    where: { id },
+    select: {
+      processFlowId: true,
+      processFlow: {
+        select: {
+          versions: {
+            where: { status: 'ACTIVE' },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+  if (!candidate) {
+    throw HttpError.notFound('Process flow version not found');
+  }
+  const expectedActiveVersionId = candidate.processFlow.versions[0]?.id ?? null;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('process_flow:' || ${candidate.processFlowId}, 0))::text`;
+    const currentActiveVersion = await tx.processFlowVersion.findFirst({
+      where: { processFlowId: candidate.processFlowId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if ((currentActiveVersion?.id ?? null) !== expectedActiveVersionId) {
+      throw HttpError.conflict(
+        'The active process flow version changed while this activation was waiting; retry against the updated process flow',
+      );
+    }
+
+    const existing = await tx.processFlowVersion.findUnique({
+      where: { id },
+      include: { stages: { orderBy: { sequence: 'asc' } } },
+    });
+    if (!existing) {
+      throw HttpError.notFound('Process flow version not found');
+    }
+    if (existing.status !== 'DRAFT') {
+      throw HttpError.conflict('This version is no longer a draft and cannot be activated');
+    }
+    if (existing.stages.length === 0) {
+      throw HttpError.badRequest('At least one stage is required before activation');
+    }
+
+    const previousActive = await tx.processFlowVersion.findMany({
+      where: { processFlowId: existing.processFlowId, status: 'ACTIVE' },
+    });
+    if (previousActive.length > 0) {
+      await tx.processFlowVersion.updateMany({
+        where: { id: { in: previousActive.map((version) => version.id) }, status: 'ACTIVE' },
+        data: { status: 'RETIRED' },
+      });
+      for (const retired of previousActive) {
+        await recordAuditLog(
+          {
+            actorId: actor.id,
+            action: 'PROCESS_FLOW_VERSION_RETIRED',
+            entityType: 'ProcessFlowVersion',
+            entityId: retired.id,
+            metadata: { replacedByVersionId: id },
+          },
+          tx,
+        );
+      }
+    }
+
+    const activated = await tx.processFlowVersion.updateMany({
+      where: { id, status: 'DRAFT' },
       data: { status: 'ACTIVE', effectiveFrom: existing.effectiveFrom ?? new Date() },
-    }),
-  ]);
+    });
+    if (activated.count !== 1) {
+      throw HttpError.conflict('This version changed concurrently and could not be activated');
+    }
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'PROCESS_FLOW_VERSION_ACTIVATED',
+        entityType: 'ProcessFlowVersion',
+        entityId: id,
+        metadata: {
+          processFlowId: existing.processFlowId,
+          versionNumber: existing.versionNumber,
+          retiredVersionIds: previousActive.map((version) => version.id),
+          stages: stageSummary(existing.stages),
+        },
+      },
+      tx,
+    );
+  });
 
   return getProcessFlowVersionById(id);
 }
@@ -628,12 +884,19 @@ export function assertProcessFlowVersionMutable(status: ProcessFlowVersionStatus
 function isDistributorScopedUser(actor: CurrentUser): boolean {
   return (
     actor.roles.includes('DISTRIBUTOR') &&
-    !actor.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT')
+    !actor.roles.some(
+      (role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT',
+    )
   );
 }
 
-export async function listDistributors(actor: CurrentUser, filters: { status?: string; search?: string }) {
-  const soleDistributorId = isDistributorScopedUser(actor) ? getSoleDistributorId(actor) : undefined;
+export async function listDistributors(
+  actor: CurrentUser,
+  filters: { status?: string; search?: string },
+) {
+  const soleDistributorId = isDistributorScopedUser(actor)
+    ? getSoleDistributorId(actor)
+    : undefined;
 
   return prisma.distributor.findMany({
     where: {
@@ -674,7 +937,9 @@ export async function createDistributor(
 
   let distributor;
   try {
-    distributor = await prisma.distributor.create({ data: { id: createId(), status: 'ACTIVE', ...input } });
+    distributor = await prisma.distributor.create({
+      data: { id: createId(), status: 'ACTIVE', ...input },
+    });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('A distributor with this code or name already exists');
@@ -692,9 +957,15 @@ export async function createDistributor(
   return distributor;
 }
 
-export async function updateDistributor(actor: CurrentUser, id: string, input: Record<string, unknown>) {
+export async function updateDistributor(
+  actor: CurrentUser,
+  id: string,
+  input: Record<string, unknown>,
+) {
   if (typeof input.name === 'string') {
-    const existingByName = await prisma.distributor.findFirst({ where: { name: input.name, NOT: { id } } });
+    const existingByName = await prisma.distributor.findFirst({
+      where: { name: input.name, NOT: { id } },
+    });
     if (existingByName) {
       throw HttpError.conflict('A distributor with this code or name already exists');
     }
@@ -726,7 +997,11 @@ export async function updateDistributor(actor: CurrentUser, id: string, input: R
   return distributor;
 }
 
-export async function updateDistributorStatus(actor: CurrentUser, id: string, status: DistributorStatus) {
+export async function updateDistributorStatus(
+  actor: CurrentUser,
+  id: string,
+  status: DistributorStatus,
+) {
   const existing = await prisma.distributor.findUnique({ where: { id } });
   if (!existing) {
     throw HttpError.notFound('Distributor not found');

@@ -89,7 +89,10 @@ export interface ProcessFlow {
     versionNumber: number;
     status: 'DRAFT' | 'ACTIVE' | 'RETIRED';
     effectiveFrom: string | null;
+    createdAt: string;
   }>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ProcessFlowVersion {
@@ -100,5 +103,13 @@ export interface ProcessFlowVersion {
   versionNumber: number;
   status: 'DRAFT' | 'ACTIVE' | 'RETIRED';
   effectiveFrom: string | null;
-  stages: Array<{ id: string; sequence: number; name: string; code: string | null; status: Status }>;
+  stages: Array<{
+    id: string;
+    sequence: number;
+    name: string;
+    code: string | null;
+    status: Status;
+  }>;
+  createdAt: string;
+  updatedAt: string;
 }

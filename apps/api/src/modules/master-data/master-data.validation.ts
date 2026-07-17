@@ -27,9 +27,11 @@ export const createStyleSchema = z.object({
   status: styleStatusSchema.optional(),
 });
 
-export const updateStyleSchema = createStyleSchema.partial().refine((value) => Object.keys(value).length > 0, {
-  message: 'At least one field is required',
-});
+export const updateStyleSchema = createStyleSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required',
+  });
 
 export const updateStyleStatusSchema = z.object({ status: styleStatusSchema });
 
@@ -51,9 +53,11 @@ export const createSizeSchema = z.object({
   status: sizeStatusSchema.optional(),
 });
 
-export const updateSizeSchema = createSizeSchema.partial().refine((value) => Object.keys(value).length > 0, {
-  message: 'At least one field is required',
-});
+export const updateSizeSchema = createSizeSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required',
+  });
 
 export const updateSizeStatusSchema = z.object({ status: sizeStatusSchema });
 
@@ -102,23 +106,65 @@ export const updateDistributorSchema = createDistributorSchema
 export const updateDistributorStatusSchema = z.object({ status: distributorStatusSchema });
 
 const processStageSchema = z.object({
-  sequence: z.coerce.number().int().positive(),
-  name: z.string().trim().min(1),
-  code: optionalText,
+  sequence: z.coerce.number().int().positive().optional(),
+  name: z.string().trim().min(1, 'Stage name is required').max(120),
+  code: z.string().trim().max(50).optional().nullable(),
   status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
 });
 
-export const createProcessFlowSchema = z.object({
-  code: z.string().trim().min(1),
-  name: z.string().trim().min(1),
-  description: optionalText,
-  status: processFlowStatusSchema.optional(),
-  stages: z.array(processStageSchema).min(1).optional(),
+const processStagesSchema = z.array(processStageSchema).superRefine((stages, context) => {
+  const names = new Set<string>();
+  stages.forEach((stage, index) => {
+    const normalizedName = stage.name.toLocaleLowerCase();
+    if (names.has(normalizedName)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Stage names must be unique within a version',
+        path: [index, 'name'],
+      });
+    }
+    names.add(normalizedName);
+  });
+
+  const suppliedSequences = stages.flatMap((stage) =>
+    stage.sequence === undefined ? [] : [stage.sequence],
+  );
+  if (suppliedSequences.length > 0) {
+    const uniqueSequences = new Set(suppliedSequences);
+    if (suppliedSequences.length !== stages.length || uniqueSequences.size !== stages.length) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Stage sequences must be unique and supplied for every stage',
+      });
+    } else if ([...uniqueSequences].some((sequence, index) => sequence !== index + 1)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Stage sequences must be contiguous starting at 1',
+      });
+    }
+  }
 });
 
-export const createProcessFlowVersionSchema = z.object({
-  stages: z.array(processStageSchema).min(1),
-  effectiveFrom: z.coerce.date().optional().nullable(),
+export const createProcessFlowSchema = z.object({
+  code: z.string().trim().min(1).max(50),
+  name: z.string().trim().min(1).max(120),
+  description: optionalText,
+  status: processFlowStatusSchema.optional(),
+  stages: processStagesSchema.min(1, 'At least one stage is required'),
+});
+
+export const createProcessFlowVersionSchema = z
+  .object({
+    stages: processStagesSchema.optional(),
+    copyFromVersionId: z.string().trim().min(1).optional(),
+    effectiveFrom: z.coerce.date().optional().nullable(),
+  })
+  .refine((input) => !(input.copyFromVersionId && input.stages), {
+    message: 'Provide either copyFromVersionId or stages, not both',
+  });
+
+export const replaceProcessFlowVersionStagesSchema = z.object({
+  stages: processStagesSchema,
 });
 
 export const listStylesQuerySchema = z.object({

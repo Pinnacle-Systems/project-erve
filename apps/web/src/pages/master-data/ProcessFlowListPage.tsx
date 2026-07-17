@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
+import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { ProcessFlow } from './types.js';
@@ -17,14 +18,25 @@ export function ProcessFlowListPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Process Flows" subtitle="Operational process definitions and active versions" />
+      <PageHeader
+        title="Process Flows"
+        subtitle="Operational process definitions and active versions"
+        primaryAction={
+          <Button asChild variant="default">
+            <Link to="/master-data/process-flows/new">Create Process Flow</Link>
+          </Button>
+        }
+      />
       <DataTable
         columns={[
           {
             key: 'name',
             header: 'Name',
             render: (flow) => (
-              <Link className="font-medium text-[var(--erp-text-link)]" to={`/master-data/process-flows/${flow.id}`}>
+              <Link
+                className="font-medium text-[var(--erp-text-link)]"
+                to={`/master-data/process-flows/${flow.id}`}
+              >
                 {flow.name}
               </Link>
             ),
@@ -41,16 +53,29 @@ export function ProcessFlowListPage() {
           {
             key: 'status',
             header: 'Status',
-            render: (flow) => <StatusBadge label={flow.status} tone={flow.status === 'ACTIVE' ? 'success' : 'muted'} />,
+            render: (flow) => (
+              <StatusBadge
+                label={flow.status}
+                tone={flow.status === 'ACTIVE' ? 'success' : 'muted'}
+              />
+            ),
           },
         ]}
         data={flowsQuery.data ?? []}
         loading={flowsQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading process flows" />}
-        emptyState={<EmptyState title="No process flows found" description="Process flow records will appear here." />}
+        emptyState={
+          <EmptyState
+            title="No process flows found"
+            description="Process flow records will appear here."
+          />
+        }
         error={
           flowsQuery.isError ? (
-            <ErrorState title="Unable to load process flows" description={flowsQuery.error.message} />
+            <ErrorState
+              title="Unable to load process flows"
+              description={flowsQuery.error.message}
+            />
           ) : undefined
         }
       />

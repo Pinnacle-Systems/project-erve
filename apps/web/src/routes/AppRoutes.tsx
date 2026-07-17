@@ -8,7 +8,9 @@ import { DistributorFormPage } from '../pages/master-data/DistributorFormPage.js
 import { DistributorListPage } from '../pages/master-data/DistributorListPage.js';
 import { FactoryListPage } from '../pages/master-data/FactoryListPage.js';
 import { ProcessFlowDetailPage } from '../pages/master-data/ProcessFlowDetailPage.js';
+import { ProcessFlowCreatePage } from '../pages/master-data/ProcessFlowCreatePage.js';
 import { ProcessFlowListPage } from '../pages/master-data/ProcessFlowListPage.js';
+import { ProcessFlowVersionEditorPage } from '../pages/master-data/ProcessFlowVersionEditorPage.js';
 import { SizeListPage } from '../pages/master-data/SizeListPage.js';
 import { StyleDetailPage } from '../pages/master-data/StyleDetailPage.js';
 import { StyleFormPage } from '../pages/master-data/StyleFormPage.js';
@@ -25,11 +27,23 @@ import { JobOrderListPage } from '../pages/job-orders/JobOrderListPage.js';
 import { AppLayout } from '../pages/AppLayout.js';
 import { RoleRoute } from './RoleRoute.js';
 
-const PRICE_LIST_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT', 'DISTRIBUTOR'] as const;
+const PRICE_LIST_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'ACCOUNTANT',
+  'DISTRIBUTOR',
+] as const;
 const PRICE_LIST_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const;
 const PO_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'] as const;
 const PO_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER', 'DISTRIBUTOR'] as const;
-const JOB_ORDER_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'] as const;
+const JOB_ORDER_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'FACTORY_USER',
+  'QA_USER',
+] as const;
 const JOB_ORDER_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const;
 
 export function AppRoutes() {
@@ -131,10 +145,26 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="process-flows/new"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+              <ProcessFlowCreatePage />
+            </RoleRoute>
+          }
+        />
+        <Route
           path="process-flows/:id"
           element={
             <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
               <ProcessFlowDetailPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="process-flow-versions/:versionId/edit"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+              <ProcessFlowVersionEditorPage />
             </RoleRoute>
           }
         />

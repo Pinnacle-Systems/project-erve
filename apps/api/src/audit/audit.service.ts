@@ -9,8 +9,13 @@ export interface AuditLogEntry {
   metadata?: Prisma.InputJsonValue;
 }
 
-export async function recordAuditLog(entry: AuditLogEntry): Promise<void> {
-  await prisma.auditLog.create({
+type AuditClient = Pick<typeof prisma, 'auditLog'>;
+
+export async function recordAuditLog(
+  entry: AuditLogEntry,
+  client: AuditClient = prisma,
+): Promise<void> {
+  await client.auditLog.create({
     data: {
       id: createId(),
       actorId: entry.actorId,
