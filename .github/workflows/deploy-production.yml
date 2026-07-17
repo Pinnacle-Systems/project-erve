@@ -160,6 +160,7 @@ jobs:
             JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else \
             JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else \
             CORS_ORIGIN="https://smoke-test.invalid" \
+            FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads" \
             node server.js &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
@@ -228,6 +229,9 @@ jobs:
           export DATABASE_URL="postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci"
           export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
           export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          # NODE_ENV=production makes the app's env validation require an
+          # explicit absolute FILE_STORAGE_DIR (see apps/api/src/config/env.ts).
+          export FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads"
           export ADMIN_EMAIL="artifact-admin@smoke.invalid"
           export ADMIN_NAME="Artifact Smoke Admin"
           export ADMIN_PASSWORD="ArtifactSmokeTest123!"
@@ -282,6 +286,7 @@ jobs:
           export DATABASE_URL="postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci"
           export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
           export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          export FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads"
 
           echo "--- without --confirm-production: must refuse ---"
           if node roles-bootstrap.js; then

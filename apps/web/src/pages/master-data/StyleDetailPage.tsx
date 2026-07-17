@@ -1,15 +1,19 @@
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
+import { hasAnyRole } from '@erve/shared';
 import { AuditTrail, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { EmptyState, LoadingState } from '@erve/data-display';
+import { useAuth } from '../../auth/AuthContext.js';
 import { apiClient } from '../../lib/api-client.js';
+import { StyleImagesPanel } from './StyleImagesPanel.js';
 import type { Style } from './types.js';
 
 export function StyleDetailPage() {
   const { id } = useParams();
+  const { user } = useAuth();
   const styleQuery = useQuery({
     queryKey: ['style', id],
     queryFn: async () => {
@@ -23,7 +27,9 @@ export function StyleDetailPage() {
     return <LoadingState label="Loading style" />;
   }
   if (!style) {
-    return <EmptyState title="Style not found" description="The selected style could not be loaded." />;
+    return (
+      <EmptyState title="Style not found" description="The selected style could not be loaded." />
+    );
   }
 
   const fields = [
@@ -47,7 +53,12 @@ export function StyleDetailPage() {
       <PageHeader
         title={style.styleNumber}
         subtitle={style.styleName}
-        status={<StatusBadge label={style.status} tone={style.status === 'ACTIVE' ? 'success' : 'muted'} />}
+        status={
+          <StatusBadge
+            label={style.status}
+            tone={style.status === 'ACTIVE' ? 'success' : 'muted'}
+          />
+        }
         primaryAction={
           <Button asChild>
             <Link to={`/master-data/styles/${style.id}/edit`}>Edit</Link>
@@ -63,18 +74,31 @@ export function StyleDetailPage() {
         </DescriptionList>
       </Panel>
 
+      <StyleImagesPanel
+        styleId={style.id}
+        images={style.images}
+        canManage={Boolean(user && hasAnyRole(user, ['ADMIN', 'MERCHANDISER']))}
+      />
+
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel title="Valid Sizes">
           <div className="flex flex-wrap gap-2">
             {style.sizes.map((size) => (
-              <StatusBadge key={size.id} label={size.code} tone={size.mappingStatus === 'ACTIVE' ? 'info' : 'muted'} />
+              <StatusBadge
+                key={size.id}
+                label={size.code}
+                tone={size.mappingStatus === 'ACTIVE' ? 'info' : 'muted'}
+              />
             ))}
           </div>
         </Panel>
         <Panel title="Factory Mappings">
           <div className="divide-y divide-border-subtle">
             {style.factories.map((factory) => (
-              <div key={factory.id} className="flex justify-between gap-3 py-2 text-sm text-foreground">
+              <div
+                key={factory.id}
+                className="flex justify-between gap-3 py-2 text-sm text-foreground"
+              >
                 <span>{factory.name}</span>
                 <span className="font-medium">{factory.exFactoryPrice.toFixed(2)}</span>
               </div>

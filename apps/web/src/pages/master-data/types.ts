@@ -58,6 +58,19 @@ export interface AdminUserSummary {
   distributors: Array<{ id: string; code: string; name: string }>;
 }
 
+export interface StyleImage {
+  id: string;
+  styleId: string;
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  isPrimary: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Style {
   id: string;
   styleNumber: string;
@@ -76,6 +89,7 @@ export interface Style {
   status: Status;
   sizes: Array<Size & { mappingStatus: Status; importedSizeRangeLabel: string | null }>;
   factories: Array<Factory & { mappingStatus: Status; exFactoryPrice: number }>;
+  images: StyleImage[];
 }
 
 export interface ProcessFlow {

@@ -18,6 +18,8 @@ coverage/
 .turbo/
 .vite/
 .cache/
+# Local development upload storage (apps/api FILE_STORAGE_DIR default)
+.data/
 
 # Mobile / Capacitor
 apps/mobile/android/

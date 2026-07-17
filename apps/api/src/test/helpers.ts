@@ -22,6 +22,8 @@ export async function resetDatabase(): Promise<void> {
   await prisma.priceList.deleteMany();
   await prisma.styleFactoryMapping.deleteMany();
   await prisma.styleSize.deleteMany();
+  await prisma.styleImage.deleteMany();
+  await prisma.file.deleteMany();
   await prisma.style.deleteMany();
   await prisma.size.deleteMany();
   await prisma.refreshSession.deleteMany();
@@ -85,7 +87,9 @@ export async function createTestDistributor(overrides?: {
   const id = createId();
   const code = overrides?.code ?? `DIST-${id}`;
   const name = overrides?.name ?? 'Test Distributor';
-  await prisma.distributor.create({ data: { id, code, name, status: overrides?.status ?? 'ACTIVE' } });
+  await prisma.distributor.create({
+    data: { id, code, name, status: overrides?.status ?? 'ACTIVE' },
+  });
   return { id, code, name };
 }
 

@@ -25,6 +25,9 @@ import {
   updateStyleStatusSchema,
 } from './master-data.validation.js';
 import * as masterDataService from './master-data.service.js';
+import * as styleImagesService from './style-images.service.js';
+import { singleImageUpload } from '../../middleware/image-upload.js';
+import { HttpError } from '../../errors/http-error.js';
 
 const canManageMasterData = requireRoles('ADMIN', 'MERCHANDISER');
 const canViewStyles = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT');
@@ -226,9 +229,99 @@ stylesRouter.delete(
 stylesRouter.post(
   '/:id/images',
   canManageMasterData,
+  singleImageUpload('image'),
   asyncHandler(async (req, res) => {
-    await masterDataService.createStyleImagePlaceholder(req.params.id! as string);
-    res.status(501).json(successResponse(null));
+    if (!req.file) {
+      throw HttpError.badRequest("A multipart file field named 'image' is required");
+    }
+    const { image, created } = await styleImagesService.uploadStyleImage(
+      req.user!,
+      req.params.id! as string,
+      { buffer: req.file.buffer, originalName: req.file.originalname },
+    );
+    // A retried upload of identical content answers 200 with the existing
+    // image instead of creating a duplicate (201).
+    res.status(created ? 201 : 200).json(successResponse(image));
+  }),
+);
+
+stylesRouter.get(
+  '/:id/images',
+  canViewStyles,
+  asyncHandler(async (req, res) => {
+    const images = await styleImagesService.listStyleImages(req.params.id! as string);
+    res.status(200).json(successResponse(images));
+  }),
+);
+
+stylesRouter.get(
+  '/:id/images/:imageId/content',
+  canViewStyles,
+  asyncHandler(async (req, res) => {
+    const content = await styleImagesService.getStyleImageContent(
+      req.params.id! as string,
+      req.params.imageId! as string,
+    );
+    // The storage key (and therefore the ETag) changes on every replace, so
+    // clients revalidate cheaply and never render stale replaced content.
+    if (req.headers['if-none-match'] === content.etag) {
+      res.status(304).end();
+      return;
+    }
+    res
+      .status(200)
+      .set({
+        'Content-Type': content.mimeType,
+        'Content-Length': String(content.data.length),
+        'Content-Disposition': `inline; filename="${content.fileName.replaceAll('"', '')}"`,
+        'Cache-Control': 'private, no-cache',
+        ETag: content.etag,
+      })
+      .send(content.data);
+  }),
+);
+
+stylesRouter.put(
+  '/:id/images/:imageId',
+  canManageMasterData,
+  singleImageUpload('image'),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      throw HttpError.badRequest("A multipart file field named 'image' is required");
+    }
+    const image = await styleImagesService.replaceStyleImage(
+      req.user!,
+      req.params.id! as string,
+      req.params.imageId! as string,
+      { buffer: req.file.buffer, originalName: req.file.originalname },
+    );
+    res.status(200).json(successResponse(image));
+  }),
+);
+
+stylesRouter.delete(
+  '/:id/images/:imageId',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    const images = await styleImagesService.removeStyleImage(
+      req.user!,
+      req.params.id! as string,
+      req.params.imageId! as string,
+    );
+    res.status(200).json(successResponse(images));
+  }),
+);
+
+stylesRouter.patch(
+  '/:id/images/:imageId/primary',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    const images = await styleImagesService.setPrimaryStyleImage(
+      req.user!,
+      req.params.id! as string,
+      req.params.imageId! as string,
+    );
+    res.status(200).json(successResponse(images));
   }),
 );
 

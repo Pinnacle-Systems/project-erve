@@ -230,13 +230,35 @@ JWT_REFRESH_ABSOLUTE_TIMEOUT_HOURS=8
 # (see apps/mobile/CAPACITOR_AUTH_TESTING.md) — unrelated to DOMAIN_NAME
 # and required regardless of which domain the web app is served from.
 CORS_ORIGIN=https://DOMAIN_NAME,https://localhost
+
+# Uploaded style images. FILE_STORAGE_DIR is REQUIRED in production and must
+# be an absolute path outside the versioned releases/ directories —
+# shared/uploads survives deployments and release cleanup by design (§4).
+# The API refuses to start in production if this is missing or relative.
+FILE_STORAGE_DRIVER=local
+FILE_STORAGE_DIR=/home/SITE_USER/htdocs/DOMAIN_NAME/shared/uploads
+# Optional; defaults to 5242880 (5 MiB). If you raise this, also raise the
+# client_max_body_size in the /api/ Nginx location block (§8).
+UPLOAD_MAX_IMAGE_BYTES=5242880
 ```
 
 Notes:
+
 - The web app itself doesn't strictly need to be in `CORS_ORIGIN` (it's served same-origin through Nginx at `/`, calling `/api/...` — no cross-origin request, no CORS preflight), but including it is harmless defense-in-depth.
 - The refresh-token cookie (`apps/api/src/modules/auth/refresh-cookie.ts`) sets `Secure` whenever `NODE_ENV=production`, so HTTPS must be live end-to-end (CloudPanel's cert + this env value) before testing login from a browser.
 - That same cookie is issued with `Path=/`, not an Express-internal path like `/auth`. The public request path the browser actually sees differs by environment — `/auth/refresh` in local dev (direct Express, no proxy) vs. `/api/auth/refresh` in production (behind the Nginx `/api/` proxy, §8) — and `Path=/` is the one value that is correct in both without any environment-specific configuration or an Nginx `proxy_cookie_path` rewrite. Do not change this to a narrower path without re-verifying it against whatever public path the browser/Capacitor WebView actually calls.
-- No file upload / storage credentials exist in the current codebase (no `multer`, no upload routes) — `shared/uploads/` is reserved for when that lands, not used today.
+- `shared/uploads/` is the persistent style-image store (see §5.1). It is created by §4 (and re-ensured by every `deploy-release.sh` run), owned by `SITE_USER`, and must never live inside `releases/`.
+
+### 5.1 Uploaded style images (`shared/uploads/`)
+
+Style images are uploaded through the API (`POST /api/styles/<id>/images`, ADMIN/MERCHANDISER only), validated server-side by file signature (JPEG/PNG/WebP only), and written by the API's local-filesystem storage adapter under `FILE_STORAGE_DIR` using server-generated keys (`style-images/<styleId>/<fileId>.<ext>`). Nothing under this directory is served statically — image bytes are delivered only through the authenticated API endpoint (`GET /api/styles/<id>/images/<imageId>/content`), so style RBAC applies to the content itself. Do not add an Nginx location for it (§8).
+
+Operational rules:
+
+- **Directory and permissions**: `mkdir -p "$DEPLOY_ROOT/shared/uploads"` as `SITE_USER` (already part of §4). Default permissions are fine — only `SITE_USER` (the PM2/API user) needs to read/write it; it must not be world-writable.
+- **Startup validation**: the API validates the directory at boot (creates it if missing, fails startup loudly when `FILE_STORAGE_DIR` is unset, relative, or unusable in production).
+- **Deployment safety**: deployments only add/remove `releases/<sha>` directories and re-point `current`; `cleanup-releases.sh` refuses to touch anything outside `releases/`. Uploads are therefore never deleted by deployment or cleanup.
+- **When storage is unavailable** (directory removed, disk full, permissions broken): style CRUD keeps working; image upload/replace/delete requests fail with 5xx and image content requests return 404/5xx. Fix the directory and the API recovers without a restart (except a boot-time misconfiguration, which prevents startup entirely).
 
 Every release gets a fresh `api/.env → ../../../shared/api.env` symlink created by `deploy-release.sh` — the file itself is written once and reused by every deployment.
 
@@ -388,15 +410,15 @@ This is a **separate policy from application release retention** (`ERVE_RELEASE_
 - **Application rollback** (§10, `rollback-release.sh`) switches which compiled release `current` points at and reloads PM2. It is fast, safe to try, and auto-reverts on failure. **It never touches the database.**
 - **Database restoration** (restoring a `shared/backups/*.dump` file with `pg_restore`) is a separate, manual, higher-risk operation that overwrites live data. There is no automated script for this in `scripts/deployment/` — restoring production data is deliberately not a one-command operation.
 
-If a deployment's migration corrupted data or a schema change is incompatible with older application code, an application rollback **alone does not fix a bad migration** — you may need both a code rollback and a database restore, and should think carefully about data created *after* the bad migration that a restore would discard.
+If a deployment's migration corrupted data or a schema change is incompatible with older application code, an application rollback **alone does not fix a bad migration** — you may need both a code rollback and a database restore, and should think carefully about data created _after_ the bad migration that a restore would discard.
 
 ### 11.3 Off-VPS backup storage is required
 
-`shared/backups/` on the VPS is **not** a substitute for off-server backup storage. It protects against a bad migration on the *same* deployment; it does not protect against VPS disk failure, accidental `rm -rf`, the VPS provider losing the instance, or ransomware affecting the whole filesystem. Set up a periodic off-VPS copy of `shared/backups/*.dump` (e.g. a cron'd `rsync`/`rclone` to separate storage, or your VPS provider's snapshot feature) — this is not implemented as part of this deployment pipeline and is tracked here as a pending operational task, not a completed one.
+`shared/backups/` on the VPS is **not** a substitute for off-server backup storage. It protects against a bad migration on the _same_ deployment; it does not protect against VPS disk failure, accidental `rm -rf`, the VPS provider losing the instance, or ransomware affecting the whole filesystem. Set up a periodic off-VPS copy of `shared/backups/*.dump` (e.g. a cron'd `rsync`/`rclone` to separate storage, or your VPS provider's snapshot feature) — this is not implemented as part of this deployment pipeline and is tracked here as a pending operational task, not a completed one.
 
 ### 11.4 Restore-testing procedure (use a separate database — never production)
 
-Backups are only as good as your last successful *restore test*. Periodically (and definitely before you actually need it in an emergency):
+Backups are only as good as your last successful _restore test_. Periodically (and definitely before you actually need it in an emergency):
 
 ```bash
 # On the VPS, or anywhere with network access to Postgres and the backup file:
@@ -412,11 +434,41 @@ sudo -u postgres dropdb erve_restore_test
 
 **Never** `pg_restore` directly into the live `erve` database as a way of "testing" a backup — that overwrites production data. Do not consider backup/restore verified until this has actually been run and the row counts/spot-checked data looked correct.
 
+### 11.5 Uploaded style images must be backed up separately — database backups are not enough
+
+`backup-database.sh` (and everything in §11.1–§11.4) covers **only PostgreSQL**. Style-image _metadata_ lives in the database (`files` / `style_images` tables), but the image _bytes_ live on disk under `shared/uploads/` — a database restore without a matching uploads restore produces styles whose images 404 ("The stored image file is missing").
+
+This is a **required operational step**, tracked here as pending until actually set up:
+
+- Include `shared/uploads/` in the same periodic off-VPS copy as `shared/backups/` (§11.3), e.g.:
+
+  ```bash
+  rsync -a --delete-after "$DEPLOY_ROOT/shared/uploads/" <off-vps-target>/uploads/
+  ```
+
+  (or `rclone sync`, or provider snapshots — anything that captures the directory tree as-is. File names under `shared/uploads/` are content-stable: a replace writes a new file name and deletes the old one, so incremental sync tools work well.)
+
+- Take the uploads copy **at or after** the time of the database backup you would pair it with. An uploads copy newer than the database backup is safe (extra never-referenced files are harmless and invisible); an uploads copy _older_ than the database backup can miss images the restored database references.
+
+**Restore procedure** (after or alongside a §11.2/§11.4 database restoration):
+
+```bash
+# 1. Restore the database dump (see §11.2 — deliberate, manual, high-risk).
+# 2. Restore the uploads tree into place, preserving the directory layout:
+rsync -a <off-vps-target>/uploads/ "$DEPLOY_ROOT/shared/uploads/"
+# 3. Spot-check: open a style with images in the web app, or
+curl -s -H "Authorization: Bearer <token>" https://DOMAIN_NAME/api/styles/<id>/images
+#    and fetch one image's /content URL — a 200 with image bytes confirms
+#    metadata and files are consistent again.
+```
+
+Orphaned files (present on disk, not referenced by any `files` row) are harmless. Missing files (referenced but not on disk) surface as 404s on that image's content endpoint only — the style itself and the rest of the application keep working, and the affected image can simply be re-uploaded or removed through the UI.
+
 ---
 
 ## 12. Production bootstrap: roles and the admin user
 
-The general reference-data seed (`apps/api/prisma/seed.ts`, `pnpm --filter @erve/api prisma:seed`) is **deliberately never run against production** — besides the bootstrap admin, it also inserts demo/master data (sample factories, styles, sizes, a default process flow) that has no place in real production data. Because of that, a freshly deployed production database has an **empty `roles` table and no admin user at all**. This is not just a login problem: `apps/api/src/modules/users/users.service.ts`'s `createUser` and `assignRole` both *expect* the target `Role` row to already exist (they reject with a 400 rather than creating one on demand), so an empty `roles` table also blocks creating or role-assigning *any* user, admin or not, through the normal API.
+The general reference-data seed (`apps/api/prisma/seed.ts`, `pnpm --filter @erve/api prisma:seed`) is **deliberately never run against production** — besides the bootstrap admin, it also inserts demo/master data (sample factories, styles, sizes, a default process flow) that has no place in real production data. Because of that, a freshly deployed production database has an **empty `roles` table and no admin user at all**. This is not just a login problem: `apps/api/src/modules/users/users.service.ts`'s `createUser` and `assignRole` both _expect_ the target `Role` row to already exist (they reject with a 400 rather than creating one on demand), so an empty `roles` table also blocks creating or role-assigning _any_ user, admin or not, through the normal API.
 
 Two dedicated, idempotent, production-safe commands exist for this:
 
@@ -433,7 +485,7 @@ Neither command ever touches factories, styles, sizes, process flows, or any use
 
 ### 12.1 Bootstrap order
 
-**For a first deployment (or any time the `roles` table might be empty), running `admin-bootstrap.js` alone is sufficient** — it ensures all 7 roles *and* creates the admin user, in one transaction:
+**For a first deployment (or any time the `roles` table might be empty), running `admin-bootstrap.js` alone is sufficient** — it ensures all 7 roles _and_ creates the admin user, in one transaction:
 
 ```bash
 cd "$DEPLOY_ROOT/current/api"
@@ -565,28 +617,28 @@ pnpm --filter @erve/api roles:bootstrap
 
 ## 13. Troubleshooting
 
-| Symptom | Likely cause / first check |
-|---|---|
-| SSH authentication failure from GitHub Actions | `DEPLOY_SSH_KEY` doesn't match the key added to `SITE_USER`'s `authorized_keys`; confirm with `ssh -i <key> -p SSH_PORT SITE_USER@VPS_HOST` locally first |
-| Host key mismatch / `deploy` job fails at SSH step | VPS host key rotated (reprovisioned VPS, etc.) — re-run §1.4 and update `DEPLOY_KNOWN_HOSTS`; never silence this with `StrictHostKeyChecking=no` |
-| `deploy-release.sh` fails disk space preflight | `du -sk "$DEPLOY_ROOT/releases"` and `df -Pk "$DEPLOY_ROOT"` — run `cleanup-releases.sh` manually or lower `ERVE_RELEASE_RETENTION` |
-| Artifact checksum failure | Re-run the `build-and-verify` job; do not manually re-upload a tarball with a stale checksum file |
-| `package-production.sh` fails during `pnpm install --prod` in the artifact | Check `apps/api/package.json`'s `dependencies` — `generate-prod-package-json.mjs` only pins direct deps + `prisma`; a new direct dependency needs no script change, but a new *transitive-only* native dependency might need investigation |
-| Prisma Client / migration engine mismatch on the VPS | `apps/api/prisma/schema.prisma` uses the engine-less `prisma-client` provider (WASM query compiler, no native query engine binary), but `prisma migrate deploy`'s **schema engine** is a real platform-specific binary resolved by `@prisma/engines` at install time on the GitHub Actions runner (Linux x64). Confirm the VPS is also Linux x64 — `uname -m` should print `x86_64` — before relying on this packaging approach |
-| CI Postgres service fails to become healthy | Usually a transient GitHub Actions runner issue — re-run the job; if persistent, check the `postgres:18` image tag still matches §3.1's `SHOW server_version;` output |
-| Migration failure on the VPS | `deploy-release.sh` takes a backup (`backup-database.sh`) *before* migrating and aborts the deployment (release not activated) on migration failure — check `pm2 logs`, fix forward, redeploy; do not attempt to hand-edit `_prisma_migrations` |
-| Backup failure | Confirm `shared/api.env` exists and is readable by `SITE_USER`, and that `pg_dump`/`psql` client tools are installed and match a compatible major version |
-| `cleanup-backups.sh` "refuses" or errors on a path | It only ever deletes files directly under `shared/backups/` matching the exact `erve-<timestamp>.dump` naming convention, and never the backup just created — this is intentional; investigate rather than working around it |
-| Fewer backups present than `ERVE_DB_BACKUP_RETENTION` | Normal if fewer than that many deployments (and therefore backups) have happened yet — retention is a maximum, not a guarantee of that many existing |
-| PM2 shows `erve-api` offline after deploy | `pm2 logs erve-api` — most likely `shared/api.env` is missing/malformed (the app's own `dotenv/config` + Zod schema will log which variables failed validation) |
-| PM2 running under Node 22 instead of 24 | `pm2 startup`/`pm2 install` was run without `nvm use 24` active first — re-run §9 in full, including regenerating the systemd unit |
-| PM2 startup service failure after reboot | The NVM Node 24 path baked into the old systemd unit no longer exists (patch upgrade) — regenerate per §9 |
-| `nginx -t` failure | You likely edited outside the three spliced `location` blocks, or duplicated a `location /` — re-diff against `deployment/nginx/erve.vhost.example.conf` |
-| Nginx 502 on `/api/` | `erve-api` PM2 process is down, or bound to the wrong `HOST`/`PORT` — check `shared/api.env`'s `HOST=127.0.0.1`/`PORT` matches the Nginx `proxy_pass` target and CloudPanel's assigned `APP_PORT` |
-| SPA routes 404 instead of loading the app | The `location /` block's `try_files $uri $uri/ /index.html;` fallback is missing/misordered relative to `/api/` and `/mobile-updates/bundles/` |
-| API 404s return `index.html` instead of JSON | The `/api/` `location` block is being matched *after* `location /` instead of Nginx's normal longest-prefix-first behavior — check block ordering and that `location /api/` isn't accidentally nested under `location /` |
-| Refresh cookie not being set/sent behind HTTPS | Confirm `NODE_ENV=production` in `shared/api.env` (the cookie's `Secure` flag is keyed off this) and that the browser is actually on `https://` — mixed content silently drops `Secure` cookies |
-| `/api/ready` returns 503 | Real DB connectivity issue — check `psql "${DATABASE_URL%%\?*}" -tAc "SELECT 1;"` on the VPS directly (`deploy-release.sh`/`backup-database.sh` use the same check via `erve_libpq_url`; the `?schema=` suffix is Prisma-only and must be stripped before handing the URL to psql/pg_dump) |
-| Rollback fails | `rollback-release.sh` auto-restores the previously active release and refuses to leave the box on a failed target — check `pm2 logs` for the target release's own startup errors |
-| `cleanup-releases.sh` "refuses unsafe deletion" | Working as intended — it only deletes directories directly under `releases/` named as a full Git SHA, and never the currently active one; if you need to remove something else, do it manually with `realpath` sanity checks of your own |
-| Cannot log in to a freshly deployed environment / login always 401s | Expected on a brand-new production database — the general seed (which creates the bootstrap admin) is deliberately never run against production, so `roles`/`users` start empty. Run §12's `admin-bootstrap` once |
+| Symptom                                                                    | Likely cause / first check                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SSH authentication failure from GitHub Actions                             | `DEPLOY_SSH_KEY` doesn't match the key added to `SITE_USER`'s `authorized_keys`; confirm with `ssh -i <key> -p SSH_PORT SITE_USER@VPS_HOST` locally first                                                                                                                                                                                                                                                                       |
+| Host key mismatch / `deploy` job fails at SSH step                         | VPS host key rotated (reprovisioned VPS, etc.) — re-run §1.4 and update `DEPLOY_KNOWN_HOSTS`; never silence this with `StrictHostKeyChecking=no`                                                                                                                                                                                                                                                                                |
+| `deploy-release.sh` fails disk space preflight                             | `du -sk "$DEPLOY_ROOT/releases"` and `df -Pk "$DEPLOY_ROOT"` — run `cleanup-releases.sh` manually or lower `ERVE_RELEASE_RETENTION`                                                                                                                                                                                                                                                                                             |
+| Artifact checksum failure                                                  | Re-run the `build-and-verify` job; do not manually re-upload a tarball with a stale checksum file                                                                                                                                                                                                                                                                                                                               |
+| `package-production.sh` fails during `pnpm install --prod` in the artifact | Check `apps/api/package.json`'s `dependencies` — `generate-prod-package-json.mjs` only pins direct deps + `prisma`; a new direct dependency needs no script change, but a new _transitive-only_ native dependency might need investigation                                                                                                                                                                                      |
+| Prisma Client / migration engine mismatch on the VPS                       | `apps/api/prisma/schema.prisma` uses the engine-less `prisma-client` provider (WASM query compiler, no native query engine binary), but `prisma migrate deploy`'s **schema engine** is a real platform-specific binary resolved by `@prisma/engines` at install time on the GitHub Actions runner (Linux x64). Confirm the VPS is also Linux x64 — `uname -m` should print `x86_64` — before relying on this packaging approach |
+| CI Postgres service fails to become healthy                                | Usually a transient GitHub Actions runner issue — re-run the job; if persistent, check the `postgres:18` image tag still matches §3.1's `SHOW server_version;` output                                                                                                                                                                                                                                                           |
+| Migration failure on the VPS                                               | `deploy-release.sh` takes a backup (`backup-database.sh`) _before_ migrating and aborts the deployment (release not activated) on migration failure — check `pm2 logs`, fix forward, redeploy; do not attempt to hand-edit `_prisma_migrations`                                                                                                                                                                                 |
+| Backup failure                                                             | Confirm `shared/api.env` exists and is readable by `SITE_USER`, and that `pg_dump`/`psql` client tools are installed and match a compatible major version                                                                                                                                                                                                                                                                       |
+| `cleanup-backups.sh` "refuses" or errors on a path                         | It only ever deletes files directly under `shared/backups/` matching the exact `erve-<timestamp>.dump` naming convention, and never the backup just created — this is intentional; investigate rather than working around it                                                                                                                                                                                                    |
+| Fewer backups present than `ERVE_DB_BACKUP_RETENTION`                      | Normal if fewer than that many deployments (and therefore backups) have happened yet — retention is a maximum, not a guarantee of that many existing                                                                                                                                                                                                                                                                            |
+| PM2 shows `erve-api` offline after deploy                                  | `pm2 logs erve-api` — most likely `shared/api.env` is missing/malformed (the app's own `dotenv/config` + Zod schema will log which variables failed validation)                                                                                                                                                                                                                                                                 |
+| PM2 running under Node 22 instead of 24                                    | `pm2 startup`/`pm2 install` was run without `nvm use 24` active first — re-run §9 in full, including regenerating the systemd unit                                                                                                                                                                                                                                                                                              |
+| PM2 startup service failure after reboot                                   | The NVM Node 24 path baked into the old systemd unit no longer exists (patch upgrade) — regenerate per §9                                                                                                                                                                                                                                                                                                                       |
+| `nginx -t` failure                                                         | You likely edited outside the three spliced `location` blocks, or duplicated a `location /` — re-diff against `deployment/nginx/erve.vhost.example.conf`                                                                                                                                                                                                                                                                        |
+| Nginx 502 on `/api/`                                                       | `erve-api` PM2 process is down, or bound to the wrong `HOST`/`PORT` — check `shared/api.env`'s `HOST=127.0.0.1`/`PORT` matches the Nginx `proxy_pass` target and CloudPanel's assigned `APP_PORT`                                                                                                                                                                                                                               |
+| SPA routes 404 instead of loading the app                                  | The `location /` block's `try_files $uri $uri/ /index.html;` fallback is missing/misordered relative to `/api/` and `/mobile-updates/bundles/`                                                                                                                                                                                                                                                                                  |
+| API 404s return `index.html` instead of JSON                               | The `/api/` `location` block is being matched _after_ `location /` instead of Nginx's normal longest-prefix-first behavior — check block ordering and that `location /api/` isn't accidentally nested under `location /`                                                                                                                                                                                                        |
+| Refresh cookie not being set/sent behind HTTPS                             | Confirm `NODE_ENV=production` in `shared/api.env` (the cookie's `Secure` flag is keyed off this) and that the browser is actually on `https://` — mixed content silently drops `Secure` cookies                                                                                                                                                                                                                                 |
+| `/api/ready` returns 503                                                   | Real DB connectivity issue — check `psql "${DATABASE_URL%%\?*}" -tAc "SELECT 1;"` on the VPS directly (`deploy-release.sh`/`backup-database.sh` use the same check via `erve_libpq_url`; the `?schema=` suffix is Prisma-only and must be stripped before handing the URL to psql/pg_dump)                                                                                                                                      |
+| Rollback fails                                                             | `rollback-release.sh` auto-restores the previously active release and refuses to leave the box on a failed target — check `pm2 logs` for the target release's own startup errors                                                                                                                                                                                                                                                |
+| `cleanup-releases.sh` "refuses unsafe deletion"                            | Working as intended — it only deletes directories directly under `releases/` named as a full Git SHA, and never the currently active one; if you need to remove something else, do it manually with `realpath` sanity checks of your own                                                                                                                                                                                        |
+| Cannot log in to a freshly deployed environment / login always 401s        | Expected on a brand-new production database — the general seed (which creates the bootstrap admin) is deliberately never run against production, so `roles`/`users` start empty. Run §12's `admin-bootstrap` once                                                                                                                                                                                                               |

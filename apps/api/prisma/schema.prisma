@@ -336,6 +336,10 @@ model Style {
   @@map("styles")
 }
 
+// A raw partial unique index in the migrations
+// (style_images_one_primary_per_style: UNIQUE ON (style_id) WHERE
+// is_primary = true) guarantees at most one primary image per style at the
+// database level, independent of the service's per-style advisory lock.
 model StyleImage {
   id        String   @id
   styleId   String   @map("style_id")
@@ -719,6 +723,10 @@ model File {
   mimeType     String   @map("mime_type")
   sizeBytes    Int      @map("size_bytes")
   storageKey   String   @map("storage_key")
+  // SHA-256 of the stored bytes — lets a retried/duplicated upload of the
+  // same content be answered with the existing record instead of creating
+  // a duplicate style image.
+  checksumSha256 String? @map("checksum_sha256")
   url          String?
   uploadedById String?  @map("uploaded_by_id")
   createdAt    DateTime @default(now()) @map("created_at")

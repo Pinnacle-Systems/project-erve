@@ -12,10 +12,15 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
+import { toStyleImageView } from './style-images.service.js';
 
 const styleInclude = {
   styleSizes: { include: { size: true }, orderBy: { size: { sortOrder: 'asc' } } },
   styleFactoryMappings: { include: { factory: true }, orderBy: { factory: { name: 'asc' } } },
+  images: {
+    include: { file: true },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+  },
 } satisfies Prisma.StyleInclude;
 
 const processFlowInclude = {
@@ -76,6 +81,7 @@ function toStyleView(style: StyleRecord) {
       mappingStatus: mapping.status,
       exFactoryPrice: decimalToNumber(mapping.exFactoryPrice),
     })),
+    images: style.images.map(toStyleImageView),
     createdAt: style.createdAt,
     updatedAt: style.updatedAt,
   };
@@ -360,14 +366,6 @@ export async function removeStyleFactory(actor: CurrentUser, styleId: string, fa
   });
 
   return getStyleById(styleId);
-}
-
-export async function createStyleImagePlaceholder(styleId: string): Promise<never> {
-  const style = await prisma.style.findUnique({ where: { id: styleId } });
-  if (!style) {
-    throw HttpError.notFound('Style not found');
-  }
-  throw new HttpError(501, 'NOT_IMPLEMENTED', 'Style image upload storage is not configured yet');
 }
 
 export async function listSizes(filters: { status?: string; search?: string }) {

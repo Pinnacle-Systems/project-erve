@@ -1,11 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
-import { Button, Checkbox, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import {
+  Button,
+  Checkbox,
+  SelectField,
+  SelectItem,
+  TextField,
+  ValidationMessage,
+} from '@erve/primitives';
 import { FormGrid, FormSection, Panel, Stack } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
+import {
+  IMAGE_GUIDANCE,
+  ACCEPTED_IMAGE_TYPES,
+  StyleImagesPanel,
+  imageErrorMessage,
+  validateImageFile,
+} from './StyleImagesPanel.js';
 import type { Factory, Size, Status, Style } from './types.js';
 
 const emptyForm = {
@@ -56,8 +70,39 @@ export function StyleFormPage() {
   const isEdit = Boolean(id);
   const [form, setForm] = useState(emptyForm);
   const [selectedSizeIds, setSelectedSizeIds] = useState<string[]>([]);
-  const [factoryMappings, setFactoryMappings] = useState<Array<{ factoryId: string; exFactoryPrice: string }>>([]);
+  const [factoryMappings, setFactoryMappings] = useState<
+    Array<{ factoryId: string; exFactoryPrice: string }>
+  >([]);
   const [error, setError] = useState('');
+  // Create-mode only: an image picked before the style exists. The style
+  // must be created first (the image endpoint needs a style ID), so this is
+  // an explicit two-step flow — see the mutation below for the honest
+  // partial-failure handling.
+  const pendingImageInputRef = useRef<HTMLInputElement>(null);
+  const [pendingImage, setPendingImage] = useState<File | null>(null);
+  const [pendingImageUrl, setPendingImageUrl] = useState<string | null>(null);
+  const [createdWithImageFailure, setCreatedWithImageFailure] = useState<Style | null>(null);
+
+  const selectPendingImage = (file: File | null) => {
+    setError('');
+    if (pendingImageUrl) {
+      URL.revokeObjectURL(pendingImageUrl);
+    }
+    if (!file) {
+      setPendingImage(null);
+      setPendingImageUrl(null);
+      return;
+    }
+    const validationError = validateImageFile(file);
+    if (validationError) {
+      setPendingImage(null);
+      setPendingImageUrl(null);
+      setError(validationError);
+      return;
+    }
+    setPendingImage(file);
+    setPendingImageUrl(URL.createObjectURL(file));
+  };
 
   const styleQuery = useQuery({
     queryKey: ['style', id],
@@ -70,7 +115,9 @@ export function StyleFormPage() {
   const sizesQuery = useQuery({
     queryKey: ['sizes', 'active'],
     queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Size[]>>('/sizes', { params: { status: 'ACTIVE' } });
+      const response = await apiClient.get<ApiSuccessResponse<Size[]>>('/sizes', {
+        params: { status: 'ACTIVE' },
+      });
       return response.data.data;
     },
   });
@@ -104,7 +151,8 @@ export function StyleFormPage() {
       hsnCode: styleQuery.data.hsnCode ?? '',
       hsnDescription: styleQuery.data.hsnDescription ?? '',
       finalMrp: String(styleQuery.data.finalMrp),
-      royaltyPercentage: styleQuery.data.royaltyPercentage === null ? '' : String(styleQuery.data.royaltyPercentage),
+      royaltyPercentage:
+        styleQuery.data.royaltyPercentage === null ? '' : String(styleQuery.data.royaltyPercentage),
       status: styleQuery.data.status,
     });
     setSelectedSizeIds(styleQuery.data.sizes.map((size) => size.id));
@@ -149,7 +197,9 @@ export function StyleFormPage() {
       await Promise.all(
         style.factories
           .filter((factory) => {
-            const submitted = submittedFactories.find((mapping) => mapping.factoryId === factory.id);
+            const submitted = submittedFactories.find(
+              (mapping) => mapping.factoryId === factory.id,
+            );
             return submitted && Number(submitted.exFactoryPrice) !== factory.exFactoryPrice;
           })
           .map((factory) => apiClient.delete(`/styles/${style.id}/factories/${factory.id}`)),
@@ -157,7 +207,9 @@ export function StyleFormPage() {
       const currentFactoryIds = new Set(
         style.factories
           .filter((factory) => {
-            const submitted = submittedFactories.find((mapping) => mapping.factoryId === factory.id);
+            const submitted = submittedFactories.find(
+              (mapping) => mapping.factoryId === factory.id,
+            );
             return submitted && Number(submitted.exFactoryPrice) === factory.exFactoryPrice;
           })
           .map((factory) => factory.id),
@@ -173,10 +225,33 @@ export function StyleFormPage() {
           ),
       );
 
+      if (!isEdit && pendingImage) {
+        // The style row is already committed at this point. If the image
+        // upload fails we do not pretend the whole save failed — the user
+        // gets an honest message plus a link to the created style, and the
+        // form is locked against re-submitting (which would try to create
+        // the same style number again).
+        const body = new FormData();
+        body.append('image', pendingImage);
+        try {
+          await apiClient.post(`/styles/${style.id}/images`, body);
+        } catch (caught) {
+          setCreatedWithImageFailure(style);
+          throw new Error(
+            `The style was created, but the image upload failed: ${imageErrorMessage(
+              caught,
+              'upload error',
+            )}. Open the style to retry the upload.`,
+            { cause: caught },
+          );
+        }
+      }
+
       return style;
     },
     onSuccess: (style) => navigate(`/master-data/styles/${style.id}`),
-    onError: (caught) => setError(caught instanceof Error ? caught.message : 'Unable to save style'),
+    onError: (caught) =>
+      setError(caught instanceof Error ? caught.message : 'Unable to save style'),
   });
 
   const availableFactories = useMemo(() => factoriesQuery.data ?? [], [factoriesQuery.data]);
@@ -185,7 +260,9 @@ export function StyleFormPage() {
     <div className="space-y-5">
       <PageHeader
         title={isEdit ? 'Edit Style' : 'Create Style'}
-        subtitle={isEdit ? 'Update item master details and mappings' : 'Create an item master record'}
+        subtitle={
+          isEdit ? 'Update item master details and mappings' : 'Create an item master record'
+        }
         secondaryActions={
           <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
             Cancel
@@ -202,35 +279,41 @@ export function StyleFormPage() {
           }}
         >
           <FormSection title="Style Details">
-          <FormGrid columns={3}>
-            {Object.keys(emptyForm).map((key) =>
-              key === 'status' ? (
-                <SelectField
-                  key={key}
-                  label="Status"
-                  value={form.status}
-                  onValueChange={(value) => setForm((current) => ({ ...current, status: value as Status }))}
-                  width="fill"
-                >
-                  <SelectItem value="ACTIVE">Active</SelectItem>
-                  <SelectItem value="INACTIVE">Inactive</SelectItem>
-                </SelectField>
-              ) : (
-                <TextField
-                  key={key}
-                  label={fieldLabels[key as keyof typeof emptyForm]}
-                  type={key.includes('Mrp') || key.includes('Percentage') ? 'number' : 'text'}
-                  value={form[key as keyof typeof emptyForm]}
-                  errorMessage={
-                    error && ((key === 'styleNumber' && !form.styleNumber) || (key === 'styleName' && !form.styleName))
-                      ? 'Required'
-                      : undefined
-                  }
-                  onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
-                />
-              ),
-            )}
-          </FormGrid>
+            <FormGrid columns={3}>
+              {Object.keys(emptyForm).map((key) =>
+                key === 'status' ? (
+                  <SelectField
+                    key={key}
+                    label="Status"
+                    value={form.status}
+                    onValueChange={(value) =>
+                      setForm((current) => ({ ...current, status: value as Status }))
+                    }
+                    width="fill"
+                  >
+                    <SelectItem value="ACTIVE">Active</SelectItem>
+                    <SelectItem value="INACTIVE">Inactive</SelectItem>
+                  </SelectField>
+                ) : (
+                  <TextField
+                    key={key}
+                    label={fieldLabels[key as keyof typeof emptyForm]}
+                    type={key.includes('Mrp') || key.includes('Percentage') ? 'number' : 'text'}
+                    value={form[key as keyof typeof emptyForm]}
+                    errorMessage={
+                      error &&
+                      ((key === 'styleNumber' && !form.styleNumber) ||
+                        (key === 'styleName' && !form.styleName))
+                        ? 'Required'
+                        : undefined
+                    }
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, [key]: event.target.value }))
+                    }
+                  />
+                ),
+              )}
+            </FormGrid>
           </FormSection>
 
           <FormSection title="Valid Sizes">
@@ -244,7 +327,9 @@ export function StyleFormPage() {
                     checked={selectedSizeIds.includes(size.id)}
                     onCheckedChange={(checked) =>
                       setSelectedSizeIds((current) =>
-                        checked === true ? [...current, size.id] : current.filter((sizeId) => sizeId !== size.id),
+                        checked === true
+                          ? [...current, size.id]
+                          : current.filter((sizeId) => sizeId !== size.id),
                       )
                     }
                   />
@@ -257,7 +342,16 @@ export function StyleFormPage() {
           <FormSection
             title="Factory Mappings"
             actions={
-              <Button type="button" variant="secondary" onClick={() => setFactoryMappings((current) => [...current, { factoryId: '', exFactoryPrice: '' }])}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() =>
+                  setFactoryMappings((current) => [
+                    ...current,
+                    { factoryId: '', exFactoryPrice: '' },
+                  ])
+                }
+              >
                 Add Factory
               </Button>
             }
@@ -271,7 +365,9 @@ export function StyleFormPage() {
                     onValueChange={(value) =>
                       setFactoryMappings((current) =>
                         current.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, factoryId: value === 'NONE' ? '' : value } : item,
+                          itemIndex === index
+                            ? { ...item, factoryId: value === 'NONE' ? '' : value }
+                            : item,
                         ),
                       )
                     }
@@ -291,7 +387,9 @@ export function StyleFormPage() {
                     onChange={(event) =>
                       setFactoryMappings((current) =>
                         current.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, exFactoryPrice: event.target.value } : item,
+                          itemIndex === index
+                            ? { ...item, exFactoryPrice: event.target.value }
+                            : item,
                         ),
                       )
                     }
@@ -299,7 +397,11 @@ export function StyleFormPage() {
                   <Button
                     type="button"
                     variant="secondary"
-                    onClick={() => setFactoryMappings((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                    onClick={() =>
+                      setFactoryMappings((current) =>
+                        current.filter((_, itemIndex) => itemIndex !== index),
+                      )
+                    }
                   >
                     Remove
                   </Button>
@@ -308,17 +410,95 @@ export function StyleFormPage() {
             </Stack>
           </FormSection>
 
+          {!isEdit ? (
+            <FormSection title="Image">
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  {IMAGE_GUIDANCE}. The image is uploaded after the style is saved.
+                </p>
+                <input
+                  ref={pendingImageInputRef}
+                  type="file"
+                  accept={ACCEPTED_IMAGE_TYPES.join(',')}
+                  className="sr-only"
+                  aria-label="Style image"
+                  onChange={(event) => {
+                    selectPendingImage(event.target.files?.[0] ?? null);
+                    event.target.value = '';
+                  }}
+                />
+                {pendingImageUrl && pendingImage ? (
+                  <div className="flex items-start gap-4">
+                    <div className="flex aspect-square w-40 items-center justify-center overflow-hidden rounded-control border border-border-subtle bg-surface-muted">
+                      <img
+                        src={pendingImageUrl}
+                        alt={`Preview of ${pendingImage.name}`}
+                        className="h-full w-full object-contain"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm text-foreground">{pendingImage.name}</p>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          density="compact"
+                          onClick={() => pendingImageInputRef.current?.click()}
+                        >
+                          Change
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          density="compact"
+                          onClick={() => selectPendingImage(null)}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => pendingImageInputRef.current?.click()}
+                  >
+                    Choose Image
+                  </Button>
+                )}
+              </div>
+            </FormSection>
+          ) : null}
+
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
+          {createdWithImageFailure ? (
+            <div className="flex justify-end">
+              <Button asChild variant="secondary">
+                <Link to={`/master-data/styles/${createdWithImageFailure.id}`}>
+                  Open {createdWithImageFailure.styleNumber}
+                </Link>
+              </Button>
+            </div>
+          ) : null}
           <div className="flex justify-end gap-3 border-t border-border-subtle pt-4">
             <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
               Cancel
             </Button>
-            <Button type="submit" loading={mutation.isPending}>
+            <Button
+              type="submit"
+              loading={mutation.isPending}
+              disabled={createdWithImageFailure !== null}
+            >
               Save Style
             </Button>
           </div>
         </form>
       </Panel>
+
+      {isEdit && id ? (
+        <StyleImagesPanel styleId={id} images={styleQuery.data?.images ?? []} canManage />
+      ) : null}
     </div>
   );
 }
