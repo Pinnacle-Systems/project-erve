@@ -7,6 +7,13 @@ export interface Size {
   sizeType: 'AGE' | 'ALPHA' | 'NUMERIC' | 'WAIST' | 'FREE_SIZE';
   sortOrder: number;
   status: Status;
+  createdAt?: string;
+  updatedAt?: string;
+  usage?: {
+    styleMappings: number;
+    purchaseOrderLines: number;
+    jobOrderLines: number;
+  };
 }
 
 export interface Factory {
@@ -18,6 +25,18 @@ export interface Factory {
   contactPhone: string | null;
   city: string | null;
   status: Status;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  state?: string | null;
+  country?: string | null;
+  postalCode?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  usage?: {
+    styleMappings: number;
+    jobOrders: number;
+    mappedUsers: number;
+  };
 }
 
 export interface DistributorSummary {
@@ -56,7 +75,10 @@ export interface AdminUserSummary {
   status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
   roles: string[];
   distributors: Array<{ id: string; code: string; name: string }>;
+  factories: Array<{ id: string; code: string; name: string }>;
 }
+
+export type FactoryUser = DistributorUser;
 
 export interface StyleImage {
   id: string;

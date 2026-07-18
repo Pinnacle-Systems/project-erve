@@ -37,7 +37,10 @@ const poInclude = {
   lines: {
     include: {
       style: { select: { id: true, styleNumber: true, styleName: true } },
-      sizes: { include: { size: { select: { id: true, code: true, label: true, sortOrder: true } } }, orderBy: { size: { sortOrder: 'asc' as const } } },
+      sizes: {
+        include: { size: { select: { id: true, code: true, label: true, sortOrder: true } } },
+        orderBy: { size: { sortOrder: 'asc' as const } },
+      },
     },
     orderBy: { createdAt: 'asc' as const },
   },
@@ -146,7 +149,10 @@ export async function getPurchaseOrderList(
 }
 
 export async function getPurchaseOrderDetail(user: CurrentUser, id: string) {
-  const po = await prisma.distributorPurchaseOrder.findUnique({ where: { id }, include: poInclude });
+  const po = await prisma.distributorPurchaseOrder.findUnique({
+    where: { id },
+    include: poInclude,
+  });
   if (!po) throw HttpError.notFound('Purchase order not found');
   assertPOViewAccess(user, po);
   return toPOView(po);
@@ -169,7 +175,10 @@ export async function createPurchaseOrder(
   },
 ) {
   // DISTRIBUTOR users can only create POs for their mapped distributor
-  if (actor.roles.includes('DISTRIBUTOR') && !actor.roles.some((r) => r === 'ADMIN' || r === 'MERCHANDISER')) {
+  if (
+    actor.roles.includes('DISTRIBUTOR') &&
+    !actor.roles.some((r) => r === 'ADMIN' || r === 'MERCHANDISER')
+  ) {
     if (getSoleDistributorId(actor) !== input.distributorId) {
       throw HttpError.forbidden('You can only create purchase orders for your mapped distributor');
     }
@@ -191,7 +200,9 @@ export async function createPurchaseOrder(
       distributorId: input.distributorId,
       merchandiserId: input.merchandiserId ?? null,
       poDate: new Date(input.poDate),
-      requiredDeliveryDate: input.requiredDeliveryDate ? new Date(input.requiredDeliveryDate) : null,
+      requiredDeliveryDate: input.requiredDeliveryDate
+        ? new Date(input.requiredDeliveryDate)
+        : null,
       purchaseMode: input.purchaseMode,
       status: 'DRAFT',
       remarks: input.remarks ?? null,
@@ -243,7 +254,8 @@ export async function updatePurchaseOrderDraft(
   const po = await prisma.distributorPurchaseOrder.findUnique({ where: { id } });
   if (!po) throw HttpError.notFound('Purchase order not found');
   assertPOViewAccess(actor, po);
-  if (po.status !== 'DRAFT') throw HttpError.badRequest('Purchase order can only be edited in DRAFT status');
+  if (po.status !== 'DRAFT')
+    throw HttpError.badRequest('Purchase order can only be edited in DRAFT status');
 
   if (input.lines) {
     await validateLines(input.lines);
@@ -257,7 +269,9 @@ export async function updatePurchaseOrderDraft(
         poDate: input.poDate ? new Date(input.poDate) : undefined,
         requiredDeliveryDate:
           input.requiredDeliveryDate !== undefined
-            ? input.requiredDeliveryDate ? new Date(input.requiredDeliveryDate) : null
+            ? input.requiredDeliveryDate
+              ? new Date(input.requiredDeliveryDate)
+              : null
             : undefined,
         purchaseMode: input.purchaseMode,
         remarks: input.remarks !== undefined ? input.remarks : undefined,
@@ -302,7 +316,8 @@ export async function submitPurchaseOrder(actor: CurrentUser, id: string) {
   const po = await prisma.distributorPurchaseOrder.findUnique({ where: { id } });
   if (!po) throw HttpError.notFound('Purchase order not found');
   assertPOViewAccess(actor, po);
-  if (po.status !== 'DRAFT') throw HttpError.badRequest('Only DRAFT purchase orders can be submitted');
+  if (po.status !== 'DRAFT')
+    throw HttpError.badRequest('Only DRAFT purchase orders can be submitted');
 
   await prisma.distributorPurchaseOrder.update({ where: { id }, data: { status: 'SUBMITTED' } });
 
@@ -327,15 +342,11 @@ export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
 
   const cancellableStatuses: PurchaseOrderStatus[] = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW'];
   if (!cancellableStatuses.includes(po.status)) {
-    throw HttpError.badRequest(
-      `Purchase order in status ${po.status} cannot be cancelled`,
-    );
+    throw HttpError.badRequest(`Purchase order in status ${po.status} cannot be cancelled`);
   }
 
   // Guard: no job ordered quantities must exist
-  const hasJobOrdered = po.lines.some((line) =>
-    line.sizes.some((sz) => sz.jobOrderedQuantity > 0),
-  );
+  const hasJobOrdered = po.lines.some((line) => line.sizes.some((sz) => sz.jobOrderedQuantity > 0));
   if (hasJobOrdered) {
     throw HttpError.badRequest('Cannot cancel a purchase order that has job ordered quantities');
   }
@@ -469,19 +480,21 @@ async function validateLines(
     const style = await prisma.style.findUnique({
       where: { id: line.styleId },
       include: {
-        styleSizes: { where: { status: 'ACTIVE' }, select: { sizeId: true } },
+        styleSizes: {
+          where: { status: 'ACTIVE', size: { status: 'ACTIVE' } },
+          select: { sizeId: true },
+        },
       },
     });
 
     if (!style) throw HttpError.badRequest(`Style ${line.styleId} not found`);
-    if (style.status !== 'ACTIVE') throw HttpError.badRequest(`Style ${style.styleNumber} is not active`);
+    if (style.status !== 'ACTIVE')
+      throw HttpError.badRequest(`Style ${style.styleNumber} is not active`);
 
     const validSizeIds = new Set(style.styleSizes.map((ss) => ss.sizeId));
     for (const sz of line.sizes) {
       if (!validSizeIds.has(sz.sizeId)) {
-        throw HttpError.badRequest(
-          `Size ${sz.sizeId} is not valid for style ${style.styleNumber}`,
-        );
+        throw HttpError.badRequest(`Size ${sz.sizeId} is not valid for style ${style.styleNumber}`);
       }
       if (sz.orderedQuantity <= 0) {
         throw HttpError.badRequest('Ordered quantity must be greater than 0');

@@ -52,14 +52,11 @@ describe('POST /users', () => {
       roles: ['MERCHANDISER'],
     });
 
-    const res = await request(app)
-      .post('/users')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        name: 'New User',
-        email: 'new-user@test.local',
-        password: 'new-user-password',
-      });
+    const res = await request(app).post('/users').set('Authorization', `Bearer ${token}`).send({
+      name: 'New User',
+      email: 'new-user@test.local',
+      password: 'new-user-password',
+    });
 
     expect(res.status).toBe(403);
   });
@@ -160,7 +157,11 @@ describe('POST /users/:id/distributors', () => {
       roles: ['DISTRIBUTOR'],
     });
     const active = await createTestDistributor({ code: 'D-001', name: 'Acme Distribution' });
-    const inactive = await createTestDistributor({ code: 'D-002', name: 'Dormant Distribution', status: 'INACTIVE' });
+    const inactive = await createTestDistributor({
+      code: 'D-002',
+      name: 'Dormant Distribution',
+      status: 'INACTIVE',
+    });
 
     await request(app)
       .post(`/users/${targetId}/distributors`)
@@ -201,7 +202,9 @@ describe('POST /users/:id/distributors', () => {
       .send({ distributorId: distributor.id });
 
     expect(res.status).toBe(400);
-    expect(res.body.error.message).toBe('Only users with the DISTRIBUTOR role can be mapped to a distributor');
+    expect(res.body.error.message).toBe(
+      'Only users with the DISTRIBUTOR role can be mapped to a distributor',
+    );
   });
 
   it('rejects a second distributor until the existing mapping is removed', async () => {
@@ -230,7 +233,9 @@ describe('POST /users/:id/distributors', () => {
       .send({ distributorId: second.id });
 
     expect(conflicting.status).toBe(409);
-    expect(conflicting.body.error.message).toBe('User is already mapped to a different distributor');
+    expect(conflicting.body.error.message).toBe(
+      'User is already mapped to a different distributor',
+    );
 
     await request(app)
       .delete(`/users/${targetId}/distributors/${first.id}`)
@@ -269,7 +274,9 @@ describe('POST /users/:id/distributors', () => {
       roles: ['DISTRIBUTOR'],
     });
     const distributors = await Promise.all(
-      [1, 2, 3, 4].map((n) => createTestDistributor({ code: `D-00${n}`, name: `Distribution ${n}` })),
+      [1, 2, 3, 4].map((n) =>
+        createTestDistributor({ code: `D-00${n}`, name: `Distribution ${n}` }),
+      ),
     );
 
     const responses = await Promise.all(
@@ -346,8 +353,12 @@ describe('POST /users/:id/distributors', () => {
     expect(removedAgain.status).toBe(404);
 
     const [added, deleted] = await Promise.all([
-      prisma.auditLog.findFirst({ where: { action: 'DISTRIBUTOR_MAPPING_ADDED', entityId: targetId } }),
-      prisma.auditLog.findFirst({ where: { action: 'DISTRIBUTOR_MAPPING_REMOVED', entityId: targetId } }),
+      prisma.auditLog.findFirst({
+        where: { action: 'DISTRIBUTOR_MAPPING_ADDED', entityId: targetId },
+      }),
+      prisma.auditLog.findFirst({
+        where: { action: 'DISTRIBUTOR_MAPPING_REMOVED', entityId: targetId },
+      }),
     ]);
     expect(added?.metadata).toEqual({ distributorId: distributor.id });
     expect(deleted?.metadata).toEqual({ distributorId: distributor.id });
@@ -379,5 +390,54 @@ describe('POST /users/:id/factories', () => {
       { id: factory.id, code: factory.code, name: factory.name },
     ]);
     expect(JSON.stringify(res.body)).not.toContain('passwordHash');
+  });
+
+  it('enforces role, active account, active factory, duplicates, removal, and audit rows', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { userId } = await createTestUserAndToken({
+      email: 'factory-user@test.local',
+      password: 'target-password',
+      roles: ['FACTORY_USER'],
+    });
+    const { userId: wrongRoleId } = await createTestUserAndToken({
+      email: 'merch@test.local',
+      password: 'target-password',
+      roles: ['MERCHANDISER'],
+    });
+    const { userId: inactiveId } = await createTestUserAndToken({
+      email: 'inactive@test.local',
+      password: 'target-password',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.user.update({ where: { id: inactiveId }, data: { status: 'INACTIVE' } });
+    const factory = await createTestFactory({ code: 'F-001', name: 'Acme Factory' });
+    const post = (targetId: string) =>
+      request(app)
+        .post(`/users/${targetId}/factories`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ factoryId: factory.id });
+
+    await post(wrongRoleId).expect(400);
+    await post(inactiveId).expect(400);
+    await post(userId).expect(200);
+    await post(userId).expect(409);
+    const removed = await request(app)
+      .delete(`/users/${userId}/factories/${factory.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(removed.status).toBe(200);
+
+    await prisma.factory.update({ where: { id: factory.id }, data: { status: 'INACTIVE' } });
+    await post(userId).expect(400);
+    const actions = await prisma.auditLog.findMany({
+      where: { entityId: userId },
+      select: { action: true },
+    });
+    expect(actions.map(({ action }) => action)).toEqual(
+      expect.arrayContaining(['FACTORY_MAPPING_ADDED', 'FACTORY_MAPPING_REMOVED']),
+    );
   });
 });

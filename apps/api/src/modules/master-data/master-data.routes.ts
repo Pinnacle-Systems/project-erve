@@ -339,8 +339,17 @@ sizesRouter.post(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = createSizeSchema.parse(req.body);
-    const size = await masterDataService.createSize(input);
+    const size = await masterDataService.createSize(req.user!, input);
     res.status(201).json(successResponse(size));
+  }),
+);
+
+sizesRouter.get(
+  '/:id',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    const size = await masterDataService.getSizeById(req.params.id! as string);
+    res.status(200).json(successResponse(size));
   }),
 );
 
@@ -349,7 +358,7 @@ sizesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = updateSizeSchema.parse(req.body);
-    const size = await masterDataService.updateSize(req.params.id! as string, input);
+    const size = await masterDataService.updateSize(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(size));
   }),
 );
@@ -359,7 +368,11 @@ sizesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const { status } = updateSizeStatusSchema.parse(req.body);
-    const size = await masterDataService.updateSizeStatus(req.params.id! as string, status);
+    const size = await masterDataService.updateSizeStatus(
+      req.user!,
+      req.params.id! as string,
+      status,
+    );
     res.status(200).json(successResponse(size));
   }),
 );
@@ -374,12 +387,21 @@ factoriesRouter.get(
   }),
 );
 
+factoriesRouter.get(
+  '/:id/users',
+  requireRoles('ADMIN'),
+  asyncHandler(async (req, res) => {
+    const users = await masterDataService.listFactoryUsers(req.params.id! as string);
+    res.status(200).json(successResponse(users));
+  }),
+);
+
 factoriesRouter.post(
   '/',
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = createFactorySchema.parse(req.body);
-    const factory = await masterDataService.createFactory(input);
+    const factory = await masterDataService.createFactory(req.user!, input);
     res.status(201).json(successResponse(factory));
   }),
 );
@@ -398,7 +420,11 @@ factoriesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const input = updateFactorySchema.parse(req.body);
-    const factory = await masterDataService.updateFactory(req.params.id! as string, input);
+    const factory = await masterDataService.updateFactory(
+      req.user!,
+      req.params.id! as string,
+      input,
+    );
     res.status(200).json(successResponse(factory));
   }),
 );
@@ -408,7 +434,11 @@ factoriesRouter.patch(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     const { status } = updateFactoryStatusSchema.parse(req.body);
-    const factory = await masterDataService.updateFactoryStatus(req.params.id! as string, status);
+    const factory = await masterDataService.updateFactoryStatus(
+      req.user!,
+      req.params.id! as string,
+      status,
+    );
     res.status(200).json(successResponse(factory));
   }),
 );

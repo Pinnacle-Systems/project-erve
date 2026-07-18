@@ -386,6 +386,173 @@ describe('job orders API', () => {
     await expect(prisma.auditLog.count({ where: { entityType: 'JobOrder' } })).resolves.toBe(6);
   });
 
+  it('blocks sending to a deactivated factory while keeping the existing job order readable', async () => {
+    const graph = await createSeedGraph();
+    const createRes = await createJobOrder(graph.admin.token, graph, 4);
+    const jobOrderId = createRes.body.data.id;
+    await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'INACTIVE' } });
+
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(409);
+    const detail = await request(app)
+      .get(`/job-orders/${jobOrderId}`)
+      .set('Authorization', `Bearer ${graph.admin.token}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.data.status).toBe('DRAFT');
+  });
+
+  it('blocks a mapped factory user from workflow mutations on a deactivated factory while preserving admin/merchandiser resolution, QA visibility, and immediate restoration on reactivation', async () => {
+    const graph = await createSeedGraph();
+    const merchandiser = await createTestUserAndToken({
+      email: 'merch-job@test.local',
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    const qaUser = await createTestUserAndToken({
+      email: 'qa-job@test.local',
+      password: 'pass',
+      roles: ['QA_USER'],
+    });
+    const factoryUser = await createTestUserAndToken({
+      email: 'factory-suspend@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+    });
+    const otherFactoryUser = await createTestUserAndToken({
+      email: 'other-factory-suspend@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: otherFactoryUser.userId, factoryId: graph.otherFactory.id },
+    });
+
+    const createRes = await createJobOrder(graph.admin.token, graph, 4);
+    const jobOrderId = createRes.body.data.id;
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+
+    await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'INACTIVE' } });
+
+    // A mapped factory user can no longer advance production at their now-inactive factory.
+    const factoryUserConfirm = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`);
+    expect(factoryUserConfirm.status).toBe(409);
+    expect(factoryUserConfirm.body.error.message).toMatch(/inactive/i);
+
+    // A factory user mapped to a different factory is still rejected on role grounds, not factory status.
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/confirm`)
+      .set('Authorization', `Bearer ${otherFactoryUser.token}`)
+      .expect(403);
+
+    // No new job order can be assigned to the inactive factory while existing work is unresolved.
+    await expect(createJobOrder(graph.admin.token, graph, 1)).resolves.toMatchObject({
+      status: 400,
+    });
+
+    // ADMIN retains the ability to administratively resolve the existing job order.
+    const confirmRes = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/confirm`)
+      .set('Authorization', `Bearer ${graph.admin.token}`);
+    expect(confirmRes.status).toBe(200);
+    expect(confirmRes.body.data.status).toBe('CONFIRMED_BY_FACTORY');
+    const stages = confirmRes.body.data.stages;
+
+    // The mapped factory user remains blocked at the next workflow step too.
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .send({ stageStatusId: stages[0].id })
+      .expect(409);
+
+    // MERCHANDISER retains its normal control over the existing job order.
+    const stage1Res = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .send({ stageStatusId: stages[0].id });
+    expect(stage1Res.status).toBe(200);
+    expect(stage1Res.body.data.status).toBe('IN_PRODUCTION');
+
+    const stage2Res = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({ stageStatusId: stages[1].id });
+    expect(stage2Res.status).toBe(200);
+    expect(stage2Res.body.data.status).toBe('PRODUCTION_COMPLETE');
+
+    const sizeId = stage2Res.body.data.lines[0].sizes[0].id;
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .send({ sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }] })
+      .expect(409);
+
+    const preparedRes = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({ sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }] });
+    expect(preparedRes.status).toBe(200);
+    expect(preparedRes.body.data.status).toBe('READY_FOR_QA');
+
+    // QA can still inspect the already-prepared quantities on the inactive factory's job order
+    // (view access has never depended on factory status). No QA pass/fail action exists yet to test.
+    const qaView = await request(app)
+      .get(`/job-orders/${jobOrderId}`)
+      .set('Authorization', `Bearer ${qaUser.token}`);
+    expect(qaView.status).toBe(200);
+    expect(qaView.body.data.status).toBe('READY_FOR_QA');
+
+    // Existing history remains fully readable through every read endpoint.
+    await request(app)
+      .get(`/job-orders/${jobOrderId}/stages`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    await request(app)
+      .get(`/job-orders/${jobOrderId}/variance`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    await request(app)
+      .get('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+
+    // Reactivation restores the factory user's mapped workflow access immediately.
+    await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'ACTIVE' } });
+    const jo2Res = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        purchaseOrderId: graph.poId,
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        lines: [
+          {
+            purchaseOrderLineId: graph.poLineId,
+            sizes: [{ purchaseOrderLineSizeId: graph.poSizeBId, quantity: 3 }],
+          },
+        ],
+      });
+    expect(jo2Res.status).toBe(201);
+    await request(app)
+      .post(`/job-orders/${jo2Res.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    const restoredConfirm = await request(app)
+      .post(`/job-orders/${jo2Res.body.data.id}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`);
+    expect(restoredConfirm.status).toBe(200);
+    expect(restoredConfirm.body.data.status).toBe('CONFIRMED_BY_FACTORY');
+  });
+
   it('blocks distributor access to job orders', async () => {
     const graph = await createSeedGraph();
     const createRes = await createJobOrder(graph.admin.token, graph, 2);

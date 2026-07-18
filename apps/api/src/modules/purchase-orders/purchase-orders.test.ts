@@ -72,7 +72,11 @@ async function createPO(token: string, payload: POPayload) {
 describe('purchase orders API', () => {
   describe('POST /purchase-orders — create', () => {
     it('creates a DRAFT PO successfully', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -90,8 +94,33 @@ describe('purchase orders API', () => {
       expect(res.body.data.totalOrderedQuantity).toBe(168);
     });
 
+    it('rejects an inactive size even when its historical style mapping remains active', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+      await prisma.size.update({ where: { id: size.id }, data: { status: 'INACTIVE' } });
+
+      const res = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+
+      expect(res.status).toBe(400);
+      expect(await prisma.styleSize.count({ where: { sizeId: size.id } })).toBe(1);
+    });
+
     it('allows MERCHANDISER to create POs', async () => {
-      const { token } = await createTestUserAndToken({ email: 'merch@test.local', password: 'pass', roles: ['MERCHANDISER'] });
+      const { token } = await createTestUserAndToken({
+        email: 'merch@test.local',
+        password: 'pass',
+        roles: ['MERCHANDISER'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -106,7 +135,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects PO without distributorId', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const res = await request(app)
         .post('/purchase-orders')
         .set('Authorization', `Bearer ${token}`)
@@ -116,7 +149,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects PO without lines', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
 
       const res = await createPO(token, { distributorId: dist.id, lines: [] });
@@ -125,16 +162,28 @@ describe('purchase orders API', () => {
     });
 
     it('rejects invalid purchaseMode', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
 
-      const res = await createPO(token, { distributorId: dist.id, purchaseMode: 'INVALID' as 'OUTRIGHT', lines: [] });
+      const res = await createPO(token, {
+        distributorId: dist.id,
+        purchaseMode: 'INVALID' as 'OUTRIGHT',
+        lines: [],
+      });
 
       expect(res.status).toBe(400);
     });
 
     it('rejects inactive style', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle({ status: 'INACTIVE' });
       const size = await createSize('AGE_3', 3);
@@ -149,7 +198,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects an inactive distributor', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor({ status: 'INACTIVE' });
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -165,7 +218,11 @@ describe('purchase orders API', () => {
     });
 
     it('keeps existing purchase orders readable after their distributor is deactivated', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -186,7 +243,9 @@ describe('purchase orders API', () => {
       const detail = await request(app)
         .get(`/purchase-orders/${createRes.body.data.id}`)
         .set('Authorization', `Bearer ${token}`);
-      const list = await request(app).get('/purchase-orders').set('Authorization', `Bearer ${token}`);
+      const list = await request(app)
+        .get('/purchase-orders')
+        .set('Authorization', `Bearer ${token}`);
 
       expect(detail.status).toBe(200);
       expect(detail.body.data.distributor.id).toBe(dist.id);
@@ -195,7 +254,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects size not valid for style', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -210,7 +273,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects zero quantity', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -225,7 +292,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects duplicate styles in same PO', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -243,7 +314,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects duplicate sizes within a line', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -266,7 +341,11 @@ describe('purchase orders API', () => {
     });
 
     it('blocks FACTORY_USER from creating POs', async () => {
-      const { token } = await createTestUserAndToken({ email: 'factory@test.local', password: 'pass', roles: ['FACTORY_USER'] });
+      const { token } = await createTestUserAndToken({
+        email: 'factory@test.local',
+        password: 'pass',
+        roles: ['FACTORY_USER'],
+      });
       const dist = await createTestDistributor();
 
       const res = await createPO(token, { distributorId: dist.id });
@@ -277,7 +356,11 @@ describe('purchase orders API', () => {
 
   describe('POST /purchase-orders/:id/actions/submit', () => {
     it('submits a DRAFT PO', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -298,7 +381,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects submit from non-DRAFT status', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -310,7 +397,9 @@ describe('purchase orders API', () => {
       });
       const poId = createRes.body.data.id;
 
-      await request(app).post(`/purchase-orders/${poId}/actions/submit`).set('Authorization', `Bearer ${token}`);
+      await request(app)
+        .post(`/purchase-orders/${poId}/actions/submit`)
+        .set('Authorization', `Bearer ${token}`);
       const res = await request(app)
         .post(`/purchase-orders/${poId}/actions/submit`)
         .set('Authorization', `Bearer ${token}`);
@@ -321,7 +410,11 @@ describe('purchase orders API', () => {
 
   describe('POST /purchase-orders/:id/actions/cancel', () => {
     it('cancels a DRAFT PO with no job ordered quantities', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -342,7 +435,11 @@ describe('purchase orders API', () => {
     });
 
     it('cancels a SUBMITTED PO if no job ordered quantities', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -353,7 +450,9 @@ describe('purchase orders API', () => {
         lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 50 }] }],
       });
       const poId = createRes.body.data.id;
-      await request(app).post(`/purchase-orders/${poId}/actions/submit`).set('Authorization', `Bearer ${token}`);
+      await request(app)
+        .post(`/purchase-orders/${poId}/actions/submit`)
+        .set('Authorization', `Bearer ${token}`);
 
       const res = await request(app)
         .post(`/purchase-orders/${poId}/actions/cancel`)
@@ -364,7 +463,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects cancel if any job_ordered_quantity > 0', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -392,14 +495,24 @@ describe('purchase orders API', () => {
 
   describe('access control', () => {
     it('DISTRIBUTOR user cannot access another distributor PO', async () => {
-      const { token: adminToken } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
-      const { userId: distUserId, token: distToken } = await createTestUserAndToken({ email: 'dist@test.local', password: 'pass', roles: ['DISTRIBUTOR'] });
+      const { token: adminToken } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const { userId: distUserId, token: distToken } = await createTestUserAndToken({
+        email: 'dist@test.local',
+        password: 'pass',
+        roles: ['DISTRIBUTOR'],
+      });
 
       const dist1 = await createTestDistributor({ code: 'D1', name: 'Dist 1' });
       const dist2 = await createTestDistributor({ code: 'D2', name: 'Dist 2' });
 
       // Link distUser to dist2 only
-      await prisma.userDistributor.create({ data: { id: createId(), userId: distUserId, distributorId: dist2.id } });
+      await prisma.userDistributor.create({
+        data: { id: createId(), userId: distUserId, distributorId: dist2.id },
+      });
 
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -421,8 +534,16 @@ describe('purchase orders API', () => {
     });
 
     it('fails closed for a DISTRIBUTOR user with no distributor mapping', async () => {
-      const { token: adminToken } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
-      const { token: distToken } = await createTestUserAndToken({ email: 'dist@test.local', password: 'pass', roles: ['DISTRIBUTOR'] });
+      const { token: adminToken } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const { token: distToken } = await createTestUserAndToken({
+        email: 'dist@test.local',
+        password: 'pass',
+        roles: ['DISTRIBUTOR'],
+      });
 
       const dist = await createTestDistributor();
       const style = await createStyle();
@@ -435,7 +556,9 @@ describe('purchase orders API', () => {
       });
 
       // An unmapped distributor account must see nothing — not every PO.
-      const listRes = await request(app).get('/purchase-orders').set('Authorization', `Bearer ${distToken}`);
+      const listRes = await request(app)
+        .get('/purchase-orders')
+        .set('Authorization', `Bearer ${distToken}`);
       const detailRes = await request(app)
         .get(`/purchase-orders/${createRes.body.data.id}`)
         .set('Authorization', `Bearer ${distToken}`);
@@ -451,7 +574,11 @@ describe('purchase orders API', () => {
     });
 
     it('ADMIN can view all POs', async () => {
-      const { token: adminToken } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token: adminToken } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -462,14 +589,24 @@ describe('purchase orders API', () => {
         lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
       });
 
-      const res = await request(app).get('/purchase-orders').set('Authorization', `Bearer ${adminToken}`);
+      const res = await request(app)
+        .get('/purchase-orders')
+        .set('Authorization', `Bearer ${adminToken}`);
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveLength(1);
     });
 
     it('MERCHANDISER can view all POs', async () => {
-      const { token: adminToken } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
-      const { token: merchToken } = await createTestUserAndToken({ email: 'merch@test.local', password: 'pass', roles: ['MERCHANDISER'] });
+      const { token: adminToken } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const { token: merchToken } = await createTestUserAndToken({
+        email: 'merch@test.local',
+        password: 'pass',
+        roles: ['MERCHANDISER'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -480,20 +617,32 @@ describe('purchase orders API', () => {
         lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
       });
 
-      const res = await request(app).get('/purchase-orders').set('Authorization', `Bearer ${merchToken}`);
+      const res = await request(app)
+        .get('/purchase-orders')
+        .set('Authorization', `Bearer ${merchToken}`);
       expect(res.status).toBe(200);
     });
 
     it('FACTORY_USER cannot access POs', async () => {
-      const { token } = await createTestUserAndToken({ email: 'factory@test.local', password: 'pass', roles: ['FACTORY_USER'] });
-      const res = await request(app).get('/purchase-orders').set('Authorization', `Bearer ${token}`);
+      const { token } = await createTestUserAndToken({
+        email: 'factory@test.local',
+        password: 'pass',
+        roles: ['FACTORY_USER'],
+      });
+      const res = await request(app)
+        .get('/purchase-orders')
+        .set('Authorization', `Bearer ${token}`);
       expect(res.status).toBe(403);
     });
   });
 
   describe('PATCH /purchase-orders/:id — draft update', () => {
     it('updates a DRAFT PO', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -516,7 +665,11 @@ describe('purchase orders API', () => {
     });
 
     it('rejects editing a SUBMITTED PO', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -527,7 +680,9 @@ describe('purchase orders API', () => {
         lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 50 }] }],
       });
       const poId = createRes.body.data.id;
-      await request(app).post(`/purchase-orders/${poId}/actions/submit`).set('Authorization', `Bearer ${token}`);
+      await request(app)
+        .post(`/purchase-orders/${poId}/actions/submit`)
+        .set('Authorization', `Bearer ${token}`);
 
       const res = await request(app)
         .patch(`/purchase-orders/${poId}`)
@@ -540,7 +695,11 @@ describe('purchase orders API', () => {
 
   describe('audit logs', () => {
     it('writes audit logs for create, submit, and cancel', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -552,8 +711,12 @@ describe('purchase orders API', () => {
       });
       const poId = createRes.body.data.id;
 
-      await request(app).post(`/purchase-orders/${poId}/actions/submit`).set('Authorization', `Bearer ${token}`);
-      await request(app).post(`/purchase-orders/${poId}/actions/cancel`).set('Authorization', `Bearer ${token}`);
+      await request(app)
+        .post(`/purchase-orders/${poId}/actions/submit`)
+        .set('Authorization', `Bearer ${token}`);
+      await request(app)
+        .post(`/purchase-orders/${poId}/actions/cancel`)
+        .set('Authorization', `Bearer ${token}`);
 
       const logs = await prisma.auditLog.findMany({
         where: { entityType: 'DistributorPurchaseOrder', entityId: poId },
@@ -567,7 +730,11 @@ describe('purchase orders API', () => {
     });
 
     it('writes audit log for update', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -594,7 +761,11 @@ describe('purchase orders API', () => {
 
   describe('GET /purchase-orders/:id/job-order-balance', () => {
     it('returns balance with ordered and job-ordered quantities', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
@@ -618,7 +789,11 @@ describe('purchase orders API', () => {
 
   describe('GET /purchase-orders/:id/fulfilment-summary', () => {
     it('returns fulfilment summary with zero quantities initially', async () => {
-      const { token } = await createTestUserAndToken({ email: 'admin@test.local', password: 'pass', roles: ['ADMIN'] });
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
       const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);

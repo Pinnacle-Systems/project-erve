@@ -7,6 +7,7 @@ import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-disp
 import { apiClient } from '../../lib/api-client.js';
 import type { Size } from './types.js';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 export function SizeListPage() {
   const queryClient = useQueryClient();
@@ -39,7 +40,11 @@ export function SizeListPage() {
           }}
         >
           <FormGrid columns={4}>
-            <TextField label="Code" value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} />
+            <TextField
+              label="Code"
+              value={form.code}
+              onChange={(event) => setForm({ ...form, code: event.target.value })}
+            />
             <TextField
               label="Label"
               value={form.label}
@@ -74,20 +79,41 @@ export function SizeListPage() {
 
       <DataTable
         columns={[
-          { key: 'code', header: 'Code', accessor: 'code' },
+          {
+            key: 'code',
+            header: 'Code',
+            render: (size) => (
+              <Link
+                className="font-medium text-primary hover:underline"
+                to={`/master-data/sizes/${size.id}`}
+              >
+                {size.code}
+              </Link>
+            ),
+          },
           { key: 'label', header: 'Label', accessor: 'label' },
-          { key: 'sizeType', header: 'Type', accessor: 'sizeType' },
+          { key: 'sizeType', header: 'Type', render: (size) => size.sizeType.replace('_', ' ') },
           { key: 'sortOrder', header: 'Sort', accessor: 'sortOrder', align: 'right' },
           {
             key: 'status',
             header: 'Status',
-            render: (size) => <StatusBadge label={size.status} tone={size.status === 'ACTIVE' ? 'success' : 'muted'} />,
+            render: (size) => (
+              <StatusBadge
+                label={size.status}
+                tone={size.status === 'ACTIVE' ? 'success' : 'muted'}
+              />
+            ),
           },
         ]}
         data={sizesQuery.data ?? []}
         loading={sizesQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading sizes" />}
-        emptyState={<EmptyState title="No sizes found" description="Create a size to use it in style mappings." />}
+        emptyState={
+          <EmptyState
+            title="No sizes found"
+            description="Create a size to use it in style mappings."
+          />
+        }
         error={
           sizesQuery.isError ? (
             <ErrorState title="Unable to load sizes" description={sizesQuery.error.message} />

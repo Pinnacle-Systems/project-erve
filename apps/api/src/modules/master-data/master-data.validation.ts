@@ -54,6 +54,7 @@ export const createSizeSchema = z.object({
 });
 
 export const updateSizeSchema = createSizeSchema
+  .omit({ status: true })
   .partial()
   .refine((value) => Object.keys(value).length > 0, {
     message: 'At least one field is required',
@@ -77,6 +78,7 @@ export const createFactorySchema = z.object({
 });
 
 export const updateFactorySchema = createFactorySchema
+  .omit({ status: true })
   .partial()
   .refine((value) => Object.keys(value).length > 0, { message: 'At least one field is required' });
 

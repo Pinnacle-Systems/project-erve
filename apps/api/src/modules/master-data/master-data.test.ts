@@ -171,6 +171,111 @@ describe('sizes API', () => {
 
     expect(duplicate.status).toBe(409);
   });
+
+  it('returns detail usage, updates safely, changes status, and audits mutations', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const size = await createSize();
+    const style = await createStyle(token).then((res) => res.body.data);
+    await prisma.styleSize.create({
+      data: { id: createId(), styleId: style.id, sizeId: size.id },
+    });
+
+    const detail = await request(app)
+      .get(`/sizes/${size.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    const updated = await request(app)
+      .patch(`/sizes/${size.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ label: 'Age 3 years', sortOrder: 4 });
+    const deactivated = await request(app)
+      .patch(`/sizes/${size.id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'INACTIVE' });
+    const mapping = await request(app)
+      .post(`/styles/${style.id}/sizes`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ sizeId: size.id });
+
+    expect(detail.status).toBe(200);
+    expect(detail.body.data.usage.styleMappings).toBe(1);
+    expect(updated.body.data.label).toBe('Age 3 years');
+    expect(deactivated.body.data.status).toBe('INACTIVE');
+    expect(mapping.status).toBe(400);
+    expect(await prisma.styleSize.count({ where: { sizeId: size.id } })).toBe(1);
+    const actions = await prisma.auditLog.findMany({
+      where: { entityId: size.id },
+      select: { action: true },
+    });
+    expect(actions.map(({ action }) => action)).toEqual(
+      expect.arrayContaining(['SIZE_UPDATED', 'SIZE_STATUS_CHANGED']),
+    );
+  });
+
+  it('rejects invalid and unauthorized updates', async () => {
+    const { token: adminToken } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { token: qaToken } = await createTestUserAndToken({
+      email: 'qa@test.local',
+      password: 'qa-password',
+      roles: ['QA_USER'],
+    });
+    const size = await createSize();
+    await request(app)
+      .patch(`/sizes/${size.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ sortOrder: 1.5 })
+      .expect(400);
+    await request(app)
+      .patch(`/sizes/${size.id}`)
+      .set('Authorization', `Bearer ${qaToken}`)
+      .send({ label: 'Nope' })
+      .expect(403);
+  });
+
+  it('locks identity fields after transactional use while allowing descriptive correction', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const distributor = await createTestDistributor();
+    const size = await createSize();
+    const style = await createStyle(token).then((res) => res.body.data);
+    await prisma.styleSize.create({ data: { id: createId(), styleId: style.id, sizeId: size.id } });
+    await request(app)
+      .post('/purchase-orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        distributorId: distributor.id,
+        poDate: '2026-07-17',
+        purchaseMode: 'OUTRIGHT',
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      })
+      .expect(201);
+
+    await request(app)
+      .patch(`/sizes/${size.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: 'AGE_03' })
+      .expect(409);
+    await request(app)
+      .patch(`/sizes/${size.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ sizeType: 'ALPHA' })
+      .expect(409);
+    const correction = await request(app)
+      .patch(`/sizes/${size.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ label: '3 years' });
+    expect(correction.status).toBe(200);
+  });
 });
 
 describe('factories API', () => {
@@ -198,6 +303,47 @@ describe('factories API', () => {
 
     expect(duplicateCode.status).toBe(409);
     expect(duplicateName.status).toBe(409);
+  });
+
+  it('returns detail usage, updates, changes status, blocks new style mappings, and audits', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const factory = await createTestFactory({ code: 'FAC-001', name: 'Acme Factory' });
+    const style = await createStyle(token).then((res) => res.body.data);
+    await prisma.styleFactoryMapping.create({
+      data: { id: createId(), styleId: style.id, factoryId: factory.id, exFactoryPrice: 100 },
+    });
+    const detail = await request(app)
+      .get(`/factories/${factory.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    const updated = await request(app)
+      .patch(`/factories/${factory.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ city: 'Bengaluru' });
+    await request(app)
+      .patch(`/factories/${factory.id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'INACTIVE' })
+      .expect(200);
+    const mapping = await request(app)
+      .post(`/styles/${style.id}/factories`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ factoryId: factory.id, exFactoryPrice: 120 });
+
+    expect(detail.body.data.usage.styleMappings).toBe(1);
+    expect(updated.body.data.city).toBe('Bengaluru');
+    expect(mapping.status).toBe(400);
+    expect(await prisma.styleFactoryMapping.count({ where: { factoryId: factory.id } })).toBe(1);
+    const actions = await prisma.auditLog.findMany({
+      where: { entityId: factory.id },
+      select: { action: true },
+    });
+    expect(actions.map(({ action }) => action)).toEqual(
+      expect.arrayContaining(['FACTORY_UPDATED', 'FACTORY_STATUS_CHANGED']),
+    );
   });
 });
 

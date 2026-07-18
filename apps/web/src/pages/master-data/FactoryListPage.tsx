@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
@@ -12,8 +13,15 @@ import type { Factory } from './types.js';
 export function FactoryListPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const canManage = user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER') ?? false;
-  const [form, setForm] = useState({ code: '', name: '', contactName: '', contactEmail: '', contactPhone: '' });
+  const canManage =
+    user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER') ?? false;
+  const [form, setForm] = useState({
+    code: '',
+    name: '',
+    contactName: '',
+    contactEmail: '',
+    contactPhone: '',
+  });
   const factoriesQuery = useQuery({
     queryKey: ['factories'],
     queryFn: async () => {
@@ -74,26 +82,57 @@ export function FactoryListPage() {
       ) : null}
       <DataTable
         columns={[
-          { key: 'code', header: 'Code', accessor: 'code' },
+          {
+            key: 'code',
+            header: 'Code',
+            render: (factory) => (
+              <Link
+                className="font-medium text-primary hover:underline"
+                to={`/master-data/factories/${factory.id}`}
+              >
+                {factory.code}
+              </Link>
+            ),
+          },
           { key: 'name', header: 'Name', accessor: 'name' },
-          { key: 'contactName', header: 'Contact', render: (factory) => factory.contactName ?? '—' },
-          { key: 'contactEmail', header: 'Email', render: (factory) => factory.contactEmail ?? '—' },
-          { key: 'contactPhone', header: 'Phone', render: (factory) => factory.contactPhone ?? '—' },
+          {
+            key: 'contactName',
+            header: 'Contact',
+            render: (factory) => factory.contactName ?? '—',
+          },
+          {
+            key: 'contactEmail',
+            header: 'Email',
+            render: (factory) => factory.contactEmail ?? '—',
+          },
+          {
+            key: 'contactPhone',
+            header: 'Phone',
+            render: (factory) => factory.contactPhone ?? '—',
+          },
           {
             key: 'status',
             header: 'Status',
             render: (factory) => (
-              <StatusBadge label={factory.status} tone={factory.status === 'ACTIVE' ? 'success' : 'muted'} />
+              <StatusBadge
+                label={factory.status}
+                tone={factory.status === 'ACTIVE' ? 'success' : 'muted'}
+              />
             ),
           },
         ]}
         data={factoriesQuery.data ?? []}
         loading={factoriesQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading factories" />}
-        emptyState={<EmptyState title="No factories found" description="Factory records will appear here." />}
+        emptyState={
+          <EmptyState title="No factories found" description="Factory records will appear here." />
+        }
         error={
           factoriesQuery.isError ? (
-            <ErrorState title="Unable to load factories" description={factoriesQuery.error.message} />
+            <ErrorState
+              title="Unable to load factories"
+              description={factoriesQuery.error.message}
+            />
           ) : undefined
         }
       />

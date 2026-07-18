@@ -139,9 +139,16 @@ export async function updateUserStatus(
   return getUserById(userId);
 }
 
-export async function assignRole(actor: CurrentUser, userId: string, roleName: Role): Promise<UserView> {
+export async function assignRole(
+  actor: CurrentUser,
+  userId: string,
+  roleName: Role,
+): Promise<UserView> {
   const [user, role] = await Promise.all([
-    prisma.user.findUnique({ where: { id: userId } }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      include: { userRoles: { select: { role: { select: { name: true } } } } },
+    }),
     prisma.role.findUnique({ where: { name: roleName } }),
   ]);
 
@@ -172,7 +179,11 @@ export async function assignRole(actor: CurrentUser, userId: string, roleName: R
   return getUserById(userId);
 }
 
-export async function removeRole(actor: CurrentUser, userId: string, roleName: Role): Promise<UserView> {
+export async function removeRole(
+  actor: CurrentUser,
+  userId: string,
+  roleName: Role,
+): Promise<UserView> {
   const role = await prisma.role.findUnique({ where: { name: roleName } });
   if (!role) {
     throw HttpError.badRequest('Unknown role');
@@ -211,7 +222,9 @@ export async function addDistributorMapping(
     throw HttpError.notFound('User not found');
   }
   if (!user.userRoles.some((userRole) => userRole.role.name === 'DISTRIBUTOR')) {
-    throw HttpError.badRequest('Only users with the DISTRIBUTOR role can be mapped to a distributor');
+    throw HttpError.badRequest(
+      'Only users with the DISTRIBUTOR role can be mapped to a distributor',
+    );
   }
   if (!distributor) {
     throw HttpError.badRequest('Unknown distributor');
@@ -276,15 +289,27 @@ export async function addFactoryMapping(
   factoryId: string,
 ): Promise<UserView> {
   const [user, factory] = await Promise.all([
-    prisma.user.findUnique({ where: { id: userId } }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      include: { userRoles: { select: { role: { select: { name: true } } } } },
+    }),
     prisma.factory.findUnique({ where: { id: factoryId } }),
   ]);
 
   if (!user) {
     throw HttpError.notFound('User not found');
   }
+  if (!user.userRoles.some(({ role }) => role.name === 'FACTORY_USER')) {
+    throw HttpError.badRequest('Only users with the FACTORY_USER role can be mapped to a factory');
+  }
+  if (user.status !== 'ACTIVE') {
+    throw HttpError.badRequest('Only active users can be mapped to a factory');
+  }
   if (!factory) {
     throw HttpError.badRequest('Unknown factory');
+  }
+  if (factory.status !== 'ACTIVE') {
+    throw HttpError.badRequest('Cannot map a user to an inactive factory');
   }
 
   try {

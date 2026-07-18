@@ -263,6 +263,9 @@ export async function addStyleSize(
   if (!size) {
     throw HttpError.badRequest('Unknown size');
   }
+  if (size.status !== 'ACTIVE') {
+    throw HttpError.badRequest('Cannot map an inactive size to a style');
+  }
 
   try {
     await prisma.styleSize.create({
@@ -322,6 +325,9 @@ export async function addStyleFactory(
   }
   if (!factory) {
     throw HttpError.badRequest('Unknown factory');
+  }
+  if (factory.status !== 'ACTIVE') {
+    throw HttpError.badRequest('Cannot map an inactive factory to a style');
   }
 
   try {
@@ -384,17 +390,52 @@ export async function listSizes(filters: { status?: string; search?: string }) {
   return sizes;
 }
 
-export async function createSize(input: {
-  code: string;
-  label: string;
-  sizeType: SizeType;
-  sortOrder: number;
-  status?: SizeStatus;
-}) {
+export async function getSizeById(id: string) {
+  const size = await prisma.size.findUnique({
+    where: { id },
+    include: {
+      _count: {
+        select: {
+          styleSizes: true,
+          purchaseOrderLineSizes: true,
+          jobOrderLineSizes: true,
+        },
+      },
+    },
+  });
+  if (!size) throw HttpError.notFound('Size not found');
+  const { _count, ...record } = size;
+  return {
+    ...record,
+    usage: {
+      styleMappings: _count.styleSizes,
+      purchaseOrderLines: _count.purchaseOrderLineSizes,
+      jobOrderLines: _count.jobOrderLineSizes,
+    },
+  };
+}
+
+export async function createSize(
+  actor: CurrentUser,
+  input: {
+    code: string;
+    label: string;
+    sizeType: SizeType;
+    sortOrder: number;
+    status?: SizeStatus;
+  },
+) {
   try {
-    return await prisma.size.create({
+    const size = await prisma.size.create({
       data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' },
     });
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'SIZE_CREATED',
+      entityType: 'Size',
+      entityId: size.id,
+    });
+    return size;
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('A size with this code already exists');
@@ -403,12 +444,39 @@ export async function createSize(input: {
   }
 }
 
-export async function updateSize(id: string, input: Record<string, unknown>) {
+export async function updateSize(actor: CurrentUser, id: string, input: Record<string, unknown>) {
+  const existing = await prisma.size.findUnique({
+    where: { id },
+    include: {
+      _count: { select: { purchaseOrderLineSizes: true, jobOrderLineSizes: true } },
+    },
+  });
+  if (!existing) throw HttpError.notFound('Size not found');
+  const historicallyUsed =
+    existing._count.purchaseOrderLineSizes > 0 || existing._count.jobOrderLineSizes > 0;
+  if (
+    historicallyUsed &&
+    ((typeof input.code === 'string' && input.code !== existing.code) ||
+      (typeof input.sizeType === 'string' && input.sizeType !== existing.sizeType))
+  ) {
+    throw HttpError.conflict(
+      'Code and size type cannot be changed after a size is used in a transaction',
+    );
+  }
+
   try {
-    return await prisma.size.update({
+    const size = await prisma.size.update({
       where: { id },
       data: input as Prisma.SizeUncheckedUpdateInput,
     });
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'SIZE_UPDATED',
+      entityType: 'Size',
+      entityId: id,
+      metadata: { before: existing, after: size },
+    });
+    return size;
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
       throw HttpError.notFound('Size not found');
@@ -420,8 +488,18 @@ export async function updateSize(id: string, input: Record<string, unknown>) {
   }
 }
 
-export async function updateSizeStatus(id: string, status: SizeStatus) {
-  return updateSize(id, { status });
+export async function updateSizeStatus(actor: CurrentUser, id: string, status: SizeStatus) {
+  const existing = await prisma.size.findUnique({ where: { id } });
+  if (!existing) throw HttpError.notFound('Size not found');
+  const size = await prisma.size.update({ where: { id }, data: { status } });
+  await recordAuditLog({
+    actorId: actor.id,
+    action: 'SIZE_STATUS_CHANGED',
+    entityType: 'Size',
+    entityId: id,
+    metadata: { from: existing.status, to: status },
+  });
+  return size;
 }
 
 export async function listFactories(
@@ -459,21 +537,52 @@ export async function getFactoryById(actor: CurrentUser, id: string) {
     throw HttpError.forbidden();
   }
 
-  const factory = await prisma.factory.findUnique({ where: { id } });
+  const factory = await prisma.factory.findUnique({
+    where: { id },
+    include: {
+      _count: {
+        select: {
+          styleFactoryMappings: true,
+          jobOrders: true,
+          userFactories: true,
+        },
+      },
+    },
+  });
   if (!factory) {
     throw HttpError.notFound('Factory not found');
   }
-  return factory;
+  const { _count, ...record } = factory;
+  return {
+    ...record,
+    usage: {
+      styleMappings: _count.styleFactoryMappings,
+      jobOrders: _count.jobOrders,
+      mappedUsers: _count.userFactories,
+    },
+  };
 }
 
-export async function createFactory(input: Omit<Prisma.FactoryUncheckedCreateInput, 'id'>) {
+export async function createFactory(
+  actor: CurrentUser,
+  input: Omit<Prisma.FactoryUncheckedCreateInput, 'id'>,
+) {
   const existingByName = await prisma.factory.findFirst({ where: { name: input.name } });
   if (existingByName) {
     throw HttpError.conflict('A factory with this code or name already exists');
   }
 
   try {
-    return await prisma.factory.create({ data: { id: createId(), status: 'ACTIVE', ...input } });
+    const factory = await prisma.factory.create({
+      data: { id: createId(), status: 'ACTIVE', ...input },
+    });
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'FACTORY_CREATED',
+      entityType: 'Factory',
+      entityId: factory.id,
+    });
+    return factory;
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('A factory with this code or name already exists');
@@ -482,7 +591,11 @@ export async function createFactory(input: Omit<Prisma.FactoryUncheckedCreateInp
   }
 }
 
-export async function updateFactory(id: string, input: Record<string, unknown>) {
+export async function updateFactory(
+  actor: CurrentUser,
+  id: string,
+  input: Record<string, unknown>,
+) {
   if (typeof input.name === 'string') {
     const existingByName = await prisma.factory.findFirst({
       where: { name: input.name, NOT: { id } },
@@ -493,10 +606,20 @@ export async function updateFactory(id: string, input: Record<string, unknown>) 
   }
 
   try {
-    return await prisma.factory.update({
+    const existing = await prisma.factory.findUnique({ where: { id } });
+    if (!existing) throw HttpError.notFound('Factory not found');
+    const factory = await prisma.factory.update({
       where: { id },
       data: input as Prisma.FactoryUncheckedUpdateInput,
     });
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'FACTORY_UPDATED',
+      entityType: 'Factory',
+      entityId: id,
+      metadata: { before: existing, after: factory },
+    });
+    return factory;
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
       throw HttpError.notFound('Factory not found');
@@ -508,8 +631,45 @@ export async function updateFactory(id: string, input: Record<string, unknown>) 
   }
 }
 
-export async function updateFactoryStatus(id: string, status: FactoryStatus) {
-  return updateFactory(id, { status });
+export async function updateFactoryStatus(actor: CurrentUser, id: string, status: FactoryStatus) {
+  const existing = await prisma.factory.findUnique({ where: { id } });
+  if (!existing) throw HttpError.notFound('Factory not found');
+  const factory = await prisma.factory.update({ where: { id }, data: { status } });
+  await recordAuditLog({
+    actorId: actor.id,
+    action: 'FACTORY_STATUS_CHANGED',
+    entityType: 'Factory',
+    entityId: id,
+    metadata: { from: existing.status, to: status },
+  });
+  return factory;
+}
+
+export async function listFactoryUsers(factoryId: string) {
+  const factory = await prisma.factory.findUnique({ where: { id: factoryId } });
+  if (!factory) throw HttpError.notFound('Factory not found');
+  const mappings = await prisma.userFactory.findMany({
+    where: { factoryId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          status: true,
+          userRoles: { select: { role: { select: { name: true } } } },
+        },
+      },
+    },
+    orderBy: { user: { name: 'asc' } },
+  });
+  return mappings.map(({ user }) => ({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    status: user.status,
+    roles: user.userRoles.map(({ role }) => role.name),
+  }));
 }
 
 type ProcessStageInput = {

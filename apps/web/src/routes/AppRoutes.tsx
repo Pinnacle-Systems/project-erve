@@ -7,11 +7,15 @@ import { DistributorDetailPage } from '../pages/master-data/DistributorDetailPag
 import { DistributorFormPage } from '../pages/master-data/DistributorFormPage.js';
 import { DistributorListPage } from '../pages/master-data/DistributorListPage.js';
 import { FactoryListPage } from '../pages/master-data/FactoryListPage.js';
+import { FactoryDetailPage } from '../pages/master-data/FactoryDetailPage.js';
+import { FactoryFormPage } from '../pages/master-data/FactoryFormPage.js';
 import { ProcessFlowDetailPage } from '../pages/master-data/ProcessFlowDetailPage.js';
 import { ProcessFlowCreatePage } from '../pages/master-data/ProcessFlowCreatePage.js';
 import { ProcessFlowListPage } from '../pages/master-data/ProcessFlowListPage.js';
 import { ProcessFlowVersionEditorPage } from '../pages/master-data/ProcessFlowVersionEditorPage.js';
 import { SizeListPage } from '../pages/master-data/SizeListPage.js';
+import { SizeDetailPage } from '../pages/master-data/SizeDetailPage.js';
+import { SizeFormPage } from '../pages/master-data/SizeFormPage.js';
 import { StyleDetailPage } from '../pages/master-data/StyleDetailPage.js';
 import { StyleFormPage } from '../pages/master-data/StyleFormPage.js';
 import { StyleListPage } from '../pages/master-data/StyleListPage.js';
@@ -97,10 +101,42 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="sizes/:id"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+              <SizeDetailPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="sizes/:id/edit"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+              <SizeFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
           path="factories"
           element={
             <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'FACTORY_USER']}>
               <FactoryListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="factories/:id"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'FACTORY_USER']}>
+              <FactoryDetailPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="factories/:id/edit"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+              <FactoryFormPage />
             </RoleRoute>
           }
         />

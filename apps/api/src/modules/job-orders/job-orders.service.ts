@@ -40,24 +40,53 @@ function canManageJobOrders(user: CurrentUser): boolean {
 }
 
 function canViewAllJobOrders(user: CurrentUser): boolean {
-  return user.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT');
+  return user.roles.some(
+    (role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT',
+  );
 }
 
 function canFactoryManage(user: CurrentUser, factoryId: string): boolean {
   return user.roles.includes('FACTORY_USER') && user.factoryIds.includes(factoryId);
 }
 
-function assertJobOrderViewAccess(user: CurrentUser, jobOrder: { factoryId: string; status: JobOrderStatus }): void {
+function assertJobOrderViewAccess(
+  user: CurrentUser,
+  jobOrder: { factoryId: string; status: JobOrderStatus },
+): void {
   if (canViewAllJobOrders(user)) return;
   if (canFactoryManage(user, jobOrder.factoryId)) return;
   if (user.roles.includes('QA_USER') && jobOrder.status === 'READY_FOR_QA') return;
   throw HttpError.forbidden('You do not have access to this job order');
 }
 
-function assertFactoryWorkflowAccess(user: CurrentUser, factoryId: string): void {
+// Ordinary role authorization for mutating an existing job order's
+// factory-side workflow (confirm / complete-stage / update-prepared-quantity):
+// admins and merchandisers may always act, in line with their normal
+// oversight permissions; a factory user only for their own mapped factory.
+// This carries no factory-status opinion — that is a separate concern,
+// checked below only for the factory-user path.
+function assertJobOrderWorkflowAuthorization(user: CurrentUser, factoryId: string): void {
+  if (!canManageJobOrders(user) && !canFactoryManage(user, factoryId)) {
+    throw HttpError.forbidden('You cannot update this factory job order');
+  }
+}
+
+// Active-factory requirement for factory-user workflow mutations. A factory
+// user loses the ability to advance production at their factory the moment
+// it is deactivated — reactivation restores it immediately, since factory
+// status is read fresh on every call. Admins and merchandisers are exempt:
+// deactivation blocks new assignments to the factory (see
+// createJobOrderFromPO / sendJobOrderToFactory), not their ability to
+// administratively resolve work that already exists there.
+async function assertFactoryUserFactoryActive(user: CurrentUser, factoryId: string): Promise<void> {
   if (canManageJobOrders(user)) return;
-  if (canFactoryManage(user, factoryId)) return;
-  throw HttpError.forbidden('You cannot update this factory job order');
+  const factory = await prisma.factory.findUnique({
+    where: { id: factoryId },
+    select: { status: true },
+  });
+  if (!factory || factory.status !== 'ACTIVE') {
+    throw HttpError.conflict('This factory is inactive and cannot perform new operational actions');
+  }
 }
 
 function totalOrdered(jobOrder: JobOrderRecord): number {
@@ -138,7 +167,10 @@ export async function generateJobOrderNumber(): Promise<string> {
   return `${prefix}${String(lastSeq + 1).padStart(6, '0')}`;
 }
 
-export async function updatePurchaseOrderJobOrderedStatus(tx: Tx, purchaseOrderId: string): Promise<void> {
+export async function updatePurchaseOrderJobOrderedStatus(
+  tx: Tx,
+  purchaseOrderId: string,
+): Promise<void> {
   const po = await tx.distributorPurchaseOrder.findUnique({
     where: { id: purchaseOrderId },
     include: { lines: { include: { sizes: true } } },
@@ -149,10 +181,18 @@ export async function updatePurchaseOrderJobOrderedStatus(tx: Tx, purchaseOrderI
   const allSizes = po.lines.flatMap((line) => line.sizes);
   const ordered = allSizes.reduce((sum, size) => sum + size.orderedQuantity, 0);
   const jobOrdered = allSizes.reduce((sum, size) => sum + size.jobOrderedQuantity, 0);
-  const nextStatus = jobOrdered >= ordered ? 'FULLY_JOB_ORDERED' : jobOrdered > 0 ? 'PARTIALLY_JOB_ORDERED' : po.status;
+  const nextStatus =
+    jobOrdered >= ordered
+      ? 'FULLY_JOB_ORDERED'
+      : jobOrdered > 0
+        ? 'PARTIALLY_JOB_ORDERED'
+        : po.status;
 
   if (nextStatus !== po.status) {
-    await tx.distributorPurchaseOrder.update({ where: { id: purchaseOrderId }, data: { status: nextStatus } });
+    await tx.distributorPurchaseOrder.update({
+      where: { id: purchaseOrderId },
+      data: { status: nextStatus },
+    });
   }
 }
 
@@ -202,7 +242,8 @@ export async function createJobOrderFromPO(
     }>;
   },
 ) {
-  if (!canManageJobOrders(actor)) throw HttpError.forbidden('Only admins and merchandisers can create job orders');
+  if (!canManageJobOrders(actor))
+    throw HttpError.forbidden('Only admins and merchandisers can create job orders');
 
   const [po, factory, processFlowVersion] = await Promise.all([
     prisma.distributorPurchaseOrder.findUnique({
@@ -217,24 +258,29 @@ export async function createJobOrderFromPO(
   ]);
 
   if (!po) throw HttpError.badRequest('Purchase order not found');
-  if (po.status === 'DRAFT') throw HttpError.badRequest('Purchase order must be submitted before job ordering');
+  if (po.status === 'DRAFT')
+    throw HttpError.badRequest('Purchase order must be submitted before job ordering');
   if (po.status === 'CANCELLED' || po.status === 'CLOSED') {
     throw HttpError.badRequest('Purchase order cannot be job ordered in its current status');
   }
   if (!factory) throw HttpError.badRequest('Factory not found');
   if (factory.status !== 'ACTIVE') throw HttpError.badRequest('Factory is not active');
   if (!processFlowVersion) throw HttpError.badRequest('Process flow version not found');
-  if (processFlowVersion.status !== 'ACTIVE') throw HttpError.badRequest('Process flow version must be ACTIVE');
+  if (processFlowVersion.status !== 'ACTIVE')
+    throw HttpError.badRequest('Process flow version must be ACTIVE');
 
   const poLinesById = new Map(po.lines.map((line) => [line.id, line]));
-  const poSizesById = new Map(po.lines.flatMap((line) => line.sizes.map((size) => [size.id, { ...size, line }])));
+  const poSizesById = new Map(
+    po.lines.flatMap((line) => line.sizes.map((size) => [size.id, { ...size, line }])),
+  );
   const seenLines = new Set<string>();
   const seenSizes = new Set<string>();
 
   for (const line of input.lines) {
     const poLine = poLinesById.get(line.purchaseOrderLineId);
     if (!poLine) throw HttpError.badRequest('Line does not belong to the selected purchase order');
-    if (seenLines.has(line.purchaseOrderLineId)) throw HttpError.badRequest('Duplicate purchase order lines are not allowed');
+    if (seenLines.has(line.purchaseOrderLineId))
+      throw HttpError.badRequest('Duplicate purchase order lines are not allowed');
     seenLines.add(line.purchaseOrderLineId);
 
     for (const size of line.sizes) {
@@ -242,10 +288,12 @@ export async function createJobOrderFromPO(
       if (!poSize || poSize.purchaseOrderLineId !== line.purchaseOrderLineId) {
         throw HttpError.badRequest('Line size does not belong to the selected purchase order line');
       }
-      if (seenSizes.has(size.purchaseOrderLineSizeId)) throw HttpError.badRequest('Duplicate line sizes are not allowed');
+      if (seenSizes.has(size.purchaseOrderLineSizeId))
+        throw HttpError.badRequest('Duplicate line sizes are not allowed');
       seenSizes.add(size.purchaseOrderLineSizeId);
       const remaining = poSize.orderedQuantity - poSize.jobOrderedQuantity;
-      if (size.quantity > remaining) throw HttpError.badRequest('Job order quantity exceeds remaining purchase order balance');
+      if (size.quantity > remaining)
+        throw HttpError.badRequest('Job order quantity exceeds remaining purchase order balance');
     }
   }
 
@@ -305,17 +353,29 @@ export async function createJobOrderFromPO(
     action: 'JOB_ORDER_CREATED',
     entityType: 'JobOrder',
     entityId: jobOrderId,
-    metadata: { jobOrderNumber, purchaseOrderId: input.purchaseOrderId, factoryId: input.factoryId },
+    metadata: {
+      jobOrderNumber,
+      purchaseOrderId: input.purchaseOrderId,
+      factoryId: input.factoryId,
+    },
   });
 
   return getJobOrderDetail(actor, jobOrderId);
 }
 
 export async function sendJobOrderToFactory(actor: CurrentUser, id: string) {
-  const jobOrder = await prisma.jobOrder.findUnique({ where: { id } });
+  const jobOrder = await prisma.jobOrder.findUnique({
+    where: { id },
+    include: { factory: { select: { status: true } } },
+  });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
-  if (!canManageJobOrders(actor)) throw HttpError.forbidden('Only admins and merchandisers can send job orders');
-  if (jobOrder.status !== 'DRAFT') throw HttpError.badRequest('Only DRAFT job orders can be sent to factory');
+  if (!canManageJobOrders(actor))
+    throw HttpError.forbidden('Only admins and merchandisers can send job orders');
+  if (jobOrder.status !== 'DRAFT')
+    throw HttpError.badRequest('Only DRAFT job orders can be sent to factory');
+  if (jobOrder.factory.status !== 'ACTIVE') {
+    throw HttpError.conflict('An inactive factory cannot receive a job order');
+  }
 
   await prisma.jobOrder.update({ where: { id }, data: { status: 'SENT_TO_FACTORY' } });
   await recordAuditLog({
@@ -331,11 +391,17 @@ export async function sendJobOrderToFactory(actor: CurrentUser, id: string) {
 export async function confirmJobOrder(actor: CurrentUser, id: string) {
   const jobOrder = await prisma.jobOrder.findUnique({
     where: { id },
-    include: { processFlowVersion: { include: { stages: { where: { status: 'ACTIVE' }, orderBy: { sequence: 'asc' } } } } },
+    include: {
+      processFlowVersion: {
+        include: { stages: { where: { status: 'ACTIVE' }, orderBy: { sequence: 'asc' } } },
+      },
+    },
   });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
-  assertFactoryWorkflowAccess(actor, jobOrder.factoryId);
-  if (jobOrder.status !== 'SENT_TO_FACTORY') throw HttpError.badRequest('Only sent job orders can be confirmed');
+  assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
+  await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
+  if (jobOrder.status !== 'SENT_TO_FACTORY')
+    throw HttpError.badRequest('Only sent job orders can be confirmed');
 
   await prisma.$transaction(async (tx) => {
     await tx.jobOrder.update({
@@ -369,22 +435,32 @@ export async function confirmJobOrder(actor: CurrentUser, id: string) {
   return getJobOrderDetail(actor, id);
 }
 
-export async function completeProductionStage(actor: CurrentUser, id: string, input: { stageStatusId: string; remarks?: string | null }) {
+export async function completeProductionStage(
+  actor: CurrentUser,
+  id: string,
+  input: { stageStatusId: string; remarks?: string | null },
+) {
   const jobOrder = await prisma.jobOrder.findUnique({
     where: { id },
     include: { stageStatuses: { orderBy: { stageSequence: 'asc' } } },
   });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
-  assertFactoryWorkflowAccess(actor, jobOrder.factoryId);
+  assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
+  await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
   if (!['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status)) {
-    throw HttpError.badRequest('Production stages can only be completed after factory confirmation');
+    throw HttpError.badRequest(
+      'Production stages can only be completed after factory confirmation',
+    );
   }
 
   const nextStage = jobOrder.stageStatuses.find((stage) => stage.status !== 'COMPLETED');
   if (!nextStage) throw HttpError.badRequest('All production stages are already completed');
-  if (nextStage.id !== input.stageStatusId) throw HttpError.badRequest('Production stages must be completed in sequence');
+  if (nextStage.id !== input.stageStatusId)
+    throw HttpError.badRequest('Production stages must be completed in sequence');
 
-  const isFinalStage = nextStage.stageSequence === jobOrder.stageStatuses[jobOrder.stageStatuses.length - 1]?.stageSequence;
+  const isFinalStage =
+    nextStage.stageSequence ===
+    jobOrder.stageStatuses[jobOrder.stageStatuses.length - 1]?.stageSequence;
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
@@ -427,12 +503,17 @@ export async function updatePreparedQuantity(
     include: { lines: { include: { sizes: true } } },
   });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
-  assertFactoryWorkflowAccess(actor, jobOrder.factoryId);
+  assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
+  await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
   if (jobOrder.status !== 'PRODUCTION_COMPLETE') {
-    throw HttpError.badRequest('Prepared quantity can only be updated after production is complete');
+    throw HttpError.badRequest(
+      'Prepared quantity can only be updated after production is complete',
+    );
   }
 
-  const allowedSizeIds = new Set(jobOrder.lines.flatMap((line) => line.sizes.map((size) => size.id)));
+  const allowedSizeIds = new Set(
+    jobOrder.lines.flatMap((line) => line.sizes.map((size) => size.id)),
+  );
   for (const size of input.sizes) {
     if (!allowedSizeIds.has(size.jobOrderLineSizeId)) {
       throw HttpError.badRequest('Prepared quantity line size does not belong to this job order');
@@ -449,7 +530,10 @@ export async function updatePreparedQuantity(
 
     for (const line of jobOrder.lines) {
       const freshSizes = await tx.jobOrderLineSize.findMany({ where: { jobOrderLineId: line.id } });
-      const preparedQuantityTotal = freshSizes.reduce((sum, size) => sum + size.preparedQuantity, 0);
+      const preparedQuantityTotal = freshSizes.reduce(
+        (sum, size) => sum + size.preparedQuantity,
+        0,
+      );
       await tx.jobOrderLine.update({
         where: { id: line.id },
         data: { preparedQuantityTotal, status: 'READY_FOR_QA' },
@@ -457,7 +541,10 @@ export async function updatePreparedQuantity(
     }
 
     const freshLines = await tx.jobOrderLine.findMany({ where: { jobOrderId: id } });
-    const preparedQuantityTotal = freshLines.reduce((sum, line) => sum + line.preparedQuantityTotal, 0);
+    const preparedQuantityTotal = freshLines.reduce(
+      (sum, line) => sum + line.preparedQuantityTotal,
+      0,
+    );
     await tx.jobOrder.update({
       where: { id },
       data: { preparedQuantityTotal, status: 'READY_FOR_QA' },
