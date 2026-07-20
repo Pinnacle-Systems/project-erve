@@ -41,6 +41,7 @@ export interface CreateTestUserOptions {
   password: string;
   roles?: Role[];
   status?: UserStatus;
+  authVersion?: number;
 }
 
 export async function createTestUser(options: CreateTestUserOptions): Promise<string> {
@@ -59,6 +60,7 @@ export async function createTestUser(options: CreateTestUserOptions): Promise<st
       name: 'Test User',
       passwordHash,
       status: options.status ?? 'ACTIVE',
+      authVersion: options.authVersion ?? 1,
       userRoles: roles.length
         ? { create: roles.map((role) => ({ id: createId(), roleId: role.id })) }
         : undefined,
@@ -75,7 +77,11 @@ export async function createTestUserAndToken(
   options: CreateTestUserOptions,
 ): Promise<{ userId: string; token: string }> {
   const userId = await createTestUser(options);
-  const token = signAccessToken({ sub: userId, roles: options.roles ?? [] });
+  const token = signAccessToken({
+    sub: userId,
+    roles: options.roles ?? [],
+    authVersion: options.authVersion ?? 1,
+  });
   return { userId, token };
 }
 

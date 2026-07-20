@@ -10,6 +10,7 @@ function distributorUser(distributorIds: string[]): CurrentUser {
     mobile: null,
     name: 'Distributor User',
     status: 'ACTIVE',
+    authVersion: 1,
     roles: ['DISTRIBUTOR'],
     distributorIds,
     factoryIds: [],
@@ -47,7 +48,9 @@ describe('getSoleDistributorId', () => {
 describe('requireDistributorAccess', () => {
   it('allows the mapped distributor and rejects others', () => {
     expect(() => requireDistributorAccess(distributorUser(['dist-1']), 'dist-1')).not.toThrow();
-    expect(statusCodeOf(() => requireDistributorAccess(distributorUser(['dist-1']), 'dist-2'))).toBe(403);
+    expect(
+      statusCodeOf(() => requireDistributorAccess(distributorUser(['dist-1']), 'dist-2')),
+    ).toBe(403);
   });
 
   it('fails closed for multi-mapped users instead of using mapping order', () => {

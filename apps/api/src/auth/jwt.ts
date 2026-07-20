@@ -5,12 +5,14 @@ import { env } from '../config/env.js';
 export interface AccessTokenPayload {
   sub: string;
   roles: Role[];
+  authVersion: number;
 }
 
 export interface RefreshTokenPayload {
   sub: string;
   sessionId: string;
   tokenId: string;
+  authVersion: number;
 }
 
 export function signAccessToken(payload: AccessTokenPayload): string {

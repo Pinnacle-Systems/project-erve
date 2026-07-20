@@ -4,7 +4,12 @@ import { prisma } from '../../db/prisma.js';
 import { HttpError } from '../../errors/http-error.js';
 import { verifyPassword } from '../../auth/password.js';
 import { currentUserSelect, toCurrentUser } from '../../auth/current-user.js';
-import { createRefreshSession, issueTokenResponse, type TokenResponse } from './refresh-session.service.js';
+import { normalizeEmail } from '../../utils/email.js';
+import {
+  createRefreshSession,
+  issueTokenResponse,
+  type TokenResponse,
+} from './refresh-session.service.js';
 
 const INVALID_CREDENTIALS_MESSAGE = 'Invalid email/mobile number or password';
 
@@ -14,8 +19,14 @@ const INVALID_CREDENTIALS_MESSAGE = 'Invalid email/mobile number or password';
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('no-such-account', 12);
 
 export async function login(identifier: string, password: string): Promise<TokenResponse> {
+  // Emails are stored canonically (trim + lowercase, same as create/edit) —
+  // mobile numbers have no case concept, so only whitespace is trimmed.
+  const normalizedIdentifier = identifier.includes('@')
+    ? normalizeEmail(identifier)
+    : identifier.trim();
+
   const record = await prisma.user.findFirst({
-    where: { OR: [{ email: identifier }, { mobile: identifier }] },
+    where: { OR: [{ email: normalizedIdentifier }, { mobile: normalizedIdentifier }] },
     select: { ...currentUserSelect, passwordHash: true },
   });
 
@@ -26,7 +37,7 @@ export async function login(identifier: string, password: string): Promise<Token
   }
 
   const currentUser = toCurrentUser(record);
-  const refreshToken = await createRefreshSession(currentUser.id);
+  const refreshToken = await createRefreshSession(currentUser.id, currentUser.authVersion);
 
   return issueTokenResponse(currentUser, refreshToken);
 }
@@ -47,7 +58,9 @@ export async function getMe(userId: string): Promise<MeResponse> {
       name: true,
       status: true,
       userRoles: { select: { role: { select: { name: true } } } },
-      userDistributors: { select: { distributor: { select: { id: true, code: true, name: true } } } },
+      userDistributors: {
+        select: { distributor: { select: { id: true, code: true, name: true } } },
+      },
       userFactories: { select: { factory: { select: { id: true, code: true, name: true } } } },
     },
   });

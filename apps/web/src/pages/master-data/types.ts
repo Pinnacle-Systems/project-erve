@@ -72,10 +72,13 @@ export interface AdminUserSummary {
   id: string;
   name: string;
   email: string;
+  mobile?: string | null;
   status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
   roles: string[];
   distributors: Array<{ id: string; code: string; name: string }>;
   factories: Array<{ id: string; code: string; name: string }>;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export type FactoryUser = DistributorUser;

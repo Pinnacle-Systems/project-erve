@@ -8,6 +8,7 @@ import { toCurrentUser, type CurrentUser } from '../../auth/current-user.js';
 import {
   createRefreshSessionRecord,
   findRefreshSessionById,
+  revokeAllRefreshSessionsForUser,
   revokeRefreshSessionById,
   revokeRefreshSessionByToken,
   rotateRefreshSessionToken,
@@ -62,18 +63,22 @@ export function isRefreshSessionExpired(session: RefreshSessionState, now = new 
   const idleExpiresAt = addMinutes(session.lastUsedAt, env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES);
   return Boolean(
     session.revokedAt ||
-      idleExpiresAt.getTime() < now.getTime() ||
-      session.absoluteExpiresAt.getTime() <= now.getTime(),
+    idleExpiresAt.getTime() < now.getTime() ||
+    session.absoluteExpiresAt.getTime() <= now.getTime(),
   );
 }
 
-function signSessionRefreshToken(userId: string, sessionId: string): string {
-  return signRefreshToken({ sub: userId, sessionId, tokenId: createId() });
+function signSessionRefreshToken(userId: string, sessionId: string, authVersion: number): string {
+  return signRefreshToken({ sub: userId, sessionId, tokenId: createId(), authVersion });
 }
 
-export async function createRefreshSession(userId: string, now = new Date()): Promise<string> {
+export async function createRefreshSession(
+  userId: string,
+  authVersion: number,
+  now = new Date(),
+): Promise<string> {
   const sessionId = createId();
-  const refreshToken = signSessionRefreshToken(userId, sessionId);
+  const refreshToken = signSessionRefreshToken(userId, sessionId, authVersion);
   const expiry = calculateRefreshSessionExpiry(now);
 
   await createRefreshSessionRecord({
@@ -88,12 +93,21 @@ export async function createRefreshSession(userId: string, now = new Date()): Pr
   return refreshToken;
 }
 
-export async function refreshSession(refreshToken: string, now = new Date()): Promise<RefreshTokenResponse> {
+export async function refreshSession(
+  refreshToken: string,
+  now = new Date(),
+): Promise<RefreshTokenResponse> {
   let payload: ReturnType<typeof verifyRefreshToken>;
 
   try {
     payload = verifyRefreshToken(refreshToken);
   } catch {
+    throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
+  }
+
+  if (typeof payload.authVersion !== 'number') {
+    // Tokens issued before authVersion existed carry no claim at all —
+    // treated as invalid rather than silently trusted at the current version.
     throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
   }
 
@@ -117,12 +131,20 @@ export async function refreshSession(refreshToken: string, now = new Date()): Pr
 
   const currentUser = toCurrentUser(session.user);
 
-  if (currentUser.status !== 'ACTIVE') {
+  // A stale authVersion means the credential was reset since this token was
+  // issued — the session's own revokedAt is already set by that reset in the
+  // normal case, but this check also fails closed for any path that bumps
+  // the version without (yet) revoking every session.
+  if (currentUser.status !== 'ACTIVE' || currentUser.authVersion !== payload.authVersion) {
     await revokeRefreshSessionById(session.id, now);
     throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
   }
 
-  const nextRefreshToken = signSessionRefreshToken(currentUser.id, session.id);
+  const nextRefreshToken = signSessionRefreshToken(
+    currentUser.id,
+    session.id,
+    currentUser.authVersion,
+  );
   const rotated = await rotateRefreshSessionToken({
     sessionId: session.id,
     currentRefreshTokenHash,
@@ -136,7 +158,11 @@ export async function refreshSession(refreshToken: string, now = new Date()): Pr
   }
 
   return {
-    accessToken: signAccessToken({ sub: currentUser.id, roles: currentUser.roles }),
+    accessToken: signAccessToken({
+      sub: currentUser.id,
+      roles: currentUser.roles,
+      authVersion: currentUser.authVersion,
+    }),
     refreshToken: nextRefreshToken,
   };
 }
@@ -150,9 +176,19 @@ export async function revokeRefreshSession(refreshToken: string, now = new Date(
   }
 }
 
+// Used on deactivation/suspension and password reset so a signed-out state
+// takes effect immediately rather than waiting for idle/absolute expiry.
+export async function revokeAllSessionsForUser(userId: string, now = new Date()): Promise<void> {
+  await revokeAllRefreshSessionsForUser(userId, now);
+}
+
 export function issueTokenResponse(currentUser: CurrentUser, refreshToken: string): TokenResponse {
   return {
-    accessToken: signAccessToken({ sub: currentUser.id, roles: currentUser.roles }),
+    accessToken: signAccessToken({
+      sub: currentUser.id,
+      roles: currentUser.roles,
+      authVersion: currentUser.authVersion,
+    }),
     refreshToken,
     user: {
       id: currentUser.id,

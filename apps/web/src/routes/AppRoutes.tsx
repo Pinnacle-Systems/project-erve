@@ -19,6 +19,9 @@ import { SizeFormPage } from '../pages/master-data/SizeFormPage.js';
 import { StyleDetailPage } from '../pages/master-data/StyleDetailPage.js';
 import { StyleFormPage } from '../pages/master-data/StyleFormPage.js';
 import { StyleListPage } from '../pages/master-data/StyleListPage.js';
+import { UserDetailPage } from '../pages/users/UserDetailPage.js';
+import { UserFormPage } from '../pages/users/UserFormPage.js';
+import { UserListPage } from '../pages/users/UserListPage.js';
 import { PriceListDetailPage } from '../pages/price-lists/PriceListDetailPage.js';
 import { PriceListFormPage } from '../pages/price-lists/PriceListFormPage.js';
 import { PriceListListPage } from '../pages/price-lists/PriceListListPage.js';
@@ -169,6 +172,38 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={['ADMIN']}>
               <DistributorFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="users"
+          element={
+            <RoleRoute allowed={['ADMIN']}>
+              <UserListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="users/new"
+          element={
+            <RoleRoute allowed={['ADMIN']}>
+              <UserFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="users/:id"
+          element={
+            <RoleRoute allowed={['ADMIN']}>
+              <UserDetailPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="users/:id/edit"
+          element={
+            <RoleRoute allowed={['ADMIN']}>
+              <UserFormPage />
             </RoleRoute>
           }
         />

@@ -10,7 +10,9 @@ export interface CreateRefreshSessionRecordInput {
   absoluteExpiresAt: Date;
 }
 
-export async function createRefreshSessionRecord(input: CreateRefreshSessionRecordInput): Promise<void> {
+export async function createRefreshSessionRecord(
+  input: CreateRefreshSessionRecordInput,
+): Promise<void> {
   await prisma.refreshSession.create({
     data: {
       id: input.id,
@@ -99,6 +101,16 @@ export async function revokeRefreshSessionByToken(
 export async function revokeRefreshSessionById(sessionId: string, revokedAt: Date): Promise<void> {
   await prisma.refreshSession.updateMany({
     where: { id: sessionId, revokedAt: null },
+    data: { revokedAt },
+  });
+}
+
+export async function revokeAllRefreshSessionsForUser(
+  userId: string,
+  revokedAt: Date,
+): Promise<void> {
+  await prisma.refreshSession.updateMany({
+    where: { userId, revokedAt: null },
     data: { revokedAt },
   });
 }

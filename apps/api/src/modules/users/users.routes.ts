@@ -8,8 +8,11 @@ import {
   createUserSchema,
   distributorMappingSchema,
   factoryMappingSchema,
+  listUsersQuerySchema,
+  resetPasswordSchema,
   roleNameSchema,
   updateStatusSchema,
+  updateUserSchema,
 } from './users.validation.js';
 import * as usersService from './users.service.js';
 
@@ -28,8 +31,9 @@ usersRouter.post(
 
 usersRouter.get(
   '/',
-  asyncHandler(async (_req, res) => {
-    const users = await usersService.listUsers();
+  asyncHandler(async (req, res) => {
+    const filters = listUsersQuerySchema.parse(req.query);
+    const users = await usersService.listUsers(filters);
     res.status(200).json(successResponse(users));
   }),
 );
@@ -43,10 +47,28 @@ usersRouter.get(
 );
 
 usersRouter.patch(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const input = updateUserSchema.parse(req.body);
+    const user = await usersService.updateUser(req.user!, req.params.id! as string, input);
+    res.status(200).json(successResponse(user));
+  }),
+);
+
+usersRouter.patch(
   '/:id/status',
   asyncHandler(async (req, res) => {
     const { status } = updateStatusSchema.parse(req.body);
     const user = await usersService.updateUserStatus(req.user!, req.params.id! as string, status);
+    res.status(200).json(successResponse(user));
+  }),
+);
+
+usersRouter.post(
+  '/:id/reset-password',
+  asyncHandler(async (req, res) => {
+    const { password } = resetPasswordSchema.parse(req.body);
+    const user = await usersService.resetPassword(req.user!, req.params.id! as string, password);
     res.status(200).json(successResponse(user));
   }),
 );
@@ -73,7 +95,11 @@ usersRouter.post(
   '/:id/distributors',
   asyncHandler(async (req, res) => {
     const { distributorId } = distributorMappingSchema.parse(req.body);
-    const user = await usersService.addDistributorMapping(req.user!, req.params.id! as string, distributorId);
+    const user = await usersService.addDistributorMapping(
+      req.user!,
+      req.params.id! as string,
+      distributorId,
+    );
     res.status(200).json(successResponse(user));
   }),
 );
@@ -94,7 +120,11 @@ usersRouter.post(
   '/:id/factories',
   asyncHandler(async (req, res) => {
     const { factoryId } = factoryMappingSchema.parse(req.body);
-    const user = await usersService.addFactoryMapping(req.user!, req.params.id! as string, factoryId);
+    const user = await usersService.addFactoryMapping(
+      req.user!,
+      req.params.id! as string,
+      factoryId,
+    );
     res.status(200).json(successResponse(user));
   }),
 );

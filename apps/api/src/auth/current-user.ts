@@ -7,6 +7,7 @@ export const currentUserSelect = {
   mobile: true,
   name: true,
   status: true,
+  authVersion: true,
   userRoles: { select: { role: { select: { name: true } } } },
   userDistributors: { select: { distributorId: true } },
   userFactories: { select: { factoryId: true } },
@@ -20,6 +21,7 @@ export interface CurrentUser {
   mobile: string | null;
   name: string;
   status: UserStatus;
+  authVersion: number;
   roles: Role[];
   distributorIds: string[];
   factoryIds: string[];
@@ -32,6 +34,7 @@ export function toCurrentUser(record: CurrentUserRecord): CurrentUser {
     mobile: record.mobile,
     name: record.name,
     status: record.status,
+    authVersion: record.authVersion,
     roles: record.userRoles.map((userRole) => userRole.role.name as Role),
     distributorIds: record.userDistributors.map((mapping) => mapping.distributorId),
     factoryIds: record.userFactories.map((mapping) => mapping.factoryId),

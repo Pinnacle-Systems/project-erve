@@ -53,7 +53,13 @@ function flushMicrotasks(): Promise<void> {
 
 async function renderAppLayout(roles: Role[]): Promise<void> {
   setStoredToken('valid-token');
-  const user: AuthUser = { id: 'user-1', email: 'test@test.local', mobile: null, name: 'Test User', roles };
+  const user: AuthUser = {
+    id: 'user-1',
+    email: 'test@test.local',
+    mobile: null,
+    name: 'Test User',
+    roles,
+  };
 
   apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
     if (config.url === '/auth/me') {
@@ -101,9 +107,10 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Purchase Orders');
     expect(labels).toContain('+ New PO');
     expect(labels).toContain('Job Orders');
+    expect(labels).toContain('Users');
   });
 
-  it('SENIOR_MANAGEMENT sees Styles, Distributors and Price Lists but not Sizes/Factories/Process Flows or +New PO', async () => {
+  it('SENIOR_MANAGEMENT sees Styles, Distributors and Price Lists but not Sizes/Factories/Process Flows, +New PO, or Users', async () => {
     await renderAppLayout(['SENIOR_MANAGEMENT']);
     const labels = sidebarLinkLabels();
 
@@ -116,6 +123,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Purchase Orders');
     expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
+    expect(labels).not.toContain('Users');
   });
 
   it('FACTORY_USER sees only Factories in Master Data, and Job Orders but not +New PO', async () => {

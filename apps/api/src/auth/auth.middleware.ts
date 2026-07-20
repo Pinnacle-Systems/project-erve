@@ -37,12 +37,19 @@ export const requireAuth = asyncHandler(
       return;
     }
 
+    if (typeof payload.authVersion !== 'number') {
+      // Tokens issued before authVersion existed carry no claim at all —
+      // treated as invalid rather than silently trusted at the current version.
+      next(HttpError.unauthorized('Invalid or expired token'));
+      return;
+    }
+
     const record = await prisma.user.findUnique({
       where: { id: payload.sub },
       select: currentUserSelect,
     });
 
-    if (!record || record.status !== 'ACTIVE') {
+    if (!record || record.status !== 'ACTIVE' || record.authVersion !== payload.authVersion) {
       next(HttpError.unauthorized('Invalid or expired token'));
       return;
     }

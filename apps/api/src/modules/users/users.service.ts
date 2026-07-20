@@ -54,6 +54,19 @@ function isUniqueConstraintError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
+// Serializes the small set of operations that can leave the system with zero
+// active administrators (role removal, deactivation) behind one global lock
+// so concurrent last-admin mutations can't both see a stale "count > 1".
+async function assertNotLastActiveAdmin(tx: Prisma.TransactionClient): Promise<void> {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('admin-lockout', 0))::text`;
+  const activeAdminCount = await tx.user.count({
+    where: { status: 'ACTIVE', userRoles: { some: { role: { name: 'ADMIN' } } } },
+  });
+  if (activeAdminCount <= 1) {
+    throw HttpError.badRequest('This action would leave the system with no active administrator');
+  }
+}
+
 export interface CreateUserInput {
   name: string;
   email: string;
@@ -100,8 +113,24 @@ export async function createUser(actor: CurrentUser, input: CreateUserInput): Pr
   return getUserById(userId);
 }
 
-export async function listUsers(): Promise<UserView[]> {
+export interface ListUsersFilters {
+  search?: string;
+  status?: UserStatus;
+  role?: Role;
+}
+
+export async function listUsers(filters: ListUsersFilters = {}): Promise<UserView[]> {
   const users = await prisma.user.findMany({
+    where: {
+      status: filters.status,
+      userRoles: filters.role ? { some: { role: { name: filters.role } } } : undefined,
+      OR: filters.search
+        ? [
+            { name: { contains: filters.search, mode: 'insensitive' } },
+            { email: { contains: filters.search, mode: 'insensitive' } },
+          ]
+        : undefined,
+    },
     include: userWithRelationsInclude,
     orderBy: { createdAt: 'asc' },
   });
@@ -116,24 +145,159 @@ export async function getUserById(id: string): Promise<UserView> {
   return toUserView(user);
 }
 
-export async function updateUserStatus(
+export interface UpdateUserInput {
+  name?: string;
+  email?: string;
+}
+
+// Profile fields only — roles, status, and mappings are changed through
+// their own dedicated endpoints so a profile edit never silently touches them.
+export async function updateUser(
   actor: CurrentUser,
   userId: string,
-  status: UserStatus,
+  input: UpdateUserInput,
 ): Promise<UserView> {
   const existing = await prisma.user.findUnique({ where: { id: userId } });
   if (!existing) {
     throw HttpError.notFound('User not found');
   }
 
-  await prisma.user.update({ where: { id: userId }, data: { status } });
+  if (input.email && input.email !== existing.email) {
+    const emailTaken = await prisma.user.findFirst({
+      where: { email: input.email, NOT: { id: userId } },
+    });
+    if (emailTaken) {
+      throw HttpError.conflict('A user with this email already exists');
+    }
+  }
+
+  try {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { name: input.name, email: input.email },
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw HttpError.conflict('A user with this email already exists');
+    }
+    throw error;
+  }
+
+  const changes: Record<string, { from: string; to: string }> = {};
+  if (input.name && input.name !== existing.name) {
+    changes.name = { from: existing.name, to: input.name };
+  }
+  if (input.email && input.email !== existing.email) {
+    changes.email = { from: existing.email, to: input.email };
+  }
+
+  if (Object.keys(changes).length > 0) {
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'USER_PROFILE_UPDATED',
+      entityType: 'User',
+      entityId: userId,
+      metadata: changes,
+    });
+  }
+
+  return getUserById(userId);
+}
+
+export async function updateUserStatus(
+  actor: CurrentUser,
+  userId: string,
+  status: UserStatus,
+): Promise<UserView> {
+  const now = new Date();
+  let previousStatus: UserStatus | undefined;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('user_status:' || ${userId}, 0))::text`;
+
+    const existing = await tx.user.findUnique({
+      where: { id: userId },
+      include: { userRoles: { select: { role: { select: { name: true } } } } },
+    });
+    if (!existing) {
+      throw HttpError.notFound('User not found');
+    }
+    previousStatus = existing.status;
+
+    const isDeactivating = existing.status === 'ACTIVE' && status !== 'ACTIVE';
+
+    if (isDeactivating) {
+      if (actor.id === userId) {
+        throw HttpError.badRequest('You cannot deactivate your own account');
+      }
+      const isAdmin = existing.userRoles.some((userRole) => userRole.role.name === 'ADMIN');
+      if (isAdmin) {
+        await assertNotLastActiveAdmin(tx);
+      }
+    }
+
+    await tx.user.update({ where: { id: userId }, data: { status } });
+
+    if (isDeactivating) {
+      // Blocks refresh/session continuation immediately; requireAuth already
+      // rejects the (short-lived) access token on its next per-request re-check.
+      await tx.refreshSession.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+    }
+  });
 
   await recordAuditLog({
     actorId: actor.id,
     action: 'USER_STATUS_CHANGED',
     entityType: 'User',
     entityId: userId,
-    metadata: { from: existing.status, to: status },
+    metadata: { from: previousStatus, to: status },
+  });
+
+  return getUserById(userId);
+}
+
+export async function resetPassword(
+  actor: CurrentUser,
+  userId: string,
+  newPassword: string,
+): Promise<UserView> {
+  const passwordHash = await hashPassword(newPassword);
+  const now = new Date();
+
+  // authVersion is bumped with Prisma's atomic `increment`, not a
+  // read-then-write of a previously fetched value, so concurrent resets on
+  // the same user serialize on the row and both increments are preserved —
+  // no explicit advisory lock is needed for that part. Validating the user,
+  // hashing in the new password, bumping the version, revoking sessions, and
+  // writing the audit record all happen in one transaction so a failure
+  // (including a failed audit insert) leaves none of them applied.
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.user.findUnique({ where: { id: userId } });
+    if (!existing) {
+      throw HttpError.notFound('User not found');
+    }
+
+    await tx.user.update({
+      where: { id: userId },
+      data: { passwordHash, authVersion: { increment: 1 } },
+    });
+    await tx.refreshSession.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: now },
+    });
+
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'PASSWORD_RESET',
+        entityType: 'User',
+        entityId: userId,
+      },
+      tx,
+    );
   });
 
   return getUserById(userId);
@@ -189,10 +353,55 @@ export async function removeRole(
     throw HttpError.badRequest('Unknown role');
   }
 
-  const deleted = await prisma.userRole.deleteMany({ where: { userId, roleId: role.id } });
-  if (deleted.count === 0) {
-    throw HttpError.notFound('User does not have this role');
-  }
+  await prisma.$transaction(async (tx) => {
+    // Serializes concurrent role changes for this user (e.g. two admins
+    // removing different roles from the same user at once).
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('user_roles:' || ${userId}, 0))::text`;
+
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      include: { userRoles: { select: { role: { select: { name: true } } } } },
+    });
+    if (!user) {
+      throw HttpError.notFound('User not found');
+    }
+
+    const currentRoles = user.userRoles.map((userRole) => userRole.role.name);
+    if (!currentRoles.includes(roleName)) {
+      throw HttpError.notFound('User does not have this role');
+    }
+    if (currentRoles.length === 1) {
+      throw HttpError.badRequest('A user must have at least one role');
+    }
+
+    if (roleName === 'DISTRIBUTOR') {
+      const mappingCount = await tx.userDistributor.count({ where: { userId } });
+      if (mappingCount > 0) {
+        throw HttpError.badRequest(
+          'Remove the distributor mapping before removing the DISTRIBUTOR role',
+        );
+      }
+    }
+    if (roleName === 'FACTORY_USER') {
+      const mappingCount = await tx.userFactory.count({ where: { userId } });
+      if (mappingCount > 0) {
+        throw HttpError.badRequest(
+          'Remove all factory mappings before removing the FACTORY_USER role',
+        );
+      }
+    }
+
+    if (roleName === 'ADMIN') {
+      if (actor.id === userId) {
+        throw HttpError.badRequest('You cannot remove your own ADMIN role');
+      }
+      if (user.status === 'ACTIVE') {
+        await assertNotLastActiveAdmin(tx);
+      }
+    }
+
+    await tx.userRole.deleteMany({ where: { userId, roleId: role.id } });
+  });
 
   await recordAuditLog({
     actorId: actor.id,

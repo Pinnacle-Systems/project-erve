@@ -88,14 +88,20 @@ describe('refresh session helpers', () => {
 
     expect(isRefreshSessionExpired(active, now)).toBe(false);
     expect(isRefreshSessionExpired({ ...active, revokedAt: now }, now)).toBe(true);
-    expect(isRefreshSessionExpired({ ...active, lastUsedAt: new Date('2026-06-30T09:39:59.000Z') }, now)).toBe(true);
+    expect(
+      isRefreshSessionExpired({ ...active, lastUsedAt: new Date('2026-06-30T09:39:59.000Z') }, now),
+    ).toBe(true);
     expect(isRefreshSessionExpired({ ...active, absoluteExpiresAt: now }, now)).toBe(true);
   });
 });
 
 describe('POST /auth/login', () => {
   it('logs in successfully with correct credentials and returns no passwordHash', async () => {
-    await createTestUser({ email: 'admin@test.local', password: 'correct-password', roles: ['ADMIN'] });
+    await createTestUser({
+      email: 'admin@test.local',
+      password: 'correct-password',
+      roles: ['ADMIN'],
+    });
 
     const res = await request(app)
       .post('/auth/login')
@@ -141,7 +147,11 @@ describe('POST /auth/login', () => {
   });
 
   it('rejects a wrong password with a generic error', async () => {
-    await createTestUser({ email: 'admin@test.local', password: 'correct-password', roles: ['ADMIN'] });
+    await createTestUser({
+      email: 'admin@test.local',
+      password: 'correct-password',
+      roles: ['ADMIN'],
+    });
 
     const res = await request(app)
       .post('/auth/login')
@@ -167,11 +177,39 @@ describe('POST /auth/login', () => {
     expect(res.status).toBe(401);
     expect(res.body.success).toBe(false);
   });
+
+  it('normalizes email case and whitespace the same way as user creation/editing', async () => {
+    await createTestUser({
+      email: 'canonical@test.local',
+      password: 'correct-password',
+      roles: ['ADMIN'],
+    });
+
+    const uppercase = await request(app)
+      .post('/auth/login')
+      .send({ identifier: 'CANONICAL@Test.Local', password: 'correct-password' });
+    expect(uppercase.status).toBe(200);
+    expect(uppercase.body.data.user.email).toBe('canonical@test.local');
+
+    const padded = await request(app)
+      .post('/auth/login')
+      .send({ identifier: '  canonical@test.local  ', password: 'correct-password' });
+    expect(padded.status).toBe(200);
+
+    const wrongPassword = await request(app)
+      .post('/auth/login')
+      .send({ identifier: 'CANONICAL@Test.Local', password: 'wrong-password' });
+    expect(wrongPassword.status).toBe(401);
+  });
 });
 
 describe('POST /auth/refresh', () => {
   it('returns fresh tokens, slides idle expiry, and rejects the rotated token', async () => {
-    await createTestUser({ email: 'refresh@test.local', password: 'correct-password', roles: ['ADMIN'] });
+    await createTestUser({
+      email: 'refresh@test.local',
+      password: 'correct-password',
+      roles: ['ADMIN'],
+    });
 
     const login = await request(app)
       .post('/auth/login')
@@ -203,7 +241,11 @@ describe('POST /auth/refresh', () => {
   });
 
   it('rejects and revokes an idle-expired refresh session', async () => {
-    await createTestUser({ email: 'idle@test.local', password: 'correct-password', roles: ['ADMIN'] });
+    await createTestUser({
+      email: 'idle@test.local',
+      password: 'correct-password',
+      roles: ['ADMIN'],
+    });
 
     const login = await request(app)
       .post('/auth/login')
@@ -222,13 +264,19 @@ describe('POST /auth/refresh', () => {
 
     expect(res.status).toBe(401);
     expect(getSetCookieHeaders(res).join('\n')).toContain(`${REFRESH_TOKEN_COOKIE_NAME}=;`);
-    await expect(prisma.refreshSession.findUniqueOrThrow({ where: { id: session.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.refreshSession.findUniqueOrThrow({ where: { id: session.id } }),
+    ).resolves.toMatchObject({
       revokedAt: expect.any(Date),
     });
   });
 
   it('rejects and revokes an absolute-expired refresh session', async () => {
-    await createTestUser({ email: 'absolute@test.local', password: 'correct-password', roles: ['ADMIN'] });
+    await createTestUser({
+      email: 'absolute@test.local',
+      password: 'correct-password',
+      roles: ['ADMIN'],
+    });
 
     const login = await request(app)
       .post('/auth/login')
@@ -247,7 +295,9 @@ describe('POST /auth/refresh', () => {
 
     expect(res.status).toBe(401);
     expect(getSetCookieHeaders(res).join('\n')).toContain(`${REFRESH_TOKEN_COOKIE_NAME}=;`);
-    await expect(prisma.refreshSession.findUniqueOrThrow({ where: { id: session.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.refreshSession.findUniqueOrThrow({ where: { id: session.id } }),
+    ).resolves.toMatchObject({
       revokedAt: expect.any(Date),
     });
   });
@@ -255,7 +305,11 @@ describe('POST /auth/refresh', () => {
 
 describe('POST /auth/logout', () => {
   it('revokes the refresh session', async () => {
-    await createTestUser({ email: 'logout@test.local', password: 'correct-password', roles: ['ADMIN'] });
+    await createTestUser({
+      email: 'logout@test.local',
+      password: 'correct-password',
+      roles: ['ADMIN'],
+    });
 
     const login = await request(app)
       .post('/auth/login')
@@ -311,7 +365,10 @@ describe('GET /auth/me', () => {
       password: 'correct-password',
       roles: ['DISTRIBUTOR', 'FACTORY_USER'],
     });
-    const distributor = await createTestDistributor({ code: 'D-002', name: 'Northwind Distribution' });
+    const distributor = await createTestDistributor({
+      code: 'D-002',
+      name: 'Northwind Distribution',
+    });
     const factory = await createTestFactory({ code: 'F-002', name: 'Northwind Factory' });
 
     await prisma.userDistributor.create({
