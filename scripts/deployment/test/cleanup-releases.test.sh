@@ -283,10 +283,14 @@ test_cleanup_only_called_after_health_check_in_deploy_script() {
   local deploy_script="$DEPLOYMENT_DIR/deploy-release.sh"
   local health_check_line cleanup_line
   # Single-quoted deliberately: this searches deploy-release.sh's source
-  # text for the literal string "$APP_PORT", not an expansion of a
-  # variable in this test script.
+  # text for the literal call, not an expansion of a variable in this test
+  # script. The actual local health check now runs inside
+  # erve_activate_pm2_release (lib/common.sh), so the marker to look for in
+  # deploy-release.sh itself is the call into that shared function for the
+  # newly activated release (see pm2-release-binding.test.sh for direct
+  # coverage of erve_activate_pm2_release's own internal ordering).
   # shellcheck disable=SC2016
-  health_check_line="$(grep -n 'verify-release.sh" local "\$APP_PORT"' "$deploy_script" | head -1 | cut -d: -f1)"
+  health_check_line="$(grep -n 'erve_activate_pm2_release "\$RELEASE_DIR" "\$APP_PORT"' "$deploy_script" | head -1 | cut -d: -f1)"
   cleanup_line="$(grep -n 'cleanup-releases.sh"' "$deploy_script" | head -1 | cut -d: -f1)"
 
   if [ -z "$health_check_line" ] || [ -z "$cleanup_line" ]; then

@@ -122,22 +122,43 @@ TMP_LINK="$DEPLOY_ROOT/current.tmp.$$"
 ln -sfn "$RELEASE_DIR" "$TMP_LINK"
 mv -T "$TMP_LINK" "$CURRENT_LINK"
 
-erve_log "Reloading PM2"
-pm2 startOrReload "$CURRENT_LINK/api/ecosystem.config.cjs" --only erve-api --update-env
-pm2 save
-
-erve_log "Running local health checks"
-if ! "$SCRIPT_DIR/verify-release.sh" local "$APP_PORT"; then
+# erve_activate_pm2_release (lib/common.sh) is the one shared function used
+# both here and in the rollback branch immediately below: it binds PM2
+# directly to the given release directory (never through $CURRENT_LINK —
+# see the background note in lib/common.sh on why that distinction is the
+# whole fix), asserts PM2 actually resolved to it, and only then runs the
+# local health check. `pm2 save` is deliberately never called until
+# whichever attempt (this one, or the rollback below) actually passes its
+# health check — a failed release's PM2 definition must never be persisted.
+if erve_activate_pm2_release "$RELEASE_DIR" "$APP_PORT"; then
+  erve_log "Activation health checks passed — saving PM2 process list"
+  pm2 save
+else
   erve_log "Health checks failed after activation — rolling back application (not the database migration)"
+  ROLLBACK_STATUS="no-previous"
   if [ -n "$PREVIOUS_TARGET" ]; then
     ln -sfn "$PREVIOUS_TARGET" "$CURRENT_LINK"
-    pm2 startOrReload "$CURRENT_LINK/api/ecosystem.config.cjs" --only erve-api --update-env
-    pm2 save
-    "$SCRIPT_DIR/verify-release.sh" local "$APP_PORT" || erve_log "WARNING: rollback health check also failed — manual intervention required"
+    if erve_activate_pm2_release "$PREVIOUS_TARGET" "$APP_PORT"; then
+      erve_log "Rollback health check passed — saving PM2 process list for the restored release"
+      pm2 save
+      ROLLBACK_STATUS="ok"
+    else
+      ROLLBACK_STATUS="failed"
+    fi
   fi
   mkdir -p "$FAILED_DIR"
   mv "$RELEASE_DIR" "$FAILED_DIR/${SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
-  erve_die "Deployment failed post-activation health checks; rolled back to previous release${PREVIOUS_TARGET:+ ($PREVIOUS_TARGET)}. NOTE: any migration applied above was not reversed."
+  case "$ROLLBACK_STATUS" in
+    ok)
+      erve_die "Deployment failed post-activation health checks; rolled back to previous release ($PREVIOUS_TARGET). NOTE: any migration applied above was not reversed."
+      ;;
+    failed)
+      erve_die "Deployment failed post-activation health checks AND rollback to previous release ($PREVIOUS_TARGET) also failed its health check — PM2 currently targets $PREVIOUS_TARGET but its process list was NOT saved; manual intervention required. NOTE: any migration applied above was not reversed."
+      ;;
+    *)
+      erve_die "Deployment failed post-activation health checks; no previous release was recorded to roll back to. NOTE: any migration applied above was not reversed."
+      ;;
+  esac
 fi
 
 if [ -n "$PREVIOUS_TARGET" ]; then

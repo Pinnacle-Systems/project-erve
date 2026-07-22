@@ -47,17 +47,41 @@ TMP_LINK="$DEPLOY_ROOT/current.tmp.$$"
 ln -sfn "$TARGET_RELEASE" "$TMP_LINK"
 mv -T "$TMP_LINK" "$CURRENT_LINK"
 
-pm2 startOrReload "$CURRENT_LINK/api/ecosystem.config.cjs" --only erve-api --update-env
-pm2 save
-
-if ! "$SCRIPT_DIR/verify-release.sh" local "$APP_PORT"; then
+# erve_activate_pm2_release (lib/common.sh) is the same shared function
+# deploy-release.sh uses to activate a fresh release — it binds PM2
+# directly to the given release directory (never through $CURRENT_LINK),
+# asserts PM2 actually resolved to it, and only then runs the local health
+# check. There is deliberately no separate rollback-specific PM2
+# start/reload path. `pm2 save` only ever runs after whichever attempt
+# (the rollback target, or the restore-previous fallback below) actually
+# passes its health check.
+if erve_activate_pm2_release "$TARGET_RELEASE" "$APP_PORT"; then
+  erve_log "Rollback health check passed — saving PM2 process list"
+  pm2 save
+else
   erve_log "Rollback target failed health checks — restoring the previously active release"
+  RESTORE_STATUS="no-previous"
   if [ -n "$PREVIOUS_TARGET" ]; then
     ln -sfn "$PREVIOUS_TARGET" "$CURRENT_LINK"
-    pm2 startOrReload "$CURRENT_LINK/api/ecosystem.config.cjs" --only erve-api --update-env
-    pm2 save
+    if erve_activate_pm2_release "$PREVIOUS_TARGET" "$APP_PORT"; then
+      erve_log "Restore health check passed — saving PM2 process list for the restored release"
+      pm2 save
+      RESTORE_STATUS="ok"
+    else
+      RESTORE_STATUS="failed"
+    fi
   fi
-  erve_die "Rollback to $SHA failed health checks; restored previous release${PREVIOUS_TARGET:+ ($PREVIOUS_TARGET)}. Prisma migrations were NOT reversed — verify schema compatibility manually before retrying."
+  case "$RESTORE_STATUS" in
+    ok)
+      erve_die "Rollback to $SHA failed health checks; restored previous release ($PREVIOUS_TARGET), and its PM2 process list was saved. Prisma migrations were NOT reversed — verify schema compatibility manually before retrying."
+      ;;
+    failed)
+      erve_die "Rollback to $SHA failed health checks, AND restoring the previously active release ($PREVIOUS_TARGET) also failed its health check — PM2 currently targets $PREVIOUS_TARGET but its process list was NOT saved; manual intervention required. Prisma migrations were NOT reversed."
+      ;;
+    *)
+      erve_die "Rollback to $SHA failed health checks; no previously active release was recorded to restore. Prisma migrations were NOT reversed."
+      ;;
+  esac
 fi
 
 if [ -n "${ERVE_BASE_URL:-}" ]; then

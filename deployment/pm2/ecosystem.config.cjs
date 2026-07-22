@@ -9,13 +9,25 @@
 // injected into it.
 //
 // This file is copied into every release's `api/` directory by
-// scripts/deployment/package-production.sh and is always started through
-// the stable `current` symlink, so the exact command below never changes
-// between deployments:
+// scripts/deployment/package-production.sh. It is always started directly
+// against a specific release directory under `releases/<sha>/api/` — never
+// through the `current` symlink. PM2 stores the resolved absolute script
+// path and cwd a process was started with and does not reliably re-resolve
+// them on `pm2 restart`/`pm2 reload`/`pm2 startOrReload` against an
+// already-registered name (only environment variables get refreshed by
+// `--update-env`) — starting through `current` let Node's module
+// resolution silently bake in whatever release the symlink happened to
+// point at when the process was first registered, and every later
+// deploy/rollback then kept reloading that stale target. See
+// erve_start_api_release / erve_activate_pm2_release in
+// scripts/deployment/lib/common.sh, which delete and freshly start this
+// app directly against the target release on every activation and
+// rollback:
 //
-//   pm2 startOrReload ${DEPLOY_ROOT}/current/api/ecosystem.config.cjs \
-//     --only erve-api --update-env
-//   pm2 save
+//   cd ${DEPLOY_ROOT}/releases/<sha>/api
+//   pm2 delete erve-api || true
+//   pm2 start ecosystem.config.cjs --only erve-api --update-env
+//   pm2 save   # only after the release passes its health check
 module.exports = {
   apps: [
     {

@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# Fake `pm2` test double for scripts/deployment regression tests. Never
+# talks to a real PM2 daemon and requires no PM2 installation. State is
+# kept in $FAKE_PM2_STATE (a JSON array of process descriptors, in exactly
+# the shape `pm2 jlist` produces for the fields this repo's scripts
+# actually read), read and rewritten on every invocation so a sequence of
+# separate `pm2 ...` calls from the code under test see consistent state,
+# the same way the real `pm2` CLI talks to its persistent background
+# daemon. $FAKE_PM2_LOG (optional) receives one line per invocation for
+# tests that need to assert on call order/count (e.g. proving `pm2 save`
+# only happens after a health check, or that `pm2 logs` was consulted).
+#
+# Supported subcommands (only what scripts/deployment actually uses):
+#   pm2 start <ecosystem-file> --only <name> [--update-env]
+#   pm2 delete <name>
+#   pm2 jlist
+#   pm2 save
+#   pm2 logs <name> --lines N --nostream
+#
+# `start` actually requires() the given ecosystem file via Node, exactly
+# like real PM2 does internally — so it reproduces real Node module
+# resolution semantics (notably: resolving symlinks before computing
+# `__dirname`) rather than a hand-rolled approximation of it. This means a
+# regression that reintroduced starting PM2 through a symlinked path
+# (e.g. the `current` symlink) instead of a canonical release directory
+# would show up here exactly as it would against the real `pm2`.
+#
+# A started process's simulated runtime behavior is controlled by an
+# optional marker file at "<release-dir>/.fake-pm2-behavior" (checked
+# relative to the resolved script's release directory), written by the
+# test *before* calling `pm2 start`:
+#   healthy  (default when the marker is absent) - binds $FAKE_HEALTH_PORT
+#            on 127.0.0.1 and serves 200 OK for any request; status "online"
+#   down     - binds nothing; status stays "online" (PM2 has no way of
+#              knowing the app inside the process is broken) - exercises
+#              the "curl never succeeds, retries exhaust" path
+#   crashed  - binds nothing; status is "stopped" from the very first
+#              `jlist` query - exercises the "fail fast without exhausting
+#              retries, dump logs" path
+set -Eeuo pipefail
+
+: "${FAKE_PM2_STATE:?FAKE_PM2_STATE must be set by the test harness}"
+[ -f "$FAKE_PM2_STATE" ] || echo '[]' > "$FAKE_PM2_STATE"
+
+# merge_pm2_entry NAME SCRIPT CWD STATUS PID
+# Upserts one process entry into $FAKE_PM2_STATE (replacing any existing
+# entry with the same name). The new entry's fields are written to a
+# throwaway temp file by *this* shell (plain printf, no subprocess
+# involved) and only the temp file's own path is handed to `node` as an
+# argv string. This deliberately avoids ever passing SCRIPT/CWD (already
+# release paths, not real files node needs to locate) as `node` argv/env —
+# on MSYS/Git-Bash dev boxes, argv strings that look like absolute POSIX
+# paths get silently auto-translated to Windows paths whenever a native
+# (non-MSYS) executable like `node` is invoked, and that translation
+# applies to env var values too, which would corrupt an
+# already-cygpath-normalized path the moment it's handed to another `node`
+# call. Real file paths (this temp file, $FAKE_PM2_STATE) are unaffected by
+# that concern since MSYS's translation is exactly what correctly locates
+# them on disk either way — only the release-path *payload* needs to be
+# insulated from it, by routing it through file content instead of argv.
+merge_pm2_entry() {
+  local name="$1" script="$2" cwd="$3" status="$4" pid="$5" entry_file
+  entry_file="$(mktemp)"
+  printf '{"name":"%s","pid":%s,"pm2_env":{"status":"%s","pm_exec_path":"%s","pm_cwd":"%s"}}' \
+    "$name" "$pid" "$status" "$script" "$cwd" > "$entry_file"
+  node -e '
+    const fs = require("fs");
+    const [statePath, entryPath] = process.argv.slice(1);
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    const entry = JSON.parse(fs.readFileSync(entryPath, "utf8"));
+    const filtered = state.filter((p) => p.name !== entry.name);
+    filtered.push(entry);
+    fs.writeFileSync(statePath, JSON.stringify(filtered));
+  ' "$FAKE_PM2_STATE" "$entry_file"
+  rm -f "$entry_file"
+}
+
+if [ -n "${FAKE_PM2_LOG:-}" ]; then
+  printf 'pm2 %s\n' "$*" >> "$FAKE_PM2_LOG"
+fi
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  start)
+    ECOSYSTEM_ARG=""
+    APP_NAME=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --only)
+          APP_NAME="$2"
+          shift 2
+          ;;
+        --update-env)
+          shift
+          ;;
+        *)
+          ECOSYSTEM_ARG="$1"
+          shift
+          ;;
+      esac
+    done
+    [ -n "$ECOSYSTEM_ARG" ] || { echo "fake pm2: start requires an ecosystem file" >&2; exit 1; }
+    [ -n "$APP_NAME" ] || { echo "fake pm2: start requires --only <name>" >&2; exit 1; }
+
+    RESOLVED="$(node -e '
+      const path = require("path");
+      const cfgPath = path.resolve(process.argv[1]);
+      const cfg = require(cfgPath);
+      const app = cfg.apps[0];
+      const cwd = app.cwd || path.dirname(cfgPath);
+      const script = path.resolve(cwd, app.script);
+      process.stdout.write(app.name + "\t" + script + "\t" + cwd);
+    ' "$ECOSYSTEM_ARG")"
+    IFS=$'\t' read -r APP_NAME_FROM_CFG SCRIPT_PATH CWD_PATH <<<"$RESOLVED"
+
+    # On MSYS/Git-Bash dev boxes, the installed `node` is a native win32
+    # build that returns backslash-separated Windows paths from
+    # path.resolve(), while every path the shell (and erve_start_api_release's
+    # bash caller) constructs is POSIX-style. Real PM2 on the real Linux
+    # deployment target never has this mismatch (same OS, same path
+    # convention on both sides) — this normalization exists purely so this
+    # test double behaves consistently with the shell on a Windows dev
+    # machine; cygpath is a no-op passthrough (skipped entirely) on Linux.
+    if command -v cygpath >/dev/null 2>&1; then
+      SCRIPT_PATH="$(cygpath -u -- "$SCRIPT_PATH")"
+      CWD_PATH="$(cygpath -u -- "$CWD_PATH")"
+    fi
+
+    RELEASE_API_DIR="$(dirname "$SCRIPT_PATH")"
+    BEHAVIOR="healthy"
+    [ -f "$RELEASE_API_DIR/../.fake-pm2-behavior" ] && BEHAVIOR="$(cat "$RELEASE_API_DIR/../.fake-pm2-behavior")"
+
+    PID=0
+    STATUS="online"
+    case "$BEHAVIOR" in
+      healthy)
+        : "${FAKE_HEALTH_PORT:?FAKE_HEALTH_PORT must be set for a 'healthy' fake release}"
+        nohup node -e '
+          const http = require("http");
+          const port = Number(process.argv[1]);
+          http.createServer((_req, res) => { res.writeHead(200); res.end("ok"); }).listen(port, "127.0.0.1");
+        ' "$FAKE_HEALTH_PORT" >/dev/null 2>&1 &
+        PID=$!
+        disown "$PID" 2>/dev/null || true
+        STATUS="online"
+        ;;
+      down)
+        STATUS="online"
+        ;;
+      crashed)
+        STATUS="stopped"
+        ;;
+      *)
+        echo "fake pm2: unknown behavior marker '$BEHAVIOR'" >&2
+        exit 1
+        ;;
+    esac
+
+    merge_pm2_entry "$APP_NAME_FROM_CFG" "$SCRIPT_PATH" "$CWD_PATH" "$STATUS" "$PID"
+    ;;
+
+  delete)
+    NAME="${1:-}"
+    [ -n "$NAME" ] || { echo "fake pm2: delete requires a name" >&2; exit 1; }
+    # Killing is done here in bash (`kill -9`), not by asking a separate
+    # `node` process to process.kill() the recorded pid: on MSYS/Git-Bash,
+    # `$!` after backgrounding a job is a PID meaningful to *this* MSYS
+    # process tree, and a freshly spawned, unrelated node.exe cannot
+    # reliably signal it (observed: ESRCH) even though the process is very
+    # much still alive and listening — whereas bash's own `kill` (same
+    # shell family that created the job) can. This has no effect on real
+    # Linux beyond being an equally valid way to send SIGKILL.
+    PIDS_TO_KILL="$(node -e '
+      const fs = require("fs");
+      const [statePath, name] = process.argv.slice(1);
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const pids = state.filter((p) => p.name === name && p.pid).map((p) => p.pid);
+      process.stdout.write(pids.join("\n"));
+    ' "$FAKE_PM2_STATE" "$NAME")"
+    if [ -n "$PIDS_TO_KILL" ]; then
+      while IFS= read -r pid; do
+        [ -z "$pid" ] && continue
+        # A couple of retries: killing a just-backgrounded job has been
+        # observed to occasionally need a moment to take effect on
+        # MSYS/Git-Bash dev boxes before `kill -0` reliably reports it gone.
+        for _ in 1 2 3; do
+          kill -0 "$pid" 2>/dev/null || break
+          kill -9 "$pid" 2>/dev/null || true
+          sleep 0.2
+        done
+      done <<<"$PIDS_TO_KILL"
+    fi
+    node -e '
+      const fs = require("fs");
+      const [statePath, name] = process.argv.slice(1);
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      fs.writeFileSync(statePath, JSON.stringify(state.filter((p) => p.name !== name)));
+    ' "$FAKE_PM2_STATE" "$NAME"
+    ;;
+
+  jlist)
+    cat "$FAKE_PM2_STATE"
+    ;;
+
+  save)
+    : # no persistent dump file needed; tests assert on $FAKE_PM2_LOG ordering
+    ;;
+
+  logs)
+    NAME="${1:-}"
+    echo "fake pm2 logs for '$NAME' (test double — no real log file)"
+    ;;
+
+  *)
+    echo "fake pm2: unsupported subcommand '$cmd'" >&2
+    exit 1
+    ;;
+esac
