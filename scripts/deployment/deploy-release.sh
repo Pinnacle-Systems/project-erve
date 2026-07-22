@@ -68,11 +68,23 @@ done
 mv "$PARTIAL_DIR" "$RELEASE_DIR"
 erve_log "Release extracted: $RELEASE_DIR"
 
+erve_load_node24
+
+# Proves the extracted release's node_modules actually load, not merely
+# that the expected paths exist — an artifact can pass the path check
+# above and still be missing package content underneath (this is what
+# happened in production: iconv-lite's lib/index.js was present but its
+# encodings/ directory was not, and node_modules/.bin/prisma existing says
+# nothing about whether express itself can actually load). Runs before any
+# database connection, migration, or symlink activation, so a broken
+# release is caught and left in place under releases/ (never activated,
+# never cleaned up automatically) rather than taking down the running API.
+erve_log "Verifying extracted release runtime dependencies before activating it"
+"$SCRIPT_DIR/verify-artifact-deps.sh" "$RELEASE_DIR/api" || erve_die "Extracted release failed runtime dependency verification — release NOT activated: $RELEASE_DIR"
+
 erve_log "Linking shared runtime configuration into the release"
 [ -e "$SHARED_DIR/api.env" ] || erve_die "Missing $SHARED_DIR/api.env — create it manually before the first deployment (see DEPLOYMENT.md)"
 ln -sfn "$SHARED_DIR/api.env" "$RELEASE_DIR/api/.env"
-
-erve_load_node24
 
 erve_log "Verifying production database connectivity"
 set -a

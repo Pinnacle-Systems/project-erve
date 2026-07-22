@@ -141,20 +141,27 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: bash scripts/deployment/package-production.sh
 
-      # Boots the exact artifact that will be shipped (esbuild bundle + its
-      # own installed node_modules, not the monorepo's — no monorepo
+      # Boots the exact artifact that will be shipped: package-production.sh
+      # already created erve-release-<sha>.tar.gz and, as its own last step,
+      # extracted it into .deploy-build/verify-extract (a clean directory,
+      # independent of .deploy-build/release, the pre-tar workspace) and ran
+      # a dependency-load check against it. This step goes further, using
+      # the same extracted-from-the-real-archive directory (esbuild bundle +
+      # its own installed node_modules, not the monorepo's — no monorepo
       # TypeScript source and no workspace package resolution is available
       # or used here) against the same disposable database used for API
       # tests above, and proves it actually serves real, DB-backed traffic:
       # Prisma connectivity, a real query, the bundled @erve/shared and
       # @erve/types runtime code, and production config loading via the
-      # app's own dotenv/config mechanism. This is what proves the
-      # packaging approach itself works, not just that `tsc`/typecheck
-      # pass. A failure here fails the job and blocks the deploy job below.
+      # app's own dotenv/config mechanism. Testing the extracted archive
+      # rather than the unarchived release/ directory is deliberate —
+      # production runs what tar produces, and tar/untar is exactly the
+      # step this pipeline previously had zero verification of. A failure
+      # here fails the job and blocks the deploy job below.
       - name: Smoke-test the packaged artifact against the disposable database
         run: |
           set -Eeuo pipefail
-          cd .deploy-build/release/api
+          cd .deploy-build/verify-extract/api
           NODE_ENV=production HOST=127.0.0.1 PORT=4500 \
             DATABASE_URL="postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci" \
             JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else \
@@ -223,7 +230,7 @@ jobs:
       - name: Smoke-test the packaged admin-bootstrap CLI against the disposable database
         run: |
           set -Eeuo pipefail
-          cd .deploy-build/release/api
+          cd .deploy-build/verify-extract/api
 
           export NODE_ENV=production
           export DATABASE_URL="postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci"
@@ -280,7 +287,7 @@ jobs:
       - name: Smoke-test the packaged roles-bootstrap CLI against the disposable database
         run: |
           set -Eeuo pipefail
-          cd .deploy-build/release/api
+          cd .deploy-build/verify-extract/api
 
           export NODE_ENV=production
           export DATABASE_URL="postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci"

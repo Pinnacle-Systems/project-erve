@@ -2,9 +2,11 @@
 // Writes a minimal production package.json for the API deployment artifact:
 // only the real npm runtime dependencies (workspace @erve/* packages are
 // already inlined into the esbuild bundle, so they are deliberately
-// excluded here) plus the `prisma` CLI, pinned to the same version as the
-// repository's devDependency, so `node_modules/.bin/prisma migrate deploy`
-// is available on the VPS without a full monorepo install.
+// excluded here). This file is documentation/metadata only — the actual
+// node_modules installed into the release directory come from `pnpm
+// deploy` (see package-production.sh), which installs from apps/api's own
+// package.json and the repository's frozen lockfile, not from this
+// generated file.
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const [, , sourcePath, destPath] = process.argv;
@@ -20,13 +22,12 @@ const runtimeDeps = Object.fromEntries(
   Object.entries(pkg.dependencies ?? {}).filter(([name]) => !name.startsWith('@erve/')),
 );
 
-const prismaVersion = pkg.devDependencies?.prisma;
-if (!prismaVersion) {
+if (!runtimeDeps.prisma) {
   throw new Error(
-    'Expected a "prisma" devDependency in apps/api/package.json to pin the production migration CLI version.',
+    'Expected "prisma" as a real runtime dependency in apps/api/package.json — it must run `prisma migrate deploy` ' +
+      'on the VPS, so it cannot live in devDependencies (pnpm deploy --prod would exclude it from the artifact).',
   );
 }
-runtimeDeps.prisma = prismaVersion;
 
 const prodPackage = {
   name: pkg.name,
