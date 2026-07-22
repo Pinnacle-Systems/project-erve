@@ -396,7 +396,15 @@ erve_assert_pm2_release() {
 # calls `pm2 save` — callers must only do that after this returns success,
 # so a failed release's PM2 definition is never persisted.
 erve_activate_pm2_release() {
-  local release_dir="$1" app_port="$2" app_name="${3:-$ERVE_APP_NAME}"
+  # Named release_port, not app_port: shellcheck's SC2153 ("possible
+  # misspelling") does case-insensitive fuzzy matching across every file
+  # in a combined -x analysis (see ci.yml's single `shellcheck -x -P ...`
+  # invocation over all of scripts/deployment/*.sh at once) — a local
+  # variable here named app_port would get flagged as a likely-intended
+  # match for the unrelated global $APP_PORT env var read in
+  # deploy-release.sh/rollback-release.sh, even though the two have no
+  # connection beyond sharing a value at the call site.
+  local release_dir="$1" release_port="$2" app_name="${3:-$ERVE_APP_NAME}"
   local lib_dir script_dir
   lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   script_dir="$(cd "$lib_dir/.." && pwd)"
@@ -409,7 +417,7 @@ erve_activate_pm2_release() {
   fi
 
   erve_log "Running local health checks against $release_dir"
-  if ! "$script_dir/verify-release.sh" local "$app_port" "$app_name"; then
+  if ! "$script_dir/verify-release.sh" local "$release_port" "$app_name"; then
     return 1
   fi
   return 0
