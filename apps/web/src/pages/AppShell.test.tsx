@@ -299,6 +299,42 @@ describe('AppShell', () => {
     });
   });
 
+  it('hides the native scrollbar only while collapsed, never in expanded mode', async () => {
+    await renderShell();
+
+    const aside = container.querySelector('aside') as HTMLElement;
+    const nav = aside.querySelector('nav') as HTMLElement;
+
+    // Expanded: the scrollbar stays visible — it's the only cue that more
+    // nav items exist below the fold, and there's no icon column for it to
+    // overlap in this mode.
+    expect(nav.getAttribute('data-scrollbar-hidden')).toBeNull();
+    expect(nav.className).not.toContain('scrollbar-width:none');
+    expect(nav.className).not.toContain('::-webkit-scrollbar');
+
+    act(() => {
+      (container.querySelector('button[aria-label="Collapse sidebar"]') as HTMLElement).click();
+    });
+
+    // Collapsed: the scrollbar is suppressed so it can never render on top
+    // of the centered icon column, while overflow-y-auto (asserted above)
+    // keeps scrolling itself fully functional.
+    expect(nav.getAttribute('data-scrollbar-hidden')).toBe('true');
+    expect(nav.className).toContain('[scrollbar-width:none]');
+    expect(nav.className).toContain('[-ms-overflow-style:none]');
+    expect(nav.className).toContain('[&::-webkit-scrollbar]:hidden');
+
+    act(() => {
+      (container.querySelector('button[aria-label="Expand sidebar"]') as HTMLElement).click();
+    });
+
+    // Toggling back to expanded removes the hiding classes again — the
+    // scrollbar's visibility tracks collapse state on every transition, not
+    // just on first mount.
+    expect(nav.getAttribute('data-scrollbar-hidden')).toBeNull();
+    expect(nav.className).not.toContain('scrollbar-width:none');
+  });
+
   it('starts collapsed when localStorage has a persisted collapsed preference', async () => {
     localStorage.setItem('erve.sidebarCollapsed', 'true');
     await renderShell();

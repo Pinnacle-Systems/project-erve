@@ -207,7 +207,24 @@ export function AppShell({ navSections, children }: AppShellProps) {
             className={collapsed ? 'h-8 w-8' : 'h-8 w-auto'}
           />
         </NavLink>
-        <nav className="mt-8 min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden">
+        <nav
+          data-scrollbar-hidden={collapsed || undefined}
+          className={cn(
+            'mt-8 min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden',
+            // Hide the native scrollbar ONLY in collapsed mode: a visible OS
+            // scrollbar eats into the collapsed rail's ~3rem content width
+            // and physically overlaps the centered 2.5rem icon buttons.
+            // Wheel/keyboard/touch scrolling still works via overflow-y-auto
+            // above; only the track's rendering is suppressed, so no width
+            // is ever reserved or reclaimed for it (which also avoids a
+            // scrollbar "flash" while the sidebar's width transitions).
+            // Expanded mode keeps the native scrollbar, since it's the only
+            // visual cue that more nav items exist below the fold and there
+            // is no icon column to overlap in the first place.
+            collapsed &&
+              '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+          )}
+        >
           {navSections.map((section, index) => (
             <div key={section.heading ?? `section-${index}`}>
               {section.heading && (
