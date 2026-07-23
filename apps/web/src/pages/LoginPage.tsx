@@ -45,8 +45,8 @@ export function LoginPage() {
       <div className="flex flex-1 items-center justify-center px-4 py-12">
         <div className="w-full min-w-0 max-w-md">
           <div className="mb-8 text-center">
-            <img src="/erve-logo.png" alt="Erve" className="mx-auto h-auto w-full max-w-full" />
-            <p className="mt-2 text-sm text-muted-foreground">Sign in to your distributor account</p>
+            <img src="/erve-logo.png" alt="Erve" className="mx-auto h-10 w-auto" />
+            <p className="mt-3 text-sm text-muted-foreground">Sign in to your distributor account</p>
           </div>
           <Card>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
