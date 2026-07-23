@@ -1,6 +1,7 @@
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import { forwardRef, type ReactNode } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 import { ValidationMessage } from "./validation-message";
 
@@ -17,9 +18,6 @@ const checkboxVariants = cva(
         true: "border-[var(--erp-color-danger)] focus-visible:ring-[var(--erp-color-danger)]",
       },
     },
-    defaultVariants: {
-      density: "comfortable",
-    },
   }
 );
 
@@ -33,6 +31,7 @@ export interface CheckboxProps
 
 export const Checkbox = forwardRef<React.ElementRef<typeof CheckboxPrimitive.Root>, CheckboxProps>(
   ({ className, density, error, label, description, required, id, ...props }, ref) => {
+    const { densityName } = useTheme();
     const errorId = error && id ? `${id}-error` : undefined;
     const descId = description && id ? `${id}-description` : undefined;
     const ariaDescribedBy = [errorId, descId, props["aria-describedby"]].filter(Boolean).join(" ") || undefined;
@@ -44,7 +43,7 @@ export const Checkbox = forwardRef<React.ElementRef<typeof CheckboxPrimitive.Roo
         required={required}
         aria-describedby={ariaDescribedBy}
         aria-invalid={!!error}
-        className={cn(checkboxVariants({ density, error: !!error }), className)}
+        className={cn(checkboxVariants({ density: density ?? densityName, error: !!error }), className)}
         {...props}
       >
         <CheckboxPrimitive.Indicator className={cn("flex items-center justify-center text-current")}>

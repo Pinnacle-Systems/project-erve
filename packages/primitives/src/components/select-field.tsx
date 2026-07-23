@@ -6,6 +6,7 @@ import {
   forwardRef,
   type ReactNode,
 } from "react";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 
 const ChevronDown = () => (
@@ -68,7 +69,6 @@ const triggerVariants = cva(
     },
     defaultVariants: {
       state: "default",
-      density: "comfortable",
     },
   },
 );
@@ -96,20 +96,23 @@ export const SelectTrigger = forwardRef<
   ElementRef<typeof SelectPrimitive.Trigger>,
   ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger> &
     VariantProps<typeof triggerVariants>
->(({ className, children, state, density, ...props }, ref) => (
-  <SelectPrimitive.Trigger
-    ref={ref}
-    className={cn(triggerVariants({ state, density }), className)}
-    {...props}
-  >
-    {children}
-    <SelectPrimitive.Icon asChild>
-      <span className="text-muted-foreground shrink-0">
-        <ChevronDown />
-      </span>
-    </SelectPrimitive.Icon>
-  </SelectPrimitive.Trigger>
-));
+>(({ className, children, state, density, ...props }, ref) => {
+  const { densityName } = useTheme();
+  return (
+    <SelectPrimitive.Trigger
+      ref={ref}
+      className={cn(triggerVariants({ state, density: density ?? densityName }), className)}
+      {...props}
+    >
+      {children}
+      <SelectPrimitive.Icon asChild>
+        <span className="text-muted-foreground shrink-0">
+          <ChevronDown />
+        </span>
+      </SelectPrimitive.Icon>
+    </SelectPrimitive.Trigger>
+  );
+});
 SelectTrigger.displayName = SelectPrimitive.Trigger.displayName;
 
 export const SelectContent = forwardRef<
@@ -213,7 +216,7 @@ export const SelectField = ({
   "aria-label": ariaLabel,
   errorMessage,
   helpText,
-  density = "comfortable",
+  density,
   width = "md",
   error,
   id,

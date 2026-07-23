@@ -123,10 +123,10 @@ describe("theme-init.js (first-paint bootstrap)", () => {
     window.matchMedia = original;
   });
 
-  it("always sets data-theme=default and data-density=comfortable", () => {
+  it("always sets data-theme=default and data-density=compact", () => {
     runScript();
 
     expect(document.documentElement.getAttribute("data-theme")).toBe("default");
-    expect(document.documentElement.getAttribute("data-density")).toBe("comfortable");
+    expect(document.documentElement.getAttribute("data-density")).toBe("compact");
   });
 });

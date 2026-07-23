@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 
 const panelVariants = cva("flex flex-col bg-surface", {
@@ -24,7 +25,6 @@ const panelVariants = cva("flex flex-col bg-surface", {
   defaultVariants: {
     variant: "default",
     padding: "md",
-    density: "comfortable",
   },
 });
 
@@ -52,7 +52,6 @@ const headerVariants = cva("flex flex-col gap-1 border-b border-border-subtle", 
   ],
   defaultVariants: {
     padding: "md",
-    density: "comfortable",
   },
 });
 
@@ -80,7 +79,6 @@ const bodyVariants = cva("flex-1", {
   ],
   defaultVariants: {
     padding: "md",
-    density: "comfortable",
   },
 });
 
@@ -108,7 +106,6 @@ const footerVariants = cva("border-t border-border-subtle bg-surface-muted round
   ],
   defaultVariants: {
     padding: "md",
-    density: "comfortable",
   },
 });
 
@@ -138,14 +135,16 @@ export const Panel = React.forwardRef<HTMLDivElement, PanelProps>(
     },
     ref
   ) => {
+    const { densityName } = useTheme();
+    const resolvedDensity = density ?? densityName;
     return (
       <div
         ref={ref}
-        className={cn(panelVariants({ variant, density }), className)}
+        className={cn(panelVariants({ variant, density: resolvedDensity }), className)}
         {...props}
       >
         {(title || description || actions) && (
-          <div className={cn(headerVariants({ padding, density }))}>
+          <div className={cn(headerVariants({ padding, density: resolvedDensity }))}>
             <div className="flex items-center justify-between gap-4">
               <div className="flex flex-col gap-0.5">
                 {title && (
@@ -161,9 +160,9 @@ export const Panel = React.forwardRef<HTMLDivElement, PanelProps>(
             </div>
           </div>
         )}
-        <div className={cn(bodyVariants({ padding, density }))}>{children}</div>
+        <div className={cn(bodyVariants({ padding, density: resolvedDensity }))}>{children}</div>
         {footer && (
-          <div className={cn(footerVariants({ padding, density }))}>{footer}</div>
+          <div className={cn(footerVariants({ padding, density: resolvedDensity }))}>{footer}</div>
         )}
       </div>
     );

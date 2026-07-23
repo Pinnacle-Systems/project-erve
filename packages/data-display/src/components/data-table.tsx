@@ -1,4 +1,5 @@
 import { forwardRef, type ReactNode } from "react";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 
 export interface ColumnDef<T> {
@@ -36,7 +37,7 @@ const DataTableInner = <T extends Record<string, unknown>>(
     columns,
     data,
     rowKey = "id" as Extract<keyof T, string>,
-    density = "comfortable",
+    density,
     variant = "default",
     emptyState,
     loading,
@@ -48,6 +49,8 @@ const DataTableInner = <T extends Record<string, unknown>>(
   }: DataTableProps<T>,
   ref: React.Ref<HTMLTableElement>
 ) => {
+  const { densityName } = useTheme();
+  const resolvedDensity = density ?? densityName;
   const resolveRowKey = (row: T): string => {
     if (typeof rowKey === "function") {
       return rowKey(row);
@@ -96,7 +99,7 @@ const DataTableInner = <T extends Record<string, unknown>>(
                 key={col.key}
                 className={cn(
                   "px-4 text-left font-medium",
-                  density === "compact" ? "py-2" : density === "touch" ? "py-4" : "py-3",
+                  resolvedDensity === "compact" ? "py-2" : resolvedDensity === "touch" ? "py-4" : "py-3",
                   col.align === "center" && "text-center",
                   col.align === "right" && "text-right",
                   variant === "bordered" && "border-x border-border first:border-l-0 last:border-r-0",
@@ -138,7 +141,7 @@ const DataTableInner = <T extends Record<string, unknown>>(
                     key={col.key}
                     className={cn(
                       "px-4 whitespace-nowrap overflow-hidden text-ellipsis max-w-[200px]",
-                      density === "compact" ? "py-2" : density === "touch" ? "py-4" : "py-3",
+                      resolvedDensity === "compact" ? "py-2" : resolvedDensity === "touch" ? "py-4" : "py-3",
                       col.align === "center" && "text-center",
                       col.align === "right" && "text-right tabular-nums",
                       variant === "bordered" && "border-x border-border first:border-l-0 last:border-r-0",

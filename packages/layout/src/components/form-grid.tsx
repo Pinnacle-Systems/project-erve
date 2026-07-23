@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 
 const formGridVariants = cva("grid grid-cols-1", {
@@ -28,7 +29,6 @@ const formGridVariants = cva("grid grid-cols-1", {
   defaultVariants: {
     columns: 2,
     gap: "md",
-    density: "comfortable",
   },
 });
 
@@ -38,10 +38,11 @@ export interface FormGridProps
 
 export const FormGrid = React.forwardRef<HTMLDivElement, FormGridProps>(
   ({ className, columns, gap, density, ...props }, ref) => {
+    const { densityName } = useTheme();
     return (
       <div
         ref={ref}
-        className={cn(formGridVariants({ columns, gap, density }), className)}
+        className={cn(formGridVariants({ columns, gap, density: density ?? densityName }), className)}
         {...props}
       />
     );

@@ -1,6 +1,7 @@
 import * as SwitchPrimitives from "@radix-ui/react-switch";
 import { forwardRef, type ReactNode } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 import { ValidationMessage } from "./validation-message";
 
@@ -13,9 +14,6 @@ const switchVariants = cva(
         comfortable: "h-5 w-9",
         touch: "h-6 w-11",
       },
-    },
-    defaultVariants: {
-      density: "comfortable",
     },
   }
 );
@@ -30,9 +28,6 @@ const thumbVariants = cva(
         touch: "h-5 w-5 data-[state=checked]:translate-x-5",
       },
     },
-    defaultVariants: {
-      density: "comfortable",
-    },
   }
 );
 
@@ -46,6 +41,8 @@ export interface SwitchProps
 
 export const Switch = forwardRef<React.ElementRef<typeof SwitchPrimitives.Root>, SwitchProps>(
   ({ className, density, error, label, description, id, ...props }, ref) => {
+    const { densityName } = useTheme();
+    const resolvedDensity = density ?? densityName;
     const errorId = error && id ? `${id}-error` : undefined;
     const descId = description && id ? `${id}-description` : undefined;
     const ariaDescribedBy = [errorId, descId, props["aria-describedby"]].filter(Boolean).join(" ") || undefined;
@@ -56,10 +53,10 @@ export const Switch = forwardRef<React.ElementRef<typeof SwitchPrimitives.Root>,
         id={id}
         aria-describedby={ariaDescribedBy}
         aria-invalid={!!error}
-        className={cn(switchVariants({ density }), className)}
+        className={cn(switchVariants({ density: resolvedDensity }), className)}
         {...props}
       >
-        <SwitchPrimitives.Thumb className={cn(thumbVariants({ density }))} />
+        <SwitchPrimitives.Thumb className={cn(thumbVariants({ density: resolvedDensity }))} />
       </SwitchPrimitives.Root>
     );
 

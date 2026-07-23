@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 import { ValidationMessage } from "./validation-message";
 
@@ -35,7 +36,6 @@ const datePickerFieldVariants = cva(
       },
     },
     defaultVariants: {
-      density: "comfortable",
       error: false,
     },
   },
@@ -230,6 +230,8 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     },
     ref,
   ) => {
+    const { densityName } = useTheme();
+    const resolvedDensity = density ?? densityName;
     const generatedId = useId();
     const inputId = id ?? generatedId;
     const popoverId = `${inputId}-popover`;
@@ -535,7 +537,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
           {...props}
           readOnly
         />
-        <div className={cn(datePickerFieldVariants({ density, error: !!validationError }), className)}>
+        <div className={cn(datePickerFieldVariants({ density: resolvedDensity, error: !!validationError }), className)}>
           <input
             ref={ref}
             id={inputId}

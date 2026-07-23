@@ -12,7 +12,7 @@ export function App() {
     // the persisted preference (or "system") — see packages/theme's
     // getStoredThemePreference(). Do not reintroduce a controlled prop here
     // without also removing the user-facing selector (ThemeModeMenu).
-    <ThemeProvider theme="default" density="comfortable">
+    <ThemeProvider theme="default" density="compact">
       <ThemeDocumentMeta />
       <QueryClientProvider client={queryClient}>
         <AuthProvider>

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 import { DataLabel, type DataLabelProps } from "./data-label";
 
@@ -19,7 +20,6 @@ const descriptionListVariants = cva("grid grid-cols-1", {
   },
   defaultVariants: {
     columns: 2,
-    density: "comfortable",
   },
 });
 
@@ -29,10 +29,11 @@ export interface DescriptionListProps
 
 export const DescriptionList = React.forwardRef<HTMLDivElement, DescriptionListProps>(
   ({ className, columns, density, ...props }, ref) => {
+    const { densityName } = useTheme();
     return (
       <div
         ref={ref}
-        className={cn(descriptionListVariants({ columns, density }), className)}
+        className={cn(descriptionListVariants({ columns, density: density ?? densityName }), className)}
         {...props}
       />
     );

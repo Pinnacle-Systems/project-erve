@@ -1,6 +1,7 @@
 import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
 import { forwardRef, type ReactNode } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 import { ValidationMessage } from "./validation-message";
 
@@ -16,9 +17,6 @@ const radioVariants = cva(
       error: {
         true: "border-[var(--erp-color-danger)] focus-visible:ring-[var(--erp-color-danger)]",
       },
-    },
-    defaultVariants: {
-      density: "comfortable",
     },
   }
 );
@@ -79,11 +77,12 @@ export interface RadioProps
 
 export const Radio = forwardRef<React.ElementRef<typeof RadioGroupPrimitive.Item>, RadioProps>(
   ({ className, density, error, label, description, id, ...props }, ref) => {
+    const { densityName } = useTheme();
     const radio = (
       <RadioGroupPrimitive.Item
         ref={ref}
         id={id}
-        className={cn(radioVariants({ density, error: !!error }), className)}
+        className={cn(radioVariants({ density: density ?? densityName, error: !!error }), className)}
         {...props}
       >
         <RadioGroupPrimitive.Indicator className="flex items-center justify-center">

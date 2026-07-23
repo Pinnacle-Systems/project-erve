@@ -38,7 +38,7 @@
 
     var root = document.documentElement;
     root.setAttribute("data-theme", "default");
-    root.setAttribute("data-density", "comfortable");
+    root.setAttribute("data-density", "compact");
     root.setAttribute("data-color-mode", mode);
     root.classList.toggle("dark", resolved === "dark");
     root.style.colorScheme = resolved;

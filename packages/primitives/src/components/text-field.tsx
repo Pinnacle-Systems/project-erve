@@ -1,5 +1,6 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { forwardRef, type InputHTMLAttributes } from "react";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 
 const inputVariants = cva(
@@ -28,7 +29,6 @@ const inputVariants = cva(
     },
     defaultVariants: {
       state: "default",
-      density: "comfortable",
     },
   },
 );
@@ -65,13 +65,15 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
       errorMessage,
       helpText,
       error,
-      density = "comfortable",
+      density,
       width = "md",
       id,
       ...props
     },
     ref,
   ) => {
+    const { densityName } = useTheme();
+    const resolvedDensity = density ?? densityName;
     const inputId =
       id ?? (label ? `field-${label.toLowerCase().replace(/\s+/g, "-")}` : undefined);
     const hasError = Boolean(error || errorMessage);
@@ -92,7 +94,7 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
           ref={ref}
           id={inputId}
           className={cn(
-            inputVariants({ state: hasError ? "error" : "default", density }),
+            inputVariants({ state: hasError ? "error" : "default", density: resolvedDensity }),
             className,
           )}
           aria-invalid={hasError || undefined}

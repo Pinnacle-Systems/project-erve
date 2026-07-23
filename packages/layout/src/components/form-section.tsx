@@ -12,7 +12,7 @@ export const FormSection = React.forwardRef<HTMLDivElement, FormSectionProps>(
     return (
       <section
         ref={ref}
-        className={cn("flex flex-col gap-4", className)}
+        className={cn("flex flex-col gap-[var(--erp-form-section-gap)]", className)}
         {...props}
       >
         {(title || description || actions) && (
@@ -28,7 +28,7 @@ export const FormSection = React.forwardRef<HTMLDivElement, FormSectionProps>(
             {actions && <div className="shrink-0">{actions}</div>}
           </div>
         )}
-        <div className="flex flex-col gap-4">{children}</div>
+        <div className="flex flex-col gap-[var(--erp-form-section-gap)]">{children}</div>
       </section>
     );
   }

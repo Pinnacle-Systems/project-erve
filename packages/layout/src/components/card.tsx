@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
+import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 
 const cardVariants = cva("rounded-card border bg-surface", {
@@ -32,7 +33,6 @@ const cardVariants = cva("rounded-card border bg-surface", {
   defaultVariants: {
     variant: "default",
     padding: "md",
-    density: "comfortable",
   },
 });
 
@@ -44,10 +44,11 @@ export interface CardProps
 
 export const Card = React.forwardRef<HTMLDivElement, CardProps>(
   ({ className, variant, padding, density, as: Comp = "div", ...props }, ref) => {
+    const { densityName } = useTheme();
     return (
       <Comp
         ref={ref}
-        className={cn(cardVariants({ variant, padding, density }), className)}
+        className={cn(cardVariants({ variant, padding, density: density ?? densityName }), className)}
         {...props}
       />
     );
