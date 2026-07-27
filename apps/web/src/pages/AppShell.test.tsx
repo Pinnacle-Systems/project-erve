@@ -116,6 +116,13 @@ async function renderShell(navSections: AppShellNavSection[] = NAV_SECTIONS): Pr
 }
 
 describe('AppShell', () => {
+  it('uses the dedicated semantic shell surface for the sidebar and top header', async () => {
+    await renderShell();
+
+    expect((container.querySelector('aside') as HTMLElement).className).toContain('bg-shell');
+    expect((container.querySelector('header') as HTMLElement).className).toContain('bg-shell/95');
+  });
+
   it('renders the Erve logo, nav sections, and the routed page content', async () => {
     await renderShell();
 
@@ -310,7 +317,10 @@ describe('AppShell', () => {
     // overlap in this mode.
     expect(nav.getAttribute('data-scrollbar-hidden')).toBeNull();
     expect(nav.className).not.toContain('scrollbar-width:none');
-    expect(nav.className).not.toContain('::-webkit-scrollbar');
+    expect(nav.className).toContain('scrollbar-width:thin');
+    expect(nav.className).toContain('--erp-shell-scrollbar-thumb');
+    expect(nav.className).toContain('--erp-shell-scrollbar-track');
+    expect(nav.className).toContain('::-webkit-scrollbar-thumb:hover');
 
     act(() => {
       (container.querySelector('button[aria-label="Collapse sidebar"]') as HTMLElement).click();
@@ -323,6 +333,7 @@ describe('AppShell', () => {
     expect(nav.className).toContain('[scrollbar-width:none]');
     expect(nav.className).toContain('[-ms-overflow-style:none]');
     expect(nav.className).toContain('[&::-webkit-scrollbar]:hidden');
+    expect(nav.className).not.toContain('--erp-shell-scrollbar-thumb');
 
     act(() => {
       (container.querySelector('button[aria-label="Expand sidebar"]') as HTMLElement).click();

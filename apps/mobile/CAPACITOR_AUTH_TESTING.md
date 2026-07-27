@@ -209,7 +209,7 @@ qualifiers pick the right one before any JavaScript runs.
 | Android resource | Source (theme.css) | Light | Dark |
 | --- | --- | --- | --- |
 | `erve_primary` | `--erp-color-primary` | `#C21530` | `#C21530` |
-| `erve_window_background` / status/nav bar / splash bg | `--erp-color-app-bg` | `#EEF3F8` | `#020617` (splash uses `--erp-color-surface` `#0F172A`, see limitation below) |
+| `erve_window_background` / status/nav bar / splash bg | `--erp-color-app-bg` | `#EEF3F8` | `#17191D` (splash uses `--erp-color-surface` `#24282E`, see limitation below) |
 
 ### Status bar, navigation bar, and splash
 

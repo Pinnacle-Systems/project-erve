@@ -13,7 +13,7 @@ import { useTheme } from '@erve/theme';
  */
 const APP_BACKGROUND_BY_THEME = {
   light: '#eef3f8',
-  dark: '#020617',
+  dark: '#17191d',
 } as const;
 
 interface NativeThemeBridgePlugin {

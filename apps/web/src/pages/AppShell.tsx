@@ -189,7 +189,7 @@ export function AppShell({ navSections, children }: AppShellProps) {
     <div className="min-h-screen bg-background">
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 hidden flex-col overflow-hidden border-r border-border bg-surface py-6 md:flex',
+          'fixed inset-y-0 left-0 hidden flex-col overflow-hidden border-r border-border bg-shell py-6 md:flex',
           'transition-[width] duration-200 ease-out',
           collapsed
             ? 'w-[var(--erp-shell-sidebar-collapsed-width)] px-2'
@@ -221,8 +221,9 @@ export function AppShell({ navSections, children }: AppShellProps) {
             // Expanded mode keeps the native scrollbar, since it's the only
             // visual cue that more nav items exist below the fold and there
             // is no icon column to overlap in the first place.
-            collapsed &&
-              '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+            collapsed
+              ? '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'
+              : '[scrollbar-color:var(--erp-shell-scrollbar-thumb)_var(--erp-shell-scrollbar-track)] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-[var(--erp-shell-scrollbar-track)] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--erp-shell-scrollbar-thumb)] [&::-webkit-scrollbar-thumb:hover]:bg-[var(--erp-shell-scrollbar-thumb-hover)]',
           )}
         >
           {navSections.map((section, index) => (
@@ -277,7 +278,7 @@ export function AppShell({ navSections, children }: AppShellProps) {
             : 'md:pl-[var(--erp-shell-sidebar-width)]',
         )}
       >
-        <header className="sticky top-0 z-10 border-b border-border bg-surface/95 px-4 py-3 backdrop-blur-sm md:px-8">
+        <header className="sticky top-0 z-10 border-b border-border bg-shell/95 px-4 py-3 backdrop-blur-sm md:px-8">
           <div className="flex items-center justify-between gap-4">
             <div>
               <div className="text-sm font-medium text-foreground">{user?.name}</div>

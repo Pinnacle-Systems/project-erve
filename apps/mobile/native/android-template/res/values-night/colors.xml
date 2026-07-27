@@ -7,15 +7,16 @@
 <resources>
     <!-- Mirrors erp-color-primary (.dark) — same solid-fill step as light -->
     <color name="erve_primary">#C21530</color>
-    <!-- Mirrors erp-color-app-bg (.dark) -->
-    <color name="erve_window_background">#020617</color>
-    <color name="erve_status_bar_background">#020617</color>
-    <color name="erve_navigation_bar_background">#020617</color>
+    <!-- Mirrors erp-color-app-bg (.dark). THEME-07: recolored from the old
+         near-black slate (#020617) to the neutral charcoal dark palette. -->
+    <color name="erve_window_background">#17191D</color>
+    <color name="erve_status_bar_background">#17191D</color>
+    <color name="erve_navigation_bar_background">#17191D</color>
     <!-- Mirrors erp-color-surface (.dark), one step lighter than the app
          background, used only behind the placeholder splash icon so it
          isn't pure black-on-black; see final report's splash-branding
          limitation note. -->
-    <color name="erve_splash_background">#0F172A</color>
+    <color name="erve_splash_background">#24282E</color>
 
     <color name="colorPrimary">@color/erve_primary</color>
     <color name="colorPrimaryDark">@color/erve_primary</color>

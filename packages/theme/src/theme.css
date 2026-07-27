@@ -40,6 +40,7 @@
   --color-surface: var(--erp-color-surface);
   --color-surface-muted: var(--erp-color-surface-muted);
   --color-surface-raised: var(--erp-color-surface-raised);
+  --color-shell: var(--erp-shell-surface);
   --color-background: var(--erp-color-background);
   --color-foreground: var(--erp-color-foreground);
   --color-muted: var(--erp-color-muted);
@@ -261,6 +262,12 @@
   --erp-shell-content-gap: 12px;
   --erp-shell-panel-padding: 24px;
   --erp-shell-panel-gap: 16px;
+  /* Application chrome. The light value aliases the existing surface so
+     introducing the semantic role does not repaint the light theme. */
+  --erp-shell-surface: var(--erp-color-surface);
+  --erp-shell-scrollbar-track: var(--erp-shell-surface);
+  --erp-shell-scrollbar-thumb: var(--erp-color-border-strong);
+  --erp-shell-scrollbar-thumb-hover: var(--erp-color-foreground-subtle);
   --erp-shell-split-pane-min-width: 18rem;
   --erp-shell-split-pane-divider-width: 1px;
   --erp-form-label-width: 10rem;
@@ -708,23 +715,39 @@
 .dark [data-theme="clientB"] {
   color-scheme: dark;
 
-  --erp-color-background: #020617;
-  --erp-color-app-bg: #020617;
-  --erp-color-page-bg: #020617;
-  --erp-color-foreground: #f8fafc;
-  --erp-color-foreground-muted: #cbd5e1;
-  --erp-color-foreground-subtle: #94a3b8;
-  --erp-color-foreground-inverse: #020617;
+  /* ============================================================
+   * THEME-07 dark-mode palette correction: the previous dark theme reused
+   * Tailwind's `slate` scale (#020617/#0f172a/#1e293b/#334155/#475569),
+   * which reads as near-black with a noticeable blue/navy undertone and
+   * left canvas/sidebar/card surfaces too close in lightness to feel
+   * separated. Replaced with a bespoke neutral charcoal/slate-grey ramp
+   * (hue kept nearly flat — only a few units of blue bias, vs. slate's much
+   * cooler cast) that preserves every existing role/rank relationship
+   * (same variable reused for the same purpose, same relative lightness
+   * ordering) — only the literal hex values changed. One deliberate
+   * structural addition: --erp-surface-hover/--erp-state-hover/
+   * --erp-grid-row-hover-bg (previously identical to the generic muted/
+   * raised tone, i.e. no distinct hover feedback existed at all) now use
+   * their own slightly lighter neutral step so hover/pressed feedback is
+   * visibly distinct from a resting muted/raised surface. Brand crimson
+   * (primary/accent/selected/focus) is unchanged throughout. */
+  --erp-color-background: #17191d;
+  --erp-color-app-bg: #17191d;
+  --erp-color-page-bg: #17191d;
+  --erp-color-foreground: #f4f5f7;
+  --erp-color-foreground-muted: #c5cad1;
+  --erp-color-foreground-subtle: #98a0aa;
+  --erp-color-foreground-inverse: #17191d;
 
-  --erp-color-surface: #0f172a;
-  --erp-color-surface-muted: #1e293b;
-  --erp-color-surface-raised: #1e293b;
-  --erp-color-surface-accent: #1e293b;
+  --erp-color-surface: #24282e;
+  --erp-color-surface-muted: #2b3037;
+  --erp-color-surface-raised: #2b3037;
+  --erp-color-surface-accent: #2b3037;
   /* Translucent version of the brand base hue rgb(226 24 56) — was
      accidentally still blue (rgb(37 99 235)) before this batch, a leftover
      from when the primary color was blue. */
   --erp-color-primary-soft: rgb(226 24 56 / 0.16);
-  --erp-surface-hover: #1e293b;
+  --erp-surface-hover: #333941;
   /* Part 2 of this batch: was still blue (rgb(37 99 235 / ...)), a leftover
      from the old blue primary — now the same crimson base hue used by
      --erp-color-primary-soft above, at increasing alpha so
@@ -733,23 +756,30 @@
   --erp-surface-selected-hover: rgb(226 24 56 / 0.30);
   --erp-surface-active: rgb(226 24 56 / 0.26);
 
-  --erp-color-border: #334155;
-  --erp-color-border-muted: #1e293b;
-  --erp-color-border-strong: #475569;
+  --erp-color-border: #3d444d;
+  --erp-color-border-muted: #2b3037;
+  --erp-color-border-strong: #4a515a;
 
-  --erp-color-secondary: #1e293b;
-  --erp-color-secondary-foreground: #f8fafc;
+  /* Shell/chrome sits between the canvas and card/panel surfaces. Scrollbar
+     roles are kept here so browser-specific styling never needs literals. */
+  --erp-shell-surface: #1d2025;
+  --erp-shell-scrollbar-track: #1d2025;
+  --erp-shell-scrollbar-thumb: #4a515a;
+  --erp-shell-scrollbar-thumb-hover: #626a75;
 
-  --erp-color-muted: #1e293b;
-  --erp-color-muted-foreground: #cbd5e1;
+  --erp-color-secondary: #2b3037;
+  --erp-color-secondary-foreground: #f4f5f7;
 
-  --erp-text-primary: #f8fafc;
-  --erp-text-secondary: #f1f5f9;
-  --erp-text-muted: #cbd5e1;
-  --erp-text-subtle: #94a3b8;
-  --erp-text-disabled: #94a3b8;
-  --erp-text-inverse: #020617;
-  --erp-state-hover: #1e293b;
+  --erp-color-muted: #2b3037;
+  --erp-color-muted-foreground: #c5cad1;
+
+  --erp-text-primary: #f4f5f7;
+  --erp-text-secondary: #edf0f4;
+  --erp-text-muted: #c5cad1;
+  --erp-text-subtle: #98a0aa;
+  --erp-text-disabled: #98a0aa;
+  --erp-text-inverse: #17191d;
+  --erp-state-hover: #333941;
   --erp-state-selected: rgb(226 24 56 / 0.18);
   --erp-state-selected-hover: rgb(226 24 56 / 0.30);
   --erp-state-active: rgb(226 24 56 / 0.26);
@@ -758,27 +788,28 @@
      visible but not overpowering selection ring. Was blue before this
      batch. */
   --erp-border-selected: rgb(240 135 152 / 0.45);
-  --erp-form-label-color: #f8fafc;
-  --erp-form-field-help-text-color: #cbd5e1;
-  --erp-form-field-disabled-bg: #0f172a;
-  --erp-form-field-readonly-bg: #0f172a;
-  --erp-form-field-border: #475569;
+  --erp-form-label-color: #f4f5f7;
+  --erp-form-field-help-text-color: #c5cad1;
+  --erp-form-field-disabled-bg: #24282e;
+  --erp-form-field-readonly-bg: #24282e;
+  --erp-form-field-border: #4a515a;
   /* Brand step 400 (#e84b64) — clears the 3:1 focus-indicator threshold
-     against every dark surface (app bg 5.41:1, mid surface 4.79:1, raised
-     surface 3.92:1). Was blue (#60a5fa) before this batch. */
+     against every dark surface (app bg 4.72:1, mid surface 3.96:1, raised
+     surface 3.56:1). Was blue (#60a5fa) before this batch. Figures
+     recomputed for the THEME-07 charcoal palette via check:contrast. */
   --erp-form-field-focus-border: #e84b64;
   --erp-validation-error-bg: rgb(153 27 27 / 0.24);
   --erp-validation-error-text: #fca5a5;
   --erp-validation-error-border: rgb(248 113 113 / 0.45);
 
-  --erp-grid-header-bg: #1e293b;
-  --erp-grid-header-text: #cbd5e1;
-  --erp-grid-header-border: #334155;
-  --erp-grid-row-bg: #0f172a;
-  --erp-grid-row-alt-bg: #020617;
-  --erp-grid-cell-bg: #0f172a;
-  --erp-grid-row-border: #334155;
-  --erp-grid-row-hover-bg: #1e293b;
+  --erp-grid-header-bg: #2b3037;
+  --erp-grid-header-text: #c5cad1;
+  --erp-grid-header-border: #3d444d;
+  --erp-grid-row-bg: #24282e;
+  --erp-grid-row-alt-bg: #17191d;
+  --erp-grid-cell-bg: #24282e;
+  --erp-grid-row-border: #3d444d;
+  --erp-grid-row-hover-bg: #333941;
 
   --erp-grid-row-deleted-bg: rgb(153 27 27 / 0.2);
   --erp-grid-row-warning-bg: rgb(146 64 14 / 0.2);
@@ -802,9 +833,14 @@
    * its white foreground text (~6.09:1) doesn't depend on the page
    * background, so it doesn't need a lighter dark-mode value. Foreground/
    * link/focus roles DO need a lighter step, since #c21530 itself only
-   * reaches ~3.31:1 against the dark app background (#020617) — well
+   * reaches ~2.89:1 against the dark app background (#17191d) — well
    * short of the 4.5:1 text threshold. See packages/tokens crimsonTokens
-   * doc comment for the full contrast derivation of every step used here.
+   * doc comment for the full contrast derivation of every step used here
+   * (that doc comment's figures predate the THEME-07 charcoal repaint and
+   * were computed against the old slate app background — the brand-step
+   * CHOICES it documents are unaffected, only the background hex changed;
+   * see this file's THEME-07 comment above the [data-theme] block for the
+   * up-to-date figures against the current charcoal surfaces).
    * ============================================================ */
   --erp-color-primary: #c21530;
   --erp-color-primary-foreground: #ffffff;
@@ -812,9 +848,10 @@
   --erp-color-primary-active: #7f0d1f;
   --erp-color-primary-border: rgb(226 24 56 / 0.35);
   /* Brand step 300 (#f08798) — the lightest step that clears 4.5:1 text
-     contrast against ALL THREE dark surfaces (app bg 8.27:1, mid surface
-     7.32:1, raised surface 6.00:1). Step 400 was evaluated first but fails
-     against the raised surface (3.92:1 < 4.5:1) — see crimsonTokens doc
+     contrast against ALL THREE dark surfaces (app bg 7.23:1, mid surface
+     6.07:1, raised surface 5.46:1 — recomputed for the THEME-07 charcoal
+     palette via check:contrast). Step 400 was evaluated first but fails
+     against the raised surface (3.56:1 < 4.5:1) — see crimsonTokens doc
      comment. RESOLVED (Part 1 of this batch): components that render
      accent-toned foreground text/icons on `--erp-color-primary-soft`
      (packages/app-components/src/components/icon-chip.tsx and
@@ -847,31 +884,35 @@
 
   /* --erp-surface-* family (distinct from --erp-color-surface* above —
      both exist as separate variables in the default block). */
-  --erp-surface-page: #020617;
-  --erp-surface-panel: #0f172a;
-  --erp-surface-card: #0f172a;
-  --erp-surface-raised: #1e293b;
-  --erp-surface-sunken: #020617;
-  --erp-surface-overlay: rgb(2 6 23 / 0.72);
-  --erp-surface-disabled: #1e293b;
-  --erp-surface-inverse: #f8fafc;
+  --erp-surface-page: #17191d;
+  --erp-surface-panel: #24282e;
+  --erp-surface-card: #24282e;
+  --erp-surface-raised: #2b3037;
+  --erp-surface-sunken: #17191d;
+  /* Scrim base recolored to match the new charcoal family (was rgb(2 6 23),
+     the old near-black slate app background) — kept deliberately darker
+     than --erp-color-page-bg so it still reads as a dimming layer over
+     arbitrary underlying content. */
+  --erp-surface-overlay: rgb(10 11 13 / 0.72);
+  --erp-surface-disabled: #2b3037;
+  --erp-surface-inverse: #f4f5f7;
 
   /* --erp-border-* bare family (distinct from --erp-color-border* above). */
-  --erp-border-default: #334155;
-  --erp-border-muted: #1e293b;
-  --erp-border-strong: #475569;
+  --erp-border-default: #3d444d;
+  --erp-border-muted: #2b3037;
+  --erp-border-strong: #4a515a;
   --erp-border-danger: rgb(248 113 113 / 0.45);
   --erp-border-warning: rgb(251 191 36 / 0.45);
   --erp-border-success: rgb(52 211 153 / 0.45);
-  --erp-border-disabled: #334155;
+  --erp-border-disabled: #3d444d;
 
   /* --erp-state-* extended family. */
-  --erp-state-disabled: #1e293b;
-  --erp-state-readonly: #1e293b;
+  --erp-state-disabled: #2b3037;
+  --erp-state-readonly: #2b3037;
   --erp-state-loading: rgb(37 99 235 / 0.16);
   --erp-state-dragging: rgb(226 24 56 / 0.16);
   --erp-state-blocked: rgb(185 28 28 / 0.16);
-  --erp-state-locked: #1e293b;
+  --erp-state-locked: #2b3037;
   --erp-state-new: rgb(22 101 52 / 0.16);
   --erp-state-dirty: rgb(146 64 14 / 0.16);
   --erp-state-deleted: rgb(185 28 28 / 0.16);
@@ -905,7 +946,7 @@
   --erp-grid-row-error-bg: rgb(185 28 28 / 0.2);
   --erp-grid-row-error-accent: var(--color-rose-400);
   --erp-grid-row-stale-bg: rgb(126 34 206 / 0.16);
-  --erp-grid-row-readonly-bg: #1e293b;
+  --erp-grid-row-readonly-bg: #2b3037;
   /* Crimson, stronger alpha than --erp-surface-selected/--erp-state-selected
      (0.18) so an actively-edited cell reads as more emphasized than a
      merely-selected row. Was blue before this batch. */
@@ -914,14 +955,14 @@
   --erp-grid-cell-error-bg: rgb(185 28 28 / 0.2);
   --erp-grid-cell-warning-bg: rgb(146 64 14 / 0.2);
   --erp-grid-cell-stale-bg: rgb(126 34 206 / 0.16);
-  --erp-grid-cell-pinned-bg: #1e293b;
+  --erp-grid-cell-pinned-bg: #2b3037;
   --erp-grid-cell-manual-border: #60a5fa;
   --erp-grid-cell-manual-bg: rgb(37 99 235 / 0.16);
-  --erp-grid-footer-bg: #1e293b;
-  --erp-grid-footer-text: #f8fafc;
-  --erp-grid-total-row-bg: #1e293b;
-  --erp-grid-group-row-bg: #1e293b;
-  --erp-grid-resize-handle: #475569;
+  --erp-grid-footer-bg: #2b3037;
+  --erp-grid-footer-text: #f4f5f7;
+  --erp-grid-total-row-bg: #2b3037;
+  --erp-grid-group-row-bg: #2b3037;
+  --erp-grid-resize-handle: #4a515a;
   /* --erp-grid-row-hover-accent is intentionally NOT redeclared here: its
      light-mode value is `var(--erp-accent)` (a reference, not a literal),
      and --erp-accent IS overridden further down in this same block, so
@@ -932,14 +973,14 @@
   --erp-form-label-required-color: var(--color-rose-400);
   --erp-form-field-error-text-color: var(--color-rose-400);
   --erp-form-field-error-border: rgb(248 113 113 / 0.45);
-  --erp-form-section-border: #334155;
+  --erp-form-section-border: #3d444d;
   --erp-form-required-marker-color: var(--color-rose-400);
 
   /* Chart axes (used by --erp-chart-grid-color/--erp-chart-axis-color
      consumers; no chart library is wired into the app yet, but the tokens
      exist and should not silently stay light-mode-only). */
-  --erp-chart-grid-color: #1e293b;
-  --erp-chart-axis-color: #94a3b8;
+  --erp-chart-grid-color: #2b3037;
+  --erp-chart-axis-color: #98a0aa;
 
   /* KPI trend indicators. */
   --erp-kpi-trend-positive-fg: var(--color-emerald-400);
@@ -956,12 +997,12 @@
    * identical to their light-mode values (declared explicitly — see the
    * warning/success/info note above for why no value change was needed).
    * ============================================================ */
-  --erp-status-draft: #475569;
+  --erp-status-draft: #4a515a;
   --erp-status-draft-foreground: #ffffff;
-  --erp-status-draft-soft: #1e293b;
-  --erp-status-draft-bg: #1e293b;
-  --erp-status-draft-fg: #cbd5e1;
-  --erp-status-draft-border: #475569;
+  --erp-status-draft-soft: #2b3037;
+  --erp-status-draft-bg: #2b3037;
+  --erp-status-draft-fg: #c5cad1;
+  --erp-status-draft-border: #4a515a;
 
   --erp-status-submitted: #2563eb;
   --erp-status-submitted-foreground: #ffffff;
@@ -991,12 +1032,12 @@
   --erp-status-posted-fg: var(--color-indigo-400);
   --erp-status-posted-border: rgb(129 140 248 / 0.45);
 
-  --erp-status-cancelled: #475569;
+  --erp-status-cancelled: #4a515a;
   --erp-status-cancelled-foreground: #ffffff;
-  --erp-status-cancelled-soft: #1e293b;
-  --erp-status-cancelled-bg: #1e293b;
-  --erp-status-cancelled-fg: #cbd5e1;
-  --erp-status-cancelled-border: #475569;
+  --erp-status-cancelled-soft: #2b3037;
+  --erp-status-cancelled-bg: #2b3037;
+  --erp-status-cancelled-fg: #c5cad1;
+  --erp-status-cancelled-border: #4a515a;
 
   --erp-status-pending-bg: rgb(146 64 14 / 0.16);
   --erp-status-pending-fg: var(--color-amber-400);
@@ -1029,14 +1070,14 @@
    * --erp-grid-row-hover-accent: var(--erp-accent)) and was entirely
    * missing from .dark before this batch.
    * ============================================================ */
-  --erp-bg: #020617;
-  --erp-fg: #f8fafc;
-  --erp-surface: #0f172a;
-  --erp-surface-muted: #1e293b;
-  --erp-border: #334155;
-  --erp-border-strong: #475569;
-  --erp-muted: #cbd5e1;
-  --erp-subtle: #94a3b8;
+  --erp-bg: #17191d;
+  --erp-fg: #f4f5f7;
+  --erp-surface: #24282e;
+  --erp-surface-muted: #2b3037;
+  --erp-border: #3d444d;
+  --erp-border-strong: #4a515a;
+  --erp-muted: #c5cad1;
+  --erp-subtle: #98a0aa;
   --erp-accent: #c21530;
   --erp-accent-hover: #9e1127;
   --erp-accent-active: #7f0d1f;
