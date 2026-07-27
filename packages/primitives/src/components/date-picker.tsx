@@ -81,6 +81,17 @@ type PopoverPosition = {
 };
 
 type DateDisplayFormat = "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd" | "short";
+export type DatePickerWidth = "full" | "fill" | "xs" | "sm" | "md" | "lg" | "xl";
+
+const fieldWidthClasses: Record<DatePickerWidth, string> = {
+  full: "w-full",
+  fill: "w-[var(--erp-size-intent-fill)]",
+  xs: "w-[var(--erp-control-width-xs)] max-w-full",
+  sm: "w-[var(--erp-control-width-sm)] max-w-full",
+  md: "w-[var(--erp-control-width-md)] max-w-full",
+  lg: "w-[var(--erp-control-width-lg)] max-w-full",
+  xl: "w-[var(--erp-control-width-xl)] max-w-full",
+};
 
 export interface DatePickerProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "defaultValue" | "onChange">,
@@ -92,6 +103,7 @@ export interface DatePickerProps
   defaultValue?: string | Date;
   onValueChange?: (value: string | undefined) => void;
   displayFormat?: DateDisplayFormat;
+  width?: DatePickerWidth;
 }
 
 function formatDateForInput(date: string | Date | undefined): string | undefined {
@@ -225,6 +237,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
       onValueChange,
       disabled,
       displayFormat = "dd/mm/yyyy",
+      width = "sm",
       placeholder,
       ...props
     },
@@ -733,11 +746,18 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     );
 
     if (!label && !description && !validationError) {
-      return dateInput;
+      return (
+        <div data-width={width} className={fieldWidthClasses[width]}>
+          {dateInput}
+        </div>
+      );
     }
 
     return (
-      <div className="flex flex-col gap-1.5">
+      <div
+        data-width={width}
+        className={cn("flex flex-col gap-1.5", fieldWidthClasses[width])}
+      >
         {label && (
           <label htmlFor={inputId} className="text-sm font-semibold text-foreground">
             {label}

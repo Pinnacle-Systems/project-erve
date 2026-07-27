@@ -404,11 +404,11 @@ export const sizingTokens = {
     fit: "fit-content",
   },
   control: {
-    xs: "6rem",
-    sm: "8rem",
-    md: "12rem",
-    lg: "16rem",
-    xl: "24rem",
+    xs: "8rem",
+    sm: "12rem",
+    md: "18rem",
+    lg: "24rem",
+    xl: "32rem",
   },
 } as const;
 

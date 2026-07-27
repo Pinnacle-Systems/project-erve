@@ -56,6 +56,23 @@ const fieldLabels: Record<keyof typeof emptyForm, string> = {
   status: 'Status',
 };
 
+const styleFieldLayout = [
+  { key: 'styleNumber', width: 'sm' },
+  { key: 'styleName', width: 'md' },
+  { key: 'categoryDescription', width: 'sm' },
+  { key: 'itemNameGroup', width: 'md' },
+  { key: 'ipName', width: 'sm' },
+  { key: 'licensor', width: 'md' },
+  { key: 'colour', width: 'sm' },
+  { key: 'lmixNumber', width: 'sm' },
+  { key: 'hsnCode', width: 'sm' },
+  { key: 'finalMrp', width: 'sm' },
+  { key: 'hsnDescription', width: 'lg' },
+  { key: 'royaltyPercentage', width: 'xs' },
+  { key: 'status', width: 'sm' },
+  { key: 'description', width: 'lg' },
+] as const;
+
 function cleanPayload(form: typeof emptyForm) {
   return {
     ...form,
@@ -279,8 +296,8 @@ export function StyleFormPage() {
           }}
         >
           <FormSection title="Style Details">
-            <FormGrid columns={3}>
-              {Object.keys(emptyForm).map((key) =>
+            <FormGrid layout="content">
+              {styleFieldLayout.map(({ key, width }) =>
                 key === 'status' ? (
                   <SelectField
                     key={key}
@@ -289,7 +306,7 @@ export function StyleFormPage() {
                     onValueChange={(value) =>
                       setForm((current) => ({ ...current, status: value as Status }))
                     }
-                    width="fill"
+                    width={width}
                   >
                     <SelectItem value="ACTIVE">Active</SelectItem>
                     <SelectItem value="INACTIVE">Inactive</SelectItem>
@@ -300,6 +317,7 @@ export function StyleFormPage() {
                     label={fieldLabels[key as keyof typeof emptyForm]}
                     type={key.includes('Mrp') || key.includes('Percentage') ? 'number' : 'text'}
                     value={form[key as keyof typeof emptyForm]}
+                    width={width}
                     errorMessage={
                       error &&
                       ((key === 'styleNumber' && !form.styleNumber) ||

@@ -36,7 +36,7 @@ const inputVariants = cva(
 export type TextFieldDensity = NonNullable<
   VariantProps<typeof inputVariants>["density"]
 >;
-export type TextFieldWidth = "fill" | "xs" | "sm" | "md" | "lg" | "xl";
+export type TextFieldWidth = "full" | "fill" | "xs" | "sm" | "md" | "lg" | "xl";
 
 export interface TextFieldProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, "size"> {
@@ -49,6 +49,7 @@ export interface TextFieldProps
 }
 
 const fieldWidthClasses: Record<TextFieldWidth, string> = {
+  full: "w-full",
   fill: "w-[var(--erp-size-intent-fill)]",
   xs: "w-[var(--erp-control-width-xs)] max-w-full",
   sm: "w-[var(--erp-control-width-sm)] max-w-full",

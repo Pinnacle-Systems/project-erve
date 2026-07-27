@@ -196,13 +196,13 @@ export function PurchaseOrderFormPage() {
           }}
         >
           <FormSection title="PO Header">
-            <FormGrid columns={2}>
+            <FormGrid layout="content">
               <SelectField
                 label="Distributor *"
                 value={distributorId || 'NONE'}
                 disabled={isEdit}
                 onValueChange={(value) => setDistributorId(value === 'NONE' ? '' : value)}
-                width="fill"
+                width="md"
               >
                 <SelectItem value="NONE">Select distributor</SelectItem>
                 {(distributorsQuery.data ?? []).map((d) => (
@@ -214,7 +214,7 @@ export function PurchaseOrderFormPage() {
                 label="Purchase Mode *"
                 value={purchaseMode}
                 onValueChange={(value) => setPurchaseMode(value as PurchaseMode)}
-                width="fill"
+                width="sm"
               >
                 <SelectItem value="OUTRIGHT">Outright</SelectItem>
                 <SelectItem value="SALE_RETURN">Sale Return</SelectItem>
@@ -225,16 +225,23 @@ export function PurchaseOrderFormPage() {
                 value={poDate}
                 onValueChange={(value) => setPoDate(value ?? '')}
                 displayFormat="yyyy-mm-dd"
+                width="sm"
               />
               <DatePicker
                 label="Required Delivery Date"
                 value={requiredDeliveryDate}
                 onValueChange={(value) => setRequiredDeliveryDate(value ?? '')}
                 displayFormat="yyyy-mm-dd"
+                width="sm"
               />
             </FormGrid>
 
-            <TextField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} width="fill" />
+            <TextField
+              label="Remarks"
+              value={remarks}
+              onChange={(e) => setRemarks(e.target.value)}
+              width="full"
+            />
           </FormSection>
 
           <FormSection
@@ -246,31 +253,40 @@ export function PurchaseOrderFormPage() {
             }
           >
             <Stack gap="md">
+              {lines.map((line, lineIndex) => {
+                const sizesForStyle = getStyleSizes(line.styleId);
+                const availableForLine = availableStyles.filter(
+                  (s) => !usedStyleIds.has(s.id) || s.id === line.styleId,
+                );
 
-            {lines.map((line, lineIndex) => {
-              const sizesForStyle = getStyleSizes(line.styleId);
-              const availableForLine = availableStyles.filter(
-                (s) => !usedStyleIds.has(s.id) || s.id === line.styleId,
-              );
-
-              return (
-                <Panel key={lineIndex} variant="bordered" padding="sm">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1">
-                      <SelectField
-                        label="Style *"
-                        value={line.styleId || 'NONE'}
-                        onValueChange={(value) => handleStyleChange(lineIndex, value === 'NONE' ? '' : value)}
-                        width="fill"
-                      >
-                          <SelectItem value="NONE">Select style</SelectItem>
-                          {availableForLine.map((s) => (
-                            <SelectItem key={s.id} value={s.id}>
-                              {s.styleNumber} - {s.styleName}
-                            </SelectItem>
-                          ))}
-                      </SelectField>
-                    </div>
+                return (
+                  <Panel key={lineIndex} variant="bordered" padding="sm" className="space-y-4">
+                  <div className="flex flex-wrap items-end gap-3">
+                    <SelectField
+                      label="Style *"
+                      value={line.styleId || 'NONE'}
+                      onValueChange={(value) => handleStyleChange(lineIndex, value === 'NONE' ? '' : value)}
+                      width="lg"
+                    >
+                      <SelectItem value="NONE">Select style</SelectItem>
+                      {availableForLine.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.styleNumber} - {s.styleName}
+                        </SelectItem>
+                      ))}
+                    </SelectField>
+                    <TextField
+                      label="Line Remarks"
+                      value={line.remarks}
+                      width="lg"
+                      onChange={(e) =>
+                        setLines((current) =>
+                          current.map((l, i) =>
+                            i === lineIndex ? { ...l, remarks: e.target.value } : l,
+                          ),
+                        )
+                      }
+                    />
                     <Button
                       type="button"
                       variant="secondary"
@@ -285,42 +301,31 @@ export function PurchaseOrderFormPage() {
                       <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
                         Size Quantities
                       </div>
-                      <div className="grid gap-2 md:grid-cols-4 lg:grid-cols-6">
+                      <FormGrid layout="content" gap="sm">
                         {(line.sizes.length > 0 ? line.sizes : sizesForStyle.map((sz) => ({
                           sizeId: sz.id,
                           sizeCode: sz.code,
                           sizeLabel: sz.label,
                           orderedQuantity: '',
                         }))).map((sz, szIndex) => (
-                          <div key={sz.sizeId} className="space-y-1">
-                            <TextField
-                              label={sz.sizeCode}
-                              type="number"
-                              min="1"
-                              value={sz.orderedQuantity}
-                              onChange={(e) => handleQtyChange(lineIndex, szIndex, e.target.value)}
-                              placeholder="0"
-                              density="compact"
-                              width="fill"
-                            />
-                          </div>
+                          <TextField
+                            key={sz.sizeId}
+                            label={sz.sizeCode}
+                            type="number"
+                            min="1"
+                            value={sz.orderedQuantity}
+                            onChange={(e) => handleQtyChange(lineIndex, szIndex, e.target.value)}
+                            placeholder="0"
+                            density="compact"
+                            width="xs"
+                          />
                         ))}
-                      </div>
+                      </FormGrid>
                     </div>
                   )}
-
-                  <TextField
-                    label="Line Remarks"
-                    value={line.remarks}
-                    onChange={(e) =>
-                      setLines((current) =>
-                        current.map((l, i) => (i === lineIndex ? { ...l, remarks: e.target.value } : l)),
-                      )
-                    }
-                  />
-                </Panel>
-              );
-            })}
+                  </Panel>
+                );
+              })}
             </Stack>
           </FormSection>
 

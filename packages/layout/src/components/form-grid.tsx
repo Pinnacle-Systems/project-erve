@@ -3,13 +3,19 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 
-const formGridVariants = cva("grid grid-cols-1", {
+const formGridVariants = cva("", {
   variants: {
+    layout: {
+      columns: "grid grid-cols-1",
+      content: "flex flex-wrap items-start",
+    },
     columns: {
       1: "sm:grid-cols-1",
       2: "sm:grid-cols-2",
       3: "sm:grid-cols-2 lg:grid-cols-3",
       4: "sm:grid-cols-2 lg:grid-cols-4",
+      5: "sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5",
+      6: "sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-6",
     },
     gap: {
       sm: "gap-3",
@@ -27,6 +33,7 @@ const formGridVariants = cva("grid grid-cols-1", {
     { density: "touch", gap: "md", className: "gap-5 lg:gap-6" },
   ],
   defaultVariants: {
+    layout: "columns",
     columns: 2,
     gap: "md",
   },
@@ -37,12 +44,15 @@ export interface FormGridProps
     VariantProps<typeof formGridVariants> {}
 
 export const FormGrid = React.forwardRef<HTMLDivElement, FormGridProps>(
-  ({ className, columns, gap, density, ...props }, ref) => {
+  ({ className, layout, columns, gap, density, ...props }, ref) => {
     const { densityName } = useTheme();
     return (
       <div
         ref={ref}
-        className={cn(formGridVariants({ columns, gap, density: density ?? densityName }), className)}
+        className={cn(
+          formGridVariants({ layout, columns, gap, density: density ?? densityName }),
+          className,
+        )}
         {...props}
       />
     );

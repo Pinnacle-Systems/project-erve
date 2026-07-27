@@ -133,13 +133,13 @@ export function PriceListFormPage() {
           }}
         >
           <FormSection title="Price List Details">
-            <FormGrid columns={2}>
+            <FormGrid layout="content">
               <SelectField
                 label="Distributor *"
                 value={distributorId || 'NONE'}
                 disabled={isEdit}
                 onValueChange={(value) => setDistributorId(value === 'NONE' ? '' : value)}
-                width="fill"
+                width="md"
               >
                 <SelectItem value="NONE">Select distributor</SelectItem>
                 {isEdit && priceListQuery.data ? (
@@ -159,7 +159,7 @@ export function PriceListFormPage() {
                 label="Name *"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                width="fill"
+                width="md"
               />
 
               <DatePicker
@@ -167,12 +167,14 @@ export function PriceListFormPage() {
                 value={effectiveFrom}
                 onValueChange={(value) => setEffectiveFrom(value ?? '')}
                 displayFormat="yyyy-mm-dd"
+                width="sm"
               />
               <DatePicker
                 label="Effective To (optional)"
                 value={effectiveTo}
                 onValueChange={(value) => setEffectiveTo(value ?? '')}
                 displayFormat="yyyy-mm-dd"
+                width="sm"
               />
             </FormGrid>
           </FormSection>

@@ -76,9 +76,10 @@ const triggerVariants = cva(
 export type SelectFieldDensity = NonNullable<
   VariantProps<typeof triggerVariants>["density"]
 >;
-export type SelectFieldWidth = "fill" | "xs" | "sm" | "md" | "lg" | "xl";
+export type SelectFieldWidth = "full" | "fill" | "xs" | "sm" | "md" | "lg" | "xl";
 
 const fieldWidthClasses: Record<SelectFieldWidth, string> = {
+  full: "w-full",
   fill: "w-[var(--erp-size-intent-fill)]",
   xs: "w-[var(--erp-control-width-xs)] max-w-full",
   sm: "w-[var(--erp-control-width-sm)] max-w-full",
