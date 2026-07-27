@@ -75,6 +75,13 @@ jobs:
       - name: Run @erve/client tests
         run: pnpm --filter @erve/client test
 
+      # Cross-package design-system integration tests (portal scoping,
+      # accent-role contrast regressions) — relocated out of @erve/theme so
+      # that package could drop its dev-only dependency on @erve/primitives
+      # and @erve/app-components (see packages/design-system-tests/package.json).
+      - name: Run @erve/design-system-tests
+        run: pnpm --filter @erve/design-system-tests test
+
   api-tests:
     name: API integration tests (Postgres)
     runs-on: ubuntu-latest

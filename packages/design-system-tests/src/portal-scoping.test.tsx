@@ -17,7 +17,7 @@ import {
   TooltipTrigger,
 } from "@erve/primitives";
 
-import { ThemeProvider, defaultTheme } from "./index.js";
+import { ThemeProvider, defaultTheme } from "@erve/theme";
 
 /**
  * Radix's Popper-based components (DropdownMenu/Tooltip content positioning)

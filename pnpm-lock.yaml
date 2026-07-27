@@ -392,6 +392,49 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
+  packages/design-system-tests:
+    dependencies:
+      '@erve/app-components':
+        specifier: workspace:*
+        version: link:../app-components
+      '@erve/primitives':
+        specifier: workspace:*
+        version: link:../primitives
+      '@erve/theme':
+        specifier: workspace:*
+        version: link:../theme
+    devDependencies:
+      '@erve/config':
+        specifier: workspace:*
+        version: link:../config
+      '@erve/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      '@types/react':
+        specifier: ^19.2.17
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.17)
+      jsdom:
+        specifier: ^29.1.1
+        version: 29.1.1(@noble/hashes@1.8.0)
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@24.13.3)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0))
+
   packages/eslint-config:
     dependencies:
       '@eslint/js':
@@ -530,18 +573,12 @@ importers:
         specifier: workspace:*
         version: link:../tokens
     devDependencies:
-      '@erve/app-components':
-        specifier: workspace:*
-        version: link:../app-components
       '@erve/config':
         specifier: workspace:*
         version: link:../config
       '@erve/eslint-config':
         specifier: workspace:*
         version: link:../eslint-config
-      '@erve/primitives':
-        specifier: workspace:*
-        version: link:../primitives
       '@types/node':
         specifier: ^24.13.3
         version: 24.13.3
