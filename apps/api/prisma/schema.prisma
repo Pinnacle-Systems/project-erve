@@ -537,6 +537,7 @@ model DistributorPurchaseOrder {
   createdBy           String              @map("created_by")
   createdAt           DateTime            @default(now()) @map("created_at")
   updatedAt           DateTime            @updatedAt @map("updated_at")
+  version             Int                 @default(1)
 
   distributor  Distributor                    @relation(fields: [distributorId], references: [id], onDelete: Restrict)
   merchandiser User?                          @relation("POMerchandiser", fields: [merchandiserId], references: [id], onDelete: SetNull)
@@ -616,6 +617,7 @@ model JobOrder {
   createdBy                 String                    @map("created_by")
   createdAt                 DateTime                  @default(now()) @map("created_at")
   updatedAt                 DateTime                  @updatedAt @map("updated_at")
+  version                   Int                       @default(1)
 
   purchaseOrder      DistributorPurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
   factory            Factory                  @relation(fields: [factoryId], references: [id], onDelete: Restrict)
@@ -624,6 +626,7 @@ model JobOrder {
   creator            User                     @relation("JobOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
   lines              JobOrderLine[]
   stageStatuses      JobOrderStageStatus[]
+  idempotencyRecords JobOrderIdempotencyRecord[]
 
   @@index([purchaseOrderId])
   @@index([factoryId])
@@ -631,6 +634,23 @@ model JobOrder {
   @@index([status])
   @@index([factoryConfirmationStatus])
   @@map("job_orders")
+}
+
+model JobOrderIdempotencyRecord {
+  id             String   @id
+  actorId        String   @map("actor_id")
+  jobOrderId     String   @map("job_order_id")
+  operation      String
+  idempotencyKey String   @map("idempotency_key")
+  requestHash    String   @map("request_hash")
+  resultVersion  Int      @map("result_version")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  jobOrder JobOrder @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([actorId, operation, idempotencyKey])
+  @@index([jobOrderId])
+  @@map("job_order_idempotency_records")
 }
 
 model JobOrderLine {

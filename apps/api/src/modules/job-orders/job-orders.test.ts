@@ -139,6 +139,90 @@ async function createJobOrder(
 }
 
 describe('job orders API', () => {
+  it('atomically prevents concurrent PO over-allocation', async () => {
+    const graph = await createSeedGraph();
+    const responses = await Promise.all([
+      createJobOrder(graph.admin.token, graph, 7),
+      createJobOrder(graph.admin.token, graph, 7),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+    const balance = await prisma.distributorPurchaseOrderLineSize.findUniqueOrThrow({
+      where: { id: graph.poSizeAId },
+      select: { orderedQuantity: true, jobOrderedQuantity: true },
+    });
+    expect(balance).toEqual({ orderedQuantity: 10, jobOrderedQuantity: 7 });
+  });
+
+  it('generates unique business numbers for concurrent job orders', async () => {
+    const graph = await createSeedGraph();
+    const [first, second] = await Promise.all([
+      createJobOrder(graph.admin.token, graph, 1),
+      createJobOrder(graph.admin.token, graph, 1),
+    ]);
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(first.body.data.jobOrderNumber).not.toBe(second.body.data.jobOrderNumber);
+  });
+
+  it('returns a stable stale-version conflict before mutating', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 1);
+    const response = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'stale-send')
+      .send({ expectedVersion: created.body.data.version + 1 });
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe('STALE_VERSION');
+    expect(await prisma.auditLog.count({ where: { action: 'JOB_ORDER_SENT_TO_FACTORY' } })).toBe(0);
+  });
+
+  it('returns compact tasks only for a factory user with exactly one authorized mapping', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 2);
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'assigned-task-send')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    const factoryUser = await createTestUserAndToken({
+      email: 'tasks@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+
+    const unmapped = await request(app)
+      .get('/job-orders/assigned-tasks')
+      .set('Authorization', `Bearer ${factoryUser.token}`);
+    expect(unmapped.status).toBe(403);
+    expect(unmapped.body.error.code).toBe('FACTORY_MAPPING_REQUIRED');
+
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+    });
+    const assigned = await request(app)
+      .get('/job-orders/assigned-tasks')
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .expect(200);
+    expect(assigned.body.data.items).toHaveLength(1);
+    expect(assigned.body.data.items[0]).toMatchObject({
+      id: created.body.data.id,
+      jobOrderNumber: created.body.data.jobOrderNumber,
+      actionRequired: true,
+    });
+    expect(assigned.body.data.items[0].lines).toBeUndefined();
+
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.otherFactory.id },
+    });
+    const ambiguous = await request(app)
+      .get('/job-orders/assigned-tasks')
+      .set('Authorization', `Bearer ${factoryUser.token}`);
+    expect(ambiguous.status).toBe(403);
+    expect(ambiguous.body.error.code).toBe('FACTORY_MAPPING_AMBIGUOUS');
+  });
+
   it('retains its assigned historical process-flow version when a newer version is activated', async () => {
     const graph = await createSeedGraph();
     const createdJobOrder = await createJobOrder(graph.admin.token, graph, 4);
@@ -300,14 +384,18 @@ describe('job orders API', () => {
 
     const sendRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/send-to-factory`)
-      .set('Authorization', `Bearer ${graph.admin.token}`);
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'workflow-send')
+      .send({ expectedVersion: createRes.body.data.version });
     expect(sendRes.status).toBe(200);
     expect(sendRes.body.data.status).toBe('SENT_TO_FACTORY');
     await expect(
       request(app)
         .post(`/job-orders/${jobOrderId}/actions/send-to-factory`)
-        .set('Authorization', `Bearer ${graph.admin.token}`),
-    ).resolves.toMatchObject({ status: 400 });
+        .set('Authorization', `Bearer ${graph.admin.token}`)
+        .set('Idempotency-Key', 'workflow-send')
+        .send({ expectedVersion: createRes.body.data.version }),
+    ).resolves.toMatchObject({ status: 200 });
 
     const factoryUser = await createTestUserAndToken({
       email: 'factory-job@test.local',
@@ -326,38 +414,63 @@ describe('job orders API', () => {
       data: { id: createId(), userId: otherFactoryUser.userId, factoryId: graph.otherFactory.id },
     });
 
+    await request(app)
+      .get(`/job-orders/${jobOrderId}`)
+      .set('Authorization', `Bearer ${otherFactoryUser.token}`)
+      .expect(403);
+
     await expect(
       request(app)
         .post(`/job-orders/${jobOrderId}/actions/confirm`)
-        .set('Authorization', `Bearer ${otherFactoryUser.token}`),
+        .set('Authorization', `Bearer ${otherFactoryUser.token}`)
+        .set('Idempotency-Key', 'wrong-confirm')
+        .send({ expectedVersion: sendRes.body.data.version }),
     ).resolves.toMatchObject({ status: 403 });
     const confirmRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
-      .set('Authorization', `Bearer ${factoryUser.token}`);
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'workflow-confirm')
+      .send({ expectedVersion: sendRes.body.data.version });
     expect(confirmRes.status).toBe(200);
     expect(confirmRes.body.data.status).toBe('CONFIRMED_BY_FACTORY');
     expect(confirmRes.body.data.stages).toHaveLength(2);
     expect(confirmRes.body.data.stages[0].stageNameSnapshot).toBe('Cutting');
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'workflow-confirm')
+      .send({ expectedVersion: sendRes.body.data.version })
+      .expect(200);
 
     const stages = confirmRes.body.data.stages;
     await expect(
       request(app)
         .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
         .set('Authorization', `Bearer ${factoryUser.token}`)
-        .send({ stageStatusId: stages[1].id }),
+        .set('Idempotency-Key', 'wrong-stage')
+        .send({ stageStatusId: stages[1].id, expectedVersion: confirmRes.body.data.version }),
     ).resolves.toMatchObject({ status: 400 });
 
     const firstStageRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
-      .send({ stageStatusId: stages[0].id });
+      .set('Idempotency-Key', 'stage-one')
+      .send({ stageStatusId: stages[0].id, expectedVersion: confirmRes.body.data.version });
     expect(firstStageRes.body.data.status).toBe('IN_PRODUCTION');
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'stage-one')
+      .send({ stageStatusId: stages[0].id, expectedVersion: confirmRes.body.data.version })
+      .expect(200);
 
     await expect(
       request(app)
         .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
         .set('Authorization', `Bearer ${factoryUser.token}`)
+        .set('Idempotency-Key', 'prepared-too-early')
         .send({
+          expectedVersion: firstStageRes.body.data.version,
           sizes: [
             { jobOrderLineSizeId: createRes.body.data.lines[0].sizes[0].id, preparedQuantity: 3 },
           ],
@@ -367,17 +480,32 @@ describe('job orders API', () => {
     const finalStageRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
-      .send({ stageStatusId: stages[1].id });
+      .set('Idempotency-Key', 'stage-two')
+      .send({ stageStatusId: stages[1].id, expectedVersion: firstStageRes.body.data.version });
     expect(finalStageRes.body.data.status).toBe('PRODUCTION_COMPLETE');
 
     const sizeId = finalStageRes.body.data.lines[0].sizes[0].id;
     const preparedRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
-      .send({ sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }] });
+      .set('Idempotency-Key', 'prepared-final')
+      .send({
+        expectedVersion: finalStageRes.body.data.version,
+        sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }],
+      });
     expect(preparedRes.status).toBe(200);
     expect(preparedRes.body.data.status).toBe('READY_FOR_QA');
     expect(preparedRes.body.data.preparedQuantityTotal).toBe(3);
+    const preparedReplay = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'prepared-final')
+      .send({
+        expectedVersion: finalStageRes.body.data.version,
+        sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }],
+      })
+      .expect(200);
+    expect(preparedReplay.body.data.preparedQuantityTotal).toBe(3);
 
     const varianceRes = await request(app)
       .get(`/job-orders/${jobOrderId}/variance`)
@@ -395,6 +523,8 @@ describe('job orders API', () => {
     await request(app)
       .post(`/job-orders/${jobOrderId}/actions/send-to-factory`)
       .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'inactive-send')
+      .send({ expectedVersion: createRes.body.data.version })
       .expect(409);
     const detail = await request(app)
       .get(`/job-orders/${jobOrderId}`)
@@ -437,6 +567,8 @@ describe('job orders API', () => {
     await request(app)
       .post(`/job-orders/${jobOrderId}/actions/send-to-factory`)
       .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'deactivation-send')
+      .send({ expectedVersion: createRes.body.data.version })
       .expect(200);
 
     await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'INACTIVE' } });
@@ -444,7 +576,9 @@ describe('job orders API', () => {
     // A mapped factory user can no longer advance production at their now-inactive factory.
     const factoryUserConfirm = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
-      .set('Authorization', `Bearer ${factoryUser.token}`);
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'inactive-confirm')
+      .send({ expectedVersion: createRes.body.data.version + 1 });
     expect(factoryUserConfirm.status).toBe(409);
     expect(factoryUserConfirm.body.error.message).toMatch(/inactive/i);
 
@@ -452,6 +586,8 @@ describe('job orders API', () => {
     await request(app)
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${otherFactoryUser.token}`)
+      .set('Idempotency-Key', 'other-confirm')
+      .send({ expectedVersion: createRes.body.data.version + 1 })
       .expect(403);
 
     // No new job order can be assigned to the inactive factory while existing work is unresolved.
@@ -462,7 +598,9 @@ describe('job orders API', () => {
     // ADMIN retains the ability to administratively resolve the existing job order.
     const confirmRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
-      .set('Authorization', `Bearer ${graph.admin.token}`);
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'admin-confirm')
+      .send({ expectedVersion: createRes.body.data.version + 1 });
     expect(confirmRes.status).toBe(200);
     expect(confirmRes.body.data.status).toBe('CONFIRMED_BY_FACTORY');
     const stages = confirmRes.body.data.stages;
@@ -471,21 +609,24 @@ describe('job orders API', () => {
     await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
-      .send({ stageStatusId: stages[0].id })
+      .set('Idempotency-Key', 'inactive-stage')
+      .send({ stageStatusId: stages[0].id, expectedVersion: confirmRes.body.data.version })
       .expect(409);
 
     // MERCHANDISER retains its normal control over the existing job order.
     const stage1Res = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${merchandiser.token}`)
-      .send({ stageStatusId: stages[0].id });
+      .set('Idempotency-Key', 'merch-stage')
+      .send({ stageStatusId: stages[0].id, expectedVersion: confirmRes.body.data.version });
     expect(stage1Res.status).toBe(200);
     expect(stage1Res.body.data.status).toBe('IN_PRODUCTION');
 
     const stage2Res = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${graph.admin.token}`)
-      .send({ stageStatusId: stages[1].id });
+      .set('Idempotency-Key', 'admin-stage')
+      .send({ stageStatusId: stages[1].id, expectedVersion: stage1Res.body.data.version });
     expect(stage2Res.status).toBe(200);
     expect(stage2Res.body.data.status).toBe('PRODUCTION_COMPLETE');
 
@@ -493,13 +634,21 @@ describe('job orders API', () => {
     await request(app)
       .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
-      .send({ sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }] })
+      .set('Idempotency-Key', 'inactive-prepared')
+      .send({
+        expectedVersion: stage2Res.body.data.version,
+        sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }],
+      })
       .expect(409);
 
     const preparedRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
       .set('Authorization', `Bearer ${graph.admin.token}`)
-      .send({ sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }] });
+      .set('Idempotency-Key', 'admin-prepared')
+      .send({
+        expectedVersion: stage2Res.body.data.version,
+        sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }],
+      });
     expect(preparedRes.status).toBe(200);
     expect(preparedRes.body.data.status).toBe('READY_FOR_QA');
 
@@ -545,10 +694,14 @@ describe('job orders API', () => {
     await request(app)
       .post(`/job-orders/${jo2Res.body.data.id}/actions/send-to-factory`)
       .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'restored-send')
+      .send({ expectedVersion: jo2Res.body.data.version })
       .expect(200);
     const restoredConfirm = await request(app)
       .post(`/job-orders/${jo2Res.body.data.id}/actions/confirm`)
-      .set('Authorization', `Bearer ${factoryUser.token}`);
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'restored-confirm')
+      .send({ expectedVersion: jo2Res.body.data.version + 1 });
     expect(restoredConfirm.status).toBe(200);
     expect(restoredConfirm.body.data.status).toBe('CONFIRMED_BY_FACTORY');
   });

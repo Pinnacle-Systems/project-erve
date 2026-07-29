@@ -50,4 +50,6 @@ export const listPurchaseOrdersQuerySchema = z.object({
   status: purchaseOrderStatusSchema.optional(),
   distributorId: z.string().trim().optional(),
   purchaseMode: purchaseModeSchema.optional(),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
 });

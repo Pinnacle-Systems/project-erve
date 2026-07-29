@@ -1,14 +1,20 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
+import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { Factory } from '../master-data/types.js';
 import type { JobOrder, JobOrderStatus } from './types.js';
-import { CONFIRMATION_LABELS, JOB_ORDER_STATUS_LABELS, confirmationTone, formatDateTime, statusTone } from './job-order-ui.js';
+import {
+  CONFIRMATION_LABELS,
+  JOB_ORDER_STATUS_LABELS,
+  confirmationTone,
+  formatDateTime,
+  statusTone,
+} from './job-order-ui.js';
 
 export function JobOrderListPage() {
   const [search, setSearch] = useState('');
@@ -16,14 +22,21 @@ export function JobOrderListPage() {
   const [factoryId, setFactoryId] = useState('');
 
   const params = useMemo(
-    () => ({ search: search || undefined, status: status || undefined, factoryId: factoryId || undefined }),
+    () => ({
+      search: search || undefined,
+      status: status || undefined,
+      factoryId: factoryId || undefined,
+    }),
     [search, status, factoryId],
   );
 
   const jobOrdersQuery = useQuery({
     queryKey: ['job-orders', params],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<JobOrder[]>>('/job-orders', { params });
+      const res = await apiClient.get<ApiSuccessResponse<PaginatedResponse<JobOrder>>>(
+        '/job-orders',
+        { params },
+      );
       return res.data.data;
     },
   });
@@ -31,7 +44,9 @@ export function JobOrderListPage() {
   const factoriesQuery = useQuery({
     queryKey: ['factories', 'active'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', { params: { status: 'ACTIVE' } });
+      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
+        params: { status: 'ACTIVE' },
+      });
       return res.data.data;
     },
   });
@@ -56,7 +71,10 @@ export function JobOrderListPage() {
         onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as JobOrderStatus))}
         statusOptions={[
           { label: 'All statuses', value: 'ALL' },
-          ...(Object.keys(JOB_ORDER_STATUS_LABELS) as JobOrderStatus[]).map((s) => ({ label: JOB_ORDER_STATUS_LABELS[s], value: s })),
+          ...(Object.keys(JOB_ORDER_STATUS_LABELS) as JobOrderStatus[]).map((s) => ({
+            label: JOB_ORDER_STATUS_LABELS[s],
+            value: s,
+          })),
         ]}
         hasActiveFilters={Boolean(search || status || factoryId)}
         onClearFilters={() => {
@@ -74,7 +92,9 @@ export function JobOrderListPage() {
           >
             <SelectItem value="ALL">All factories</SelectItem>
             {(factoriesQuery.data ?? []).map((factory) => (
-              <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>
+              <SelectItem key={factory.id} value={factory.id}>
+                {factory.name}
+              </SelectItem>
             ))}
           </SelectField>
         }
@@ -86,22 +106,35 @@ export function JobOrderListPage() {
             key: 'jobOrderNumber',
             header: 'Job Order',
             render: (jobOrder) => (
-              <Link className="font-medium text-[var(--erp-text-link)]" to={`/job-orders/${jobOrder.id}`}>
+              <Link
+                className="font-medium text-[var(--erp-text-link)]"
+                to={`/job-orders/${jobOrder.id}`}
+              >
                 {jobOrder.jobOrderNumber}
               </Link>
             ),
           },
-          { key: 'purchaseOrderNumber', header: 'PO Number', render: (jobOrder) => jobOrder.purchaseOrder.poNumber },
+          {
+            key: 'purchaseOrderNumber',
+            header: 'PO Number',
+            render: (jobOrder) => jobOrder.purchaseOrder.poNumber,
+          },
           { key: 'factory', header: 'Factory', render: (jobOrder) => jobOrder.factory.name },
           {
             key: 'processFlowVersion',
             header: 'Process Flow',
-            render: (jobOrder) => `${jobOrder.processFlowVersion.processFlow.name} v${jobOrder.processFlowVersion.versionNumber}`,
+            render: (jobOrder) =>
+              `${jobOrder.processFlowVersion.processFlow.name} v${jobOrder.processFlowVersion.versionNumber}`,
           },
           {
             key: 'status',
             header: 'Status',
-            render: (jobOrder) => <StatusBadge label={JOB_ORDER_STATUS_LABELS[jobOrder.status]} tone={statusTone(jobOrder.status)} />,
+            render: (jobOrder) => (
+              <StatusBadge
+                label={JOB_ORDER_STATUS_LABELS[jobOrder.status]}
+                tone={statusTone(jobOrder.status)}
+              />
+            ),
           },
           {
             key: 'factoryConfirmationStatus',
@@ -113,17 +146,39 @@ export function JobOrderListPage() {
               />
             ),
           },
-          { key: 'orderedQuantityTotal', header: 'Ordered', align: 'right', render: (jobOrder) => jobOrder.orderedQuantityTotal.toLocaleString() },
-          { key: 'preparedQuantityTotal', header: 'Prepared', align: 'right', render: (jobOrder) => jobOrder.preparedQuantityTotal.toLocaleString() },
-          { key: 'createdAt', header: 'Created', render: (jobOrder) => formatDateTime(jobOrder.createdAt) },
+          {
+            key: 'orderedQuantityTotal',
+            header: 'Ordered',
+            align: 'right',
+            render: (jobOrder) => jobOrder.orderedQuantityTotal.toLocaleString(),
+          },
+          {
+            key: 'preparedQuantityTotal',
+            header: 'Prepared',
+            align: 'right',
+            render: (jobOrder) => jobOrder.preparedQuantityTotal.toLocaleString(),
+          },
+          {
+            key: 'createdAt',
+            header: 'Created',
+            render: (jobOrder) => formatDateTime(jobOrder.createdAt),
+          },
         ]}
-        data={jobOrdersQuery.data ?? []}
+        data={jobOrdersQuery.data?.items ?? []}
         loading={jobOrdersQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading job orders" />}
-        emptyState={<EmptyState title="No job orders found" description="Create job orders from submitted purchase order demand." />}
+        emptyState={
+          <EmptyState
+            title="No job orders found"
+            description="Create job orders from submitted purchase order demand."
+          />
+        }
         error={
           jobOrdersQuery.isError ? (
-            <ErrorState title="Unable to load job orders" description={jobOrdersQuery.error.message} />
+            <ErrorState
+              title="Unable to load job orders"
+              description={jobOrdersQuery.error.message}
+            />
           ) : undefined
         }
       />

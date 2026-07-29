@@ -18,29 +18,56 @@ export const createJobOrderSchema = z.object({
   purchaseOrderId: z.string().trim().min(1),
   factoryId: z.string().trim().min(1),
   processFlowVersionId: z.string().trim().min(1),
-  lines: z.array(z.object({
-    purchaseOrderLineId: z.string().trim().min(1),
-    sizes: z.array(z.object({
-      purchaseOrderLineSizeId: z.string().trim().min(1),
-      quantity: z.number().int().positive(),
-    })).min(1),
-  })).min(1, 'At least one line is required'),
+  lines: z
+    .array(
+      z.object({
+        purchaseOrderLineId: z.string().trim().min(1),
+        sizes: z
+          .array(
+            z.object({
+              purchaseOrderLineSizeId: z.string().trim().min(1),
+              quantity: z.number().int().positive(),
+            }),
+          )
+          .min(1),
+      }),
+    )
+    .min(1, 'At least one line is required'),
 });
 
 export const listJobOrdersQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: jobOrderStatusSchema.optional(),
   factoryId: z.string().trim().optional(),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export const assignedTasksQuerySchema = z.object({
+  search: z.string().trim().optional(),
+  status: jobOrderStatusSchema.optional(),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+
+export const versionedMutationSchema = z.object({
+  expectedVersion: z.number().int().positive(),
 });
 
 export const completeStageSchema = z.object({
+  expectedVersion: z.number().int().positive(),
   stageStatusId: z.string().trim().min(1),
   remarks: z.string().trim().optional().nullable(),
 });
 
 export const updatePreparedQuantitySchema = z.object({
-  sizes: z.array(z.object({
-    jobOrderLineSizeId: z.string().trim().min(1),
-    preparedQuantity: z.number().int().min(0),
-  })).min(1),
+  expectedVersion: z.number().int().positive(),
+  sizes: z
+    .array(
+      z.object({
+        jobOrderLineSizeId: z.string().trim().min(1),
+        preparedQuantity: z.number().int().min(0),
+      }),
+    )
+    .min(1),
 });

@@ -1,15 +1,17 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ApiSuccessResponse, AuthUser } from '@erve/types';
 import { apiClient, clearStoredToken, getStoredToken, setStoredToken } from '@erve/client';
-import { AUTH_EXPIRED_EVENT, logoutSession } from '../lib/api-client.js';
+import { isAxiosError } from 'axios';
+import { AUTH_EXPIRED_EVENT, logoutSession, refreshAccessToken } from '../lib/api-client.js';
 
-type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
+export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'unavailable';
 
 interface AuthContextValue {
   user: AuthUser | null;
   status: AuthStatus;
   login: (accessToken: string, user: AuthUser) => void;
   logout: () => Promise<void>;
+  retrySession: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -17,6 +19,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
 
   // Restores the session from a sessionStorage-scoped access token only.
   // No token means no prior session in this WebView session — start
@@ -28,14 +31,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function restoreSession() {
-      const token = getStoredToken();
-
-      if (!token) {
-        setStatus('unauthenticated');
-        return;
-      }
-
       try {
+        if (!getStoredToken()) await refreshAccessToken();
         const me = await apiClient.get<ApiSuccessResponse<AuthUser>>('/auth/me');
 
         if (cancelled) {
@@ -44,13 +41,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setUser(me.data.data);
         setStatus('authenticated');
-      } catch {
+      } catch (error) {
         if (cancelled) {
           return;
         }
 
-        setUser(null);
-        setStatus('unauthenticated');
+        if (
+          isAxiosError(error) &&
+          (error.response?.status === 401 || error.response?.status === 403)
+        ) {
+          clearStoredToken();
+          setUser(null);
+          setStatus('unauthenticated');
+        } else {
+          setStatus('unavailable');
+        }
       }
     }
 
@@ -59,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [restoreAttempt]);
 
   useEffect(() => {
     const handleAuthExpired = () => {
@@ -85,6 +90,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await logoutSession();
         setUser(null);
         setStatus('unauthenticated');
+      },
+      retrySession: () => {
+        setStatus('loading');
+        setRestoreAttempt((attempt) => attempt + 1);
       },
     }),
     [user, status],

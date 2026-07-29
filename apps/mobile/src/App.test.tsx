@@ -146,15 +146,13 @@ describe('Mobile App — theme switching does not disturb unrelated app state', 
     const statuses: string[] = [];
 
     act(() => {
-      root.render(
-        <Harness onClient={(c) => clients.push(c)} onStatus={(s) => statuses.push(s)} />,
-      );
+      root.render(<Harness onClient={(c) => clients.push(c)} onStatus={(s) => statuses.push(s)} />);
     });
     await act(async () => {
       await flushMicrotasks();
     });
 
-    expect(statuses.at(-1)).toBe('unauthenticated'); // mocked refreshAccessToken rejects
+    expect(statuses.at(-1)).toBe('unavailable'); // transient refresh failure preserves session state
     const clientCountBefore = clients.length;
     const clientBefore = clients.at(-1);
 
@@ -169,7 +167,7 @@ describe('Mobile App — theme switching does not disturb unrelated app state', 
     // No new QueryClient instance was created by the theme change.
     expect(clients.every((c) => c === clientBefore)).toBe(true);
     // Auth status is unaffected by the theme change (still settled, not reset to "loading").
-    expect(statuses.at(-1)).toBe('unauthenticated');
+    expect(statuses.at(-1)).toBe('unavailable');
     expect(clientCountBefore).toBeGreaterThan(0);
   });
 });

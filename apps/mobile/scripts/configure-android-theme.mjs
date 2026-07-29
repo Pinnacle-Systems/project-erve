@@ -32,7 +32,12 @@ const JAVA_ROOT = join(ANDROID_ROOT, 'app', 'src', 'main', 'java', 'com', 'erve'
 const ANCHOR_FILE = join(ANDROID_ROOT, 'app', 'src', 'main', 'AndroidManifest.xml');
 
 const LAUNCHER_DENSITIES = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'];
-const LAUNCHER_MIPMAP_FILES = ['ic_launcher_foreground.png', 'ic_launcher_monochrome.png', 'ic_launcher.png', 'ic_launcher_round.png'];
+const LAUNCHER_MIPMAP_FILES = [
+  'ic_launcher_foreground.png',
+  'ic_launcher_monochrome.png',
+  'ic_launcher.png',
+  'ic_launcher_round.png',
+];
 
 /** [sourceRelativeToTemplate, destinationAbsolutePath][] */
 const FILES = [
@@ -42,9 +47,16 @@ const FILES = [
   ['res/values-night/styles.xml', join(RES_ROOT, 'values-night', 'styles.xml')],
   ['java/MainActivity.java', join(JAVA_ROOT, 'MainActivity.java')],
   ['java/NativeThemeBridgePlugin.java', join(JAVA_ROOT, 'NativeThemeBridgePlugin.java')],
+  ['java/SecureSessionBridgePlugin.java', join(JAVA_ROOT, 'SecureSessionBridgePlugin.java')],
   ['res/mipmap-anydpi-v26/ic_launcher.xml', join(RES_ROOT, 'mipmap-anydpi-v26', 'ic_launcher.xml')],
-  ['res/mipmap-anydpi-v26/ic_launcher_round.xml', join(RES_ROOT, 'mipmap-anydpi-v26', 'ic_launcher_round.xml')],
-  ['res/drawable-nodpi/erve_splash_icon.png', join(RES_ROOT, 'drawable-nodpi', 'erve_splash_icon.png')],
+  [
+    'res/mipmap-anydpi-v26/ic_launcher_round.xml',
+    join(RES_ROOT, 'mipmap-anydpi-v26', 'ic_launcher_round.xml'),
+  ],
+  [
+    'res/drawable-nodpi/erve_splash_icon.png',
+    join(RES_ROOT, 'drawable-nodpi', 'erve_splash_icon.png'),
+  ],
   ...LAUNCHER_DENSITIES.flatMap((density) =>
     LAUNCHER_MIPMAP_FILES.map((file) => [
       `res/mipmap-${density}/${file}`,

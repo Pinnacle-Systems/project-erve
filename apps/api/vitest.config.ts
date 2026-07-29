@@ -10,6 +10,7 @@ export default defineConfig({
     env: {
       FILE_STORAGE_DIR: path.join(os.tmpdir(), 'erve-api-test-uploads'),
     },
+    setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.ts'],
     testTimeout: 15000,
     hookTimeout: 15000,

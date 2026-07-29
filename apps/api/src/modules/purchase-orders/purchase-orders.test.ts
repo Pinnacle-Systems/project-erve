@@ -250,7 +250,7 @@ describe('purchase orders API', () => {
       expect(detail.status).toBe(200);
       expect(detail.body.data.distributor.id).toBe(dist.id);
       expect(list.status).toBe(200);
-      expect(list.body.data).toHaveLength(1);
+      expect(list.body.data.items).toHaveLength(1);
     });
 
     it('rejects size not valid for style', async () => {
@@ -593,7 +593,7 @@ describe('purchase orders API', () => {
         .get('/purchase-orders')
         .set('Authorization', `Bearer ${adminToken}`);
       expect(res.status).toBe(200);
-      expect(res.body.data).toHaveLength(1);
+      expect(res.body.data.items).toHaveLength(1);
     });
 
     it('MERCHANDISER can view all POs', async () => {

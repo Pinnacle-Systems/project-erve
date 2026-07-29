@@ -97,18 +97,34 @@ async function renderAuth(): Promise<{ latest: () => CapturedAuth }> {
 }
 
 describe('mobile AuthContext — startup with no access token', () => {
-  it('does not call /auth/refresh and starts unauthenticated', async () => {
+  it('uses the persisted refresh session and restores the authenticated user', async () => {
     const calls: string[] = [];
     apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
       calls.push(config.url ?? '');
+      if (config.url === '/auth/refresh') {
+        return ok(config, { success: true, data: { accessToken: 'cold-start-token' } });
+      }
+      if (config.url === '/auth/me') {
+        expect(config.headers.Authorization).toBe('Bearer cold-start-token');
+        return ok(config, { success: true, data: TEST_USER });
+      }
       throw new Error(`Unexpected request: ${config.url}`);
     }) satisfies AxiosAdapter;
 
     const { latest } = await renderAuth();
 
-    expect(latest().status).toBe('unauthenticated');
+    expect(latest().status).toBe('authenticated');
+    expect(latest().user).toEqual(TEST_USER);
+    expect(calls).toEqual(['/auth/refresh', '/auth/me']);
+  });
+
+  it('keeps the session indeterminate on an offline cold start', async () => {
+    apiClient.defaults.adapter = vi.fn(async () => {
+      throw new AxiosError('Network Error', AxiosError.ERR_NETWORK);
+    }) satisfies AxiosAdapter;
+    const { latest } = await renderAuth();
+    expect(latest().status).toBe('unavailable');
     expect(latest().user).toBeNull();
-    expect(calls).toHaveLength(0);
   });
 });
 

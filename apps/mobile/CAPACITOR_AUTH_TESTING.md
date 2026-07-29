@@ -1,5 +1,10 @@
 # Capacitor auth cookie verification
 
+> Updated implementation: packaged Android now uses the Keystore-backed
+> lifecycle documented in [SESSION_LIFECYCLE.md](./SESSION_LIFECYCLE.md).
+> Historical cookie-only limitation notes below are retained as diagnostic
+> context and no longer describe the packaged application's active flow.
+
 The mobile app currently uses the backend's HttpOnly refresh cookie flow. It
 does not store refresh tokens in localStorage, sessionStorage, or frontend
 state. The access token itself is kept in `sessionStorage` (via
@@ -148,7 +153,7 @@ process.
 1. Set the theme selector to "Use device setting".
 2. Send the app to the background (`adb shell input keyevent KEYCODE_HOME`).
 3. Change the emulator's system appearance (`adb shell cmd uimode night
-   yes|no`).
+yes|no`).
 4. Resume the app (`adb shell am start -n com.erve.mobile/.MainActivity`).
 5. Confirm the resolved theme matches the new system setting.
 
@@ -206,10 +211,10 @@ qualifiers pick the right one before any JavaScript runs.
 
 ### Resource mapping
 
-| Android resource | Source (theme.css) | Light | Dark |
-| --- | --- | --- | --- |
-| `erve_primary` | `--erp-color-primary` | `#C21530` | `#C21530` |
-| `erve_window_background` / status/nav bar / splash bg | `--erp-color-app-bg` | `#EEF3F8` | `#17191D` (splash uses `--erp-color-surface` `#24282E`, see limitation below) |
+| Android resource                                      | Source (theme.css)    | Light     | Dark                                                                          |
+| ----------------------------------------------------- | --------------------- | --------- | ----------------------------------------------------------------------------- |
+| `erve_primary`                                        | `--erp-color-primary` | `#C21530` | `#C21530`                                                                     |
+| `erve_window_background` / status/nav bar / splash bg | `--erp-color-app-bg`  | `#EEF3F8` | `#17191D` (splash uses `--erp-color-surface` `#24282E`, see limitation below) |
 
 ### Status bar, navigation bar, and splash
 

@@ -8,14 +8,27 @@ import { useAuth } from '../auth/AuthContext.js';
 import { LoginForm, type LoginFormValues } from '../components/LoginForm.js';
 import { PoweredByPinnacleBranding } from '../branding/PoweredByPinnacleBranding.js';
 import erveLogo from '../../branding/erve-logo.png';
+import { nativeSecureSession } from '../auth/secure-session.js';
 
 export function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
 
   const mutation = useMutation({
-    mutationFn: (values: LoginFormValues) =>
-      apiClient.post<ApiSuccessResponse<LoginResponse>>('/auth/login', values, { withCredentials: true }),
+    mutationFn: async (values: LoginFormValues) => {
+      const response = await apiClient.post<
+        ApiSuccessResponse<LoginResponse & { refreshToken?: string }>
+      >(nativeSecureSession.isAvailable() ? '/auth/mobile/login' : '/auth/login', values, {
+        withCredentials: true,
+      });
+      if (nativeSecureSession.isAvailable()) {
+        if (!response.data.data.refreshToken) {
+          throw new Error('Mobile refresh session was not returned');
+        }
+        await nativeSecureSession.set(response.data.data.refreshToken);
+      }
+      return response;
+    },
     onSuccess: (response) => {
       const { accessToken, user } = response.data.data;
       login(accessToken, user);
@@ -25,8 +38,8 @@ export function LoginPage() {
 
   const errorMessage =
     mutation.isError && isAxiosError(mutation.error)
-      ? (mutation.error.response?.data?.error?.message as string | undefined) ??
-        'Unable to sign in. Please try again.'
+      ? ((mutation.error.response?.data?.error?.message as string | undefined) ??
+        'Unable to sign in. Please try again.')
       : undefined;
 
   return (
@@ -36,7 +49,7 @@ export function LoginPage() {
           unreadable on a crimson banner. */}
       <div className="flex flex-col items-center gap-2 bg-surface px-6 pb-10 pt-16">
         <img src={erveLogo} alt="Erve India" className="h-auto w-48 max-w-full" />
-        <p className="text-sm text-muted-foreground">Sign in to your distributor account</p>
+        <p className="text-sm text-muted-foreground">Sign in to your Erve account</p>
       </div>
       <div className="flex-1 px-6 py-8">
         <Card>

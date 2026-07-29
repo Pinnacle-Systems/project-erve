@@ -3,20 +3,39 @@ import { requireAuth } from '../../auth/auth.middleware.js';
 import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
+import { HttpError } from '../../errors/http-error.js';
 import {
   completeStageSchema,
+  assignedTasksQuerySchema,
   createJobOrderSchema,
   listJobOrdersQuerySchema,
   updatePreparedQuantitySchema,
+  versionedMutationSchema,
 } from './job-orders.validation.js';
 import * as jobOrdersService from './job-orders.service.js';
 
 export const jobOrdersRouter = Router();
 jobOrdersRouter.use(requireAuth);
 
-const canViewJobOrders = requireRoles('ADMIN', 'MERCHANDISER', 'FACTORY_USER', 'QA_USER', 'SENIOR_MANAGEMENT');
+const canViewJobOrders = requireRoles(
+  'ADMIN',
+  'MERCHANDISER',
+  'FACTORY_USER',
+  'QA_USER',
+  'SENIOR_MANAGEMENT',
+);
 const canCreateJobOrders = requireRoles('ADMIN', 'MERCHANDISER');
 const canWorkflowJobOrders = requireRoles('ADMIN', 'MERCHANDISER', 'FACTORY_USER');
+
+function idempotencyKey(req: { get(name: string): string | undefined }): string {
+  const key = req.get('Idempotency-Key')?.trim();
+  if (!key || key.length > 200) {
+    throw HttpError.badRequest(
+      'Idempotency-Key header is required and must be at most 200 characters',
+    );
+  }
+  return key;
+}
 
 jobOrdersRouter.get(
   '/',
@@ -39,6 +58,16 @@ jobOrdersRouter.post(
 );
 
 jobOrdersRouter.get(
+  '/assigned-tasks',
+  requireRoles('FACTORY_USER'),
+  asyncHandler(async (req, res) => {
+    const filters = assignedTasksQuerySchema.parse(req.query);
+    const tasks = await jobOrdersService.getAssignedFactoryTasks(req.user!, filters);
+    res.status(200).json(successResponse(tasks));
+  }),
+);
+
+jobOrdersRouter.get(
   '/:id',
   canViewJobOrders,
   asyncHandler(async (req, res) => {
@@ -51,7 +80,13 @@ jobOrdersRouter.post(
   '/:id/actions/send-to-factory',
   canCreateJobOrders,
   asyncHandler(async (req, res) => {
-    const jobOrder = await jobOrdersService.sendJobOrderToFactory(req.user!, req.params.id! as string);
+    const input = versionedMutationSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.sendJobOrderToFactory(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
     res.status(200).json(successResponse(jobOrder));
   }),
 );
@@ -60,7 +95,13 @@ jobOrdersRouter.post(
   '/:id/actions/confirm',
   canWorkflowJobOrders,
   asyncHandler(async (req, res) => {
-    const jobOrder = await jobOrdersService.confirmJobOrder(req.user!, req.params.id! as string);
+    const input = versionedMutationSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.confirmJobOrder(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
     res.status(200).json(successResponse(jobOrder));
   }),
 );
@@ -70,7 +111,12 @@ jobOrdersRouter.post(
   canWorkflowJobOrders,
   asyncHandler(async (req, res) => {
     const input = completeStageSchema.parse(req.body);
-    const jobOrder = await jobOrdersService.completeProductionStage(req.user!, req.params.id! as string, input);
+    const jobOrder = await jobOrdersService.completeProductionStage(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
     res.status(200).json(successResponse(jobOrder));
   }),
 );
@@ -80,7 +126,12 @@ jobOrdersRouter.post(
   canWorkflowJobOrders,
   asyncHandler(async (req, res) => {
     const input = updatePreparedQuantitySchema.parse(req.body);
-    const jobOrder = await jobOrdersService.updatePreparedQuantity(req.user!, req.params.id! as string, input);
+    const jobOrder = await jobOrdersService.updatePreparedQuantity(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
     res.status(200).json(successResponse(jobOrder));
   }),
 );
@@ -91,6 +142,18 @@ jobOrdersRouter.get(
   asyncHandler(async (req, res) => {
     const stages = await jobOrdersService.getJobOrderStages(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(stages));
+  }),
+);
+
+jobOrdersRouter.get(
+  '/:id/audit',
+  canViewJobOrders,
+  asyncHandler(async (req, res) => {
+    const history = await jobOrdersService.getJobOrderAuditHistory(
+      req.user!,
+      req.params.id! as string,
+    );
+    res.status(200).json(successResponse(history));
   }),
 );
 

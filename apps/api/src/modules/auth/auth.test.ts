@@ -303,6 +303,27 @@ describe('POST /auth/refresh', () => {
   });
 });
 
+describe('mobile secure refresh exchange', () => {
+  it('returns and rotates a refresh credential in the response body without a cookie', async () => {
+    await createTestUser({ email: 'mobile@test.local', password: 'pass', roles: ['FACTORY_USER'] });
+    const loginResponse = await request(app)
+      .post('/auth/mobile/login')
+      .send({ identifier: 'mobile@test.local', password: 'pass' })
+      .expect(200);
+    expect(loginResponse.body.data.refreshToken).toEqual(expect.any(String));
+    expect(getSetCookieHeaders(loginResponse)).toHaveLength(0);
+
+    const firstToken = loginResponse.body.data.refreshToken as string;
+    const refreshResponse = await request(app)
+      .post('/auth/mobile/refresh')
+      .send({ refreshToken: firstToken })
+      .expect(200);
+    expect(refreshResponse.body.data.accessToken).toEqual(expect.any(String));
+    expect(refreshResponse.body.data.refreshToken).not.toBe(firstToken);
+    await request(app).post('/auth/mobile/refresh').send({ refreshToken: firstToken }).expect(401);
+  });
+});
+
 describe('POST /auth/logout', () => {
   it('revokes the refresh session', async () => {
     await createTestUser({

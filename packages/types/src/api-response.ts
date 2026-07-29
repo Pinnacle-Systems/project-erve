@@ -4,10 +4,12 @@ export interface ApiSuccessResponse<T = unknown> {
   message?: string;
 }
 
+import type { StableApiErrorCode } from './operations.js';
+
 export interface ApiErrorResponse {
   success: false;
   error: {
-    code: string;
+    code: StableApiErrorCode | (string & {});
     message: string;
     details?: unknown;
   };

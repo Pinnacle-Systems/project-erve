@@ -3,3 +3,4 @@ export * from './roles.js';
 export * from './user.js';
 export * from './auth.js';
 export * from './health.js';
+export * from './operations.js';

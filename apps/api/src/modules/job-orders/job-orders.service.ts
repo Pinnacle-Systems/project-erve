@@ -1,4 +1,6 @@
 import { createId } from '@erve/shared';
+import { createHash } from 'node:crypto';
+import type { AssignedFactoryTaskSummary, JobOrderDetail, PaginatedResponse } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { JobOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
@@ -6,7 +8,15 @@ import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 
 const jobOrderInclude = {
-  purchaseOrder: { select: { id: true, poNumber: true, status: true } },
+  purchaseOrder: {
+    select: {
+      id: true,
+      poNumber: true,
+      status: true,
+      requiredDeliveryDate: true,
+      distributor: { select: { id: true, code: true, name: true } },
+    },
+  },
   factory: { select: { id: true, code: true, name: true } },
   processFlowVersion: {
     include: {
@@ -46,7 +56,17 @@ function canViewAllJobOrders(user: CurrentUser): boolean {
 }
 
 function canFactoryManage(user: CurrentUser, factoryId: string): boolean {
-  return user.roles.includes('FACTORY_USER') && user.factoryIds.includes(factoryId);
+  return (
+    user.roles.includes('FACTORY_USER') &&
+    user.factoryIds.length === 1 &&
+    user.factoryIds[0] === factoryId
+  );
+}
+
+function assertSoleFactoryMapping(user: CurrentUser): string {
+  if (user.factoryIds.length === 0) throw HttpError.factoryMappingRequired();
+  if (user.factoryIds.length > 1) throw HttpError.factoryMappingAmbiguous();
+  return user.factoryIds[0]!;
 }
 
 function assertJobOrderViewAccess(
@@ -54,7 +74,7 @@ function assertJobOrderViewAccess(
   jobOrder: { factoryId: string; status: JobOrderStatus },
 ): void {
   if (canViewAllJobOrders(user)) return;
-  if (canFactoryManage(user, jobOrder.factoryId)) return;
+  if (canFactoryManage(user, jobOrder.factoryId) && jobOrder.status !== 'DRAFT') return;
   if (user.roles.includes('QA_USER') && jobOrder.status === 'READY_FOR_QA') return;
   throw HttpError.forbidden('You do not have access to this job order');
 }
@@ -101,14 +121,14 @@ function toStageView(stage: JobOrderRecord['stageStatuses'][number]) {
     stageNameSnapshot: stage.stageNameSnapshot,
     status: stage.status,
     completedBy: stage.completer,
-    completedAt: stage.completedAt,
+    completedAt: stage.completedAt?.toISOString() ?? null,
     remarks: stage.remarks,
-    createdAt: stage.createdAt,
-    updatedAt: stage.updatedAt,
+    createdAt: stage.createdAt.toISOString(),
+    updatedAt: stage.updatedAt.toISOString(),
   };
 }
 
-function toJobOrderView(jobOrder: JobOrderRecord) {
+function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
   return {
     id: jobOrder.id,
     jobOrderNumber: jobOrder.jobOrderNumber,
@@ -123,9 +143,9 @@ function toJobOrderView(jobOrder: JobOrderRecord) {
     status: jobOrder.status,
     factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
     confirmedBy: jobOrder.confirmer,
-    confirmedAt: jobOrder.confirmedAt,
-    productionStartedAt: jobOrder.productionStartedAt,
-    productionCompletedAt: jobOrder.productionCompletedAt,
+    confirmedAt: jobOrder.confirmedAt?.toISOString() ?? null,
+    productionStartedAt: jobOrder.productionStartedAt?.toISOString() ?? null,
+    productionCompletedAt: jobOrder.productionCompletedAt?.toISOString() ?? null,
     orderedQuantityTotal: totalOrdered(jobOrder),
     preparedQuantityTotal: jobOrder.preparedQuantityTotal,
     creator: jobOrder.creator,
@@ -150,21 +170,68 @@ function toJobOrderView(jobOrder: JobOrderRecord) {
       })),
     })),
     stages: jobOrder.stageStatuses.map(toStageView),
-    createdAt: jobOrder.createdAt,
-    updatedAt: jobOrder.updatedAt,
+    createdAt: jobOrder.createdAt.toISOString(),
+    updatedAt: jobOrder.updatedAt.toISOString(),
+    version: jobOrder.version,
   };
 }
 
-export async function generateJobOrderNumber(): Promise<string> {
+async function generateJobOrderNumber(client: Tx): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = `JO-${year}-`;
-  const last = await prisma.jobOrder.findFirst({
+  await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-number-${year}`}))`;
+  const last = await client.jobOrder.findFirst({
     where: { jobOrderNumber: { startsWith: prefix } },
     orderBy: { jobOrderNumber: 'desc' },
     select: { jobOrderNumber: true },
   });
   const lastSeq = last ? parseInt(last.jobOrderNumber.slice(prefix.length), 10) : 0;
   return `${prefix}${String(lastSeq + 1).padStart(6, '0')}`;
+}
+
+function requestHash(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+async function beginIdempotentOperation(
+  tx: Tx,
+  actorId: string,
+  jobOrderId: string,
+  operation: string,
+  idempotencyKey: string,
+  hash: string,
+): Promise<boolean> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${actorId}:${operation}:${idempotencyKey}`}))`;
+  const existing = await tx.jobOrderIdempotencyRecord.findUnique({
+    where: { actorId_operation_idempotencyKey: { actorId, operation, idempotencyKey } },
+  });
+  if (!existing) return false;
+  if (existing.jobOrderId !== jobOrderId || existing.requestHash !== hash) {
+    throw HttpError.idempotencyKeyReused();
+  }
+  return true;
+}
+
+async function finishIdempotentOperation(
+  tx: Tx,
+  actorId: string,
+  jobOrderId: string,
+  operation: string,
+  idempotencyKey: string,
+  hash: string,
+  resultVersion: number,
+): Promise<void> {
+  await tx.jobOrderIdempotencyRecord.create({
+    data: {
+      id: createId(),
+      actorId,
+      jobOrderId,
+      operation,
+      idempotencyKey,
+      requestHash: hash,
+      resultVersion,
+    },
+  });
 }
 
 export async function updatePurchaseOrderJobOrderedStatus(
@@ -191,14 +258,20 @@ export async function updatePurchaseOrderJobOrderedStatus(
   if (nextStatus !== po.status) {
     await tx.distributorPurchaseOrder.update({
       where: { id: purchaseOrderId },
-      data: { status: nextStatus },
+      data: { status: nextStatus, version: { increment: 1 } },
     });
   }
 }
 
 export async function getJobOrderList(
   user: CurrentUser,
-  filters: { search?: string; status?: JobOrderStatus; factoryId?: string },
+  filters: {
+    search?: string;
+    status?: JobOrderStatus;
+    factoryId?: string;
+    cursor?: string;
+    limit: number;
+  },
 ) {
   if (user.roles.includes('DISTRIBUTOR') || user.roles.includes('ACCOUNTANT')) {
     throw HttpError.forbidden('You do not have access to job orders');
@@ -218,9 +291,111 @@ export async function getJobOrderList(
   const jobOrders = await prisma.jobOrder.findMany({
     where,
     include: jobOrderInclude,
-    orderBy: { createdAt: 'desc' },
+    orderBy: { id: 'desc' },
+    take: filters.limit + 1,
+    cursor: filters.cursor ? { id: filters.cursor } : undefined,
+    skip: filters.cursor ? 1 : undefined,
   });
-  return jobOrders.map(toJobOrderView);
+  const hasMore = jobOrders.length > filters.limit;
+  const page = hasMore ? jobOrders.slice(0, filters.limit) : jobOrders;
+  return {
+    items: page.map(toJobOrderView),
+    pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
+  };
+}
+
+export async function getAssignedFactoryTasks(
+  user: CurrentUser,
+  filters: { search?: string; status?: JobOrderStatus; cursor?: string; limit: number },
+): Promise<PaginatedResponse<AssignedFactoryTaskSummary>> {
+  const factoryId = assertSoleFactoryMapping(user);
+  const operationalStatuses: JobOrderStatus[] = [
+    'SENT_TO_FACTORY',
+    'CONFIRMED_BY_FACTORY',
+    'IN_PRODUCTION',
+    'PRODUCTION_COMPLETE',
+    'READY_FOR_QA',
+    'QA_IN_PROGRESS',
+    'QA_PASSED',
+    'PARTIALLY_QA_PASSED',
+    'CLOSED',
+    'CANCELLED',
+  ];
+  const visibleStatuses = filters.status
+    ? operationalStatuses.includes(filters.status)
+      ? [filters.status]
+      : []
+    : operationalStatuses;
+  const records = await prisma.jobOrder.findMany({
+    where: {
+      factoryId,
+      status: { in: visibleStatuses },
+      OR: filters.search
+        ? [
+            { jobOrderNumber: { contains: filters.search, mode: 'insensitive' } },
+            { purchaseOrder: { poNumber: { contains: filters.search, mode: 'insensitive' } } },
+          ]
+        : undefined,
+    },
+    select: {
+      id: true,
+      jobOrderNumber: true,
+      status: true,
+      version: true,
+      updatedAt: true,
+      preparedQuantityTotal: true,
+      factory: { select: { id: true, code: true, name: true } },
+      purchaseOrder: {
+        select: {
+          poNumber: true,
+          requiredDeliveryDate: true,
+          distributor: { select: { id: true, code: true, name: true } },
+        },
+      },
+      lines: { select: { orderedQuantityTotal: true } },
+      stageStatuses: {
+        where: { status: { not: 'COMPLETED' } },
+        orderBy: { stageSequence: 'asc' },
+        take: 1,
+        select: { id: true, stageSequence: true, stageNameSnapshot: true },
+      },
+    },
+    orderBy: { id: 'desc' },
+    take: filters.limit + 1,
+    cursor: filters.cursor ? { id: filters.cursor } : undefined,
+    skip: filters.cursor ? 1 : undefined,
+  });
+  const hasMore = records.length > filters.limit;
+  const page = hasMore ? records.slice(0, filters.limit) : records;
+  return {
+    items: page.map((record) => ({
+      id: record.id,
+      jobOrderNumber: record.jobOrderNumber,
+      purchaseOrderNumber: record.purchaseOrder.poNumber,
+      distributor: record.purchaseOrder.distributor,
+      factory: record.factory,
+      status: record.status,
+      currentStage: record.stageStatuses[0]
+        ? {
+            id: record.stageStatuses[0].id,
+            sequence: record.stageStatuses[0].stageSequence,
+            name: record.stageStatuses[0].stageNameSnapshot,
+          }
+        : null,
+      orderedQuantityTotal: record.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0),
+      preparedQuantityTotal: record.preparedQuantityTotal,
+      requiredDeliveryDate: record.purchaseOrder.requiredDeliveryDate?.toISOString() ?? null,
+      version: record.version,
+      updatedAt: record.updatedAt.toISOString(),
+      actionRequired: [
+        'SENT_TO_FACTORY',
+        'CONFIRMED_BY_FACTORY',
+        'IN_PRODUCTION',
+        'PRODUCTION_COMPLETE',
+      ].includes(record.status),
+    })),
+    pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
+  };
 }
 
 export async function getJobOrderDetail(user: CurrentUser, id: string) {
@@ -298,9 +473,10 @@ export async function createJobOrderFromPO(
   }
 
   const jobOrderId = createId();
-  const jobOrderNumber = await generateJobOrderNumber();
+  let jobOrderNumber = '';
 
   await prisma.$transaction(async (tx) => {
+    jobOrderNumber = await generateJobOrderNumber(tx);
     await tx.jobOrder.create({
       data: {
         id: jobOrderId,
@@ -338,79 +514,124 @@ export async function createJobOrderFromPO(
       });
 
       for (const size of line.sizes) {
-        await tx.distributorPurchaseOrderLineSize.update({
-          where: { id: size.purchaseOrderLineSizeId },
+        const snapshot = poSizesById.get(size.purchaseOrderLineSizeId)!;
+        const allocated = await tx.distributorPurchaseOrderLineSize.updateMany({
+          where: {
+            id: size.purchaseOrderLineSizeId,
+            jobOrderedQuantity: { lte: snapshot.orderedQuantity - size.quantity },
+          },
           data: { jobOrderedQuantity: { increment: size.quantity } },
         });
+        if (allocated.count !== 1) {
+          throw HttpError.conflict('Purchase order balance changed; reload before allocating');
+        }
       }
     }
 
     await updatePurchaseOrderJobOrderedStatus(tx, input.purchaseOrderId);
-  });
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'JOB_ORDER_CREATED',
-    entityType: 'JobOrder',
-    entityId: jobOrderId,
-    metadata: {
-      jobOrderNumber,
-      purchaseOrderId: input.purchaseOrderId,
-      factoryId: input.factoryId,
-    },
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_CREATED',
+        entityType: 'JobOrder',
+        entityId: jobOrderId,
+        metadata: {
+          jobOrderNumber,
+          purchaseOrderId: input.purchaseOrderId,
+          factoryId: input.factoryId,
+        },
+      },
+      tx,
+    );
   });
 
   return getJobOrderDetail(actor, jobOrderId);
 }
 
-export async function sendJobOrderToFactory(actor: CurrentUser, id: string) {
-  const jobOrder = await prisma.jobOrder.findUnique({
-    where: { id },
-    include: { factory: { select: { status: true } } },
-  });
-  if (!jobOrder) throw HttpError.notFound('Job order not found');
+export async function sendJobOrderToFactory(
+  actor: CurrentUser,
+  id: string,
+  input: { expectedVersion: number },
+  idempotencyKey: string,
+) {
   if (!canManageJobOrders(actor))
     throw HttpError.forbidden('Only admins and merchandisers can send job orders');
-  if (jobOrder.status !== 'DRAFT')
-    throw HttpError.badRequest('Only DRAFT job orders can be sent to factory');
-  if (jobOrder.factory.status !== 'ACTIVE') {
-    throw HttpError.conflict('An inactive factory cannot receive a job order');
-  }
-
-  await prisma.jobOrder.update({ where: { id }, data: { status: 'SENT_TO_FACTORY' } });
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'JOB_ORDER_SENT_TO_FACTORY',
-    entityType: 'JobOrder',
-    entityId: id,
-    metadata: { jobOrderNumber: jobOrder.jobOrderNumber },
+  const hash = requestHash(input);
+  await prisma.$transaction(async (tx) => {
+    if (await beginIdempotentOperation(tx, actor.id, id, 'SEND_TO_FACTORY', idempotencyKey, hash))
+      return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const jobOrder = await tx.jobOrder.findUnique({
+      where: { id },
+      include: { factory: { select: { status: true } } },
+    });
+    if (!jobOrder) throw HttpError.notFound('Job order not found');
+    if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+    if (jobOrder.status !== 'DRAFT')
+      throw HttpError.badRequest('Only DRAFT job orders can be sent to factory');
+    if (jobOrder.factory.status !== 'ACTIVE')
+      throw HttpError.conflict('An inactive factory cannot receive a job order');
+    const updated = await tx.jobOrder.update({
+      where: { id },
+      data: { status: 'SENT_TO_FACTORY', version: { increment: 1 } },
+    });
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_SENT_TO_FACTORY',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: { jobOrderNumber: jobOrder.jobOrderNumber },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'SEND_TO_FACTORY',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
   });
   return getJobOrderDetail(actor, id);
 }
 
-export async function confirmJobOrder(actor: CurrentUser, id: string) {
-  const jobOrder = await prisma.jobOrder.findUnique({
-    where: { id },
-    include: {
-      processFlowVersion: {
-        include: { stages: { where: { status: 'ACTIVE' }, orderBy: { sequence: 'asc' } } },
-      },
-    },
-  });
-  if (!jobOrder) throw HttpError.notFound('Job order not found');
-  assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
-  await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
-  if (jobOrder.status !== 'SENT_TO_FACTORY')
-    throw HttpError.badRequest('Only sent job orders can be confirmed');
-
+export async function confirmJobOrder(
+  actor: CurrentUser,
+  id: string,
+  input: { expectedVersion: number },
+  idempotencyKey: string,
+) {
+  const initial = await prisma.jobOrder.findUnique({ where: { id }, select: { factoryId: true } });
+  if (!initial) throw HttpError.notFound('Job order not found');
+  assertJobOrderWorkflowAuthorization(actor, initial.factoryId);
+  await assertFactoryUserFactoryActive(actor, initial.factoryId);
+  const hash = requestHash(input);
   await prisma.$transaction(async (tx) => {
-    await tx.jobOrder.update({
+    if (await beginIdempotentOperation(tx, actor.id, id, 'CONFIRM', idempotencyKey, hash)) return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const jobOrder = await tx.jobOrder.findUnique({
+      where: { id },
+      include: {
+        processFlowVersion: {
+          include: { stages: { where: { status: 'ACTIVE' }, orderBy: { sequence: 'asc' } } },
+        },
+      },
+    });
+    if (!jobOrder) throw HttpError.notFound('Job order not found');
+    if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+    if (jobOrder.status !== 'SENT_TO_FACTORY')
+      throw HttpError.badRequest('Only sent job orders can be confirmed');
+    const updated = await tx.jobOrder.update({
       where: { id },
       data: {
         status: 'CONFIRMED_BY_FACTORY',
         factoryConfirmationStatus: 'CONFIRMED',
         confirmedBy: actor.id,
         confirmedAt: new Date(),
+        version: { increment: 1 },
       },
     });
     await tx.jobOrderStageStatus.createMany({
@@ -423,14 +644,25 @@ export async function confirmJobOrder(actor: CurrentUser, id: string) {
       })),
       skipDuplicates: true,
     });
-  });
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'JOB_ORDER_FACTORY_CONFIRMED',
-    entityType: 'JobOrder',
-    entityId: id,
-    metadata: { jobOrderNumber: jobOrder.jobOrderNumber },
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_FACTORY_CONFIRMED',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: { jobOrderNumber: jobOrder.jobOrderNumber },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'CONFIRM',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
   });
   return getJobOrderDetail(actor, id);
 }
@@ -438,8 +670,24 @@ export async function confirmJobOrder(actor: CurrentUser, id: string) {
 export async function completeProductionStage(
   actor: CurrentUser,
   id: string,
-  input: { stageStatusId: string; remarks?: string | null },
+  input: { expectedVersion: number; stageStatusId: string; remarks?: string | null },
+  idempotencyKey: string,
 ) {
+  const hash = requestHash(input);
+  const replay = await prisma.jobOrderIdempotencyRecord.findUnique({
+    where: {
+      actorId_operation_idempotencyKey: {
+        actorId: actor.id,
+        operation: 'COMPLETE_STAGE',
+        idempotencyKey,
+      },
+    },
+  });
+  if (replay) {
+    if (replay.jobOrderId !== id || replay.requestHash !== hash)
+      throw HttpError.idempotencyKeyReused();
+    return getJobOrderDetail(actor, id);
+  }
   const jobOrder = await prisma.jobOrder.findUnique({
     where: { id },
     include: { stageStatuses: { orderBy: { stageSequence: 'asc' } } },
@@ -447,6 +695,7 @@ export async function completeProductionStage(
   if (!jobOrder) throw HttpError.notFound('Job order not found');
   assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
   await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
+  if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
   if (!['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status)) {
     throw HttpError.badRequest(
       'Production stages can only be completed after factory confirmation',
@@ -464,8 +713,18 @@ export async function completeProductionStage(
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
-    await tx.jobOrderStageStatus.update({
-      where: { id: input.stageStatusId },
+    if (await beginIdempotentOperation(tx, actor.id, id, 'COMPLETE_STAGE', idempotencyKey, hash))
+      return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const currentVersion = await tx.jobOrder.findUnique({
+      where: { id },
+      select: { version: true },
+    });
+    if (!currentVersion) throw HttpError.notFound('Job order not found');
+    if (currentVersion.version !== input.expectedVersion)
+      throw HttpError.staleVersion(currentVersion.version);
+    const stageUpdated = await tx.jobOrderStageStatus.updateMany({
+      where: { id: input.stageStatusId, status: { not: 'COMPLETED' } },
       data: {
         status: 'COMPLETED',
         completedBy: actor.id,
@@ -473,22 +732,35 @@ export async function completeProductionStage(
         remarks: input.remarks ?? null,
       },
     });
-    await tx.jobOrder.update({
+    if (stageUpdated.count !== 1) throw HttpError.staleVersion(jobOrder.version);
+    const updated = await tx.jobOrder.update({
       where: { id },
       data: {
         status: isFinalStage ? 'PRODUCTION_COMPLETE' : 'IN_PRODUCTION',
         productionStartedAt: jobOrder.productionStartedAt ?? now,
         productionCompletedAt: isFinalStage ? now : undefined,
+        version: { increment: 1 },
       },
     });
-  });
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'JOB_ORDER_STAGE_COMPLETED',
-    entityType: 'JobOrder',
-    entityId: id,
-    metadata: { stageStatusId: input.stageStatusId, stageName: nextStage.stageNameSnapshot },
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_STAGE_COMPLETED',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: { stageStatusId: input.stageStatusId, stageName: nextStage.stageNameSnapshot },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'COMPLETE_STAGE',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
   });
   return getJobOrderDetail(actor, id);
 }
@@ -496,8 +768,27 @@ export async function completeProductionStage(
 export async function updatePreparedQuantity(
   actor: CurrentUser,
   id: string,
-  input: { sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }> },
+  input: {
+    expectedVersion: number;
+    sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }>;
+  },
+  idempotencyKey: string,
 ) {
+  const hash = requestHash(input);
+  const replay = await prisma.jobOrderIdempotencyRecord.findUnique({
+    where: {
+      actorId_operation_idempotencyKey: {
+        actorId: actor.id,
+        operation: 'UPDATE_PREPARED_QUANTITY',
+        idempotencyKey,
+      },
+    },
+  });
+  if (replay) {
+    if (replay.jobOrderId !== id || replay.requestHash !== hash)
+      throw HttpError.idempotencyKeyReused();
+    return getJobOrderDetail(actor, id);
+  }
   const jobOrder = await prisma.jobOrder.findUnique({
     where: { id },
     include: { lines: { include: { sizes: true } } },
@@ -505,6 +796,7 @@ export async function updatePreparedQuantity(
   if (!jobOrder) throw HttpError.notFound('Job order not found');
   assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
   await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
+  if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
   if (jobOrder.status !== 'PRODUCTION_COMPLETE') {
     throw HttpError.badRequest(
       'Prepared quantity can only be updated after production is complete',
@@ -514,13 +806,37 @@ export async function updatePreparedQuantity(
   const allowedSizeIds = new Set(
     jobOrder.lines.flatMap((line) => line.sizes.map((size) => size.id)),
   );
+  const seenSizeIds = new Set<string>();
   for (const size of input.sizes) {
     if (!allowedSizeIds.has(size.jobOrderLineSizeId)) {
       throw HttpError.badRequest('Prepared quantity line size does not belong to this job order');
     }
+    if (seenSizeIds.has(size.jobOrderLineSizeId)) {
+      throw HttpError.badRequest('Duplicate prepared quantity sizes are not allowed');
+    }
+    seenSizeIds.add(size.jobOrderLineSizeId);
   }
 
   await prisma.$transaction(async (tx) => {
+    if (
+      await beginIdempotentOperation(
+        tx,
+        actor.id,
+        id,
+        'UPDATE_PREPARED_QUANTITY',
+        idempotencyKey,
+        hash,
+      )
+    )
+      return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const currentVersion = await tx.jobOrder.findUnique({
+      where: { id },
+      select: { version: true },
+    });
+    if (!currentVersion) throw HttpError.notFound('Job order not found');
+    if (currentVersion.version !== input.expectedVersion)
+      throw HttpError.staleVersion(currentVersion.version);
     for (const size of input.sizes) {
       await tx.jobOrderLineSize.update({
         where: { id: size.jobOrderLineSizeId },
@@ -545,17 +861,29 @@ export async function updatePreparedQuantity(
       (sum, line) => sum + line.preparedQuantityTotal,
       0,
     );
-    await tx.jobOrder.update({
+    const updated = await tx.jobOrder.update({
       where: { id },
-      data: { preparedQuantityTotal, status: 'READY_FOR_QA' },
+      data: { preparedQuantityTotal, status: 'READY_FOR_QA', version: { increment: 1 } },
     });
-  });
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'JOB_ORDER_PREPARED_QUANTITY_UPDATED',
-    entityType: 'JobOrder',
-    entityId: id,
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_PREPARED_QUANTITY_UPDATED',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: { sizes: input.sizes },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'UPDATE_PREPARED_QUANTITY',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
   });
   return getJobOrderDetail(actor, id);
 }
@@ -563,6 +891,21 @@ export async function updatePreparedQuantity(
 export async function getJobOrderStages(user: CurrentUser, id: string) {
   const detail = await getJobOrderDetail(user, id);
   return detail.stages;
+}
+
+export async function getJobOrderAuditHistory(user: CurrentUser, id: string) {
+  await getJobOrderDetail(user, id);
+  return prisma.auditLog.findMany({
+    where: { entityType: 'JobOrder', entityId: id },
+    select: {
+      id: true,
+      action: true,
+      createdAt: true,
+      metadata: true,
+      actor: { select: { id: true, name: true, email: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
 }
 
 export async function calculateVariance(user: CurrentUser, id: string) {

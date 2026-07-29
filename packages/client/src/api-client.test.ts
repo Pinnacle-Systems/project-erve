@@ -1,6 +1,17 @@
-import { AxiosError, type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
+import {
+  AxiosError,
+  type AxiosAdapter,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiClient, AUTH_EXPIRED_EVENT, logoutSession, refreshAccessToken } from './api-client.js';
+import {
+  apiClient,
+  AUTH_EXPIRED_EVENT,
+  configureRefreshCredentialProvider,
+  logoutSession,
+  refreshAccessToken,
+} from './api-client.js';
 import { clearStoredToken, getStoredToken, setStoredToken } from './token-storage.js';
 
 interface MockSessionStorage {
@@ -57,11 +68,13 @@ describe('apiClient refresh session integration', () => {
     vi.stubGlobal('sessionStorage', storage);
     vi.stubGlobal('window', new EventTarget());
     clearStoredToken();
+    configureRefreshCredentialProvider(null);
   });
 
   afterEach(() => {
     apiClient.defaults.adapter = originalAdapter;
     clearStoredToken();
+    configureRefreshCredentialProvider(null);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -71,7 +84,10 @@ describe('apiClient refresh session integration', () => {
 
     expect(getStoredToken()).toBe('access-token');
     expect(storage.setItem).toHaveBeenCalledWith('erve.accessToken', 'access-token');
-    expect(storage.setItem).not.toHaveBeenCalledWith(expect.stringContaining('refresh'), expect.any(String));
+    expect(storage.setItem).not.toHaveBeenCalledWith(
+      expect.stringContaining('refresh'),
+      expect.any(String),
+    );
   });
 
   it('refreshes once and retries a protected request after a 401', async () => {
@@ -176,6 +192,26 @@ describe('apiClient refresh session integration', () => {
 
     expect(refreshCalls).toBe(1);
     expect(getStoredToken()).toBe('startup-token');
+  });
+
+  it('rotates a native secure refresh credential without browser storage', async () => {
+    const provider = {
+      get: vi.fn(async () => 'native-refresh'),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    configureRefreshCredentialProvider(provider);
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      expect(config.url).toBe('/auth/mobile/refresh');
+      expect(config.data).toBe(JSON.stringify({ refreshToken: 'native-refresh' }));
+      return ok(config, {
+        success: true,
+        data: { accessToken: 'native-access', refreshToken: 'rotated-native-refresh' },
+      });
+    }) satisfies AxiosAdapter;
+    await expect(refreshAccessToken()).resolves.toBe('native-access');
+    expect(provider.set).toHaveBeenCalledWith('rotated-native-refresh');
+    expect(storage.setItem).toHaveBeenCalledWith('erve.accessToken', 'native-access');
   });
 
   it('does not recursively refresh login, refresh, or logout failures', async () => {

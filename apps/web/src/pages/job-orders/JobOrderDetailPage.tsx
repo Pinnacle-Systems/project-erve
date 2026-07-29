@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
+import type { ApiSuccessResponse, JobOrderAuditEntry } from '@erve/types';
 import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
@@ -36,28 +36,56 @@ export function JobOrderDetailPage() {
       return res.data.data;
     },
   });
+  const auditQuery = useQuery({
+    queryKey: ['job-order-audit', id],
+    queryFn: async () =>
+      (await apiClient.get<ApiSuccessResponse<JobOrderAuditEntry[]>>(`/job-orders/${id}/audit`))
+        .data.data,
+  });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['job-order', id] });
 
   const sendMutation = useMutation({
-    mutationFn: async () => apiClient.post<ApiSuccessResponse<JobOrder>>(`/job-orders/${id}/actions/send-to-factory`),
+    mutationFn: async () =>
+      apiClient.post<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/actions/send-to-factory`,
+        { expectedVersion: jobOrderQuery.data!.version },
+        { headers: { 'Idempotency-Key': `${id}:send:${jobOrderQuery.data!.version}` } },
+      ),
     onSuccess: () => {
       setSendDialogOpen(false);
       invalidate();
     },
   });
   const confirmMutation = useMutation({
-    mutationFn: async () => apiClient.post<ApiSuccessResponse<JobOrder>>(`/job-orders/${id}/actions/confirm`),
+    mutationFn: async () =>
+      apiClient.post<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/actions/confirm`,
+        { expectedVersion: jobOrderQuery.data!.version },
+        { headers: { 'Idempotency-Key': `${id}:confirm:${jobOrderQuery.data!.version}` } },
+      ),
     onSuccess: invalidate,
   });
   const completeStageMutation = useMutation({
     mutationFn: async (stageStatusId: string) =>
-      apiClient.post<ApiSuccessResponse<JobOrder>>(`/job-orders/${id}/actions/complete-stage`, { stageStatusId }),
+      apiClient.post<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/actions/complete-stage`,
+        { stageStatusId, expectedVersion: jobOrderQuery.data!.version },
+        {
+          headers: {
+            'Idempotency-Key': `${id}:stage:${stageStatusId}:${jobOrderQuery.data!.version}`,
+          },
+        },
+      ),
     onSuccess: invalidate,
   });
   const preparedMutation = useMutation({
     mutationFn: async (sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }>) =>
-      apiClient.post<ApiSuccessResponse<JobOrder>>(`/job-orders/${id}/actions/update-prepared-quantity`, { sizes }),
+      apiClient.post<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/actions/update-prepared-quantity`,
+        { sizes, expectedVersion: jobOrderQuery.data!.version },
+        { headers: { 'Idempotency-Key': `${id}:prepared:${jobOrderQuery.data!.version}` } },
+      ),
     onSuccess: invalidate,
   });
 
@@ -76,11 +104,19 @@ export function JobOrderDetailPage() {
   const nextStage = jobOrder?.stages.find((stage) => stage.status !== 'COMPLETED');
 
   if (jobOrderQuery.isLoading) return <LoadingState label="Loading job order" />;
-  if (!jobOrder) return <EmptyState title="Job order not found" description="The selected job order could not be loaded." tone="error" />;
+  if (!jobOrder)
+    return (
+      <EmptyState
+        title="Job order not found"
+        description="The selected job order could not be loaded."
+        tone="error"
+      />
+    );
 
   const canSend = jobOrder.status === 'DRAFT';
   const canConfirm = jobOrder.status === 'SENT_TO_FACTORY';
-  const canCompleteStage = ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) && Boolean(nextStage);
+  const canCompleteStage =
+    ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) && Boolean(nextStage);
   const canUpdatePrepared = jobOrder.status === 'PRODUCTION_COMPLETE';
   const preparedPayload = flatSizes.map((size) => ({
     jobOrderLineSizeId: size.id,
@@ -92,7 +128,12 @@ export function JobOrderDetailPage() {
       <PageHeader
         title={jobOrder.jobOrderNumber}
         subtitle={`From ${jobOrder.purchaseOrder.poNumber}`}
-        status={<StatusBadge label={JOB_ORDER_STATUS_LABELS[jobOrder.status]} tone={statusTone(jobOrder.status)} />}
+        status={
+          <StatusBadge
+            label={JOB_ORDER_STATUS_LABELS[jobOrder.status]}
+            tone={statusTone(jobOrder.status)}
+          />
+        }
         secondaryActions={
           <Button asChild variant="secondary">
             <Link to="/job-orders">Back</Link>
@@ -101,9 +142,16 @@ export function JobOrderDetailPage() {
         primaryAction={
           <div className="flex flex-wrap gap-2">
             {canSend && <Button onClick={() => setSendDialogOpen(true)}>Send to Factory</Button>}
-            {canConfirm && <Button onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>Confirm</Button>}
+            {canConfirm && (
+              <Button onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>
+                Confirm
+              </Button>
+            )}
             {canCompleteStage && nextStage && (
-              <Button onClick={() => completeStageMutation.mutate(nextStage.id)} loading={completeStageMutation.isPending}>
+              <Button
+                onClick={() => completeStageMutation.mutate(nextStage.id)}
+                loading={completeStageMutation.isPending}
+              >
                 Complete Next Stage
               </Button>
             )}
@@ -111,10 +159,17 @@ export function JobOrderDetailPage() {
         }
       />
 
-      {(sendMutation.isError || confirmMutation.isError || completeStageMutation.isError || preparedMutation.isError) && (
+      {(sendMutation.isError ||
+        confirmMutation.isError ||
+        completeStageMutation.isError ||
+        preparedMutation.isError) && (
         <ValidationMessage tone="error">
-          {[sendMutation.error, confirmMutation.error, completeStageMutation.error, preparedMutation.error]
-            .find((error) => error instanceof Error)?.message ?? 'Unable to update job order'}
+          {[
+            sendMutation.error,
+            confirmMutation.error,
+            completeStageMutation.error,
+            preparedMutation.error,
+          ].find((error) => error instanceof Error)?.message ?? 'Unable to update job order'}
         </ValidationMessage>
       )}
 
@@ -122,19 +177,44 @@ export function JobOrderDetailPage() {
         <DescriptionList columns={4}>
           <DescriptionList.Item label="Source PO" value={jobOrder.purchaseOrder.poNumber} />
           <DescriptionList.Item label="Factory" value={jobOrder.factory.name} />
-          <DescriptionList.Item label="Process Flow" value={`${jobOrder.processFlowVersion.processFlow.name} v${jobOrder.processFlowVersion.versionNumber}`} />
+          <DescriptionList.Item
+            label="Process Flow"
+            value={`${jobOrder.processFlowVersion.processFlow.name} v${jobOrder.processFlowVersion.versionNumber}`}
+          />
           <DescriptionList.Item
             label="Confirmation"
-            value={<StatusBadge label={CONFIRMATION_LABELS[jobOrder.factoryConfirmationStatus]} tone={confirmationTone(jobOrder.factoryConfirmationStatus)} />}
+            value={
+              <StatusBadge
+                label={CONFIRMATION_LABELS[jobOrder.factoryConfirmationStatus]}
+                tone={confirmationTone(jobOrder.factoryConfirmationStatus)}
+              />
+            }
           />
-          <DescriptionList.Item label="Ordered Qty" value={jobOrder.orderedQuantityTotal.toLocaleString()} />
-          <DescriptionList.Item label="Prepared Qty" value={jobOrder.preparedQuantityTotal.toLocaleString()} />
-          <DescriptionList.Item label="Variance" value={(jobOrder.preparedQuantityTotal - jobOrder.orderedQuantityTotal).toLocaleString()} />
+          <DescriptionList.Item
+            label="Ordered Qty"
+            value={jobOrder.orderedQuantityTotal.toLocaleString()}
+          />
+          <DescriptionList.Item
+            label="Prepared Qty"
+            value={jobOrder.preparedQuantityTotal.toLocaleString()}
+          />
+          <DescriptionList.Item
+            label="Variance"
+            value={(
+              jobOrder.preparedQuantityTotal - jobOrder.orderedQuantityTotal
+            ).toLocaleString()}
+          />
           <DescriptionList.Item label="Created" value={formatDateTime(jobOrder.createdAt)} />
           <DescriptionList.Item label="Confirmed By" value={jobOrder.confirmedBy?.name} />
           <DescriptionList.Item label="Confirmed At" value={formatDateTime(jobOrder.confirmedAt)} />
-          <DescriptionList.Item label="Production Started" value={formatDateTime(jobOrder.productionStartedAt)} />
-          <DescriptionList.Item label="Production Completed" value={formatDateTime(jobOrder.productionCompletedAt)} />
+          <DescriptionList.Item
+            label="Production Started"
+            value={formatDateTime(jobOrder.productionStartedAt)}
+          />
+          <DescriptionList.Item
+            label="Production Completed"
+            value={formatDateTime(jobOrder.productionCompletedAt)}
+          />
         </DescriptionList>
       </Panel>
 
@@ -143,8 +223,18 @@ export function JobOrderDetailPage() {
           columns={[
             { key: 'style', header: 'Style', accessor: 'style' },
             { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-            { key: 'orderedQuantity', header: 'Ordered', align: 'right', render: (size) => size.orderedQuantity.toLocaleString() },
-            { key: 'preparedQuantity', header: 'Prepared', align: 'right', render: (size) => size.preparedQuantity.toLocaleString() },
+            {
+              key: 'orderedQuantity',
+              header: 'Ordered',
+              align: 'right',
+              render: (size) => size.orderedQuantity.toLocaleString(),
+            },
+            {
+              key: 'preparedQuantity',
+              header: 'Prepared',
+              align: 'right',
+              render: (size) => size.preparedQuantity.toLocaleString(),
+            },
             {
               key: 'varianceQuantity',
               header: 'Variance',
@@ -165,15 +255,30 @@ export function JobOrderDetailPage() {
             {
               key: 'status',
               header: 'Status',
-              render: (stage) => <StatusBadge label={STAGE_LABELS[stage.status]} tone={stageTone(stage.status)} />,
+              render: (stage) => (
+                <StatusBadge label={STAGE_LABELS[stage.status]} tone={stageTone(stage.status)} />
+              ),
             },
-            { key: 'completedAt', header: 'Completed', render: (stage) => formatDateTime(stage.completedAt) ?? '—' },
-            { key: 'completedBy', header: 'Completed By', render: (stage) => stage.completedBy?.name ?? '—' },
+            {
+              key: 'completedAt',
+              header: 'Completed',
+              render: (stage) => formatDateTime(stage.completedAt) ?? '—',
+            },
+            {
+              key: 'completedBy',
+              header: 'Completed By',
+              render: (stage) => stage.completedBy?.name ?? '—',
+            },
             { key: 'remarks', header: 'Remarks', render: (stage) => stage.remarks ?? '—' },
           ]}
           data={jobOrder.stages}
           rowKey="id"
-          emptyState={<EmptyState title="No stages yet" description="Stages are created when the factory confirms the job order." />}
+          emptyState={
+            <EmptyState
+              title="No stages yet"
+              description="Stages are created when the factory confirms the job order."
+            />
+          }
           selectedRowKey={nextStage?.id}
         />
       </Panel>
@@ -197,7 +302,12 @@ export function JobOrderDetailPage() {
           columns={[
             { key: 'style', header: 'Style', accessor: 'style' },
             { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-            { key: 'orderedQuantity', header: 'Ordered', align: 'right', render: (size) => size.orderedQuantity.toLocaleString() },
+            {
+              key: 'orderedQuantity',
+              header: 'Ordered',
+              align: 'right',
+              render: (size) => size.orderedQuantity.toLocaleString(),
+            },
             {
               key: 'preparedInput',
               header: 'Prepared',
@@ -208,7 +318,12 @@ export function JobOrderDetailPage() {
                   type="number"
                   min={0}
                   value={preparedQuantities[size.id] ?? size.preparedQuantity}
-                  onChange={(event) => setPreparedQuantities((current) => ({ ...current, [size.id]: Number(event.target.value || 0) }))}
+                  onChange={(event) =>
+                    setPreparedQuantities((current) => ({
+                      ...current,
+                      [size.id]: Number(event.target.value || 0),
+                    }))
+                  }
                   disabled={!canUpdatePrepared}
                   density="compact"
                   width="xs"
@@ -222,7 +337,15 @@ export function JobOrderDetailPage() {
       </Panel>
 
       <Panel title="Audit Log">
-        <AuditTrail items={[]} emptyState="Audit log panel will be connected when the audit API is exposed." />
+        <AuditTrail
+          items={(auditQuery.data ?? []).map((entry) => ({
+            id: entry.id,
+            title: entry.action.replaceAll('_', ' '),
+            actor: entry.actor?.name ?? 'System',
+            timestamp: formatDateTime(entry.createdAt),
+          }))}
+          emptyState={auditQuery.isLoading ? 'Loading history…' : 'No history available.'}
+        />
       </Panel>
 
       <ConfirmDialog

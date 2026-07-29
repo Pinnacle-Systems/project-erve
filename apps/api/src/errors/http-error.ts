@@ -31,6 +31,36 @@ export class HttpError extends Error {
     return new HttpError(409, 'CONFLICT', message, details);
   }
 
+  static staleVersion(currentVersion: number): HttpError {
+    return new HttpError(409, 'STALE_VERSION', 'The job order changed since it was loaded', {
+      currentVersion,
+    });
+  }
+
+  static idempotencyKeyReused(): HttpError {
+    return new HttpError(
+      409,
+      'IDEMPOTENCY_KEY_REUSED',
+      'This idempotency key was already used for a different request',
+    );
+  }
+
+  static factoryMappingRequired(): HttpError {
+    return new HttpError(
+      403,
+      'FACTORY_MAPPING_REQUIRED',
+      'A single active factory mapping is required',
+    );
+  }
+
+  static factoryMappingAmbiguous(): HttpError {
+    return new HttpError(
+      403,
+      'FACTORY_MAPPING_AMBIGUOUS',
+      'Multiple factory mappings are not supported',
+    );
+  }
+
   static internal(message = 'Something went wrong', details?: unknown): HttpError {
     return new HttpError(500, 'INTERNAL_SERVER_ERROR', message, details);
   }

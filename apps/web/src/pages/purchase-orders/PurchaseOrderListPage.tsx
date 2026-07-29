@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
+import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -21,7 +21,11 @@ const STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
 };
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
 }
 
 function statusTone(status: PurchaseOrderStatus) {
@@ -53,7 +57,10 @@ export function PurchaseOrderListPage() {
   const ordersQuery = useQuery({
     queryKey: ['purchase-orders', params],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PurchaseOrder[]>>('/purchase-orders', { params });
+      const res = await apiClient.get<ApiSuccessResponse<PaginatedResponse<PurchaseOrder>>>(
+        '/purchase-orders',
+        { params },
+      );
       return res.data.data;
     },
   });
@@ -88,7 +95,10 @@ export function PurchaseOrderListPage() {
         onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as PurchaseOrderStatus))}
         statusOptions={[
           { label: 'All statuses', value: 'ALL' },
-          ...(Object.keys(STATUS_LABELS) as PurchaseOrderStatus[]).map((s) => ({ label: STATUS_LABELS[s], value: s })),
+          ...(Object.keys(STATUS_LABELS) as PurchaseOrderStatus[]).map((s) => ({
+            label: STATUS_LABELS[s],
+            value: s,
+          })),
         ]}
         hasActiveFilters={Boolean(search || status || distributorId || purchaseMode)}
         onClearFilters={() => {
@@ -108,13 +118,17 @@ export function PurchaseOrderListPage() {
             >
               <SelectItem value="ALL">All distributors</SelectItem>
               {(distributorsQuery.data ?? []).map((d) => (
-                <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                <SelectItem key={d.id} value={d.id}>
+                  {d.name}
+                </SelectItem>
               ))}
             </SelectField>
             <SelectField
               aria-label="Purchase mode"
               value={purchaseMode || 'ALL'}
-              onValueChange={(value) => setPurchaseMode(value === 'ALL' ? '' : (value as PurchaseMode))}
+              onValueChange={(value) =>
+                setPurchaseMode(value === 'ALL' ? '' : (value as PurchaseMode))
+              }
               density="compact"
               width="sm"
             >
@@ -132,30 +146,56 @@ export function PurchaseOrderListPage() {
             key: 'poNumber',
             header: 'PO Number',
             render: (po) => (
-              <Link className="font-medium text-[var(--erp-text-link)]" to={`/purchase-orders/${po.id}`}>
+              <Link
+                className="font-medium text-[var(--erp-text-link)]"
+                to={`/purchase-orders/${po.id}`}
+              >
                 {po.poNumber}
               </Link>
             ),
           },
           { key: 'distributor', header: 'Distributor', render: (po) => po.distributor.name },
           { key: 'poDate', header: 'PO Date', render: (po) => formatDate(po.poDate) },
-          { key: 'requiredDeliveryDate', header: 'Delivery Date', render: (po) => (po.requiredDeliveryDate ? formatDate(po.requiredDeliveryDate) : '—') },
-          { key: 'purchaseMode', header: 'Mode', render: (po) => (po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale Return') },
+          {
+            key: 'requiredDeliveryDate',
+            header: 'Delivery Date',
+            render: (po) => (po.requiredDeliveryDate ? formatDate(po.requiredDeliveryDate) : '—'),
+          },
+          {
+            key: 'purchaseMode',
+            header: 'Mode',
+            render: (po) => (po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale Return'),
+          },
           {
             key: 'status',
             header: 'Status',
-            render: (po) => <StatusBadge label={STATUS_LABELS[po.status]} tone={statusTone(po.status)} />,
+            render: (po) => (
+              <StatusBadge label={STATUS_LABELS[po.status]} tone={statusTone(po.status)} />
+            ),
           },
-          { key: 'totalOrderedQuantity', header: 'Qty', align: 'right', render: (po) => po.totalOrderedQuantity.toLocaleString() },
+          {
+            key: 'totalOrderedQuantity',
+            header: 'Qty',
+            align: 'right',
+            render: (po) => po.totalOrderedQuantity.toLocaleString(),
+          },
           { key: 'createdAt', header: 'Created', render: (po) => formatDate(po.createdAt) },
         ]}
-        data={ordersQuery.data ?? []}
+        data={ordersQuery.data?.items ?? []}
         loading={ordersQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading purchase orders" />}
-        emptyState={<EmptyState title="No purchase orders found" description="Create a PO to start tracking distributor demand." />}
+        emptyState={
+          <EmptyState
+            title="No purchase orders found"
+            description="Create a PO to start tracking distributor demand."
+          />
+        }
         error={
           ordersQuery.isError ? (
-            <ErrorState title="Unable to load purchase orders" description={ordersQuery.error.message} />
+            <ErrorState
+              title="Unable to load purchase orders"
+              description={ordersQuery.error.message}
+            />
           ) : undefined
         }
       />

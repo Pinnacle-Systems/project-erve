@@ -1,4 +1,5 @@
 import { createId } from '@erve/shared';
+import type { PurchaseOrderDetail } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { PurchaseMode, PurchaseOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
@@ -10,12 +11,14 @@ import { HttpError } from '../../errors/http-error.js';
 // PO number generation
 // ---------------------------------------------------------------------------
 
-export async function generatePoNumber(): Promise<string> {
+type Tx = Prisma.TransactionClient;
+
+async function generatePoNumber(client: Tx): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = `PO-${year}-`;
 
-  // Find the highest existing sequence for this year
-  const last = await prisma.distributorPurchaseOrder.findFirst({
+  await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`purchase-order-number-${year}`}))`;
+  const last = await client.distributorPurchaseOrder.findFirst({
     where: { poNumber: { startsWith: prefix } },
     orderBy: { poNumber: 'desc' },
     select: { poNumber: true },
@@ -76,7 +79,7 @@ function toLineView(line: PORecord['lines'][number]) {
   };
 }
 
-function toPOView(po: PORecord) {
+function toPOView(po: PORecord): PurchaseOrderDetail {
   const totalQuantity = po.lines.reduce(
     (sum, line) => sum + line.sizes.reduce((s, sz) => s + sz.orderedQuantity, 0),
     0,
@@ -87,15 +90,16 @@ function toPOView(po: PORecord) {
     distributor: po.distributor,
     merchandiser: po.merchandiser,
     creator: po.creator,
-    poDate: po.poDate,
-    requiredDeliveryDate: po.requiredDeliveryDate,
+    poDate: po.poDate.toISOString(),
+    requiredDeliveryDate: po.requiredDeliveryDate?.toISOString() ?? null,
     purchaseMode: po.purchaseMode,
     status: po.status,
     remarks: po.remarks,
     lines: po.lines.map(toLineView),
     totalOrderedQuantity: totalQuantity,
-    createdAt: po.createdAt,
-    updatedAt: po.updatedAt,
+    createdAt: po.createdAt.toISOString(),
+    updatedAt: po.updatedAt.toISOString(),
+    version: po.version,
   };
 }
 
@@ -124,6 +128,8 @@ export async function getPurchaseOrderList(
     status?: PurchaseOrderStatus;
     distributorId?: string;
     purchaseMode?: PurchaseMode;
+    cursor?: string;
+    limit: number;
   },
 ) {
   const distributorIdFilter = canViewAllPOs(user)
@@ -142,10 +148,17 @@ export async function getPurchaseOrderList(
   const orders = await prisma.distributorPurchaseOrder.findMany({
     where,
     include: poInclude,
-    orderBy: { createdAt: 'desc' },
+    orderBy: { id: 'desc' },
+    take: filters.limit + 1,
+    cursor: filters.cursor ? { id: filters.cursor } : undefined,
+    skip: filters.cursor ? 1 : undefined,
   });
-
-  return orders.map(toPOView);
+  const hasMore = orders.length > filters.limit;
+  const page = hasMore ? orders.slice(0, filters.limit) : orders;
+  return {
+    items: page.map(toPOView),
+    pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
+  };
 }
 
 export async function getPurchaseOrderDetail(user: CurrentUser, id: string) {
@@ -190,46 +203,49 @@ export async function createPurchaseOrder(
 
   await validateLines(input.lines);
 
-  const poNumber = await generatePoNumber();
   const poId = createId();
-
-  await prisma.distributorPurchaseOrder.create({
-    data: {
-      id: poId,
-      poNumber,
-      distributorId: input.distributorId,
-      merchandiserId: input.merchandiserId ?? null,
-      poDate: new Date(input.poDate),
-      requiredDeliveryDate: input.requiredDeliveryDate
-        ? new Date(input.requiredDeliveryDate)
-        : null,
-      purchaseMode: input.purchaseMode,
-      status: 'DRAFT',
-      remarks: input.remarks ?? null,
-      createdBy: actor.id,
-      lines: {
-        create: input.lines.map((line) => ({
-          id: createId(),
-          styleId: line.styleId,
-          remarks: line.remarks ?? null,
-          sizes: {
-            create: line.sizes.map((sz) => ({
-              id: createId(),
-              sizeId: sz.sizeId,
-              orderedQuantity: sz.orderedQuantity,
-            })),
-          },
-        })),
+  await prisma.$transaction(async (tx) => {
+    const poNumber = await generatePoNumber(tx);
+    await tx.distributorPurchaseOrder.create({
+      data: {
+        id: poId,
+        poNumber,
+        distributorId: input.distributorId,
+        merchandiserId: input.merchandiserId ?? null,
+        poDate: new Date(input.poDate),
+        requiredDeliveryDate: input.requiredDeliveryDate
+          ? new Date(input.requiredDeliveryDate)
+          : null,
+        purchaseMode: input.purchaseMode,
+        status: 'DRAFT',
+        remarks: input.remarks ?? null,
+        createdBy: actor.id,
+        lines: {
+          create: input.lines.map((line) => ({
+            id: createId(),
+            styleId: line.styleId,
+            remarks: line.remarks ?? null,
+            sizes: {
+              create: line.sizes.map((sz) => ({
+                id: createId(),
+                sizeId: sz.sizeId,
+                orderedQuantity: sz.orderedQuantity,
+              })),
+            },
+          })),
+        },
       },
-    },
-  });
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'PO_CREATED',
-    entityType: 'DistributorPurchaseOrder',
-    entityId: poId,
-    metadata: { poNumber, distributorId: input.distributorId },
+    });
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'PO_CREATED',
+        entityType: 'DistributorPurchaseOrder',
+        entityId: poId,
+        metadata: { poNumber, distributorId: input.distributorId },
+      },
+      tx,
+    );
   });
 
   return getPurchaseOrderDetail(actor, poId);
@@ -275,6 +291,7 @@ export async function updatePurchaseOrderDraft(
             : undefined,
         purchaseMode: input.purchaseMode,
         remarks: input.remarks !== undefined ? input.remarks : undefined,
+        version: { increment: 1 },
       },
     });
 
@@ -319,7 +336,10 @@ export async function submitPurchaseOrder(actor: CurrentUser, id: string) {
   if (po.status !== 'DRAFT')
     throw HttpError.badRequest('Only DRAFT purchase orders can be submitted');
 
-  await prisma.distributorPurchaseOrder.update({ where: { id }, data: { status: 'SUBMITTED' } });
+  await prisma.distributorPurchaseOrder.update({
+    where: { id },
+    data: { status: 'SUBMITTED', version: { increment: 1 } },
+  });
 
   await recordAuditLog({
     actorId: actor.id,
@@ -351,7 +371,10 @@ export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
     throw HttpError.badRequest('Cannot cancel a purchase order that has job ordered quantities');
   }
 
-  await prisma.distributorPurchaseOrder.update({ where: { id }, data: { status: 'CANCELLED' } });
+  await prisma.distributorPurchaseOrder.update({
+    where: { id },
+    data: { status: 'CANCELLED', version: { increment: 1 } },
+  });
 
   await recordAuditLog({
     actorId: actor.id,
@@ -398,7 +421,7 @@ export async function getJobOrderBalance(user: CurrentUser, id: string) {
     })),
   }));
 
-  return { poId: id, poNumber: po.poNumber, lines };
+  return { poId: id, poNumber: po.poNumber, version: po.version, lines };
 }
 
 export async function getFulfilmentSummary(user: CurrentUser, id: string) {
