@@ -48,7 +48,7 @@ function useTaskMutation(id: string, path: string) {
 
 export function FactoryTaskDetailPage() {
   const { id = '' } = useParams();
-  const [prepared, setPrepared] = useState<Record<string, number>>({});
+  const [prepared, setPrepared] = useState<Record<string, string>>({});
   const task = useQuery({
     queryKey: ['factory-task', id],
     queryFn: async () =>
@@ -92,7 +92,7 @@ export function FactoryTaskDetailPage() {
     expectedVersion: job.version,
     sizes: sizes.map((size) => ({
       jobOrderLineSizeId: size.id,
-      preparedQuantity: prepared[size.id] ?? size.preparedQuantity,
+      preparedQuantity: Number(prepared[size.id] ?? size.preparedQuantity),
     })),
   };
 
@@ -186,7 +186,11 @@ export function FactoryTaskDetailPage() {
       </section>
 
       <section className="rounded-xl border border-border bg-surface p-4">
-        <h2 className="font-semibold">Prepared quantities</h2>
+        <h2 className="font-semibold">Final quantities ready for QA</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Enter the finished quantity for each garment size after every production stage is
+          complete. These are not per-stage throughput quantities.
+        </p>
         <div className="mt-3 space-y-3">
           {sizes.map((size) => (
             <label
@@ -196,20 +200,21 @@ export function FactoryTaskDetailPage() {
               <span>
                 <span className="block font-medium">{size.style}</span>
                 <span className="text-sm text-muted-foreground">
-                  Size {size.sizeLabel} · ordered {size.orderedQuantity}
+                  Garment size {size.sizeLabel} · job quantity {size.orderedQuantity}
                 </span>
               </span>
               <input
                 className="min-h-12 w-24 rounded-md border border-border bg-background px-3 text-right text-lg"
-                aria-label={`Prepared ${size.style} ${size.sizeLabel}`}
+                aria-label={`Final quantity ready for QA, ${size.style}, garment size ${size.sizeLabel}`}
                 type="number"
                 min={0}
                 disabled={job.status !== 'PRODUCTION_COMPLETE'}
-                value={prepared[size.id] ?? size.preparedQuantity}
+                value={prepared[size.id] ?? String(size.preparedQuantity)}
+                onFocus={(event) => event.currentTarget.select()}
                 onChange={(event) =>
                   setPrepared((current) => ({
                     ...current,
-                    [size.id]: Number(event.target.value || 0),
+                    [size.id]: event.target.value,
                   }))
                 }
               />
@@ -224,7 +229,7 @@ export function FactoryTaskDetailPage() {
               savePrepared.mutate({ body: preparedBody, key: `${id}:prepared:${job.version}` })
             }
           >
-            {savePrepared.isPending ? 'Saving…' : 'Save prepared quantities'}
+            {savePrepared.isPending ? 'Saving…' : 'Submit final quantities to QA'}
           </button>
         )}
         {job.status === 'READY_FOR_QA' && (
