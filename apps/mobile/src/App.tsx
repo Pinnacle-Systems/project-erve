@@ -14,7 +14,7 @@ export function App() {
     // getStoredThemePreference(). Mirrors apps/web/src/App.tsx; do not
     // reintroduce a controlled prop here without also removing the
     // user-facing selector (shell/AccountMenu.js's ThemeModeSelector).
-    <ThemeProvider theme="default" density="comfortable">
+    <ThemeProvider theme="default" density="touch">
       <ThemeDocumentMeta />
       <NativeThemeSurfaces />
       <QueryClientProvider client={queryClient}>
