@@ -12,7 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@erve/primitives": "workspace:*"
+    "@erve/primitives": "workspace:*",
+    "@erve/theme": "workspace:*"
   },
   "peerDependencies": {
     "react": "^19.2.7"

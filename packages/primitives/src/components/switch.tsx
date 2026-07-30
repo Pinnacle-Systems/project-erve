@@ -1,18 +1,18 @@
 import * as SwitchPrimitives from "@radix-ui/react-switch";
 import { forwardRef, type ReactNode } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
+import { useResolvedDensity } from "../lib/density";
 import { ValidationMessage } from "./validation-message";
 
 const switchVariants = cva(
-  "peer inline-flex shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-[var(--erp-surface-muted)]",
+  "peer group inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors focus-visible:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
   {
     variants: {
       density: {
         compact: "h-4 w-7",
         comfortable: "h-5 w-9",
-        touch: "h-6 w-11",
+        touch: "h-11 w-11",
       },
     },
   }
@@ -31,6 +31,19 @@ const thumbVariants = cva(
   }
 );
 
+const trackVariants = cva(
+  "flex shrink-0 items-center rounded-full border-2 border-transparent transition-colors group-data-[state=checked]:bg-primary group-data-[state=unchecked]:bg-[var(--erp-surface-muted)]",
+  {
+    variants: {
+      density: {
+        compact: "h-4 w-7",
+        comfortable: "h-5 w-9",
+        touch: "h-6 w-11",
+      },
+    },
+  },
+);
+
 export interface SwitchProps
   extends React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root>,
     VariantProps<typeof switchVariants> {
@@ -41,8 +54,7 @@ export interface SwitchProps
 
 export const Switch = forwardRef<React.ElementRef<typeof SwitchPrimitives.Root>, SwitchProps>(
   ({ className, density, error, label, description, id, ...props }, ref) => {
-    const { densityName } = useTheme();
-    const resolvedDensity = density ?? densityName;
+    const resolvedDensity = useResolvedDensity(density ?? undefined);
     const errorId = error && id ? `${id}-error` : undefined;
     const descId = description && id ? `${id}-description` : undefined;
     const ariaDescribedBy = [errorId, descId, props["aria-describedby"]].filter(Boolean).join(" ") || undefined;
@@ -53,10 +65,13 @@ export const Switch = forwardRef<React.ElementRef<typeof SwitchPrimitives.Root>,
         id={id}
         aria-describedby={ariaDescribedBy}
         aria-invalid={!!error}
+        data-density={resolvedDensity}
         className={cn(switchVariants({ density: resolvedDensity }), className)}
         {...props}
       >
-        <SwitchPrimitives.Thumb className={cn(thumbVariants({ density: resolvedDensity }))} />
+        <span className={trackVariants({ density: resolvedDensity })}>
+          <SwitchPrimitives.Thumb className={cn(thumbVariants({ density: resolvedDensity }))} />
+        </span>
       </SwitchPrimitives.Root>
     );
 

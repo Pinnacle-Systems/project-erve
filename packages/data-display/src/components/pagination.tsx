@@ -1,6 +1,7 @@
 import { forwardRef } from "react";
 import { cn } from "../lib/utils";
 import { Button } from "@erve/primitives";
+import { useTheme, type Density } from "@erve/theme";
 
 
 export interface PaginationProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -10,8 +11,20 @@ export interface PaginationProps extends React.HTMLAttributes<HTMLDivElement> {
   pageSizeOptions?: number[];
   onPageChange?: (page: number) => void;
   onPageSizeChange?: (pageSize: number) => void;
-  density?: "compact" | "comfortable" | "touch";
+  density?: Density;
 }
+
+const paginationActionClasses = {
+  compact: "h-8 min-h-8 w-8 min-w-8 px-0",
+  comfortable: "h-9 min-h-9 w-9 min-w-9 px-0",
+  touch: "h-11 min-h-11 w-11 min-w-11 px-0",
+} as const;
+
+const paginationSelectClasses = {
+  compact: "h-8 min-h-8 text-sm",
+  comfortable: "h-9 min-h-9 text-sm",
+  touch: "h-11 min-h-11 text-base",
+} as const;
 
 export const Pagination = forwardRef<HTMLDivElement, PaginationProps>(
   (
@@ -23,11 +36,13 @@ export const Pagination = forwardRef<HTMLDivElement, PaginationProps>(
       pageSizeOptions = [10, 25, 50, 100],
       onPageChange,
       onPageSizeChange,
-      density = "comfortable",
+      density,
       ...props
     },
     ref
   ) => {
+    const { densityName } = useTheme();
+    const resolvedDensity = density ?? densityName;
     const totalPages = Math.ceil(total / pageSize);
     const hasPrevious = page > 1;
     const hasNext = page < totalPages;
@@ -37,6 +52,7 @@ export const Pagination = forwardRef<HTMLDivElement, PaginationProps>(
     return (
       <div
         ref={ref}
+        data-density={resolvedDensity}
         className={cn("flex items-center justify-between px-2 py-3 text-sm text-muted-foreground", className)}
         {...props}
       >
@@ -57,7 +73,8 @@ export const Pagination = forwardRef<HTMLDivElement, PaginationProps>(
               <span className="hidden sm:inline-block">Rows per page:</span>
               <select
                 aria-label="Rows per page"
-                className="h-8 rounded-[var(--erp-radius-md)] border border-border bg-surface px-2 py-1 text-sm text-foreground focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)]"
+                data-density={resolvedDensity}
+                className={cn("rounded-[var(--erp-radius-md)] border border-border bg-surface px-2 py-1 text-foreground focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)]", paginationSelectClasses[resolvedDensity])}
                 value={pageSize}
                 onChange={(e) => onPageSizeChange(Number(e.target.value))}
               >
@@ -74,20 +91,21 @@ export const Pagination = forwardRef<HTMLDivElement, PaginationProps>(
         <div className="flex items-center gap-2">
           <Button
             variant="ghost"
-            density="compact"
+            density={resolvedDensity}
             disabled={!hasPrevious}
             onClick={() => onPageChange?.(1)}
             aria-label="Go to first page"
-            className="hidden sm:flex"
+            className={cn("hidden sm:flex", paginationActionClasses[resolvedDensity])}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
           </Button>
           <Button
             variant="ghost"
-            density="compact"
+            density={resolvedDensity}
             disabled={!hasPrevious}
             onClick={() => onPageChange?.(page - 1)}
             aria-label="Go to previous page"
+            className={paginationActionClasses[resolvedDensity]}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="m15 18-6-6 6-6"/></svg>
           </Button>
@@ -96,20 +114,21 @@ export const Pagination = forwardRef<HTMLDivElement, PaginationProps>(
           </span>
           <Button
             variant="ghost"
-            density="compact"
+            density={resolvedDensity}
             disabled={!hasNext}
             onClick={() => onPageChange?.(page + 1)}
             aria-label="Go to next page"
+            className={paginationActionClasses[resolvedDensity]}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="m9 18 6-6-6-6"/></svg>
           </Button>
           <Button
             variant="ghost"
-            density="compact"
+            density={resolvedDensity}
             disabled={!hasNext}
             onClick={() => onPageChange?.(totalPages)}
             aria-label="Go to last page"
-            className="hidden sm:flex"
+            className={cn("hidden sm:flex", paginationActionClasses[resolvedDensity])}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
           </Button>

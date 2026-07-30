@@ -6,6 +6,7 @@ import {
   SelectItem,
   cn,
 } from "@erve/primitives";
+import { useTheme, type Density } from "@erve/theme";
 
 export interface FilterOption {
   label: string;
@@ -27,6 +28,7 @@ export interface FilterBarProps {
   onClearFilters?: () => void;
   hasActiveFilters?: boolean;
   className?: string;
+  density?: Density;
 }
 
 export const FilterBar = ({
@@ -44,7 +46,10 @@ export const FilterBar = ({
   onClearFilters,
   hasActiveFilters,
   className,
+  density,
 }: FilterBarProps) => {
+  const { densityName } = useTheme();
+  const resolvedDensity = density ?? densityName;
   const showDateFrom = onDateFromChange !== undefined || dateFrom !== undefined;
   const showDateTo = onDateToChange !== undefined || dateTo !== undefined;
 
@@ -54,12 +59,13 @@ export const FilterBar = ({
         "flex flex-wrap items-end gap-2 border-b border-border-subtle bg-surface-muted px-4 py-2.5",
         className,
       )}
+      data-density={resolvedDensity}
     >
       <TextField
         value={searchValue}
         onChange={(e) => onSearchChange?.(e.target.value)}
         placeholder={searchPlaceholder}
-        density="compact"
+        density={resolvedDensity}
         width="md"
         aria-label="Search"
       />
@@ -69,7 +75,7 @@ export const FilterBar = ({
           value={statusValue}
           onValueChange={onStatusChange}
           placeholder="All statuses"
-          density="compact"
+          density={resolvedDensity}
           width="sm"
           aria-label="Status"
         >
@@ -86,7 +92,7 @@ export const FilterBar = ({
           type="date"
           value={dateFrom ?? ""}
           onChange={(e) => onDateFromChange?.(e.target.value)}
-          density="compact"
+          density={resolvedDensity}
           width="sm"
           aria-label="From date"
         />
@@ -97,7 +103,7 @@ export const FilterBar = ({
           type="date"
           value={dateTo ?? ""}
           onChange={(e) => onDateToChange?.(e.target.value)}
-          density="compact"
+          density={resolvedDensity}
           width="sm"
           aria-label="To date"
         />
@@ -107,7 +113,7 @@ export const FilterBar = ({
         {hasActiveFilters && onClearFilters && (
           <Button
             variant="ghost"
-            density="compact"
+            density={resolvedDensity}
             width="hug"
             onClick={onClearFilters}
             type="button"

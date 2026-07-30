@@ -1,9 +1,12 @@
 import { forwardRef, type InputHTMLAttributes } from "react";
+import type { Density } from "@erve/theme";
 import { cn } from "../lib/utils";
+import { useResolvedDensity } from "../lib/density";
 
 export interface GridCellInputProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: boolean;
   numeric?: boolean;
+  density?: Density;
 }
 
 /**
@@ -12,11 +15,14 @@ export interface GridCellInputProps extends InputHTMLAttributes<HTMLInputElement
  * Use `numeric` for right-aligned tabular values (Qty, Rate, Amount).
  */
 export const GridCellInput = forwardRef<HTMLInputElement, GridCellInputProps>(
-  ({ className, error, numeric = false, ...props }, ref) => (
-    <input
+  ({ className, error, numeric = false, density, ...props }, ref) => {
+    const resolvedDensity = useResolvedDensity(density);
+    return <input
       ref={ref}
+      data-density={resolvedDensity}
       className={cn(
         "h-(--erp-grid-cell-height) w-full bg-transparent text-(length:--erp-font-size-xs) leading-(--erp-line-height-dense) font-sans",
+        resolvedDensity === "touch" && "min-h-11",
         "rounded-control border border-transparent px-(--erp-grid-cell-padding-x) py-0",
         "text-foreground placeholder:text-muted-foreground",
         "transition-colors duration-150 ease-out",
@@ -31,8 +37,8 @@ export const GridCellInput = forwardRef<HTMLInputElement, GridCellInputProps>(
         className,
       )}
       {...props}
-    />
-  ),
+    />;
+  },
 );
 
 GridCellInput.displayName = "GridCellInput";

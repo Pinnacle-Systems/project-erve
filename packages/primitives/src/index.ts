@@ -38,6 +38,7 @@ export {
 export {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuCheckboxItem,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -49,7 +50,7 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "./components/dropdown-menu";
-export type { DropdownMenuItemProps } from "./components/dropdown-menu";
+export type { DropdownMenuContentProps, DropdownMenuItemProps } from "./components/dropdown-menu";
 
 export {
   SelectContent,

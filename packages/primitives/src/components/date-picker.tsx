@@ -12,8 +12,9 @@ import {
   useState,
 } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { useTheme } from "@erve/theme";
+import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
+import { useResolvedDensity } from "../lib/density";
 import { ValidationMessage } from "./validation-message";
 
 const datePickerFieldVariants = cva(
@@ -41,11 +42,32 @@ const datePickerFieldVariants = cva(
   },
 );
 
-const popoverClassName =
-  "fixed z-50 w-[20rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-surface p-3 shadow-popover";
+const popoverDensityClasses = {
+  compact: "w-[20rem] p-3",
+  comfortable: "w-[22rem] p-3",
+  touch: "w-[23.5rem] p-3",
+} as const;
+
+const calendarActionDensityClasses = {
+  compact: "h-8 min-h-8 w-8 min-w-8 text-sm",
+  comfortable: "h-9 min-h-9 w-9 min-w-9 text-sm",
+  touch: "h-11 min-h-11 w-11 min-w-11 text-base",
+} as const;
+
+const calendarSelectDensityClasses = {
+  compact: "h-8 min-h-8 px-2 text-sm",
+  comfortable: "h-9 min-h-9 px-2 text-sm",
+  touch: "h-11 min-h-11 px-2 text-base",
+} as const;
+
+const calendarTextActionDensityClasses = {
+  compact: "min-h-8 px-1 text-sm",
+  comfortable: "min-h-9 px-2 text-sm",
+  touch: "min-h-11 px-3 text-base",
+} as const;
 
 const dayButtonClassName = [
-  "flex h-8 w-8 items-center justify-center rounded-xs text-sm text-foreground outline-hidden",
+  "flex items-center justify-center rounded-xs text-foreground outline-hidden",
   "transition-colors duration-150 ease-out",
   "hover:bg-[var(--erp-surface-hover)] hover:text-foreground",
   "focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground",
@@ -243,8 +265,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     },
     ref,
   ) => {
-    const { densityName } = useTheme();
-    const resolvedDensity = density ?? densityName;
+    const resolvedDensity = useResolvedDensity(density ?? undefined);
     const generatedId = useId();
     const inputId = id ?? generatedId;
     const popoverId = `${inputId}-popover`;
@@ -260,6 +281,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     const [isOpen, setIsOpen] = useState(false);
     const [visibleMonth, setVisibleMonth] = useState<Date>(selectedDate ?? new Date());
     const rootRef = useRef<HTMLDivElement>(null);
+    const popoverRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
     const dayRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const [popoverPosition, setPopoverPosition] = useState<PopoverPosition>({ left: 0, top: 0 });
@@ -306,8 +328,9 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
 
-      const popoverWidth = Math.min(320, window.innerWidth - 32);
-      const left = Math.min(Math.max(16, rect.left), Math.max(16, window.innerWidth - popoverWidth - 16));
+      const desiredPopoverWidth = resolvedDensity === "compact" ? 320 : resolvedDensity === "comfortable" ? 352 : 376;
+      const popoverWidth = Math.min(desiredPopoverWidth, window.innerWidth);
+      const left = Math.min(Math.max(0, rect.left), Math.max(0, window.innerWidth - popoverWidth));
       setPopoverPosition({ left, top: rect.bottom + 4 });
     };
 
@@ -374,7 +397,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
       if (!isOpen) return;
 
       const onPointerDown = (event: MouseEvent) => {
-        if (!rootRef.current?.contains(event.target as Node)) {
+        if (!rootRef.current?.contains(event.target as Node) && !popoverRef.current?.contains(event.target as Node)) {
           closePopover(false);
         }
       };
@@ -585,7 +608,13 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
               }
             }}
             onKeyDown={handleCalendarButtonKeyDown}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)]"
+            data-density={resolvedDensity}
+            className={cn(
+              "flex shrink-0 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)]",
+              resolvedDensity === "compact" && "h-7 w-7",
+              resolvedDensity === "comfortable" && "h-8 w-8",
+              resolvedDensity === "touch" && "h-11 w-11",
+            )}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -607,13 +636,18 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             </svg>
           </button>
         </div>
-        {isOpen && (
+        {isOpen && createPortal(
           <div
+            ref={popoverRef}
             id={popoverId}
+            data-density={resolvedDensity}
             role="dialog"
             aria-modal="false"
             aria-labelledby={headingId}
-            className={popoverClassName}
+            className={cn(
+              "fixed z-50 max-h-[calc(100vh-0.5rem)] max-w-[100vw] overflow-auto rounded-md border border-border bg-surface shadow-popover",
+              popoverDensityClasses[resolvedDensity],
+            )}
             style={{ left: popoverPosition.left, top: popoverPosition.top }}
           >
             <div className="mb-3 flex items-center justify-between gap-1.5">
@@ -621,7 +655,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 aria-label="Previous year"
                 disabled={!canMovePreviousYear}
-                className="flex h-8 w-8 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
+                className={cn("flex items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]", calendarActionDensityClasses[resolvedDensity])}
                 onClick={() => moveYear(-1)}
               >
                 <span aria-hidden="true">«</span>
@@ -630,7 +664,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 aria-label="Previous month"
                 disabled={!canMovePreviousMonth}
-                className="flex h-8 w-8 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
+                className={cn("flex items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]", calendarActionDensityClasses[resolvedDensity])}
                 onClick={() => moveMonth(-1)}
               >
                 <span aria-hidden="true">‹</span>
@@ -642,7 +676,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 aria-label="Month"
                 value={visibleMonth.getMonth()}
                 onChange={handleMonthChange}
-                className="h-8 min-w-0 rounded-xs border border-border bg-surface px-2 text-sm font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]"
+                className={cn("min-w-0 rounded-xs border border-border bg-surface font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]", calendarSelectDensityClasses[resolvedDensity])}
               >
                 {monthNames.map((month, index) => (
                   <option key={month} value={index}>{month}</option>
@@ -652,7 +686,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 aria-label="Year"
                 value={visibleMonth.getFullYear()}
                 onChange={handleYearChange}
-                className="h-8 rounded-xs border border-border bg-surface px-2 text-sm font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]"
+                className={cn("rounded-xs border border-border bg-surface font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]", calendarSelectDensityClasses[resolvedDensity])}
               >
                 {yearOptions.map((year) => (
                   <option key={year} value={year}>{year}</option>
@@ -662,7 +696,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 aria-label="Next month"
                 disabled={!canMoveNextMonth}
-                className="flex h-8 w-8 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
+                className={cn("flex items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]", calendarActionDensityClasses[resolvedDensity])}
                 onClick={() => moveMonth(1)}
               >
                 <span aria-hidden="true">›</span>
@@ -671,7 +705,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 aria-label="Next year"
                 disabled={!canMoveNextYear}
-                className="flex h-8 w-8 items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]"
+                className={cn("flex items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]", calendarActionDensityClasses[resolvedDensity])}
                 onClick={() => moveYear(1)}
               >
                 <span aria-hidden="true">»</span>
@@ -705,7 +739,8 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                     aria-label={dayLabel}
                     aria-pressed={isSelected}
                     aria-current={isToday ? "date" : undefined}
-                    className={dayButtonClassName}
+                    data-density={resolvedDensity}
+                    className={cn(dayButtonClassName, calendarActionDensityClasses[resolvedDensity])}
                     onClick={() => selectDate(day)}
                     onKeyDown={(event) => handleDayKeyDown(event, index)}
                   >
@@ -717,7 +752,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
               <button
                 type="button"
-                className="text-sm font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]"
+                className={cn("font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]", calendarTextActionDensityClasses[resolvedDensity])}
                 aria-label="Clear selected date"
                 onClick={() => {
                   setDraftValue("");
@@ -732,7 +767,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 type="button"
                 disabled={todayDisabled}
                 aria-label="Select today"
-                className="text-sm font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:no-underline disabled:opacity-[var(--erp-disabled-opacity)]"
+                className={cn("font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:no-underline disabled:opacity-[var(--erp-disabled-opacity)]", calendarTextActionDensityClasses[resolvedDensity])}
                 onClick={() => {
                   if (today) selectDate(today);
                 }}
@@ -740,7 +775,8 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                 Today
               </button>
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
       </div>
     );

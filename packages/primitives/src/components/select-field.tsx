@@ -6,8 +6,8 @@ import {
   forwardRef,
   type ReactNode,
 } from "react";
-import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
+import { DensityOverrideProvider, useResolvedDensity } from "../lib/density";
 
 const ChevronDown = () => (
   <svg
@@ -98,11 +98,12 @@ export const SelectTrigger = forwardRef<
   ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger> &
     VariantProps<typeof triggerVariants>
 >(({ className, children, state, density, ...props }, ref) => {
-  const { densityName } = useTheme();
+  const resolvedDensity = useResolvedDensity(density ?? undefined);
   return (
     <SelectPrimitive.Trigger
       ref={ref}
-      className={cn(triggerVariants({ state, density: density ?? densityName }), className)}
+      data-density={resolvedDensity}
+      className={cn(triggerVariants({ state, density: resolvedDensity }), className)}
       {...props}
     >
       {children}
@@ -140,15 +141,33 @@ export const SelectContent = forwardRef<
 ));
 SelectContent.displayName = SelectPrimitive.Content.displayName;
 
+const itemDensityClasses = {
+  compact: "min-h-8 py-1.5 text-sm",
+  comfortable: "min-h-9 py-2 text-sm",
+  touch: "min-h-11 py-2.5 text-base",
+} as const;
+
 export const SelectItem = forwardRef<
   ElementRef<typeof SelectPrimitive.Item>,
   ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
 >(({ className, children, ...props }, ref) => (
-  <SelectPrimitive.Item
-    ref={ref}
-    className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-xs",
-      "py-1.5 pl-8 pr-2 text-sm text-foreground outline-hidden",
+  <SelectItemWithDensity ref={ref} className={className} {...props}>
+    {children}
+  </SelectItemWithDensity>
+));
+
+const SelectItemWithDensity = forwardRef<
+  ElementRef<typeof SelectPrimitive.Item>,
+  ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
+>(({ className, children, ...props }, ref) => {
+  const resolvedDensity = useResolvedDensity();
+  return (
+    <SelectPrimitive.Item
+      ref={ref}
+      data-density={resolvedDensity}
+      className={cn(
+      "relative flex w-full cursor-default select-none items-center rounded-xs pl-8 pr-2 text-foreground outline-hidden",
+      itemDensityClasses[resolvedDensity],
       "transition-colors duration-150 ease-out",
       "hover:bg-[var(--erp-surface-hover)] hover:text-foreground",
       "focus:bg-[var(--erp-surface-hover)] focus:text-foreground",
@@ -158,18 +177,20 @@ export const SelectItem = forwardRef<
       "data-[state=checked]:focus:bg-[var(--erp-surface-selected-hover)]",
       "data-[state=checked]:data-[highlighted]:bg-[var(--erp-surface-selected-hover)]",
       "data-disabled:pointer-events-none data-disabled:text-[var(--erp-text-disabled)] data-disabled:opacity-[var(--erp-disabled-opacity)]",
-      className,
-    )}
-    {...props}
-  >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <SelectPrimitive.ItemIndicator>
-        <CheckMark />
-      </SelectPrimitive.ItemIndicator>
-    </span>
-    <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
-  </SelectPrimitive.Item>
-));
+        className,
+      )}
+      {...props}
+    >
+      <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+        <SelectPrimitive.ItemIndicator>
+          <CheckMark />
+        </SelectPrimitive.ItemIndicator>
+      </span>
+      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    </SelectPrimitive.Item>
+  );
+});
+SelectItemWithDensity.displayName = "SelectItemWithDensity";
 SelectItem.displayName = SelectPrimitive.Item.displayName;
 
 export const SelectLabel = forwardRef<
@@ -226,6 +247,7 @@ export const SelectField = ({
   children,
   ...rootProps
 }: SelectFieldProps) => {
+  const resolvedDensity = useResolvedDensity(density);
   const fieldId =
     id ?? (label ? `select-${label.toLowerCase().replace(/\s+/g, "-")}` : undefined);
   const hasError = Boolean(error || errorMessage);
@@ -243,18 +265,20 @@ export const SelectField = ({
           {label}
         </label>
       )}
-      <SelectRoot {...rootProps}>
-        <SelectTrigger
-          id={fieldId}
-          state={hasError ? "error" : "default"}
-          density={density}
-          aria-invalid={hasError || undefined}
-          aria-label={!label ? ariaLabel : undefined}
-        >
-          <SelectValue placeholder={placeholder ?? "Select..."} />
-        </SelectTrigger>
-        <SelectContent>{children}</SelectContent>
-      </SelectRoot>
+      <DensityOverrideProvider density={resolvedDensity}>
+        <SelectRoot {...rootProps}>
+          <SelectTrigger
+            id={fieldId}
+            state={hasError ? "error" : "default"}
+            density={resolvedDensity}
+            aria-invalid={hasError || undefined}
+            aria-label={!label ? ariaLabel : undefined}
+          >
+            <SelectValue placeholder={placeholder ?? "Select..."} />
+          </SelectTrigger>
+          <SelectContent>{children}</SelectContent>
+        </SelectRoot>
+      </DensityOverrideProvider>
       {errorMessage && (
         <p className="text-xs text-[var(--erp-form-field-error-text-color)] leading-none" role="alert">
           {errorMessage}

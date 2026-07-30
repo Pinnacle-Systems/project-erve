@@ -1,21 +1,21 @@
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import { forwardRef, type ReactNode } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
+import { useResolvedDensity } from "../lib/density";
 import { ValidationMessage } from "./validation-message";
 
 const checkboxVariants = cva(
-  "peer shrink-0 rounded-xs border border-[var(--erp-color-primary)] ring-offset-background focus-visible:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
+  "peer group inline-flex shrink-0 items-center justify-center rounded-xs ring-offset-background focus-visible:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:cursor-not-allowed disabled:opacity-50",
   {
     variants: {
       density: {
         compact: "h-3.5 w-3.5",
         comfortable: "h-4 w-4",
-        touch: "h-5 w-5",
+        touch: "h-11 w-11",
       },
       error: {
-        true: "border-[var(--erp-color-danger)] focus-visible:ring-[var(--erp-color-danger)]",
+        true: "focus-visible:ring-[var(--erp-color-danger)]",
       },
     },
   }
@@ -31,7 +31,7 @@ export interface CheckboxProps
 
 export const Checkbox = forwardRef<React.ElementRef<typeof CheckboxPrimitive.Root>, CheckboxProps>(
   ({ className, density, error, label, description, required, id, ...props }, ref) => {
-    const { densityName } = useTheme();
+    const resolvedDensity = useResolvedDensity(density ?? undefined);
     const errorId = error && id ? `${id}-error` : undefined;
     const descId = description && id ? `${id}-description` : undefined;
     const ariaDescribedBy = [errorId, descId, props["aria-describedby"]].filter(Boolean).join(" ") || undefined;
@@ -43,14 +43,23 @@ export const Checkbox = forwardRef<React.ElementRef<typeof CheckboxPrimitive.Roo
         required={required}
         aria-describedby={ariaDescribedBy}
         aria-invalid={!!error}
-        className={cn(checkboxVariants({ density: density ?? densityName, error: !!error }), className)}
+        data-density={resolvedDensity}
+        className={cn(checkboxVariants({ density: resolvedDensity, error: !!error }), className)}
         {...props}
       >
-        <CheckboxPrimitive.Indicator className={cn("flex items-center justify-center text-current")}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-full w-full p-[1px]">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-        </CheckboxPrimitive.Indicator>
+        <span className={cn(
+          "flex shrink-0 items-center justify-center rounded-xs border border-[var(--erp-color-primary)] group-data-[state=checked]:bg-primary group-data-[state=checked]:text-primary-foreground",
+          resolvedDensity === "compact" && "h-3.5 w-3.5",
+          resolvedDensity === "comfortable" && "h-4 w-4",
+          resolvedDensity === "touch" && "h-5 w-5",
+          error && "border-[var(--erp-color-danger)]",
+        )}>
+          <CheckboxPrimitive.Indicator className="flex h-full w-full items-center justify-center text-current">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-full w-full p-[1px]" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </CheckboxPrimitive.Indicator>
+        </span>
       </CheckboxPrimitive.Root>
     );
 
@@ -60,19 +69,16 @@ export const Checkbox = forwardRef<React.ElementRef<typeof CheckboxPrimitive.Roo
 
     return (
       <div className="flex flex-col gap-1.5">
-        <div className="flex items-start gap-2">
-          <div className="mt-[0.125rem]">
+        <label htmlFor={id} className="flex cursor-pointer items-start gap-2">
+          <div className={cn(resolvedDensity !== "touch" && "mt-[0.125rem]")}>
             {checkbox}
           </div>
           <div className="grid gap-1.5">
             {label && (
-              <label
-                htmlFor={id}
-                className="text-sm font-medium peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-              >
+              <span className="text-sm font-medium peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 {label}
                 {required && <span className="ml-1 text-danger" aria-hidden="true">*</span>}
-              </label>
+              </span>
             )}
             {description && (
               <p id={descId} className="text-sm text-muted-foreground">
@@ -80,7 +86,7 @@ export const Checkbox = forwardRef<React.ElementRef<typeof CheckboxPrimitive.Roo
               </p>
             )}
           </div>
-        </div>
+        </label>
         {error && (
           <ValidationMessage id={errorId} tone="error">{error}</ValidationMessage>
         )}
