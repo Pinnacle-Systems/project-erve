@@ -126,6 +126,9 @@ enum JobOrderStatus {
   PRODUCTION_COMPLETE
   READY_FOR_QA
   QA_IN_PROGRESS
+  REWORK_REQUIRED
+  READY_FOR_REINSPECTION
+  QA_APPROVED
   QA_PASSED
   PARTIALLY_QA_PASSED
   CLOSED
@@ -163,17 +166,21 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  userRoles        UserRole[]
-  userDistributors UserDistributor[]
-  userFactories    UserFactory[]
-  uploadedFiles    File[]            @relation("FileUploadedBy")
-  auditLogs        AuditLog[]        @relation("AuditLogActor")
-  refreshSessions  RefreshSession[]
-  createdPurchaseOrders     DistributorPurchaseOrder[] @relation("POCreator")
+  userRoles                  UserRole[]
+  userDistributors           UserDistributor[]
+  userFactories              UserFactory[]
+  uploadedFiles              File[]                     @relation("FileUploadedBy")
+  auditLogs                  AuditLog[]                 @relation("AuditLogActor")
+  refreshSessions            RefreshSession[]
+  createdPurchaseOrders      DistributorPurchaseOrder[] @relation("POCreator")
   merchandisedPurchaseOrders DistributorPurchaseOrder[] @relation("POMerchandiser")
-  createdJobOrders           JobOrder[] @relation("JobOrderCreator")
-  confirmedJobOrders         JobOrder[] @relation("JobOrderConfirmer")
-  completedJobOrderStages    JobOrderStageStatus[] @relation("JobOrderStageCompleter")
+  createdJobOrders           JobOrder[]                 @relation("JobOrderCreator")
+  confirmedJobOrders         JobOrder[]                 @relation("JobOrderConfirmer")
+  completedJobOrderStages    JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
+  qaInspections              QaInspectionSession[]      @relation("QaInspector")
+  reopenedQaInspections      QaInspectionSession[]      @relation("QaReopenedBy")
+  acknowledgedQaReworks      QaReworkTask[]             @relation("QaReworkAcknowledgedBy")
+  readiedQaReworks           QaReworkTask[]             @relation("QaReworkReadiedBy")
 
   @@index([status])
   @@map("users")
@@ -243,9 +250,9 @@ model Distributor {
   createdAt    DateTime          @default(now()) @map("created_at")
   updatedAt    DateTime          @updatedAt @map("updated_at")
 
-  userDistributors      UserDistributor[]
-  priceLists            PriceList[]
-  purchaseOrders        DistributorPurchaseOrder[]
+  userDistributors UserDistributor[]
+  priceLists       PriceList[]
+  purchaseOrders   DistributorPurchaseOrder[]
 
   @@index([status])
   @@map("distributors")
@@ -372,9 +379,9 @@ model Size {
   createdAt DateTime   @default(now()) @map("created_at")
   updatedAt DateTime   @updatedAt @map("updated_at")
 
-  styleSizes         StyleSize[]
+  styleSizes             StyleSize[]
   purchaseOrderLineSizes DistributorPurchaseOrderLineSize[]
-  jobOrderLineSizes JobOrderLineSize[]
+  jobOrderLineSizes      JobOrderLineSize[]
 
   @@index([status])
   @@index([sizeType])
@@ -512,7 +519,7 @@ model ProcessFlowVersionStage {
   createdAt            DateTime           @default(now()) @map("created_at")
   updatedAt            DateTime           @updatedAt @map("updated_at")
 
-  processFlowVersion ProcessFlowVersion @relation(fields: [processFlowVersionId], references: [id], onDelete: Cascade)
+  processFlowVersion    ProcessFlowVersion    @relation(fields: [processFlowVersionId], references: [id], onDelete: Cascade)
   jobOrderStageStatuses JobOrderStageStatus[]
 
   @@unique([processFlowVersionId, sequence])
@@ -525,19 +532,19 @@ model ProcessFlowVersionStage {
 // ---------------------------------------------------------------------------
 
 model DistributorPurchaseOrder {
-  id                  String              @id
-  poNumber            String              @unique @map("po_number")
-  distributorId       String              @map("distributor_id")
-  merchandiserId      String?             @map("merchandiser_id")
-  poDate              DateTime            @map("po_date") @db.Date
-  requiredDeliveryDate DateTime?          @map("required_delivery_date") @db.Date
-  purchaseMode        PurchaseMode        @map("purchase_mode")
-  status              PurchaseOrderStatus @default(DRAFT)
-  remarks             String?
-  createdBy           String              @map("created_by")
-  createdAt           DateTime            @default(now()) @map("created_at")
-  updatedAt           DateTime            @updatedAt @map("updated_at")
-  version             Int                 @default(1)
+  id                   String              @id
+  poNumber             String              @unique @map("po_number")
+  distributorId        String              @map("distributor_id")
+  merchandiserId       String?             @map("merchandiser_id")
+  poDate               DateTime            @map("po_date") @db.Date
+  requiredDeliveryDate DateTime?           @map("required_delivery_date") @db.Date
+  purchaseMode         PurchaseMode        @map("purchase_mode")
+  status               PurchaseOrderStatus @default(DRAFT)
+  remarks              String?
+  createdBy            String              @map("created_by")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  version              Int                 @default(1)
 
   distributor  Distributor                    @relation(fields: [distributorId], references: [id], onDelete: Restrict)
   merchandiser User?                          @relation("POMerchandiser", fields: [merchandiserId], references: [id], onDelete: SetNull)
@@ -552,16 +559,16 @@ model DistributorPurchaseOrder {
 }
 
 model DistributorPurchaseOrderLine {
-  id              String                 @id
-  purchaseOrderId String                 @map("purchase_order_id")
-  styleId         String                 @map("style_id")
+  id              String                  @id
+  purchaseOrderId String                  @map("purchase_order_id")
+  styleId         String                  @map("style_id")
   lineStatus      PurchaseOrderLineStatus @default(ACTIVE) @map("line_status")
   remarks         String?
-  createdAt       DateTime               @default(now()) @map("created_at")
-  updatedAt       DateTime               @updatedAt @map("updated_at")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
 
-  purchaseOrder DistributorPurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  style         Style                            @relation(fields: [styleId], references: [id], onDelete: Restrict)
+  purchaseOrder DistributorPurchaseOrder           @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  style         Style                              @relation(fields: [styleId], references: [id], onDelete: Restrict)
   sizes         DistributorPurchaseOrderLineSize[]
   jobOrderLines JobOrderLine[]
 
@@ -619,14 +626,16 @@ model JobOrder {
   updatedAt                 DateTime                  @updatedAt @map("updated_at")
   version                   Int                       @default(1)
 
-  purchaseOrder      DistributorPurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
-  factory            Factory                  @relation(fields: [factoryId], references: [id], onDelete: Restrict)
-  processFlowVersion ProcessFlowVersion       @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
-  confirmer          User?                    @relation("JobOrderConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
-  creator            User                     @relation("JobOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  purchaseOrder      DistributorPurchaseOrder    @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  factory            Factory                     @relation(fields: [factoryId], references: [id], onDelete: Restrict)
+  processFlowVersion ProcessFlowVersion          @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
+  confirmer          User?                       @relation("JobOrderConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
+  creator            User                        @relation("JobOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
   lines              JobOrderLine[]
   stageStatuses      JobOrderStageStatus[]
   idempotencyRecords JobOrderIdempotencyRecord[]
+  qaInspections      QaInspectionSession[]
+  qaReworkTasks      QaReworkTask[]
 
   @@index([purchaseOrderId])
   @@index([factoryId])
@@ -634,6 +643,30 @@ model JobOrder {
   @@index([status])
   @@index([factoryConfirmationStatus])
   @@map("job_orders")
+}
+
+enum QaInspectionStatus {
+  DRAFT
+  FINALIZED
+  REOPENED
+  VOIDED
+}
+
+enum QaDefectCategory {
+  STITCHING
+  FABRIC
+  PRINT_EMBROIDERY
+  MEASUREMENT
+  FINISHING
+  PACKAGING
+  OTHER
+}
+
+enum QaReworkStatus {
+  PENDING_ACKNOWLEDGEMENT
+  ACKNOWLEDGED
+  READY_FOR_REINSPECTION
+  CLOSED
 }
 
 model JobOrderIdempotencyRecord {
@@ -654,15 +687,15 @@ model JobOrderIdempotencyRecord {
 }
 
 model JobOrderLine {
-  id                    String             @id
-  jobOrderId            String             @map("job_order_id")
-  purchaseOrderLineId   String             @map("purchase_order_line_id")
-  styleId               String             @map("style_id")
-  orderedQuantityTotal  Int                @map("ordered_quantity_total")
-  preparedQuantityTotal Int                @default(0) @map("prepared_quantity_total")
-  status                JobOrderStatus     @default(DRAFT)
-  createdAt             DateTime           @default(now()) @map("created_at")
-  updatedAt             DateTime           @updatedAt @map("updated_at")
+  id                    String         @id
+  jobOrderId            String         @map("job_order_id")
+  purchaseOrderLineId   String         @map("purchase_order_line_id")
+  styleId               String         @map("style_id")
+  orderedQuantityTotal  Int            @map("ordered_quantity_total")
+  preparedQuantityTotal Int            @default(0) @map("prepared_quantity_total")
+  status                JobOrderStatus @default(DRAFT)
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
 
   jobOrder          JobOrder                     @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
   purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
@@ -686,15 +719,118 @@ model JobOrderLineSize {
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 
-  jobOrderLine          JobOrderLine                    @relation(fields: [jobOrderLineId], references: [id], onDelete: Cascade)
+  jobOrderLine          JobOrderLine                     @relation(fields: [jobOrderLineId], references: [id], onDelete: Cascade)
   purchaseOrderLineSize DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict)
-  size                  Size                            @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+  size                  Size                             @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+  qaInspectionLines     QaInspectionLine[]
+  qaReworkTasks         QaReworkTask[]
 
   @@unique([jobOrderLineId, purchaseOrderLineSizeId])
   @@index([jobOrderLineId])
   @@index([purchaseOrderLineSizeId])
   @@index([sizeId])
   @@map("job_order_line_sizes")
+}
+
+// DRAFT inspection lines reserve quantities. FINALIZED lines are authoritative.
+// Reopening preserves the original facts and requires a replacement session.
+model QaInspectionSession {
+  id           String             @id
+  jobOrderId   String             @map("job_order_id")
+  inspectorId  String             @map("inspector_id")
+  cycleNumber  Int                @map("cycle_number")
+  status       QaInspectionStatus @default(DRAFT)
+  notes        String?
+  version      Int                @default(1)
+  finalizedAt  DateTime?          @map("finalized_at")
+  reopenedAt   DateTime?          @map("reopened_at")
+  reopenedById String?            @map("reopened_by_id")
+  reopenReason String?            @map("reopen_reason")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+
+  jobOrder   JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
+  inspector  User               @relation("QaInspector", fields: [inspectorId], references: [id], onDelete: Restrict)
+  reopenedBy User?              @relation("QaReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull)
+  lines      QaInspectionLine[]
+  evidence   QaEvidence[]
+
+  @@index([jobOrderId, status])
+  @@index([inspectorId])
+  @@map("qa_inspection_sessions")
+}
+
+model QaInspectionLine {
+  id                          String            @id
+  inspectionSessionId         String            @map("inspection_session_id")
+  jobOrderLineSizeId          String            @map("job_order_line_size_id")
+  sourceReworkTaskId          String?           @map("source_rework_task_id")
+  inspectedQuantity           Int               @map("inspected_quantity")
+  acceptedQuantity            Int               @map("accepted_quantity")
+  reworkQuantity              Int               @map("rework_quantity")
+  permanentlyRejectedQuantity Int               @map("permanently_rejected_quantity")
+  defectCategory              QaDefectCategory? @map("defect_category")
+  defectNotes                 String?           @map("defect_notes")
+  createdAt                   DateTime          @default(now()) @map("created_at")
+  updatedAt                   DateTime          @updatedAt @map("updated_at")
+
+  session          QaInspectionSession @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade)
+  jobOrderLineSize JobOrderLineSize    @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict)
+  sourceReworkTask QaReworkTask?       @relation("QaReinspectionSource", fields: [sourceReworkTaskId], references: [id], onDelete: Restrict)
+  generatedRework  QaReworkTask?       @relation("QaGeneratedRework")
+  evidence         QaEvidence[]
+
+  @@unique([inspectionSessionId, jobOrderLineSizeId, sourceReworkTaskId])
+  @@index([jobOrderLineSizeId])
+  @@index([sourceReworkTaskId])
+  @@map("qa_inspection_lines")
+}
+
+model QaReworkTask {
+  id                 String         @id
+  jobOrderId         String         @map("job_order_id")
+  jobOrderLineSizeId String         @map("job_order_line_size_id")
+  sourceLineId       String         @unique @map("source_line_id")
+  attemptNumber      Int            @map("attempt_number")
+  assignedQuantity   Int            @map("assigned_quantity")
+  status             QaReworkStatus @default(PENDING_ACKNOWLEDGEMENT)
+  acknowledgedById   String?        @map("acknowledged_by_id")
+  acknowledgedAt     DateTime?      @map("acknowledged_at")
+  readyById          String?        @map("ready_by_id")
+  readyAt            DateTime?      @map("ready_at")
+  notes              String?
+  version            Int            @default(1)
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+
+  jobOrder         JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
+  jobOrderLineSize JobOrderLineSize   @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict)
+  sourceLine       QaInspectionLine   @relation("QaGeneratedRework", fields: [sourceLineId], references: [id], onDelete: Restrict)
+  reinspections    QaInspectionLine[] @relation("QaReinspectionSource")
+  acknowledgedBy   User?              @relation("QaReworkAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
+  readyBy          User?              @relation("QaReworkReadiedBy", fields: [readyById], references: [id], onDelete: SetNull)
+
+  @@unique([jobOrderLineSizeId, attemptNumber])
+  @@index([jobOrderId, status])
+  @@map("qa_rework_tasks")
+}
+
+model QaEvidence {
+  id                  String   @id
+  inspectionSessionId String   @map("inspection_session_id")
+  inspectionLineId    String?  @map("inspection_line_id")
+  fileId              String   @map("file_id")
+  checksumSha256      String   @map("checksum_sha256")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  session QaInspectionSession @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade)
+  line    QaInspectionLine?   @relation(fields: [inspectionLineId], references: [id], onDelete: Cascade)
+  file    File                @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  @@unique([inspectionSessionId, checksumSha256])
+  @@index([inspectionLineId])
+  @@index([fileId])
+  @@map("qa_evidence")
 }
 
 model JobOrderStageStatus {
@@ -743,22 +879,23 @@ model AuditLog {
 }
 
 model File {
-  id           String   @id
-  fileName     String   @map("file_name")
-  mimeType     String   @map("mime_type")
-  sizeBytes    Int      @map("size_bytes")
-  storageKey   String   @map("storage_key")
+  id             String   @id
+  fileName       String   @map("file_name")
+  mimeType       String   @map("mime_type")
+  sizeBytes      Int      @map("size_bytes")
+  storageKey     String   @map("storage_key")
   // SHA-256 of the stored bytes — lets a retried/duplicated upload of the
   // same content be answered with the existing record instead of creating
   // a duplicate style image.
-  checksumSha256 String? @map("checksum_sha256")
-  url          String?
-  uploadedById String?  @map("uploaded_by_id")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  checksumSha256 String?  @map("checksum_sha256")
+  url            String?
+  uploadedById   String?  @map("uploaded_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   uploadedBy  User?        @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
   styleImages StyleImage[]
+  qaEvidence  QaEvidence[]
 
   @@index([storageKey])
   @@index([uploadedById])

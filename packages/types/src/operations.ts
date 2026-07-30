@@ -48,6 +48,9 @@ export type JobOrderStatus =
   | 'PRODUCTION_COMPLETE'
   | 'READY_FOR_QA'
   | 'QA_IN_PROGRESS'
+  | 'REWORK_REQUIRED'
+  | 'READY_FOR_REINSPECTION'
+  | 'QA_APPROVED'
   | 'QA_PASSED'
   | 'PARTIALLY_QA_PASSED'
   | 'CLOSED'
@@ -220,4 +223,114 @@ export interface CompleteJobOrderStageInput extends VersionedMutationInput {
 }
 export interface UpdatePreparedQuantityInput extends VersionedMutationInput {
   sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }>;
+}
+
+export type QaQueueFilter =
+  | 'AWAITING_FIRST_INSPECTION'
+  | 'IN_PROGRESS'
+  | 'REWORK_REQUIRED'
+  | 'READY_FOR_REINSPECTION'
+  | 'COMPLETED';
+export type QaInspectionStatus = 'DRAFT' | 'FINALIZED' | 'REOPENED' | 'VOIDED';
+export type QaDefectCategory =
+  'STITCHING' | 'FABRIC' | 'PRINT_EMBROIDERY' | 'MEASUREMENT' | 'FINISHING' | 'PACKAGING' | 'OTHER';
+export type QaReworkStatus =
+  'PENDING_ACKNOWLEDGEMENT' | 'ACKNOWLEDGED' | 'READY_FOR_REINSPECTION' | 'CLOSED';
+
+export interface QaQuantityTotals {
+  prepared: number;
+  availableToInspect: number;
+  accepted: number;
+  rework: number;
+  awaitingReinspection: number;
+  permanentlyRejected: number;
+  finalApproved: number;
+}
+export interface QaQueueSummary extends VersionedResource {
+  id: string;
+  jobOrderNumber: string;
+  purchaseOrderNumber: string;
+  factory: { id: string; code: string; name: string };
+  status: JobOrderStatus;
+  totals: QaQuantityTotals;
+}
+export interface QaInspectionLineView {
+  id: string;
+  jobOrderLineSizeId: string;
+  sourceReworkTaskId: string | null;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  preparedQuantity: number;
+  inspectedQuantity: number;
+  acceptedQuantity: number;
+  reworkQuantity: number;
+  permanentlyRejectedQuantity: number;
+  defectCategory: QaDefectCategory | null;
+  defectNotes: string | null;
+}
+export interface QaEvidenceMetadata {
+  id: string;
+  inspectionLineId: string | null;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+export interface QaInspectionSessionView extends VersionedResource {
+  id: string;
+  cycleNumber: number;
+  status: QaInspectionStatus;
+  inspector: { id: string; name: string; email: string };
+  notes: string | null;
+  finalizedAt: string | null;
+  reopenedAt: string | null;
+  reopenReason: string | null;
+  lines: QaInspectionLineView[];
+  evidence: QaEvidenceMetadata[];
+  createdAt: string;
+}
+export interface QaReworkTaskView extends VersionedResource {
+  id: string;
+  jobOrderId: string;
+  jobOrderNumber: string;
+  jobOrderLineSizeId: string;
+  styleNumber: string;
+  sizeCode: string;
+  assignedQuantity: number;
+  attemptNumber: number;
+  status: QaReworkStatus;
+  defectCategory: QaDefectCategory | null;
+  defectNotes: string | null;
+}
+export interface QaInspectionDetail extends QaQueueSummary {
+  lines: Array<{
+    jobOrderLineSizeId: string;
+    styleNumber: string;
+    styleName: string;
+    sizeCode: string;
+    sizeLabel: string;
+    preparedQuantity: number;
+    availableToInspect: number;
+    acceptedQuantity: number;
+    reworkQuantity: number;
+    awaitingReinspectionQuantity: number;
+    permanentlyRejectedQuantity: number;
+  }>;
+  sessions: QaInspectionSessionView[];
+  reworkTasks: QaReworkTaskView[];
+}
+export interface SaveQaInspectionInput extends VersionedMutationInput {
+  notes?: string | null;
+  lines: Array<{
+    jobOrderLineSizeId: string;
+    sourceReworkTaskId?: string | null;
+    inspectedQuantity: number;
+    acceptedQuantity: number;
+    reworkQuantity: number;
+    permanentlyRejectedQuantity: number;
+    defectCategory?: QaDefectCategory | null;
+    defectNotes?: string | null;
+  }>;
 }
