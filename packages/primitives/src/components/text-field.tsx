@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import { forwardRef, type InputHTMLAttributes } from "react";
+import { forwardRef, type InputHTMLAttributes, type ReactNode } from "react";
 import { useTheme } from "@erve/theme";
 import { cn } from "../lib/utils";
 
@@ -46,6 +46,7 @@ export interface TextFieldProps
   density?: TextFieldDensity;
   width?: TextFieldWidth;
   error?: boolean;
+  endAdornment?: ReactNode;
 }
 
 const fieldWidthClasses: Record<TextFieldWidth, string> = {
@@ -69,6 +70,7 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
       density,
       width = "md",
       id,
+      endAdornment,
       ...props
     },
     ref,
@@ -80,6 +82,21 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
     const hasError = Boolean(error || errorMessage);
     const errorId = inputId ? `${inputId}-error` : undefined;
     const helpId = inputId ? `${inputId}-help` : undefined;
+    const inputElement = (
+      <input
+        ref={ref}
+        id={inputId}
+        className={cn(
+          inputVariants({ state: hasError ? "error" : "default", density: resolvedDensity }),
+          className,
+        )}
+        aria-invalid={hasError || undefined}
+        aria-describedby={
+          errorMessage ? errorId : helpText ? helpId : undefined
+        }
+        {...props}
+      />
+    );
 
     return (
       <div data-width={width} className={cn("flex flex-col gap-1.5", fieldWidthClasses[width])}>
@@ -91,19 +108,14 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
             {label}
           </label>
         )}
-        <input
-          ref={ref}
-          id={inputId}
-          className={cn(
-            inputVariants({ state: hasError ? "error" : "default", density: resolvedDensity }),
-            className,
-          )}
-          aria-invalid={hasError || undefined}
-          aria-describedby={
-            errorMessage ? errorId : helpText ? helpId : undefined
-          }
-          {...props}
-        />
+        {endAdornment ? (
+          <div className="relative">
+            {inputElement}
+            {endAdornment}
+          </div>
+        ) : (
+          inputElement
+        )}
         {errorMessage && (
           <p id={errorId} className="text-xs text-[var(--erp-form-field-error-text-color)] leading-none" role="alert">
             {errorMessage}

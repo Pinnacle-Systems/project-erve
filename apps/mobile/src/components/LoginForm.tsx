@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Button, TextField } from '@erve/primitives';
+import { Button, PasswordField, TextField } from '@erve/primitives';
 
 export interface LoginFormValues {
   identifier: string;
@@ -32,9 +32,8 @@ export function LoginForm({ onSubmit, isSubmitting = false, errorMessage }: Logi
         onChange={(e) => setIdentifier(e.target.value)}
         required
       />
-      <TextField
+      <PasswordField
         id="password"
-        type="password"
         label="Password"
         autoComplete="current-password"
         value={password}

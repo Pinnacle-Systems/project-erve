@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, PasswordField, TextField, ValidationMessage } from '@erve/primitives';
 import { Card } from '@erve/layout';
 import type { ApiSuccessResponse, LoginResponse } from '@erve/types';
 import { apiClient } from '../lib/api-client.js';
@@ -60,9 +60,8 @@ export function LoginPage() {
                 required
                 width="fill"
               />
-              <TextField
+              <PasswordField
                 id="password"
-                type="password"
                 label="Password"
                 autoComplete="current-password"
                 value={values.password}
