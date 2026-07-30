@@ -4,11 +4,11 @@ import {
   ClipboardList,
   Factory,
   Hammer,
+  Handshake,
   LayoutDashboard,
   Ruler,
   Shirt,
   Tags,
-  Truck,
   Users,
   Workflow,
   ShieldCheck,
@@ -52,7 +52,7 @@ export function AppLayout() {
           ? [{ to: '/master-data/factories', label: 'Factories', icon: Factory }]
           : []),
         ...(canViewDistributorMaster
-          ? [{ to: '/master-data/distributors', label: 'Distributors', icon: Truck }]
+          ? [{ to: '/master-data/distributors', label: 'Distributors', icon: Handshake }]
           : []),
         ...(canManageMasterData
           ? [{ to: '/master-data/process-flows', label: 'Process Flows', icon: Workflow }]

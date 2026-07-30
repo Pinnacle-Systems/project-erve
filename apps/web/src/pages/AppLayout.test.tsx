@@ -110,6 +110,14 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Users');
   });
 
+  it('represents distributors as business partners rather than delivery transport', async () => {
+    await renderAppLayout(['ADMIN']);
+
+    const distributorLink = container.querySelector('a[href="/master-data/distributors"]');
+    expect(distributorLink?.querySelector('svg')?.classList.contains('lucide-handshake')).toBe(true);
+    expect(distributorLink?.querySelector('.lucide-truck')).toBeNull();
+  });
+
   it('SENIOR_MANAGEMENT sees Styles, Distributors and Price Lists but not Sizes/Factories/Process Flows, +New PO, or Users', async () => {
     await renderAppLayout(['SENIOR_MANAGEMENT']);
     const labels = sidebarLinkLabels();
