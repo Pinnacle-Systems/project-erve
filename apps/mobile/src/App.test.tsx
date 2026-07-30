@@ -8,6 +8,7 @@ import { ThemeProvider } from '@erve/theme';
 
 vi.mock('./lib/api-client.js', () => ({
   AUTH_EXPIRED_EVENT: 'erve:auth-expired',
+  RefreshCredentialError: class RefreshCredentialError extends Error {},
   apiClient: { get: vi.fn(), post: vi.fn() },
   logoutSession: vi.fn(),
   refreshAccessToken: vi.fn().mockRejectedValue(new Error('no session')),

@@ -29,6 +29,16 @@ export interface RefreshCredentialProvider {
   clear(): Promise<void>;
 }
 
+export class RefreshCredentialError extends Error {
+  constructor(
+    public readonly reason: 'missing' | 'unreadable',
+    options?: ErrorOptions,
+  ) {
+    super(`Refresh credential is ${reason}`, options);
+    this.name = 'RefreshCredentialError';
+  }
+}
+
 let refreshCredentialProvider: RefreshCredentialProvider | null = null;
 
 export function configureRefreshCredentialProvider(
@@ -60,14 +70,38 @@ function notifyAuthExpired(): void {
 
 export async function refreshAccessToken(): Promise<string> {
   refreshPromise ??= (async () => {
-    const refreshToken = await refreshCredentialProvider?.get();
-    const response = await apiClient.post<
-      ApiSuccessResponse<RefreshResponse & { refreshToken?: string }>
-    >(
-      refreshCredentialProvider ? '/auth/mobile/refresh' : '/auth/refresh',
-      refreshCredentialProvider ? { refreshToken } : undefined,
-      { withCredentials: true },
-    );
+    let refreshToken: string | null | undefined;
+    try {
+      refreshToken = await refreshCredentialProvider?.get();
+    } catch (cause) {
+      await refreshCredentialProvider?.clear().catch(() => undefined);
+      throw new RefreshCredentialError('unreadable', { cause });
+    }
+
+    if (refreshCredentialProvider && !refreshToken) {
+      throw new RefreshCredentialError('missing');
+    }
+
+    let response;
+    try {
+      response = await apiClient.post<
+        ApiSuccessResponse<RefreshResponse & { refreshToken?: string }>
+      >(
+        refreshCredentialProvider ? '/auth/mobile/refresh' : '/auth/refresh',
+        refreshCredentialProvider ? { refreshToken } : undefined,
+        { withCredentials: true },
+      );
+    } catch (error) {
+      if (
+        refreshCredentialProvider &&
+        axios.isAxiosError(error) &&
+        error.config?.url?.endsWith('/refresh') &&
+        [400, 401, 403].includes(error.response?.status ?? 0)
+      ) {
+        await refreshCredentialProvider.clear().catch(() => undefined);
+      }
+      throw error;
+    }
     const { accessToken, refreshToken: nextRefreshToken } = response.data.data;
     if (refreshCredentialProvider && nextRefreshToken) {
       await refreshCredentialProvider.set(nextRefreshToken);

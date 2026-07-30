@@ -4,6 +4,7 @@ const config: CapacitorConfig = {
   appId: 'com.erve.mobile',
   appName: 'Erve',
   webDir: 'dist',
+  loggingBehavior: 'none',
   plugins: {
     SplashScreen: {
       // The native Android 12 Splash Screen API theme (see

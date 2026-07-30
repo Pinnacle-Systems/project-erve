@@ -214,6 +214,80 @@ describe('apiClient refresh session integration', () => {
     expect(storage.setItem).toHaveBeenCalledWith('erve.accessToken', 'native-access');
   });
 
+  it('does not call the API when the native refresh credential is missing', async () => {
+    const provider = {
+      get: vi.fn(async () => null),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    configureRefreshCredentialProvider(provider);
+    apiClient.defaults.adapter = vi.fn(async () => {
+      throw new Error('The API must not be called without a credential');
+    }) satisfies AxiosAdapter;
+
+    await expect(refreshAccessToken()).rejects.toMatchObject({
+      name: 'RefreshCredentialError',
+      reason: 'missing',
+    });
+    expect(apiClient.defaults.adapter).not.toHaveBeenCalled();
+  });
+
+  it('clears an unreadable native refresh credential and does not call the API', async () => {
+    const provider = {
+      get: vi.fn(async () => {
+        throw new Error('Keystore decryption failed');
+      }),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    configureRefreshCredentialProvider(provider);
+    apiClient.defaults.adapter = vi.fn(async () => {
+      throw new Error('The API must not be called with an unreadable credential');
+    }) satisfies AxiosAdapter;
+
+    await expect(refreshAccessToken()).rejects.toMatchObject({
+      name: 'RefreshCredentialError',
+      reason: 'unreadable',
+    });
+    expect(provider.clear).toHaveBeenCalledTimes(1);
+    expect(apiClient.defaults.adapter).not.toHaveBeenCalled();
+  });
+
+  it('clears a rejected native credential but retains it for a server failure', async () => {
+    const provider = {
+      get: vi.fn(async () => 'native-refresh'),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    configureRefreshCredentialProvider(provider);
+    apiClient.defaults.adapter = vi
+      .fn()
+      .mockImplementationOnce(async (config: InternalAxiosRequestConfig) => {
+        throw new AxiosError('Unauthorized', AxiosError.ERR_BAD_REQUEST, config, undefined, {
+          data: { success: false },
+          status: 401,
+          statusText: 'Unauthorized',
+          headers: {},
+          config,
+        });
+      })
+      .mockImplementationOnce(async (config: InternalAxiosRequestConfig) => {
+        throw new AxiosError('Server error', AxiosError.ERR_BAD_RESPONSE, config, undefined, {
+          data: { success: false },
+          status: 500,
+          statusText: 'Server Error',
+          headers: {},
+          config,
+        });
+      }) satisfies AxiosAdapter;
+
+    await expect(refreshAccessToken()).rejects.toBeInstanceOf(AxiosError);
+    expect(provider.clear).toHaveBeenCalledTimes(1);
+
+    await expect(refreshAccessToken()).rejects.toBeInstanceOf(AxiosError);
+    expect(provider.clear).toHaveBeenCalledTimes(1);
+  });
+
   it('does not recursively refresh login, refresh, or logout failures', async () => {
     let refreshCalls = 0;
 

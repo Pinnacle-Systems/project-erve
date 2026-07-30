@@ -8,7 +8,12 @@ import {
   type AxiosResponse,
   type InternalAxiosRequestConfig,
 } from 'axios';
-import { apiClient, getStoredToken, setStoredToken } from '@erve/client';
+import {
+  apiClient,
+  configureRefreshCredentialProvider,
+  getStoredToken,
+  setStoredToken,
+} from '@erve/client';
 import type { AuthUser } from '@erve/types';
 import { AuthProvider, useAuth } from './AuthContext.js';
 
@@ -45,6 +50,7 @@ beforeEach(() => {
   originalAdapter = apiClient.defaults.adapter;
   sessionStorage.clear();
   localStorage.clear();
+  configureRefreshCredentialProvider(null);
 });
 
 afterEach(() => {
@@ -55,6 +61,7 @@ afterEach(() => {
   apiClient.defaults.adapter = originalAdapter;
   sessionStorage.clear();
   localStorage.clear();
+  configureRefreshCredentialProvider(null);
   vi.restoreAllMocks();
 });
 
@@ -97,6 +104,130 @@ async function renderAuth(): Promise<{ latest: () => CapturedAuth }> {
 }
 
 describe('mobile AuthContext — startup with no access token', () => {
+  it('returns to login without an API call when no native refresh credential exists', async () => {
+    configureRefreshCredentialProvider({
+      get: vi.fn(async () => null),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    });
+    apiClient.defaults.adapter = vi.fn(async () => {
+      throw new Error('The API must not be called without a credential');
+    }) satisfies AxiosAdapter;
+
+    const { latest } = await renderAuth();
+
+    expect(latest().status).toBe('unauthenticated');
+    expect(latest().user).toBeNull();
+    expect(apiClient.defaults.adapter).not.toHaveBeenCalled();
+  });
+
+  it('clears an unreadable native credential and returns to login', async () => {
+    const provider = {
+      get: vi.fn(async () => {
+        throw new Error('Keystore decryption failed');
+      }),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    configureRefreshCredentialProvider(provider);
+    apiClient.defaults.adapter = vi.fn(async () => {
+      throw new Error('The API must not be called with an unreadable credential');
+    }) satisfies AxiosAdapter;
+
+    const { latest } = await renderAuth();
+
+    expect(latest().status).toBe('unauthenticated');
+    expect(provider.clear).toHaveBeenCalledTimes(1);
+    expect(apiClient.defaults.adapter).not.toHaveBeenCalled();
+  });
+
+  it('clears a malformed native credential rejected with 400 and returns to login', async () => {
+    const provider = {
+      get: vi.fn(async () => 'malformed-refresh'),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    configureRefreshCredentialProvider(provider);
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      throw new AxiosError('Bad request', AxiosError.ERR_BAD_REQUEST, config, undefined, {
+        data: { success: false, error: { code: 'VALIDATION_ERROR' } },
+        status: 400,
+        statusText: 'Bad Request',
+        headers: {},
+        config,
+      });
+    }) satisfies AxiosAdapter;
+
+    const { latest } = await renderAuth();
+
+    expect(latest().status).toBe('unauthenticated');
+    expect(provider.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains a native credential and offers retry for a server failure', async () => {
+    const provider = {
+      get: vi.fn(async () => 'native-refresh'),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    configureRefreshCredentialProvider(provider);
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      throw new AxiosError('Server error', AxiosError.ERR_BAD_RESPONSE, config, undefined, {
+        data: { success: false },
+        status: 500,
+        statusText: 'Server Error',
+        headers: {},
+        config,
+      });
+    }) satisfies AxiosAdapter;
+
+    const { latest } = await renderAuth();
+
+    expect(latest().status).toBe('unavailable');
+    expect(provider.clear).not.toHaveBeenCalled();
+  });
+
+  it('restores the session when retry succeeds after a network failure', async () => {
+    const provider = {
+      get: vi.fn(async () => 'native-refresh'),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    configureRefreshCredentialProvider(provider);
+    let refreshCalls = 0;
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/auth/mobile/refresh') {
+        refreshCalls += 1;
+        if (refreshCalls === 1) {
+          throw new AxiosError('Network Error', AxiosError.ERR_NETWORK, config);
+        }
+        return ok(config, {
+          success: true,
+          data: { accessToken: 'restored-access', refreshToken: 'rotated-refresh' },
+        });
+      }
+      if (config.url === '/auth/me') {
+        expect(config.headers.Authorization).toBe('Bearer restored-access');
+        return ok(config, { success: true, data: TEST_USER });
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    }) satisfies AxiosAdapter;
+
+    const { latest } = await renderAuth();
+    expect(latest().status).toBe('unavailable');
+    expect(provider.clear).not.toHaveBeenCalled();
+
+    await act(async () => {
+      latest().retrySession();
+      await flushMicrotasks();
+    });
+
+    expect(latest().status).toBe('authenticated');
+    expect(latest().user).toEqual(TEST_USER);
+    expect(provider.set).toHaveBeenCalledWith('rotated-refresh');
+    expect(refreshCalls).toBe(2);
+  });
+
   it('uses the persisted refresh session and restores the authenticated user', async () => {
     const calls: string[] = [];
     apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {

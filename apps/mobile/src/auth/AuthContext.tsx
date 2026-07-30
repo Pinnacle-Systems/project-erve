@@ -2,7 +2,12 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import type { ApiSuccessResponse, AuthUser } from '@erve/types';
 import { apiClient, clearStoredToken, getStoredToken, setStoredToken } from '@erve/client';
 import { isAxiosError } from 'axios';
-import { AUTH_EXPIRED_EVENT, logoutSession, refreshAccessToken } from '../lib/api-client.js';
+import {
+  AUTH_EXPIRED_EVENT,
+  RefreshCredentialError,
+  logoutSession,
+  refreshAccessToken,
+} from '../lib/api-client.js';
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'unavailable';
 
@@ -46,9 +51,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        if (
+        const rejectedRefresh =
           isAxiosError(error) &&
-          (error.response?.status === 401 || error.response?.status === 403)
+          error.config?.url?.endsWith('/refresh') &&
+          [400, 401, 403].includes(error.response?.status ?? 0);
+
+        if (
+          error instanceof RefreshCredentialError ||
+          rejectedRefresh ||
+          (isAxiosError(error) &&
+            (error.response?.status === 401 || error.response?.status === 403))
         ) {
           clearStoredToken();
           setUser(null);
