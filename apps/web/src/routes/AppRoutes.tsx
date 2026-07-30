@@ -33,6 +33,8 @@ import { JobOrderDetailPage } from '../pages/job-orders/JobOrderDetailPage.js';
 import { JobOrderListPage } from '../pages/job-orders/JobOrderListPage.js';
 import { AppLayout } from '../pages/AppLayout.js';
 import { RoleRoute } from './RoleRoute.js';
+import { QaDetailPage } from '../pages/qa/QaDetailPage.js';
+import { QaQueuePage } from '../pages/qa/QaQueuePage.js';
 
 const PRICE_LIST_VIEW_ROLES = [
   'ADMIN',
@@ -329,6 +331,17 @@ export function AppRoutes() {
           }
         />
         <Route path=":id" element={<JobOrderDetailPage />} />
+      </Route>
+      <Route
+        path="/qa"
+        element={
+          <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'QA_USER']}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<QaQueuePage />} />
+        <Route path=":id" element={<QaDetailPage />} />
       </Route>
 
       <Route path="/" element={<Navigate to="/login" replace />} />

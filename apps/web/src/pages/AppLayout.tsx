@@ -11,6 +11,7 @@ import {
   Truck,
   Users,
   Workflow,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext.js';
 import { AppShell, type AppShellNavSection } from './AppShell.js';
@@ -68,6 +69,11 @@ export function AppLayout() {
           ? [{ to: '/purchase-orders/new', label: '+ New PO', icon: CirclePlus }]
           : []),
         ...(canViewJobOrders ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }] : []),
+        ...(user?.roles.some((r) =>
+          ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'QA_USER'].includes(r),
+        )
+          ? [{ to: '/qa', label: 'QA', icon: ShieldCheck }]
+          : []),
       ],
     },
   ];

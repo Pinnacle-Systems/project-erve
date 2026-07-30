@@ -8,6 +8,9 @@ export const JOB_ORDER_STATUS_LABELS: Record<JobOrderStatus, string> = {
   PRODUCTION_COMPLETE: 'Production Complete',
   READY_FOR_QA: 'Ready for QA',
   QA_IN_PROGRESS: 'QA in Progress',
+  REWORK_REQUIRED: 'Rework Required',
+  READY_FOR_REINSPECTION: 'Ready for Reinspection',
+  QA_APPROVED: 'QA Approved',
   QA_PASSED: 'QA Passed',
   PARTIALLY_QA_PASSED: 'Partially QA Passed',
   CLOSED: 'Closed',
@@ -40,7 +43,7 @@ export function formatDateTime(iso: string | null | undefined) {
 export function statusTone(status: JobOrderStatus) {
   if (status === 'DRAFT') return 'draft';
   if (status === 'CANCELLED') return 'cancelled';
-  if (status === 'CLOSED' || status === 'QA_PASSED') return 'success';
+  if (status === 'CLOSED' || status === 'QA_PASSED' || status === 'QA_APPROVED') return 'success';
   if (status === 'READY_FOR_QA' || status.includes('QA')) return 'info';
   if (status === 'IN_PRODUCTION' || status === 'PRODUCTION_COMPLETE') return 'submitted';
   return 'pending';
