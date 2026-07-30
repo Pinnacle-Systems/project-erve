@@ -8,6 +8,10 @@ import { signAccessToken } from '../auth/jwt.js';
 // only the per-test rows need clearing between tests.
 export async function resetDatabase(): Promise<void> {
   await prisma.auditLog.deleteMany();
+  await prisma.qaEvidence.deleteMany();
+  await prisma.qaReworkTask.deleteMany();
+  await prisma.qaInspectionLine.deleteMany();
+  await prisma.qaInspectionSession.deleteMany();
   await prisma.jobOrderStageStatus.deleteMany();
   await prisma.jobOrderLineSize.deleteMany();
   await prisma.jobOrderLine.deleteMany();

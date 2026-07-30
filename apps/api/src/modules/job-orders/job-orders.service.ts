@@ -75,7 +75,19 @@ function assertJobOrderViewAccess(
 ): void {
   if (canViewAllJobOrders(user)) return;
   if (canFactoryManage(user, jobOrder.factoryId) && jobOrder.status !== 'DRAFT') return;
-  if (user.roles.includes('QA_USER') && jobOrder.status === 'READY_FOR_QA') return;
+  if (
+    user.roles.includes('QA_USER') &&
+    user.factoryIds.length === 1 &&
+    user.factoryIds[0] === jobOrder.factoryId &&
+    [
+      'READY_FOR_QA',
+      'QA_IN_PROGRESS',
+      'REWORK_REQUIRED',
+      'READY_FOR_REINSPECTION',
+      'QA_APPROVED',
+    ].includes(jobOrder.status)
+  )
+    return;
   throw HttpError.forbidden('You do not have access to this job order');
 }
 

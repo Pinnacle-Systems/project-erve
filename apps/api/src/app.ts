@@ -21,6 +21,7 @@ import {
 import { priceListsRouter } from './modules/price-lists/price-lists.routes.js';
 import { purchaseOrdersRouter } from './modules/purchase-orders/purchase-orders.routes.js';
 import { jobOrdersRouter } from './modules/job-orders/job-orders.routes.js';
+import { qaRouter } from './modules/qa/qa.routes.js';
 
 const READY_CHECK_TIMEOUT_MS = 2000;
 
@@ -74,7 +75,10 @@ export function createApp() {
         const payload: ReadyCheckResponse = { status: 'ok', timestamp: new Date().toISOString() };
         res.status(200).json(successResponse(payload));
       } catch {
-        const payload: ReadyCheckResponse = { status: 'error', timestamp: new Date().toISOString() };
+        const payload: ReadyCheckResponse = {
+          status: 'error',
+          timestamp: new Date().toISOString(),
+        };
         res.status(503).json(errorResponse('NOT_READY', 'Database is not reachable', payload));
       }
     }),
@@ -91,6 +95,7 @@ export function createApp() {
   app.use('/price-lists', priceListsRouter);
   app.use('/purchase-orders', purchaseOrdersRouter);
   app.use('/job-orders', jobOrdersRouter);
+  app.use('/qa', qaRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

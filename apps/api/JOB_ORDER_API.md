@@ -28,3 +28,7 @@ constraints. Concurrent over-allocation rolls back. PO/JO numbering holds a
 transaction-scoped PostgreSQL advisory lock per type/year until insertion;
 unique indexes remain the final invariant. Hardened mutations and their audit
 records commit or roll back together.
+
+The QA extension and its explicit assumptions are documented in
+[`docs/QA_WORKFLOW.md`](../../docs/QA_WORKFLOW.md). `QA_APPROVED` replaces the
+legacy placeholder pass statuses for new workflow actions.

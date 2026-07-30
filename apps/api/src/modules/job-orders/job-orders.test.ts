@@ -545,6 +545,9 @@ describe('job orders API', () => {
       password: 'pass',
       roles: ['QA_USER'],
     });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: qaUser.userId, factoryId: graph.factory.id },
+    });
     const factoryUser = await createTestUserAndToken({
       email: 'factory-suspend@test.local',
       password: 'pass',
@@ -652,8 +655,8 @@ describe('job orders API', () => {
     expect(preparedRes.status).toBe(200);
     expect(preparedRes.body.data.status).toBe('READY_FOR_QA');
 
-    // QA can still inspect the already-prepared quantities on the inactive factory's job order
-    // (view access has never depended on factory status). No QA pass/fail action exists yet to test.
+    // Scoped QA can still inspect already-prepared quantities at an inactive factory;
+    // view access depends on mapping, not the factory's active flag.
     const qaView = await request(app)
       .get(`/job-orders/${jobOrderId}`)
       .set('Authorization', `Bearer ${qaUser.token}`);
