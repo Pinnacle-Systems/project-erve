@@ -9,6 +9,7 @@ import { signAccessToken } from '../auth/jwt.js';
 export async function resetDatabase(): Promise<void> {
   await prisma.auditLog.deleteMany();
   await prisma.qaEvidence.deleteMany();
+  await prisma.qaInspectionLine.deleteMany({ where: { sourceReworkTaskId: { not: null } } });
   await prisma.qaReworkTask.deleteMany();
   await prisma.qaInspectionLine.deleteMany();
   await prisma.qaInspectionSession.deleteMany();

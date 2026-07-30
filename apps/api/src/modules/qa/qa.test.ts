@@ -11,6 +11,7 @@ import {
 } from '../../test/helpers.js';
 
 const app = createApp();
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32, 0x11)]);
 beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
 
@@ -286,7 +287,7 @@ describe('QA workflow', () => {
     const sessionId = started.body.data.sessions.find(
       (session: { status: string }) => session.status === 'DRAFT',
     ).id;
-    await request(app)
+    const saved = await request(app)
       .put(`/qa/inspections/${sessionId}`)
       .set(auth(f.qa.token))
       .set('Idempotency-Key', 'save-reject')
@@ -311,6 +312,38 @@ describe('QA workflow', () => {
       .send({ expectedVersion: 2 })
       .expect(400);
     expect(await prisma.qaInspectionSession.count({ where: { status: 'FINALIZED' } })).toBe(0);
+    const inspectionLineId = saved.body.data.sessions.find(
+      (session: { id: string }) => session.id === sessionId,
+    ).lines[0].id;
+    const evidence = await request(app)
+      .post(`/qa/inspections/${sessionId}/evidence`)
+      .set(auth(f.qa.token))
+      .field('inspectionLineId', inspectionLineId)
+      .attach('image', JPEG, { filename: 'fabric-defect.jpg', contentType: 'image/jpeg' })
+      .expect(201);
+    await request(app)
+      .get(`/qa/evidence/${evidence.body.data.id}/content`)
+      .set(auth(f.outsider.token))
+      .expect(403);
+    await request(app)
+      .get(`/qa/evidence/${evidence.body.data.id}/content`)
+      .set(auth(f.factoryUser.token))
+      .expect(200)
+      .expect('Content-Type', 'image/jpeg');
+    const finalized = await request(app)
+      .post(`/qa/inspections/${sessionId}/finalize`)
+      .set(auth(f.qa.token))
+      .set('Idempotency-Key', 'final-reject')
+      .send({ expectedVersion: 2 })
+      .expect(200);
+    const approved = await request(app)
+      .post(`/qa/job-orders/${f.jobOrderId}/approve`)
+      .set(auth(f.qa.token))
+      .set('Idempotency-Key', 'approve-reject')
+      .send({ expectedVersion: finalized.body.data.version })
+      .expect(200);
+    expect(approved.body.data.totals.finalApproved).toBe(7);
+    expect(approved.body.data.totals.permanentlyRejected).toBe(3);
   });
 
   it('hands only rejected quantity through factory rework and reinspection', async () => {
@@ -363,5 +396,46 @@ describe('QA workflow', () => {
     const fresh = await request(app).get(`/qa/job-orders/${f.jobOrderId}`).set(auth(f.qa.token));
     expect(fresh.body.data.status).toBe('READY_FOR_REINSPECTION');
     expect(fresh.body.data.totals.accepted).toBe(6);
+    const reinspection = await request(app)
+      .post(`/qa/job-orders/${f.jobOrderId}/inspections`)
+      .set(auth(f.qa.token))
+      .set('Idempotency-Key', 'start-reinspection')
+      .send({ expectedVersion: fresh.body.data.version, sourceReworkTaskIds: [task.id] })
+      .expect(201);
+    const reinspectionSession = reinspection.body.data.sessions.find(
+      (session: { status: string }) => session.status === 'DRAFT',
+    );
+    await request(app)
+      .put(`/qa/inspections/${reinspectionSession.id}`)
+      .set(auth(f.qa.token))
+      .set('Idempotency-Key', 'save-reinspection')
+      .send({
+        expectedVersion: 1,
+        lines: [
+          {
+            jobOrderLineSizeId: f.jobOrderLineSizeId,
+            sourceReworkTaskId: task.id,
+            inspectedQuantity: 4,
+            acceptedQuantity: 4,
+            reworkQuantity: 0,
+            permanentlyRejectedQuantity: 0,
+          },
+        ],
+      })
+      .expect(200);
+    const reinspected = await request(app)
+      .post(`/qa/inspections/${reinspectionSession.id}/finalize`)
+      .set(auth(f.qa.token))
+      .set('Idempotency-Key', 'final-reinspection')
+      .send({ expectedVersion: 2 })
+      .expect(200);
+    const approved = await request(app)
+      .post(`/qa/job-orders/${f.jobOrderId}/approve`)
+      .set(auth(f.qa.token))
+      .set('Idempotency-Key', 'approve-reinspection')
+      .send({ expectedVersion: reinspected.body.data.version })
+      .expect(200);
+    expect(approved.body.data.status).toBe('QA_APPROVED');
+    expect(approved.body.data.totals.finalApproved).toBe(10);
   });
 });
