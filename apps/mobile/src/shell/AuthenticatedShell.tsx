@@ -19,11 +19,24 @@ export function AuthenticatedShell() {
             Erve
           </Link>
           {user?.roles.includes('FACTORY_USER') && (
-            <Link
-              to="/factory-tasks"
-              className="min-h-11 content-center text-sm text-[var(--erp-text-link)]"
-            >
-              My tasks
+            <>
+              <Link
+                to="/factory-tasks"
+                className="min-h-11 content-center text-sm text-[var(--erp-text-link)]"
+              >
+                My tasks
+              </Link>
+              <Link
+                to="/factory-rework"
+                className="min-h-11 content-center text-sm text-[var(--erp-text-link)]"
+              >
+                QA rework
+              </Link>
+            </>
+          )}
+          {user?.roles.includes('QA_USER') && (
+            <Link to="/qa" className="min-h-11 content-center text-sm text-[var(--erp-text-link)]">
+              QA
             </Link>
           )}
         </div>
