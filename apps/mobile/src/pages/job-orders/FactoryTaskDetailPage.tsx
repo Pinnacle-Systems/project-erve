@@ -71,13 +71,19 @@ export function FactoryTaskDetailPage() {
 
   if (task.isLoading)
     return (
-      <main className="p-5" role="status">
+      <main
+        className="flex h-full min-h-0 items-center justify-center overflow-hidden bg-background p-5"
+        role="status"
+      >
         Loading task…
       </main>
     );
   if (task.isError || !job)
     return (
-      <main className="space-y-4 p-5" role="alert">
+      <main
+        className="flex h-full min-h-0 flex-col items-center justify-center gap-4 overflow-hidden bg-background p-5 text-center"
+        role="alert"
+      >
         <p>{mutationMessage(task.error)}</p>
         <button
           className="min-h-11 rounded-md bg-primary px-5 text-primary-foreground"
@@ -97,7 +103,7 @@ export function FactoryTaskDetailPage() {
   };
 
   return (
-    <main className="min-h-screen space-y-4 bg-background px-4 py-5">
+    <main className="min-h-full space-y-4 bg-background px-4 py-5">
       <Link
         to="/factory-tasks"
         className="inline-flex min-h-11 items-center text-[var(--erp-text-link)]"

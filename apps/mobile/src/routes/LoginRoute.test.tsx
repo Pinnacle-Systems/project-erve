@@ -60,5 +60,19 @@ describe('LoginRoute', () => {
     renderRoute();
     expect(container.textContent).toContain('Temporarily unavailable');
     expect(container.textContent).not.toContain('Login form');
+    const screen = container.querySelector('main');
+    expect(screen?.className).toContain('h-full');
+    expect(screen?.className).toContain('min-h-0');
+    expect(screen?.className).toContain('overflow-hidden');
+  });
+
+  it('contains session restoration inside the viewport without a nested scroller', () => {
+    auth.status = 'loading';
+    renderRoute();
+
+    const screen = container.querySelector('main[aria-label="Restoring session"]');
+    expect(screen?.className).toContain('h-full');
+    expect(screen?.className).toContain('min-h-0');
+    expect(screen?.className).toContain('overflow-hidden');
   });
 });

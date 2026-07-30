@@ -39,7 +39,7 @@ export function FactoryTaskListPage() {
   });
 
   return (
-    <main className="min-h-screen space-y-4 bg-background px-4 py-5">
+    <main className="min-h-full space-y-4 bg-background px-4 py-5">
       <div>
         <h1 className="text-2xl font-semibold">My factory tasks</h1>
         <p className="text-sm text-muted-foreground">

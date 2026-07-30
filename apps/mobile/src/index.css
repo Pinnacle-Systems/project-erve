@@ -8,6 +8,14 @@
 @source '../../../packages/ui/src';
 
 @layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
   html {
     font-family: var(--erp-font-family-sans);
     background: var(--erp-color-app-bg);
@@ -15,15 +23,18 @@
   }
 
   body {
-    min-height: 100vh;
+    margin: 0;
     background: var(--erp-color-app-bg);
+  }
+
+  .app-viewport {
+    box-sizing: border-box;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
     padding-top: env(safe-area-inset-top);
     padding-right: env(safe-area-inset-right);
     padding-bottom: env(safe-area-inset-bottom);
     padding-left: env(safe-area-inset-left);
-  }
-
-  #root {
-    min-height: 100vh;
   }
 }

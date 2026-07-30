@@ -17,13 +17,15 @@ export function App() {
     <ThemeProvider theme="default" density="touch">
       <ThemeDocumentMeta />
       <NativeThemeSurfaces />
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <BrowserRouter>
-            <AppRoutes />
-          </BrowserRouter>
-        </AuthProvider>
-      </QueryClientProvider>
+      <div className="app-viewport">
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <BrowserRouter>
+              <AppRoutes />
+            </BrowserRouter>
+          </AuthProvider>
+        </QueryClientProvider>
+      </div>
     </ThemeProvider>
   );
 }

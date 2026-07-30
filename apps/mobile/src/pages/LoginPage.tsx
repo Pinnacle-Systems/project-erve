@@ -43,7 +43,7 @@ export function LoginPage() {
       : undefined;
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       {/* Neutral surface, not bg-primary: the full logo's "erve" wordmark is
           rendered in the same crimson as --erp-color-primary, so it would be
           unreadable on a crimson banner. */}
@@ -51,7 +51,7 @@ export function LoginPage() {
         <img src={erveLogo} alt="Erve India" className="h-auto w-48 max-w-full" />
         <p className="text-sm text-muted-foreground">Sign in to your Erve account</p>
       </div>
-      <div className="flex-1 px-6 py-8">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
         <Card>
           <LoginForm
             onSubmit={(values) => mutation.mutate(values)}

@@ -99,4 +99,15 @@ describe('AuthenticatedShell', () => {
     expect(container.textContent).toContain('Page Two');
     expect(container.querySelector('button[aria-label="Account menu"]')).not.toBeNull();
   });
+
+  it('owns one bounded content scroller beneath the fixed header', async () => {
+    await renderShellAt('/one');
+
+    const shell = container.firstElementChild as HTMLElement;
+    const content = shell.lastElementChild as HTMLElement;
+    expect(shell.className).toContain('h-full');
+    expect(shell.className).toContain('overflow-hidden');
+    expect(content.className).toContain('min-h-0');
+    expect(content.className).toContain('overflow-y-auto');
+  });
 });
