@@ -129,7 +129,7 @@ export function QaDetailPage() {
               </div>
               {canReopen && session.status === 'FINALIZED' && data.status !== 'QA_APPROVED' && (
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   onClick={() => {
                     const reason = window.prompt('Reason for reopening this finalized session?');
                     if (reason)
