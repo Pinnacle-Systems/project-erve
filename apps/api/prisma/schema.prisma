@@ -681,7 +681,7 @@ model JobOrderIdempotencyRecord {
 
   jobOrder JobOrder @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
 
-  @@unique([actorId, operation, idempotencyKey])
+  @@unique([actorId, operation, idempotencyKey], map: "job_order_idempotency_records_actor_id_operation_idempotency_ke")
   @@index([jobOrderId])
   @@map("job_order_idempotency_records")
 }
@@ -749,9 +749,9 @@ model QaInspectionSession {
   createdAt    DateTime           @default(now()) @map("created_at")
   updatedAt    DateTime           @updatedAt @map("updated_at")
 
-  jobOrder   JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
-  inspector  User               @relation("QaInspector", fields: [inspectorId], references: [id], onDelete: Restrict)
-  reopenedBy User?              @relation("QaReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull)
+  jobOrder   JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  inspector  User               @relation("QaInspector", fields: [inspectorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reopenedBy User?              @relation("QaReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
   lines      QaInspectionLine[]
   evidence   QaEvidence[]
 
@@ -774,13 +774,14 @@ model QaInspectionLine {
   createdAt                   DateTime          @default(now()) @map("created_at")
   updatedAt                   DateTime          @updatedAt @map("updated_at")
 
-  session          QaInspectionSession @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade)
-  jobOrderLineSize JobOrderLineSize    @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict)
-  sourceReworkTask QaReworkTask?       @relation("QaReinspectionSource", fields: [sourceReworkTaskId], references: [id], onDelete: Restrict)
+  session          QaInspectionSession @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  jobOrderLineSize JobOrderLineSize    @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sourceReworkTask QaReworkTask?       @relation("QaReinspectionSource", fields: [sourceReworkTaskId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   generatedRework  QaReworkTask?       @relation("QaGeneratedRework")
   evidence         QaEvidence[]
 
-  @@unique([inspectionSessionId, jobOrderLineSizeId, sourceReworkTaskId])
+  // Uniqueness is enforced by the custom COALESCE expression index in
+  // 20260729160000_add_qa_workflow so null source IDs are treated as equal.
   @@index([jobOrderLineSizeId])
   @@index([sourceReworkTaskId])
   @@map("qa_inspection_lines")
@@ -803,12 +804,12 @@ model QaReworkTask {
   createdAt          DateTime       @default(now()) @map("created_at")
   updatedAt          DateTime       @updatedAt @map("updated_at")
 
-  jobOrder         JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
-  jobOrderLineSize JobOrderLineSize   @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict)
-  sourceLine       QaInspectionLine   @relation("QaGeneratedRework", fields: [sourceLineId], references: [id], onDelete: Restrict)
+  jobOrder         JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  jobOrderLineSize JobOrderLineSize   @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sourceLine       QaInspectionLine   @relation("QaGeneratedRework", fields: [sourceLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   reinspections    QaInspectionLine[] @relation("QaReinspectionSource")
-  acknowledgedBy   User?              @relation("QaReworkAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
-  readyBy          User?              @relation("QaReworkReadiedBy", fields: [readyById], references: [id], onDelete: SetNull)
+  acknowledgedBy   User?              @relation("QaReworkAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  readyBy          User?              @relation("QaReworkReadiedBy", fields: [readyById], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   @@unique([jobOrderLineSizeId, attemptNumber])
   @@index([jobOrderId, status])
@@ -823,9 +824,9 @@ model QaEvidence {
   checksumSha256      String   @map("checksum_sha256")
   createdAt           DateTime @default(now()) @map("created_at")
 
-  session QaInspectionSession @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade)
-  line    QaInspectionLine?   @relation(fields: [inspectionLineId], references: [id], onDelete: Cascade)
-  file    File                @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  session QaInspectionSession @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  line    QaInspectionLine?   @relation(fields: [inspectionLineId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  file    File                @relation(fields: [fileId], references: [id], onDelete: Restrict, onUpdate: NoAction)
 
   @@unique([inspectionSessionId, checksumSha256])
   @@index([inspectionLineId])
