@@ -9,6 +9,13 @@ import { FactoryTaskDetailPage } from '../pages/job-orders/FactoryTaskDetailPage
 import { FactoryReworkPage } from '../pages/qa/FactoryReworkPage.js';
 import { QaInspectionPage } from '../pages/qa/QaInspectionPage.js';
 import { QaQueuePage } from '../pages/qa/QaQueuePage.js';
+import { useAuth } from '../auth/AuthContext.js';
+import { OperationalJobOrderListPage } from '../pages/job-orders/OperationalJobOrderListPage.js';
+
+function DashboardRoute() {
+  const { user } = useAuth();
+  return user ? <DashboardPage user={user} /> : null;
+}
 
 export function AppRoutes() {
   return (
@@ -21,12 +28,28 @@ export function AppRoutes() {
           </RoleRoute>
         }
       >
-        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/dashboard" element={<DashboardRoute />} />
         <Route
           path="/factory-tasks"
           element={
             <RoleRoute allowed={['FACTORY_USER']}>
               <FactoryTaskListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="/job-orders"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+              <OperationalJobOrderListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="/job-orders/:id"
+          element={
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+              <FactoryTaskDetailPage />
             </RoleRoute>
           }
         />
@@ -41,7 +64,7 @@ export function AppRoutes() {
         <Route
           path="/factory-rework"
           element={
-            <RoleRoute allowed={['FACTORY_USER']}>
+            <RoleRoute allowed={['FACTORY_USER', 'ADMIN', 'MERCHANDISER']}>
               <FactoryReworkPage />
             </RoleRoute>
           }

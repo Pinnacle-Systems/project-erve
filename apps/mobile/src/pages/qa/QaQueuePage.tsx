@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type {
@@ -21,7 +21,18 @@ function errorMessage(error: unknown) {
   return error.response.data.error.message;
 }
 export function QaQueuePage() {
-  const [filter, setFilter] = useState<QaQueueFilter | ''>('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedFilter = searchParams.get('filter');
+  const initialFilter: QaQueueFilter | '' = [
+    'AWAITING_FIRST_INSPECTION',
+    'IN_PROGRESS',
+    'REWORK_REQUIRED',
+    'READY_FOR_REINSPECTION',
+    'COMPLETED',
+  ].includes(requestedFilter ?? '')
+    ? (requestedFilter as QaQueueFilter)
+    : '';
+  const [filter, setFilter] = useState<QaQueueFilter | ''>(initialFilter);
   const [search, setSearch] = useState('');
   const query = useQuery({
     queryKey: ['qa-queue', filter, search],
@@ -51,7 +62,11 @@ export function QaQueuePage() {
         className="min-h-12 w-full rounded-md border border-border bg-surface px-3"
         aria-label="QA status"
         value={filter}
-        onChange={(e) => setFilter(e.target.value as QaQueueFilter | '')}
+        onChange={(e) => {
+          const nextFilter = e.target.value as QaQueueFilter | '';
+          setFilter(nextFilter);
+          setSearchParams(nextFilter ? { filter: nextFilter } : {}, { replace: true });
+        }}
       >
         <option value="">All active and completed</option>
         <option value="AWAITING_FIRST_INSPECTION">Awaiting first inspection</option>

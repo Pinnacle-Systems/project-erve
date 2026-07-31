@@ -18,6 +18,15 @@ import { AuthProvider, useAuth } from './auth/AuthContext.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { ThemeModeSelector } from './theme/ThemeModeSelector.js';
+import type { AuthUser } from '@erve/types';
+
+const DASHBOARD_USER: AuthUser = {
+  id: 'dashboard-user',
+  email: 'distributor@example.test',
+  mobile: null,
+  name: 'Dashboard User',
+  roles: ['DISTRIBUTOR'],
+};
 
 let container: HTMLDivElement;
 let root: Root;
@@ -74,7 +83,9 @@ describe('Mobile App — theme applies without an explicit colorMode prop', () =
     act(() => {
       root.render(
         <ThemeProvider theme="default" density="comfortable" colorMode="dark">
-          <DashboardPage />
+          <QueryClientProvider client={new QueryClient()}>
+            <DashboardPage user={DASHBOARD_USER} />
+          </QueryClientProvider>
         </ThemeProvider>,
       );
     });
@@ -92,7 +103,9 @@ describe('Mobile App — theme applies without an explicit colorMode prop', () =
     act(() => {
       root.render(
         <ThemeProvider theme="default" density="comfortable">
-          <DashboardPage />
+          <QueryClientProvider client={new QueryClient()}>
+            <DashboardPage user={DASHBOARD_USER} />
+          </QueryClientProvider>
         </ThemeProvider>,
       );
     });

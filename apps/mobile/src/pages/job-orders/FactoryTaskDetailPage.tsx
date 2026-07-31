@@ -9,6 +9,7 @@ import type {
   UpdatePreparedQuantityInput,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
+import { useAuth } from '../../auth/AuthContext.js';
 
 interface MutationVariables {
   body: object;
@@ -47,6 +48,7 @@ function useTaskMutation(id: string, path: string) {
 }
 
 export function FactoryTaskDetailPage() {
+  const { user } = useAuth();
   const { id = '' } = useParams();
   const [prepared, setPrepared] = useState<Record<string, string>>({});
   const task = useQuery({
@@ -105,10 +107,10 @@ export function FactoryTaskDetailPage() {
   return (
     <main className="min-h-full space-y-4 bg-background px-4 py-5">
       <Link
-        to="/factory-tasks"
+        to={user?.roles.includes('FACTORY_USER') ? '/factory-tasks' : '/job-orders'}
         className="inline-flex min-h-11 items-center text-[var(--erp-text-link)]"
       >
-        ← My tasks
+        ← {user?.roles.includes('FACTORY_USER') ? 'My tasks' : 'Active job orders'}
       </Link>
       <section className="rounded-xl border border-border bg-surface p-4">
         <p className="text-sm text-muted-foreground">

@@ -35,7 +35,7 @@ export function AuthenticatedShell() {
               </Link>
             </>
           )}
-          {user?.roles.includes('QA_USER') && (
+          {user?.roles.some((role) => ['QA_USER', 'ADMIN', 'MERCHANDISER'].includes(role)) && (
             <Link to="/qa" className="min-h-11 content-center text-sm text-[var(--erp-text-link)]">
               QA
             </Link>
