@@ -1,6 +1,5 @@
 import { Outlet } from 'react-router-dom';
 import {
-  CirclePlus,
   ClipboardList,
   Factory,
   Hammer,
@@ -19,8 +18,6 @@ import { AppShell, type AppShellNavSection } from './AppShell.js';
 export function AppLayout() {
   const { user } = useAuth();
 
-  const canManagePOs =
-    user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'DISTRIBUTOR'].includes(r)) ?? false;
   const canManageMasterData =
     user?.roles.some((r) => ['ADMIN', 'MERCHANDISER'].includes(r)) ?? false;
   const canManageUsers = user?.roles.includes('ADMIN') ?? false;
@@ -65,9 +62,6 @@ export function AppLayout() {
       heading: 'Orders',
       items: [
         { to: '/purchase-orders', label: 'Purchase Orders', end: true, icon: ClipboardList },
-        ...(canManagePOs
-          ? [{ to: '/purchase-orders/new', label: '+ New PO', icon: CirclePlus }]
-          : []),
         ...(canViewJobOrders ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }] : []),
         ...(user?.roles.some((r) =>
           ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'QA_USER'].includes(r),

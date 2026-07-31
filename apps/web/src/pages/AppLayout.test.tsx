@@ -105,7 +105,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Process Flows');
     expect(labels).toContain('Price Lists');
     expect(labels).toContain('Purchase Orders');
-    expect(labels).toContain('+ New PO');
+    expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
     expect(labels).toContain('Users');
   });
@@ -114,11 +114,13 @@ describe('AppLayout — role-gated navigation', () => {
     await renderAppLayout(['ADMIN']);
 
     const distributorLink = container.querySelector('a[href="/master-data/distributors"]');
-    expect(distributorLink?.querySelector('svg')?.classList.contains('lucide-handshake')).toBe(true);
+    expect(distributorLink?.querySelector('svg')?.classList.contains('lucide-handshake')).toBe(
+      true,
+    );
     expect(distributorLink?.querySelector('.lucide-truck')).toBeNull();
   });
 
-  it('SENIOR_MANAGEMENT sees Styles, Distributors and Price Lists but not Sizes/Factories/Process Flows, +New PO, or Users', async () => {
+  it('SENIOR_MANAGEMENT sees Styles, Distributors and Price Lists but not Sizes/Factories/Process Flows or Users', async () => {
     await renderAppLayout(['SENIOR_MANAGEMENT']);
     const labels = sidebarLinkLabels();
 
@@ -134,7 +136,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Users');
   });
 
-  it('FACTORY_USER sees only Factories in Master Data, and Job Orders but not +New PO', async () => {
+  it('FACTORY_USER sees only Factories in Master Data and Job Orders', async () => {
     await renderAppLayout(['FACTORY_USER']);
     const labels = sidebarLinkLabels();
 
@@ -161,7 +163,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Price Lists');
   });
 
-  it('DISTRIBUTOR sees Purchase Orders, +New PO and Price Lists but no other Master Data or Job Orders links', async () => {
+  it('DISTRIBUTOR sees Purchase Orders and Price Lists but no other Master Data or Job Orders links', async () => {
     await renderAppLayout(['DISTRIBUTOR']);
     const labels = sidebarLinkLabels();
 
@@ -172,7 +174,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Process Flows');
     expect(labels).toContain('Price Lists');
     expect(labels).toContain('Purchase Orders');
-    expect(labels).toContain('+ New PO');
+    expect(labels).not.toContain('+ New PO');
     expect(labels).not.toContain('Job Orders');
   });
 });

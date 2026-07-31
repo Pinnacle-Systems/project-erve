@@ -6,6 +6,7 @@ import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useAuth } from '../../auth/AuthContext.js';
 import type { Distributor, PurchaseMode, PurchaseOrder, PurchaseOrderStatus } from './types.js';
 
 const STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
@@ -39,6 +40,9 @@ function statusTone(status: PurchaseOrderStatus) {
 }
 
 export function PurchaseOrderListPage() {
+  const { user } = useAuth();
+  const canManagePurchaseOrders =
+    user?.roles.some((role) => ['ADMIN', 'MERCHANDISER', 'DISTRIBUTOR'].includes(role)) ?? false;
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<PurchaseOrderStatus | ''>('');
   const [distributorId, setDistributorId] = useState('');
@@ -81,9 +85,11 @@ export function PurchaseOrderListPage() {
         title="Purchase Orders"
         subtitle="Distributor demand orders"
         primaryAction={
-          <Button asChild>
-            <Link to="/purchase-orders/new">Create PO</Link>
-          </Button>
+          canManagePurchaseOrders ? (
+            <Button asChild>
+              <Link to="/purchase-orders/new">Create Purchase Order</Link>
+            </Button>
+          ) : undefined
         }
       />
 
@@ -187,7 +193,18 @@ export function PurchaseOrderListPage() {
         emptyState={
           <EmptyState
             title="No purchase orders found"
-            description="Create a PO to start tracking distributor demand."
+            description={
+              canManagePurchaseOrders
+                ? 'Create a purchase order to start tracking distributor demand.'
+                : 'Purchase orders will appear here when they are available.'
+            }
+            action={
+              canManagePurchaseOrders ? (
+                <Button asChild>
+                  <Link to="/purchase-orders/new">Create Purchase Order</Link>
+                </Button>
+              ) : undefined
+            }
           />
         }
         error={

@@ -224,14 +224,14 @@ export function PurchaseOrderFormPage() {
                 label="PO Date *"
                 value={poDate}
                 onValueChange={(value) => setPoDate(value ?? '')}
-                displayFormat="yyyy-mm-dd"
+                displayFormat="dd/mm/yyyy"
                 width="sm"
               />
               <DatePicker
                 label="Required Delivery Date"
                 value={requiredDeliveryDate}
                 onValueChange={(value) => setRequiredDeliveryDate(value ?? '')}
-                displayFormat="yyyy-mm-dd"
+                displayFormat="dd/mm/yyyy"
                 width="sm"
               />
             </FormGrid>

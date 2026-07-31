@@ -166,14 +166,14 @@ export function PriceListFormPage() {
                 label="Effective From"
                 value={effectiveFrom}
                 onValueChange={(value) => setEffectiveFrom(value ?? '')}
-                displayFormat="yyyy-mm-dd"
+                displayFormat="dd/mm/yyyy"
                 width="sm"
               />
               <DatePicker
                 label="Effective To (optional)"
                 value={effectiveTo}
                 onValueChange={(value) => setEffectiveTo(value ?? '')}
-                displayFormat="yyyy-mm-dd"
+                displayFormat="dd/mm/yyyy"
                 width="sm"
               />
             </FormGrid>
