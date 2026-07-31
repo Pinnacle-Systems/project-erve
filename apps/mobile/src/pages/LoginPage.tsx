@@ -43,23 +43,23 @@ export function LoginPage() {
       : undefined;
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+    <div className="login-page bg-background">
       {/* Neutral surface, not bg-primary: the full logo's "erve" wordmark is
           rendered in the same crimson as --erp-color-primary, so it would be
           unreadable on a crimson banner. */}
-      <div className="flex flex-col items-center gap-2 bg-surface px-6 pb-10 pt-16">
-        <img src={erveLogo} alt="Erve India" className="h-auto w-48 max-w-full" />
+      <header className="login-logo flex flex-col items-center gap-2 bg-surface">
+        <img src={erveLogo} alt="Erve India" className="h-auto w-64 max-w-full" />
         <p className="text-sm text-muted-foreground">Sign in to your Erve account</p>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-        <Card>
+      </header>
+      <main className="login-main">
+        <Card className="login-card">
           <LoginForm
             onSubmit={(values) => mutation.mutate(values)}
             isSubmitting={mutation.isPending}
             errorMessage={errorMessage}
           />
         </Card>
-      </div>
+      </main>
       <footer className="flex items-center justify-center gap-2 border-t border-border px-6 py-6">
         <PoweredByPinnacleBranding className="justify-center" logoClassName="h-8" />
       </footer>

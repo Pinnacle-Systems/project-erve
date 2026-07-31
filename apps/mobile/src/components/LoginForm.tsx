@@ -31,6 +31,7 @@ export function LoginForm({ onSubmit, isSubmitting = false, errorMessage }: Logi
         value={identifier}
         onChange={(e) => setIdentifier(e.target.value)}
         required
+        width="fill"
       />
       <PasswordField
         id="password"
@@ -39,9 +40,16 @@ export function LoginForm({ onSubmit, isSubmitting = false, errorMessage }: Logi
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         required
+        width="fill"
       />
       {errorMessage && <p className="text-sm text-danger">{errorMessage}</p>}
-      <Button type="submit" variant="default" disabled={isSubmitting}>
+      <Button
+        type="submit"
+        variant="default"
+        width="fill"
+        className="w-full"
+        disabled={isSubmitting}
+      >
         {isSubmitting ? 'Signing in…' : 'Sign in'}
       </Button>
     </form>

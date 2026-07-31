@@ -14,7 +14,7 @@
     "native:theme:android": "node scripts/configure-android-theme.mjs",
     "branding:generate": "node scripts/generate-branding.mjs",
     "cap:run:android": "cap run android",
-    "cap:run:android:live": "adb reverse tcp:4000 tcp:4000 && cap run android --live-reload --host localhost --port 5174 --forwardPorts 5174:5174",
+    "cap:run:android:live": "node scripts/run-android-live.mjs",
     "test": "vitest run"
   },
   "dependencies": {

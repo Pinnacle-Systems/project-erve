@@ -39,4 +39,29 @@ describe('LoginForm', () => {
       root.unmount();
     });
   });
+
+  it('renders the primary action full-width at ambient touch density', () => {
+    const container = document.createElement('div');
+    containers.push(container);
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <ThemeProvider theme="default" density="touch">
+          <LoginForm onSubmit={vi.fn()} />
+        </ThemeProvider>,
+      );
+    });
+
+    const submit = container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    expect(submit.dataset.width).toBe('fill');
+    expect(submit.className).toContain('w-full');
+    expect(submit.className).toContain('h-control');
+    expect(document.documentElement.dataset.density).toBe('touch');
+
+    act(() => {
+      root.unmount();
+    });
+  });
 });
