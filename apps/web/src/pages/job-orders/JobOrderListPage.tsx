@@ -15,19 +15,49 @@ import {
   formatDateTime,
   statusTone,
 } from './job-order-ui.js';
+import { useAuth } from '../../auth/AuthContext.js';
+import { useSearchParams } from 'react-router-dom';
+import { useEffect } from 'react';
+import { canCreateJobOrders, canFilterJobOrdersByFactory } from '../../auth/permissions.js';
 
 export function JobOrderListPage() {
+  const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const canCreate = canCreateJobOrders(user);
+  const mayFilterByFactory = canFilterJobOrdersByFactory(user);
+
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<JobOrderStatus | ''>('');
-  const [factoryId, setFactoryId] = useState('');
+
+  const rawFactoryId = searchParams.get('factoryId');
+  const effectiveFactoryId = mayFilterByFactory ? (rawFactoryId ?? undefined) : undefined;
+
+  useEffect(() => {
+    if (!mayFilterByFactory && rawFactoryId !== null) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('factoryId');
+      setSearchParams(next, { replace: true });
+    }
+  }, [mayFilterByFactory, rawFactoryId, searchParams, setSearchParams]);
+
+  const handleFactoryChange = (value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value && value !== 'ALL') {
+      next.set('factoryId', value);
+    } else {
+      next.delete('factoryId');
+    }
+    setSearchParams(next, { replace: true });
+  };
 
   const params = useMemo(
     () => ({
       search: search || undefined,
       status: status || undefined,
-      factoryId: factoryId || undefined,
+      factoryId: effectiveFactoryId,
     }),
-    [search, status, factoryId],
+    [search, status, effectiveFactoryId],
   );
 
   const jobOrdersQuery = useQuery({
@@ -57,9 +87,11 @@ export function JobOrderListPage() {
         title="Job Orders"
         subtitle="Factory production orders created from purchase order demand"
         primaryAction={
-          <Button asChild>
-            <Link to="/job-orders/new">Create Job Order</Link>
-          </Button>
+          canCreate ? (
+            <Button asChild>
+              <Link to="/job-orders/new">Create Job Order</Link>
+            </Button>
+          ) : undefined
         }
       />
 
@@ -76,27 +108,29 @@ export function JobOrderListPage() {
             value: s,
           })),
         ]}
-        hasActiveFilters={Boolean(search || status || factoryId)}
+        hasActiveFilters={Boolean(search || status || effectiveFactoryId)}
         onClearFilters={() => {
           setSearch('');
           setStatus('');
-          setFactoryId('');
+          handleFactoryChange('');
         }}
         actions={
-          <SelectField
-            aria-label="Factory"
-            value={factoryId || 'ALL'}
-            onValueChange={(value) => setFactoryId(value === 'ALL' ? '' : value)}
-            density="compact"
-            width="md"
-          >
-            <SelectItem value="ALL">All factories</SelectItem>
-            {(factoriesQuery.data ?? []).map((factory) => (
-              <SelectItem key={factory.id} value={factory.id}>
-                {factory.name}
-              </SelectItem>
-            ))}
-          </SelectField>
+          mayFilterByFactory ? (
+            <SelectField
+              aria-label="Factory"
+              value={effectiveFactoryId || 'ALL'}
+              onValueChange={handleFactoryChange}
+              density="compact"
+              width="md"
+            >
+              <SelectItem value="ALL">All factories</SelectItem>
+              {(factoriesQuery.data ?? []).map((factory) => (
+                <SelectItem key={factory.id} value={factory.id}>
+                  {factory.name}
+                </SelectItem>
+              ))}
+            </SelectField>
+          ) : undefined
         }
       />
 

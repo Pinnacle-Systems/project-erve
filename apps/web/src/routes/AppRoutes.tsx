@@ -36,24 +36,23 @@ import { RoleRoute } from './RoleRoute.js';
 import { QaDetailPage } from '../pages/qa/QaDetailPage.js';
 import { QaQueuePage } from '../pages/qa/QaQueuePage.js';
 
-const PRICE_LIST_VIEW_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-  'SENIOR_MANAGEMENT',
-  'ACCOUNTANT',
-  'DISTRIBUTOR',
-] as const;
-const PRICE_LIST_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const;
-const PO_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'] as const;
-const PO_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER', 'DISTRIBUTOR'] as const;
-const JOB_ORDER_VIEW_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-  'SENIOR_MANAGEMENT',
-  'FACTORY_USER',
-  'QA_USER',
-] as const;
-const JOB_ORDER_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const;
+import {
+  DISTRIBUTOR_VIEW_ROLES,
+  FACTORY_VIEW_ROLES,
+  JOB_ORDER_CREATE_ROLES,
+  JOB_ORDER_VIEW_ROLES,
+  PRICE_LIST_MANAGE_ROLES,
+  PRICE_LIST_VIEW_ROLES,
+  PROCESS_FLOW_MANAGE_ROLES,
+  PURCHASE_ORDER_MANAGE_ROLES,
+  PURCHASE_ORDER_VIEW_ROLES,
+  QA_VIEW_ROLES,
+  SIZE_MANAGE_ROLES,
+  STYLE_VIEW_ROLES,
+  USER_MANAGE_ROLES,
+} from '../auth/permissions.js';
+
+const MASTER_DATA_ROUTE_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER'] as const;
 
 export function AppRoutes() {
   return (
@@ -73,7 +72,7 @@ export function AppRoutes() {
       <Route
         path="/master-data"
         element={
-          <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER']}>
+          <RoleRoute allowed={MASTER_DATA_ROUTE_ROLES}>
             <AppLayout />
           </RoleRoute>
         }
@@ -83,7 +82,7 @@ export function AppRoutes() {
         <Route
           path="styles/new"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={STYLE_VIEW_ROLES}>
               <StyleFormPage />
             </RoleRoute>
           }
@@ -92,7 +91,7 @@ export function AppRoutes() {
         <Route
           path="styles/:id/edit"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={STYLE_VIEW_ROLES}>
               <StyleFormPage />
             </RoleRoute>
           }
@@ -100,7 +99,7 @@ export function AppRoutes() {
         <Route
           path="sizes"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={SIZE_MANAGE_ROLES}>
               <SizeListPage />
             </RoleRoute>
           }
@@ -108,7 +107,7 @@ export function AppRoutes() {
         <Route
           path="sizes/:id"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={SIZE_MANAGE_ROLES}>
               <SizeDetailPage />
             </RoleRoute>
           }
@@ -116,7 +115,7 @@ export function AppRoutes() {
         <Route
           path="sizes/:id/edit"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={SIZE_MANAGE_ROLES}>
               <SizeFormPage />
             </RoleRoute>
           }
@@ -124,7 +123,7 @@ export function AppRoutes() {
         <Route
           path="factories"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'FACTORY_USER']}>
+            <RoleRoute allowed={FACTORY_VIEW_ROLES}>
               <FactoryListPage />
             </RoleRoute>
           }
@@ -132,7 +131,7 @@ export function AppRoutes() {
         <Route
           path="factories/:id"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'FACTORY_USER']}>
+            <RoleRoute allowed={FACTORY_VIEW_ROLES}>
               <FactoryDetailPage />
             </RoleRoute>
           }
@@ -140,7 +139,7 @@ export function AppRoutes() {
         <Route
           path="factories/:id/edit"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={FACTORY_VIEW_ROLES}>
               <FactoryFormPage />
             </RoleRoute>
           }
@@ -148,7 +147,7 @@ export function AppRoutes() {
         <Route
           path="distributors"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT']}>
+            <RoleRoute allowed={DISTRIBUTOR_VIEW_ROLES}>
               <DistributorListPage />
             </RoleRoute>
           }
@@ -164,7 +163,7 @@ export function AppRoutes() {
         <Route
           path="distributors/:id"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT']}>
+            <RoleRoute allowed={DISTRIBUTOR_VIEW_ROLES}>
               <DistributorDetailPage />
             </RoleRoute>
           }
@@ -180,7 +179,7 @@ export function AppRoutes() {
         <Route
           path="users"
           element={
-            <RoleRoute allowed={['ADMIN']}>
+            <RoleRoute allowed={USER_MANAGE_ROLES}>
               <UserListPage />
             </RoleRoute>
           }
@@ -188,7 +187,7 @@ export function AppRoutes() {
         <Route
           path="users/new"
           element={
-            <RoleRoute allowed={['ADMIN']}>
+            <RoleRoute allowed={USER_MANAGE_ROLES}>
               <UserFormPage />
             </RoleRoute>
           }
@@ -196,7 +195,7 @@ export function AppRoutes() {
         <Route
           path="users/:id"
           element={
-            <RoleRoute allowed={['ADMIN']}>
+            <RoleRoute allowed={USER_MANAGE_ROLES}>
               <UserDetailPage />
             </RoleRoute>
           }
@@ -204,7 +203,7 @@ export function AppRoutes() {
         <Route
           path="users/:id/edit"
           element={
-            <RoleRoute allowed={['ADMIN']}>
+            <RoleRoute allowed={USER_MANAGE_ROLES}>
               <UserFormPage />
             </RoleRoute>
           }
@@ -212,7 +211,7 @@ export function AppRoutes() {
         <Route
           path="process-flows"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={PROCESS_FLOW_MANAGE_ROLES}>
               <ProcessFlowListPage />
             </RoleRoute>
           }
@@ -220,7 +219,7 @@ export function AppRoutes() {
         <Route
           path="process-flows/new"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={PROCESS_FLOW_MANAGE_ROLES}>
               <ProcessFlowCreatePage />
             </RoleRoute>
           }
@@ -228,7 +227,7 @@ export function AppRoutes() {
         <Route
           path="process-flows/:id"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={PROCESS_FLOW_MANAGE_ROLES}>
               <ProcessFlowDetailPage />
             </RoleRoute>
           }
@@ -236,7 +235,7 @@ export function AppRoutes() {
         <Route
           path="process-flow-versions/:versionId/edit"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={PROCESS_FLOW_MANAGE_ROLES}>
               <ProcessFlowVersionEditorPage />
             </RoleRoute>
           }
@@ -274,7 +273,7 @@ export function AppRoutes() {
       <Route
         path="/purchase-orders"
         element={
-          <RoleRoute allowed={PO_VIEW_ROLES}>
+          <RoleRoute allowed={PURCHASE_ORDER_VIEW_ROLES}>
             <AppLayout />
           </RoleRoute>
         }
@@ -282,7 +281,7 @@ export function AppRoutes() {
         <Route
           index
           element={
-            <RoleRoute allowed={PO_VIEW_ROLES}>
+            <RoleRoute allowed={PURCHASE_ORDER_VIEW_ROLES}>
               <PurchaseOrderListPage />
             </RoleRoute>
           }
@@ -290,7 +289,7 @@ export function AppRoutes() {
         <Route
           path="new"
           element={
-            <RoleRoute allowed={PO_MANAGE_ROLES}>
+            <RoleRoute allowed={PURCHASE_ORDER_MANAGE_ROLES}>
               <PurchaseOrderFormPage />
             </RoleRoute>
           }
@@ -298,7 +297,7 @@ export function AppRoutes() {
         <Route
           path=":id"
           element={
-            <RoleRoute allowed={PO_VIEW_ROLES}>
+            <RoleRoute allowed={PURCHASE_ORDER_VIEW_ROLES}>
               <PurchaseOrderDetailPage />
             </RoleRoute>
           }
@@ -306,7 +305,7 @@ export function AppRoutes() {
         <Route
           path=":id/edit"
           element={
-            <RoleRoute allowed={PO_MANAGE_ROLES}>
+            <RoleRoute allowed={PURCHASE_ORDER_MANAGE_ROLES}>
               <PurchaseOrderFormPage />
             </RoleRoute>
           }
@@ -325,7 +324,7 @@ export function AppRoutes() {
         <Route
           path="new"
           element={
-            <RoleRoute allowed={JOB_ORDER_MANAGE_ROLES}>
+            <RoleRoute allowed={JOB_ORDER_CREATE_ROLES}>
               <JobOrderCreatePage />
             </RoleRoute>
           }
@@ -335,7 +334,7 @@ export function AppRoutes() {
       <Route
         path="/qa"
         element={
-          <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'QA_USER']}>
+          <RoleRoute allowed={QA_VIEW_ROLES}>
             <AppLayout />
           </RoleRoute>
         }

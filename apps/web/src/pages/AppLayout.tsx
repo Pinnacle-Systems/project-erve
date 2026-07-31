@@ -14,63 +14,59 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext.js';
 import { AppShell, type AppShellNavSection } from './AppShell.js';
+import {
+  canManageProcessFlows,
+  canManageSizes,
+  canManageUsers,
+  canViewDistributorMaster,
+  canViewFactories,
+  canViewJobOrders,
+  canViewPriceLists,
+  canViewPurchaseOrders,
+  canViewQa,
+  canViewStyles,
+} from '../auth/permissions.js';
 
 export function AppLayout() {
   const { user } = useAuth();
 
-  const canManageMasterData =
-    user?.roles.some((r) => ['ADMIN', 'MERCHANDISER'].includes(r)) ?? false;
-  const canManageUsers = user?.roles.includes('ADMIN') ?? false;
-  const canViewStyles =
-    user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(r)) ?? false;
-  const canViewFactories =
-    user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'FACTORY_USER'].includes(r)) ?? false;
-  const canViewDistributorMaster =
-    user?.roles.some((r) => ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(r)) ?? false;
-  const canViewJobOrders =
-    user?.roles.some((r) =>
-      ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'].includes(r),
-    ) ?? false;
-  const canViewPriceLists =
-    user?.roles.some((r) =>
-      ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT', 'DISTRIBUTOR'].includes(r),
-    ) ?? false;
-
-  const navSections: AppShellNavSection[] = [
+  const rawNavSections: AppShellNavSection[] = [
     {
       items: [{ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }],
     },
     {
       heading: 'Master Data',
       items: [
-        ...(canViewStyles ? [{ to: '/master-data/styles', label: 'Styles', icon: Shirt }] : []),
-        ...(canManageMasterData ? [{ to: '/master-data/sizes', label: 'Sizes', icon: Ruler }] : []),
-        ...(canViewFactories
+        ...(canViewStyles(user) ? [{ to: '/master-data/styles', label: 'Styles', icon: Shirt }] : []),
+        ...(canManageSizes(user) ? [{ to: '/master-data/sizes', label: 'Sizes', icon: Ruler }] : []),
+        ...(canViewFactories(user)
           ? [{ to: '/master-data/factories', label: 'Factories', icon: Factory }]
           : []),
-        ...(canViewDistributorMaster
+        ...(canViewDistributorMaster(user)
           ? [{ to: '/master-data/distributors', label: 'Distributors', icon: Handshake }]
           : []),
-        ...(canManageMasterData
+        ...(canManageProcessFlows(user)
           ? [{ to: '/master-data/process-flows', label: 'Process Flows', icon: Workflow }]
           : []),
-        ...(canViewPriceLists ? [{ to: '/price-lists', label: 'Price Lists', icon: Tags }] : []),
-        ...(canManageUsers ? [{ to: '/master-data/users', label: 'Users', icon: Users }] : []),
+        ...(canViewPriceLists(user) ? [{ to: '/price-lists', label: 'Price Lists', icon: Tags }] : []),
+        ...(canManageUsers(user) ? [{ to: '/master-data/users', label: 'Users', icon: Users }] : []),
       ],
     },
     {
       heading: 'Orders',
       items: [
-        { to: '/purchase-orders', label: 'Purchase Orders', end: true, icon: ClipboardList },
-        ...(canViewJobOrders ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }] : []),
-        ...(user?.roles.some((r) =>
-          ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'QA_USER'].includes(r),
-        )
+        ...(canViewPurchaseOrders(user)
+          ? [{ to: '/purchase-orders', label: 'Purchase Orders', end: true, icon: ClipboardList }]
+          : []),
+        ...(canViewJobOrders(user) ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }] : []),
+        ...(canViewQa(user)
           ? [{ to: '/qa', label: 'QA', icon: ShieldCheck }]
           : []),
       ],
     },
   ];
+
+  const navSections = rawNavSections.filter((section) => section.items.length > 0);
 
   return (
     <AppShell navSections={navSections}>

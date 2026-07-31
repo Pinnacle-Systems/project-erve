@@ -3,16 +3,15 @@ import { PageHeader } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { Card } from '@erve/layout';
 import { useAuth } from '../auth/AuthContext.js';
+import {
+  canViewJobOrders,
+  canViewMasterDataDashboardShortcut,
+  canViewPurchaseOrders,
+} from '../auth/permissions.js';
 
 export function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canViewPurchaseOrders = user?.roles.some((role) =>
-    ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'].includes(role),
-  ) ?? false;
-  const canViewJobOrders = user?.roles.some((role) =>
-    ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'].includes(role),
-  ) ?? false;
 
   return (
     <div className="space-y-5">
@@ -25,15 +24,17 @@ export function DashboardPage() {
           <div>
             {user ? <p className="text-sm text-muted-foreground">Signed in as {user.name}</p> : null}
             <div className="mt-5 flex flex-wrap gap-3">
-              <Button variant="secondary" onClick={() => navigate('/master-data/styles')}>
-                Master Data
-              </Button>
-              {canViewPurchaseOrders && (
+              {canViewMasterDataDashboardShortcut(user) && (
+                <Button variant="secondary" onClick={() => navigate('/master-data/styles')}>
+                  Master Data
+                </Button>
+              )}
+              {canViewPurchaseOrders(user) && (
                 <Button variant="secondary" onClick={() => navigate('/purchase-orders')}>
                   Purchase Orders
                 </Button>
               )}
-              {canViewJobOrders && (
+              {canViewJobOrders(user) && (
                 <Button variant="secondary" onClick={() => navigate('/job-orders')}>
                   Job Orders
                 </Button>

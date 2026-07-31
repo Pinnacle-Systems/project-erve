@@ -93,10 +93,16 @@ function sidebarLinkLabels(): string[] {
   return Array.from(aside?.querySelectorAll('nav a') ?? []).map((a) => a.textContent ?? '');
 }
 
+function sidebarTextContent(): string {
+  const aside = container.querySelector('aside');
+  return aside?.textContent ?? '';
+}
+
 describe('AppLayout — role-gated navigation', () => {
   it('ADMIN sees every Master Data and Orders link', async () => {
     await renderAppLayout(['ADMIN']);
     const labels = sidebarLinkLabels();
+    const text = sidebarTextContent();
 
     expect(labels).toContain('Styles');
     expect(labels).toContain('Sizes');
@@ -108,6 +114,9 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
     expect(labels).toContain('Users');
+
+    expect(text).toContain('Master Data');
+    expect(text).toContain('Orders');
   });
 
   it('represents distributors as business partners rather than delivery transport', async () => {
@@ -136,19 +145,23 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Users');
   });
 
-  it('FACTORY_USER sees only Factories in Master Data and Job Orders', async () => {
+  it('FACTORY_USER sees only Job Orders', async () => {
     await renderAppLayout(['FACTORY_USER']);
     const labels = sidebarLinkLabels();
+    const text = sidebarTextContent();
 
     expect(labels).not.toContain('Styles');
     expect(labels).not.toContain('Sizes');
-    expect(labels).toContain('Factories');
+    expect(labels).not.toContain('Factories');
     expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).not.toContain('Price Lists');
-    expect(labels).toContain('Purchase Orders');
+    expect(labels).not.toContain('Purchase Orders');
     expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
+
+    expect(text).not.toContain('Master Data');
+    expect(text).toContain('Orders');
   });
 
   it('ACCOUNTANT sees Price Lists but no other Master Data links', async () => {
