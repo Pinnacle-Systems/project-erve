@@ -13,6 +13,7 @@ function supervisor(user: CurrentUser) {
 }
 function assertView(user: CurrentUser, factoryId: string) {
   if (supervisor(user)) return;
+  if (user.roles.includes('QA_USER')) return;
   if (
     user.factoryIds.length !== 1 ||
     user.factoryIds[0] !== factoryId ||

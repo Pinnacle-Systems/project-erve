@@ -13,10 +13,6 @@ import { apiClient } from '../../lib/api-client.js';
 
 function errorMessage(error: unknown) {
   if (!isAxiosError<ApiErrorResponse>(error)) return 'QA tasks are temporarily unavailable.';
-  if (error.response?.data.error.code === 'FACTORY_MAPPING_REQUIRED')
-    return 'Your QA account is not mapped to a factory.';
-  if (error.response?.data.error.code === 'FACTORY_MAPPING_AMBIGUOUS')
-    return 'Your QA account has conflicting factory mappings. Contact an administrator.';
   if (!error.response) return 'You appear to be offline. Pull to refresh or try again.';
   return error.response.data.error.message;
 }

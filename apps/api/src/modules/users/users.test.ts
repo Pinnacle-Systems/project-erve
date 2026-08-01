@@ -65,6 +65,32 @@ describe('POST /users', () => {
     expect(JSON.stringify(res.body)).not.toContain('passwordHash');
   });
 
+  it('creates and edits a QA user without factory assignment', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin-qa@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const created = await request(app)
+      .post('/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Unmapped QA',
+        email: 'unmapped-qa@test.local',
+        password: 'qa-password',
+        roles: ['QA_USER'],
+      })
+      .expect(201);
+    expect(created.body.data.factories).toEqual([]);
+    const edited = await request(app)
+      .patch(`/users/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Edited Unmapped QA' })
+      .expect(200);
+    expect(edited.body.data.name).toBe('Edited Unmapped QA');
+    expect(edited.body.data.factories).toEqual([]);
+  });
+
   it('rejects a non-ADMIN caller', async () => {
     const { token } = await createTestUserAndToken({
       email: 'merchandiser@test.local',

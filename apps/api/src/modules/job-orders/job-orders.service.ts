@@ -1,6 +1,6 @@
 import { createId } from '@erve/shared';
 import { createHash } from 'node:crypto';
-import type { AssignedFactoryTaskSummary, JobOrderDetail, PaginatedResponse } from '@erve/types';
+import { QA_QUEUE_STATUSES, type AssignedFactoryTaskSummary, type JobOrderDetail, type PaginatedResponse } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { JobOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
@@ -77,15 +77,7 @@ function assertJobOrderViewAccess(
   if (canFactoryManage(user, jobOrder.factoryId) && jobOrder.status !== 'DRAFT') return;
   if (
     user.roles.includes('QA_USER') &&
-    user.factoryIds.length === 1 &&
-    user.factoryIds[0] === jobOrder.factoryId &&
-    [
-      'READY_FOR_QA',
-      'QA_IN_PROGRESS',
-      'REWORK_REQUIRED',
-      'READY_FOR_REINSPECTION',
-      'QA_APPROVED',
-    ].includes(jobOrder.status)
+    QA_QUEUE_STATUSES.includes(jobOrder.status)
   )
     return;
   throw HttpError.forbidden('You do not have access to this job order');

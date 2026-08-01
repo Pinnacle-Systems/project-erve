@@ -8,7 +8,7 @@ The isolated PostgreSQL target is `erve_test`; migration `20260729160000_add_qa_
 
 - full inspection, final approval, purchase-order QA-passed propagation, idempotent replay and single audit emission;
 - prepared-capacity rejection, stale concurrent save rejection and idempotency payload-mismatch rejection;
-- QA factory-scope isolation, factory-route denial, required permanent-rejection evidence, evidence read isolation, successful permanent rejection and final approved quantity derivation;
+- QA global visibility without factory mapping, factory-route denial, required permanent-rejection evidence, factory-scoped evidence reads, successful permanent rejection and final approved quantity derivation;
 - partial acceptance, factory acknowledgement, ready-for-reinspection handoff, reinspection, protected accepted quantity and final approval after rework.
 
 Client regression results:
@@ -32,7 +32,7 @@ The existing secure session survived reinstall/cold start, but session recovery 
 - C — permanent rejection: passed through the real API, file storage and database; packaged Android camera/gallery not executed.
 - D — concurrent inspectors: passed at the mutation/concurrency boundary; two physical devices not used.
 - E — retry after timeout: exact replay and payload mismatch passed; an actual network timeout was not induced on device.
-- F — authorization: passed for QA/factory scope and evidence reads.
+- F — authorization: QA is global for active QA users; factory workflows and factory-user evidence remain scoped.
 - G — interrupted mobile workflow: local draft persistence is implemented and mobile tests pass; physical connectivity interruption/recovery was not executed.
 
 Warehouse, stock, receipt, allocation, reservation, packing, dispatch, invoicing, returns, payments, Tally, notifications and dashboards were not started.

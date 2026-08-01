@@ -8,6 +8,7 @@ import type {
   QaDefectCategory,
   QaInspectionDetail,
 } from '@erve/types';
+import { canStartQaInspection, qaInspectionAction } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 
 type Entry = {
@@ -33,7 +34,7 @@ function message(error: unknown) {
   if (code === 'STALE_VERSION')
     return 'This job changed on another device. Reload before continuing.';
   if (code === 'UNAUTHORIZED') return 'Your session expired. Sign in again.';
-  if (code === 'FORBIDDEN') return 'Your QA permission or factory scope changed.';
+  if (code === 'FORBIDDEN') return 'Your QA permission changed.';
   if (!error.response)
     return 'The result is unknown after a connection interruption. Retry with the same action.';
   return error.response.data.error.message;
@@ -219,8 +220,7 @@ export function QaInspectionPage() {
           </div>
         </section>
       )}
-      {!currentDraft &&
-        ['READY_FOR_QA', 'QA_IN_PROGRESS', 'READY_FOR_REINSPECTION'].includes(detail.status) && (
+      {!currentDraft && canStartQaInspection(detail.status) && (
           <button
             className="min-h-12 w-full rounded-lg bg-primary text-primary-foreground"
             onClick={() =>
@@ -230,7 +230,7 @@ export function QaInspectionPage() {
               })
             }
           >
-            {selectedRework.length ? 'Start reinspection' : 'Start inspection'}
+            {qaInspectionAction(detail.status) === 'REINSPECTION' ? 'Start reinspection' : 'Start inspection'}
           </button>
         )}
       {currentDraft && (

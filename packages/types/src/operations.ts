@@ -231,6 +231,28 @@ export type QaQueueFilter =
   | 'REWORK_REQUIRED'
   | 'READY_FOR_REINSPECTION'
   | 'COMPLETED';
+
+/** QA workflow states shared by the API and clients. */
+export const QA_QUEUE_STATUSES: JobOrderStatus[] = [
+  'READY_FOR_QA',
+  'QA_IN_PROGRESS',
+  'REWORK_REQUIRED',
+  'READY_FOR_REINSPECTION',
+  'QA_APPROVED',
+];
+export const QA_INSPECTION_START_STATUSES: JobOrderStatus[] = [
+  'READY_FOR_QA',
+  'QA_IN_PROGRESS',
+  'READY_FOR_REINSPECTION',
+];
+export function canStartQaInspection(status: JobOrderStatus): boolean {
+  return QA_INSPECTION_START_STATUSES.includes(status);
+}
+export function qaInspectionAction(status: JobOrderStatus): 'INITIAL' | 'REINSPECTION' | null {
+  if (status === 'READY_FOR_REINSPECTION') return 'REINSPECTION';
+  if (status === 'READY_FOR_QA' || status === 'QA_IN_PROGRESS') return 'INITIAL';
+  return null;
+}
 export type QaInspectionStatus = 'DRAFT' | 'FINALIZED' | 'REOPENED' | 'VOIDED';
 export type QaDefectCategory =
   'STITCHING' | 'FABRIC' | 'PRINT_EMBROIDERY' | 'MEASUREMENT' | 'FINISHING' | 'PACKAGING' | 'OTHER';

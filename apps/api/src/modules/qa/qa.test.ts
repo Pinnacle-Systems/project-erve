@@ -35,9 +35,6 @@ async function fixture(prepared = 10) {
   const factory = await createTestFactory();
   const otherFactory = await createTestFactory({ code: 'OTHER-QA' });
   await prisma.userFactory.create({
-    data: { id: createId(), userId: qa.userId, factoryId: factory.id },
-  });
-  await prisma.userFactory.create({
     data: { id: createId(), userId: factoryUser.userId, factoryId: factory.id },
   });
   await prisma.userFactory.create({
@@ -119,13 +116,85 @@ async function fixture(prepared = 10) {
       },
     },
   });
-  return { qa, factoryUser, outsider, jobOrderId, jobOrderLineSizeId, poLineSizeId };
+  return { qa, factoryUser, outsider, otherFactory, jobOrderId, jobOrderLineSizeId, poLineSizeId };
 }
 function auth(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
+async function createSecondFactoryJob(f: Awaited<ReturnType<typeof fixture>>) {
+  const source = await prisma.jobOrder.findUniqueOrThrow({
+    where: { id: f.jobOrderId },
+    include: { lines: { include: { sizes: true } } },
+  });
+  return prisma.jobOrder.create({
+    data: {
+      id: createId(),
+      jobOrderNumber: `JO-${createId()}`,
+      purchaseOrderId: source.purchaseOrderId,
+      factoryId: f.otherFactory.id,
+      processFlowVersionId: source.processFlowVersionId,
+      status: 'READY_FOR_QA',
+      preparedQuantityTotal: source.preparedQuantityTotal,
+      createdBy: f.qa.userId,
+      lines: {
+        create: source.lines.map((line) => ({
+          id: createId(),
+          purchaseOrderLineId: line.purchaseOrderLineId,
+          styleId: line.styleId,
+          orderedQuantityTotal: line.orderedQuantityTotal,
+          preparedQuantityTotal: line.preparedQuantityTotal,
+          status: 'READY_FOR_QA' as const,
+          sizes: {
+            create: line.sizes.map((size) => ({
+              id: createId(),
+              purchaseOrderLineSizeId: size.purchaseOrderLineSizeId,
+              sizeId: size.sizeId,
+              orderedQuantity: size.orderedQuantity,
+              preparedQuantity: size.preparedQuantity,
+            })),
+          },
+        })),
+      },
+    },
+  });
+}
+
 describe('QA workflow', () => {
+  it('exposes eligible work from multiple factories to an unmapped QA user', async () => {
+    const f = await fixture();
+    await createSecondFactoryJob(f);
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ identifier: 'qa@test.local', password: 'pass' })
+      .expect(200);
+    expect(login.body.data.user.roles).toContain('QA_USER');
+    const queue = await request(app)
+      .get('/qa/queue')
+      .set(auth(login.body.data.accessToken))
+      .expect(200);
+    expect(queue.body.data.items).toHaveLength(2);
+    expect(new Set(queue.body.data.items.map((item: { factory: { id: string } }) => item.factory.id)).size).toBe(2);
+  });
+
+  it('denies inactive QA users and unauthorized roles server-side', async () => {
+    const f = await fixture();
+    const distributor = await createTestUserAndToken({
+      email: 'qa-distributor@test.local',
+      password: 'pass',
+      roles: ['DISTRIBUTOR'],
+    });
+    await request(app).get('/qa/queue').set(auth(distributor.token)).expect(403);
+    await request(app)
+      .post(`/qa/job-orders/${f.jobOrderId}/inspections`)
+      .set(auth(distributor.token))
+      .set('Idempotency-Key', 'unauthorized-start')
+      .send({ expectedVersion: 1, sourceReworkTaskIds: [] })
+      .expect(403);
+    await prisma.user.update({ where: { id: f.qa.userId }, data: { status: 'INACTIVE' } });
+    await request(app).get('/qa/queue').set(auth(f.qa.token)).expect(401);
+  });
+
   it('fully inspects and approves an authoritative quantity with retry-safe audit', async () => {
     const f = await fixture();
     const started = await request(app)
@@ -134,6 +203,15 @@ describe('QA workflow', () => {
       .set('Idempotency-Key', 'start-full')
       .send({ expectedVersion: 1, sourceReworkTaskIds: [] })
       .expect(201);
+    const repeatedStart = await request(app)
+      .post(`/qa/job-orders/${f.jobOrderId}/inspections`)
+      .set(auth(f.qa.token))
+      .set('Idempotency-Key', 'start-full-repeat')
+      .send({ expectedVersion: 2, sourceReworkTaskIds: [] })
+      .expect(201);
+    expect(
+      repeatedStart.body.data.sessions.filter((s: { status: string }) => s.status === 'DRAFT'),
+    ).toHaveLength(1);
     const sessionId = started.body.data.sessions.find(
       (session: { status: string }) => session.status === 'DRAFT',
     ).id;
@@ -186,6 +264,12 @@ describe('QA workflow', () => {
       .expect(200);
     expect(approved.body.data.status).toBe('QA_APPROVED');
     expect(approved.body.data.totals.finalApproved).toBe(10);
+    await request(app)
+      .post(`/qa/job-orders/${f.jobOrderId}/inspections`)
+      .set(auth(f.qa.token))
+      .set('Idempotency-Key', 'start-approved')
+      .send({ expectedVersion: approved.body.data.version, sourceReworkTaskIds: [] })
+      .expect(409);
     expect(
       (
         await prisma.distributorPurchaseOrderLineSize.findUniqueOrThrow({
@@ -269,12 +353,12 @@ describe('QA workflow', () => {
     expect(mismatch.body.error.code).toBe('IDEMPOTENCY_KEY_REUSED');
   });
 
-  it('isolates factory scope and requires evidence for permanent rejection', async () => {
+  it('allows unmapped QA users globally while retaining factory-user evidence scope', async () => {
     const f = await fixture();
     await request(app)
       .get(`/qa/job-orders/${f.jobOrderId}`)
       .set(auth(f.outsider.token))
-      .expect(403);
+      .expect(200);
     await request(app)
       .get(`/qa/job-orders/${f.jobOrderId}`)
       .set(auth(f.factoryUser.token))
@@ -324,7 +408,8 @@ describe('QA workflow', () => {
     await request(app)
       .get(`/qa/evidence/${evidence.body.data.id}/content`)
       .set(auth(f.outsider.token))
-      .expect(403);
+      .expect(200)
+      .expect('Content-Type', 'image/jpeg');
     await request(app)
       .get(`/qa/evidence/${evidence.body.data.id}/content`)
       .set(auth(f.factoryUser.token))

@@ -552,7 +552,7 @@ describe('job orders API', () => {
     expect(detail.body.data.status).toBe('DRAFT');
   });
 
-  it('blocks a mapped factory user from workflow mutations on a deactivated factory while preserving admin/merchandiser resolution, QA visibility, and immediate restoration on reactivation', async () => {
+  it('blocks factory workflow mutations on a deactivated factory while preserving admin/merchandiser resolution, global QA visibility, and immediate restoration on reactivation', async () => {
     const graph = await createSeedGraph();
     const merchandiser = await createTestUserAndToken({
       email: 'merch-job@test.local',
@@ -563,9 +563,6 @@ describe('job orders API', () => {
       email: 'qa-job@test.local',
       password: 'pass',
       roles: ['QA_USER'],
-    });
-    await prisma.userFactory.create({
-      data: { id: createId(), userId: qaUser.userId, factoryId: graph.factory.id },
     });
     const factoryUser = await createTestUserAndToken({
       email: 'factory-suspend@test.local',
@@ -674,8 +671,8 @@ describe('job orders API', () => {
     expect(preparedRes.status).toBe(200);
     expect(preparedRes.body.data.status).toBe('READY_FOR_QA');
 
-    // Scoped QA can still inspect already-prepared quantities at an inactive factory;
-    // view access depends on mapping, not the factory's active flag.
+    // An unmapped QA user can inspect already-prepared quantities at any factory;
+    // view access depends on active QA role membership, not factory mapping.
     const qaView = await request(app)
       .get(`/job-orders/${jobOrderId}`)
       .set('Authorization', `Bearer ${qaUser.token}`);

@@ -7,19 +7,13 @@ import type {
   QaReworkTaskView,
   SaveQaInspectionInput,
 } from '@erve/types';
+import { QA_INSPECTION_START_STATUSES, QA_QUEUE_STATUSES } from '@erve/types';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { HttpError } from '../../errors/http-error.js';
 import { Prisma, prisma } from '../../db/prisma.js';
 
 type Tx = Prisma.TransactionClient;
-const QA_JOB_STATUSES = [
-  'READY_FOR_QA',
-  'QA_IN_PROGRESS',
-  'REWORK_REQUIRED',
-  'READY_FOR_REINSPECTION',
-  'QA_APPROVED',
-] as const;
 
 function isSupervisor(user: CurrentUser) {
   return user.roles.includes('ADMIN') || user.roles.includes('MERCHANDISER');
@@ -27,21 +21,14 @@ function isSupervisor(user: CurrentUser) {
 function isReadSupervisor(user: CurrentUser) {
   return isSupervisor(user) || user.roles.includes('SENIOR_MANAGEMENT');
 }
-function qaFactoryId(user: CurrentUser): string | null {
-  if (!user.roles.includes('QA_USER')) return null;
-  if (user.factoryIds.length === 0) throw HttpError.factoryMappingRequired();
-  if (user.factoryIds.length > 1) throw HttpError.factoryMappingAmbiguous();
-  return user.factoryIds[0]!;
+function assertQaMutation(user: CurrentUser, _factoryId: string) {
+  if (isSupervisor(user) || user.roles.includes('QA_USER')) return;
+  throw HttpError.forbidden('You cannot inspect this job order');
 }
-function assertQaMutation(user: CurrentUser, factoryId: string) {
-  if (isSupervisor(user)) return;
-  const scoped = qaFactoryId(user);
-  if (scoped !== factoryId) throw HttpError.forbidden('You cannot inspect this job order');
-}
-function assertQaView(user: CurrentUser, factoryId: string) {
+function assertQaView(user: CurrentUser, _factoryId: string) {
   if (isReadSupervisor(user)) return;
-  const scoped = qaFactoryId(user);
-  if (scoped !== factoryId) throw HttpError.forbidden('You cannot view this QA record');
+  if (user.roles.includes('QA_USER')) return;
+  throw HttpError.forbidden('You cannot view this QA record');
 }
 function assertFactoryMutation(user: CurrentUser, factoryId: string) {
   if (isSupervisor(user)) return;
@@ -273,7 +260,7 @@ export async function getDetail(user: CurrentUser, id: string) {
   return toDetail(record);
 }
 export async function getQueue(
-  user: CurrentUser,
+  _user: CurrentUser,
   filters: {
     filter?: string;
     factoryId?: string;
@@ -284,7 +271,7 @@ export async function getQueue(
     limit: number;
   },
 ): Promise<PaginatedResponse<QaQueueSummary>> {
-  const scopedFactory = isReadSupervisor(user) ? filters.factoryId : qaFactoryId(user)!;
+  const scopedFactory = filters.factoryId;
   const statuses =
     filters.filter === 'AWAITING_FIRST_INSPECTION'
       ? ['READY_FOR_QA']
@@ -296,7 +283,7 @@ export async function getQueue(
             ? ['READY_FOR_REINSPECTION']
             : filters.filter === 'COMPLETED'
               ? ['QA_APPROVED']
-              : [...QA_JOB_STATUSES];
+              : [...QA_QUEUE_STATUSES];
   const records = await prisma.jobOrder.findMany({
     where: {
       factoryId: scopedFactory,
@@ -348,13 +335,20 @@ export async function startInspection(
     if (await replayOrLock(tx, user.id, jobOrderId, 'QA_START', key, requestHash)) return;
     const job = await tx.jobOrder.findUnique({
       where: { id: jobOrderId },
-      include: { qaInspections: { select: { cycleNumber: true } }, qaReworkTasks: true },
+      include: { qaInspections: { select: { id: true, cycleNumber: true, status: true } }, qaReworkTasks: true },
     });
     if (!job) throw HttpError.notFound('Job order not found');
     assertQaMutation(user, job.factoryId);
     if (job.version !== input.expectedVersion) throw HttpError.staleVersion(job.version);
-    if (!['READY_FOR_QA', 'QA_IN_PROGRESS', 'READY_FOR_REINSPECTION'].includes(job.status))
+    if (!QA_INSPECTION_START_STATUSES.includes(job.status))
       throw HttpError.conflict('Job order is not available for inspection');
+    const activeDraft = job.status === 'QA_IN_PROGRESS'
+      ? job.qaInspections.find((session) => session.status === 'DRAFT')
+      : undefined;
+    if (activeDraft) {
+      sessionId = activeDraft.id;
+      return;
+    }
     const selected = job.qaReworkTasks.filter((t) => input.sourceReworkTaskIds.includes(t.id));
     if (
       selected.length !== input.sourceReworkTaskIds.length ||

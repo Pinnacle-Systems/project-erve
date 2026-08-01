@@ -2,8 +2,8 @@
 
 ## Decisions and bounded assumptions
 
-- A mapped `QA_USER` initiates an inspection from the QA queue. Admins and merchandisers may also act for exception resolution. Senior management is read-only.
-- QA scope is one factory per QA account, using the existing `user_factories` mapping. Zero mappings fail `FACTORY_MAPPING_REQUIRED`; multiple mappings fail `FACTORY_MAPPING_AMBIGUOUS`. This is deliberately fail-closed until a dedicated multi-site QA assignment model exists.
+- An active `QA_USER` initiates an inspection from the global QA queue. Factory mappings are not required for QA visibility or inspection; admins and merchandisers may also act for exception resolution. Senior management is read-only.
+- The shared `user_factories` relation remains for `FACTORY_USER` workflows and other legitimate mappings; it is no longer read by the active QA workflow, so no schema migration removes shared mapping data.
 - Inspection is a partial, versioned session against job-order style/size lines. Multiple sequential sessions are allowed. A version conflict prevents two clients from consuming the same quantity.
 - Draft lines reserve first-pass or rework quantity. A user can correct their own draft. Finalized sessions are immutable facts.
 - Accepted quantities remain provisional until job-level `QA_APPROVED`. Only then is the derived accepted total copied to the purchase-order QA-passed counter and exposed as `finalApproved` for the future warehouse workflow.
