@@ -72,6 +72,17 @@ export const JOB_ORDER_VIEW_ROLES = [
   'QA_USER',
 ] as const satisfies readonly Role[];
 
+/** Roles that receive the general Job Orders navigation destination.
+ * QA users retain read-only route access for contextual links, but use QA as
+ * their operational entry point.
+ */
+export const JOB_ORDER_NAVIGATION_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'FACTORY_USER',
+] as const satisfies readonly Role[];
+
 export const JOB_ORDER_CREATE_ROLES = [
   'ADMIN',
   'MERCHANDISER',
@@ -131,6 +142,9 @@ export const canManagePurchaseOrders = (user: AuthUser | null | undefined) =>
 
 export const canViewJobOrders = (user: AuthUser | null | undefined) =>
   hasRole(user, JOB_ORDER_VIEW_ROLES);
+
+export const canNavigateToJobOrders = (user: AuthUser | null | undefined) =>
+  hasRole(user, JOB_ORDER_NAVIGATION_ROLES);
 
 export const canCreateJobOrders = (user: AuthUser | null | undefined) =>
   hasRole(user, JOB_ORDER_CREATE_ROLES);

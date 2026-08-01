@@ -87,4 +87,9 @@ describe('DashboardPage', () => {
     expect(labels).not.toContain('Purchase Orders');
     expect(labels).toContain('Job Orders');
   });
+
+  it('QA_USER is not directed to the generic Job Orders shortcut', async () => {
+    await renderDashboard('QA_USER');
+    expect(getButtonTexts()).not.toContain('Job Orders');
+  });
 });

@@ -4,7 +4,7 @@ import { Button } from '@erve/primitives';
 import { Card } from '@erve/layout';
 import { useAuth } from '../auth/AuthContext.js';
 import {
-  canViewJobOrders,
+  canNavigateToJobOrders,
   canViewMasterDataDashboardShortcut,
   canViewPurchaseOrders,
 } from '../auth/permissions.js';
@@ -34,7 +34,7 @@ export function DashboardPage() {
                   Purchase Orders
                 </Button>
               )}
-              {canViewJobOrders(user) && (
+              {canNavigateToJobOrders(user) && (
                 <Button variant="secondary" onClick={() => navigate('/job-orders')}>
                   Job Orders
                 </Button>

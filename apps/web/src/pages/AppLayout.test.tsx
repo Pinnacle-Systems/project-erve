@@ -164,6 +164,25 @@ describe('AppLayout — role-gated navigation', () => {
     expect(text).toContain('Orders');
   });
 
+  it('QA_USER sees QA but not the generic Job Orders destination', async () => {
+    await renderAppLayout(['QA_USER']);
+    const labels = sidebarLinkLabels();
+    const text = sidebarTextContent();
+
+    expect(labels).toContain('QA');
+    expect(labels).not.toContain('Job Orders');
+    expect(text).toContain('Orders');
+  });
+
+  it('does not render an empty section heading after role filtering', async () => {
+    await renderAppLayout(['QA_USER']);
+    const headings = Array.from(container.querySelectorAll('aside nav > div > div:first-child'))
+      .map((element) => element.textContent?.trim())
+      .filter(Boolean);
+
+    expect(headings).not.toContain('Master Data');
+  });
+
   it('ACCOUNTANT sees Price Lists but no other Master Data links', async () => {
     await renderAppLayout(['ACCOUNTANT']);
     const labels = sidebarLinkLabels();

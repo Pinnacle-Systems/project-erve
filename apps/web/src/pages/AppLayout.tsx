@@ -20,7 +20,7 @@ import {
   canManageUsers,
   canViewDistributorMaster,
   canViewFactories,
-  canViewJobOrders,
+  canNavigateToJobOrders,
   canViewPriceLists,
   canViewPurchaseOrders,
   canViewQa,
@@ -58,7 +58,9 @@ export function AppLayout() {
         ...(canViewPurchaseOrders(user)
           ? [{ to: '/purchase-orders', label: 'Purchase Orders', end: true, icon: ClipboardList }]
           : []),
-        ...(canViewJobOrders(user) ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }] : []),
+        ...(canNavigateToJobOrders(user)
+          ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }]
+          : []),
         ...(canViewQa(user)
           ? [{ to: '/qa', label: 'QA', icon: ShieldCheck }]
           : []),

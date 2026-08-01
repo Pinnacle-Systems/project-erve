@@ -18,6 +18,9 @@ vi.mock('../pages/master-data/FactoryListPage.js', () => ({ FactoryListPage: () 
 vi.mock('../pages/purchase-orders/PurchaseOrderListPage.js', () => ({ PurchaseOrderListPage: () => <div>PurchaseOrderListPage</div> }));
 vi.mock('../pages/job-orders/JobOrderListPage.js', () => ({ JobOrderListPage: () => <div>JobOrderListPage</div> }));
 vi.mock('../pages/job-orders/JobOrderCreatePage.js', () => ({ JobOrderCreatePage: () => <div>JobOrderCreatePage</div> }));
+vi.mock('../pages/job-orders/JobOrderDetailPage.js', () => ({ JobOrderDetailPage: () => <div>JobOrderDetailPage</div> }));
+vi.mock('../pages/qa/QaQueuePage.js', () => ({ QaQueuePage: () => <div>QaQueuePage</div> }));
+vi.mock('../pages/qa/QaDetailPage.js', () => ({ QaDetailPage: () => <div>QaDetailPage</div> }));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -41,6 +44,12 @@ function flushMicrotasks(): Promise<void> {
 }
 
 const renderRoutes = async (role: Role, initialUrl: string) => {
+  act(() => {
+    root.unmount();
+  });
+  container.innerHTML = '';
+  root = createRoot(container);
+
   const user: AuthUser = {
     id: 'user-1',
     email: 'test@test.local',
@@ -137,6 +146,20 @@ describe('AppRoutes Permissions', () => {
       await renderRoutes('ADMIN', '/job-orders');
       const content = getPageContent();
       expect(content).toContain('JobOrderListPage');
+    });
+  });
+
+  describe('QA_USER', () => {
+    it('cannot access Job Order creation but retains contextual detail and QA access', async () => {
+      await renderRoutes('QA_USER', '/job-orders/new');
+      expect(getPageContent()).toContain('ForbiddenPage');
+
+      await renderRoutes('QA_USER', '/job-orders/jo-1');
+      expect(getPageContent()).toContain('JobOrderDetailPage');
+      expect(getPageContent()).not.toContain('ForbiddenPage');
+
+      await renderRoutes('QA_USER', '/qa');
+      expect(getPageContent()).toContain('QaQueuePage');
     });
   });
 });
