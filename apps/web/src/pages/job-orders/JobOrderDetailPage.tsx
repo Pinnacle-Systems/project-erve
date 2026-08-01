@@ -8,13 +8,13 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { JobOrder, JobOrderLineSize } from './types.js';
+import { ProductionStageStepper } from './ProductionStageStepper.js';
+import { formatJobOrderAuditTitle } from './job-order-audit.js';
 import {
   CONFIRMATION_LABELS,
   JOB_ORDER_STATUS_LABELS,
-  STAGE_LABELS,
   confirmationTone,
   formatDateTime,
-  stageTone,
   statusTone,
 } from './job-order-ui.js';
 
@@ -118,6 +118,7 @@ export function JobOrderDetailPage() {
   const canCompleteStage =
     ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) && Boolean(nextStage);
   const canUpdatePrepared = jobOrder.status === 'PRODUCTION_COMPLETE';
+  const hasProductionStarted = ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION', 'PRODUCTION_COMPLETE'].includes(jobOrder.status);
   const preparedPayload = flatSizes.map((size) => ({
     jobOrderLineSizeId: size.id,
     preparedQuantity: preparedQuantities[size.id] ?? size.preparedQuantity,
@@ -145,14 +146,6 @@ export function JobOrderDetailPage() {
             {canConfirm && (
               <Button onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>
                 Confirm
-              </Button>
-            )}
-            {canCompleteStage && nextStage && (
-              <Button
-                onClick={() => completeStageMutation.mutate(nextStage.id)}
-                loading={completeStageMutation.isPending}
-              >
-                Complete Next Stage
               </Button>
             )}
           </div>
@@ -218,6 +211,111 @@ export function JobOrderDetailPage() {
         </DescriptionList>
       </Panel>
 
+      {jobOrder.status === 'DRAFT' && (
+        <Panel title="Production workflow not started">
+          <p className="text-sm text-muted-foreground">
+            Send this job order to the factory. Production stages will become available after the factory confirms it.
+          </p>
+        </Panel>
+      )}
+
+      {jobOrder.status === 'SENT_TO_FACTORY' && (
+        <Panel title="Awaiting factory confirmation">
+          <p className="text-sm text-muted-foreground">
+            The production workflow will begin after {jobOrder.factory.name} confirms this job order.
+          </p>
+        </Panel>
+      )}
+
+      {hasProductionStarted && (
+        <ProductionStageStepper
+          stages={jobOrder.stages}
+          currentStageId={nextStage?.id}
+          isPreparedQuantitiesUnlocked={canUpdatePrepared}
+        />
+      )}
+
+      {canCompleteStage && nextStage && (
+        <Panel title={`Current Stage: ${nextStage.stageNameSnapshot}`}>
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-muted-foreground">
+              Complete {nextStage.stageNameSnapshot} when work for this stage has finished.
+            </p>
+            <div className="flex">
+              <Button
+                onClick={() => completeStageMutation.mutate(nextStage.id)}
+                loading={completeStageMutation.isPending}
+              >
+                Complete {nextStage.stageNameSnapshot}
+              </Button>
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {hasProductionStarted && (
+        <Panel
+          title="Prepared Quantity"
+          description={canUpdatePrepared ? "Update size-wise prepared quantities after production is complete." : undefined}
+        footer={
+          canUpdatePrepared && (
+            <div className="flex justify-end">
+              <Button
+                onClick={() => preparedMutation.mutate(preparedPayload)}
+                disabled={!canUpdatePrepared}
+                loading={preparedMutation.isPending}
+              >
+                Save Prepared Quantity
+              </Button>
+            </div>
+          )
+        }
+      >
+        {canUpdatePrepared ? (
+          <DataTable
+            columns={[
+              { key: 'style', header: 'Style', accessor: 'style' },
+              { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
+              {
+                key: 'orderedQuantity',
+                header: 'Ordered',
+                align: 'right',
+                render: (size) => size.orderedQuantity.toLocaleString(),
+              },
+              {
+                key: 'preparedInput',
+                header: 'Prepared',
+                align: 'right',
+                render: (size) => (
+                  <TextField
+                    aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
+                    type="number"
+                    min={0}
+                    value={preparedQuantities[size.id] ?? size.preparedQuantity}
+                    onChange={(event) =>
+                      setPreparedQuantities((current) => ({
+                        ...current,
+                        [size.id]: Number(event.target.value || 0),
+                      }))
+                    }
+                    disabled={!canUpdatePrepared}
+                    density="compact"
+                    width="xs"
+                  />
+                ),
+              },
+            ]}
+            data={flatSizes}
+            rowKey="id"
+          />
+        ) : (
+          <div className="p-4 bg-muted/30 rounded-md border text-sm text-muted-foreground">
+            Prepared quantities become available after {jobOrder.stages[jobOrder.stages.length - 1]?.stageNameSnapshot ?? 'the final stage'} is completed.
+          </div>
+        )}
+      </Panel>
+      )}
+
       <Panel title="Style and Size Quantities">
         <DataTable
           columns={[
@@ -247,100 +345,11 @@ export function JobOrderDetailPage() {
         />
       </Panel>
 
-      <Panel title="Production Stage Timeline">
-        <DataTable
-          columns={[
-            { key: 'stageSequence', header: 'Seq', accessor: 'stageSequence', width: '72px' },
-            { key: 'stageNameSnapshot', header: 'Stage', accessor: 'stageNameSnapshot' },
-            {
-              key: 'status',
-              header: 'Status',
-              render: (stage) => (
-                <StatusBadge label={STAGE_LABELS[stage.status]} tone={stageTone(stage.status)} />
-              ),
-            },
-            {
-              key: 'completedAt',
-              header: 'Completed',
-              render: (stage) => formatDateTime(stage.completedAt) ?? '—',
-            },
-            {
-              key: 'completedBy',
-              header: 'Completed By',
-              render: (stage) => stage.completedBy?.name ?? '—',
-            },
-            { key: 'remarks', header: 'Remarks', render: (stage) => stage.remarks ?? '—' },
-          ]}
-          data={jobOrder.stages}
-          rowKey="id"
-          emptyState={
-            <EmptyState
-              title="No stages yet"
-              description="Stages are created when the factory confirms the job order."
-            />
-          }
-          selectedRowKey={nextStage?.id}
-        />
-      </Panel>
-
-      <Panel
-        title="Prepared Quantity"
-        description="Update size-wise prepared quantities after production is complete."
-        footer={
-          <div className="flex justify-end">
-            <Button
-              onClick={() => preparedMutation.mutate(preparedPayload)}
-              disabled={!canUpdatePrepared}
-              loading={preparedMutation.isPending}
-            >
-              Save Prepared Quantity
-            </Button>
-          </div>
-        }
-      >
-        <DataTable
-          columns={[
-            { key: 'style', header: 'Style', accessor: 'style' },
-            { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-            {
-              key: 'orderedQuantity',
-              header: 'Ordered',
-              align: 'right',
-              render: (size) => size.orderedQuantity.toLocaleString(),
-            },
-            {
-              key: 'preparedInput',
-              header: 'Prepared',
-              align: 'right',
-              render: (size) => (
-                <TextField
-                  aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
-                  type="number"
-                  min={0}
-                  value={preparedQuantities[size.id] ?? size.preparedQuantity}
-                  onChange={(event) =>
-                    setPreparedQuantities((current) => ({
-                      ...current,
-                      [size.id]: Number(event.target.value || 0),
-                    }))
-                  }
-                  disabled={!canUpdatePrepared}
-                  density="compact"
-                  width="xs"
-                />
-              ),
-            },
-          ]}
-          data={flatSizes}
-          rowKey="id"
-        />
-      </Panel>
-
       <Panel title="Audit Log">
         <AuditTrail
           items={(auditQuery.data ?? []).map((entry) => ({
             id: entry.id,
-            title: entry.action.replaceAll('_', ' '),
+            title: formatJobOrderAuditTitle(entry.action, entry.metadata),
             actor: entry.actor?.name ?? 'System',
             timestamp: formatDateTime(entry.createdAt),
           }))}

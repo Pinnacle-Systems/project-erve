@@ -760,7 +760,12 @@ export async function completeProductionStage(
         action: 'JOB_ORDER_STAGE_COMPLETED',
         entityType: 'JobOrder',
         entityId: id,
-        metadata: { stageStatusId: input.stageStatusId, stageName: nextStage.stageNameSnapshot },
+        metadata: {
+          stageStatusId: input.stageStatusId,
+          processFlowVersionStageId: nextStage.processFlowVersionStageId,
+          stageSequence: nextStage.stageSequence,
+          stageName: nextStage.stageNameSnapshot,
+        },
       },
       tx,
     );

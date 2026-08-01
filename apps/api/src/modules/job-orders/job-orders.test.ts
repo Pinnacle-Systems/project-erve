@@ -457,6 +457,25 @@ describe('job orders API', () => {
       .set('Idempotency-Key', 'stage-one')
       .send({ stageStatusId: stages[0].id, expectedVersion: confirmRes.body.data.version });
     expect(firstStageRes.body.data.status).toBe('IN_PRODUCTION');
+
+    const stageAudit = await request(app)
+      .get(`/job-orders/${jobOrderId}/audit`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    expect(stageAudit.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'JOB_ORDER_STAGE_COMPLETED',
+          metadata: {
+            stageStatusId: stages[0].id,
+            processFlowVersionStageId: stages[0].processFlowVersionStageId,
+            stageSequence: 1,
+            stageName: 'Cutting',
+          },
+        }),
+      ]),
+    );
+
     await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
