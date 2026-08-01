@@ -10,8 +10,9 @@ import type {
   QaReworkTaskView,
 } from '@erve/types';
 import { apiClient } from '../lib/api-client.js';
+import { QA_OPERATION_ROLES } from '@erve/shared';
 
-const operationalQaRoles = ['QA_USER', 'ADMIN', 'MERCHANDISER'] as const;
+const operationalQaRoles = [...QA_OPERATION_ROLES, 'MERCHANDISER'] as const;
 const oversightRoles = ['ADMIN', 'MERCHANDISER'] as const;
 
 function hasRole(user: AuthUser, roles: readonly AuthUser['roles'][number][]) {

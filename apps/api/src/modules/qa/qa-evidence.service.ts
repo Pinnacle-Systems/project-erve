@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createId } from '@erve/shared';
+import { canPerformQaOperation, createId } from '@erve/shared';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { env } from '../../config/env.js';
@@ -9,7 +9,10 @@ import { FileNotFoundInStorageError, getFileStorage } from '../../storage/index.
 import { sanitizeDisplayFileName, sniffImage } from '../../storage/image-sniff.js';
 
 function supervisor(user: CurrentUser) {
-  return user.roles.some((role) => ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(role));
+  return (
+    canPerformQaOperation(user) ||
+    user.roles.some((role) => ['MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(role))
+  );
 }
 function assertView(user: CurrentUser, factoryId: string) {
   if (supervisor(user)) return;
@@ -17,7 +20,7 @@ function assertView(user: CurrentUser, factoryId: string) {
   if (
     user.factoryIds.length !== 1 ||
     user.factoryIds[0] !== factoryId ||
-    !user.roles.some((role) => role === 'QA_USER' || role === 'FACTORY_USER')
+    (!canPerformQaOperation(user) && !user.roles.includes('FACTORY_USER'))
   )
     throw HttpError.forbidden('You cannot access this QA evidence');
 }
@@ -49,7 +52,8 @@ export async function uploadEvidence(
     throw HttpError.conflict('Evidence can only be attached to a draft inspection');
   if (
     session.inspectorId !== user.id &&
-    !user.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER')
+    !canPerformQaOperation(user) &&
+    !user.roles.includes('MERCHANDISER')
   )
     throw HttpError.forbidden('Only the inspector can upload evidence');
   assertView(user, session.jobOrder.factoryId);

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { QA_OPERATION_ROLES } from '@erve/shared';
 import { requireAuth } from '../../auth/auth.middleware.js';
 import { requireRoles } from '../../auth/rbac.middleware.js';
 import { HttpError } from '../../errors/http-error.js';
@@ -19,7 +20,7 @@ import {
 export const qaRouter = Router();
 qaRouter.use(requireAuth);
 const canView = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'QA_USER');
-const canInspect = requireRoles('ADMIN', 'MERCHANDISER', 'QA_USER');
+const canInspect = requireRoles(...QA_OPERATION_ROLES, 'MERCHANDISER');
 const canRework = requireRoles('ADMIN', 'MERCHANDISER', 'FACTORY_USER');
 function key(req: { get(name: string): string | undefined }) {
   const value = req.get('Idempotency-Key')?.trim();

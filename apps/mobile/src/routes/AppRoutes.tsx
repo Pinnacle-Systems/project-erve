@@ -11,6 +11,9 @@ import { QaInspectionPage } from '../pages/qa/QaInspectionPage.js';
 import { QaQueuePage } from '../pages/qa/QaQueuePage.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { OperationalJobOrderListPage } from '../pages/job-orders/OperationalJobOrderListPage.js';
+import { QA_OPERATION_ROLES } from '@erve/shared';
+
+const QA_ROUTE_ROLES = [...QA_OPERATION_ROLES, 'MERCHANDISER'] as const;
 
 function DashboardRoute() {
   const { user } = useAuth();
@@ -72,7 +75,7 @@ export function AppRoutes() {
         <Route
           path="/qa"
           element={
-            <RoleRoute allowed={['QA_USER', 'ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={QA_ROUTE_ROLES}>
               <QaQueuePage />
             </RoleRoute>
           }
@@ -80,7 +83,7 @@ export function AppRoutes() {
         <Route
           path="/qa/:id"
           element={
-            <RoleRoute allowed={['QA_USER', 'ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={QA_ROUTE_ROLES}>
               <QaInspectionPage />
             </RoleRoute>
           }

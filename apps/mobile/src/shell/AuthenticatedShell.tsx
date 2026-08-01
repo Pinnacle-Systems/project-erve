@@ -2,6 +2,9 @@ import { Outlet } from 'react-router-dom';
 import { AccountMenu } from './AccountMenu.js';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.js';
+import { QA_OPERATION_ROLES } from '@erve/shared';
+
+const QA_ROUTE_ROLES = [...QA_OPERATION_ROLES, 'MERCHANDISER'] as const;
 
 /**
  * Wraps every authenticated route (see routes/AppRoutes.tsx) with a header
@@ -35,7 +38,9 @@ export function AuthenticatedShell() {
               </Link>
             </>
           )}
-          {user?.roles.some((role) => ['QA_USER', 'ADMIN', 'MERCHANDISER'].includes(role)) && (
+          {user?.roles.some((role) =>
+            QA_ROUTE_ROLES.some((allowedRole) => allowedRole === role),
+          ) && (
             <Link to="/qa" className="min-h-11 content-center text-sm text-[var(--erp-text-link)]">
               QA
             </Link>

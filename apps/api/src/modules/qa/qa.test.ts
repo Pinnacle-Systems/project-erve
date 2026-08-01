@@ -21,6 +21,11 @@ async function fixture(prepared = 10) {
     password: 'pass',
     roles: ['QA_USER'],
   });
+  const admin = await createTestUserAndToken({
+    email: 'admin-qa@test.local',
+    password: 'pass',
+    roles: ['ADMIN'],
+  });
   const factoryUser = await createTestUserAndToken({
     email: 'factory-qa@test.local',
     password: 'pass',
@@ -116,7 +121,16 @@ async function fixture(prepared = 10) {
       },
     },
   });
-  return { qa, factoryUser, outsider, otherFactory, jobOrderId, jobOrderLineSizeId, poLineSizeId };
+  return {
+    qa,
+    admin,
+    factoryUser,
+    outsider,
+    otherFactory,
+    jobOrderId,
+    jobOrderLineSizeId,
+    poLineSizeId,
+  };
 }
 function auth(token: string) {
   return { Authorization: `Bearer ${token}` };
@@ -174,7 +188,10 @@ describe('QA workflow', () => {
       .set(auth(login.body.data.accessToken))
       .expect(200);
     expect(queue.body.data.items).toHaveLength(2);
-    expect(new Set(queue.body.data.items.map((item: { factory: { id: string } }) => item.factory.id)).size).toBe(2);
+    expect(
+      new Set(queue.body.data.items.map((item: { factory: { id: string } }) => item.factory.id))
+        .size,
+    ).toBe(2);
   });
 
   it('denies inactive QA users and unauthorized roles server-side', async () => {
@@ -193,6 +210,90 @@ describe('QA workflow', () => {
       .expect(403);
     await prisma.user.update({ where: { id: f.qa.userId }, data: { status: 'INACTIVE' } });
     await request(app).get('/qa/queue').set(auth(f.qa.token)).expect(401);
+  });
+
+  it('gives an unmapped active admin QA parity without bypassing workflow validation or audit attribution', async () => {
+    const f = await fixture(5);
+    const detail = await request(app)
+      .get(`/qa/job-orders/${f.jobOrderId}`)
+      .set(auth(f.admin.token))
+      .expect(200);
+    expect(detail.body.data.status).toBe('READY_FOR_QA');
+
+    const started = await request(app)
+      .post(`/qa/job-orders/${f.jobOrderId}/inspections`)
+      .set(auth(f.admin.token))
+      .set('Idempotency-Key', 'admin-start')
+      .send({ expectedVersion: detail.body.data.version, sourceReworkTaskIds: [] })
+      .expect(201);
+    const sessionId = started.body.data.sessions.find(
+      (session: { status: string }) => session.status === 'DRAFT',
+    ).id;
+
+    await request(app)
+      .put(`/qa/inspections/${sessionId}`)
+      .set(auth(f.admin.token))
+      .set('Idempotency-Key', 'admin-save-over')
+      .send({
+        expectedVersion: 1,
+        lines: [
+          {
+            jobOrderLineSizeId: f.jobOrderLineSizeId,
+            inspectedQuantity: 6,
+            acceptedQuantity: 6,
+            reworkQuantity: 0,
+            permanentlyRejectedQuantity: 0,
+          },
+        ],
+      })
+      .expect(409);
+
+    const saved = await request(app)
+      .put(`/qa/inspections/${sessionId}`)
+      .set(auth(f.admin.token))
+      .set('Idempotency-Key', 'admin-save')
+      .send({
+        expectedVersion: 1,
+        lines: [
+          {
+            jobOrderLineSizeId: f.jobOrderLineSizeId,
+            inspectedQuantity: 5,
+            acceptedQuantity: 4,
+            reworkQuantity: 0,
+            permanentlyRejectedQuantity: 1,
+            defectCategory: 'FABRIC',
+          },
+        ],
+      })
+      .expect(200);
+    const inspectionLineId = saved.body.data.sessions.find(
+      (session: { id: string }) => session.id === sessionId,
+    ).lines[0].id;
+    await request(app)
+      .post(`/qa/inspections/${sessionId}/evidence`)
+      .set(auth(f.admin.token))
+      .field('inspectionLineId', inspectionLineId)
+      .attach('image', JPEG, { filename: 'admin-defect.jpg', contentType: 'image/jpeg' })
+      .expect(201);
+    const finalized = await request(app)
+      .post(`/qa/inspections/${sessionId}/finalize`)
+      .set(auth(f.admin.token))
+      .set('Idempotency-Key', 'admin-finalize')
+      .send({ expectedVersion: saved.body.data.sessions[0].version })
+      .expect(200);
+    await request(app)
+      .post(`/qa/job-orders/${f.jobOrderId}/approve`)
+      .set(auth(f.admin.token))
+      .set('Idempotency-Key', 'admin-approve')
+      .send({ expectedVersion: finalized.body.data.version })
+      .expect(200);
+
+    const audit = await prisma.auditLog.findMany({
+      where: { actorId: f.admin.userId, action: { startsWith: 'QA_' } },
+      include: { actor: { select: { id: true, email: true } } },
+    });
+    expect(audit.length).toBeGreaterThanOrEqual(5);
+    expect(audit.every((entry) => entry.actor?.id === f.admin.userId)).toBe(true);
   });
 
   it('fully inspects and approves an authoritative quantity with retry-safe audit', async () => {

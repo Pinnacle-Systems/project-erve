@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createId } from '@erve/shared';
+import { canPerformQaOperation, createId } from '@erve/shared';
 import type {
   PaginatedResponse,
   QaInspectionDetail,
@@ -16,18 +16,18 @@ import { Prisma, prisma } from '../../db/prisma.js';
 type Tx = Prisma.TransactionClient;
 
 function isSupervisor(user: CurrentUser) {
-  return user.roles.includes('ADMIN') || user.roles.includes('MERCHANDISER');
+  return canPerformQaOperation(user) || user.roles.includes('MERCHANDISER');
 }
 function isReadSupervisor(user: CurrentUser) {
   return isSupervisor(user) || user.roles.includes('SENIOR_MANAGEMENT');
 }
 function assertQaMutation(user: CurrentUser, _factoryId: string) {
-  if (isSupervisor(user) || user.roles.includes('QA_USER')) return;
+  if (isSupervisor(user)) return;
   throw HttpError.forbidden('You cannot inspect this job order');
 }
 function assertQaView(user: CurrentUser, _factoryId: string) {
   if (isReadSupervisor(user)) return;
-  if (user.roles.includes('QA_USER')) return;
+  if (canPerformQaOperation(user)) return;
   throw HttpError.forbidden('You cannot view this QA record');
 }
 function assertFactoryMutation(user: CurrentUser, factoryId: string) {
@@ -335,16 +335,20 @@ export async function startInspection(
     if (await replayOrLock(tx, user.id, jobOrderId, 'QA_START', key, requestHash)) return;
     const job = await tx.jobOrder.findUnique({
       where: { id: jobOrderId },
-      include: { qaInspections: { select: { id: true, cycleNumber: true, status: true } }, qaReworkTasks: true },
+      include: {
+        qaInspections: { select: { id: true, cycleNumber: true, status: true } },
+        qaReworkTasks: true,
+      },
     });
     if (!job) throw HttpError.notFound('Job order not found');
     assertQaMutation(user, job.factoryId);
     if (job.version !== input.expectedVersion) throw HttpError.staleVersion(job.version);
     if (!QA_INSPECTION_START_STATUSES.includes(job.status))
       throw HttpError.conflict('Job order is not available for inspection');
-    const activeDraft = job.status === 'QA_IN_PROGRESS'
-      ? job.qaInspections.find((session) => session.status === 'DRAFT')
-      : undefined;
+    const activeDraft =
+      job.status === 'QA_IN_PROGRESS'
+        ? job.qaInspections.find((session) => session.status === 'DRAFT')
+        : undefined;
     if (activeDraft) {
       sessionId = activeDraft.id;
       return;

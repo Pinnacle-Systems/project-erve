@@ -1,6 +1,11 @@
-import { createId } from '@erve/shared';
+import { canPerformQaOperation, createId } from '@erve/shared';
 import { createHash } from 'node:crypto';
-import { QA_QUEUE_STATUSES, type AssignedFactoryTaskSummary, type JobOrderDetail, type PaginatedResponse } from '@erve/types';
+import {
+  QA_QUEUE_STATUSES,
+  type AssignedFactoryTaskSummary,
+  type JobOrderDetail,
+  type PaginatedResponse,
+} from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { JobOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
@@ -75,11 +80,7 @@ function assertJobOrderViewAccess(
 ): void {
   if (canViewAllJobOrders(user)) return;
   if (canFactoryManage(user, jobOrder.factoryId) && jobOrder.status !== 'DRAFT') return;
-  if (
-    user.roles.includes('QA_USER') &&
-    QA_QUEUE_STATUSES.includes(jobOrder.status)
-  )
-    return;
+  if (canPerformQaOperation(user) && QA_QUEUE_STATUSES.includes(jobOrder.status)) return;
   throw HttpError.forbidden('You do not have access to this job order');
 }
 
