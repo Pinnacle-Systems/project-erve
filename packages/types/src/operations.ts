@@ -106,6 +106,7 @@ export interface PurchaseOrderBalance {
   poId: string;
   poNumber: string;
   version: number;
+  styleFactoryPrices?: Record<string, number | null>;
   lines: Array<{
     lineId: string;
     styleId: string;
@@ -161,6 +162,7 @@ export interface JobOrderSummary extends VersionedResource {
   jobOrderNumber: string;
   purchaseOrder: { id: string; poNumber: string; status: PurchaseOrderStatus };
   factory: { id: string; code: string; name: string };
+  unitPrice: number | null;
   status: JobOrderStatus;
   factoryConfirmationStatus: FactoryConfirmationStatus;
   orderedQuantityTotal: number;
@@ -209,6 +211,7 @@ export interface CreateJobOrderInput {
   purchaseOrderId: string;
   factoryId: string;
   processFlowVersionId: string;
+  unitPrice: string;
   lines: Array<{
     purchaseOrderLineId: string;
     sizes: Array<{ purchaseOrderLineSizeId: string; quantity: number }>;

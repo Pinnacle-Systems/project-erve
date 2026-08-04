@@ -614,6 +614,7 @@ model JobOrder {
   purchaseOrderId           String                    @map("purchase_order_id")
   factoryId                 String                    @map("factory_id")
   processFlowVersionId      String                    @map("process_flow_version_id")
+  unitPrice                 Decimal                   @map("unit_price") @db.Decimal(12, 2)
   status                    JobOrderStatus            @default(DRAFT)
   factoryConfirmationStatus FactoryConfirmationStatus @default(PENDING) @map("factory_confirmation_status")
   confirmedBy               String?                   @map("confirmed_by")

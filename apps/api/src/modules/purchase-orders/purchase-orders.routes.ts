@@ -40,7 +40,10 @@ purchaseOrdersRouter.get(
   '/:id',
   canViewPOs,
   asyncHandler(async (req, res) => {
-    const order = await purchaseOrdersService.getPurchaseOrderDetail(req.user!, req.params.id! as string);
+    const order = await purchaseOrdersService.getPurchaseOrderDetail(
+      req.user!,
+      req.params.id! as string,
+    );
     res.status(200).json(successResponse(order));
   }),
 );
@@ -50,7 +53,11 @@ purchaseOrdersRouter.patch(
   canManagePOs,
   asyncHandler(async (req, res) => {
     const input = updatePurchaseOrderSchema.parse(req.body);
-    const order = await purchaseOrdersService.updatePurchaseOrderDraft(req.user!, req.params.id! as string, input);
+    const order = await purchaseOrdersService.updatePurchaseOrderDraft(
+      req.user!,
+      req.params.id! as string,
+      input,
+    );
     res.status(200).json(successResponse(order));
   }),
 );
@@ -59,7 +66,10 @@ purchaseOrdersRouter.post(
   '/:id/actions/submit',
   canManagePOs,
   asyncHandler(async (req, res) => {
-    const order = await purchaseOrdersService.submitPurchaseOrder(req.user!, req.params.id! as string);
+    const order = await purchaseOrdersService.submitPurchaseOrder(
+      req.user!,
+      req.params.id! as string,
+    );
     res.status(200).json(successResponse(order));
   }),
 );
@@ -68,7 +78,10 @@ purchaseOrdersRouter.post(
   '/:id/actions/cancel',
   canManagePOs,
   asyncHandler(async (req, res) => {
-    const order = await purchaseOrdersService.cancelPurchaseOrder(req.user!, req.params.id! as string);
+    const order = await purchaseOrdersService.cancelPurchaseOrder(
+      req.user!,
+      req.params.id! as string,
+    );
     res.status(200).json(successResponse(order));
   }),
 );
@@ -77,7 +90,12 @@ purchaseOrdersRouter.get(
   '/:id/job-order-balance',
   canViewPOs,
   asyncHandler(async (req, res) => {
-    const balance = await purchaseOrdersService.getJobOrderBalance(req.user!, req.params.id! as string);
+    const factoryId = typeof req.query.factoryId === 'string' ? req.query.factoryId : undefined;
+    const balance = await purchaseOrdersService.getJobOrderBalance(
+      req.user!,
+      req.params.id! as string,
+      factoryId,
+    );
     res.status(200).json(successResponse(balance));
   }),
 );
@@ -86,7 +104,10 @@ purchaseOrdersRouter.get(
   '/:id/fulfilment-summary',
   canViewPOs,
   asyncHandler(async (req, res) => {
-    const summary = await purchaseOrdersService.getFulfilmentSummary(req.user!, req.params.id! as string);
+    const summary = await purchaseOrdersService.getFulfilmentSummary(
+      req.user!,
+      req.params.id! as string,
+    );
     res.status(200).json(successResponse(summary));
   }),
 );

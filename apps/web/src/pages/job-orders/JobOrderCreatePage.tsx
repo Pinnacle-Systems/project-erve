@@ -28,12 +28,18 @@ export function JobOrderCreatePage() {
   const [factoryId, setFactoryId] = useState('');
   const [processFlowVersionId, setProcessFlowVersionId] = useState('');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [selectedStyleId, setSelectedStyleId] = useState('');
+  const [unitPrice, setUnitPrice] = useState('');
+  const [priceEdited, setPriceEdited] = useState(false);
 
   const balanceQuery = useQuery({
-    queryKey: ['purchase-order-job-order-balance', purchaseOrderId],
+    queryKey: ['purchase-order-job-order-balance', purchaseOrderId, factoryId],
     enabled: Boolean(purchaseOrderId),
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<JobOrderBalance>>(`/purchase-orders/${purchaseOrderId}/job-order-balance`);
+      const res = await apiClient.get<ApiSuccessResponse<JobOrderBalance>>(
+        `/purchase-orders/${purchaseOrderId}/job-order-balance`,
+        { params: { factoryId } },
+      );
       return res.data.data;
     },
   });
@@ -41,7 +47,9 @@ export function JobOrderCreatePage() {
   const factoriesQuery = useQuery({
     queryKey: ['factories', 'active'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', { params: { status: 'ACTIVE' } });
+      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
+        params: { status: 'ACTIVE' },
+      });
       return res.data.data;
     },
   });
@@ -81,13 +89,44 @@ export function JobOrderCreatePage() {
     [balanceQuery.data],
   );
 
-  const selectedTotal = rows.reduce((sum, row) => sum + (quantities[row.id] ?? 0), 0);
-  const hasInvalidQuantity = rows.some((row) => (quantities[row.id] ?? 0) > row.balanceQuantity);
+  const styles = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          rows.map((row) => [
+            row.purchaseOrderLineId,
+            { id: row.purchaseOrderLineId, label: row.style },
+          ]),
+        ).values(),
+      ),
+    [rows],
+  );
+  const visibleRows = selectedStyleId
+    ? rows.filter((row) => row.purchaseOrderLineId === selectedStyleId)
+    : [];
+
+  const selectedStyle = balanceQuery.data?.lines.find((line) => line.lineId === selectedStyleId);
+  const mappedUnitPrice = selectedStyle
+    ? balanceQuery.data?.styleFactoryPrices?.[selectedStyle.styleId]
+    : undefined;
+  const effectiveUnitPrice = priceEdited
+    ? unitPrice
+    : mappedUnitPrice == null
+      ? ''
+      : String(mappedUnitPrice);
+
+  const selectedTotal = visibleRows.reduce((sum, row) => sum + (quantities[row.id] ?? 0), 0);
+  const hasInvalidQuantity = visibleRows.some(
+    (row) => (quantities[row.id] ?? 0) > row.balanceQuantity,
+  );
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const lineMap = new Map<string, Array<{ purchaseOrderLineSizeId: string; quantity: number }>>();
-      for (const row of rows) {
+      const lineMap = new Map<
+        string,
+        Array<{ purchaseOrderLineSizeId: string; quantity: number }>
+      >();
+      for (const row of visibleRows) {
         const quantity = quantities[row.id] ?? 0;
         if (quantity > 0) {
           lineMap.set(row.purchaseOrderLineId, [
@@ -100,20 +139,36 @@ export function JobOrderCreatePage() {
         purchaseOrderId,
         factoryId,
         processFlowVersionId,
-        lines: Array.from(lineMap.entries()).map(([purchaseOrderLineId, sizes]) => ({ purchaseOrderLineId, sizes })),
+        unitPrice: effectiveUnitPrice,
+        lines: Array.from(lineMap.entries()).map(([purchaseOrderLineId, sizes]) => ({
+          purchaseOrderLineId,
+          sizes,
+        })),
       });
       return res.data.data;
     },
     onSuccess: (jobOrder) => navigate(`/job-orders/${jobOrder.id}`),
   });
 
-  const canSubmit = Boolean(purchaseOrderId && factoryId && processFlowVersionId && selectedTotal > 0 && !hasInvalidQuantity);
+  const canSubmit = Boolean(
+    purchaseOrderId &&
+    factoryId &&
+    processFlowVersionId &&
+    selectedStyleId &&
+    effectiveUnitPrice &&
+    selectedTotal > 0 &&
+    !hasInvalidQuantity,
+  );
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Create Job Order"
-        subtitle={balanceQuery.data ? `From ${balanceQuery.data.poNumber}` : 'Create factory demand from one purchase order'}
+        subtitle={
+          balanceQuery.data
+            ? `From ${balanceQuery.data.poNumber}`
+            : 'Create factory demand from one purchase order'
+        }
         secondaryActions={
           <Button asChild variant="secondary">
             <Link to="/job-orders">Back</Link>
@@ -133,26 +188,77 @@ export function JobOrderCreatePage() {
             }}
             width="fill"
           />
-          <SelectField label="Factory" value={factoryId || undefined} onValueChange={setFactoryId} width="fill">
+          <SelectField
+            label="Factory"
+            value={factoryId || undefined}
+            onValueChange={setFactoryId}
+            width="fill"
+          >
             {(factoriesQuery.data ?? []).map((factory) => (
-              <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>
+              <SelectItem key={factory.id} value={factory.id}>
+                {factory.name}
+              </SelectItem>
             ))}
           </SelectField>
-          <SelectField label="Process Flow Version" value={processFlowVersionId || undefined} onValueChange={setProcessFlowVersionId} width="fill">
+          <SelectField
+            label="Style (one per Job Order)"
+            value={selectedStyleId || undefined}
+            onValueChange={(value) => {
+              setSelectedStyleId(value);
+              setQuantities({});
+              setPriceEdited(false);
+              setUnitPrice('');
+            }}
+            width="fill"
+          >
+            {styles.map((style) => (
+              <SelectItem key={style.id} value={style.id}>
+                {style.label}
+              </SelectItem>
+            ))}
+          </SelectField>
+          <TextField
+            label="Unit price (INR)"
+            value={effectiveUnitPrice}
+            inputMode="decimal"
+            placeholder="Enter factory unit price"
+            onChange={(event) => {
+              setPriceEdited(true);
+              setUnitPrice(event.target.value);
+            }}
+            error={Boolean(
+              effectiveUnitPrice &&
+              (!/^\d+(\.\d{1,2})?$/.test(effectiveUnitPrice) || Number(effectiveUnitPrice) <= 0),
+            )}
+            width="fill"
+          />
+          <SelectField
+            label="Process Flow Version"
+            value={processFlowVersionId || undefined}
+            onValueChange={setProcessFlowVersionId}
+            width="fill"
+          >
             {activeVersions.map((version) => (
-              <SelectItem key={version.id} value={version.id}>{version.label}</SelectItem>
+              <SelectItem key={version.id} value={version.id}>
+                {version.label}
+              </SelectItem>
             ))}
           </SelectField>
         </FormGrid>
       </Panel>
 
       {balanceQuery.isLoading && <LoadingState label="Loading PO balance" />}
-      {balanceQuery.isError && <ErrorState title="Unable to load PO balance" description={balanceQuery.error.message} />}
+      {balanceQuery.isError && (
+        <ErrorState title="Unable to load PO balance" description={balanceQuery.error.message} />
+      )}
       {!purchaseOrderId && (
-        <EmptyState title="Select a purchase order" description="Open a submitted PO and use Create Job Order, or paste the PO id here." />
+        <EmptyState
+          title="Select a purchase order"
+          description="Open a submitted PO and use Create Job Order, or paste the PO id here."
+        />
       )}
 
-      {balanceQuery.data && (
+      {balanceQuery.data && selectedStyleId && (
         <Panel
           title="Remaining PO Balance"
           description={`Selected quantity: ${selectedTotal.toLocaleString()}`}
@@ -161,12 +267,22 @@ export function JobOrderCreatePage() {
               <div>
                 {createMutation.isError && (
                   <ValidationMessage tone="error">
-                    {createMutation.error instanceof Error ? createMutation.error.message : 'Unable to create job order'}
+                    {createMutation.error instanceof Error
+                      ? createMutation.error.message
+                      : 'Unable to create job order'}
                   </ValidationMessage>
                 )}
-                {hasInvalidQuantity && <ValidationMessage tone="error">One or more quantities exceed remaining PO balance.</ValidationMessage>}
+                {hasInvalidQuantity && (
+                  <ValidationMessage tone="error">
+                    One or more quantities exceed remaining PO balance.
+                  </ValidationMessage>
+                )}
               </div>
-              <Button onClick={() => createMutation.mutate()} disabled={!canSubmit} loading={createMutation.isPending}>
+              <Button
+                onClick={() => createMutation.mutate()}
+                disabled={!canSubmit}
+                loading={createMutation.isPending}
+              >
                 Create Draft
               </Button>
             </div>
@@ -176,9 +292,24 @@ export function JobOrderCreatePage() {
             columns={[
               { key: 'style', header: 'Style', accessor: 'style' },
               { key: 'size', header: 'Size', accessor: 'size' },
-              { key: 'orderedQuantity', header: 'Ordered', align: 'right', render: (row) => row.orderedQuantity.toLocaleString() },
-              { key: 'jobOrderedQuantity', header: 'Already Job Ordered', align: 'right', render: (row) => row.jobOrderedQuantity.toLocaleString() },
-              { key: 'balanceQuantity', header: 'Remaining', align: 'right', render: (row) => row.balanceQuantity.toLocaleString() },
+              {
+                key: 'orderedQuantity',
+                header: 'Ordered',
+                align: 'right',
+                render: (row) => row.orderedQuantity.toLocaleString(),
+              },
+              {
+                key: 'jobOrderedQuantity',
+                header: 'Already Job Ordered',
+                align: 'right',
+                render: (row) => row.jobOrderedQuantity.toLocaleString(),
+              },
+              {
+                key: 'balanceQuantity',
+                header: 'Remaining',
+                align: 'right',
+                render: (row) => row.balanceQuantity.toLocaleString(),
+              },
               {
                 key: 'quantity',
                 header: 'Job Order Qty',
@@ -201,9 +332,14 @@ export function JobOrderCreatePage() {
                 ),
               },
             ]}
-            data={rows}
+            data={visibleRows}
             rowKey="id"
-            emptyState={<EmptyState title="No remaining balance" description="This PO has no quantity left for job ordering." />}
+            emptyState={
+              <EmptyState
+                title="No remaining balance"
+                description="This PO has no quantity left for job ordering."
+              />
+            }
           />
         </Panel>
       )}

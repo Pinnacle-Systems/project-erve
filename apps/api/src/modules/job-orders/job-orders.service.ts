@@ -147,6 +147,7 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
     },
     status: jobOrder.status,
     factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
+    unitPrice: jobOrder.unitPrice?.toNumber() ?? null,
     confirmedBy: jobOrder.confirmer,
     confirmedAt: jobOrder.confirmedAt?.toISOString() ?? null,
     productionStartedAt: jobOrder.productionStartedAt?.toISOString() ?? null,
@@ -416,6 +417,7 @@ export async function createJobOrderFromPO(
     purchaseOrderId: string;
     factoryId: string;
     processFlowVersionId: string;
+    unitPrice: string;
     lines: Array<{
       purchaseOrderLineId: string;
       sizes: Array<{ purchaseOrderLineSizeId: string; quantity: number }>;
@@ -455,6 +457,7 @@ export async function createJobOrderFromPO(
   );
   const seenLines = new Set<string>();
   const seenSizes = new Set<string>();
+  const selectedStyleIds = new Set<string>();
 
   for (const line of input.lines) {
     const poLine = poLinesById.get(line.purchaseOrderLineId);
@@ -462,6 +465,7 @@ export async function createJobOrderFromPO(
     if (seenLines.has(line.purchaseOrderLineId))
       throw HttpError.badRequest('Duplicate purchase order lines are not allowed');
     seenLines.add(line.purchaseOrderLineId);
+    selectedStyleIds.add(poLine.styleId);
 
     for (const size of line.sizes) {
       const poSize = poSizesById.get(size.purchaseOrderLineSizeId);
@@ -476,6 +480,9 @@ export async function createJobOrderFromPO(
         throw HttpError.badRequest('Job order quantity exceeds remaining purchase order balance');
     }
   }
+  if (selectedStyleIds.size !== 1) {
+    throw HttpError.badRequest('A job order must contain lines from exactly one style');
+  }
 
   const jobOrderId = createId();
   let jobOrderNumber = '';
@@ -489,6 +496,7 @@ export async function createJobOrderFromPO(
         purchaseOrderId: input.purchaseOrderId,
         factoryId: input.factoryId,
         processFlowVersionId: input.processFlowVersionId,
+        unitPrice: new Prisma.Decimal(input.unitPrice),
         createdBy: actor.id,
       },
     });

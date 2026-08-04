@@ -118,7 +118,11 @@ export function JobOrderDetailPage() {
   const canCompleteStage =
     ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) && Boolean(nextStage);
   const canUpdatePrepared = jobOrder.status === 'PRODUCTION_COMPLETE';
-  const hasProductionStarted = ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION', 'PRODUCTION_COMPLETE'].includes(jobOrder.status);
+  const hasProductionStarted = [
+    'CONFIRMED_BY_FACTORY',
+    'IN_PRODUCTION',
+    'PRODUCTION_COMPLETE',
+  ].includes(jobOrder.status);
   const preparedPayload = flatSizes.map((size) => ({
     jobOrderLineSizeId: size.id,
     preparedQuantity: preparedQuantities[size.id] ?? size.preparedQuantity,
@@ -171,6 +175,12 @@ export function JobOrderDetailPage() {
           <DescriptionList.Item label="Source PO" value={jobOrder.purchaseOrder.poNumber} />
           <DescriptionList.Item label="Factory" value={jobOrder.factory.name} />
           <DescriptionList.Item
+            label="Factory unit price"
+            value={
+              jobOrder.unitPrice == null ? 'Not available' : `₹${jobOrder.unitPrice.toFixed(2)}`
+            }
+          />
+          <DescriptionList.Item
             label="Process Flow"
             value={`${jobOrder.processFlowVersion.processFlow.name} v${jobOrder.processFlowVersion.versionNumber}`}
           />
@@ -214,7 +224,8 @@ export function JobOrderDetailPage() {
       {jobOrder.status === 'DRAFT' && (
         <Panel title="Production workflow not started">
           <p className="text-sm text-muted-foreground">
-            Send this job order to the factory. Production stages will become available after the factory confirms it.
+            Send this job order to the factory. Production stages will become available after the
+            factory confirms it.
           </p>
         </Panel>
       )}
@@ -222,7 +233,8 @@ export function JobOrderDetailPage() {
       {jobOrder.status === 'SENT_TO_FACTORY' && (
         <Panel title="Awaiting factory confirmation">
           <p className="text-sm text-muted-foreground">
-            The production workflow will begin after {jobOrder.factory.name} confirms this job order.
+            The production workflow will begin after {jobOrder.factory.name} confirms this job
+            order.
           </p>
         </Panel>
       )}
@@ -256,64 +268,70 @@ export function JobOrderDetailPage() {
       {hasProductionStarted && (
         <Panel
           title="Prepared Quantity"
-          description={canUpdatePrepared ? "Update size-wise prepared quantities after production is complete." : undefined}
-        footer={
-          canUpdatePrepared && (
-            <div className="flex justify-end">
-              <Button
-                onClick={() => preparedMutation.mutate(preparedPayload)}
-                disabled={!canUpdatePrepared}
-                loading={preparedMutation.isPending}
-              >
-                Save Prepared Quantity
-              </Button>
+          description={
+            canUpdatePrepared
+              ? 'Update size-wise prepared quantities after production is complete.'
+              : undefined
+          }
+          footer={
+            canUpdatePrepared && (
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => preparedMutation.mutate(preparedPayload)}
+                  disabled={!canUpdatePrepared}
+                  loading={preparedMutation.isPending}
+                >
+                  Save Prepared Quantity
+                </Button>
+              </div>
+            )
+          }
+        >
+          {canUpdatePrepared ? (
+            <DataTable
+              columns={[
+                { key: 'style', header: 'Style', accessor: 'style' },
+                { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
+                {
+                  key: 'orderedQuantity',
+                  header: 'Ordered',
+                  align: 'right',
+                  render: (size) => size.orderedQuantity.toLocaleString(),
+                },
+                {
+                  key: 'preparedInput',
+                  header: 'Prepared',
+                  align: 'right',
+                  render: (size) => (
+                    <TextField
+                      aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
+                      type="number"
+                      min={0}
+                      value={preparedQuantities[size.id] ?? size.preparedQuantity}
+                      onChange={(event) =>
+                        setPreparedQuantities((current) => ({
+                          ...current,
+                          [size.id]: Number(event.target.value || 0),
+                        }))
+                      }
+                      disabled={!canUpdatePrepared}
+                      density="compact"
+                      width="xs"
+                    />
+                  ),
+                },
+              ]}
+              data={flatSizes}
+              rowKey="id"
+            />
+          ) : (
+            <div className="p-4 bg-muted/30 rounded-md border text-sm text-muted-foreground">
+              Prepared quantities become available after{' '}
+              {jobOrder.stages[jobOrder.stages.length - 1]?.stageNameSnapshot ?? 'the final stage'}{' '}
+              is completed.
             </div>
-          )
-        }
-      >
-        {canUpdatePrepared ? (
-          <DataTable
-            columns={[
-              { key: 'style', header: 'Style', accessor: 'style' },
-              { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-              {
-                key: 'orderedQuantity',
-                header: 'Ordered',
-                align: 'right',
-                render: (size) => size.orderedQuantity.toLocaleString(),
-              },
-              {
-                key: 'preparedInput',
-                header: 'Prepared',
-                align: 'right',
-                render: (size) => (
-                  <TextField
-                    aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
-                    type="number"
-                    min={0}
-                    value={preparedQuantities[size.id] ?? size.preparedQuantity}
-                    onChange={(event) =>
-                      setPreparedQuantities((current) => ({
-                        ...current,
-                        [size.id]: Number(event.target.value || 0),
-                      }))
-                    }
-                    disabled={!canUpdatePrepared}
-                    density="compact"
-                    width="xs"
-                  />
-                ),
-              },
-            ]}
-            data={flatSizes}
-            rowKey="id"
-          />
-        ) : (
-          <div className="p-4 bg-muted/30 rounded-md border text-sm text-muted-foreground">
-            Prepared quantities become available after {jobOrder.stages[jobOrder.stages.length - 1]?.stageNameSnapshot ?? 'the final stage'} is completed.
-          </div>
-        )}
-      </Panel>
+          )}
+        </Panel>
       )}
 
       <Panel title="Style and Size Quantities">

@@ -21,6 +21,18 @@ export const createJobOrderSchema = z.object({
   purchaseOrderId: z.string().trim().min(1),
   factoryId: z.string().trim().min(1),
   processFlowVersionId: z.string().trim().min(1),
+  unitPrice: z
+    .union([z.string(), z.number()])
+    .superRefine((value, ctx) => {
+      const raw = String(value).trim();
+      if (!/^\d+(\.\d{1,2})?$/.test(raw) || Number(raw) <= 0 || !Number.isFinite(Number(raw))) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Unit price must be a finite positive INR amount',
+        });
+      }
+    })
+    .transform(String),
   lines: z
     .array(
       z.object({

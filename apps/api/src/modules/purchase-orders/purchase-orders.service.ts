@@ -387,7 +387,7 @@ export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
   return getPurchaseOrderDetail(actor, id);
 }
 
-export async function getJobOrderBalance(user: CurrentUser, id: string) {
+export async function getJobOrderBalance(user: CurrentUser, id: string, factoryId?: string) {
   const po = await prisma.distributorPurchaseOrder.findUnique({
     where: { id },
     include: {
@@ -421,7 +421,16 @@ export async function getJobOrderBalance(user: CurrentUser, id: string) {
     })),
   }));
 
-  return { poId: id, poNumber: po.poNumber, version: po.version, lines };
+  const styleFactoryPrices: Record<string, number | null> = {};
+  if (factoryId) {
+    const mappings = await prisma.styleFactoryMapping.findMany({
+      where: { factoryId, styleId: { in: lines.map((line) => line.styleId) }, status: 'ACTIVE' },
+      select: { styleId: true, exFactoryPrice: true },
+    });
+    for (const mapping of mappings)
+      styleFactoryPrices[mapping.styleId] = mapping.exFactoryPrice.toNumber();
+  }
+  return { poId: id, poNumber: po.poNumber, version: po.version, lines, styleFactoryPrices };
 }
 
 export async function getFulfilmentSummary(user: CurrentUser, id: string) {

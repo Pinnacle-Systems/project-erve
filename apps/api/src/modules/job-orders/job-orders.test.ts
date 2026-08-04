@@ -129,6 +129,7 @@ async function createJobOrder(
       purchaseOrderId: graph.poId,
       factoryId: graph.factory.id,
       processFlowVersionId: graph.processFlowVersionId,
+      unitPrice: '199.50',
       lines: [
         {
           purchaseOrderLineId: graph.poLineId,
@@ -266,6 +267,9 @@ describe('job orders API', () => {
     expect(res.body.data.status).toBe('DRAFT');
     expect(res.body.data.jobOrderNumber).toMatch(/^JO-\d{4}-\d{6}$/);
     expect(res.body.data.orderedQuantityTotal).toBe(4);
+    expect(res.body.data.unitPrice).toBe(199.5);
+    const persisted = await prisma.jobOrder.findUniqueOrThrow({ where: { id: res.body.data.id } });
+    expect(persisted.unitPrice.toFixed(2)).toBe('199.50');
 
     const poSize = await prisma.distributorPurchaseOrderLineSize.findUniqueOrThrow({
       where: { id: graph.poSizeAId },
@@ -278,6 +282,39 @@ describe('job orders API', () => {
     await expect(prisma.auditLog.count({ where: { action: 'JOB_ORDER_CREATED' } })).resolves.toBe(
       1,
     );
+  });
+
+  it.each([undefined, 0, -1, 'Infinity'])('rejects invalid unit prices (%s)', async (unitPrice) => {
+    const graph = await createSeedGraph();
+    const response = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        purchaseOrderId: graph.poId,
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        ...(unitPrice === undefined ? {} : { unitPrice }),
+        lines: [
+          {
+            purchaseOrderLineId: graph.poLineId,
+            sizes: [{ purchaseOrderLineSizeId: graph.poSizeAId, quantity: 1 }],
+          },
+        ],
+      });
+    expect(response.status).toBe(400);
+  });
+
+  it('reads a legacy null unit price without substituting the mapping price', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 1);
+    await prisma.$executeRaw`UPDATE "job_orders" SET "unit_price" = NULL WHERE "id" = ${created.body.data.id}`;
+
+    const response = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+
+    expect(response.body.data.unitPrice).toBeNull();
   });
 
   it('rejects DRAFT PO, inactive factory, inactive flow, excess quantity, wrong line, and wrong size', async () => {
@@ -359,6 +396,7 @@ describe('job orders API', () => {
         purchaseOrderId: graph.poId,
         factoryId: graph.factory.id,
         processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '199.50',
         lines: [
           {
             purchaseOrderLineId: graph.poLineId,
@@ -702,6 +740,7 @@ describe('job orders API', () => {
         purchaseOrderId: graph.poId,
         factoryId: graph.factory.id,
         processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '199.50',
         lines: [
           {
             purchaseOrderLineId: graph.poLineId,
