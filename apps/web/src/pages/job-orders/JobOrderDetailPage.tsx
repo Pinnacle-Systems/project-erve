@@ -210,7 +210,7 @@ export function JobOrderDetailPage() {
           <DescriptionList.Item
             label="Factory unit price"
             value={
-              jobOrder.unitPrice == null ? 'Not available' : `₹${jobOrder.unitPrice.toFixed(2)}`
+              `₹${jobOrder.unitPrice.toFixed(2)}`
             }
           />
           <DescriptionList.Item

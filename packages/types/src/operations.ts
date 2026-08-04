@@ -183,7 +183,7 @@ export interface JobOrderSummary extends VersionedResource {
   jobOrderNumber: string;
   purchaseOrder: { id: string; poNumber: string; status: PurchaseOrderStatus };
   factory: { id: string; code: string; name: string };
-  unitPrice: number | null;
+  unitPrice: number;
   status: JobOrderStatus;
   factoryConfirmationStatus: FactoryConfirmationStatus;
   orderedQuantityTotal: number;

@@ -167,7 +167,7 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
     },
     status: jobOrder.status,
     factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
-    unitPrice: jobOrder.unitPrice?.toNumber() ?? null,
+    unitPrice: jobOrder.unitPrice.toNumber(),
     confirmedBy: jobOrder.confirmer,
     confirmedAt: jobOrder.confirmedAt?.toISOString() ?? null,
     disclaimerText: jobOrder.disclaimerText,

@@ -305,17 +305,18 @@ describe('job orders API', () => {
     expect(response.status).toBe(400);
   });
 
-  it('reads a legacy null unit price without substituting the mapping price', async () => {
+  it('enforces a positive non-null unit price at the database boundary', async () => {
     const graph = await createSeedGraph();
     const created = await createJobOrder(graph.admin.token, graph, 1);
-    await prisma.$executeRaw`UPDATE "job_orders" SET "unit_price" = NULL WHERE "id" = ${created.body.data.id}`;
-
-    const response = await request(app)
-      .get(`/job-orders/${created.body.data.id}`)
-      .set('Authorization', `Bearer ${graph.admin.token}`)
-      .expect(200);
-
-    expect(response.body.data.unitPrice).toBeNull();
+    await expect(
+      prisma.$executeRaw`UPDATE "job_orders" SET "unit_price" = NULL WHERE "id" = ${created.body.data.id}`,
+    ).rejects.toThrow();
+    await expect(
+      prisma.$executeRaw`UPDATE "job_orders" SET "unit_price" = 0 WHERE "id" = ${created.body.data.id}`,
+    ).rejects.toThrow();
+    await expect(
+      prisma.$executeRaw`UPDATE "job_orders" SET "unit_price" = -1 WHERE "id" = ${created.body.data.id}`,
+    ).rejects.toThrow();
   });
 
   it('rejects DRAFT PO, inactive factory, inactive flow, excess quantity, wrong line, and wrong size', async () => {

@@ -51,6 +51,7 @@ const mockJobOrder = (status: string, stages: JobOrderStage[] = standardStages) 
   factoryConfirmationStatus: status === 'DRAFT' || status === 'SENT_TO_FACTORY' ? 'PENDING' : 'CONFIRMED',
   orderedQuantityTotal: 10,
   preparedQuantityTotal: 0,
+  unitPrice: 199.5,
   version: 1,
   createdAt: '2026-07-31T10:00:00Z',
   confirmedAt: null,
