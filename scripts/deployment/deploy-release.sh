@@ -37,35 +37,96 @@ mkdir -p "$RELEASES_DIR" "$SHARED_DIR/backups" "$SHARED_DIR/mobile-updates/bundl
 
 erve_acquire_lock "$LOCK_DIR"
 
+# A directory is created before preparation and migrations, so its mere
+# existence is never proof that it is an immutable completed release.
+STATE_FILE_NAME=".erve-release-state"
+RELEASE_DIR="$RELEASES_DIR/$SHA"
+DEPLOY_STATE_FILE=""
+DEPLOY_STATE=""
+
+write_release_state() {
+  local state="$1" tmp
+  [ -n "$DEPLOY_STATE_FILE" ] || return 0
+  tmp="${DEPLOY_STATE_FILE}.tmp.$$"
+  { printf 'version=1\n'; printf 'artifact_sha256=%s\n' "$ACTUAL_SHA256"; printf 'state=%s\n' "$state"; } > "$tmp"
+  mv -f "$tmp" "$DEPLOY_STATE_FILE"
+  DEPLOY_STATE="$state"
+  erve_log "Release state recorded: $state"
+}
+
+deploy_exit() {
+  local status="$?"
+  if [ "$status" -ne 0 ] && [ -n "$DEPLOY_STATE_FILE" ] && [ -d "$RELEASE_DIR" ] && [ "$DEPLOY_STATE" != completed ] && [ "$DEPLOY_STATE" != activated ]; then
+    write_release_state failed || true
+    erve_log "Release left recoverable after failed deployment: $RELEASE_DIR"
+  fi
+  erve_release_lock
+  exit "$status"
+}
+trap deploy_exit EXIT
+trap 'exit 128' HUP INT TERM
+
 erve_log "Verifying artifact checksum"
 EXPECTED_SHA256="$(cat "$CHECKSUM_PATH")"
 ACTUAL_SHA256="$(sha256sum "$ARTIFACT_PATH" | awk '{print $1}')"
 [ "$EXPECTED_SHA256" = "$ACTUAL_SHA256" ] || erve_die "Artifact checksum mismatch (expected $EXPECTED_SHA256, got $ACTUAL_SHA256)"
 
-RELEASE_DIR="$RELEASES_DIR/$SHA"
 if [ -e "$RELEASE_DIR" ]; then
-  erve_die "Release directory already exists, refusing to overwrite an existing different release: $RELEASE_DIR"
+  [ -d "$RELEASE_DIR" ] || erve_die "Release path exists but is not a directory; refusing to operate on it: $RELEASE_DIR"
+  erve_assert_inside_dir "$RELEASE_DIR" "$RELEASES_DIR"
+  RELEASE_DIR="$(realpath -e "$RELEASE_DIR")"
+  ACTIVE_RELEASE=""
+  if [ -L "$CURRENT_LINK" ] || [ -e "$CURRENT_LINK" ]; then
+    ACTIVE_RELEASE="$(erve_resolve_release_dir "$CURRENT_LINK" "$RELEASES_DIR")"
+    erve_log "Active-release protection: current resolves to $ACTIVE_RELEASE"
+  fi
+  [ "$RELEASE_DIR" != "$ACTIVE_RELEASE" ] || erve_die "Refusing to recover or overwrite active release: $RELEASE_DIR"
+  DEPLOY_STATE_FILE="$RELEASE_DIR/$STATE_FILE_NAME"
+  if [ -f "$DEPLOY_STATE_FILE" ]; then
+    DEPLOY_STATE="$(sed -n 's/^state=//p' "$DEPLOY_STATE_FILE" | tail -n 1)"
+    STORED_SHA256="$(sed -n 's/^artifact_sha256=//p' "$DEPLOY_STATE_FILE" | tail -n 1)"
+    case "$DEPLOY_STATE" in
+      completed|activated)
+        erve_log "Existing completed release state detected: $DEPLOY_STATE"
+        [ -n "$STORED_SHA256" ] || erve_die "Completed release has no stored artifact checksum; refusing to modify it: $RELEASE_DIR"
+        [ "$STORED_SHA256" = "$ACTUAL_SHA256" ] || erve_die "Checksum mismatch for completed release $RELEASE_DIR; refusing to modify immutable release"
+        erve_log "Completed-release checksum verified; identical artifact already deployed. Skipping safely."
+        exit 0
+        ;;
+      created|extracted|preparing|migrating|failed|"")
+        erve_log "Existing incomplete release state detected: ${DEPLOY_STATE:-legacy/unmarked}; recovering it under deployment lock"
+        erve_log "Removing failed or incomplete release before deterministic recreation: $RELEASE_DIR"
+        rm -rf "$RELEASE_DIR"
+        DEPLOY_STATE_FILE=""
+        DEPLOY_STATE=""
+        ;;
+      *) erve_die "Unknown release state '$DEPLOY_STATE' in $DEPLOY_STATE_FILE; refusing to modify release" ;;
+    esac
+  else
+    erve_log "Existing incomplete release state detected: legacy/unmarked; recovering it under deployment lock"
+    erve_log "Removing failed or incomplete release before deterministic recreation: $RELEASE_DIR"
+    rm -rf "$RELEASE_DIR"
+  fi
 fi
 
 ARTIFACT_BYTES="$(stat -c%s "$ARTIFACT_PATH")"
 erve_check_disk_space "$DEPLOY_ROOT" "$ARTIFACT_BYTES"
 
-PARTIAL_DIR="${RELEASE_DIR}.partial"
-rm -rf "$PARTIAL_DIR"
-mkdir -p "$PARTIAL_DIR"
+mkdir -p "$RELEASE_DIR"
+DEPLOY_STATE_FILE="$RELEASE_DIR/$STATE_FILE_NAME"
+write_release_state created
 
-erve_log "Extracting artifact into $PARTIAL_DIR"
-tar -xzf "$ARTIFACT_PATH" -C "$PARTIAL_DIR" --strip-components=1
+erve_log "Extracting artifact into $RELEASE_DIR"
+tar -xzf "$ARTIFACT_PATH" -C "$RELEASE_DIR" --strip-components=1
+write_release_state extracted
 
 erve_log "Validating extracted release structure"
 for required in api/server.js api/admin-bootstrap.js api/roles-bootstrap.js api/package.json api/prisma.config.ts api/prisma/schema.prisma api/ecosystem.config.cjs web/index.html deployment-metadata.json; do
-  if [ ! -e "$PARTIAL_DIR/$required" ]; then
-    rm -rf "$PARTIAL_DIR"
+  if [ ! -e "$RELEASE_DIR/$required" ]; then
     erve_die "Extracted release is missing required path: $required — a partially extracted release must never become active"
   fi
 done
 
-mv "$PARTIAL_DIR" "$RELEASE_DIR"
 erve_log "Release extracted: $RELEASE_DIR"
 
 erve_load_node24
@@ -79,6 +140,7 @@ erve_load_node24
 # database connection, migration, or symlink activation, so a broken
 # release is caught and left in place under releases/ (never activated,
 # never cleaned up automatically) rather than taking down the running API.
+write_release_state preparing
 erve_log "Verifying extracted release runtime dependencies before activating it"
 "$SCRIPT_DIR/verify-artifact-deps.sh" "$RELEASE_DIR/api" || erve_die "Extracted release failed runtime dependency verification — release NOT activated: $RELEASE_DIR"
 
@@ -103,6 +165,7 @@ erve_log "Backing up the production database before migrating"
 [ -x "$RELEASE_DIR/api/node_modules/.bin/prisma" ] || erve_die "Release is missing node_modules/.bin/prisma — packaging must install production dependencies on the build runner"
 
 erve_log "Applying production database migrations"
+write_release_state migrating
 if ! (cd "$RELEASE_DIR/api" && ./node_modules/.bin/prisma migrate deploy --schema=prisma/schema.prisma); then
   erve_die "Production migration failed — deployment aborted, release NOT activated. A database backup was taken before this step."
 fi
@@ -133,6 +196,9 @@ mv -T "$TMP_LINK" "$CURRENT_LINK"
 if erve_activate_pm2_release "$RELEASE_DIR" "$APP_PORT"; then
   erve_log "Activation health checks passed — saving PM2 process list"
   pm2 save
+  write_release_state completed
+  write_release_state activated
+  erve_log "Release marked completed and activated: $RELEASE_DIR"
 else
   erve_log "Health checks failed after activation — rolling back application (not the database migration)"
   ROLLBACK_STATUS="no-previous"

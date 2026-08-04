@@ -322,6 +322,30 @@ The production `DATABASE_URL` and JWT secrets are **never** entered into GitHub 
 
 ---
 
+### 7.1 Failed deployment reruns
+
+`deploy-release.sh` records a durable `.erve-release-state` file in each
+release directory. It stores the artifact SHA-256 and progresses through
+`created`, `extracted`, `preparing`, `migrating`, `completed`, and `activated`.
+The marker is written atomically while the VPS deployment lock is held.
+
+If Prisma migrations (or an earlier preparation step) fail, the release is
+marked `failed` and `current` is not changed. After correcting the underlying
+database or migration issue, confirm the failed release was never activated,
+then use GitHub Actions to rerun the failed deployment job. The rerun holds the
+same deployment lock, recognizes the incomplete release, confirms that it is
+not the canonical target of `current`, removes only that incomplete directory,
+re-verifies the uploaded artifact, and deploys it again.
+
+Do not manually delete the failed release as the normal recovery path.
+Completed or active releases are never reused or overwritten. For a completed
+release, the stored checksum must match the requested artifact; a matching
+rerun safely skips deployment, while a mismatch is rejected and requires
+investigation rather than replacement. No `previous` symlink is required for
+these protections.
+
+---
+
 ## 8. Nginx (CloudPanel custom vhost)
 
 CloudPanel manages the base vhost (SSL, its own security/logging includes). Do not replace it. Open the CloudPanel UI's vhost editor for `DOMAIN_NAME` and splice in the three `location` blocks from [`deployment/nginx/erve.vhost.example.conf`](deployment/nginx/erve.vhost.example.conf), replacing `<DEPLOY_ROOT>` and `<APP_PORT>`. Validate and reload:
