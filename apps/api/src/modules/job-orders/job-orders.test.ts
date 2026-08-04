@@ -270,7 +270,7 @@ describe('job orders API', () => {
     expect(res.body.data.orderedQuantityTotal).toBe(4);
     expect(res.body.data.unitPrice).toBe(199.5);
     const persisted = await prisma.jobOrder.findUniqueOrThrow({ where: { id: res.body.data.id } });
-    expect(persisted.unitPrice?.toFixed(2)).toBe('199.50');
+    expect(persisted.unitPrice.toFixed(2)).toBe('199.50');
 
     const poSize = await prisma.distributorPurchaseOrderLineSize.findUniqueOrThrow({
       where: { id: graph.poSizeAId },
