@@ -615,7 +615,8 @@ model JobOrder {
   purchaseOrderId           String                    @map("purchase_order_id")
   factoryId                 String                    @map("factory_id")
   processFlowVersionId      String                    @map("process_flow_version_id")
-  unitPrice                 Decimal                   @map("unit_price") @db.Decimal(12, 2)
+  // Nullable for ERVE-009 legacy Job Orders. New create paths require a positive price.
+  unitPrice                 Decimal?                  @map("unit_price") @db.Decimal(12, 2)
   disclaimerText            String?                   @map("disclaimer_text")
   disclaimerRevision        Int                       @default(0) @map("disclaimer_revision")
   status                    JobOrderStatus            @default(DRAFT)
