@@ -30,6 +30,7 @@ export function JobOrderCreatePage() {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [selectedStyleId, setSelectedStyleId] = useState('');
   const [unitPrice, setUnitPrice] = useState('');
+  const [disclaimerText, setDisclaimerText] = useState('');
   const [priceEdited, setPriceEdited] = useState(false);
 
   const balanceQuery = useQuery({
@@ -140,6 +141,7 @@ export function JobOrderCreatePage() {
         factoryId,
         processFlowVersionId,
         unitPrice: effectiveUnitPrice,
+        disclaimerText,
         lines: Array.from(lineMap.entries()).map(([purchaseOrderLineId, sizes]) => ({
           purchaseOrderLineId,
           sizes,
@@ -157,7 +159,7 @@ export function JobOrderCreatePage() {
     selectedStyleId &&
     effectiveUnitPrice &&
     selectedTotal > 0 &&
-    !hasInvalidQuantity,
+      !hasInvalidQuantity,
   );
 
   return (
@@ -244,6 +246,19 @@ export function JobOrderCreatePage() {
               </SelectItem>
             ))}
           </SelectField>
+          <label className="flex flex-col gap-1 text-sm font-medium">
+            Factory commercial terms / disclaimer
+            <textarea
+              className="min-h-28 rounded-md border border-border bg-background px-3 py-2 font-normal"
+              value={disclaimerText}
+              maxLength={10000}
+              onChange={(event) => setDisclaimerText(event.target.value)}
+              aria-describedby="job-order-disclaimer-help"
+            />
+            <span id="job-order-disclaimer-help" className="text-xs font-normal text-muted-foreground">
+              The factory must acknowledge these plain-text terms before confirmation. {disclaimerText.length}/10,000
+            </span>
+          </label>
         </FormGrid>
       </Panel>
 

@@ -6,10 +6,12 @@ import { successResponse } from '../../utils/response.js';
 import { HttpError } from '../../errors/http-error.js';
 import {
   completeStageSchema,
+  confirmJobOrderSchema,
   assignedTasksQuerySchema,
   createJobOrderSchema,
   listJobOrdersQuerySchema,
   updatePreparedQuantitySchema,
+  updateJobOrderDisclaimerSchema,
   versionedMutationSchema,
 } from './job-orders.validation.js';
 import * as jobOrdersService from './job-orders.service.js';
@@ -44,6 +46,21 @@ jobOrdersRouter.get(
     const filters = listJobOrdersQuerySchema.parse(req.query);
     const jobOrders = await jobOrdersService.getJobOrderList(req.user!, filters);
     res.status(200).json(successResponse(jobOrders));
+  }),
+);
+
+jobOrdersRouter.patch(
+  '/:id/disclaimer',
+  canCreateJobOrders,
+  asyncHandler(async (req, res) => {
+    const input = updateJobOrderDisclaimerSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.updateDraftJobOrderDisclaimer(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
+    res.status(200).json(successResponse(jobOrder));
   }),
 );
 
@@ -95,7 +112,7 @@ jobOrdersRouter.post(
   '/:id/actions/confirm',
   canWorkflowJobOrders,
   asyncHandler(async (req, res) => {
-    const input = versionedMutationSchema.parse(req.body);
+    const input = confirmJobOrderSchema.parse(req.body);
     const jobOrder = await jobOrdersService.confirmJobOrder(
       req.user!,
       req.params.id! as string,

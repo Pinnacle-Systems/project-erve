@@ -11,6 +11,7 @@ import type { JobOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
+import { normalizeDisclaimerText } from './job-orders.validation.js';
 
 const jobOrderInclude = {
   purchaseOrder: {
@@ -44,6 +45,10 @@ const jobOrderInclude = {
   stageStatuses: {
     include: { completer: { select: { id: true, name: true, email: true } } },
     orderBy: { stageSequence: 'asc' as const },
+  },
+  acknowledgements: {
+    include: { acknowledgedBy: { select: { id: true, name: true, email: true } } },
+    orderBy: { acknowledgedAt: 'desc' as const },
   },
 } satisfies Prisma.JobOrderInclude;
 
@@ -134,6 +139,21 @@ function toStageView(stage: JobOrderRecord['stageStatuses'][number]) {
 }
 
 function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
+  const acknowledgements = jobOrder.acknowledgements.map((acknowledgement) => ({
+    id: acknowledgement.id,
+    jobOrderVersion: acknowledgement.jobOrderVersion,
+    disclaimerRevision: acknowledgement.disclaimerRevision,
+    disclaimerTextSnapshot: acknowledgement.disclaimerTextSnapshot,
+    disclaimerSha256: acknowledgement.disclaimerSha256,
+    factoryIdSnapshot: acknowledgement.factoryIdSnapshot,
+    acknowledgedBy: acknowledgement.acknowledgedBy,
+    acknowledgedByRole: acknowledgement.acknowledgedByRole,
+    acknowledgedAt: acknowledgement.acknowledgedAt.toISOString(),
+    invalidatedAt: acknowledgement.invalidatedAt?.toISOString() ?? null,
+    invalidatedByUserId: acknowledgement.invalidatedByUserId,
+    invalidationReason: acknowledgement.invalidationReason,
+    invalidationMetadata: acknowledgement.invalidationMetadata,
+  }));
   return {
     id: jobOrder.id,
     jobOrderNumber: jobOrder.jobOrderNumber,
@@ -150,6 +170,10 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
     unitPrice: jobOrder.unitPrice?.toNumber() ?? null,
     confirmedBy: jobOrder.confirmer,
     confirmedAt: jobOrder.confirmedAt?.toISOString() ?? null,
+    disclaimerText: jobOrder.disclaimerText,
+    disclaimerRevision: jobOrder.disclaimerRevision,
+    acknowledgement: acknowledgements[0] ?? null,
+    acknowledgements,
     productionStartedAt: jobOrder.productionStartedAt?.toISOString() ?? null,
     productionCompletedAt: jobOrder.productionCompletedAt?.toISOString() ?? null,
     orderedQuantityTotal: totalOrdered(jobOrder),
@@ -197,6 +221,10 @@ async function generateJobOrderNumber(client: Tx): Promise<string> {
 
 function requestHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function disclaimerSha256(disclaimerText: string): string {
+  return createHash('sha256').update(disclaimerText, 'utf8').digest('hex');
 }
 
 async function beginIdempotentOperation(
@@ -418,6 +446,7 @@ export async function createJobOrderFromPO(
     factoryId: string;
     processFlowVersionId: string;
     unitPrice: string;
+    disclaimerText?: string;
     lines: Array<{
       purchaseOrderLineId: string;
       sizes: Array<{ purchaseOrderLineSizeId: string; quantity: number }>;
@@ -497,6 +526,8 @@ export async function createJobOrderFromPO(
         factoryId: input.factoryId,
         processFlowVersionId: input.processFlowVersionId,
         unitPrice: new Prisma.Decimal(input.unitPrice),
+        disclaimerText: input.disclaimerText || null,
+        disclaimerRevision: input.disclaimerText ? 1 : 0,
         createdBy: actor.id,
       },
     });
@@ -552,6 +583,8 @@ export async function createJobOrderFromPO(
           jobOrderNumber,
           purchaseOrderId: input.purchaseOrderId,
           factoryId: input.factoryId,
+          disclaimerRevision: input.disclaimerText ? 1 : 0,
+          disclaimerSha256: input.disclaimerText ? disclaimerSha256(input.disclaimerText) : null,
         },
       },
       tx,
@@ -559,6 +592,62 @@ export async function createJobOrderFromPO(
   });
 
   return getJobOrderDetail(actor, jobOrderId);
+}
+
+export async function updateDraftJobOrderDisclaimer(
+  actor: CurrentUser,
+  id: string,
+  input: { expectedVersion: number; disclaimerText: string },
+  idempotencyKey: string,
+) {
+  if (!canManageJobOrders(actor))
+    throw HttpError.forbidden('Only admins and merchandisers can edit a job order disclaimer');
+  const hash = requestHash(input);
+  await prisma.$transaction(async (tx) => {
+    if (await beginIdempotentOperation(tx, actor.id, id, 'UPDATE_DISCLAIMER', idempotencyKey, hash))
+      return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const jobOrder = await tx.jobOrder.findUnique({ where: { id } });
+    if (!jobOrder) throw HttpError.notFound('Job order not found');
+    if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+    if (jobOrder.status !== 'DRAFT')
+      throw HttpError.conflict('The disclaimer can only be changed while the job order is a draft');
+    const disclaimerText = input.disclaimerText;
+    const priorText = jobOrder.disclaimerText ?? '';
+    const changed = disclaimerText !== priorText;
+    const updated = await tx.jobOrder.update({
+      where: { id },
+      data: {
+        disclaimerText: disclaimerText || null,
+        disclaimerRevision: changed ? { increment: 1 } : undefined,
+        version: { increment: 1 },
+      },
+    });
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: priorText ? 'JOB_ORDER_DISCLAIMER_CHANGED' : 'JOB_ORDER_DISCLAIMER_SET',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: {
+          disclaimerRevision: updated.disclaimerRevision,
+          changed,
+          disclaimerSha256: disclaimerText ? disclaimerSha256(disclaimerText) : null,
+        },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'UPDATE_DISCLAIMER',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
+  });
+  return getJobOrderDetail(actor, id);
 }
 
 export async function sendJobOrderToFactory(
@@ -582,6 +671,10 @@ export async function sendJobOrderToFactory(
     if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
     if (jobOrder.status !== 'DRAFT')
       throw HttpError.badRequest('Only DRAFT job orders can be sent to factory');
+    const normalizedDisclaimer = jobOrder.disclaimerText
+      ? normalizeDisclaimerText(jobOrder.disclaimerText)
+      : '';
+    if (!normalizedDisclaimer) throw HttpError.disclaimerRequired();
     if (jobOrder.factory.status !== 'ACTIVE')
       throw HttpError.conflict('An inactive factory cannot receive a job order');
     const updated = await tx.jobOrder.update({
@@ -594,7 +687,11 @@ export async function sendJobOrderToFactory(
         action: 'JOB_ORDER_SENT_TO_FACTORY',
         entityType: 'JobOrder',
         entityId: id,
-        metadata: { jobOrderNumber: jobOrder.jobOrderNumber },
+        metadata: {
+          jobOrderNumber: jobOrder.jobOrderNumber,
+          disclaimerRevision: jobOrder.disclaimerRevision,
+          disclaimerSha256: disclaimerSha256(normalizedDisclaimer),
+        },
       },
       tx,
     );
@@ -614,12 +711,17 @@ export async function sendJobOrderToFactory(
 export async function confirmJobOrder(
   actor: CurrentUser,
   id: string,
-  input: { expectedVersion: number },
+  input: {
+    expectedVersion: number;
+    expectedDisclaimerRevision: number;
+    acknowledgeDisclaimer?: boolean;
+  },
   idempotencyKey: string,
 ) {
   const initial = await prisma.jobOrder.findUnique({ where: { id }, select: { factoryId: true } });
   if (!initial) throw HttpError.notFound('Job order not found');
-  assertJobOrderWorkflowAuthorization(actor, initial.factoryId);
+  if (!canFactoryManage(actor, initial.factoryId))
+    throw HttpError.forbidden('Only the mapped factory user can acknowledge and confirm this job order');
   await assertFactoryUserFactoryActive(actor, initial.factoryId);
   const hash = requestHash(input);
   await prisma.$transaction(async (tx) => {
@@ -631,19 +733,48 @@ export async function confirmJobOrder(
         processFlowVersion: {
           include: { stages: { where: { status: 'ACTIVE' }, orderBy: { sequence: 'asc' } } },
         },
+        factory: { select: { status: true } },
       },
     });
     if (!jobOrder) throw HttpError.notFound('Job order not found');
+    if (!canFactoryManage(actor, jobOrder.factoryId))
+      throw HttpError.forbidden('Only the mapped factory user can acknowledge and confirm this job order');
+    if (jobOrder.factory.status !== 'ACTIVE')
+      throw HttpError.conflict('This factory is inactive and cannot perform new operational actions');
     if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
     if (jobOrder.status !== 'SENT_TO_FACTORY')
       throw HttpError.badRequest('Only sent job orders can be confirmed');
+    if (jobOrder.disclaimerRevision !== input.expectedDisclaimerRevision)
+      throw HttpError.staleDisclaimerRevision(jobOrder.disclaimerRevision);
+    if (input.acknowledgeDisclaimer !== true) throw HttpError.acknowledgementRequired();
+    const normalizedDisclaimer = jobOrder.disclaimerText
+      ? normalizeDisclaimerText(jobOrder.disclaimerText)
+      : '';
+    if (!normalizedDisclaimer) throw HttpError.disclaimerRequired();
+    const acknowledgementId = createId();
+    const acknowledgedAt = new Date();
+    const disclaimerHash = disclaimerSha256(normalizedDisclaimer);
+    await tx.jobOrderAcknowledgement.create({
+      data: {
+        id: acknowledgementId,
+        jobOrderId: id,
+        jobOrderVersion: jobOrder.version,
+        disclaimerRevision: jobOrder.disclaimerRevision,
+        disclaimerTextSnapshot: normalizedDisclaimer,
+        disclaimerSha256: disclaimerHash,
+        factoryIdSnapshot: jobOrder.factoryId,
+        acknowledgedByUserId: actor.id,
+        acknowledgedByRole: 'FACTORY_USER',
+        acknowledgedAt,
+      },
+    });
     const updated = await tx.jobOrder.update({
       where: { id },
       data: {
         status: 'CONFIRMED_BY_FACTORY',
         factoryConfirmationStatus: 'CONFIRMED',
         confirmedBy: actor.id,
-        confirmedAt: new Date(),
+        confirmedAt: acknowledgedAt,
         version: { increment: 1 },
       },
     });
@@ -660,10 +791,27 @@ export async function confirmJobOrder(
     await recordAuditLog(
       {
         actorId: actor.id,
+        action: 'JOB_ORDER_DISCLAIMER_ACKNOWLEDGED',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: {
+          acknowledgementId,
+          jobOrderVersion: jobOrder.version,
+          disclaimerRevision: jobOrder.disclaimerRevision,
+          disclaimerSha256: disclaimerHash,
+          factoryId: jobOrder.factoryId,
+          acknowledgedByRole: 'FACTORY_USER',
+        },
+      },
+      tx,
+    );
+    await recordAuditLog(
+      {
+        actorId: actor.id,
         action: 'JOB_ORDER_FACTORY_CONFIRMED',
         entityType: 'JobOrder',
         entityId: id,
-        metadata: { jobOrderNumber: jobOrder.jobOrderNumber },
+        metadata: { jobOrderNumber: jobOrder.jobOrderNumber, acknowledgementId },
       },
       tx,
     );

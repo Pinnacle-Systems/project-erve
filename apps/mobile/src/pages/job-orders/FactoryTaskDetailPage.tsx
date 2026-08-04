@@ -51,6 +51,7 @@ export function FactoryTaskDetailPage() {
   const { user } = useAuth();
   const { id = '' } = useParams();
   const [prepared, setPrepared] = useState<Record<string, string>>({});
+  const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
   const task = useQuery({
     queryKey: ['factory-task', id],
     queryFn: async () =>
@@ -70,6 +71,7 @@ export function FactoryTaskDetailPage() {
     [job],
   );
   const activeMutation = [confirm, completeStage, savePrepared].find((entry) => entry.isError);
+  const canFactoryAcknowledge = Boolean(user?.roles.includes('FACTORY_USER'));
 
   if (task.isLoading)
     return (
@@ -103,6 +105,8 @@ export function FactoryTaskDetailPage() {
       preparedQuantity: Number(prepared[size.id] ?? size.preparedQuantity),
     })),
   };
+  const acknowledgementKey = `${job.id}:${job.version}:${job.disclaimerRevision}`;
+  const acknowledgeDisclaimer = acknowledgedRevision === acknowledgementKey;
 
   return (
     <main className="min-h-full space-y-4 bg-background px-4 py-5">
@@ -148,18 +152,35 @@ export function FactoryTaskDetailPage() {
       )}
 
       {job.status === 'SENT_TO_FACTORY' && (
+        <section className="rounded-xl border border-border bg-surface p-4">
+          <h2 className="font-semibold">Factory commercial terms / disclaimer</h2>
+          {job.disclaimerText ? (
+            <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-sm font-sans">{job.disclaimerText}</pre>
+          ) : (
+            <p className="mt-2 text-sm text-danger">No disclaimer is available. Contact the merchandiser.</p>
+          )}
+          <p className="mt-3 text-sm text-muted-foreground">Review the style, size quantities, total quantity, unit price, and process flow before confirming.</p>
+          {canFactoryAcknowledge && (
+            <label className="mt-4 flex min-h-12 items-center gap-3 text-sm font-medium">
+              <input className="size-5" type="checkbox" checked={acknowledgeDisclaimer} onChange={(event) => setAcknowledgedRevision(event.target.checked ? acknowledgementKey : '')} />
+              I have read and acknowledge the Job Order commercial terms and disclaimer.
+            </label>
+          )}
+        {canFactoryAcknowledge && (
         <button
           className="min-h-12 w-full rounded-lg bg-primary px-5 font-medium text-primary-foreground"
-          disabled={confirm.isPending}
+          disabled={confirm.isPending || !canFactoryAcknowledge || !acknowledgeDisclaimer || !job.disclaimerText}
           onClick={() =>
             confirm.mutate({
-              body: { expectedVersion: job.version },
+              body: { expectedVersion: job.version, expectedDisclaimerRevision: job.disclaimerRevision, acknowledgeDisclaimer: true },
               key: `${id}:confirm:${job.version}`,
             })
           }
         >
           {confirm.isPending ? 'Confirming…' : 'Confirm job order'}
         </button>
+        )}
+        </section>
       )}
 
       <section className="rounded-xl border border-border bg-surface p-4">

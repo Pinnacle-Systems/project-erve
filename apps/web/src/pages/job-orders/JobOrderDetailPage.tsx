@@ -7,6 +7,7 @@ import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useOptionalAuth } from '../../auth/AuthContext.js';
 import type { JobOrder, JobOrderLineSize } from './types.js';
 import { ProductionStageStepper } from './ProductionStageStepper.js';
 import { formatJobOrderAuditTitle } from './job-order-audit.js';
@@ -28,6 +29,9 @@ export function JobOrderDetailPage() {
   const queryClient = useQueryClient();
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
+  const [disclaimerDrafts, setDisclaimerDrafts] = useState<Record<string, string>>({});
+  const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
+  const user = useOptionalAuth()?.user;
 
   const jobOrderQuery = useQuery({
     queryKey: ['job-order', id],
@@ -61,8 +65,24 @@ export function JobOrderDetailPage() {
     mutationFn: async () =>
       apiClient.post<ApiSuccessResponse<JobOrder>>(
         `/job-orders/${id}/actions/confirm`,
-        { expectedVersion: jobOrderQuery.data!.version },
+        {
+          expectedVersion: jobOrderQuery.data!.version,
+          expectedDisclaimerRevision: jobOrderQuery.data!.disclaimerRevision,
+          acknowledgeDisclaimer: true,
+        },
         { headers: { 'Idempotency-Key': `${id}:confirm:${jobOrderQuery.data!.version}` } },
+      ),
+    onSuccess: invalidate,
+  });
+  const disclaimerMutation = useMutation({
+    mutationFn: async () =>
+      apiClient.patch<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/disclaimer`,
+        {
+          expectedVersion: jobOrderQuery.data!.version,
+          disclaimerText: disclaimerDrafts[jobOrderQuery.data!.id] ?? jobOrderQuery.data!.disclaimerText ?? '',
+        },
+        { headers: { 'Idempotency-Key': `${id}:disclaimer:${jobOrderQuery.data!.version}` } },
       ),
     onSuccess: invalidate,
   });
@@ -113,8 +133,15 @@ export function JobOrderDetailPage() {
       />
     );
 
-  const canSend = jobOrder.status === 'DRAFT';
-  const canConfirm = jobOrder.status === 'SENT_TO_FACTORY';
+  const canManageJobOrders = Boolean(
+    user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'),
+  );
+  const canSend = jobOrder.status === 'DRAFT' && canManageJobOrders;
+  const acknowledgementKey = `${jobOrder.id}:${jobOrder.version}:${jobOrder.disclaimerRevision}`;
+  const acknowledgeDisclaimer = acknowledgedRevision === acknowledgementKey;
+  const disclaimerText = disclaimerDrafts[jobOrder.id] ?? jobOrder.disclaimerText ?? '';
+  const canEditDisclaimer = jobOrder.status === 'DRAFT' && canManageJobOrders;
+  const canConfirm = jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
   const canCompleteStage =
     ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) && Boolean(nextStage);
   const canUpdatePrepared = jobOrder.status === 'PRODUCTION_COMPLETE';
@@ -148,7 +175,7 @@ export function JobOrderDetailPage() {
           <div className="flex flex-wrap gap-2">
             {canSend && <Button onClick={() => setSendDialogOpen(true)}>Send to Factory</Button>}
             {canConfirm && (
-              <Button onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>
+              <Button disabled={!acknowledgeDisclaimer} onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>
                 Confirm
               </Button>
             )}
@@ -167,6 +194,12 @@ export function JobOrderDetailPage() {
             completeStageMutation.error,
             preparedMutation.error,
           ].find((error) => error instanceof Error)?.message ?? 'Unable to update job order'}
+        </ValidationMessage>
+      )}
+
+      {disclaimerMutation.isError && (
+        <ValidationMessage tone="error">
+          {disclaimerMutation.error instanceof Error ? disclaimerMutation.error.message : 'Unable to update disclaimer'}
         </ValidationMessage>
       )}
 
@@ -220,6 +253,57 @@ export function JobOrderDetailPage() {
           />
         </DescriptionList>
       </Panel>
+
+      <Panel
+        title="Factory commercial terms / disclaimer"
+        description="Plain-text terms the factory must acknowledge before confirming this Job Order."
+        footer={
+          canEditDisclaimer ? (
+            <div className="flex justify-end">
+              <Button onClick={() => disclaimerMutation.mutate()} loading={disclaimerMutation.isPending}>
+                Save disclaimer
+              </Button>
+            </div>
+          ) : undefined
+        }
+      >
+        {canEditDisclaimer ? (
+          <label className="flex flex-col gap-1 text-sm font-medium">
+            Disclaimer
+            <textarea
+              className="min-h-32 rounded-md border border-border bg-background px-3 py-2 font-normal"
+              value={disclaimerText}
+              maxLength={10000}
+              onChange={(event) =>
+                setDisclaimerDrafts((current) => ({ ...current, [jobOrder.id]: event.target.value }))
+              }
+            />
+            <span className="text-xs font-normal text-muted-foreground">{disclaimerText.length}/10,000</span>
+          </label>
+        ) : jobOrder.disclaimerText ? (
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 text-sm font-sans">
+            {jobOrder.disclaimerText}
+          </pre>
+        ) : (
+          <p className="text-sm text-muted-foreground">No disclaimer has been recorded.</p>
+        )}
+      </Panel>
+
+      {canConfirm && (
+        <Panel title="Factory acknowledgement review">
+          <p className="text-sm text-muted-foreground">
+            Review the style, size quantities, unit price, process flow, and disclaimer above before confirming.
+          </p>
+          <label className="mt-4 flex min-h-11 items-center gap-3 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={acknowledgeDisclaimer}
+              onChange={(event) => setAcknowledgedRevision(event.target.checked ? acknowledgementKey : '')}
+            />
+            I have read and acknowledge the Job Order commercial terms and disclaimer.
+          </label>
+        </Panel>
+      )}
 
       {jobOrder.status === 'DRAFT' && (
         <Panel title="Production workflow not started">
@@ -373,6 +457,30 @@ export function JobOrderDetailPage() {
           }))}
           emptyState={auditQuery.isLoading ? 'Loading history…' : 'No history available.'}
         />
+      </Panel>
+
+      <Panel title="Factory acknowledgement evidence">
+        {jobOrder.acknowledgement ? (
+          <div className="space-y-3 text-sm">
+            <p>
+              Acknowledged by <strong>{jobOrder.acknowledgement.acknowledgedBy.name}</strong> at{' '}
+              {formatDateTime(jobOrder.acknowledgement.acknowledgedAt)} (revision{' '}
+              {jobOrder.acknowledgement.disclaimerRevision}).
+            </p>
+            <p className="break-all text-muted-foreground">
+              SHA-256: {jobOrder.acknowledgement.disclaimerSha256}
+            </p>
+            <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-sans">
+              {jobOrder.acknowledgement.disclaimerTextSnapshot}
+            </pre>
+          </div>
+        ) : jobOrder.status !== 'DRAFT' ? (
+          <p className="text-sm text-muted-foreground">
+            No recorded disclaimer acknowledgement. This Job Order predates the acknowledgement workflow.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">No acknowledgement is required while this Job Order is a draft.</p>
+        )}
       </Panel>
 
       <ConfirmDialog

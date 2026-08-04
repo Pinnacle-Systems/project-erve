@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+export const MAX_JOB_ORDER_DISCLAIMER_LENGTH = 10_000;
+
+export function normalizeDisclaimerText(value: string): string {
+  return value.replace(/\r\n?/g, '\n').trim();
+}
+
+const disclaimerTextSchema = z
+  .string()
+  .max(MAX_JOB_ORDER_DISCLAIMER_LENGTH)
+  .transform(normalizeDisclaimerText);
+
 export const jobOrderStatusSchema = z.enum([
   'DRAFT',
   'SENT_TO_FACTORY',
@@ -33,6 +44,7 @@ export const createJobOrderSchema = z.object({
       }
     })
     .transform(String),
+  disclaimerText: disclaimerTextSchema.optional(),
   lines: z
     .array(
       z.object({
@@ -67,6 +79,17 @@ export const assignedTasksQuerySchema = z.object({
 
 export const versionedMutationSchema = z.object({
   expectedVersion: z.number().int().positive(),
+});
+
+export const updateJobOrderDisclaimerSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  disclaimerText: disclaimerTextSchema,
+});
+
+export const confirmJobOrderSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  expectedDisclaimerRevision: z.number().int().min(0),
+  acknowledgeDisclaimer: z.boolean().optional(),
 });
 
 export const completeStageSchema = z.object({

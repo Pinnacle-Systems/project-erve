@@ -14,6 +14,9 @@ const JOB_ORDER_AUDIT_TITLES: Record<string, string> = {
   JOB_ORDER_CREATED: 'Job order created',
   JOB_ORDER_SENT_TO_FACTORY: 'Job order sent to factory',
   JOB_ORDER_FACTORY_CONFIRMED: 'Job order factory confirmed',
+  JOB_ORDER_DISCLAIMER_SET: 'Job order disclaimer set',
+  JOB_ORDER_DISCLAIMER_CHANGED: 'Job order disclaimer changed',
+  JOB_ORDER_DISCLAIMER_ACKNOWLEDGED: 'Factory acknowledged disclaimer',
   JOB_ORDER_PREPARED_QUANTITY_UPDATED: 'Job order prepared quantity updated',
 };
 

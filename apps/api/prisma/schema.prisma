@@ -176,6 +176,7 @@ model User {
   merchandisedPurchaseOrders DistributorPurchaseOrder[] @relation("POMerchandiser")
   createdJobOrders           JobOrder[]                 @relation("JobOrderCreator")
   confirmedJobOrders         JobOrder[]                 @relation("JobOrderConfirmer")
+  jobOrderAcknowledgements   JobOrderAcknowledgement[]  @relation("JobOrderAcknowledgedBy")
   completedJobOrderStages    JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
   qaInspections              QaInspectionSession[]      @relation("QaInspector")
   reopenedQaInspections      QaInspectionSession[]      @relation("QaReopenedBy")
@@ -615,6 +616,8 @@ model JobOrder {
   factoryId                 String                    @map("factory_id")
   processFlowVersionId      String                    @map("process_flow_version_id")
   unitPrice                 Decimal                   @map("unit_price") @db.Decimal(12, 2)
+  disclaimerText            String?                   @map("disclaimer_text")
+  disclaimerRevision        Int                       @default(0) @map("disclaimer_revision")
   status                    JobOrderStatus            @default(DRAFT)
   factoryConfirmationStatus FactoryConfirmationStatus @default(PENDING) @map("factory_confirmation_status")
   confirmedBy               String?                   @map("confirmed_by")
@@ -637,6 +640,7 @@ model JobOrder {
   idempotencyRecords JobOrderIdempotencyRecord[]
   qaInspections      QaInspectionSession[]
   qaReworkTasks      QaReworkTask[]
+  acknowledgements   JobOrderAcknowledgement[]
 
   @@index([purchaseOrderId])
   @@index([factoryId])
@@ -644,6 +648,32 @@ model JobOrder {
   @@index([status])
   @@index([factoryConfirmationStatus])
   @@map("job_orders")
+}
+
+model JobOrderAcknowledgement {
+  id                     String   @id
+  jobOrderId             String   @map("job_order_id")
+  jobOrderVersion        Int      @map("job_order_version")
+  disclaimerRevision     Int      @map("disclaimer_revision")
+  disclaimerTextSnapshot String   @map("disclaimer_text_snapshot")
+  disclaimerSha256       String   @map("disclaimer_sha256")
+  factoryIdSnapshot      String   @map("factory_id_snapshot")
+  acknowledgedByUserId   String   @map("acknowledged_by_user_id")
+  acknowledgedByRole     RoleName @map("acknowledged_by_role")
+  acknowledgedAt         DateTime @map("acknowledged_at")
+  invalidatedAt          DateTime? @map("invalidated_at")
+  invalidatedByUserId    String?  @map("invalidated_by_user_id")
+  invalidationReason     String?  @map("invalidation_reason")
+  invalidationMetadata   Json?    @map("invalidation_metadata")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  jobOrder       JobOrder @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
+  acknowledgedBy User     @relation("JobOrderAcknowledgedBy", fields: [acknowledgedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([jobOrderId, jobOrderVersion])
+  @@index([jobOrderId, acknowledgedAt])
+  @@index([acknowledgedByUserId])
+  @@map("job_order_acknowledgements")
 }
 
 enum QaInspectionStatus {

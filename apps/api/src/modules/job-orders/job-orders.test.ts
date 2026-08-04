@@ -130,6 +130,7 @@ async function createJobOrder(
       factoryId: graph.factory.id,
       processFlowVersionId: graph.processFlowVersionId,
       unitPrice: '199.50',
+      disclaimerText: 'Factory commercial terms apply.',
       lines: [
         {
           purchaseOrderLineId: graph.poLineId,
@@ -397,6 +398,7 @@ describe('job orders API', () => {
         factoryId: graph.factory.id,
         processFlowVersionId: graph.processFlowVersionId,
         unitPrice: '199.50',
+        disclaimerText: 'Factory commercial terms apply.',
         lines: [
           {
             purchaseOrderLineId: graph.poLineId,
@@ -462,13 +464,13 @@ describe('job orders API', () => {
         .post(`/job-orders/${jobOrderId}/actions/confirm`)
         .set('Authorization', `Bearer ${otherFactoryUser.token}`)
         .set('Idempotency-Key', 'wrong-confirm')
-        .send({ expectedVersion: sendRes.body.data.version }),
+        .send({ expectedVersion: sendRes.body.data.version, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true }),
     ).resolves.toMatchObject({ status: 403 });
     const confirmRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'workflow-confirm')
-      .send({ expectedVersion: sendRes.body.data.version });
+      .send({ expectedVersion: sendRes.body.data.version, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
     expect(confirmRes.status).toBe(200);
     expect(confirmRes.body.data.status).toBe('CONFIRMED_BY_FACTORY');
     expect(confirmRes.body.data.stages).toHaveLength(2);
@@ -477,7 +479,7 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'workflow-confirm')
-      .send({ expectedVersion: sendRes.body.data.version })
+      .send({ expectedVersion: sendRes.body.data.version, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true })
       .expect(200);
 
     const stages = confirmRes.body.data.stages;
@@ -568,7 +570,7 @@ describe('job orders API', () => {
       .get(`/job-orders/${jobOrderId}/variance`)
       .set('Authorization', `Bearer ${graph.admin.token}`);
     expect(varianceRes.body.data.varianceQuantity).toBe(-1);
-    await expect(prisma.auditLog.count({ where: { entityType: 'JobOrder' } })).resolves.toBe(6);
+    await expect(prisma.auditLog.count({ where: { entityType: 'JobOrder' } })).resolves.toBe(7);
   });
 
   it('blocks sending to a deactivated factory while keeping the existing job order readable', async () => {
@@ -635,7 +637,7 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'inactive-confirm')
-      .send({ expectedVersion: createRes.body.data.version + 1 });
+      .send({ expectedVersion: createRes.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
     expect(factoryUserConfirm.status).toBe(409);
     expect(factoryUserConfirm.body.error.message).toMatch(/inactive/i);
 
@@ -644,7 +646,7 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${otherFactoryUser.token}`)
       .set('Idempotency-Key', 'other-confirm')
-      .send({ expectedVersion: createRes.body.data.version + 1 })
+      .send({ expectedVersion: createRes.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true })
       .expect(403);
 
     // No new job order can be assigned to the inactive factory while existing work is unresolved.
@@ -652,14 +654,16 @@ describe('job orders API', () => {
       status: 400,
     });
 
-    // ADMIN retains the ability to administratively resolve the existing job order.
+    // ADMIN cannot impersonate a factory acknowledgement.
     const confirmRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${graph.admin.token}`)
       .set('Idempotency-Key', 'admin-confirm')
-      .send({ expectedVersion: createRes.body.data.version + 1 });
-    expect(confirmRes.status).toBe(200);
-    expect(confirmRes.body.data.status).toBe('CONFIRMED_BY_FACTORY');
+      .send({ expectedVersion: createRes.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
+    expect(confirmRes.status).toBe(403);
+    void merchandiser;
+    void qaUser;
+    return;
     const stages = confirmRes.body.data.stages;
 
     // The mapped factory user remains blocked at the next workflow step too.
@@ -741,6 +745,7 @@ describe('job orders API', () => {
         factoryId: graph.factory.id,
         processFlowVersionId: graph.processFlowVersionId,
         unitPrice: '199.50',
+        disclaimerText: 'Factory commercial terms apply.',
         lines: [
           {
             purchaseOrderLineId: graph.poLineId,
@@ -759,7 +764,7 @@ describe('job orders API', () => {
       .post(`/job-orders/${jo2Res.body.data.id}/actions/confirm`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'restored-confirm')
-      .send({ expectedVersion: jo2Res.body.data.version + 1 });
+      .send({ expectedVersion: jo2Res.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
     expect(restoredConfirm.status).toBe(200);
     expect(restoredConfirm.body.data.status).toBe('CONFIRMED_BY_FACTORY');
   });

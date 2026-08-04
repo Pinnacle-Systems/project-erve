@@ -102,3 +102,8 @@ export function useAuth(): AuthContextValue {
 
   return context;
 }
+
+/** Useful for pages that retain read-only rendering in isolated test or embed contexts. */
+export function useOptionalAuth(): AuthContextValue | undefined {
+  return useContext(AuthContext);
+}

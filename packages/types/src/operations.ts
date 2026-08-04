@@ -1,3 +1,5 @@
+import type { Role } from './roles.js';
+
 export const STABLE_API_ERROR_CODES = [
   'VALIDATION_ERROR',
   'UNAUTHORIZED',
@@ -5,6 +7,9 @@ export const STABLE_API_ERROR_CODES = [
   'NOT_FOUND',
   'CONFLICT',
   'STALE_VERSION',
+  'STALE_DISCLAIMER_REVISION',
+  'DISCLAIMER_REQUIRED',
+  'ACKNOWLEDGEMENT_REQUIRED',
   'IDEMPOTENCY_KEY_REUSED',
   'FACTORY_MAPPING_REQUIRED',
   'FACTORY_MAPPING_AMBIGUOUS',
@@ -57,6 +62,22 @@ export type JobOrderStatus =
   | 'CANCELLED';
 export type FactoryConfirmationStatus = 'PENDING' | 'CONFIRMED' | 'REJECTED';
 export type ProductionStageStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
+
+export interface JobOrderAcknowledgement {
+  id: string;
+  jobOrderVersion: number;
+  disclaimerRevision: number;
+  disclaimerTextSnapshot: string;
+  disclaimerSha256: string;
+  factoryIdSnapshot: string;
+  acknowledgedBy: { id: string; name: string; email: string };
+  acknowledgedByRole: Role;
+  acknowledgedAt: string;
+  invalidatedAt: string | null;
+  invalidatedByUserId: string | null;
+  invalidationReason: string | null;
+  invalidationMetadata: unknown;
+}
 
 export interface PurchaseOrderSummary extends VersionedResource {
   id: string;
@@ -178,6 +199,10 @@ export interface JobOrderDetail extends JobOrderSummary {
   };
   confirmedBy: { id: string; name: string; email: string } | null;
   confirmedAt: string | null;
+  disclaimerText: string | null;
+  disclaimerRevision: number;
+  acknowledgement: JobOrderAcknowledgement | null;
+  acknowledgements: JobOrderAcknowledgement[];
   productionStartedAt: string | null;
   productionCompletedAt: string | null;
   creator: { id: string; name: string; email: string };
@@ -212,6 +237,7 @@ export interface CreateJobOrderInput {
   factoryId: string;
   processFlowVersionId: string;
   unitPrice: string;
+  disclaimerText?: string;
   lines: Array<{
     purchaseOrderLineId: string;
     sizes: Array<{ purchaseOrderLineSizeId: string; quantity: number }>;
@@ -219,6 +245,13 @@ export interface CreateJobOrderInput {
 }
 export interface VersionedMutationInput {
   expectedVersion: number;
+}
+export interface UpdateJobOrderDisclaimerInput extends VersionedMutationInput {
+  disclaimerText?: string;
+}
+export interface ConfirmJobOrderInput extends VersionedMutationInput {
+  expectedDisclaimerRevision: number;
+  acknowledgeDisclaimer: true;
 }
 export interface CompleteJobOrderStageInput extends VersionedMutationInput {
   stageStatusId: string;

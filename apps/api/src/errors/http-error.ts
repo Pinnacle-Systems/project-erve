@@ -37,6 +37,23 @@ export class HttpError extends Error {
     });
   }
 
+  static disclaimerRequired(): HttpError {
+    return new HttpError(400, 'DISCLAIMER_REQUIRED', 'A factory commercial terms / disclaimer is required');
+  }
+
+  static acknowledgementRequired(): HttpError {
+    return new HttpError(400, 'ACKNOWLEDGEMENT_REQUIRED', 'Explicit disclaimer acknowledgement is required');
+  }
+
+  static staleDisclaimerRevision(currentRevision: number): HttpError {
+    return new HttpError(
+      409,
+      'STALE_DISCLAIMER_REVISION',
+      'The disclaimer changed since it was loaded',
+      { currentRevision },
+    );
+  }
+
   static idempotencyKeyReused(): HttpError {
     return new HttpError(
       409,
