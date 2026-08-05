@@ -39,6 +39,7 @@ import { QaQueuePage } from '../pages/qa/QaQueuePage.js';
 import {
   DISTRIBUTOR_VIEW_ROLES,
   FACTORY_VIEW_ROLES,
+  FACTORY_MANAGE_ROLES,
   JOB_ORDER_CREATE_ROLES,
   JOB_ORDER_VIEW_ROLES,
   PRICE_LIST_MANAGE_ROLES,
@@ -139,7 +140,7 @@ export function AppRoutes() {
         <Route
           path="factories/:id/edit"
           element={
-            <RoleRoute allowed={FACTORY_VIEW_ROLES}>
+            <RoleRoute allowed={FACTORY_MANAGE_ROLES}>
               <FactoryFormPage />
             </RoleRoute>
           }

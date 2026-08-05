@@ -145,22 +145,22 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Users');
   });
 
-  it('FACTORY_USER sees only Job Orders', async () => {
+  it('FACTORY_USER sees their factory and Job Orders', async () => {
     await renderAppLayout(['FACTORY_USER']);
     const labels = sidebarLinkLabels();
     const text = sidebarTextContent();
 
     expect(labels).not.toContain('Styles');
     expect(labels).not.toContain('Sizes');
-    expect(labels).not.toContain('Factories');
     expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).not.toContain('Price Lists');
     expect(labels).not.toContain('Purchase Orders');
     expect(labels).not.toContain('+ New PO');
+    expect(labels).toContain('Factories');
     expect(labels).toContain('Job Orders');
 
-    expect(text).not.toContain('Master Data');
+    expect(text).toContain('Master Data');
     expect(text).toContain('Orders');
   });
 
@@ -195,14 +195,14 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Price Lists');
   });
 
-  it('DISTRIBUTOR sees Purchase Orders and Price Lists but no other Master Data or Job Orders links', async () => {
+  it('DISTRIBUTOR sees their distributor, Purchase Orders and Price Lists', async () => {
     await renderAppLayout(['DISTRIBUTOR']);
     const labels = sidebarLinkLabels();
 
     expect(labels).not.toContain('Styles');
     expect(labels).not.toContain('Sizes');
     expect(labels).not.toContain('Factories');
-    expect(labels).not.toContain('Distributors');
+    expect(labels).toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).toContain('Price Lists');
     expect(labels).toContain('Purchase Orders');

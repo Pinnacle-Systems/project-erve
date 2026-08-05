@@ -151,6 +151,31 @@ describe('styles API', () => {
 });
 
 describe('sizes API', () => {
+  it('enforces the size-master read policy for direct API requests', async () => {
+    const { token: adminToken } = await createTestUserAndToken({
+      email: 'admin-sizes@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { token: factoryToken } = await createTestUserAndToken({
+      email: 'factory-sizes@test.local',
+      password: 'factory-password',
+      roles: ['FACTORY_USER'],
+    });
+    await createSize();
+
+    const allowed = await request(app).get('/sizes').set('Authorization', `Bearer ${adminToken}`);
+    const denied = await request(app).get('/sizes').set('Authorization', `Bearer ${factoryToken}`);
+    const unauthenticated = await request(app).get('/sizes');
+
+    expect(allowed.status).toBe(200);
+    expect(allowed.body.data).toHaveLength(1);
+    expect(denied.status).toBe(403);
+    expect(denied.body.data).toBeUndefined();
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.body.data).toBeUndefined();
+  });
+
   it('validates unique size code', async () => {
     const { token } = await createTestUserAndToken({
       email: 'admin@test.local',

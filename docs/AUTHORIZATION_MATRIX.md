@@ -1,0 +1,97 @@
+# ERVE-018 Authorization Matrix
+
+Audit date: 2026-08-04. This is an inventory of implemented routes; modules not listed do not exist in this repository.
+
+## Policy legend
+
+| Code | Allowed roles | Record/status scope | Unauthorized |
+| --- | --- | --- | --- |
+| A | ADMIN | global | 403 |
+| M | ADMIN, MERCHANDISER | global | 403 |
+| F | ADMIN, MERCHANDISER, FACTORY_USER | factory user: mapped factories only | 403/empty list |
+| D | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, DISTRIBUTOR | distributor: sole mapped distributor only | 403/empty list |
+| P | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, ACCOUNTANT, DISTRIBUTOR | distributor: own ACTIVE price lists only | 403/empty list |
+| PO-V | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, DISTRIBUTOR | distributor: own purchase orders | 403/empty list |
+| PO-M | ADMIN, MERCHANDISER, DISTRIBUTOR | distributor: own PO and active distributor | 403 |
+| JO-V | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, FACTORY_USER, QA_USER | factory mapped; QA global visibility | 403/empty list |
+| JO-M | ADMIN, MERCHANDISER | PO/factory/process-flow/draft eligibility | 403/409 |
+| JO-W | ADMIN, MERCHANDISER, FACTORY_USER | mapped active factory; transition status/version | 403/409 |
+| QA-V | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, QA_USER | QA global visibility | 403 |
+| QA-O | ADMIN, QA_USER, MERCHANDISER | inspection/job-order eligibility and version | 403/409 |
+| QA-R | ADMIN, MERCHANDISER, FACTORY_USER | mapped factory; rework status/version | 403/409 |
+| QA-E | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, QA_USER, FACTORY_USER | evidence inherits its inspection/job-order factory scope | 403 |
+| STYLE-R | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT | global style/image read | 403 |
+| FACTORY-TASK | FACTORY_USER | exactly one mapped factory | 403 |
+| AUTH | any active authenticated user | current user only | 401 |
+
+Every non-public row runs through `requireAuth`, reloading active status, roles, mappings and `authVersion` per request. Missing, expired, revoked, stale, or inactive access tokens receive 401; failed role/scope checks receive 403. Mutations take the audit actor from the authenticated request.
+
+## Endpoint and action inventory
+
+| Module | Method/route or action | Policy | API enforcement | Client visibility | Audit status |
+| --- | --- | --- | --- | --- | --- |
+| Health | GET `/health`, `/ready` | public probes | app | none | reviewed |
+| Auth | login/refresh/mobile login/mobile refresh | public, active credentials/session | auth service | login | reviewed |
+| Auth | logout/mobile logout; GET `/me` | public revocation; authenticated me | auth routes/`requireAuth` | client shells | reviewed |
+| Users | all `/users` CRUD, status/password, role and mapping operations | A | router, services, audit | ADMIN routes | reviewed |
+| Distributors | GET `/distributors`, `/:id` | D | router + distributor scope | D routes | reviewed |
+| Distributors | create/update/status; `/:id/users` | A | router + service | ADMIN | reviewed |
+| Styles/images | list/detail/image content | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT | router + parent lookup | matching routes | reviewed |
+| Styles/images | style CRUD; size/factory maps; image upload/replace/delete/primary | M | router + service + audit | M controls | reviewed |
+| Sizes | GET/list/detail; create/update/status | M | router + service + audit | M routes | ERVE-018-01 fixed |
+| Factories | GET `/factories`, `/:id` | F | router + factory scope | F routes; edit M | web aligned |
+| Factories | create/update/status; `/:id/users` | M; users A | router + service + audit | M; ADMIN mapping | reviewed |
+| Process flow/version | all list/detail/create/activate/stage replacement operations | M | router + mutable/status service | M routes | reviewed |
+| Price lists | list/detail/lookup/distributor history | P | router + distributor/status scope | matching routes | reviewed |
+| Price lists | list/line mutations; activate/retire | M | router + draft/status service + audit | M controls | reviewed |
+| Purchase orders | list/detail/balance/fulfilment | PO-V | router + distributor scope | matching routes | reviewed |
+| Purchase orders | create/update draft/submit/cancel | PO-M | router + ownership/status service + audit | matching controls | reviewed |
+| Job orders | list/detail/stages/audit/variance | JO-V | router + factory/QA scope | QA contextual read | reviewed |
+| Job orders | create/disclaimer/send-to-factory | JO-M | router + eligibility/idempotency service | ADMIN/MERCHANDISER | reviewed |
+| Job orders | assigned tasks | FACTORY_USER, exactly one mapped factory | router + service | mobile tasks | reviewed |
+| Job orders | confirm/complete-stage/prepared quantity | JO-W | router + factory/status/version service | operational controls | reviewed |
+| QA | queue/job-order detail | QA-V | router + visibility service | matching routes | reviewed |
+| QA | inspection/evidence/approve/finalize | QA-O | router + eligibility/version service | matching controls | reviewed |
+| QA | reopen | ADMIN, MERCHANDISER | router + status/version service | web controls | reviewed |
+| QA | rework queue/acknowledge/ready | QA-R | router + factory/status/version service | mobile controls | reviewed |
+| QA | evidence content | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, QA_USER, FACTORY_USER | router + evidence-parent scope | contextual | reviewed |
+
+## Findings and remediation plan
+
+| ID | Severity and business impact | Current vs intended behaviour | Authoritative layer | Resolution |
+| --- | --- | --- | --- | --- |
+| ERVE-018-01 | High: global master-data disclosure | Any active role could directly enumerate `GET /sizes`; intended policy is M. | API route | Added M gate and direct API allowed/403/401/no-data coverage. |
+| ERVE-018-02 | Low: UI-only mismatch | Scoped factory/distributor reads were allowed by API but hidden on web/direct routes. | Web visibility only | Aligned read roles; factory edit remains M. |
+| ERVE-018-03 | Informational: absent modules | Dispatches, packing/invoices/payments, reports/exports, notifications, audit-log browsing, and general uploaded/static files have no routes/modules. | **REQUIRES BUSINESS DECISION** before implementation | No change possible in this codebase. |
+
+The existing ERVE-006/007/017 decisions were preserved: ADMIN QA parity, global QA visibility without factory mapping, eligible QA statuses, no QA job-order creation, factory/distributor scope, and `authVersion` revocation. `packages/shared/src/rbac.ts` remains the shared QA-operation policy; client route guards are UX only and API services remain authoritative.
+
+## Exact route inventory and automated evidence
+
+The normalized, one-row-per-endpoint inventory is [AUTHORIZATION_ROUTE_INVENTORY.md](AUTHORIZATION_ROUTE_INVENTORY.md). It records each exact method and mounted route, policy code, scope/status rule, middleware, and unauthorized behavior. The source list below provides traceability back to the reviewed declarations.
+
+| Route module | Exact individual route inventory and enforcement source |
+| --- | --- |
+| Auth | `apps/api/src/modules/auth/auth.routes.ts`: POST `/login`, `/refresh`, `/mobile/login`, `/mobile/refresh`, `/mobile/logout`, `/logout`; GET `/me`. |
+| Users | `apps/api/src/modules/users/users.routes.ts`: POST/GET `/`; GET/PATCH `/:id`; PATCH `/:id/status`; POST `/:id/reset-password`, `/:id/roles`, `/:id/distributors`, `/:id/factories`; DELETE `/:id/roles/:roleName`, `/:id/distributors/:distributorId`, `/:id/factories/:factoryId`. All use router-level `requireAuth, requireRoles('ADMIN')`. |
+| Master data | `apps/api/src/modules/master-data/master-data.routes.ts`: all individual style, style-image, size, factory, distributor, process-flow, and process-flow-version declarations, with the named `canManageMasterData`, `canViewStyles`, `canViewFactories`, `canViewDistributors`, and `canManageDistributors` middleware directly on each route. |
+| Price lists | `apps/api/src/modules/price-lists/price-lists.routes.ts`: GET `/`, `/lookup`, `/distributors/:distributorId/history`, `/:id`; POST `/`, `/:id/lines`, `/:id/actions/activate`, `/:id/actions/retire`; PATCH `/:id`, `/:id/lines/:lineId`; DELETE `/:id/lines/:lineId`. |
+| Purchase orders | `apps/api/src/modules/purchase-orders/purchase-orders.routes.ts`: GET `/`, `/:id`, `/:id/job-order-balance`, `/:id/fulfilment-summary`; POST `/`, `/:id/actions/submit`, `/:id/actions/cancel`; PATCH `/:id`. |
+| Job orders | `apps/api/src/modules/job-orders/job-orders.routes.ts`: GET `/`, `/assigned-tasks`, `/:id`, `/:id/stages`, `/:id/audit`, `/:id/variance`; POST `/`, `/:id/actions/send-to-factory`, `/:id/actions/confirm`, `/:id/actions/complete-stage`, `/:id/actions/update-prepared-quantity`; PATCH `/:id/disclaimer`. |
+| QA | `apps/api/src/modules/qa/qa.routes.ts`: GET `/queue`, `/job-orders/:id`, `/rework`, `/evidence/:id/content`; POST `/job-orders/:id/inspections`, `/inspections/:id/finalize`, `/job-orders/:id/approve`, `/inspections/:id/reopen`, `/rework/:id/acknowledge`, `/rework/:id/ready`, `/inspections/:id/evidence`; PUT `/inspections/:id`. |
+
+| Required authorization evidence | Existing automated test files |
+| --- | --- |
+| Factory scope, cross-factory substitution, scoped lists | `apps/api/src/modules/job-orders/job-orders.test.ts`, `apps/api/src/modules/master-data/master-data.test.ts`, `apps/web/src/pages/job-orders/JobOrderListPage.permissions.test.tsx` |
+| Distributor scope, identifier substitution, scoped lists/counts | `apps/api/src/modules/purchase-orders/purchase-orders.test.ts`, `apps/api/src/modules/price-lists/price-lists.test.ts`, `apps/api/src/modules/master-data/master-data.test.ts` |
+| Role permission and independent status eligibility | `apps/api/src/modules/job-orders/job-orders.test.ts`, `apps/api/src/modules/qa/qa.test.ts`, `apps/api/src/modules/purchase-orders/purchase-orders.test.ts`, `apps/api/src/modules/price-lists/price-lists.test.ts` |
+| Inactive, revoked/stale sessions, and existing-session role changes | `apps/api/src/modules/auth/auth.test.ts`, `apps/api/src/auth/access.test.ts`, `apps/api/src/modules/users/users.test.ts` |
+| Authenticated audit actor and target attribution | `apps/api/src/modules/users/users.test.ts`, `apps/api/src/modules/job-orders/job-orders.test.ts`, `apps/api/src/modules/master-data/master-data.test.ts`, `apps/api/src/modules/qa/qa.test.ts` |
+
+## Verification and residual risk
+
+Disposable database: `postgresql://postgres:postgres@localhost:5432/erve_test?schema=public` was set explicitly as `TEST_DATABASE_URL`; it is distinct from `erve_dev`. With `DATABASE_URL` temporarily set to the same disposable target, `prisma migrate deploy` and `prisma migrate status` reported all 16 committed migrations applied and schema up to date.
+
+The added direct-API test was run with `pnpm --filter @erve/api test -- master-data.test.ts -t "enforces the size-master read policy for direct API requests"`: 1 file passed, 1 test passed, and 36 tests were filtered. All 17 API test files were then rerun against the disposable database in serial batches because the suite intentionally shares one resettable database: 286 tests passed (auth 16, users 37, master data 37, price lists 37, purchase orders 30, job orders 17, QA 7, and 74 remaining CLI/storage/style-image tests; 31 access/database-safety/health/CORS tests). The absent modules in ERVE-018-03 remain untested until they are implemented with an approved business policy.
+
+No migration or destructive test command was directed at `erve_dev` or production. API authorization remains authoritative even if a web/mobile route or hidden control is bypassed.

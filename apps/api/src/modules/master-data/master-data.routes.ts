@@ -327,6 +327,7 @@ stylesRouter.patch(
 
 sizesRouter.get(
   '/',
+  canManageMasterData,
   asyncHandler(async (req, res) => {
     const filters = listStatusQuerySchema.parse(req.query);
     const sizes = await masterDataService.listSizes(filters);

@@ -94,11 +94,11 @@ function getPageContent(): string {
 
 describe('AppRoutes Permissions', () => {
   describe('FACTORY_USER', () => {
-    it('is denied access to /master-data/factories', async () => {
+    it("can access the factory list, where the API applies the user's factory scope", async () => {
       await renderRoutes('FACTORY_USER', '/master-data/factories');
       const content = getPageContent();
-      expect(content).not.toContain('FactoryListPage');
-      expect(content).toContain('ForbiddenPage');
+      expect(content).toContain('FactoryListPage');
+      expect(content).not.toContain('ForbiddenPage');
     });
 
     it('is denied access to /purchase-orders', async () => {

@@ -28,7 +28,7 @@ const mockUser = (role: Role): AuthUser => ({
 
 describe('permissions', () => {
   describe.each([
-    ['FACTORY_USER', false, false, false, false, false, true, false],
+    ['FACTORY_USER', false, false, true, false, false, true, false],
     ['ADMIN', true, true, true, true, true, true, true],
     ['MERCHANDISER', true, true, true, true, true, true, true],
   ] as const)(
