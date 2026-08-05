@@ -631,6 +631,63 @@ describe('job orders API', () => {
       .send({ expectedVersion: createRes.body.data.version })
       .expect(200);
 
+    // ERVE-018 regression: a merchandiser can manage job-order setup, but can
+    // never make the factory-only acknowledgement/confirmation transition.
+    const merchandiserRole = await prisma.userRole.findFirst({
+      where: { userId: merchandiser.userId, role: { name: 'MERCHANDISER' } },
+    });
+    expect(merchandiserRole).not.toBeNull();
+    const beforeMerchandiserConfirm = await prisma.jobOrder.findUniqueOrThrow({
+      where: { id: jobOrderId },
+      select: {
+        status: true,
+        factoryConfirmationStatus: true,
+        confirmedBy: true,
+        confirmedAt: true,
+      },
+    });
+    expect(beforeMerchandiserConfirm).toMatchObject({
+      status: 'SENT_TO_FACTORY',
+      factoryConfirmationStatus: 'PENDING',
+      confirmedBy: null,
+      confirmedAt: null,
+    });
+    const confirmationAuditWhere = {
+      entityType: 'JobOrder',
+      entityId: jobOrderId,
+      action: { in: ['JOB_ORDER_DISCLAIMER_ACKNOWLEDGED', 'JOB_ORDER_FACTORY_CONFIRMED'] },
+    };
+    expect(
+      await prisma.jobOrderAcknowledgement.count({ where: { jobOrderId } }),
+    ).toBe(0);
+    expect(await prisma.auditLog.count({ where: confirmationAuditWhere })).toBe(0);
+
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/confirm`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'merchandiser-confirm-denied')
+      .send({
+        expectedVersion: createRes.body.data.version + 1,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
+      .expect(403);
+
+    const afterMerchandiserConfirm = await prisma.jobOrder.findUniqueOrThrow({
+      where: { id: jobOrderId },
+      select: {
+        status: true,
+        factoryConfirmationStatus: true,
+        confirmedBy: true,
+        confirmedAt: true,
+      },
+    });
+    expect(afterMerchandiserConfirm).toEqual(beforeMerchandiserConfirm);
+    expect(
+      await prisma.jobOrderAcknowledgement.count({ where: { jobOrderId } }),
+    ).toBe(0);
+    expect(await prisma.auditLog.count({ where: confirmationAuditWhere })).toBe(0);
+
     await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'INACTIVE' } });
 
     // A mapped factory user can no longer advance production at their now-inactive factory.
@@ -662,17 +719,25 @@ describe('job orders API', () => {
       .set('Idempotency-Key', 'admin-confirm')
       .send({ expectedVersion: createRes.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
     expect(confirmRes.status).toBe(403);
-    void merchandiser;
-    void qaUser;
-    return;
-    const stages = confirmRes.body.data.stages;
+
+    // Confirm while the factory is active, then suspend it to exercise the
+    // workflow actions that must remain unavailable to factory users.
+    await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'ACTIVE' } });
+    const activeFactoryConfirm = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'active-confirm-before-suspension')
+      .send({ expectedVersion: createRes.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
+    expect(activeFactoryConfirm.status).toBe(200);
+    const stages = activeFactoryConfirm.body.data.stages;
+    await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'INACTIVE' } });
 
     // The mapped factory user remains blocked at the next workflow step too.
     await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'inactive-stage')
-      .send({ stageStatusId: stages[0].id, expectedVersion: confirmRes.body.data.version })
+      .send({ stageStatusId: stages[0].id, expectedVersion: activeFactoryConfirm.body.data.version })
       .expect(409);
 
     // MERCHANDISER retains its normal control over the existing job order.
@@ -680,7 +745,7 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${merchandiser.token}`)
       .set('Idempotency-Key', 'merch-stage')
-      .send({ stageStatusId: stages[0].id, expectedVersion: confirmRes.body.data.version });
+      .send({ stageStatusId: stages[0].id, expectedVersion: activeFactoryConfirm.body.data.version });
     expect(stage1Res.status).toBe(200);
     expect(stage1Res.body.data.status).toBe('IN_PRODUCTION');
 
