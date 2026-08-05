@@ -16,6 +16,7 @@ import { ProcessFlowVersionEditorPage } from '../pages/master-data/ProcessFlowVe
 import { SizeListPage } from '../pages/master-data/SizeListPage.js';
 import { SizeDetailPage } from '../pages/master-data/SizeDetailPage.js';
 import { SizeFormPage } from '../pages/master-data/SizeFormPage.js';
+import { SeasonListPage } from '../pages/master-data/SeasonListPage.js';
 import { StyleDetailPage } from '../pages/master-data/StyleDetailPage.js';
 import { StyleFormPage } from '../pages/master-data/StyleFormPage.js';
 import { StyleListPage } from '../pages/master-data/StyleListPage.js';
@@ -49,7 +50,8 @@ import {
   PURCHASE_ORDER_VIEW_ROLES,
   QA_VIEW_ROLES,
   SIZE_MANAGE_ROLES,
-  STYLE_VIEW_ROLES,
+  SEASON_MANAGE_ROLES,
+  STYLE_MANAGE_ROLES,
   USER_MANAGE_ROLES,
 } from '../auth/permissions.js';
 
@@ -83,7 +85,7 @@ export function AppRoutes() {
         <Route
           path="styles/new"
           element={
-            <RoleRoute allowed={STYLE_VIEW_ROLES}>
+            <RoleRoute allowed={STYLE_MANAGE_ROLES}>
               <StyleFormPage />
             </RoleRoute>
           }
@@ -92,10 +94,14 @@ export function AppRoutes() {
         <Route
           path="styles/:id/edit"
           element={
-            <RoleRoute allowed={STYLE_VIEW_ROLES}>
+            <RoleRoute allowed={STYLE_MANAGE_ROLES}>
               <StyleFormPage />
             </RoleRoute>
           }
+        />
+        <Route
+          path="seasons"
+          element={<RoleRoute allowed={SEASON_MANAGE_ROLES}><SeasonListPage /></RoleRoute>}
         />
         <Route
           path="sizes"

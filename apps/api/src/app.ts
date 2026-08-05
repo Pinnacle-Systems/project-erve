@@ -16,6 +16,7 @@ import {
   processFlowsRouter,
   processFlowVersionsRouter,
   sizesRouter,
+  seasonsRouter,
   stylesRouter,
 } from './modules/master-data/master-data.routes.js';
 import { priceListsRouter } from './modules/price-lists/price-lists.routes.js';
@@ -88,6 +89,7 @@ export function createApp() {
   app.use('/users', usersRouter);
   app.use('/styles', stylesRouter);
   app.use('/sizes', sizesRouter);
+  app.use('/seasons', seasonsRouter);
   app.use('/factories', factoriesRouter);
   app.use('/distributors', distributorsRouter);
   app.use('/process-flows', processFlowsRouter);

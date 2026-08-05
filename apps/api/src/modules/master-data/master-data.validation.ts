@@ -9,6 +9,10 @@ export const sizeStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const factoryStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const processFlowStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const processFlowVersionStatusSchema = z.enum(['DRAFT', 'ACTIVE', 'RETIRED']);
+export const seasonStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
+const seasonIdsSchema = z.array(z.string().trim().min(1)).min(1, 'At least one Season is required').superRefine((ids, ctx) => {
+  if (new Set(ids).size !== ids.length) ctx.addIssue({ code: 'custom', message: 'Duplicate Season identifiers are not allowed' });
+});
 
 export const createStyleSchema = z.object({
   styleNumber: z.string().trim().min(1),
@@ -25,6 +29,7 @@ export const createStyleSchema = z.object({
   finalMrp: positiveMoney,
   royaltyPercentage: z.coerce.number().min(0).max(100).optional().nullable(),
   status: styleStatusSchema.optional(),
+  seasonIds: seasonIdsSchema,
 });
 
 export const updateStyleSchema = createStyleSchema
@@ -34,6 +39,21 @@ export const updateStyleSchema = createStyleSchema
   });
 
 export const updateStyleStatusSchema = z.object({ status: styleStatusSchema });
+const seasonFieldsSchema = z.object({
+  code: z.string().trim().min(1, 'Season code is required').max(20).regex(/^[A-Za-z0-9/-]+$/, 'Season code may contain letters, numbers, hyphens, and slashes only').transform((value) => value.toUpperCase()),
+  name: z.string().trim().min(1, 'Season name is required').max(80),
+  financialYear: z.string().trim().regex(/^\d{2}-\d{2}$/, 'Financial year must use YY-YY format'),
+  status: seasonStatusSchema.optional(),
+});
+const hasConsecutiveFinancialYear = (financialYear: string) => {
+  const [start = Number.NaN, end = Number.NaN] = financialYear.split('-').map(Number);
+  return (start + 1) % 100 === end;
+};
+export const createSeasonSchema = seasonFieldsSchema.refine(({ financialYear }) => hasConsecutiveFinancialYear(financialYear), { message: 'Financial year must contain consecutive years', path: ['financialYear'] });
+export const updateSeasonSchema = seasonFieldsSchema.omit({ status: true }).partial()
+  .refine((value) => Object.keys(value).length > 0, { message: 'At least one field is required' })
+  .refine((value) => value.financialYear === undefined || hasConsecutiveFinancialYear(value.financialYear), { message: 'Financial year must contain consecutive years', path: ['financialYear'] });
+export const updateSeasonStatusSchema = z.object({ status: seasonStatusSchema });
 
 export const styleSizeSchema = z.object({
   sizeId: z.string().trim().min(1),

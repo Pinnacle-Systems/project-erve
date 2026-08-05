@@ -30,6 +30,7 @@ export async function resetDatabase(): Promise<void> {
   await prisma.styleImage.deleteMany();
   await prisma.file.deleteMany();
   await prisma.style.deleteMany();
+  await prisma.season.deleteMany();
   await prisma.size.deleteMany();
   await prisma.refreshSession.deleteMany();
   await prisma.userRole.deleteMany();

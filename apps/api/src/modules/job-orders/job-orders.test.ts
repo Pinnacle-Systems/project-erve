@@ -35,8 +35,9 @@ async function createSeedGraph() {
   const sizeB = await prisma.size.create({
     data: { id: createId(), code: 'AGE_4', label: '4', sizeType: 'AGE', sortOrder: 4 },
   });
+  const season = await prisma.season.create({ data: { id: createId(), code: 'JO-TEST', name: 'Job Order Test Season', financialYear: '26-27' } });
   const style = await prisma.style.create({
-    data: { id: createId(), styleNumber: 'ST-JO', styleName: 'Job Style', finalMrp: 500 },
+    data: { id: createId(), styleNumber: 'ST-JO', styleName: 'Job Style', finalMrp: 500, styleSeasons: { create: { seasonId: season.id } } },
   });
   await prisma.styleSize.createMany({
     data: [
@@ -269,6 +270,9 @@ describe('job orders API', () => {
     expect(res.body.data.jobOrderNumber).toMatch(/^JO-\d{4}-\d{6}$/);
     expect(res.body.data.orderedQuantityTotal).toBe(4);
     expect(res.body.data.unitPrice).toBe(199.5);
+    expect(res.body.data.seasonSnapshots).toEqual([
+      expect.objectContaining({ code: 'JO-TEST', name: 'Job Order Test Season', financialYear: '26-27' }),
+    ]);
     const persisted = await prisma.jobOrder.findUniqueOrThrow({ where: { id: res.body.data.id } });
     expect(persisted.unitPrice.toFixed(2)).toBe('199.50');
 

@@ -12,11 +12,13 @@ export const STYLE_VIEW_ROLES = [
   'MERCHANDISER',
   'SENIOR_MANAGEMENT',
 ] as const satisfies readonly Role[];
+export const STYLE_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
 export const SIZE_MANAGE_ROLES = [
   'ADMIN',
   'MERCHANDISER',
 ] as const satisfies readonly Role[];
+export const SEASON_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
 export const FACTORY_VIEW_ROLES = [
   'ADMIN',
@@ -122,6 +124,7 @@ export const canViewStyles = (user: AuthUser | null | undefined) =>
 
 export const canManageSizes = (user: AuthUser | null | undefined) =>
   hasRole(user, SIZE_MANAGE_ROLES);
+export const canManageSeasons = (user: AuthUser | null | undefined) => hasRole(user, SEASON_MANAGE_ROLES);
 
 export const canViewFactories = (user: AuthUser | null | undefined) =>
   hasRole(user, FACTORY_VIEW_ROLES);

@@ -447,6 +447,10 @@ export function JobOrderDetailPage() {
         />
       </Panel>
 
+      <Panel title="Seasons">
+        <div className="text-sm text-muted-foreground">{(jobOrder.seasonSnapshots ?? []).map((season) => season.displayName).join(', ') || 'No Season snapshot'}</div>
+      </Panel>
+
       <Panel title="Audit Log">
         <AuditTrail
           items={(auditQuery.data ?? []).map((entry) => ({

@@ -30,6 +30,7 @@ async function createSize(code: string, sortOrder: number) {
 }
 
 async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED' }) {
+  const seasonId = createId();
   return prisma.style.create({
     data: {
       id: createId(),
@@ -37,6 +38,7 @@ async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCO
       styleName: 'Test Style',
       finalMrp: 500,
       status: overrides?.status ?? 'ACTIVE',
+      styleSeasons: { create: { season: { create: { id: seasonId, code: `T-${seasonId.slice(-6)}`, name: 'Test Season', financialYear: '26-27' } } } },
     },
   });
 }
@@ -92,6 +94,10 @@ describe('purchase orders API', () => {
       expect(res.body.data.poNumber).toMatch(/^PO-\d{4}-\d{6}$/);
       expect(res.body.data.lines).toHaveLength(1);
       expect(res.body.data.totalOrderedQuantity).toBe(168);
+      expect(res.body.data.lines[0].seasonSnapshots).toHaveLength(1);
+      expect(res.body.data.lines[0].seasonSnapshots[0]).toMatchObject({
+        seasonId: expect.any(String), code: expect.any(String), name: 'Test Season', financialYear: '26-27',
+      });
     });
 
     it('rejects an inactive size even when its historical style mapping remains active', async () => {

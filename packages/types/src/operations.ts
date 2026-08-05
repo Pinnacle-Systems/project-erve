@@ -113,6 +113,7 @@ export interface PurchaseOrderLine {
   styleName: string;
   lineStatus: 'ACTIVE' | 'CANCELLED';
   remarks: string | null;
+  seasonSnapshots: Array<{ seasonId: string | null; code: string; name: string; financialYear: string; displayName: string }>;
   sizes: PurchaseOrderLineSize[];
   totalOrderedQuantity: number;
 }
@@ -191,6 +192,7 @@ export interface JobOrderSummary extends VersionedResource {
   createdAt: string;
 }
 export interface JobOrderDetail extends JobOrderSummary {
+  seasonSnapshots: Array<{ seasonId: string | null; code: string; name: string; financialYear: string; displayName: string }>;
   processFlowVersion: {
     id: string;
     versionNumber: number;

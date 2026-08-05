@@ -27,7 +27,13 @@ async function createSize(code = 'AGE_3') {
   });
 }
 
+async function createActiveSeason(overrides?: Partial<{ code: string; name: string; financialYear: string }>) {
+  const suffix = createId().slice(-6);
+  return prisma.season.create({ data: { id: createId(), code: `T-${suffix}`, name: `Test Season ${suffix}`, financialYear: '26-27', ...overrides } });
+}
+
 async function createStyle(token: string, overrides?: Record<string, unknown>) {
+  const season = await createActiveSeason();
   return request(app)
     .post('/styles')
     .set('Authorization', `Bearer ${token}`)
@@ -37,6 +43,7 @@ async function createStyle(token: string, overrides?: Record<string, unknown>) {
       finalMrp: 849,
       hsnCode: '61091000',
       royaltyPercentage: 12,
+      seasonIds: [season.id],
       ...overrides,
     });
 }
@@ -147,6 +154,32 @@ describe('styles API', () => {
     expect(duplicate.status).toBe(409);
     expect(removed.status).toBe(200);
     expect(removed.body.data.factories).toHaveLength(0);
+  });
+});
+
+describe('seasons API', () => {
+  it('allows management roles to create, read, update and toggle Seasons', async () => {
+    const { token } = await createTestUserAndToken({ email: 'season-admin@test.local', password: 'password', roles: ['ADMIN'] });
+    const created = await request(app).post('/seasons').set('Authorization', `Bearer ${token}`).send({ code: ' aw-core ', name: ' Autumn/Winter ', financialYear: '26-27' });
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({ code: 'AW-CORE', name: 'Autumn/Winter', financialYear: '26-27', displayName: 'AW-CORE 26-27' });
+    const read = await request(app).get(`/seasons/${created.body.data.id}`).set('Authorization', `Bearer ${token}`);
+    expect(read.status).toBe(200);
+    const updated = await request(app).patch(`/seasons/${created.body.data.id}`).set('Authorization', `Bearer ${token}`).send({ name: 'Autumn Winter' });
+    expect(updated.body.data.name).toBe('Autumn Winter');
+    const inactive = await request(app).patch(`/seasons/${created.body.data.id}/status`).set('Authorization', `Bearer ${token}`).send({ status: 'INACTIVE' });
+    expect(inactive.body.data.status).toBe('INACTIVE');
+  });
+
+  it('enforces configurable code/year identity and Season-management authorization', async () => {
+    const admin = await createTestUserAndToken({ email: 'season-admin@test.local', password: 'password', roles: ['ADMIN'] });
+    const factory = await createTestUserAndToken({ email: 'season-factory@test.local', password: 'password', roles: ['FACTORY_USER'] });
+    const payload = { code: 'custom-1', name: 'Shared descriptive name', financialYear: '26-27' };
+    expect((await request(app).post('/seasons').set('Authorization', `Bearer ${admin.token}`).send(payload)).status).toBe(201);
+    expect((await request(app).post('/seasons').set('Authorization', `Bearer ${admin.token}`).send({ ...payload, code: 'CUSTOM-2' })).status).toBe(201);
+    expect((await request(app).post('/seasons').set('Authorization', `Bearer ${admin.token}`).send({ ...payload, code: 'custom-1' })).status).toBe(409);
+    expect((await request(app).post('/seasons').set('Authorization', `Bearer ${factory.token}`).send(payload)).status).toBe(403);
+    expect((await request(app).get('/seasons')).status).toBe(401);
   });
 });
 

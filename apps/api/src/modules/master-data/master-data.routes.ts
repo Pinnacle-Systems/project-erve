@@ -9,6 +9,7 @@ import {
   createProcessFlowSchema,
   createProcessFlowVersionSchema,
   createSizeSchema,
+  createSeasonSchema,
   createStyleSchema,
   listStatusQuerySchema,
   listStylesQuerySchema,
@@ -21,6 +22,8 @@ import {
   updateFactoryStatusSchema,
   updateSizeSchema,
   updateSizeStatusSchema,
+  updateSeasonSchema,
+  updateSeasonStatusSchema,
   updateStyleSchema,
   updateStyleStatusSchema,
 } from './master-data.validation.js';
@@ -46,6 +49,7 @@ export const factoriesRouter = Router();
 export const processFlowsRouter = Router();
 export const processFlowVersionsRouter = Router();
 export const distributorsRouter = Router();
+export const seasonsRouter = Router();
 
 stylesRouter.use(requireAuth);
 sizesRouter.use(requireAuth);
@@ -53,6 +57,23 @@ factoriesRouter.use(requireAuth);
 processFlowsRouter.use(requireAuth);
 processFlowVersionsRouter.use(requireAuth);
 distributorsRouter.use(requireAuth);
+seasonsRouter.use(requireAuth);
+
+seasonsRouter.get('/', canManageMasterData, asyncHandler(async (req, res) => {
+  res.json(successResponse(await masterDataService.listSeasons(listStatusQuerySchema.parse(req.query))));
+}));
+seasonsRouter.post('/', canManageMasterData, asyncHandler(async (req, res) => {
+  res.status(201).json(successResponse(await masterDataService.createSeason(req.user!, createSeasonSchema.parse(req.body))));
+}));
+seasonsRouter.get('/:id', canManageMasterData, asyncHandler(async (req, res) => {
+  res.json(successResponse(await masterDataService.getSeasonById(String(req.params.id))));
+}));
+seasonsRouter.patch('/:id', canManageMasterData, asyncHandler(async (req, res) => {
+  res.json(successResponse(await masterDataService.updateSeason(req.user!, String(req.params.id), updateSeasonSchema.parse(req.body))));
+}));
+seasonsRouter.patch('/:id/status', canManageMasterData, asyncHandler(async (req, res) => {
+  res.json(successResponse(await masterDataService.updateSeasonStatus(req.user!, String(req.params.id), updateSeasonStatusSchema.parse(req.body).status)));
+}));
 
 distributorsRouter.get(
   '/',

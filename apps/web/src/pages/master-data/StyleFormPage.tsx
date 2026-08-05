@@ -20,7 +20,7 @@ import {
   imageErrorMessage,
   validateImageFile,
 } from './StyleImagesPanel.js';
-import type { Factory, Size, Status, Style } from './types.js';
+import type { Factory, Season, Size, Status, Style } from './types.js';
 
 const emptyForm = {
   styleNumber: '',
@@ -73,11 +73,12 @@ const styleFieldLayout = [
   { key: 'description', width: 'lg' },
 ] as const;
 
-function cleanPayload(form: typeof emptyForm) {
+function cleanPayload(form: typeof emptyForm, seasonIds: string[]) {
   return {
     ...form,
     finalMrp: Number(form.finalMrp),
     royaltyPercentage: form.royaltyPercentage === '' ? null : Number(form.royaltyPercentage),
+    seasonIds,
   };
 }
 
@@ -87,6 +88,7 @@ export function StyleFormPage() {
   const isEdit = Boolean(id);
   const [form, setForm] = useState(emptyForm);
   const [selectedSizeIds, setSelectedSizeIds] = useState<string[]>([]);
+  const [selectedSeasonIds, setSelectedSeasonIds] = useState<string[]>([]);
   const [factoryMappings, setFactoryMappings] = useState<
     Array<{ factoryId: string; exFactoryPrice: string }>
   >([]);
@@ -147,6 +149,7 @@ export function StyleFormPage() {
       return response.data.data;
     },
   });
+  const seasonsQuery = useQuery({ queryKey: ['seasons'], queryFn: async () => (await apiClient.get<ApiSuccessResponse<Season[]>>('/seasons')).data.data });
 
   useEffect(() => {
     if (!styleQuery.data) {
@@ -173,6 +176,7 @@ export function StyleFormPage() {
       status: styleQuery.data.status,
     });
     setSelectedSizeIds(styleQuery.data.sizes.map((size) => size.id));
+    setSelectedSeasonIds(styleQuery.data.seasons.map((season) => season.id));
     setFactoryMappings(
       styleQuery.data.factories.map((factory) => ({
         factoryId: factory.id,
@@ -184,12 +188,12 @@ export function StyleFormPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!form.styleNumber || !form.styleName || Number(form.finalMrp) <= 0) {
-        throw new Error('Style number, style name, and final MRP are required');
+      if (!form.styleNumber || !form.styleName || Number(form.finalMrp) <= 0 || selectedSeasonIds.length === 0) {
+        throw new Error('Style number, style name, final MRP, and at least one Season are required');
       }
       const response = isEdit
-        ? await apiClient.patch<ApiSuccessResponse<Style>>(`/styles/${id}`, cleanPayload(form))
-        : await apiClient.post<ApiSuccessResponse<Style>>('/styles', cleanPayload(form));
+        ? await apiClient.patch<ApiSuccessResponse<Style>>(`/styles/${id}`, cleanPayload(form, selectedSeasonIds))
+        : await apiClient.post<ApiSuccessResponse<Style>>('/styles', cleanPayload(form, selectedSeasonIds));
       const style = response.data.data;
 
       const currentSizeIds = new Set(style.sizes.map((size) => size.id));
@@ -332,6 +336,18 @@ export function StyleFormPage() {
                 ),
               )}
             </FormGrid>
+          </FormSection>
+
+          <FormSection title="Seasons">
+            <div className="grid gap-2 md:grid-cols-3" role="group" aria-label="Seasons">
+              {(seasonsQuery.data ?? []).filter((season) => season.status === 'ACTIVE' || selectedSeasonIds.includes(season.id)).map((season) => (
+                <label key={season.id} className="flex items-center gap-2 rounded-control border border-border-subtle bg-surface-muted p-2 text-sm text-foreground">
+                  <Checkbox checked={selectedSeasonIds.includes(season.id)} onCheckedChange={(checked) => setSelectedSeasonIds((current) => checked === true ? [...current, season.id] : current.filter((seasonId) => seasonId !== season.id))} />
+                  {season.displayName} — {season.name}{season.status === 'INACTIVE' ? ' (inactive)' : ''}
+                </label>
+              ))}
+            </div>
+            {error && selectedSeasonIds.length === 0 ? <ValidationMessage>At least one Season is required.</ValidationMessage> : null}
           </FormSection>
 
           <FormSection title="Valid Sizes">

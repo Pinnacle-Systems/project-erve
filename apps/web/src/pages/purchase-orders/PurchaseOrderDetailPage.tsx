@@ -151,6 +151,7 @@ export function PurchaseOrderDetailPage() {
               <div>
                 <span className="font-medium text-foreground">{line.styleNumber}</span>
                 <span className="ml-2 text-sm text-muted-foreground">{line.styleName}</span>
+                <span className="ml-2 text-xs text-muted-foreground">{line.seasonSnapshots.map((season) => season.displayName).join(', ')}</span>
               </div>
               <span className="text-sm font-medium text-foreground">
                 Total: {line.totalOrderedQuantity.toLocaleString()}

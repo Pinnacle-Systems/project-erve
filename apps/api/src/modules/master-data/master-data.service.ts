@@ -15,6 +15,7 @@ import { HttpError } from '../../errors/http-error.js';
 import { toStyleImageView } from './style-images.service.js';
 
 const styleInclude = {
+  styleSeasons: { include: { season: true }, orderBy: { season: { name: 'asc' } } },
   styleSizes: { include: { size: true }, orderBy: { size: { sortOrder: 'asc' } } },
   styleFactoryMappings: { include: { factory: true }, orderBy: { factory: { name: 'asc' } } },
   images: {
@@ -63,6 +64,7 @@ function toStyleView(style: StyleRecord) {
     finalMrp: decimalToNumber(style.finalMrp),
     royaltyPercentage: decimalToNumber(style.royaltyPercentage),
     status: style.status,
+    seasons: style.styleSeasons.map(({ season }) => ({ id: season.id, code: season.code, name: season.name, financialYear: season.financialYear, displayName: `${season.code} ${season.financialYear}`, status: season.status })),
     sizes: style.styleSizes.map((mapping) => ({
       id: mapping.size.id,
       code: mapping.size.code,
@@ -172,13 +174,16 @@ export async function createStyle(
   },
 ) {
   const styleId = createId();
+  const seasonIds = input.seasonIds as string[];
+  await assertActiveSeasons(seasonIds);
 
   try {
     await prisma.style.create({
       data: {
         id: styleId,
-        ...input,
+        ...Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'seasonIds')),
         status: input.status ?? 'ACTIVE',
+        styleSeasons: { create: seasonIds.map((seasonId) => ({ seasonId })) },
       } as Prisma.StyleUncheckedCreateInput,
     });
   } catch (error) {
@@ -203,15 +208,25 @@ export async function updateStyle(
   styleId: string,
   input: Record<string, unknown>,
 ) {
-  const existing = await prisma.style.findUnique({ where: { id: styleId } });
+  const existing = await prisma.style.findUnique({ where: { id: styleId }, include: { styleSeasons: true } });
   if (!existing) {
     throw HttpError.notFound('Style not found');
   }
 
+  const seasonIds = input.seasonIds as string[] | undefined;
+  // An inactive master can remain on an existing Style during edits, but it
+  // cannot be newly assigned.
+  if (seasonIds) {
+    const retainedInactiveIds = new Set(existing.styleSeasons.map((mapping) => mapping.seasonId));
+    await assertActiveSeasons(seasonIds.filter((seasonId) => !retainedInactiveIds.has(seasonId)));
+  }
   try {
     await prisma.style.update({
       where: { id: styleId },
-      data: input as Prisma.StyleUncheckedUpdateInput,
+      data: {
+        ...Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'seasonIds')),
+        ...(seasonIds ? { styleSeasons: { deleteMany: {}, create: seasonIds.map((seasonId) => ({ seasonId })) } } : {}),
+      },
     });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
@@ -225,9 +240,49 @@ export async function updateStyle(
     action: 'STYLE_UPDATED',
     entityType: 'Style',
     entityId: styleId,
+    metadata: seasonIds ? { seasonIds } : undefined,
   });
 
   return getStyleById(styleId);
+}
+
+function toSeasonView(season: { id: string; code: string; name: string; financialYear: string; status: string; createdAt: Date; updatedAt: Date }) {
+  return { ...season, displayName: `${season.code} ${season.financialYear}` };
+}
+
+export async function listSeasons(filters: { status?: string; search?: string }) {
+  const seasons = await prisma.season.findMany({ where: { status: filters.status, OR: filters.search ? [{ name: { contains: filters.search, mode: 'insensitive' } }, { financialYear: { contains: filters.search } }] : undefined }, orderBy: [{ financialYear: 'desc' }, { name: 'asc' }] });
+  return seasons.map(toSeasonView);
+}
+export async function getSeasonById(id: string) {
+  const season = await prisma.season.findUnique({ where: { id } });
+  if (!season) throw HttpError.notFound('Season not found');
+  return toSeasonView(season);
+}
+
+async function assertActiveSeasons(ids: string[]) {
+  const seasons = await prisma.season.findMany({ where: { id: { in: ids }, status: 'ACTIVE' } });
+  if (seasons.length !== ids.length) throw HttpError.badRequest('Every selected Season must exist and be active');
+}
+
+export async function createSeason(actor: CurrentUser, input: { code: string; name: string; financialYear: string; status?: 'ACTIVE' | 'INACTIVE' }) {
+  try {
+    const season = await prisma.season.create({ data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' } });
+    await recordAuditLog({ actorId: actor.id, action: 'SEASON_CREATED', entityType: 'Season', entityId: season.id, metadata: { code: season.code, name: season.name, financialYear: season.financialYear } });
+    return toSeasonView(season);
+  } catch (error) { if (isUniqueConstraintError(error)) throw HttpError.conflict('A Season with this name and financial year already exists'); throw error; }
+}
+export async function updateSeason(actor: CurrentUser, id: string, input: { code?: string; name?: string; financialYear?: string }) {
+  const existing = await prisma.season.findUnique({ where: { id } });
+  if (!existing) throw HttpError.notFound('Season not found');
+  if ((input.code === undefined || input.code === existing.code) && (input.name === undefined || input.name === existing.name) && (input.financialYear === undefined || input.financialYear === existing.financialYear)) return toSeasonView(existing);
+  try { const season = await prisma.season.update({ where: { id }, data: input }); await recordAuditLog({ actorId: actor.id, action: 'SEASON_UPDATED', entityType: 'Season', entityId: id, metadata: { ...input } }); return toSeasonView(season); } catch (error) { if (isUniqueConstraintError(error)) throw HttpError.conflict('A Season with this name and financial year already exists'); throw error; }
+}
+export async function updateSeasonStatus(actor: CurrentUser, id: string, status: 'ACTIVE' | 'INACTIVE') {
+  const existing = await prisma.season.findUnique({ where: { id } });
+  if (!existing) throw HttpError.notFound('Season not found');
+  if (existing.status === status) return toSeasonView(existing);
+  const season = await prisma.season.update({ where: { id }, data: { status } }); await recordAuditLog({ actorId: actor.id, action: `SEASON_${status}`, entityType: 'Season', entityId: id, metadata: { code: season.code, name: season.name, financialYear: season.financialYear } }); return toSeasonView(season);
 }
 
 export async function updateStyleStatus(actor: CurrentUser, styleId: string, status: StyleStatus) {

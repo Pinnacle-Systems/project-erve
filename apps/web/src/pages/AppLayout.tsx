@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import {
   ClipboardList,
+  CalendarRange,
   Factory,
   Hammer,
   Handshake,
@@ -17,6 +18,7 @@ import { AppShell, type AppShellNavSection } from './AppShell.js';
 import {
   canManageProcessFlows,
   canManageSizes,
+  canManageSeasons,
   canManageUsers,
   canViewDistributorMaster,
   canViewFactories,
@@ -38,6 +40,7 @@ export function AppLayout() {
       heading: 'Master Data',
       items: [
         ...(canViewStyles(user) ? [{ to: '/master-data/styles', label: 'Styles', icon: Shirt }] : []),
+        ...(canManageSeasons(user) ? [{ to: '/master-data/seasons', label: 'Seasons', icon: CalendarRange }] : []),
         ...(canManageSizes(user) ? [{ to: '/master-data/sizes', label: 'Sizes', icon: Ruler }] : []),
         ...(canViewFactories(user)
           ? [{ to: '/master-data/factories', label: 'Factories', icon: Factory }]

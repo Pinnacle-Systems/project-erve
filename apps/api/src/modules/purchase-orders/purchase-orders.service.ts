@@ -40,6 +40,7 @@ const poInclude = {
   lines: {
     include: {
       style: { select: { id: true, styleNumber: true, styleName: true } },
+      seasonSnapshots: { orderBy: [{ financialYear: 'asc' as const }, { name: 'asc' as const }] },
       sizes: {
         include: { size: { select: { id: true, code: true, label: true, sortOrder: true } } },
         orderBy: { size: { sortOrder: 'asc' as const } },
@@ -60,6 +61,7 @@ function toLineView(line: PORecord['lines'][number]) {
     styleName: line.style.styleName,
     lineStatus: line.lineStatus,
     remarks: line.remarks,
+    seasonSnapshots: line.seasonSnapshots.map((season) => ({ seasonId: season.seasonId, code: season.code, name: season.name, financialYear: season.financialYear, displayName: season.displayName })),
     sizes: line.sizes.map((s) => ({
       id: s.id,
       sizeId: s.sizeId,
@@ -202,6 +204,9 @@ export async function createPurchaseOrder(
   if (distributor.status !== 'ACTIVE') throw HttpError.badRequest('Distributor is not active');
 
   await validateLines(input.lines);
+  const styles = await prisma.style.findMany({ where: { id: { in: input.lines.map((line) => line.styleId) } }, include: { styleSeasons: { include: { season: true } } } });
+  const seasonsByStyle = new Map(styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]));
+  if ([...seasonsByStyle.values()].some((seasons) => seasons.length === 0)) throw HttpError.badRequest('Every purchase-order Style must have Seasons assigned');
 
   const poId = createId();
   await prisma.$transaction(async (tx) => {
@@ -225,6 +230,7 @@ export async function createPurchaseOrder(
             id: createId(),
             styleId: line.styleId,
             remarks: line.remarks ?? null,
+            seasonSnapshots: { create: (seasonsByStyle.get(line.styleId) ?? []).map((season) => ({ id: createId(), seasonId: season.id, code: season.code, name: season.name, financialYear: season.financialYear, displayName: `${season.code} ${season.financialYear}` })) },
             sizes: {
               create: line.sizes.map((sz) => ({
                 id: createId(),
@@ -296,6 +302,9 @@ export async function updatePurchaseOrderDraft(
     });
 
     if (input.lines) {
+      const styles = await tx.style.findMany({ where: { id: { in: input.lines.map((line) => line.styleId) } }, include: { styleSeasons: { include: { season: true } } } });
+      const seasonsByStyle = new Map(styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]));
+      if ([...seasonsByStyle.values()].some((seasons) => seasons.length === 0)) throw HttpError.badRequest('Every purchase-order Style must have Seasons assigned');
       // Replace all lines atomically
       await tx.distributorPurchaseOrderLine.deleteMany({ where: { purchaseOrderId: id } });
       for (const line of input.lines) {
@@ -306,6 +315,7 @@ export async function updatePurchaseOrderDraft(
             purchaseOrderId: id,
             styleId: line.styleId,
             remarks: line.remarks ?? null,
+            seasonSnapshots: { create: (seasonsByStyle.get(line.styleId) ?? []).map((season) => ({ id: createId(), seasonId: season.id, code: season.code, name: season.name, financialYear: season.financialYear, displayName: `${season.code} ${season.financialYear}` })) },
             sizes: {
               create: line.sizes.map((sz) => ({
                 id: createId(),

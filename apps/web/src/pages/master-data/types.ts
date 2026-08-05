@@ -1,4 +1,5 @@
 export type Status = 'ACTIVE' | 'INACTIVE';
+export interface Season { id: string; code: string; name: string; financialYear: string; displayName: string; status: Status; }
 
 export interface Size {
   id: string;
@@ -112,6 +113,7 @@ export interface Style {
   finalMrp: number;
   royaltyPercentage: number | null;
   status: Status;
+  seasons: Season[];
   sizes: Array<Size & { mappingStatus: Status; importedSizeRangeLabel: string | null }>;
   factories: Array<Factory & { mappingStatus: Status; exFactoryPrice: number }>;
   images: StyleImage[];

@@ -14,6 +14,7 @@ import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
 
 const jobOrderInclude = {
+  seasonSnapshots: { orderBy: [{ financialYear: 'asc' as const }, { name: 'asc' as const }] },
   purchaseOrder: {
     select: {
       id: true,
@@ -168,6 +169,7 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
     status: jobOrder.status,
     factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
     unitPrice: jobOrder.unitPrice.toNumber(),
+    seasonSnapshots: jobOrder.seasonSnapshots.map((season) => ({ seasonId: season.seasonId, code: season.code, name: season.name, financialYear: season.financialYear, displayName: season.displayName })),
     confirmedBy: jobOrder.confirmer,
     confirmedAt: jobOrder.confirmedAt?.toISOString() ?? null,
     disclaimerText: jobOrder.disclaimerText,
@@ -459,7 +461,7 @@ export async function createJobOrderFromPO(
   const [po, factory, processFlowVersion] = await Promise.all([
     prisma.distributorPurchaseOrder.findUnique({
       where: { id: input.purchaseOrderId },
-      include: { lines: { include: { sizes: true } } },
+      include: { lines: { include: { sizes: true, seasonSnapshots: true } } },
     }),
     prisma.factory.findUnique({ where: { id: input.factoryId } }),
     prisma.processFlowVersion.findUnique({
@@ -529,6 +531,7 @@ export async function createJobOrderFromPO(
         disclaimerText: input.disclaimerText || null,
         disclaimerRevision: input.disclaimerText ? 1 : 0,
         createdBy: actor.id,
+        seasonSnapshots: { create: [...new Map(input.lines.flatMap((line) => (poLinesById.get(line.purchaseOrderLineId)?.seasonSnapshots ?? []).map((season) => [season.seasonId ?? season.id, { id: createId(), seasonId: season.seasonId, code: season.code, name: season.name, financialYear: season.financialYear, displayName: season.displayName }]))).values()] },
       },
     });
 

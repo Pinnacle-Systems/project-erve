@@ -344,9 +344,39 @@ model Style {
   priceListLines       PriceListLine[]
   purchaseOrderLines   DistributorPurchaseOrderLine[]
   jobOrderLines        JobOrderLine[]
+  styleSeasons         StyleSeason[]
 
   @@index([status])
   @@map("styles")
+}
+
+// Season names are administrator-managed master data.  Financial years use
+// the established compact two-year display form (for example, 26-27).
+model Season {
+  id            String   @id
+  code          String
+  name          String
+  financialYear String   @map("financial_year")
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  styleSeasons StyleSeason[]
+
+  @@index([status])
+  @@map("seasons")
+}
+
+model StyleSeason {
+  styleId  String @map("style_id")
+  seasonId String @map("season_id")
+
+  style  Style  @relation(fields: [styleId], references: [id], onDelete: Cascade)
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Restrict)
+
+  @@id([styleId, seasonId])
+  @@index([seasonId])
+  @@map("style_seasons")
 }
 
 // A raw partial unique index in the migrations
@@ -572,11 +602,29 @@ model DistributorPurchaseOrderLine {
   style         Style                              @relation(fields: [styleId], references: [id], onDelete: Restrict)
   sizes         DistributorPurchaseOrderLineSize[]
   jobOrderLines JobOrderLine[]
+  seasonSnapshots PurchaseOrderLineSeasonSnapshot[]
 
   @@unique([purchaseOrderId, styleId])
   @@index([purchaseOrderId])
   @@index([styleId])
   @@map("distributor_purchase_order_lines")
+}
+
+model PurchaseOrderLineSeasonSnapshot {
+  id                  String   @id
+  purchaseOrderLineId String   @map("purchase_order_line_id")
+  seasonId            String?  @map("season_id")
+  code                String
+  name                String
+  financialYear       String   @map("financial_year")
+  displayName         String   @map("display_name")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Cascade)
+
+  @@unique([purchaseOrderLineId, seasonId])
+  @@index([seasonId])
+  @@map("purchase_order_line_season_snapshots")
 }
 
 model DistributorPurchaseOrderLineSize {
@@ -641,6 +689,7 @@ model JobOrder {
   qaInspections      QaInspectionSession[]
   qaReworkTasks      QaReworkTask[]
   acknowledgements   JobOrderAcknowledgement[]
+  seasonSnapshots    JobOrderSeasonSnapshot[]
 
   @@index([purchaseOrderId])
   @@index([factoryId])
@@ -648,6 +697,23 @@ model JobOrder {
   @@index([status])
   @@index([factoryConfirmationStatus])
   @@map("job_orders")
+}
+
+model JobOrderSeasonSnapshot {
+  id            String   @id
+  jobOrderId    String   @map("job_order_id")
+  seasonId      String?  @map("season_id")
+  code          String
+  name          String
+  financialYear String   @map("financial_year")
+  displayName   String   @map("display_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  jobOrder JobOrder @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([jobOrderId, seasonId])
+  @@index([seasonId])
+  @@map("job_order_season_snapshots")
 }
 
 model JobOrderAcknowledgement {
