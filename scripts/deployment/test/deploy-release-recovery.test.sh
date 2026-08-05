@@ -23,14 +23,25 @@ test_state_lifecycle_and_failed_migration_recovery() {
   for value in "$created" "$extracted" "$preparing" "$migrating" "$failed" "$completed" "$activated"; do
     [ -n "$value" ] || { fail "state_lifecycle: missing a required durable state transition"; return; }
   done
-  [ "$created" -lt "$extracted" ] && [ "$extracted" -lt "$preparing" ] && [ "$preparing" -lt "$migrating" ] \
-    || fail "state_lifecycle: creation/extraction/preparation/migration states are out of order"
-  [ "$migrating" -lt "$completed" ] && [ "$completed" -lt "$activated" ] \
-    || fail "state_lifecycle: completed/activated states are out of order"
-  grep -q 'Production migration failed' "$DEPLOY_SCRIPT" \
-    || fail "failed_migration_rerun: migration failure is not explicitly reported"
-  grep -q 'Existing incomplete release state detected' "$DEPLOY_SCRIPT" \
-    || fail "failed_migration_rerun: incomplete state is not recoverable on rerun"
+  if ! {
+    [ "$created" -lt "$extracted" ] &&
+      [ "$extracted" -lt "$preparing" ] &&
+      [ "$preparing" -lt "$migrating" ]
+  }; then
+    fail "state_lifecycle: creation/extraction/preparation/migration states are out of order"
+  fi
+  if ! {
+    [ "$migrating" -lt "$completed" ] &&
+      [ "$completed" -lt "$activated" ]
+  }; then
+    fail "state_lifecycle: completed/activated states are out of order"
+  fi
+  if ! grep -q 'Production migration failed' "$DEPLOY_SCRIPT"; then
+    fail "failed_migration_rerun: migration failure is not explicitly reported"
+  fi
+  if ! grep -q 'Existing incomplete release state detected' "$DEPLOY_SCRIPT"; then
+    fail "failed_migration_rerun: incomplete state is not recoverable on rerun"
+  fi
 }
 
 test_active_release_protection_and_missing_previous_independence() {
@@ -38,12 +49,23 @@ test_active_release_protection_and_missing_previous_independence() {
   active="$(line 'ACTIVE_RELEASE=.*erve_resolve_release_dir')"
   resolve="$(line 'Active-release protection')"
   remove="$(line 'Removing failed or incomplete release')"
-  [ -n "$active" ] && [ -n "$resolve" ] && [ -n "$remove" ] \
-    || { fail "active_release_protection: required protection code is missing"; return; }
-  [ "$active" -lt "$remove" ] && [ "$resolve" -lt "$remove" ] \
-    || fail "active_release_protection: canonical current resolution must precede recovery deletion"
-  grep -q 'Refusing to recover or overwrite active release' "$DEPLOY_SCRIPT" \
-    || fail "active_release_protection: active release is not rejected"
+  if ! {
+    [ -n "$active" ] &&
+      [ -n "$resolve" ] &&
+      [ -n "$remove" ]
+  }; then
+    fail "active_release_protection: required protection code is missing"
+    return
+  fi
+  if ! {
+    [ "$active" -lt "$remove" ] &&
+      [ "$resolve" -lt "$remove" ]
+  }; then
+    fail "active_release_protection: canonical current resolution must precede recovery deletion"
+  fi
+  if ! grep -q 'Refusing to recover or overwrite active release' "$DEPLOY_SCRIPT"; then
+    fail "active_release_protection: active release is not rejected"
+  fi
   if grep -q 'previous.*symlink\|PREVIOUS_LINK' "$DEPLOY_SCRIPT"; then
     fail "missing_previous_symlink: recovery must not depend on a previous symlink"
   fi
@@ -54,12 +76,22 @@ test_completed_release_checksum_immutability() {
   completed="$(line 'Existing completed release state detected')"
   checksum="$(line 'Checksum mismatch for completed release')"
   remove="$(line 'Removing failed or incomplete release')"
-  [ -n "$completed" ] && [ -n "$checksum" ] \
-    || { fail "completed_release_immutability: completed checksum handling is missing"; return; }
-  [ "$completed" -lt "$remove" ] && [ "$checksum" -lt "$remove" ] \
-    || fail "completed_release_immutability: completed releases must be checked before any deletion path"
-  grep -q 'Completed-release checksum verified; identical artifact already deployed. Skipping safely.' "$DEPLOY_SCRIPT" \
-    || fail "same_completed_artifact: expected safe idempotent skip is missing"
+  if ! {
+    [ -n "$completed" ] &&
+      [ -n "$checksum" ]
+  }; then
+    fail "completed_release_immutability: completed checksum handling is missing"
+    return
+  fi
+  if ! {
+    [ "$completed" -lt "$remove" ] &&
+      [ "$checksum" -lt "$remove" ]
+  }; then
+    fail "completed_release_immutability: completed releases must be checked before any deletion path"
+  fi
+  if ! grep -q 'Completed-release checksum verified; identical artifact already deployed. Skipping safely.' "$DEPLOY_SCRIPT"; then
+    fail "same_completed_artifact: expected safe idempotent skip is missing"
+  fi
 }
 
 test_lock_covers_recovery_and_exit_release() {
@@ -67,12 +99,26 @@ test_lock_covers_recovery_and_exit_release() {
   lock="$(line 'erve_acquire_lock')"
   inspect="$(line 'Existing incomplete release state detected')"
   remove="$(line 'Removing failed or incomplete release')"
-  [ -n "$lock" ] && [ -n "$inspect" ] && [ -n "$remove" ] \
-    || { fail "lock_preservation: required lock/recovery code is missing"; return; }
-  [ "$lock" -lt "$inspect" ] && [ "$lock" -lt "$remove" ] \
-    || fail "lock_preservation: recovery must occur after lock acquisition"
-  grep -q 'trap deploy_exit EXIT' "$DEPLOY_SCRIPT" && grep -q 'erve_release_lock' "$DEPLOY_SCRIPT" \
-    || fail "lock_preservation: lock release must remain protected by an exit trap"
+  if ! {
+    [ -n "$lock" ] &&
+      [ -n "$inspect" ] &&
+      [ -n "$remove" ]
+  }; then
+    fail "lock_preservation: required lock/recovery code is missing"
+    return
+  fi
+  if ! {
+    [ "$lock" -lt "$inspect" ] &&
+      [ "$lock" -lt "$remove" ]
+  }; then
+    fail "lock_preservation: recovery must occur after lock acquisition"
+  fi
+  if ! {
+    grep -q 'trap deploy_exit EXIT' "$DEPLOY_SCRIPT" &&
+      grep -q 'erve_release_lock' "$DEPLOY_SCRIPT"
+  }; then
+    fail "lock_preservation: lock release must remain protected by an exit trap"
+  fi
 }
 
 test_state_lifecycle_and_failed_migration_recovery
