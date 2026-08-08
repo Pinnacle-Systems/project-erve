@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ApiSuccessResponse, JobOrderAuditEntry } from '@erve/types';
+import { isAxiosError } from 'axios';
+import type { ApiErrorResponse, ApiSuccessResponse, JobOrderAuditEntry } from '@erve/types';
 import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
@@ -24,13 +25,26 @@ type FlatSize = JobOrderLineSize & {
   linePreparedQuantityTotal: number;
 };
 
+const disclaimerRequiredMessage =
+  'Factory commercial terms / disclaimer is required before sending this Job Order to the factory.';
+
+function mutationErrorMessage(error: unknown, fallback: string): string {
+  if (isAxiosError<ApiErrorResponse>(error)) return error.response?.data.error.message ?? fallback;
+  if (error instanceof Error && !error.message.startsWith('Request failed with status code'))
+    return error.message;
+  return fallback;
+}
+
 export function JobOrderDetailPage() {
   const { id } = useParams();
   const queryClient = useQueryClient();
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
   const [disclaimerDrafts, setDisclaimerDrafts] = useState<Record<string, string>>({});
+  const [disclaimerError, setDisclaimerError] = useState('');
+  const [sendError, setSendError] = useState('');
   const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
+  const disclaimerRef = useRef<HTMLTextAreaElement>(null);
   const user = useOptionalAuth()?.user;
 
   const jobOrderQuery = useQuery({
@@ -58,7 +72,24 @@ export function JobOrderDetailPage() {
       ),
     onSuccess: () => {
       setSendDialogOpen(false);
+      setSendError('');
       invalidate();
+    },
+    onError: (error) => {
+      const apiCode = isAxiosError<ApiErrorResponse>(error)
+        ? error.response?.data.error.code
+        : undefined;
+      const message =
+        apiCode === 'DISCLAIMER_REQUIRED'
+          ? disclaimerRequiredMessage
+          : mutationErrorMessage(error, 'Unable to send this Job Order to the factory.');
+      setSendDialogOpen(false);
+      setSendError(message);
+      if (apiCode === 'DISCLAIMER_REQUIRED') {
+        setDisclaimerError(message);
+        disclaimerRef.current?.focus();
+        disclaimerRef.current?.scrollIntoView?.({ block: 'center' });
+      }
     },
   });
   const confirmMutation = useMutation({
@@ -72,7 +103,11 @@ export function JobOrderDetailPage() {
         },
         { headers: { 'Idempotency-Key': `${id}:confirm:${jobOrderQuery.data!.version}` } },
       ),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setDisclaimerError('');
+      setSendError('');
+      invalidate();
+    },
   });
   const disclaimerMutation = useMutation({
     mutationFn: async () =>
@@ -154,6 +189,32 @@ export function JobOrderDetailPage() {
     jobOrderLineSizeId: size.id,
     preparedQuantity: preparedQuantities[size.id] ?? size.preparedQuantity,
   }));
+  const focusDisclaimer = (message: string) => {
+    setDisclaimerError(message);
+    setSendError(message);
+    setSendDialogOpen(false);
+    disclaimerRef.current?.focus();
+    disclaimerRef.current?.scrollIntoView?.({ block: 'center' });
+  };
+  const validateDisclaimerForSend = () => {
+    if (!disclaimerText.trim()) {
+      focusDisclaimer(disclaimerRequiredMessage);
+      return false;
+    }
+    if (disclaimerText.trim() !== (jobOrder.disclaimerText ?? '').trim()) {
+      focusDisclaimer('Save the disclaimer before sending this Job Order to the factory.');
+      return false;
+    }
+    setDisclaimerError('');
+    setSendError('');
+    return true;
+  };
+  const openSendDialog = () => {
+    if (validateDisclaimerForSend()) setSendDialogOpen(true);
+  };
+  const sendToFactory = () => {
+    if (validateDisclaimerForSend()) sendMutation.mutate();
+  };
 
   return (
     <div className="space-y-5">
@@ -173,7 +234,19 @@ export function JobOrderDetailPage() {
         }
         primaryAction={
           <div className="flex flex-wrap gap-2">
-            {canSend && <Button onClick={() => setSendDialogOpen(true)}>Send to Factory</Button>}
+            {canSend && (
+              <div className="flex flex-col items-end gap-1">
+                <Button onClick={openSendDialog}>Send to Factory</Button>
+                {sendError ? (
+                  <p
+                    className="max-w-md text-right text-xs text-[var(--erp-form-field-error-text-color)]"
+                    role="alert"
+                  >
+                    {sendError}
+                  </p>
+                ) : null}
+              </div>
+            )}
             {canConfirm && (
               <Button disabled={!acknowledgeDisclaimer} onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>
                 Confirm
@@ -183,13 +256,11 @@ export function JobOrderDetailPage() {
         }
       />
 
-      {(sendMutation.isError ||
-        confirmMutation.isError ||
+      {(confirmMutation.isError ||
         completeStageMutation.isError ||
         preparedMutation.isError) && (
         <ValidationMessage tone="error">
           {[
-            sendMutation.error,
             confirmMutation.error,
             completeStageMutation.error,
             preparedMutation.error,
@@ -268,17 +339,53 @@ export function JobOrderDetailPage() {
         }
       >
         {canEditDisclaimer ? (
-          <label className="flex flex-col gap-1 text-sm font-medium">
-            Disclaimer
+          <label className="flex flex-col gap-1 text-sm font-medium" htmlFor="job-order-disclaimer">
+            <span>
+              Disclaimer{' '}
+              <span
+                className="text-[var(--erp-form-field-error-text-color)]"
+                aria-hidden="true"
+              >
+                *
+              </span>
+            </span>
             <textarea
-              className="min-h-32 rounded-md border border-border bg-background px-3 py-2 font-normal"
+              ref={disclaimerRef}
+              id="job-order-disclaimer"
+              required
+              aria-invalid={Boolean(disclaimerError) || undefined}
+              aria-describedby={disclaimerError ? 'job-order-disclaimer-error' : 'job-order-disclaimer-help'}
+              className={`min-h-32 rounded-control border bg-surface-raised px-[var(--erp-control-padding-x)] py-2 font-normal focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)] ${
+                disclaimerError
+                  ? 'border-[var(--erp-form-field-error-border)] focus:border-[var(--erp-form-field-error-border)]'
+                  : 'border-[var(--erp-form-field-border)] focus:border-[var(--erp-form-field-focus-border)]'
+              }`}
               value={disclaimerText}
               maxLength={10000}
-              onChange={(event) =>
-                setDisclaimerDrafts((current) => ({ ...current, [jobOrder.id]: event.target.value }))
-              }
+              onChange={(event) => {
+                const value = event.target.value;
+                setDisclaimerDrafts((current) => ({ ...current, [jobOrder.id]: value }));
+                if (value.trim()) {
+                  setDisclaimerError('');
+                  setSendError('');
+                }
+              }}
             />
-            <span className="text-xs font-normal text-muted-foreground">{disclaimerText.length}/10,000</span>
+            {disclaimerError ? (
+              <span
+                id="job-order-disclaimer-error"
+                className="text-xs font-normal text-[var(--erp-form-field-error-text-color)]"
+                role="alert"
+              >
+                {disclaimerError}
+              </span>
+            ) : null}
+            <span
+              id="job-order-disclaimer-help"
+              className="text-xs font-normal text-muted-foreground"
+            >
+              Required before sending to the factory. {disclaimerText.length}/10,000
+            </span>
           </label>
         ) : jobOrder.disclaimerText ? (
           <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 text-sm font-sans">
@@ -494,7 +601,7 @@ export function JobOrderDetailPage() {
         description="The selected process flow version will be locked for factory confirmation."
         confirmLabel="Send"
         loading={sendMutation.isPending}
-        onConfirm={() => sendMutation.mutate()}
+        onConfirm={sendToFactory}
       />
     </div>
   );

@@ -9,6 +9,10 @@ import { ProductionStageStepper } from './ProductionStageStepper.js';
 import { apiClient } from '../../lib/api-client.js';
 import type { JobOrderStage } from './types.js';
 
+vi.mock('../../auth/AuthContext.js', () => ({
+  useOptionalAuth: () => ({ user: { roles: ['MERCHANDISER'] } }),
+}));
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -44,7 +48,11 @@ const standardStages = [
   stage('stage-4', 'Finishing', 4, 'NOT_STARTED'),
 ];
 
-const mockJobOrder = (status: string, stages: JobOrderStage[] = standardStages) => ({
+const mockJobOrder = (
+  status: string,
+  stages: JobOrderStage[] = standardStages,
+  overrides: Record<string, unknown> = {},
+) => ({
   id: 'jo-1',
   jobOrderNumber: 'JO-001',
   status,
@@ -61,10 +69,14 @@ const mockJobOrder = (status: string, stages: JobOrderStage[] = standardStages) 
   purchaseOrder: { poNumber: 'PO-001' },
   factory: { name: 'Test Factory' },
   confirmedBy: null,
+  disclaimerText: null,
+  disclaimerRevision: 0,
+  acknowledgement: null,
   lines: [],
   stages: status === 'PRODUCTION_COMPLETE'
     ? stages.map((current) => ({ ...current, status: 'COMPLETED' as const }))
     : stages,
+  ...overrides,
 });
 
 type Audit = { id: string; action: string; createdAt: string; actor: { id: string; name: string; email: string } | null; metadata: unknown };
@@ -73,11 +85,12 @@ const renderPage = async (
   status: string,
   stages: JobOrderStage[] = standardStages,
   audits: Audit[] = [],
+  overrides: Record<string, unknown> = {},
 ) => {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) =>
     url.endsWith('/audit')
       ? { data: { data: audits } }
-      : { data: { data: mockJobOrder(status, stages) } },
+      : { data: { data: mockJobOrder(status, stages, overrides) } },
   );
 
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -97,6 +110,11 @@ const renderPage = async (
 };
 
 const content = () => container.textContent ?? '';
+const changeTextarea = (textarea: HTMLTextAreaElement, value: string) => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+  setter?.call(textarea, value);
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+};
 
 describe('ProductionStageStepper', () => {
   it('renders nothing when production stages are empty', () => {
@@ -114,6 +132,84 @@ describe('JobOrderDetailPage workflow rendering', () => {
     expect(content()).toContain('Send this job order to the factory');
     expect(content()).not.toContain('Prepared Quantities');
     expect(content()).not.toContain('Current Stage:');
+  });
+
+  it('blocks send before the API call and focuses the required disclaimer', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage('DRAFT');
+    const send = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Send to Factory',
+    ) as HTMLButtonElement;
+
+    act(() => send.click());
+
+    const disclaimer = container.querySelector('#job-order-disclaimer') as HTMLTextAreaElement;
+    const disclaimerLabel = container.querySelector(
+      'label[for="job-order-disclaimer"] > span',
+    ) as HTMLSpanElement;
+    expect(post).not.toHaveBeenCalled();
+    expect(disclaimerLabel.textContent?.replace(/\s+/g, ' ').trim()).toBe('Disclaimer *');
+    expect(disclaimer.required).toBe(true);
+    expect(disclaimer.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(disclaimer);
+    expect(content()).toContain(
+      'Factory commercial terms / disclaimer is required before sending this Job Order to the factory.',
+    );
+    expect(content()).not.toContain('Send job order to factory?');
+
+    await act(async () => changeTextarea(disclaimer, 'Factory terms'));
+    expect(disclaimer.getAttribute('aria-invalid')).toBeNull();
+    expect(content()).not.toContain(
+      'Factory commercial terms / disclaimer is required before sending this Job Order to the factory.',
+    );
+  });
+
+  it('requires an edited disclaimer to be saved before opening send confirmation', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage('DRAFT', standardStages, [], { disclaimerText: 'Persisted terms' });
+    const disclaimer = container.querySelector('#job-order-disclaimer') as HTMLTextAreaElement;
+    await act(async () => changeTextarea(disclaimer, 'Unsaved replacement terms'));
+    const send = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Send to Factory',
+    ) as HTMLButtonElement;
+
+    act(() => send.click());
+
+    expect(post).not.toHaveBeenCalled();
+    expect(content()).toContain('Save the disclaimer before sending this Job Order to the factory.');
+    expect(document.activeElement).toBe(disclaimer);
+  });
+
+  it('maps a backend disclaimer error to actionable feedback instead of Axios text', async () => {
+    vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      message: 'Request failed with status code 400',
+      response: {
+        data: {
+          error: {
+            code: 'DISCLAIMER_REQUIRED',
+            message: 'A factory commercial terms / disclaimer is required',
+          },
+        },
+      },
+    });
+    await renderPage('DRAFT', standardStages, [], { disclaimerText: 'Persisted terms' });
+    const send = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Send to Factory',
+    ) as HTMLButtonElement;
+    act(() => send.click());
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Send',
+    ) as HTMLButtonElement;
+
+    await act(async () => confirm.click());
+
+    await vi.waitFor(() =>
+      expect(content()).toContain(
+        'Factory commercial terms / disclaimer is required before sending this Job Order to the factory.',
+      ),
+    );
+    expect(content()).not.toContain('Request failed with status code 400');
   });
 
   it('renders the awaiting-confirmation notice without production controls', async () => {
