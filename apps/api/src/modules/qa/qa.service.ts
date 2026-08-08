@@ -3,9 +3,9 @@ import { canPerformQaOperation, createId } from '@erve/shared';
 import type {
   PaginatedResponse,
   QaInspectionDetail,
+  QaChecklistItemCode,
   QaQueueSummary,
   QaReworkTaskView,
-  SaveQaInspectionInput,
 } from '@erve/types';
 import { QA_INSPECTION_START_STATUSES, QA_QUEUE_STATUSES } from '@erve/types';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -83,19 +83,36 @@ async function finish(
   });
 }
 
+async function deriveSessionStatus(tx: Tx, sessionId: string) {
+  const forms = await tx.qaSizeInspectionForm.findMany({
+    where: { inspectionSessionId: sessionId },
+    select: { status: true },
+  });
+  const finalized = forms.length > 0 && forms.every((form) => form.status === 'FINALIZED');
+  return tx.qaInspectionSession.update({
+    where: { id: sessionId },
+    data: finalized
+      ? { status: 'FINALIZED', finalizedAt: new Date() }
+      : { status: 'DRAFT', finalizedAt: null },
+  });
+}
+
 const detailInclude = {
   factory: { select: { id: true, code: true, name: true } },
-  purchaseOrder: { select: { poNumber: true } },
+  purchaseOrder: {
+    select: { poNumber: true, distributor: { select: { id: true, code: true, name: true } } },
+  },
+  seasonSnapshots: { select: { code: true, displayName: true } },
   lines: {
     include: {
-      style: { select: { styleNumber: true, styleName: true } },
+      style: { select: { styleNumber: true, styleName: true, colour: true } },
       sizes: { include: { size: { select: { code: true, label: true, sortOrder: true } } } },
     },
   },
   qaInspections: {
     include: {
       inspector: { select: { id: true, name: true, email: true } },
-      lines: true,
+      forms: { include: { checklist: true } },
       evidence: { include: { file: true } },
     },
     orderBy: { createdAt: 'asc' as const },
@@ -104,15 +121,33 @@ const detailInclude = {
 } satisfies Prisma.JobOrderInclude;
 type DetailRecord = Prisma.JobOrderGetPayload<{ include: typeof detailInclude }>;
 
+const checklistOrder: QaChecklistItemCode[] = [
+  'FABRIC_COLOUR_QUALITY',
+  'TRIMS_CARD',
+  'FABRIC_GSM',
+  'MEASUREMENTS_REPORT',
+  'GARMENT_CONSTRUCTION',
+  'GENERAL_QUALITY_PRESENTATION',
+  'LABELLING_POSITION',
+  'FIT_SAMPLE_BUYER_COMMENTS',
+  'SPI',
+  'SAMPLE_TAG',
+  'DATA_SHEET_PULL_TEST_PINCH_SETTING',
+  'METAL_DETECTION',
+  'P_AND_P',
+  'PP_SAMPLE_FIT_COMMENTS',
+  'SOURCE_DECLARATION_FORM',
+];
+
 function derive(record: DetailRecord) {
   const activeSessions = record.qaInspections.filter(
     (session) => session.status !== 'REOPENED' && session.status !== 'VOIDED',
   );
   const finalizedLines = activeSessions
-    .filter((s) => s.status === 'FINALIZED')
-    .flatMap((s) => s.lines);
+    .flatMap((session) => session.forms)
+    .filter((form) => form.status === 'FINALIZED');
   const reservedFirstPass = activeSessions
-    .flatMap((s) => s.lines)
+    .flatMap((s) => s.forms)
     .filter((line) => !line.sourceReworkTaskId);
   const accepted = finalizedLines.reduce((n, line) => n + line.acceptedQuantity, 0);
   const rejected = finalizedLines.reduce((n, line) => n + line.permanentlyRejectedQuantity, 0);
@@ -165,10 +200,10 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
   for (const session of record.qaInspections.filter(
     (s) => !['REOPENED', 'VOIDED'].includes(s.status),
   )) {
-    for (const line of session.lines) {
+    for (const line of session.forms) {
       const fact = lineFacts.get(line.jobOrderLineSizeId)!;
       if (!line.sourceReworkTaskId) fact.reserved += line.inspectedQuantity;
-      if (session.status === 'FINALIZED') {
+      if (line.status === 'FINALIZED') {
         fact.accepted += line.acceptedQuantity;
         fact.rework += line.reworkQuantity;
         fact.rejected += line.permanentlyRejectedQuantity;
@@ -181,6 +216,11 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
     id: record.id,
     jobOrderNumber: record.jobOrderNumber,
     purchaseOrderNumber: record.purchaseOrder.poNumber,
+    distributor: record.purchaseOrder.distributor,
+    seasons: record.seasonSnapshots.map((season) => ({
+      code: season.code,
+      displayName: season.displayName,
+    })),
     factory: record.factory,
     status: record.status,
     totals: derive(record),
@@ -193,8 +233,10 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
           jobOrderLineSizeId: size.id,
           styleNumber: line.style.styleNumber,
           styleName: line.style.styleName,
+          colour: line.style.colour,
           sizeCode: size.size.code,
           sizeLabel: size.size.label,
+          orderedQuantity: size.orderedQuantity,
           preparedQuantity: size.preparedQuantity,
           availableToInspect: Math.max(0, size.preparedQuantity - fact.reserved),
           acceptedQuantity: fact.accepted,
@@ -209,31 +251,43 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
       cycleNumber: session.cycleNumber,
       status: session.status,
       inspector: session.inspector,
-      notes: session.notes,
       finalizedAt: session.finalizedAt?.toISOString() ?? null,
       reopenedAt: session.reopenedAt?.toISOString() ?? null,
       reopenReason: session.reopenReason,
       createdAt: session.createdAt.toISOString(),
       updatedAt: session.updatedAt.toISOString(),
       version: session.version,
-      lines: session.lines.map((line) => {
+      forms: session.forms.map((line) => {
         const size = record.lines
           .flatMap((l) => l.sizes.map((s) => ({ l, s })))
           .find(({ s }) => s.id === line.jobOrderLineSizeId)!;
         return {
           id: line.id,
+          status: line.status,
+          version: line.version,
+          finalizedAt: line.finalizedAt?.toISOString() ?? null,
+          reopenedAt: line.reopenedAt?.toISOString() ?? null,
+          reopenReason: line.reopenReason,
           jobOrderLineSizeId: line.jobOrderLineSizeId,
           sourceReworkTaskId: line.sourceReworkTaskId,
           styleNumber: size.l.style.styleNumber,
           styleName: size.l.style.styleName,
+          colour: size.l.style.colour,
           sizeCode: size.s.size.code,
           sizeLabel: size.s.size.label,
           preparedQuantity: size.s.preparedQuantity,
+          sampleQuantity: line.sampleQuantity,
+          checklist: checklistOrder.map((itemCode) => {
+            const item = line.checklist.find((check) => check.itemCode === itemCode);
+            return { itemCode, status: item?.status ?? null, remarks: item?.remarks ?? null };
+          }),
+          inspectionRemarks: line.inspectionRemarks,
           inspectedQuantity: line.inspectedQuantity,
           acceptedQuantity: line.acceptedQuantity,
           reworkQuantity: line.reworkQuantity,
           permanentlyRejectedQuantity: line.permanentlyRejectedQuantity,
           defectCategory: line.defectCategory,
+          otherDefectDetails: line.otherDefectDetails,
           defectNotes: line.defectNotes,
         };
       }),
@@ -338,6 +392,7 @@ export async function startInspection(
       include: {
         qaInspections: { select: { id: true, cycleNumber: true, status: true } },
         qaReworkTasks: true,
+        lines: { include: { sizes: true } },
       },
     });
     if (!job) throw HttpError.notFound('Job order not found');
@@ -360,12 +415,37 @@ export async function startInspection(
     )
       throw HttpError.conflict('Rework is not ready for reinspection');
     sessionId = createId();
+    const eligible = selected.length
+      ? selected.map((task) => ({
+          jobOrderLineSizeId: task.jobOrderLineSizeId,
+          sourceReworkTaskId: task.id,
+        }))
+      : job.lines
+          .flatMap((line) => line.sizes)
+          .filter((size) => size.preparedQuantity > 0)
+          .map((size) => ({ jobOrderLineSizeId: size.id, sourceReworkTaskId: null }));
+    if (!eligible.length)
+      throw HttpError.conflict('No size allocations are available for inspection');
     await tx.qaInspectionSession.create({
       data: {
         id: sessionId,
         jobOrderId,
         inspectorId: user.id,
         cycleNumber: Math.max(0, ...job.qaInspections.map((s) => s.cycleNumber)) + 1,
+        forms: {
+          create: eligible.map((form) => ({
+            id: createId(),
+            jobOrderLineSizeId: form.jobOrderLineSizeId,
+            sourceReworkTaskId: form.sourceReworkTaskId,
+            inspectedQuantity: 0,
+            acceptedQuantity: 0,
+            reworkQuantity: 0,
+            permanentlyRejectedQuantity: 0,
+            checklist: {
+              create: checklistOrder.map((itemCode) => ({ id: createId(), itemCode })),
+            },
+          })),
+        },
       },
     });
     const updated = await tx.jobOrder.update({
@@ -387,187 +467,343 @@ export async function startInspection(
   return getDetail(user, jobOrderId);
 }
 
-export async function saveInspection(
+export async function saveSizeInspectionForm(
   user: CurrentUser,
   sessionId: string,
-  input: SaveQaInspectionInput,
+  formId: string,
+  input: {
+    expectedVersion: number;
+    sampleQuantity?: number | null;
+    inspectionRemarks?: string | null;
+    checklist: Array<{
+      itemCode: QaChecklistItemCode;
+      status: 'YES' | 'NO' | 'AVAILABLE' | null;
+      remarks: string | null;
+    }>;
+    inspectedQuantity: number;
+    acceptedQuantity: number;
+    reworkQuantity: number;
+    permanentlyRejectedQuantity: number;
+    defectCategory?:
+      | 'STITCHING'
+      | 'FABRIC'
+      | 'PRINT_EMBROIDERY'
+      | 'MEASUREMENT'
+      | 'FINISHING'
+      | 'PACKAGING'
+      | 'OTHER'
+      | null;
+    otherDefectDetails?: string | null;
+    defectNotes?: string | null;
+  },
   key: string,
 ) {
   const requestHash = hash(input);
   let jobOrderId = '';
   await prisma.$transaction(async (tx) => {
-    const snapshot = await tx.qaInspectionSession.findUnique({
-      where: { id: sessionId },
-      select: { jobOrderId: true },
+    const form = await tx.qaSizeInspectionForm.findUnique({
+      where: { id: formId },
+      include: { session: { include: { jobOrder: true } }, checklist: true },
     });
-    if (!snapshot) throw HttpError.notFound('Inspection session not found');
-    jobOrderId = snapshot.jobOrderId;
+    if (!form || form.inspectionSessionId !== sessionId)
+      throw HttpError.notFound('Size inspection form not found');
+    jobOrderId = form.session.jobOrderId;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa:${jobOrderId}`}))`;
-    if (await replayOrLock(tx, user.id, jobOrderId, 'QA_SAVE', key, requestHash)) return;
-    const session = await tx.qaInspectionSession.findUniqueOrThrow({
-      where: { id: sessionId },
-      include: { jobOrder: true },
-    });
-    assertQaMutation(user, session.jobOrder.factoryId);
-    if (session.inspectorId !== user.id && !isSupervisor(user))
+    if (await replayOrLock(tx, user.id, jobOrderId, 'QA_FORM_SAVE', key, requestHash)) return;
+    assertQaMutation(user, form.session.jobOrder.factoryId);
+    if (form.session.inspectorId !== user.id && !isSupervisor(user))
       throw HttpError.forbidden('Only the inspector can edit this draft');
-    if (session.status !== 'DRAFT') throw HttpError.conflict('Inspection is already finalized');
-    if (session.version !== input.expectedVersion) throw HttpError.staleVersion(session.version);
-    if (
-      new Set(input.lines.map((l) => `${l.jobOrderLineSizeId}:${l.sourceReworkTaskId ?? ''}`))
-        .size !== input.lines.length
-    )
-      throw HttpError.badRequest('Duplicate inspection lines are not allowed');
-    const jobSizes = await tx.jobOrderLineSize.findMany({
-      where: { jobOrderLine: { jobOrderId } },
+    if (form.version !== input.expectedVersion) throw HttpError.staleVersion(form.version);
+    if (!['DRAFT', 'REOPENED'].includes(form.status))
+      throw HttpError.conflict('Size inspection form is finalized');
+    const size = await tx.jobOrderLineSize.findFirst({
+      where: { id: form.jobOrderLineSizeId, jobOrderLine: { jobOrderId } },
     });
-    const sizeMap = new Map(jobSizes.map((s) => [s.id, s]));
-    const otherLines = await tx.qaInspectionLine.findMany({
+    if (!size) throw HttpError.badRequest('Size inspection form does not belong to this job order');
+    const other = await tx.qaSizeInspectionForm.findMany({
       where: {
-        session: { jobOrderId, status: { in: ['DRAFT', 'FINALIZED'] } },
-        inspectionSessionId: { not: sessionId },
+        id: { not: formId },
+        jobOrderLineSizeId: form.jobOrderLineSizeId,
+        status: { in: ['DRAFT', 'FINALIZED'] },
       },
     });
-    for (const line of input.lines) {
-      const size = sizeMap.get(line.jobOrderLineSizeId);
-      if (!size) throw HttpError.badRequest('Inspection line does not belong to the job order');
-      if (line.sourceReworkTaskId) {
-        const task = await tx.qaReworkTask.findUnique({ where: { id: line.sourceReworkTaskId } });
-        if (
-          !task ||
-          task.jobOrderLineSizeId !== line.jobOrderLineSizeId ||
-          task.status !== 'READY_FOR_REINSPECTION'
-        )
-          throw HttpError.conflict('Rework is not ready for this reinspection');
-        const consumed = otherLines
-          .filter((l) => l.sourceReworkTaskId === task.id)
-          .reduce((n, l) => n + l.inspectedQuantity, 0);
-        if (line.inspectedQuantity + consumed > task.assignedQuantity)
-          throw HttpError.conflict('Reinspection exceeds the quantity sent for rework');
-      } else {
-        const consumed = otherLines
-          .filter((l) => l.jobOrderLineSizeId === line.jobOrderLineSizeId && !l.sourceReworkTaskId)
-          .reduce((n, l) => n + l.inspectedQuantity, 0);
-        if (line.inspectedQuantity + consumed > size.preparedQuantity)
-          throw HttpError.conflict('Inspection exceeds prepared quantity available');
-      }
-    }
-    await tx.qaInspectionLine.deleteMany({ where: { inspectionSessionId: sessionId } });
-    for (const line of input.lines) {
-      await tx.qaInspectionLine.create({
-        data: {
-          id: createId(),
-          inspectionSessionId: sessionId,
-          jobOrderLineSizeId: line.jobOrderLineSizeId,
-          sourceReworkTaskId: line.sourceReworkTaskId,
-          inspectedQuantity: line.inspectedQuantity,
-          acceptedQuantity: line.acceptedQuantity,
-          reworkQuantity: line.reworkQuantity,
-          permanentlyRejectedQuantity: line.permanentlyRejectedQuantity,
-          defectCategory: line.defectCategory,
-          defectNotes: line.defectNotes,
-        },
+    const consumed = other
+      .filter((candidate) => candidate.sourceReworkTaskId === form.sourceReworkTaskId)
+      .reduce((sum, candidate) => sum + candidate.inspectedQuantity, 0);
+    const capacity = form.sourceReworkTaskId
+      ? (await tx.qaReworkTask.findUniqueOrThrow({ where: { id: form.sourceReworkTaskId } }))
+          .assignedQuantity
+      : size.preparedQuantity;
+    if (consumed + input.inspectedQuantity > capacity)
+      throw HttpError.badRequest('Inspection exceeds quantity available for this size', {
+        issues: [
+          {
+            qaSizeInspectionFormId: formId,
+            jobOrderLineSizeId: form.jobOrderLineSizeId,
+            field: 'quantities',
+            message:
+              'Accepted, rework and rejected quantities exceed the remaining inspectable quantity.',
+          },
+        ],
       });
+    const normalized = {
+      sampleQuantity: input.sampleQuantity ?? null,
+      inspectionRemarks: input.inspectionRemarks?.trim() || null,
+      inspectedQuantity: input.inspectedQuantity,
+      acceptedQuantity: input.acceptedQuantity,
+      reworkQuantity: input.reworkQuantity,
+      permanentlyRejectedQuantity: input.permanentlyRejectedQuantity,
+      defectCategory: input.defectCategory ?? null,
+      otherDefectDetails:
+        input.defectCategory === 'OTHER' ? input.otherDefectDetails?.trim() || null : null,
+      defectNotes: input.defectNotes?.trim() || null,
+      checklist: input.checklist
+        .map((item) => ({
+          itemCode: item.itemCode,
+          status: item.status,
+          remarks: item.remarks?.trim() || null,
+        }))
+        .sort((a, b) => a.itemCode.localeCompare(b.itemCode)),
+    };
+    const existing = {
+      sampleQuantity: form.sampleQuantity,
+      inspectionRemarks: form.inspectionRemarks,
+      inspectedQuantity: form.inspectedQuantity,
+      acceptedQuantity: form.acceptedQuantity,
+      reworkQuantity: form.reworkQuantity,
+      permanentlyRejectedQuantity: form.permanentlyRejectedQuantity,
+      defectCategory: form.defectCategory,
+      otherDefectDetails: form.otherDefectDetails,
+      defectNotes: form.defectNotes,
+      checklist: form.checklist
+        .map((item) => ({ itemCode: item.itemCode, status: item.status, remarks: item.remarks }))
+        .sort((a, b) => a.itemCode.localeCompare(b.itemCode)),
+    };
+    if (JSON.stringify(normalized) === JSON.stringify(existing)) {
+      await finish(tx, user.id, jobOrderId, 'QA_FORM_SAVE', key, requestHash, form.version);
+      return;
     }
-    const updated = await tx.qaInspectionSession.update({
-      where: { id: sessionId },
-      data: { notes: input.notes, version: { increment: 1 } },
+    await tx.qaSizeInspectionChecklistItem.deleteMany({ where: { inspectionFormId: formId } });
+    const updated = await tx.qaSizeInspectionForm.update({
+      where: { id: formId },
+      data: {
+        ...normalized,
+        status: 'DRAFT',
+        checklist: {
+          createMany: { data: normalized.checklist.map((item) => ({ id: createId(), ...item })) },
+        },
+        version: { increment: 1 },
+      },
     });
+    await deriveSessionStatus(tx, sessionId);
     await recordAuditLog(
       {
         actorId: user.id,
-        action: 'QA_INSPECTION_SAVED',
-        entityType: 'QaInspectionSession',
-        entityId: sessionId,
-        metadata: { jobOrderId, lineCount: input.lines.length },
+        action: 'QA_SIZE_FORM_SAVED',
+        entityType: 'QaSizeInspectionForm',
+        entityId: formId,
+        metadata: {
+          jobOrderId,
+          sessionId,
+          jobOrderLineSizeId: form.jobOrderLineSizeId,
+          resultVersion: updated.version,
+        },
       },
       tx,
     );
-    await finish(tx, user.id, jobOrderId, 'QA_SAVE', key, requestHash, updated.version);
+    await finish(tx, user.id, jobOrderId, 'QA_FORM_SAVE', key, requestHash, updated.version);
   });
   return getDetail(user, jobOrderId);
 }
 
-export async function finalizeInspection(
+export async function finalizeSizeInspectionForm(
   user: CurrentUser,
   sessionId: string,
+  formId: string,
   input: { expectedVersion: number },
   key: string,
 ) {
   const requestHash = hash(input);
   let jobOrderId = '';
   await prisma.$transaction(async (tx) => {
-    const snapshot = await tx.qaInspectionSession.findUnique({
-      where: { id: sessionId },
-      select: { jobOrderId: true },
+    const form = await tx.qaSizeInspectionForm.findUnique({
+      where: { id: formId },
+      include: { checklist: true, session: { include: { jobOrder: true } } },
     });
-    if (!snapshot) throw HttpError.notFound('Inspection session not found');
-    jobOrderId = snapshot.jobOrderId;
+    if (!form || form.inspectionSessionId !== sessionId)
+      throw HttpError.notFound('Size inspection form not found');
+    jobOrderId = form.session.jobOrderId;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa:${jobOrderId}`}))`;
-    if (await replayOrLock(tx, user.id, jobOrderId, 'QA_FINALIZE', key, requestHash)) return;
-    const session = await tx.qaInspectionSession.findUniqueOrThrow({
-      where: { id: sessionId },
-      include: { jobOrder: true, lines: true },
-    });
-    assertQaMutation(user, session.jobOrder.factoryId);
-    if (session.inspectorId !== user.id && !isSupervisor(user))
-      throw HttpError.forbidden('Only the inspector can finalize this draft');
-    if (session.status !== 'DRAFT' || session.lines.length === 0)
-      throw HttpError.conflict('Inspection has no finalizable draft');
-    if (session.version !== input.expectedVersion) throw HttpError.staleVersion(session.version);
-    const rejectedLines = session.lines.filter((l) => l.permanentlyRejectedQuantity > 0);
-    if (rejectedLines.length) {
-      const evidenced = await tx.qaEvidence.findMany({
-        where: { inspectionSessionId: sessionId },
-        select: { inspectionLineId: true },
+    if (await replayOrLock(tx, user.id, jobOrderId, 'QA_FORM_FINALIZE', key, requestHash)) return;
+    assertQaMutation(user, form.session.jobOrder.factoryId);
+    if (form.session.inspectorId !== user.id && !isSupervisor(user))
+      throw HttpError.forbidden('Only the inspector can finalize this form');
+    if (form.version !== input.expectedVersion) throw HttpError.staleVersion(form.version);
+    if (form.status !== 'DRAFT')
+      throw HttpError.conflict('Size inspection form is already finalized');
+    const capacity = form.sourceReworkTaskId
+      ? (await tx.qaReworkTask.findUniqueOrThrow({ where: { id: form.sourceReworkTaskId } }))
+          .assignedQuantity
+      : (
+          await tx.jobOrderLineSize.findUniqueOrThrow({
+            where: { id: form.jobOrderLineSizeId },
+          })
+        ).preparedQuantity;
+    const incomplete: Array<{ field: string; message: string }> = [];
+    if (form.sampleQuantity === null)
+      incomplete.push({ field: 'sampleQuantity', message: 'Sample quantity is required.' });
+    if (
+      form.checklist.length !== checklistOrder.length ||
+      form.checklist.some((item) => item.status === null)
+    )
+      incomplete.push({ field: 'checklist', message: 'Every checklist response is required.' });
+    if (form.inspectedQuantity !== capacity)
+      incomplete.push({
+        field: 'quantities',
+        message: `Final quantities must reconcile to ${capacity}.`,
       });
-      const evidenceIds = new Set(evidenced.map((e) => e.inspectionLineId));
-      if (rejectedLines.some((l) => !evidenceIds.has(l.id)))
+    if (
+      (form.reworkQuantity > 0 || form.permanentlyRejectedQuantity > 0) &&
+      !form.defectCategory
+    )
+      incomplete.push({ field: 'defectCategory', message: 'A defect category is required.' });
+    if (form.defectCategory === 'OTHER' && !form.otherDefectDetails?.trim())
+      incomplete.push({
+        field: 'otherDefectDetails',
+        message: 'Other defect details are required.',
+      });
+    if (incomplete.length)
+      throw HttpError.badRequest('Size inspection form is incomplete', {
+        issues: incomplete.map((issue) => ({
+          qaSizeInspectionFormId: formId,
+          jobOrderLineSizeId: form.jobOrderLineSizeId,
+          ...issue,
+        })),
+      });
+    if (form.permanentlyRejectedQuantity > 0) {
+      const evidence = await tx.qaEvidence.count({
+        where: { inspectionSessionId: sessionId, inspectionLineId: formId },
+      });
+      if (!evidence)
         throw HttpError.badRequest('Photo evidence is required for permanent rejection');
     }
-    for (const line of session.lines.filter((l) => l.reworkQuantity > 0)) {
+    if (form.reworkQuantity > 0) {
       const attempt =
-        (await tx.qaReworkTask.count({ where: { jobOrderLineSizeId: line.jobOrderLineSizeId } })) +
+        (await tx.qaReworkTask.count({ where: { jobOrderLineSizeId: form.jobOrderLineSizeId } })) +
         1;
       await tx.qaReworkTask.create({
         data: {
           id: createId(),
           jobOrderId,
-          jobOrderLineSizeId: line.jobOrderLineSizeId,
-          sourceLineId: line.id,
+          jobOrderLineSizeId: form.jobOrderLineSizeId,
+          sourceLineId: formId,
           attemptNumber: attempt,
-          assignedQuantity: line.reworkQuantity,
+          assignedQuantity: form.reworkQuantity,
         },
       });
     }
-    for (const line of session.lines.filter((l) => l.sourceReworkTaskId))
+    if (form.sourceReworkTaskId)
       await tx.qaReworkTask.update({
-        where: { id: line.sourceReworkTaskId! },
+        where: { id: form.sourceReworkTaskId },
         data: { status: 'CLOSED', version: { increment: 1 } },
       });
-    const updatedSession = await tx.qaInspectionSession.update({
-      where: { id: sessionId },
+    const updated = await tx.qaSizeInspectionForm.update({
+      where: { id: formId },
       data: { status: 'FINALIZED', finalizedAt: new Date(), version: { increment: 1 } },
     });
+    const session = await deriveSessionStatus(tx, sessionId);
     const openRework = await tx.qaReworkTask.count({
       where: { jobOrderId, status: { not: 'CLOSED' } },
     });
-    const nextStatus = openRework ? 'REWORK_REQUIRED' : 'QA_IN_PROGRESS';
-    const updated = await tx.jobOrder.update({
+    await tx.jobOrder.update({
       where: { id: jobOrderId },
-      data: { status: nextStatus, version: { increment: 1 } },
+      data: {
+        status: openRework ? 'REWORK_REQUIRED' : 'QA_IN_PROGRESS',
+        version: { increment: 1 },
+      },
     });
     await recordAuditLog(
       {
         actorId: user.id,
-        action: 'QA_INSPECTION_FINALIZED',
-        entityType: 'QaInspectionSession',
-        entityId: sessionId,
-        metadata: { jobOrderId, resultVersion: updatedSession.version },
+        action: 'QA_SIZE_FORM_FINALIZED',
+        entityType: 'QaSizeInspectionForm',
+        entityId: formId,
+        metadata: {
+          jobOrderId,
+          sessionId,
+          jobOrderLineSizeId: form.jobOrderLineSizeId,
+          sessionStatus: session.status,
+          resultVersion: updated.version,
+        },
       },
       tx,
     );
-    await finish(tx, user.id, jobOrderId, 'QA_FINALIZE', key, requestHash, updated.version);
+    await finish(tx, user.id, jobOrderId, 'QA_FORM_FINALIZE', key, requestHash, updated.version);
+  });
+  return getDetail(user, jobOrderId);
+}
+
+export async function reopenSizeInspectionForm(
+  user: CurrentUser,
+  sessionId: string,
+  formId: string,
+  input: { expectedVersion: number; reason: string },
+  key: string,
+) {
+  if (!user.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'))
+    throw HttpError.forbidden('Only admins and merchandisers may reopen QA');
+  const requestHash = hash(input);
+  let jobOrderId = '';
+  await prisma.$transaction(async (tx) => {
+    const form = await tx.qaSizeInspectionForm.findUnique({
+      where: { id: formId },
+      include: { session: { include: { jobOrder: true } } },
+    });
+    if (!form || form.inspectionSessionId !== sessionId)
+      throw HttpError.notFound('Size inspection form not found');
+    jobOrderId = form.session.jobOrderId;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa:${jobOrderId}`}))`;
+    if (await replayOrLock(tx, user.id, jobOrderId, 'QA_FORM_REOPEN', key, requestHash)) return;
+    if (form.session.jobOrder.status === 'QA_APPROVED')
+      throw HttpError.conflict('Approved QA cannot be reopened after downstream release');
+    if (form.version !== input.expectedVersion) throw HttpError.staleVersion(form.version);
+    if (form.status !== 'FINALIZED')
+      throw HttpError.conflict('Only a finalized size inspection form can be reopened');
+    if (await tx.qaReworkTask.count({ where: { sourceLineId: formId } }))
+      throw HttpError.conflict('A form that generated rework cannot be reopened');
+    const changed = await tx.qaSizeInspectionForm.update({
+      where: { id: formId },
+      data: {
+        status: 'REOPENED',
+        reopenedAt: new Date(),
+        reopenedById: user.id,
+        reopenReason: input.reason,
+        version: { increment: 1 },
+      },
+    });
+    const session = await deriveSessionStatus(tx, sessionId);
+    await tx.jobOrder.update({
+      where: { id: jobOrderId },
+      data: { status: 'QA_IN_PROGRESS', version: { increment: 1 } },
+    });
+    await recordAuditLog(
+      {
+        actorId: user.id,
+        action: 'QA_SIZE_FORM_REOPENED',
+        entityType: 'QaSizeInspectionForm',
+        entityId: formId,
+        metadata: {
+          jobOrderId,
+          sessionId,
+          jobOrderLineSizeId: form.jobOrderLineSizeId,
+          reason: input.reason,
+          sessionStatus: session.status,
+          resultVersion: changed.version,
+        },
+      },
+      tx,
+    );
+    await finish(tx, user.id, jobOrderId, 'QA_FORM_REOPEN', key, requestHash, changed.version);
   });
   return getDetail(user, jobOrderId);
 }
@@ -586,7 +822,7 @@ export async function approve(
       where: { id: jobOrderId },
       include: {
         lines: { include: { sizes: true } },
-        qaInspections: { where: { status: 'FINALIZED' }, include: { lines: true } },
+        qaInspections: { where: { status: 'FINALIZED' }, include: { forms: true } },
         qaReworkTasks: true,
       },
     });
@@ -596,18 +832,18 @@ export async function approve(
     if (job.qaReworkTasks.some((t) => t.status !== 'CLOSED'))
       throw HttpError.conflict('Rework remains outstanding');
     const initial = job.qaInspections
-      .flatMap((s) => s.lines)
+      .flatMap((s) => s.forms)
       .filter((l) => !l.sourceReworkTaskId)
       .reduce((n, l) => n + l.inspectedQuantity, 0);
     if (initial !== job.preparedQuantityTotal)
       throw HttpError.conflict('Prepared quantities have not been fully inspected');
     const terminal = job.qaInspections
-      .flatMap((s) => s.lines)
+      .flatMap((s) => s.forms)
       .reduce((n, l) => n + l.acceptedQuantity + l.permanentlyRejectedQuantity, 0);
     if (terminal !== job.preparedQuantityTotal)
       throw HttpError.conflict('QA quantities do not reconcile to prepared quantity');
     const acceptedBySize = new Map<string, number>();
-    for (const line of job.qaInspections.flatMap((s) => s.lines))
+    for (const line of job.qaInspections.flatMap((s) => s.forms))
       acceptedBySize.set(
         line.jobOrderLineSizeId,
         (acceptedBySize.get(line.jobOrderLineSizeId) ?? 0) + line.acceptedQuantity,
@@ -731,67 +967,4 @@ export async function getFactoryReworkQueue(user: CurrentUser) {
   return jobs.flatMap((job) =>
     job.qaReworkTasks.filter((t) => t.status !== 'CLOSED').map((task) => toRework(job, task)),
   );
-}
-
-export async function reopen(
-  user: CurrentUser,
-  sessionId: string,
-  input: { expectedVersion: number; reason: string },
-  key: string,
-) {
-  if (!isSupervisor(user)) throw HttpError.forbidden('Only admins and merchandisers may reopen QA');
-  const session = await prisma.qaInspectionSession.findUnique({
-    where: { id: sessionId },
-    include: { jobOrder: true, lines: true },
-  });
-  if (!session) throw HttpError.notFound('Inspection session not found');
-  if (session.jobOrder.status === 'QA_APPROVED')
-    throw HttpError.conflict('Approved QA cannot be reopened after downstream release');
-  const requestHash = hash(input);
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa:${session.jobOrderId}`}))`;
-    if (await replayOrLock(tx, user.id, session.jobOrderId, 'QA_REOPEN', key, requestHash)) return;
-    const fresh = await tx.qaInspectionSession.findUniqueOrThrow({ where: { id: sessionId } });
-    if (fresh.version !== input.expectedVersion) throw HttpError.staleVersion(fresh.version);
-    if (fresh.status !== 'FINALIZED')
-      throw HttpError.conflict('Only a finalized inspection can be reopened');
-    if (
-      await tx.qaReworkTask.count({
-        where: { sourceLineId: { in: session.lines.map((l) => l.id) } },
-      })
-    )
-      throw HttpError.conflict(
-        'A session that generated rework cannot be reopened; use an explicit disposition reversal in a future slice',
-      );
-    const changed = await tx.qaInspectionSession.update({
-      where: { id: sessionId },
-      data: {
-        status: 'REOPENED',
-        reopenedAt: new Date(),
-        reopenedById: user.id,
-        reopenReason: input.reason,
-        version: { increment: 1 },
-      },
-    });
-    const updated = await tx.jobOrder.update({
-      where: { id: session.jobOrderId },
-      data: { status: 'QA_IN_PROGRESS', version: { increment: 1 } },
-    });
-    await recordAuditLog(
-      {
-        actorId: user.id,
-        action: 'QA_INSPECTION_REOPENED',
-        entityType: 'QaInspectionSession',
-        entityId: sessionId,
-        metadata: {
-          jobOrderId: session.jobOrderId,
-          reason: input.reason,
-          resultVersion: changed.version,
-        },
-      },
-      tx,
-    );
-    await finish(tx, user.id, session.jobOrderId, 'QA_REOPEN', key, requestHash, updated.version);
-  });
-  return getDetail(user, session.jobOrderId);
 }

@@ -113,7 +113,13 @@ export interface PurchaseOrderLine {
   styleName: string;
   lineStatus: 'ACTIVE' | 'CANCELLED';
   remarks: string | null;
-  seasonSnapshots: Array<{ seasonId: string | null; code: string; name: string; financialYear: string; displayName: string }>;
+  seasonSnapshots: Array<{
+    seasonId: string | null;
+    code: string;
+    name: string;
+    financialYear: string;
+    displayName: string;
+  }>;
   sizes: PurchaseOrderLineSize[];
   totalOrderedQuantity: number;
 }
@@ -134,6 +140,7 @@ export interface PurchaseOrderBalance {
     styleId: string;
     styleNumber: string;
     styleName: string;
+    colour: string | null;
     sizes: Array<{
       purchaseOrderLineSizeId: string;
       sizeId: string;
@@ -192,7 +199,13 @@ export interface JobOrderSummary extends VersionedResource {
   createdAt: string;
 }
 export interface JobOrderDetail extends JobOrderSummary {
-  seasonSnapshots: Array<{ seasonId: string | null; code: string; name: string; financialYear: string; displayName: string }>;
+  seasonSnapshots: Array<{
+    seasonId: string | null;
+    code: string;
+    name: string;
+    financialYear: string;
+    displayName: string;
+  }>;
   processFlowVersion: {
     id: string;
     versionNumber: number;
@@ -296,6 +309,64 @@ export type QaDefectCategory =
   'STITCHING' | 'FABRIC' | 'PRINT_EMBROIDERY' | 'MEASUREMENT' | 'FINISHING' | 'PACKAGING' | 'OTHER';
 export type QaReworkStatus =
   'PENDING_ACKNOWLEDGEMENT' | 'ACKNOWLEDGED' | 'READY_FOR_REINSPECTION' | 'CLOSED';
+export type QaChecklistStatus = 'YES' | 'NO' | 'AVAILABLE';
+export type QaChecklistItemCode =
+  | 'FABRIC_COLOUR_QUALITY'
+  | 'TRIMS_CARD'
+  | 'FABRIC_GSM'
+  | 'MEASUREMENTS_REPORT'
+  | 'GARMENT_CONSTRUCTION'
+  | 'GENERAL_QUALITY_PRESENTATION'
+  | 'LABELLING_POSITION'
+  | 'FIT_SAMPLE_BUYER_COMMENTS'
+  | 'SPI'
+  | 'SAMPLE_TAG'
+  | 'DATA_SHEET_PULL_TEST_PINCH_SETTING'
+  | 'METAL_DETECTION'
+  | 'P_AND_P'
+  | 'PP_SAMPLE_FIT_COMMENTS'
+  | 'SOURCE_DECLARATION_FORM';
+export const QA_CHECKLIST_ITEMS: ReadonlyArray<{ code: QaChecklistItemCode; label: string }> = [
+  {
+    code: 'FABRIC_COLOUR_QUALITY',
+    label:
+      'Confirm fabric has been checked and is correct colour and quality (approved shade band / bulk hanger)',
+  },
+  { code: 'TRIMS_CARD', label: 'Confirm trims is available and checked as per trims card' },
+  { code: 'FABRIC_GSM', label: 'Confirm fabric GSM is correct' },
+  {
+    code: 'MEASUREMENTS_REPORT',
+    label: 'Confirm all measurements are within tolerance and measurement report is attached',
+  },
+  {
+    code: 'GARMENT_CONSTRUCTION',
+    label: 'Confirm garment construction is correct and as per all previous samples comment',
+  },
+  {
+    code: 'GENERAL_QUALITY_PRESENTATION',
+    label: 'Confirm samples general quality and presentation are acceptable',
+  },
+  { code: 'LABELLING_POSITION', label: 'Confirm labelling position has been checked and correct' },
+  { code: 'FIT_SAMPLE_BUYER_COMMENTS', label: 'Fit sample made based on buyer comments' },
+  {
+    code: 'SPI',
+    label: 'Confirm SPI is correct (outside 11–12 per inch and inside 12–13 per inch)',
+  },
+  { code: 'SAMPLE_TAG', label: 'Confirm sample tag with details' },
+  {
+    code: 'DATA_SHEET_PULL_TEST_PINCH_SETTING',
+    label: 'Confirm all Data Sheet / Pull Test / Pinch Setting have been checked and are correct',
+  },
+  { code: 'METAL_DETECTION', label: 'Confirm Metal Detection have been checked and are correct' },
+  { code: 'P_AND_P', label: 'Confirm P&P have been checked and are correct' },
+  { code: 'PP_SAMPLE_FIT_COMMENTS', label: 'Confirm PP sample made based on fit comments' },
+  { code: 'SOURCE_DECLARATION_FORM', label: 'Source declaration form available' },
+];
+export interface QaChecklistItemView {
+  itemCode: QaChecklistItemCode;
+  status: QaChecklistStatus | null;
+  remarks: string | null;
+}
 
 export interface QaQuantityTotals {
   prepared: number;
@@ -314,20 +385,30 @@ export interface QaQueueSummary extends VersionedResource {
   status: JobOrderStatus;
   totals: QaQuantityTotals;
 }
-export interface QaInspectionLineView {
+export interface QaSizeInspectionFormView {
   id: string;
+  status: QaInspectionStatus;
+  version: number;
+  finalizedAt: string | null;
+  reopenedAt: string | null;
+  reopenReason: string | null;
   jobOrderLineSizeId: string;
   sourceReworkTaskId: string | null;
   styleNumber: string;
   styleName: string;
+  colour: string | null;
   sizeCode: string;
   sizeLabel: string;
   preparedQuantity: number;
+  sampleQuantity: number | null;
+  checklist: QaChecklistItemView[];
+  inspectionRemarks: string | null;
   inspectedQuantity: number;
   acceptedQuantity: number;
   reworkQuantity: number;
   permanentlyRejectedQuantity: number;
   defectCategory: QaDefectCategory | null;
+  otherDefectDetails: string | null;
   defectNotes: string | null;
 }
 export interface QaEvidenceMetadata {
@@ -343,11 +424,10 @@ export interface QaInspectionSessionView extends VersionedResource {
   cycleNumber: number;
   status: QaInspectionStatus;
   inspector: { id: string; name: string; email: string };
-  notes: string | null;
   finalizedAt: string | null;
   reopenedAt: string | null;
   reopenReason: string | null;
-  lines: QaInspectionLineView[];
+  forms: QaSizeInspectionFormView[];
   evidence: QaEvidenceMetadata[];
   createdAt: string;
 }
@@ -365,12 +445,16 @@ export interface QaReworkTaskView extends VersionedResource {
   defectNotes: string | null;
 }
 export interface QaInspectionDetail extends QaQueueSummary {
+  distributor: { id: string; code: string; name: string } | null;
+  seasons: Array<{ code: string; displayName: string }>;
   lines: Array<{
     jobOrderLineSizeId: string;
     styleNumber: string;
     styleName: string;
+    colour: string | null;
     sizeCode: string;
     sizeLabel: string;
+    orderedQuantity: number;
     preparedQuantity: number;
     availableToInspect: number;
     acceptedQuantity: number;
@@ -380,17 +464,4 @@ export interface QaInspectionDetail extends QaQueueSummary {
   }>;
   sessions: QaInspectionSessionView[];
   reworkTasks: QaReworkTaskView[];
-}
-export interface SaveQaInspectionInput extends VersionedMutationInput {
-  notes?: string | null;
-  lines: Array<{
-    jobOrderLineSizeId: string;
-    sourceReworkTaskId?: string | null;
-    inspectedQuantity: number;
-    acceptedQuantity: number;
-    reworkQuantity: number;
-    permanentlyRejectedQuantity: number;
-    defectCategory?: QaDefectCategory | null;
-    defectNotes?: string | null;
-  }>;
 }

@@ -12,7 +12,7 @@ import {
   qaQueueQuerySchema,
   reopenSchema,
   reworkActionSchema,
-  saveInspectionSchema,
+  saveSizeInspectionFormSchema,
   startInspectionSchema,
   versionSchema,
 } from './qa.validation.js';
@@ -66,35 +66,23 @@ qaRouter.post(
   ),
 );
 qaRouter.put(
-  '/inspections/:id',
+  '/inspections/:sessionId/forms/:formId',
   canInspect,
   asyncHandler(async (req, res) =>
-    res.json(
-      successResponse(
-        await service.saveInspection(
-          req.user!,
-          req.params.id! as string,
-          saveInspectionSchema.parse(req.body),
-          key(req),
-        ),
-      ),
-    ),
+    res.json(successResponse(await service.saveSizeInspectionForm(
+      req.user!, req.params.sessionId! as string, req.params.formId! as string,
+      saveSizeInspectionFormSchema.parse(req.body), key(req),
+    ))),
   ),
 );
 qaRouter.post(
-  '/inspections/:id/finalize',
+  '/inspections/:sessionId/forms/:formId/finalize',
   canInspect,
   asyncHandler(async (req, res) =>
-    res.json(
-      successResponse(
-        await service.finalizeInspection(
-          req.user!,
-          req.params.id! as string,
-          versionSchema.parse(req.body),
-          key(req),
-        ),
-      ),
-    ),
+    res.json(successResponse(await service.finalizeSizeInspectionForm(
+      req.user!, req.params.sessionId! as string, req.params.formId! as string,
+      versionSchema.parse(req.body), key(req),
+    ))),
   ),
 );
 qaRouter.post(
@@ -114,14 +102,15 @@ qaRouter.post(
   ),
 );
 qaRouter.post(
-  '/inspections/:id/reopen',
+  '/inspections/:sessionId/forms/:formId/reopen',
   requireRoles('ADMIN', 'MERCHANDISER'),
   asyncHandler(async (req, res) =>
     res.json(
       successResponse(
-        await service.reopen(
+        await service.reopenSizeInspectionForm(
           req.user!,
-          req.params.id! as string,
+          req.params.sessionId! as string,
+          req.params.formId! as string,
           reopenSchema.parse(req.body),
           key(req),
         ),
@@ -197,5 +186,13 @@ qaRouter.get(
     );
     res.setHeader('ETag', file.etag);
     res.send(file.data);
+  }),
+);
+qaRouter.delete(
+  '/evidence/:id',
+  canInspect,
+  asyncHandler(async (req, res) => {
+    await evidenceService.deleteEvidence(req.user!, req.params.id! as string);
+    res.status(204).end();
   }),
 );

@@ -45,7 +45,7 @@ export async function uploadEvidence(
 ) {
   const session = await prisma.qaInspectionSession.findUnique({
     where: { id: sessionId },
-    include: { jobOrder: true, lines: true },
+    include: { jobOrder: true, forms: true },
   });
   if (!session) throw HttpError.notFound('Inspection session not found');
   if (session.status !== 'DRAFT')
@@ -57,16 +57,15 @@ export async function uploadEvidence(
   )
     throw HttpError.forbidden('Only the inspector can upload evidence');
   assertView(user, session.jobOrder.factoryId);
-  if (inspectionLineId && !session.lines.some((line) => line.id === inspectionLineId))
+  if (inspectionLineId && !session.forms.some((form) => form.id === inspectionLineId))
     throw HttpError.badRequest('Evidence line does not belong to this inspection');
   const image = validate(upload.buffer);
   const checksum = createHash('sha256').update(upload.buffer).digest('hex');
-  const duplicate = await prisma.qaEvidence.findUnique({
+  const duplicate = await prisma.qaEvidence.findFirst({
     where: {
-      inspectionSessionId_checksumSha256: {
-        inspectionSessionId: sessionId,
-        checksumSha256: checksum,
-      },
+      inspectionSessionId: sessionId,
+      inspectionLineId: inspectionLineId ?? null,
+      checksumSha256: checksum,
     },
     include: { file: true },
   });
@@ -142,4 +141,36 @@ export async function readEvidence(user: CurrentUser, evidenceId: string) {
       throw HttpError.notFound('QA evidence content not found');
     throw error;
   }
+}
+
+export async function deleteEvidence(user: CurrentUser, evidenceId: string) {
+  const evidence = await prisma.qaEvidence.findUnique({
+    where: { id: evidenceId },
+    include: { file: true, session: { include: { jobOrder: true } } },
+  });
+  if (!evidence) throw HttpError.notFound('QA evidence not found');
+  if (evidence.session.status !== 'DRAFT')
+    throw HttpError.conflict('Evidence can only be removed from a draft inspection');
+  if (
+    evidence.session.inspectorId !== user.id &&
+    !canPerformQaOperation(user) &&
+    !user.roles.includes('MERCHANDISER')
+  )
+    throw HttpError.forbidden('Only the inspector can remove evidence');
+  assertView(user, evidence.session.jobOrder.factoryId);
+  await prisma.$transaction(async (tx) => {
+    await tx.qaEvidence.delete({ where: { id: evidence.id } });
+    await tx.file.delete({ where: { id: evidence.fileId } });
+    await recordAuditLog(
+      {
+        actorId: user.id,
+        action: 'QA_EVIDENCE_DELETED',
+        entityType: 'QaInspectionSession',
+        entityId: evidence.inspectionSessionId,
+        metadata: { evidenceId: evidence.id, inspectionLineId: evidence.inspectionLineId },
+      },
+      tx,
+    );
+  });
+  await getFileStorage().delete(evidence.file.storageKey).catch(() => undefined);
 }

@@ -10,6 +10,24 @@ const defectCategory = z.enum([
   'PACKAGING',
   'OTHER',
 ]);
+const checklistItemCode = z.enum([
+  'FABRIC_COLOUR_QUALITY',
+  'TRIMS_CARD',
+  'FABRIC_GSM',
+  'MEASUREMENTS_REPORT',
+  'GARMENT_CONSTRUCTION',
+  'GENERAL_QUALITY_PRESENTATION',
+  'LABELLING_POSITION',
+  'FIT_SAMPLE_BUYER_COMMENTS',
+  'SPI',
+  'SAMPLE_TAG',
+  'DATA_SHEET_PULL_TEST_PINCH_SETTING',
+  'METAL_DETECTION',
+  'P_AND_P',
+  'PP_SAMPLE_FIT_COMMENTS',
+  'SOURCE_DECLARATION_FORM',
+]);
+const checklistStatus = z.enum(['YES', 'NO', 'AVAILABLE']);
 
 export const qaQueueQuerySchema = z.object({
   filter: z
@@ -34,42 +52,32 @@ export const startInspectionSchema = z.object({
   sourceReworkTaskIds: z.array(z.string().min(1)).max(100).default([]),
 });
 
-export const saveInspectionSchema = z.object({
+// A size form is the unit of editing.
+export const saveSizeInspectionFormSchema = z.object({
   expectedVersion,
-  notes: z.string().trim().max(2000).nullable().optional(),
-  lines: z
+  sampleQuantity: z.number().int().min(0).max(2_147_483_647).nullable().optional(),
+  inspectionRemarks: z.string().trim().max(2000).nullable().optional(),
+  checklist: z
     .array(
-      z
-        .object({
-          jobOrderLineSizeId: z.string().min(1),
-          sourceReworkTaskId: z.string().min(1).nullable().optional(),
-          inspectedQuantity: z.number().int().min(0),
-          acceptedQuantity: z.number().int().min(0),
-          reworkQuantity: z.number().int().min(0),
-          permanentlyRejectedQuantity: z.number().int().min(0),
-          defectCategory: defectCategory.nullable().optional(),
-          defectNotes: z.string().trim().max(2000).nullable().optional(),
-        })
-        .superRefine((line, context) => {
-          if (
-            line.inspectedQuantity !==
-            line.acceptedQuantity + line.reworkQuantity + line.permanentlyRejectedQuantity
-          ) {
-            context.addIssue({
-              code: 'custom',
-              message: 'Inspected quantity must equal accepted + rework + permanently rejected',
-            });
-          }
-          if (
-            (line.reworkQuantity > 0 || line.permanentlyRejectedQuantity > 0) &&
-            !line.defectCategory
-          ) {
-            context.addIssue({ code: 'custom', message: 'A defect category is required' });
-          }
-        }),
+      z.object({ itemCode: checklistItemCode, status: checklistStatus.nullable(), remarks: z.string().trim().max(2000).nullable() }),
     )
-    .min(1)
-    .max(500),
+    .length(15)
+    .superRefine((items, context) => {
+      if (new Set(items.map((item) => item.itemCode)).size !== items.length)
+        context.addIssue({ code: 'custom', message: 'Duplicate checklist items are not allowed' });
+    }),
+  inspectedQuantity: z.number().int().min(0),
+  acceptedQuantity: z.number().int().min(0),
+  reworkQuantity: z.number().int().min(0),
+  permanentlyRejectedQuantity: z.number().int().min(0),
+  defectCategory: defectCategory.nullable().optional(),
+  otherDefectDetails: z.string().trim().min(1).max(2000).nullable().optional(),
+  defectNotes: z.string().trim().max(2000).nullable().optional(),
+}).superRefine((form, context) => {
+  if (form.inspectedQuantity !== form.acceptedQuantity + form.reworkQuantity + form.permanentlyRejectedQuantity)
+    context.addIssue({ code: 'custom', message: 'Inspected quantity must equal accepted + rework + permanently rejected' });
+  if (form.defectCategory !== 'OTHER' && form.otherDefectDetails)
+    context.addIssue({ code: 'custom', message: 'Other defect details only apply to OTHER' });
 });
 
 export const versionSchema = z.object({ expectedVersion });

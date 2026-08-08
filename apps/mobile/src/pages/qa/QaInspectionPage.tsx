@@ -1,398 +1,62 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import type {
-  ApiErrorResponse,
-  ApiSuccessResponse,
-  QaDefectCategory,
-  QaInspectionDetail,
-} from '@erve/types';
-import { canStartQaInspection, qaInspectionAction } from '@erve/types';
+import type { ApiErrorResponse, ApiSuccessResponse, QaChecklistStatus, QaDefectCategory, QaInspectionDetail, QaSizeInspectionFormView } from '@erve/types';
+import { canStartQaInspection, qaInspectionAction, QA_CHECKLIST_ITEMS } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
+import { useAuth } from '../../auth/AuthContext.js';
 
-type Entry = {
-  accepted: string;
-  rework: string;
-  rejected: string;
-  category: QaDefectCategory | '';
-  notes: string;
-};
-const categories: QaDefectCategory[] = [
-  'STITCHING',
-  'FABRIC',
-  'PRINT_EMBROIDERY',
-  'MEASUREMENT',
-  'FINISHING',
-  'PACKAGING',
-  'OTHER',
-];
-function message(error: unknown) {
-  if (!isAxiosError<ApiErrorResponse>(error))
-    return 'The request did not complete. You can safely retry.';
-  const code = error.response?.data.error.code;
-  if (code === 'STALE_VERSION')
-    return 'This job changed on another device. Reload before continuing.';
-  if (code === 'UNAUTHORIZED') return 'Your session expired. Sign in again.';
-  if (code === 'FORBIDDEN') return 'Your QA permission changed.';
-  if (!error.response)
-    return 'The result is unknown after a connection interruption. Retry with the same action.';
-  return error.response.data.error.message;
+type ChecklistEntry = { status: QaChecklistStatus | ''; remarks: string };
+export type QaFormDraft = { sampleQuantity: string; accepted: string; rework: string; rejected: string; category: QaDefectCategory | ''; other: string; notes: string; remarks: string; checklist: Record<string, ChecklistEntry> };
+type Errors = Record<string, string>;
+const categories: QaDefectCategory[] = ['STITCHING', 'FABRIC', 'PRINT_EMBROIDERY', 'MEASUREMENT', 'FINISHING', 'PACKAGING', 'OTHER'];
+const blank = (): QaFormDraft => ({ sampleQuantity: '', accepted: '', rework: '', rejected: '', category: '', other: '', notes: '', remarks: '', checklist: {} });
+export function draftFrom(form: QaSizeInspectionFormView): QaFormDraft { return { sampleQuantity: form.sampleQuantity?.toString() ?? '', accepted: String(form.acceptedQuantity), rework: String(form.reworkQuantity), rejected: String(form.permanentlyRejectedQuantity), category: form.defectCategory ?? '', other: form.otherDefectDetails ?? '', notes: form.defectNotes ?? '', remarks: form.inspectionRemarks ?? '', checklist: Object.fromEntries(form.checklist.map((item) => [item.itemCode, { status: item.status ?? '', remarks: item.remarks ?? '' }])) }; }
+function requestKey(action: string, version: number) { return `mobile:${action}:${version}:${crypto.randomUUID()}`; }
+function apiMessage(error: unknown) { if (!isAxiosError<ApiErrorResponse>(error)) return 'The request did not complete. You can safely retry.'; const code = error.response?.data.error.code; if (code === 'STALE_VERSION' || code === 'CONFLICT') return 'This size inspection changed on another device.'; if (code === 'UNAUTHORIZED') return 'Your session expired. Sign in again.'; if (code === 'FORBIDDEN') return 'Your QA permission changed.'; return error.response?.data.error.message ?? 'The request did not complete.'; }
+export function validateDraft(draft: QaFormDraft, capacity: number, finalizing: boolean, evidenceCount: number): Errors {
+  const errors: Errors = {}; const integer = (value: string) => /^\d+$/.test(value);
+  if (draft.sampleQuantity && (!integer(draft.sampleQuantity) || Number(draft.sampleQuantity) > 2147483647)) errors.sampleQuantity = 'Sample quantity must be a non-negative whole number.';
+  const values = [draft.accepted, draft.rework, draft.rejected];
+  if (values.some((value) => value && !integer(value))) errors.quantities = 'Quantities must be non-negative whole numbers.';
+  const total = values.reduce((sum, value) => sum + (value ? Number(value) : 0), 0);
+  if (!errors.quantities && total > capacity) errors.quantities = `Total cannot exceed ${capacity} available for this size.`;
+  if (draft.category === 'OTHER' && !draft.other.trim()) errors.other = 'Describe the other defect.';
+  if (finalizing) { if (!draft.sampleQuantity) errors.sampleQuantity ??= 'Sample quantity is required to finalize.'; if (QA_CHECKLIST_ITEMS.some((item) => !draft.checklist[item.code]?.status)) errors.checklist = 'Complete all 15 checklist responses before finalizing.'; if (total === 0) errors.quantities ??= 'Record an inspection outcome before finalizing.'; if (Number(draft.rejected || 0) > 0 && evidenceCount === 0) errors.evidence = 'Permanent rejection requires evidence for this size.'; }
+  return errors;
 }
-function key(action: string, version: number) {
-  return `mobile:${action}:${version}:${crypto.randomUUID()}`;
-}
-
-function useQaMutation(id: string, path: string, method: 'post' | 'put' = 'post') {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ body, requestKey }: { body: object; requestKey: string }) =>
-      (
-        await apiClient.request<ApiSuccessResponse<QaInspectionDetail>>({
-          url: path,
-          method,
-          data: body,
-          headers: { 'Idempotency-Key': requestKey },
-        })
-      ).data.data,
-    onSuccess: (data) => {
-      queryClient.setQueryData(['qa-detail', id], data);
-      void queryClient.invalidateQueries({ queryKey: ['qa-queue'] });
-    },
-  });
-}
+function formPayload(draft: QaFormDraft, version: number) { const accepted = Number(draft.accepted || 0), rework = Number(draft.rework || 0), rejected = Number(draft.rejected || 0); return { expectedVersion: version, sampleQuantity: draft.sampleQuantity === '' ? null : Number(draft.sampleQuantity), inspectionRemarks: draft.remarks.trim() || null, checklist: QA_CHECKLIST_ITEMS.map((item) => ({ itemCode: item.code, status: draft.checklist[item.code]?.status || null, remarks: draft.checklist[item.code]?.remarks.trim() || null })), inspectedQuantity: accepted + rework + rejected, acceptedQuantity: accepted, reworkQuantity: rework, permanentlyRejectedQuantity: rejected, defectCategory: draft.category || null, otherDefectDetails: draft.category === 'OTHER' ? draft.other.trim() || null : null, defectNotes: draft.notes.trim() || null }; }
 
 export function QaInspectionPage() {
-  const { id = '' } = useParams();
-  const draftKey = `erve:qa-draft:${id}`;
-  const [entries, setEntries] = useState<Record<string, Entry>>(() => {
-    const saved = localStorage.getItem(draftKey);
-    if (!saved) return {};
-    try {
-      return JSON.parse(saved) as Record<string, Entry>;
-    } catch {
-      localStorage.removeItem(draftKey);
-      return {};
-    }
-  });
-  const query = useQuery({
-    queryKey: ['qa-detail', id],
-    queryFn: async () =>
-      (await apiClient.get<ApiSuccessResponse<QaInspectionDetail>>(`/qa/job-orders/${id}`)).data
-        .data,
-  });
-  const currentDraft = query.data?.sessions.find((s) => s.status === 'DRAFT');
-  useEffect(() => {
-    if (Object.keys(entries).length) localStorage.setItem(draftKey, JSON.stringify(entries));
-  }, [draftKey, entries]);
-  useEffect(() => {
-    if (query.data && !currentDraft) localStorage.removeItem(draftKey);
-  }, [currentDraft, draftKey, query.data]);
-  const start = useQaMutation(id, `/qa/job-orders/${id}/inspections`);
-  const save = useQaMutation(id, `/qa/inspections/${currentDraft?.id ?? 'draft'}`, 'put');
-  const finalize = useQaMutation(id, `/qa/inspections/${currentDraft?.id ?? 'draft'}/finalize`);
-  const approve = useQaMutation(id, `/qa/job-orders/${id}/approve`);
-  const detail = query.data;
-  const selectedRework = useMemo(
-    () =>
-      detail?.reworkTasks.filter((t) => t.status === 'READY_FOR_REINSPECTION').map((t) => t.id) ??
-      [],
-    [detail],
-  );
-  const activeLines = useMemo(
-    () =>
-      detail?.lines.filter(
-        (line) =>
-          line.availableToInspect > 0 ||
-          selectedRework.some(
-            (taskId) =>
-              detail.reworkTasks.find((t) => t.id === taskId)?.jobOrderLineSizeId ===
-              line.jobOrderLineSizeId,
-          ),
-      ) ?? [],
-    [detail, selectedRework],
-  );
-  if (query.isLoading)
-    return (
-      <main
-        className="flex h-full min-h-0 items-center justify-center overflow-hidden bg-background p-5"
-        role="status"
-      >
-        Loading inspection…
-      </main>
-    );
-  if (!detail || query.isError)
-    return (
-      <main
-        className="flex h-full min-h-0 flex-col items-center justify-center gap-3 overflow-hidden bg-background p-5 text-center"
-        role="alert"
-      >
-        <p>{message(query.error)}</p>
-        <button onClick={() => void query.refetch()}>Reload</button>
-      </main>
-    );
-  const change = (lineId: string, patch: Partial<Entry>) =>
-    setEntries((all) => ({
-      ...all,
-      [lineId]: {
-        accepted: '',
-        rework: '',
-        rejected: '',
-        category: '',
-        notes: '',
-        ...all[lineId],
-        ...patch,
-      },
-    }));
-  const sourceFor = (lineId: string) =>
-    detail.reworkTasks.find(
-      (t) => t.jobOrderLineSizeId === lineId && t.status === 'READY_FOR_REINSPECTION',
-    );
-  const payload = {
-    expectedVersion: currentDraft?.version ?? 0,
-    lines: activeLines
-      .map((line) => {
-        const e = entries[line.jobOrderLineSizeId] ?? {
-          accepted: '',
-          rework: '',
-          rejected: '',
-          category: '',
-          notes: '',
-        };
-        const accepted = Number(e.accepted || 0),
-          rework = Number(e.rework || 0),
-          rejected = Number(e.rejected || 0);
-        return {
-          jobOrderLineSizeId: line.jobOrderLineSizeId,
-          sourceReworkTaskId: sourceFor(line.jobOrderLineSizeId)?.id,
-          inspectedQuantity: accepted + rework + rejected,
-          acceptedQuantity: accepted,
-          reworkQuantity: rework,
-          permanentlyRejectedQuantity: rejected,
-          defectCategory: e.category || null,
-          defectNotes: e.notes || null,
-        };
-      })
-      .filter((line) => line.inspectedQuantity > 0),
-  };
-  const failedMutation = [start, save, finalize, approve].find((mutation) => mutation.isError);
-  const error = failedMutation?.error;
-  return (
-    <main className="min-h-full space-y-4 bg-background px-4 py-5">
-      <Link to="/qa" className="inline-flex min-h-11 items-center text-[var(--erp-text-link)]">
-        ← QA queue
-      </Link>
-      <section className="rounded-xl border border-border bg-surface p-4">
-        <p className="text-sm text-muted-foreground">
-          {detail.purchaseOrderNumber} · {detail.factory.name}
-        </p>
-        <h1 className="text-2xl font-semibold">{detail.jobOrderNumber}</h1>
-        <p className="mt-2 text-sm">
-          {detail.status.replaceAll('_', ' ')} · Version {detail.version}
-        </p>
-      </section>
-      <section className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-surface p-4 text-sm">
-        <span>Prepared {detail.totals.prepared}</span>
-        <span>Still available {detail.totals.availableToInspect}</span>
-        <span>Accepted {detail.totals.accepted}</span>
-        <span>Awaiting reinspection {detail.totals.awaitingReinspection}</span>
-        <span>Rejected {detail.totals.permanentlyRejected}</span>
-        <span>Final approved {detail.totals.finalApproved}</span>
-      </section>
-      {error && (
-        <section role="alert" className="rounded-lg border border-danger/40 bg-surface p-4">
-          <p>{message(error)}</p>
-          <div className="mt-2 flex gap-2">
-            {failedMutation?.variables && (
-              <button
-                className="min-h-11 rounded-md bg-primary px-4 text-primary-foreground"
-                onClick={() => failedMutation.mutate(failedMutation.variables!)}
-              >
-                Retry safely
-              </button>
-            )}
-            <button
-              className="min-h-11 border border-border px-4"
-              onClick={() => void query.refetch()}
-            >
-              Reload current version
-            </button>
-          </div>
-        </section>
-      )}
-      {!currentDraft && canStartQaInspection(detail.status) && (
-          <button
-            className="min-h-12 w-full rounded-lg bg-primary text-primary-foreground"
-            onClick={() =>
-              start.mutate({
-                body: { expectedVersion: detail.version, sourceReworkTaskIds: selectedRework },
-                requestKey: key('start', detail.version),
-              })
-            }
-          >
-            {qaInspectionAction(detail.status) === 'REINSPECTION' ? 'Start reinspection' : 'Start inspection'}
-          </button>
-        )}
-      {currentDraft && (
-        <>
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold">Quantity disposition</h2>
-            {activeLines.map((line) => {
-              const e = entries[line.jobOrderLineSizeId] ?? {
-                accepted: '',
-                rework: '',
-                rejected: '',
-                category: '',
-                notes: '',
-              };
-              const source = sourceFor(line.jobOrderLineSizeId);
-              const maximum = source?.assignedQuantity ?? line.availableToInspect;
-              return (
-                <article
-                  key={line.jobOrderLineSizeId}
-                  className="rounded-xl border border-border bg-surface p-4"
-                >
-                  <p className="font-semibold">
-                    {line.styleNumber} · {line.sizeLabel}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {source
-                      ? `Reinspect ${maximum}`
-                      : `Prepared ${line.preparedQuantity} · available ${maximum}`}
-                  </p>
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    {(
-                      [
-                        ['accepted', 'Accepted'],
-                        ['rework', 'Rework'],
-                        ['rejected', 'Reject'],
-                      ] as const
-                    ).map(([field, label]) => (
-                      <label key={field} className="text-xs">
-                        {label}
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          min="0"
-                          max={maximum}
-                          className="mt-1 min-h-12 w-full rounded-md border border-border bg-background px-2 text-lg"
-                          value={e[field]}
-                          onChange={(event) =>
-                            change(line.jobOrderLineSizeId, { [field]: event.target.value })
-                          }
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <select
-                    aria-label="Defect category"
-                    className="mt-3 min-h-12 w-full rounded-md border border-border bg-background px-3"
-                    value={e.category}
-                    onChange={(event) =>
-                      change(line.jobOrderLineSizeId, {
-                        category: event.target.value as QaDefectCategory,
-                      })
-                    }
-                  >
-                    <option value="">No defect category</option>
-                    {categories.map((c) => (
-                      <option key={c} value={c}>
-                        {c.replaceAll('_', ' ')}
-                      </option>
-                    ))}
-                  </select>
-                  <textarea
-                    aria-label="Defect notes"
-                    placeholder="Defect notes"
-                    className="mt-3 min-h-20 w-full rounded-md border border-border bg-background p-3"
-                    value={e.notes}
-                    onChange={(event) =>
-                      change(line.jobOrderLineSizeId, { notes: event.target.value })
-                    }
-                  />
-                </article>
-              );
-            })}
-          </section>
-          <button
-            className="min-h-12 w-full rounded-lg bg-primary text-primary-foreground"
-            disabled={!payload.lines.length || save.isPending}
-            onClick={() =>
-              save.mutate({
-                body: payload,
-                requestKey: key(`save:${currentDraft.id}`, currentDraft.version),
-              })
-            }
-          >
-            Save draft
-          </button>
-          <section className="rounded-xl border border-border bg-surface p-4">
-            <h2 className="font-semibold">Defect evidence</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Save quantities first. A photo is required for each permanently rejected line.
-            </p>
-            {currentDraft.lines.map((line) => (
-              <label key={line.id} className="mt-3 block text-sm">
-                {line.styleNumber} · {line.sizeLabel}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  capture="environment"
-                  className="mt-1 block min-h-11 w-full"
-                  onChange={async (event) => {
-                    const file = event.target.files?.[0];
-                    if (!file) return;
-                    const form = new FormData();
-                    form.append('image', file);
-                    form.append('inspectionLineId', line.id);
-                    await apiClient.post(`/qa/inspections/${currentDraft.id}/evidence`, form);
-                    await query.refetch();
-                  }}
-                />
-              </label>
-            ))}
-          </section>
-          <button
-            className="min-h-12 w-full rounded-lg border border-primary text-primary"
-            disabled={finalize.isPending}
-            onClick={() =>
-              finalize.mutate({
-                body: { expectedVersion: currentDraft.version },
-                requestKey: key(`finalize:${currentDraft.id}`, currentDraft.version),
-              })
-            }
-          >
-            Review complete · finalize session
-          </button>
-        </>
-      )}
-      {detail.status === 'QA_IN_PROGRESS' &&
-        !currentDraft &&
-        detail.totals.availableToInspect === 0 &&
-        detail.totals.awaitingReinspection === 0 && (
-          <button
-            className="min-h-12 w-full rounded-lg bg-primary text-primary-foreground"
-            onClick={() =>
-              approve.mutate({
-                body: { expectedVersion: detail.version },
-                requestKey: key('approve', detail.version),
-              })
-            }
-          >
-            Approve final QA quantity
-          </button>
-        )}
-      {detail.status === 'REWORK_REQUIRED' && (
-        <p className="rounded-lg bg-primary/10 p-4">
-          Factory rework is pending. Accepted quantities remain protected.
-        </p>
-      )}
-      {detail.status === 'QA_APPROVED' && (
-        <p className="rounded-lg bg-primary/10 p-4">
-          QA approved: {detail.totals.finalApproved} units are authoritative for future warehouse
-          receipt.
-        </p>
-      )}
-    </main>
-  );
+  const { id = '' } = useParams(); const { user } = useAuth(); const queryClient = useQueryClient(); const storageKey = `erve:qa-form-drafts:${id}`;
+  const [drafts, setDrafts] = useState<Record<string, QaFormDraft>>(() => { try { return JSON.parse(localStorage.getItem(storageKey) ?? '{}'); } catch { return {}; } });
+  const [selectedId, setSelectedId] = useState(''); const [errors, setErrors] = useState<Errors>({}); const [serverIssues, setServerIssues] = useState<string[]>([]); const [stale, setStale] = useState(false);
+  const query = useQuery({ queryKey: ['qa-detail', id], queryFn: async () => (await apiClient.get<ApiSuccessResponse<QaInspectionDetail>>(`/qa/job-orders/${id}`)).data.data });
+  const detail = query.data; const editableSession = detail?.sessions.find((session) => session.forms.some((form) => form.status === 'DRAFT' || form.status === 'REOPENED'));
+  const displayedSession = editableSession ?? detail?.sessions.at(-1); const forms = displayedSession?.forms ?? []; const selected = forms.find((form) => form.id === selectedId) ?? forms[0];
+  useEffect(() => { localStorage.setItem(storageKey, JSON.stringify(drafts)); }, [drafts, storageKey]);
+  const updateDetail = (data: QaInspectionDetail, formId?: string) => { queryClient.setQueryData(['qa-detail', id], data); void queryClient.invalidateQueries({ queryKey: ['qa-queue'] }); if (formId) setDrafts((all) => { const next = { ...all }; delete next[formId]; return next; }); setErrors({}); setStale(false); };
+  const mutate = useMutation({ mutationFn: async ({ url, method, body, key }: { url: string; method: 'post' | 'put'; body: object; key: string }) => (await apiClient.request<ApiSuccessResponse<QaInspectionDetail>>({ url, method, data: body, headers: { 'Idempotency-Key': key } })).data.data, onSuccess: (data, variables) => updateDetail(data, variables.url.split('/forms/')[1]?.split('/')[0]), onError: (error) => { const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined; setStale(api?.code === 'STALE_VERSION' || api?.code === 'CONFLICT'); const issues = (api?.details as { issues?: Array<{ qaSizeInspectionFormId?: string; jobOrderLineSizeId?: string; field?: string; path?: Array<string | number>; message?: string }> } | undefined)?.issues ?? []; const own: Errors = {}; const other: string[] = []; for (const issue of issues) { const form = forms.find((candidate) => candidate.id === issue.qaSizeInspectionFormId || candidate.jobOrderLineSizeId === issue.jobOrderLineSizeId); const raw = issue.field ?? issue.path?.map(String).join('.') ?? 'form'; const target = ['acceptedQuantity', 'reworkQuantity', 'permanentlyRejectedQuantity', 'inspectedQuantity'].includes(raw) ? 'quantities' : raw === 'otherDefectDetails' ? 'other' : raw.startsWith('checklist') ? 'checklist' : raw; const text = issue.message ?? 'Invalid value'; if (form && form.id !== selected?.id) other.push(`Size ${form.sizeLabel} — ${text}`); else own[target] = text; } setErrors(own); setServerIssues(other); } });
+  const start = useMutation({ mutationFn: async () => (await apiClient.post<ApiSuccessResponse<QaInspectionDetail>>(`/qa/job-orders/${id}/inspections`, { expectedVersion: detail!.version, sourceReworkTaskIds: detail!.reworkTasks.filter((task) => task.status === 'READY_FOR_REINSPECTION').map((task) => task.id) }, { headers: { 'Idempotency-Key': requestKey('start', detail!.version) } })).data.data, onSuccess: updateDetail });
+  if (query.isLoading) return <main className="p-5" role="status">Loading inspection…</main>;
+  if (!detail || query.isError) return <main className="p-5" role="alert"><p>{apiMessage(query.error)}</p><button onClick={() => void query.refetch()}>Reload</button></main>;
+  const draft = selected ? drafts[selected.id] ?? draftFrom(selected) : blank(); const line = selected && detail.lines.find((item) => item.jobOrderLineSizeId === selected.jobOrderLineSizeId); const rework = selected && detail.reworkTasks.find((task) => task.id === selected.sourceReworkTaskId); const capacity = rework?.assignedQuantity ?? line?.availableToInspect ?? 0; const evidence = selected ? displayedSession?.evidence.filter((item) => item.inspectionLineId === selected.id) ?? [] : []; const readonly = !editableSession || selected?.status === 'FINALIZED';
+  const change = (patch: Partial<QaFormDraft>) => selected && setDrafts((all) => ({ ...all, [selected.id]: { ...draft, ...patch } }));
+  const submit = (finalizing: boolean) => { if (!selected || !editableSession) return; const next = validateDraft(draft, capacity, finalizing, evidence.length); setErrors(next); setServerIssues([]); if (Object.keys(next).length) return; mutate.mutate({ url: `/qa/inspections/${editableSession.id}/forms/${selected.id}${finalizing ? '/finalize' : ''}`, method: finalizing ? 'post' : 'put', body: finalizing ? { expectedVersion: selected.version } : formPayload(draft, selected.version), key: requestKey(finalizing ? 'finalize' : 'save', selected.version) }); };
+  const canReopen = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'));
+  return <main className="min-h-full space-y-4 bg-background px-4 py-5"><Link to="/qa">← QA queue</Link><section className="rounded-xl border border-border bg-surface p-4"><p className="text-sm">{detail.purchaseOrderNumber} · {detail.factory.name}</p><h1 className="text-2xl font-semibold">{detail.jobOrderNumber}</h1><p>{detail.status.replaceAll('_', ' ')} · Version {detail.version}</p></section>
+    {(mutate.isError || start.isError) && <section role="alert" className="rounded border border-danger/40 p-3"><p>{apiMessage(mutate.error ?? start.error)}</p>{stale && <button onClick={() => void query.refetch()}>Reload latest size inspection</button>}</section>}
+    {!editableSession && canStartQaInspection(detail.status) && <button className="min-h-12 w-full rounded-lg bg-primary text-primary-foreground" onClick={() => start.mutate(undefined)}>{qaInspectionAction(detail.status) === 'REINSPECTION' ? 'Start reinspection' : 'Start inspection'}</button>}
+    {displayedSession && selected && <><section className="rounded-xl border border-border bg-surface p-4"><p>Cycle {displayedSession.cycleNumber}{displayedSession.cycleNumber > 1 ? ' · Reinspection' : ''}</p><nav aria-label="Size inspection forms" className="mt-3 flex flex-wrap gap-2">{forms.map((form) => <button key={form.id} aria-pressed={form.id === selected.id} onClick={() => { setSelectedId(form.id); setErrors({}); setServerIssues([]); }} className="rounded border px-3 py-2">Size {form.sizeLabel}<span className="block text-xs">{form.status}</span></button>)}</nav></section>
+      <section className="space-y-4 rounded-xl border border-border bg-surface p-4"><h2 className="text-lg font-semibold">Size {selected.sizeLabel} · {selected.status}</h2><p className="text-sm">{selected.styleNumber} · prepared {selected.preparedQuantity} · inspectable {capacity}</p>
+        <label>Sample quantity<input aria-label="Sample quantity" disabled={readonly} type="text" inputMode="numeric" value={draft.sampleQuantity} onChange={(event) => change({ sampleQuantity: event.target.value })} /></label>{errors.sampleQuantity && <p role="alert">{errors.sampleQuantity}</p>}
+        <section><h3>Checklist (15 items)</h3>{QA_CHECKLIST_ITEMS.map((item) => { const check = draft.checklist[item.code] ?? { status: '', remarks: '' }; return <div key={item.code}><label>{item.label}<select aria-label={`${item.label} response`} disabled={readonly} value={check.status} onChange={(event) => change({ checklist: { ...draft.checklist, [item.code]: { ...check, status: event.target.value as QaChecklistStatus | '' } } })}><option value="">Unanswered</option><option value="YES">Yes</option><option value="NO">No</option><option value="AVAILABLE">Available</option></select></label><textarea aria-label={`${item.label} remarks`} disabled={readonly} placeholder="Checklist-row remarks" value={check.remarks} onChange={(event) => change({ checklist: { ...draft.checklist, [item.code]: { ...check, remarks: event.target.value } } })} /></div>; })}</section>{errors.checklist && <p role="alert">{errors.checklist}</p>}
+        <label>Inspection remarks<textarea aria-label="Inspection remarks" disabled={readonly} value={draft.remarks} onChange={(event) => change({ remarks: event.target.value })} /></label>
+        <section><h3>Size-specific quantities</h3>{(['accepted', 'rework', 'rejected'] as const).map((field) => <label key={field}>{field}<input aria-label={`${selected.sizeLabel} ${field}`} disabled={readonly} inputMode="numeric" value={draft[field]} onChange={(event) => change({ [field]: event.target.value } as Partial<QaFormDraft>)} /></label>)}{errors.quantities && <p role="alert">{errors.quantities}</p>}</section>
+        <section><h3>Defect information</h3><select aria-label="Defect category" disabled={readonly} value={draft.category} onChange={(event) => change({ category: event.target.value as QaDefectCategory | '', other: event.target.value === 'OTHER' ? draft.other : '' })}><option value="">No defect category</option>{categories.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}</select>{draft.category === 'OTHER' && <textarea aria-label="Other defect details" disabled={readonly} value={draft.other} onChange={(event) => change({ other: event.target.value })} />}{errors.other && <p role="alert">{errors.other}</p>}<textarea aria-label="Defect notes" disabled={readonly} value={draft.notes} onChange={(event) => change({ notes: event.target.value })} /></section>
+        <section><h3>Evidence for size {selected.sizeLabel}</h3>{evidence.length ? evidence.map((item) => <p key={item.id}>{item.fileName}</p>) : <p>No evidence attached to this size.</p>}{!readonly && <input aria-label={`Upload evidence for size ${selected.sizeLabel}`} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('image', file); body.append('inspectionLineId', selected.id); await apiClient.post(`/qa/inspections/${editableSession!.id}/evidence`, body); await query.refetch(); }} />}{errors.evidence && <p role="alert">{errors.evidence}</p>}</section>
+        {errors.form && <p role="alert">{errors.form}</p>}{serverIssues.map((issue) => <p role="alert" key={issue}>{issue}</p>)}<div className="flex gap-2">{!readonly && <><button onClick={() => submit(false)} disabled={mutate.isPending}>Save size form</button><button onClick={() => submit(true)} disabled={mutate.isPending}>Finalize size {selected.sizeLabel}</button></>}{selected.status === 'FINALIZED' && canReopen && <button onClick={() => { const reason = window.prompt(`Reason for reopening size ${selected.sizeLabel}`); if (reason?.trim()) mutate.mutate({ url: `/qa/inspections/${displayedSession.id}/forms/${selected.id}/reopen`, method: 'post', body: { expectedVersion: selected.version, reason: reason.trim() }, key: requestKey('reopen', selected.version) }); }}>Reopen size</button>}</div></section></>}
+    <section className="rounded-xl border border-border bg-surface p-4"><h2>Inspection history</h2>{detail.sessions.map((session) => <article key={session.id}><p>Cycle {session.cycleNumber}{session.cycleNumber > 1 ? ' · Reinspection' : ''}</p>{session.forms.map((form) => <p key={form.id}>Size {form.sizeLabel} · {form.status} · accepted {form.acceptedQuantity}, rework {form.reworkQuantity}, rejected {form.permanentlyRejectedQuantity}</p>)}</article>)}</section>
+  </main>;
 }

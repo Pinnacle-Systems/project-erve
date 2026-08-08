@@ -180,6 +180,7 @@ model User {
   completedJobOrderStages    JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
   qaInspections              QaInspectionSession[]      @relation("QaInspector")
   reopenedQaInspections      QaInspectionSession[]      @relation("QaReopenedBy")
+  reopenedQaSizeForms        QaSizeInspectionForm[]     @relation("QaSizeFormReopenedBy")
   acknowledgedQaReworks      QaReworkTask[]             @relation("QaReworkAcknowledgedBy")
   readiedQaReworks           QaReworkTask[]             @relation("QaReworkReadiedBy")
 
@@ -598,10 +599,10 @@ model DistributorPurchaseOrderLine {
   createdAt       DateTime                @default(now()) @map("created_at")
   updatedAt       DateTime                @updatedAt @map("updated_at")
 
-  purchaseOrder DistributorPurchaseOrder           @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  style         Style                              @relation(fields: [styleId], references: [id], onDelete: Restrict)
-  sizes         DistributorPurchaseOrderLineSize[]
-  jobOrderLines JobOrderLine[]
+  purchaseOrder   DistributorPurchaseOrder           @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  style           Style                              @relation(fields: [styleId], references: [id], onDelete: Restrict)
+  sizes           DistributorPurchaseOrderLineSize[]
+  jobOrderLines   JobOrderLine[]
   seasonSnapshots PurchaseOrderLineSeasonSnapshot[]
 
   @@unique([purchaseOrderId, styleId])
@@ -717,21 +718,21 @@ model JobOrderSeasonSnapshot {
 }
 
 model JobOrderAcknowledgement {
-  id                     String   @id
-  jobOrderId             String   @map("job_order_id")
-  jobOrderVersion        Int      @map("job_order_version")
-  disclaimerRevision     Int      @map("disclaimer_revision")
-  disclaimerTextSnapshot String   @map("disclaimer_text_snapshot")
-  disclaimerSha256       String   @map("disclaimer_sha256")
-  factoryIdSnapshot      String   @map("factory_id_snapshot")
-  acknowledgedByUserId   String   @map("acknowledged_by_user_id")
-  acknowledgedByRole     RoleName @map("acknowledged_by_role")
-  acknowledgedAt         DateTime @map("acknowledged_at")
+  id                     String    @id
+  jobOrderId             String    @map("job_order_id")
+  jobOrderVersion        Int       @map("job_order_version")
+  disclaimerRevision     Int       @map("disclaimer_revision")
+  disclaimerTextSnapshot String    @map("disclaimer_text_snapshot")
+  disclaimerSha256       String    @map("disclaimer_sha256")
+  factoryIdSnapshot      String    @map("factory_id_snapshot")
+  acknowledgedByUserId   String    @map("acknowledged_by_user_id")
+  acknowledgedByRole     RoleName  @map("acknowledged_by_role")
+  acknowledgedAt         DateTime  @map("acknowledged_at")
   invalidatedAt          DateTime? @map("invalidated_at")
-  invalidatedByUserId    String?  @map("invalidated_by_user_id")
-  invalidationReason     String?  @map("invalidation_reason")
-  invalidationMetadata   Json?    @map("invalidation_metadata")
-  createdAt              DateTime @default(now()) @map("created_at")
+  invalidatedByUserId    String?   @map("invalidated_by_user_id")
+  invalidationReason     String?   @map("invalidation_reason")
+  invalidationMetadata   Json?     @map("invalidation_metadata")
+  createdAt              DateTime  @default(now()) @map("created_at")
 
   jobOrder       JobOrder @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
   acknowledgedBy User     @relation("JobOrderAcknowledgedBy", fields: [acknowledgedByUserId], references: [id], onDelete: Restrict)
@@ -764,6 +765,15 @@ enum QaReworkStatus {
   ACKNOWLEDGED
   READY_FOR_REINSPECTION
   CLOSED
+}
+
+// These are the three marked columns on the supplied sample checklist. A
+// missing value deliberately represents an unanswered draft item; it is not a
+// fabricated pass/fail default.
+enum QaChecklistStatus {
+  YES
+  NO
+  AVAILABLE
 }
 
 model JobOrderIdempotencyRecord {
@@ -819,7 +829,7 @@ model JobOrderLineSize {
   jobOrderLine          JobOrderLine                     @relation(fields: [jobOrderLineId], references: [id], onDelete: Cascade)
   purchaseOrderLineSize DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict)
   size                  Size                             @relation(fields: [sizeId], references: [id], onDelete: Restrict)
-  qaInspectionLines     QaInspectionLine[]
+  qaSizeInspectionForms QaSizeInspectionForm[]
   qaReworkTasks         QaReworkTask[]
 
   @@unique([jobOrderLineId, purchaseOrderLineSizeId])
@@ -829,15 +839,14 @@ model JobOrderLineSize {
   @@map("job_order_line_sizes")
 }
 
-// DRAFT inspection lines reserve quantities. FINALIZED lines are authoritative.
-// Reopening preserves the original facts and requires a replacement session.
+// A session records the shared inspection cycle and lifecycle only. Every size
+// inspected in that cycle has its own complete form below.
 model QaInspectionSession {
   id           String             @id
   jobOrderId   String             @map("job_order_id")
   inspectorId  String             @map("inspector_id")
   cycleNumber  Int                @map("cycle_number")
   status       QaInspectionStatus @default(DRAFT)
-  notes        String?
   version      Int                @default(1)
   finalizedAt  DateTime?          @map("finalized_at")
   reopenedAt   DateTime?          @map("reopened_at")
@@ -846,10 +855,10 @@ model QaInspectionSession {
   createdAt    DateTime           @default(now()) @map("created_at")
   updatedAt    DateTime           @updatedAt @map("updated_at")
 
-  jobOrder   JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  inspector  User               @relation("QaInspector", fields: [inspectorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  reopenedBy User?              @relation("QaReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  lines      QaInspectionLine[]
+  jobOrder   JobOrder               @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  inspector  User                   @relation("QaInspector", fields: [inspectorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reopenedBy User?                  @relation("QaReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  forms      QaSizeInspectionForm[]
   evidence   QaEvidence[]
 
   @@index([jobOrderId, status])
@@ -857,31 +866,62 @@ model QaInspectionSession {
   @@map("qa_inspection_sessions")
 }
 
-model QaInspectionLine {
-  id                          String            @id
-  inspectionSessionId         String            @map("inspection_session_id")
-  jobOrderLineSizeId          String            @map("job_order_line_size_id")
-  sourceReworkTaskId          String?           @map("source_rework_task_id")
-  inspectedQuantity           Int               @map("inspected_quantity")
-  acceptedQuantity            Int               @map("accepted_quantity")
-  reworkQuantity              Int               @map("rework_quantity")
-  permanentlyRejectedQuantity Int               @map("permanently_rejected_quantity")
-  defectCategory              QaDefectCategory? @map("defect_category")
-  defectNotes                 String?           @map("defect_notes")
-  createdAt                   DateTime          @default(now()) @map("created_at")
-  updatedAt                   DateTime          @updatedAt @map("updated_at")
+model QaSizeInspectionChecklistItem {
+  id               String             @id
+  inspectionFormId String             @map("inspection_form_id")
+  itemCode         String             @map("item_code")
+  status           QaChecklistStatus?
+  remarks          String?
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
 
-  session          QaInspectionSession @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  jobOrderLineSize JobOrderLineSize    @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  sourceReworkTask QaReworkTask?       @relation("QaReinspectionSource", fields: [sourceReworkTaskId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  generatedRework  QaReworkTask?       @relation("QaGeneratedRework")
+  form QaSizeInspectionForm @relation(fields: [inspectionFormId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([inspectionFormId, itemCode], map: "qa_size_inspection_checklist_i_inspection_form_id_item_code_key")
+  @@index([inspectionFormId])
+  @@map("qa_size_inspection_checklist_items")
+}
+
+// One complete paper-equivalent QA form for one JobOrderLineSize in a session.
+// DRAFT forms reserve quantities. FINALIZED forms are authoritative.
+model QaSizeInspectionForm {
+  id                          String             @id
+  inspectionSessionId         String             @map("inspection_session_id")
+  jobOrderLineSizeId          String             @map("job_order_line_size_id")
+  sourceReworkTaskId          String?            @map("source_rework_task_id")
+  sampleQuantity              Int?               @map("sample_quantity")
+  inspectionRemarks           String?            @map("inspection_remarks")
+  status                      QaInspectionStatus @default(DRAFT)
+  finalizedAt                 DateTime?          @map("finalized_at")
+  reopenedAt                  DateTime?          @map("reopened_at")
+  reopenedById                String?            @map("reopened_by_id")
+  reopenReason                String?            @map("reopen_reason")
+  version                     Int                @default(1)
+  inspectedQuantity           Int                @map("inspected_quantity")
+  acceptedQuantity            Int                @map("accepted_quantity")
+  reworkQuantity              Int                @map("rework_quantity")
+  permanentlyRejectedQuantity Int                @map("permanently_rejected_quantity")
+  defectCategory              QaDefectCategory?  @map("defect_category")
+  otherDefectDetails          String?            @map("other_defect_details")
+  defectNotes                 String?            @map("defect_notes")
+  createdAt                   DateTime           @default(now()) @map("created_at")
+  updatedAt                   DateTime           @updatedAt @map("updated_at")
+
+  session          QaInspectionSession             @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  jobOrderLineSize JobOrderLineSize                @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sourceReworkTask QaReworkTask?                   @relation("QaReinspectionSource", fields: [sourceReworkTaskId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  generatedRework  QaReworkTask?                   @relation("QaGeneratedRework")
+  checklist        QaSizeInspectionChecklistItem[]
+  reopenedBy       User?                           @relation("QaSizeFormReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
   evidence         QaEvidence[]
 
+  @@unique([inspectionSessionId, jobOrderLineSizeId])
   // Uniqueness is enforced by the custom COALESCE expression index in
   // 20260729160000_add_qa_workflow so null source IDs are treated as equal.
   @@index([jobOrderLineSizeId])
   @@index([sourceReworkTaskId])
-  @@map("qa_inspection_lines")
+  @@index([inspectionSessionId, status])
+  @@map("qa_size_inspection_forms")
 }
 
 model QaReworkTask {
@@ -901,12 +941,12 @@ model QaReworkTask {
   createdAt          DateTime       @default(now()) @map("created_at")
   updatedAt          DateTime       @updatedAt @map("updated_at")
 
-  jobOrder         JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  jobOrderLineSize JobOrderLineSize   @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  sourceLine       QaInspectionLine   @relation("QaGeneratedRework", fields: [sourceLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  reinspections    QaInspectionLine[] @relation("QaReinspectionSource")
-  acknowledgedBy   User?              @relation("QaReworkAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  readyBy          User?              @relation("QaReworkReadiedBy", fields: [readyById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  jobOrder         JobOrder               @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  jobOrderLineSize JobOrderLineSize       @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sourceLine       QaSizeInspectionForm   @relation("QaGeneratedRework", fields: [sourceLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reinspections    QaSizeInspectionForm[] @relation("QaReinspectionSource")
+  acknowledgedBy   User?                  @relation("QaReworkAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  readyBy          User?                  @relation("QaReworkReadiedBy", fields: [readyById], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   @@unique([jobOrderLineSizeId, attemptNumber])
   @@index([jobOrderId, status])
@@ -921,11 +961,11 @@ model QaEvidence {
   checksumSha256      String   @map("checksum_sha256")
   createdAt           DateTime @default(now()) @map("created_at")
 
-  session QaInspectionSession @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  line    QaInspectionLine?   @relation(fields: [inspectionLineId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  file    File                @relation(fields: [fileId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  session QaInspectionSession   @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  form    QaSizeInspectionForm? @relation(fields: [inspectionLineId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  file    File                  @relation(fields: [fileId], references: [id], onDelete: Restrict, onUpdate: NoAction)
 
-  @@unique([inspectionSessionId, checksumSha256])
+  @@unique([inspectionSessionId, inspectionLineId, checksumSha256])
   @@index([inspectionLineId])
   @@index([fileId])
   @@map("qa_evidence")

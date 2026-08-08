@@ -78,7 +78,7 @@ The normalized, one-row-per-endpoint inventory is [AUTHORIZATION_ROUTE_INVENTORY
 | Price lists | `apps/api/src/modules/price-lists/price-lists.routes.ts`: GET `/`, `/lookup`, `/distributors/:distributorId/history`, `/:id`; POST `/`, `/:id/lines`, `/:id/actions/activate`, `/:id/actions/retire`; PATCH `/:id`, `/:id/lines/:lineId`; DELETE `/:id/lines/:lineId`. |
 | Purchase orders | `apps/api/src/modules/purchase-orders/purchase-orders.routes.ts`: GET `/`, `/:id`, `/:id/job-order-balance`, `/:id/fulfilment-summary`; POST `/`, `/:id/actions/submit`, `/:id/actions/cancel`; PATCH `/:id`. |
 | Job orders | `apps/api/src/modules/job-orders/job-orders.routes.ts`: GET `/`, `/assigned-tasks`, `/:id`, `/:id/stages`, `/:id/audit`, `/:id/variance`; POST `/`, `/:id/actions/send-to-factory`, `/:id/actions/confirm`, `/:id/actions/complete-stage`, `/:id/actions/update-prepared-quantity`; PATCH `/:id/disclaimer`. |
-| QA | `apps/api/src/modules/qa/qa.routes.ts`: GET `/queue`, `/job-orders/:id`, `/rework`, `/evidence/:id/content`; POST `/job-orders/:id/inspections`, `/inspections/:id/finalize`, `/job-orders/:id/approve`, `/inspections/:id/reopen`, `/rework/:id/acknowledge`, `/rework/:id/ready`, `/inspections/:id/evidence`; PUT `/inspections/:id`. |
+| QA | `apps/api/src/modules/qa/qa.routes.ts`: GET `/queue`, `/job-orders/:id`, `/rework`, `/evidence/:id/content`; POST `/job-orders/:id/inspections`, `/inspections/:sessionId/forms/:formId/finalize`, `/inspections/:sessionId/forms/:formId/reopen`, `/job-orders/:id/approve`, `/rework/:id/acknowledge`, `/rework/:id/ready`, `/inspections/:id/evidence`; PUT `/inspections/:sessionId/forms/:formId`. |
 
 | Required authorization evidence | Existing automated test files |
 | --- | --- |

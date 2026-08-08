@@ -9,7 +9,7 @@ export function notFoundHandler(req: Request, res: Response): void {
 
 export function errorHandler(
   err: unknown,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction,
 ): void {
@@ -19,7 +19,15 @@ export function errorHandler(
   }
 
   if (err instanceof ZodError) {
-    res.status(400).json(errorResponse('VALIDATION_ERROR', 'Invalid request data', err.flatten()));
+    const formId = req.params.formId ?? req.originalUrl.match(/\/forms\/([^/?]+)/)?.[1];
+    res.status(400).json(errorResponse('VALIDATION_ERROR', 'Invalid request data', {
+      issues: err.issues.map((issue) => ({
+        qaSizeInspectionFormId: formId,
+        jobOrderLineSizeId: typeof req.body?.jobOrderLineSizeId === 'string' ? req.body.jobOrderLineSizeId : undefined,
+        field: issue.path.join('.') || 'form',
+        message: issue.message,
+      })),
+    }));
     return;
   }
 

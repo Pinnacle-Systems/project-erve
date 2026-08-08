@@ -96,10 +96,10 @@ Generated from the API route declarations on 2026-08-05. Each row is a separatel
 | QA | GET | `/qa/queue` | QA-V | QA global visibility | `canView` | 401 unauthenticated; 403 role/scope |
 | QA | GET | `/qa/job-orders/:id` | QA-V | QA global visibility | `canView` | 401 unauthenticated; 403 role/scope |
 | QA | POST | `/qa/job-orders/:id/inspections` | QA-O | QA eligibility and version | `canInspect` | 401 unauthenticated; 403 role/scope |
-| QA | PUT | `/qa/inspections/:id` | QA-O | QA eligibility and version | `canInspect` | 401 unauthenticated; 403 role/scope |
-| QA | POST | `/qa/inspections/:id/finalize` | QA-O | QA eligibility and version | `canInspect` | 401 unauthenticated; 403 role/scope |
+| QA | PUT | `/qa/inspections/:sessionId/forms/:formId` | QA-O | form/session ownership and form version | `canInspect` | 401 unauthenticated; 403 role/scope |
+| QA | POST | `/qa/inspections/:sessionId/forms/:formId/finalize` | QA-O | form/session ownership and form version | `canInspect` | 401 unauthenticated; 403 role/scope |
 | QA | POST | `/qa/job-orders/:id/approve` | QA-O | QA eligibility and version | `canInspect` | 401 unauthenticated; 403 role/scope |
-| QA | POST | `/qa/inspections/:id/reopen` | M | inspection status/version | `requireRoles('ADMIN', 'MERCHANDISER')` | 401 unauthenticated; 403 role/scope |
+| QA | POST | `/qa/inspections/:sessionId/forms/:formId/reopen` | M | finalized form status/version | `requireRoles('ADMIN', 'MERCHANDISER')` | 401 unauthenticated; 403 role/scope |
 | QA | GET | `/qa/rework` | QA-R | mapped factory; rework status/version | `canRework` | 401 unauthenticated; 403 role/scope |
 | QA | POST | `/qa/rework/:id/acknowledge` | QA-R | mapped factory; rework status/version | `canRework` | 401 unauthenticated; 403 role/scope |
 | QA | POST | `/qa/rework/:id/ready` | QA-R | mapped factory; rework status/version | `canRework` | 401 unauthenticated; 403 role/scope |

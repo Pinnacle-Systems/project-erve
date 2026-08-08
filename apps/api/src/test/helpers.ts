@@ -7,11 +7,22 @@ import { signAccessToken } from '../auth/jwt.js';
 // Test users/roles live on top of the seeded reference data (roles), so
 // only the per-test rows need clearing between tests.
 export async function resetDatabase(): Promise<void> {
+  // Integration tests must be self-contained after a fresh migration replay;
+  // do not rely on development seeding for authorization reference data.
+  for (const name of [
+    'ADMIN', 'MERCHANDISER', 'FACTORY_USER', 'QA_USER', 'ACCOUNTANT', 'DISTRIBUTOR', 'SENIOR_MANAGEMENT',
+  ] as const) {
+    await prisma.role.upsert({
+      where: { name },
+      update: {},
+      create: { id: createId(), name, description: `Integration test ${name} role` },
+    });
+  }
   await prisma.auditLog.deleteMany();
   await prisma.qaEvidence.deleteMany();
-  await prisma.qaInspectionLine.deleteMany({ where: { sourceReworkTaskId: { not: null } } });
+  await prisma.qaSizeInspectionForm.deleteMany({ where: { sourceReworkTaskId: { not: null } } });
   await prisma.qaReworkTask.deleteMany();
-  await prisma.qaInspectionLine.deleteMany();
+  await prisma.qaSizeInspectionForm.deleteMany();
   await prisma.qaInspectionSession.deleteMany();
   await prisma.jobOrderStageStatus.deleteMany();
   await prisma.jobOrderLineSize.deleteMany();
