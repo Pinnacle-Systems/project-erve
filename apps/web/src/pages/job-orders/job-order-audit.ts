@@ -18,23 +18,23 @@ const JOB_ORDER_AUDIT_TITLES: Record<string, string> = {
   JOB_ORDER_DISCLAIMER_CHANGED: 'Job order disclaimer changed',
   JOB_ORDER_DISCLAIMER_ACKNOWLEDGED: 'Factory acknowledged disclaimer',
   JOB_ORDER_PREPARED_QUANTITY_UPDATED: 'Job order prepared quantity updated',
+  QA_REWORK_REQUESTED: 'Rework requested by QA',
+  QA_REWORK_ACKNOWLEDGE: 'Factory acknowledged rework',
+  QA_REWORK_NOTES: 'Factory updated rework notes',
+  QA_REWORK_READY: 'Factory marked rework ready for reinspection',
+  QA_INSPECTION_STARTED: 'QA inspection or reinspection started',
+  QA_REINSPECTION_COMPLETED: 'QA reinspection completed',
 };
 
 function sentenceCaseAction(action: string): string {
-  const words = action
-    .trim()
-    .replaceAll('_', ' ')
-    .toLowerCase()
-    .trim();
+  const words = action.trim().replaceAll('_', ' ').toLowerCase().trim();
   return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : 'Unknown event';
 }
 
 export function formatJobOrderAuditTitle(action: string, metadata: unknown): string {
   if (action === 'JOB_ORDER_STAGE_COMPLETED') {
     const stageName = getCompletedStageName(metadata);
-    return stageName
-      ? `Production stage completed — ${stageName}`
-      : 'Job order stage completed';
+    return stageName ? `Production stage completed — ${stageName}` : 'Job order stage completed';
   }
 
   return JOB_ORDER_AUDIT_TITLES[action] ?? sentenceCaseAction(action);

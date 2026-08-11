@@ -51,6 +51,20 @@ const jobOrderInclude = {
     include: { acknowledgedBy: { select: { id: true, name: true, email: true } } },
     orderBy: { acknowledgedAt: 'desc' as const },
   },
+  qaReworkTasks: {
+    include: {
+      sourceLine: {
+        include: {
+          session: { include: { inspector: { select: { id: true, name: true, email: true } } } },
+          evidence: { include: { file: true } },
+        },
+      },
+      acknowledgedBy: { select: { id: true, name: true, email: true } },
+      readyBy: { select: { id: true, name: true, email: true } },
+      reinspections: { select: { finalizedAt: true }, orderBy: { createdAt: 'desc' as const } },
+    },
+    orderBy: { createdAt: 'desc' as const },
+  },
 } satisfies Prisma.JobOrderInclude;
 
 type JobOrderRecord = Prisma.JobOrderGetPayload<{ include: typeof jobOrderInclude }>;
@@ -169,7 +183,13 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
     status: jobOrder.status,
     factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
     unitPrice: jobOrder.unitPrice.toNumber(),
-    seasonSnapshots: jobOrder.seasonSnapshots.map((season) => ({ seasonId: season.seasonId, code: season.code, name: season.name, financialYear: season.financialYear, displayName: season.displayName })),
+    seasonSnapshots: jobOrder.seasonSnapshots.map((season) => ({
+      seasonId: season.seasonId,
+      code: season.code,
+      name: season.name,
+      financialYear: season.financialYear,
+      displayName: season.displayName,
+    })),
     confirmedBy: jobOrder.confirmer,
     confirmedAt: jobOrder.confirmedAt?.toISOString() ?? null,
     disclaimerText: jobOrder.disclaimerText,
@@ -202,6 +222,46 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
       })),
     })),
     stages: jobOrder.stageStatuses.map(toStageView),
+    reworkTasks: jobOrder.qaReworkTasks.map((task) => {
+      const context = jobOrder.lines
+        .flatMap((line) => line.sizes.map((size) => ({ line, size })))
+        .find(({ size }) => size.id === task.jobOrderLineSizeId)!;
+      return {
+        id: task.id,
+        jobOrderId: jobOrder.id,
+        jobOrderNumber: jobOrder.jobOrderNumber,
+        jobOrderLineSizeId: task.jobOrderLineSizeId,
+        styleNumber: context.line.style.styleNumber,
+        styleName: context.line.style.styleName,
+        sizeCode: context.size.size.code,
+        sizeLabel: context.size.size.label,
+        assignedQuantity: task.assignedQuantity,
+        attemptNumber: task.attemptNumber,
+        status: task.status,
+        defectCategory: task.sourceLine.defectCategory,
+        otherDefectDetails: task.sourceLine.otherDefectDetails,
+        defectNotes: task.sourceLine.defectNotes,
+        qaRemarks: task.sourceLine.inspectionRemarks,
+        qaEvidence: task.sourceLine.evidence.map((evidence) => ({
+          id: evidence.id,
+          inspectionLineId: evidence.inspectionLineId,
+          fileName: evidence.file.fileName,
+          contentType: evidence.file.mimeType,
+          sizeBytes: evidence.file.sizeBytes,
+          createdAt: evidence.createdAt.toISOString(),
+        })),
+        requestedBy: task.sourceLine.session.inspector,
+        requestedAt: (task.sourceLine.finalizedAt ?? task.createdAt).toISOString(),
+        factoryNotes: task.notes,
+        acknowledgedBy: task.acknowledgedBy,
+        acknowledgedAt: task.acknowledgedAt?.toISOString() ?? null,
+        readyBy: task.readyBy,
+        readyAt: task.readyAt?.toISOString() ?? null,
+        reinspectedAt: task.reinspections[0]?.finalizedAt?.toISOString() ?? null,
+        version: task.version,
+        updatedAt: task.updatedAt.toISOString(),
+      };
+    }),
     createdAt: jobOrder.createdAt.toISOString(),
     updatedAt: jobOrder.updatedAt.toISOString(),
     version: jobOrder.version,
@@ -531,7 +591,25 @@ export async function createJobOrderFromPO(
         disclaimerText: input.disclaimerText || null,
         disclaimerRevision: input.disclaimerText ? 1 : 0,
         createdBy: actor.id,
-        seasonSnapshots: { create: [...new Map(input.lines.flatMap((line) => (poLinesById.get(line.purchaseOrderLineId)?.seasonSnapshots ?? []).map((season) => [season.seasonId ?? season.id, { id: createId(), seasonId: season.seasonId, code: season.code, name: season.name, financialYear: season.financialYear, displayName: season.displayName }]))).values()] },
+        seasonSnapshots: {
+          create: [
+            ...new Map(
+              input.lines.flatMap((line) =>
+                (poLinesById.get(line.purchaseOrderLineId)?.seasonSnapshots ?? []).map((season) => [
+                  season.seasonId ?? season.id,
+                  {
+                    id: createId(),
+                    seasonId: season.seasonId,
+                    code: season.code,
+                    name: season.name,
+                    financialYear: season.financialYear,
+                    displayName: season.displayName,
+                  },
+                ]),
+              ),
+            ).values(),
+          ],
+        },
       },
     });
 
@@ -724,7 +802,9 @@ export async function confirmJobOrder(
   const initial = await prisma.jobOrder.findUnique({ where: { id }, select: { factoryId: true } });
   if (!initial) throw HttpError.notFound('Job order not found');
   if (!canFactoryManage(actor, initial.factoryId))
-    throw HttpError.forbidden('Only the mapped factory user can acknowledge and confirm this job order');
+    throw HttpError.forbidden(
+      'Only the mapped factory user can acknowledge and confirm this job order',
+    );
   await assertFactoryUserFactoryActive(actor, initial.factoryId);
   const hash = requestHash(input);
   await prisma.$transaction(async (tx) => {
@@ -741,9 +821,13 @@ export async function confirmJobOrder(
     });
     if (!jobOrder) throw HttpError.notFound('Job order not found');
     if (!canFactoryManage(actor, jobOrder.factoryId))
-      throw HttpError.forbidden('Only the mapped factory user can acknowledge and confirm this job order');
+      throw HttpError.forbidden(
+        'Only the mapped factory user can acknowledge and confirm this job order',
+      );
     if (jobOrder.factory.status !== 'ACTIVE')
-      throw HttpError.conflict('This factory is inactive and cannot perform new operational actions');
+      throw HttpError.conflict(
+        'This factory is inactive and cannot perform new operational actions',
+      );
     if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
     if (jobOrder.status !== 'SENT_TO_FACTORY')
       throw HttpError.badRequest('Only sent job orders can be confirmed');

@@ -10,7 +10,13 @@ export async function resetDatabase(): Promise<void> {
   // Integration tests must be self-contained after a fresh migration replay;
   // do not rely on development seeding for authorization reference data.
   for (const name of [
-    'ADMIN', 'MERCHANDISER', 'FACTORY_USER', 'QA_USER', 'ACCOUNTANT', 'DISTRIBUTOR', 'SENIOR_MANAGEMENT',
+    'ADMIN',
+    'MERCHANDISER',
+    'FACTORY_USER',
+    'QA_USER',
+    'ACCOUNTANT',
+    'DISTRIBUTOR',
+    'SENIOR_MANAGEMENT',
   ] as const) {
     await prisma.role.upsert({
       where: { name },
@@ -19,11 +25,13 @@ export async function resetDatabase(): Promise<void> {
     });
   }
   await prisma.auditLog.deleteMany();
-  await prisma.qaEvidence.deleteMany();
-  await prisma.qaSizeInspectionForm.deleteMany({ where: { sourceReworkTaskId: { not: null } } });
-  await prisma.qaReworkTask.deleteMany();
-  await prisma.qaSizeInspectionForm.deleteMany();
-  await prisma.qaInspectionSession.deleteMany();
+  // Repeated rework intentionally forms a historical chain where a reinspection
+  // form points to cycle N and cycle N+1 points back to that form. PostgreSQL
+  // cannot DELETE either side first, so the disposable test database clears the
+  // related QA tables atomically. Production FKs remain restrictive.
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "qa_inspection_sessions", "qa_size_inspection_forms", "qa_rework_tasks" CASCADE',
+  );
   await prisma.jobOrderStageStatus.deleteMany();
   await prisma.jobOrderLineSize.deleteMany();
   await prisma.jobOrderLine.deleteMany();

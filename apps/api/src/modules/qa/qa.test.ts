@@ -140,7 +140,7 @@ async function fixture() {
       },
     });
   }
-  return { qa, admin, jobOrderId, formSizeId, formSizeIds: [formSizeId, ...moreSizeIds] };
+  return { qa, admin, factory, jobOrderId, formSizeId, formSizeIds: [formSizeId, ...moreSizeIds] };
 }
 function payload(version: number, accepted = 10) {
   return {
@@ -357,9 +357,9 @@ describe('per-size QA form lifecycle', () => {
         expect.objectContaining({ field: 'quantities' }),
       ]),
     );
-    expect(await prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } })).toMatchObject(
-      { status: 'DRAFT', sampleQuantity: null, inspectedQuantity: 0 },
-    );
+    expect(
+      await prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } }),
+    ).toMatchObject({ status: 'DRAFT', sampleQuantity: null, inspectedQuantity: 0 });
   });
 
   it('saves an incomplete defect draft but requires its category before finalization', async () => {
@@ -401,9 +401,9 @@ describe('per-size QA form lifecycle', () => {
     expect(blocked.body.error.details.issues).toEqual(
       expect.arrayContaining([expect.objectContaining({ field: 'defectCategory' })]),
     );
-    expect(await prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } })).toMatchObject(
-      { status: 'DRAFT', reworkQuantity: 1, defectCategory: null },
-    );
+    expect(
+      await prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } }),
+    ).toMatchObject({ status: 'DRAFT', reworkQuantity: 1, defectCategory: null });
   });
 
   it('keeps retired session-wide mutation routes unavailable', async () => {
@@ -788,6 +788,9 @@ describe('per-size QA form lifecycle', () => {
     const own = await addEvidence(a.id);
     expect(own.inspectionLineId).toBe(a.id);
     await finalize('reject-own-evidence').expect(200);
+    expect(
+      await prisma.qaReworkTask.count({ where: { jobOrderLineSizeId: a.jobOrderLineSizeId } }),
+    ).toBe(0);
   });
 
   it('allows the same image to be attached independently to different size forms', async () => {
@@ -827,7 +830,7 @@ describe('per-size QA form lifecycle', () => {
     );
   });
 
-  it('creates exactly one B rework task and completes a B-only reinspection cycle', async () => {
+  it('creates one B rework task, reinspects it, and appends a second failed cycle', async () => {
     const f = await fixture();
     const started = await request(app)
       .post(`/qa/job-orders/${f.jobOrderId}/inspections`)
@@ -879,6 +882,61 @@ describe('per-size QA form lifecycle', () => {
       sourceLineId: b.id,
     });
     expect(await prisma.qaReworkTask.count({ where: { jobOrderId: f.jobOrderId } })).toBe(1);
+    expect(await prisma.jobOrder.count()).toBe(1);
+    const originalJobOrderNumber = (
+      await prisma.jobOrder.findUniqueOrThrow({ where: { id: f.jobOrderId } })
+    ).jobOrderNumber;
+    const factoryUser = await createTestUserAndToken({
+      email: 'factory-rework@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: f.factory.id },
+    });
+    const wrongFactory = await createTestFactory();
+    const wrongFactoryUser = await createTestUserAndToken({
+      email: 'wrong-factory-rework@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: wrongFactoryUser.userId, factoryId: wrongFactory.id },
+    });
+    const factoryDetail = await request(app)
+      .get(`/job-orders/${f.jobOrderId}`)
+      .set(auth(factoryUser.token))
+      .expect(200);
+    expect(factoryDetail.body.data).toMatchObject({
+      id: f.jobOrderId,
+      jobOrderNumber: originalJobOrderNumber,
+      reworkTasks: [
+        expect.objectContaining({
+          id: task.id,
+          assignedQuantity: 5,
+          status: 'REWORK_REQUIRED',
+          qaRemarks: 'Size-specific remarks',
+          defectCategory: 'STITCHING',
+          requestedBy: expect.objectContaining({ id: f.qa.userId }),
+        }),
+      ],
+    });
+    await request(app)
+      .get(`/job-orders/${f.jobOrderId}`)
+      .set(auth(wrongFactoryUser.token))
+      .expect(403);
+    await request(app)
+      .post(`/qa/rework/${task.id}/acknowledge`)
+      .set(auth(wrongFactoryUser.token))
+      .set('Idempotency-Key', 'wrong-factory-ack')
+      .send({ expectedVersion: task.version })
+      .expect(403);
+    await request(app)
+      .post(`/qa/rework/${task.id}/acknowledge`)
+      .set(auth(f.qa.token))
+      .set('Idempotency-Key', 'qa-cannot-ack')
+      .send({ expectedVersion: task.version })
+      .expect(403);
     expect(
       await prisma.auditLog.findFirst({
         where: { action: 'QA_SIZE_FORM_FINALIZED', entityId: b.id },
@@ -893,17 +951,62 @@ describe('per-size QA form lifecycle', () => {
     expect(await prisma.qaReworkTask.count({ where: { jobOrderId: f.jobOrderId } })).toBe(1);
     await request(app)
       .post(`/qa/rework/${task.id}/acknowledge`)
-      .set(auth(f.admin.token))
+      .set(auth(factoryUser.token))
       .set('Idempotency-Key', 'ack-b')
-      .send({ expectedVersion: task.version })
+      .send({ expectedVersion: task.version, notes: 'Rework accepted by the line supervisor' })
       .expect(200);
     const acknowledged = await prisma.qaReworkTask.findUniqueOrThrow({ where: { id: task.id } });
+    expect(acknowledged).toMatchObject({
+      status: 'ACKNOWLEDGED',
+      acknowledgedById: factoryUser.userId,
+      notes: 'Rework accepted by the line supervisor',
+    });
+    await request(app)
+      .post(`/qa/rework/${task.id}/acknowledge`)
+      .set(auth(factoryUser.token))
+      .set('Idempotency-Key', 'ack-b-duplicate')
+      .send({ expectedVersion: task.version })
+      .expect(409);
+    await request(app)
+      .patch(`/qa/rework/${task.id}/notes`)
+      .set(auth(factoryUser.token))
+      .set('Idempotency-Key', 'notes-b')
+      .send({ expectedVersion: acknowledged.version, notes: 'Seams corrected and checked' })
+      .expect(200);
+    const noted = await prisma.qaReworkTask.findUniqueOrThrow({ where: { id: task.id } });
+    expect(noted.notes).toBe('Seams corrected and checked');
     const ready = await request(app)
       .post(`/qa/rework/${task.id}/ready`)
-      .set(auth(f.admin.token))
+      .set(auth(factoryUser.token))
       .set('Idempotency-Key', 'ready-b')
-      .send({ expectedVersion: acknowledged.version })
+      .send({ expectedVersion: noted.version })
       .expect(200);
+    await request(app)
+      .post(`/qa/rework/${task.id}/ready`)
+      .set(auth(factoryUser.token))
+      .set('Idempotency-Key', 'ready-b-duplicate')
+      .send({ expectedVersion: noted.version })
+      .expect(409);
+    expect(await prisma.jobOrder.count()).toBe(1);
+    expect(
+      (await prisma.jobOrder.findUniqueOrThrow({ where: { id: f.jobOrderId } })).jobOrderNumber,
+    ).toBe(originalJobOrderNumber);
+    expect(
+      await prisma.auditLog.findMany({
+        where: {
+          entityType: 'JobOrder',
+          entityId: f.jobOrderId,
+          action: {
+            in: [
+              'QA_REWORK_REQUESTED',
+              'QA_REWORK_ACKNOWLEDGE',
+              'QA_REWORK_NOTES',
+              'QA_REWORK_READY',
+            ],
+          },
+        },
+      }),
+    ).toHaveLength(4);
     const second = await request(app)
       .post(`/qa/job-orders/${f.jobOrderId}/inspections`)
       .set(auth(f.qa.token))
@@ -924,7 +1027,13 @@ describe('per-size QA form lifecycle', () => {
       .put(`/qa/inspections/${cycle2.id}/forms/${reForm.id}`)
       .set(auth(f.qa.token))
       .set('Idempotency-Key', 'save-reinspection-b')
-      .send(payload(reForm.version, 5))
+      .send({
+        ...payload(reForm.version, 5),
+        acceptedQuantity: 3,
+        reworkQuantity: 2,
+        defectCategory: 'FINISHING',
+        defectNotes: 'Cuff finish still uneven',
+      })
       .expect(200);
     const reVersion = resaved.body.data.sessions.find((s: { id: string }) => s.id === cycle2.id)
       .forms[0].version;
@@ -935,7 +1044,24 @@ describe('per-size QA form lifecycle', () => {
       .send({ expectedVersion: reVersion })
       .expect(200);
     expect((await prisma.qaReworkTask.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-      'CLOSED',
+      'REINSPECTED',
     );
+    const cycles = await prisma.qaReworkTask.findMany({
+      where: { jobOrderId: f.jobOrderId, jobOrderLineSizeId: b.jobOrderLineSizeId },
+      orderBy: { attemptNumber: 'asc' },
+    });
+    expect(cycles).toHaveLength(2);
+    expect(cycles[1]).toMatchObject({
+      attemptNumber: 2,
+      assignedQuantity: 2,
+      status: 'REWORK_REQUIRED',
+    });
+    expect(
+      await prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: b.id } }),
+    ).toMatchObject({
+      status: 'FINALIZED',
+      reworkQuantity: 5,
+      defectCategory: 'STITCHING',
+    });
   });
 });

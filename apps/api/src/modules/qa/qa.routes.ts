@@ -12,6 +12,7 @@ import {
   qaQueueQuerySchema,
   reopenSchema,
   reworkActionSchema,
+  reworkNotesSchema,
   saveSizeInspectionFormSchema,
   startInspectionSchema,
   versionSchema,
@@ -69,20 +70,34 @@ qaRouter.put(
   '/inspections/:sessionId/forms/:formId',
   canInspect,
   asyncHandler(async (req, res) =>
-    res.json(successResponse(await service.saveSizeInspectionForm(
-      req.user!, req.params.sessionId! as string, req.params.formId! as string,
-      saveSizeInspectionFormSchema.parse(req.body), key(req),
-    ))),
+    res.json(
+      successResponse(
+        await service.saveSizeInspectionForm(
+          req.user!,
+          req.params.sessionId! as string,
+          req.params.formId! as string,
+          saveSizeInspectionFormSchema.parse(req.body),
+          key(req),
+        ),
+      ),
+    ),
   ),
 );
 qaRouter.post(
   '/inspections/:sessionId/forms/:formId/finalize',
   canInspect,
   asyncHandler(async (req, res) =>
-    res.json(successResponse(await service.finalizeSizeInspectionForm(
-      req.user!, req.params.sessionId! as string, req.params.formId! as string,
-      versionSchema.parse(req.body), key(req),
-    ))),
+    res.json(
+      successResponse(
+        await service.finalizeSizeInspectionForm(
+          req.user!,
+          req.params.sessionId! as string,
+          req.params.formId! as string,
+          versionSchema.parse(req.body),
+          key(req),
+        ),
+      ),
+    ),
   ),
 );
 qaRouter.post(
@@ -153,6 +168,23 @@ qaRouter.post(
           req.params.id! as string,
           'READY',
           reworkActionSchema.parse(req.body),
+          key(req),
+        ),
+      ),
+    ),
+  ),
+);
+qaRouter.patch(
+  '/rework/:id/notes',
+  canRework,
+  asyncHandler(async (req, res) =>
+    res.json(
+      successResponse(
+        await service.updateRework(
+          req.user!,
+          req.params.id! as string,
+          'NOTES',
+          reworkNotesSchema.parse(req.body),
           key(req),
         ),
       ),

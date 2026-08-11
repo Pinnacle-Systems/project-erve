@@ -10,7 +10,7 @@ import { apiClient } from '../../lib/api-client.js';
 import type { JobOrderStage } from './types.js';
 
 vi.mock('../../auth/AuthContext.js', () => ({
-  useOptionalAuth: () => ({ user: { roles: ['MERCHANDISER'] } }),
+  useOptionalAuth: () => ({ user: { roles: ['MERCHANDISER', 'FACTORY_USER'] } }),
 }));
 
 let container: HTMLDivElement;
@@ -28,14 +28,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const stage = (id: string, name: string, sequence: number, status: JobOrderStage['status']): JobOrderStage => ({
+const stage = (
+  id: string,
+  name: string,
+  sequence: number,
+  status: JobOrderStage['status'],
+): JobOrderStage => ({
   id,
   processFlowVersionStageId: `flow-${id}`,
   stageSequence: sequence,
   stageNameSnapshot: name,
   status,
   completedAt: status === 'COMPLETED' ? '2026-07-31T10:00:00Z' : null,
-  completedBy: status === 'COMPLETED' ? { id: 'user-1', name: 'Alice', email: 'alice@test.local' } : null,
+  completedBy:
+    status === 'COMPLETED' ? { id: 'user-1', name: 'Alice', email: 'alice@test.local' } : null,
   remarks: null,
   createdAt: '2026-07-30T10:00:00Z',
   updatedAt: '2026-07-31T10:00:00Z',
@@ -56,7 +62,8 @@ const mockJobOrder = (
   id: 'jo-1',
   jobOrderNumber: 'JO-001',
   status,
-  factoryConfirmationStatus: status === 'DRAFT' || status === 'SENT_TO_FACTORY' ? 'PENDING' : 'CONFIRMED',
+  factoryConfirmationStatus:
+    status === 'DRAFT' || status === 'SENT_TO_FACTORY' ? 'PENDING' : 'CONFIRMED',
   orderedQuantityTotal: 10,
   preparedQuantityTotal: 0,
   unitPrice: 199.5,
@@ -72,14 +79,22 @@ const mockJobOrder = (
   disclaimerText: null,
   disclaimerRevision: 0,
   acknowledgement: null,
+  reworkTasks: [],
   lines: [],
-  stages: status === 'PRODUCTION_COMPLETE'
-    ? stages.map((current) => ({ ...current, status: 'COMPLETED' as const }))
-    : stages,
+  stages:
+    status === 'PRODUCTION_COMPLETE'
+      ? stages.map((current) => ({ ...current, status: 'COMPLETED' as const }))
+      : stages,
   ...overrides,
 });
 
-type Audit = { id: string; action: string; createdAt: string; actor: { id: string; name: string; email: string } | null; metadata: unknown };
+type Audit = {
+  id: string;
+  action: string;
+  createdAt: string;
+  actor: { id: string; name: string; email: string } | null;
+  metadata: unknown;
+};
 
 const renderPage = async (
   status: string,
@@ -126,6 +141,59 @@ describe('ProductionStageStepper', () => {
 });
 
 describe('JobOrderDetailPage workflow rendering', () => {
+  it('shows size-level rework inside the original Job Order and performs factory actions', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: {} } });
+    await renderPage('REWORK_REQUIRED', standardStages, [], {
+      reworkTasks: [
+        {
+          id: 'rework-1',
+          jobOrderId: 'jo-1',
+          jobOrderNumber: 'JO-001',
+          jobOrderLineSizeId: 'size-m',
+          styleNumber: 'ST-101',
+          styleName: 'Oxford Shirt',
+          sizeCode: 'M',
+          sizeLabel: 'Medium',
+          assignedQuantity: 4,
+          attemptNumber: 1,
+          status: 'REWORK_REQUIRED',
+          defectCategory: 'STITCHING',
+          otherDefectDetails: null,
+          defectNotes: 'Loose cuff seam',
+          qaRemarks: 'Repair the cuff and present all four units.',
+          qaEvidence: [],
+          requestedBy: { id: 'qa-1', name: 'QA Inspector', email: 'qa@test.local' },
+          requestedAt: '2026-08-09T10:00:00Z',
+          factoryNotes: null,
+          acknowledgedBy: null,
+          acknowledgedAt: null,
+          readyBy: null,
+          readyAt: null,
+          reinspectedAt: null,
+          version: 1,
+          updatedAt: '2026-08-09T10:00:00Z',
+        },
+      ],
+    });
+
+    expect(content()).toContain('Current open rework');
+    expect(content()).toContain('JO-001 · ST-101 Oxford Shirt · Size Medium');
+    expect(content()).toContain('Requested quantity4');
+    expect(content()).toContain('Loose cuff seam');
+    expect(content()).toContain('Repair the cuff and present all four units.');
+    expect(content()).not.toContain('rework-1');
+
+    const acknowledge = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Acknowledge rework',
+    ) as HTMLButtonElement;
+    await act(async () => acknowledge.click());
+    expect(post).toHaveBeenCalledWith(
+      '/qa/rework/rework-1/acknowledge',
+      { expectedVersion: 1, notes: null },
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+  });
+
   it('renders the draft notice without production controls', async () => {
     await renderPage('DRAFT');
     expect(content()).toContain('Production workflow not started');
@@ -176,7 +244,9 @@ describe('JobOrderDetailPage workflow rendering', () => {
     act(() => send.click());
 
     expect(post).not.toHaveBeenCalled();
-    expect(content()).toContain('Save the disclaimer before sending this Job Order to the factory.');
+    expect(content()).toContain(
+      'Save the disclaimer before sending this Job Order to the factory.',
+    );
     expect(document.activeElement).toBe(disclaimer);
   });
 
@@ -219,18 +289,25 @@ describe('JobOrderDetailPage workflow rendering', () => {
     expect(content()).not.toContain('Current Stage:');
   });
 
-  it.each(['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'])('renders the guided workflow for %s', async (status) => {
-    await renderPage(status);
-    expect(content()).toContain('Cutting');
-    expect(content()).toContain('Printing');
-    expect(content()).toContain('Current Stage: Cutting');
-    expect(content()).toContain('Prepared quantities become available after Finishing is completed.');
-  });
+  it.each(['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'])(
+    'renders the guided workflow for %s',
+    async (status) => {
+      await renderPage(status);
+      expect(content()).toContain('Cutting');
+      expect(content()).toContain('Printing');
+      expect(content()).toContain('Current Stage: Cutting');
+      expect(content()).toContain(
+        'Prepared quantities become available after Finishing is completed.',
+      );
+    },
+  );
 
   it('renders unlocked prepared quantities after production completes', async () => {
     await renderPage('PRODUCTION_COMPLETE');
     expect(content()).toContain('Cutting');
-    expect(content()).toContain('Update size-wise prepared quantities after production is complete.');
+    expect(content()).toContain(
+      'Update size-wise prepared quantities after production is complete.',
+    );
     expect(content()).not.toContain('Prepared quantities become available after');
   });
 
@@ -245,7 +322,9 @@ describe('JobOrderDetailPage workflow rendering', () => {
     expect(content()).toContain('Embroidery');
     expect(content()).toContain('Final Inspection');
     expect(content()).toContain('Current Stage: Fabric Preparation');
-    expect(content()).toContain('Prepared quantities become available after Final Inspection is completed.');
+    expect(content()).toContain(
+      'Prepared quantities become available after Final Inspection is completed.',
+    );
     expect(content()).not.toContain('Cutting');
   });
 });
@@ -260,7 +339,9 @@ describe('JobOrderDetailPage audit history', () => {
   });
 
   it('renders valid stage names while preserving actor and timestamp', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [audit('cutting', { stageName: ' Cutting ' })]);
+    await renderPage('IN_PRODUCTION', standardStages, [
+      audit('cutting', { stageName: ' Cutting ' }),
+    ]);
     expect(content()).toContain('Production stage completed — Cutting');
     expect(content()).toContain('Alice');
     expect(content()).toContain('31 Jul 2026');
@@ -290,12 +371,16 @@ describe('JobOrderDetailPage audit history', () => {
   );
 
   it('preserves custom stage-name capitalization', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [audit('custom', { stageName: 'QA Review' })]);
+    await renderPage('IN_PRODUCTION', standardStages, [
+      audit('custom', { stageName: 'QA Review' }),
+    ]);
     expect(content()).toContain('Production stage completed — QA Review');
   });
 
   it('uses a safe sentence-case fallback for unknown actions', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [audit('unknown', null, 'SOME_NEW_EVENT_CODE')]);
+    await renderPage('IN_PRODUCTION', standardStages, [
+      audit('unknown', null, 'SOME_NEW_EVENT_CODE'),
+    ]);
     expect(content()).toContain('Some new event code');
     expect(content()).not.toContain('SOME_NEW_EVENT_CODE');
   });
@@ -317,13 +402,23 @@ describe('JobOrderDetailPage stage completion mutation', () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/audit')) return { data: { data: [] } };
       readCount += 1;
-      const stages = readCount <= 1
-        ? [stage('stage-1', 'Cutting', 1, 'IN_PROGRESS'), stage('stage-2', 'Printing', 2, 'NOT_STARTED')]
-        : [stage('stage-1', 'Cutting', 1, 'COMPLETED'), stage('stage-2', 'Printing', 2, 'IN_PROGRESS')];
+      const stages =
+        readCount <= 1
+          ? [
+              stage('stage-1', 'Cutting', 1, 'IN_PROGRESS'),
+              stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
+            ]
+          : [
+              stage('stage-1', 'Cutting', 1, 'COMPLETED'),
+              stage('stage-2', 'Printing', 2, 'IN_PROGRESS'),
+            ];
       return { data: { data: mockJobOrder('IN_PRODUCTION', stages) } };
     });
     vi.spyOn(apiClient, 'post').mockImplementation(
-      () => new Promise((resolve) => { resolvePost = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          resolvePost = resolve;
+        }),
     );
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -331,7 +426,9 @@ describe('JobOrderDetailPage stage completion mutation', () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <MemoryRouter initialEntries={['/job-orders/jo-1']}>
-            <Routes><Route path="/job-orders/:id" element={<JobOrderDetailPage />} /></Routes>
+            <Routes>
+              <Route path="/job-orders/:id" element={<JobOrderDetailPage />} />
+            </Routes>
           </MemoryRouter>
         </QueryClientProvider>,
       );

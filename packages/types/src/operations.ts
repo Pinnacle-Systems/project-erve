@@ -223,6 +223,7 @@ export interface JobOrderDetail extends JobOrderSummary {
   creator: { id: string; name: string; email: string };
   lines: JobOrderLine[];
   stages: JobOrderStage[];
+  reworkTasks: QaReworkTaskView[];
 }
 
 export interface JobOrderAuditEntry {
@@ -308,7 +309,7 @@ export type QaInspectionStatus = 'DRAFT' | 'FINALIZED' | 'REOPENED' | 'VOIDED';
 export type QaDefectCategory =
   'STITCHING' | 'FABRIC' | 'PRINT_EMBROIDERY' | 'MEASUREMENT' | 'FINISHING' | 'PACKAGING' | 'OTHER';
 export type QaReworkStatus =
-  'PENDING_ACKNOWLEDGEMENT' | 'ACKNOWLEDGED' | 'READY_FOR_REINSPECTION' | 'CLOSED';
+  'REWORK_REQUIRED' | 'ACKNOWLEDGED' | 'READY_FOR_REINSPECTION' | 'REINSPECTED';
 export type QaChecklistStatus = 'YES' | 'NO' | 'AVAILABLE';
 export type QaChecklistItemCode =
   | 'FABRIC_COLOUR_QUALITY'
@@ -437,12 +438,25 @@ export interface QaReworkTaskView extends VersionedResource {
   jobOrderNumber: string;
   jobOrderLineSizeId: string;
   styleNumber: string;
+  styleName: string;
   sizeCode: string;
+  sizeLabel: string;
   assignedQuantity: number;
   attemptNumber: number;
   status: QaReworkStatus;
   defectCategory: QaDefectCategory | null;
+  otherDefectDetails: string | null;
   defectNotes: string | null;
+  qaRemarks: string | null;
+  qaEvidence: QaEvidenceMetadata[];
+  requestedBy: { id: string; name: string; email: string };
+  requestedAt: string;
+  factoryNotes: string | null;
+  acknowledgedBy: { id: string; name: string; email: string } | null;
+  acknowledgedAt: string | null;
+  readyBy: { id: string; name: string; email: string } | null;
+  readyAt: string | null;
+  reinspectedAt: string | null;
 }
 export interface QaInspectionDetail extends QaQueueSummary {
   distributor: { id: string; code: string; name: string } | null;

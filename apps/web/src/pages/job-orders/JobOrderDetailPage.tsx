@@ -2,12 +2,18 @@ import { useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import type { ApiErrorResponse, ApiSuccessResponse, JobOrderAuditEntry } from '@erve/types';
+import type {
+  ApiErrorResponse,
+  ApiSuccessResponse,
+  JobOrderAuditEntry,
+  QaReworkTaskView,
+} from '@erve/types';
 import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useAuthedImage } from '../../lib/use-authed-image.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
 import type { JobOrder, JobOrderLineSize } from './types.js';
 import { ProductionStageStepper } from './ProductionStageStepper.js';
@@ -35,6 +41,27 @@ function mutationErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+const REWORK_STATUS_LABELS: Record<QaReworkTaskView['status'], string> = {
+  REWORK_REQUIRED: 'Rework required',
+  ACKNOWLEDGED: 'Acknowledged',
+  READY_FOR_REINSPECTION: 'Ready for reinspection',
+  REINSPECTED: 'Reinspected',
+};
+
+function QaEvidenceLink({ evidence }: { evidence: QaReworkTaskView['qaEvidence'][number] }) {
+  const image = useAuthedImage(`/qa/evidence/${evidence.id}/content`, evidence.createdAt);
+  return (
+    <button
+      type="button"
+      className="text-sm font-medium text-primary underline disabled:text-muted-foreground"
+      disabled={!image.url}
+      onClick={() => image.url && window.open(image.url, '_blank', 'noopener,noreferrer')}
+    >
+      {image.loading ? `Loading ${evidence.fileName}…` : evidence.fileName}
+    </button>
+  );
+}
+
 export function JobOrderDetailPage() {
   const { id } = useParams();
   const queryClient = useQueryClient();
@@ -44,6 +71,7 @@ export function JobOrderDetailPage() {
   const [disclaimerError, setDisclaimerError] = useState('');
   const [sendError, setSendError] = useState('');
   const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
+  const [reworkNotesDrafts, setReworkNotesDrafts] = useState<Record<string, string>>({});
   const disclaimerRef = useRef<HTMLTextAreaElement>(null);
   const user = useOptionalAuth()?.user;
 
@@ -61,7 +89,10 @@ export function JobOrderDetailPage() {
         .data.data,
   });
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['job-order', id] });
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['job-order', id] });
+    void queryClient.invalidateQueries({ queryKey: ['job-order-audit', id] });
+  };
 
   const sendMutation = useMutation({
     mutationFn: async () =>
@@ -115,7 +146,8 @@ export function JobOrderDetailPage() {
         `/job-orders/${id}/disclaimer`,
         {
           expectedVersion: jobOrderQuery.data!.version,
-          disclaimerText: disclaimerDrafts[jobOrderQuery.data!.id] ?? jobOrderQuery.data!.disclaimerText ?? '',
+          disclaimerText:
+            disclaimerDrafts[jobOrderQuery.data!.id] ?? jobOrderQuery.data!.disclaimerText ?? '',
         },
         { headers: { 'Idempotency-Key': `${id}:disclaimer:${jobOrderQuery.data!.version}` } },
       ),
@@ -141,6 +173,27 @@ export function JobOrderDetailPage() {
         { sizes, expectedVersion: jobOrderQuery.data!.version },
         { headers: { 'Idempotency-Key': `${id}:prepared:${jobOrderQuery.data!.version}` } },
       ),
+    onSuccess: invalidate,
+  });
+  const reworkMutation = useMutation({
+    mutationFn: async ({
+      task,
+      action,
+      notes,
+    }: {
+      task: QaReworkTaskView;
+      action: 'acknowledge' | 'ready' | 'notes';
+      notes: string;
+    }) => {
+      const url = `/qa/rework/${task.id}/${action}`;
+      const body = { expectedVersion: task.version, notes: notes.trim() || null };
+      const config = {
+        headers: { 'Idempotency-Key': `${id}:rework:${task.id}:${action}:${task.version}` },
+      };
+      return action === 'notes'
+        ? apiClient.patch(url, body, config)
+        : apiClient.post(url, body, config);
+    },
     onSuccess: invalidate,
   });
 
@@ -176,10 +229,14 @@ export function JobOrderDetailPage() {
   const acknowledgeDisclaimer = acknowledgedRevision === acknowledgementKey;
   const disclaimerText = disclaimerDrafts[jobOrder.id] ?? jobOrder.disclaimerText ?? '';
   const canEditDisclaimer = jobOrder.status === 'DRAFT' && canManageJobOrders;
-  const canConfirm = jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
+  const canConfirm =
+    jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
   const canCompleteStage =
     ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) && Boolean(nextStage);
   const canUpdatePrepared = jobOrder.status === 'PRODUCTION_COMPLETE';
+  const canPerformFactoryRework = Boolean(user?.roles.includes('FACTORY_USER'));
+  const openRework = jobOrder.reworkTasks.filter((task) => task.status !== 'REINSPECTED');
+  const historicalRework = jobOrder.reworkTasks.filter((task) => task.status === 'REINSPECTED');
   const hasProductionStarted = [
     'CONFIRMED_BY_FACTORY',
     'IN_PRODUCTION',
@@ -248,7 +305,11 @@ export function JobOrderDetailPage() {
               </div>
             )}
             {canConfirm && (
-              <Button disabled={!acknowledgeDisclaimer} onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>
+              <Button
+                disabled={!acknowledgeDisclaimer}
+                onClick={() => confirmMutation.mutate()}
+                loading={confirmMutation.isPending}
+              >
                 Confirm
               </Button>
             )}
@@ -256,21 +317,19 @@ export function JobOrderDetailPage() {
         }
       />
 
-      {(confirmMutation.isError ||
-        completeStageMutation.isError ||
-        preparedMutation.isError) && (
+      {(confirmMutation.isError || completeStageMutation.isError || preparedMutation.isError) && (
         <ValidationMessage tone="error">
-          {[
-            confirmMutation.error,
-            completeStageMutation.error,
-            preparedMutation.error,
-          ].find((error) => error instanceof Error)?.message ?? 'Unable to update job order'}
+          {[confirmMutation.error, completeStageMutation.error, preparedMutation.error].find(
+            (error) => error instanceof Error,
+          )?.message ?? 'Unable to update job order'}
         </ValidationMessage>
       )}
 
       {disclaimerMutation.isError && (
         <ValidationMessage tone="error">
-          {disclaimerMutation.error instanceof Error ? disclaimerMutation.error.message : 'Unable to update disclaimer'}
+          {disclaimerMutation.error instanceof Error
+            ? disclaimerMutation.error.message
+            : 'Unable to update disclaimer'}
         </ValidationMessage>
       )}
 
@@ -280,9 +339,7 @@ export function JobOrderDetailPage() {
           <DescriptionList.Item label="Factory" value={jobOrder.factory.name} />
           <DescriptionList.Item
             label="Factory unit price"
-            value={
-              `₹${jobOrder.unitPrice.toFixed(2)}`
-            }
+            value={`₹${jobOrder.unitPrice.toFixed(2)}`}
           />
           <DescriptionList.Item
             label="Process Flow"
@@ -325,13 +382,173 @@ export function JobOrderDetailPage() {
         </DescriptionList>
       </Panel>
 
+      {jobOrder.reworkTasks.length > 0 && (
+        <Panel
+          title="Rework"
+          description="QA rework remains part of this original Job Order and is tracked separately by size and inspection cycle."
+        >
+          <div className="space-y-5">
+            {openRework.length > 0 && (
+              <section className="space-y-3" aria-label="Open rework cycles">
+                <h3 className="text-sm font-semibold">Current open rework</h3>
+                {openRework.map((task) => {
+                  const notes = reworkNotesDrafts[task.id] ?? task.factoryNotes ?? '';
+                  return (
+                    <article
+                      key={task.id}
+                      className="space-y-4 rounded-md border border-border p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold">
+                            {jobOrder.jobOrderNumber} · {task.styleNumber} {task.styleName} · Size{' '}
+                            {task.sizeLabel}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            Rework cycle {task.attemptNumber} · Requested{' '}
+                            {formatDateTime(task.requestedAt)} by {task.requestedBy.name}
+                          </p>
+                        </div>
+                        <StatusBadge
+                          label={REWORK_STATUS_LABELS[task.status]}
+                          tone={task.status === 'READY_FOR_REINSPECTION' ? 'info' : 'warning'}
+                        />
+                      </div>
+                      <DescriptionList columns={3}>
+                        <DescriptionList.Item
+                          label="Requested quantity"
+                          value={task.assignedQuantity.toLocaleString()}
+                        />
+                        <DescriptionList.Item
+                          label="Defect category"
+                          value={task.defectCategory?.replaceAll('_', ' ') ?? 'Not recorded'}
+                        />
+                        <DescriptionList.Item
+                          label="Defect details"
+                          value={task.otherDefectDetails ?? task.defectNotes ?? 'Not recorded'}
+                        />
+                        <DescriptionList.Item
+                          label="QA remarks"
+                          value={task.qaRemarks ?? 'Not recorded'}
+                        />
+                        <DescriptionList.Item
+                          label="Acknowledged"
+                          value={
+                            task.acknowledgedAt
+                              ? `${formatDateTime(task.acknowledgedAt)} by ${task.acknowledgedBy?.name ?? 'Factory'}`
+                              : 'Not yet'
+                          }
+                        />
+                        <DescriptionList.Item
+                          label="Ready"
+                          value={
+                            task.readyAt
+                              ? `${formatDateTime(task.readyAt)} by ${task.readyBy?.name ?? 'Factory'}`
+                              : 'Not yet'
+                          }
+                        />
+                      </DescriptionList>
+                      <div>
+                        <p className="mb-2 text-sm font-medium">QA evidence</p>
+                        {task.qaEvidence.length ? (
+                          <div className="flex flex-wrap gap-3">
+                            {task.qaEvidence.map((evidence) => (
+                              <QaEvidenceLink key={evidence.id} evidence={evidence} />
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No QA evidence attached.</p>
+                        )}
+                      </div>
+                      <label className="block text-sm font-medium">
+                        Factory rework notes
+                        <textarea
+                          className="mt-1 min-h-24 w-full rounded-control border border-border bg-surface-raised px-3 py-2 font-normal"
+                          maxLength={1000}
+                          readOnly={!canPerformFactoryRework}
+                          value={notes}
+                          onChange={(event) =>
+                            setReworkNotesDrafts((current) => ({
+                              ...current,
+                              [task.id]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      {canPerformFactoryRework && (
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="secondary"
+                            loading={reworkMutation.isPending}
+                            onClick={() => reworkMutation.mutate({ task, action: 'notes', notes })}
+                          >
+                            Save notes
+                          </Button>
+                          {task.status === 'REWORK_REQUIRED' && (
+                            <Button
+                              loading={reworkMutation.isPending}
+                              onClick={() =>
+                                reworkMutation.mutate({ task, action: 'acknowledge', notes })
+                              }
+                            >
+                              Acknowledge rework
+                            </Button>
+                          )}
+                          {task.status === 'ACKNOWLEDGED' && (
+                            <Button
+                              loading={reworkMutation.isPending}
+                              onClick={() =>
+                                reworkMutation.mutate({ task, action: 'ready', notes })
+                              }
+                            >
+                              Mark complete quantity ready for reinspection
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </section>
+            )}
+            {historicalRework.length > 0 && (
+              <section className="space-y-2" aria-label="Previous rework cycles">
+                <h3 className="text-sm font-semibold">Previous rework cycles</h3>
+                {historicalRework.map((task) => (
+                  <div key={task.id} className="rounded-md border border-border p-3 text-sm">
+                    <p className="font-medium">
+                      {task.styleNumber} · Size {task.sizeLabel} · cycle {task.attemptNumber}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {task.assignedQuantity} units · Reinspected{' '}
+                      {formatDateTime(task.reinspectedAt)}
+                    </p>
+                  </div>
+                ))}
+              </section>
+            )}
+            {reworkMutation.isError && (
+              <ValidationMessage tone="error">
+                {mutationErrorMessage(
+                  reworkMutation.error,
+                  'Unable to update rework. Refresh and try again.',
+                )}
+              </ValidationMessage>
+            )}
+          </div>
+        </Panel>
+      )}
+
       <Panel
         title="Factory commercial terms / disclaimer"
         description="Plain-text terms the factory must acknowledge before confirming this Job Order."
         footer={
           canEditDisclaimer ? (
             <div className="flex justify-end">
-              <Button onClick={() => disclaimerMutation.mutate()} loading={disclaimerMutation.isPending}>
+              <Button
+                onClick={() => disclaimerMutation.mutate()}
+                loading={disclaimerMutation.isPending}
+              >
                 Save disclaimer
               </Button>
             </div>
@@ -342,10 +559,7 @@ export function JobOrderDetailPage() {
           <label className="flex flex-col gap-1 text-sm font-medium" htmlFor="job-order-disclaimer">
             <span>
               Disclaimer{' '}
-              <span
-                className="text-[var(--erp-form-field-error-text-color)]"
-                aria-hidden="true"
-              >
+              <span className="text-[var(--erp-form-field-error-text-color)]" aria-hidden="true">
                 *
               </span>
             </span>
@@ -354,7 +568,9 @@ export function JobOrderDetailPage() {
               id="job-order-disclaimer"
               required
               aria-invalid={Boolean(disclaimerError) || undefined}
-              aria-describedby={disclaimerError ? 'job-order-disclaimer-error' : 'job-order-disclaimer-help'}
+              aria-describedby={
+                disclaimerError ? 'job-order-disclaimer-error' : 'job-order-disclaimer-help'
+              }
               className={`min-h-32 rounded-control border bg-surface-raised px-[var(--erp-control-padding-x)] py-2 font-normal focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)] ${
                 disclaimerError
                   ? 'border-[var(--erp-form-field-error-border)] focus:border-[var(--erp-form-field-error-border)]'
@@ -399,13 +615,16 @@ export function JobOrderDetailPage() {
       {canConfirm && (
         <Panel title="Factory acknowledgement review">
           <p className="text-sm text-muted-foreground">
-            Review the style, size quantities, unit price, process flow, and disclaimer above before confirming.
+            Review the style, size quantities, unit price, process flow, and disclaimer above before
+            confirming.
           </p>
           <label className="mt-4 flex min-h-11 items-center gap-3 text-sm font-medium">
             <input
               type="checkbox"
               checked={acknowledgeDisclaimer}
-              onChange={(event) => setAcknowledgedRevision(event.target.checked ? acknowledgementKey : '')}
+              onChange={(event) =>
+                setAcknowledgedRevision(event.target.checked ? acknowledgementKey : '')
+              }
             />
             I have read and acknowledge the Job Order commercial terms and disclaimer.
           </label>
@@ -555,7 +774,10 @@ export function JobOrderDetailPage() {
       </Panel>
 
       <Panel title="Seasons">
-        <div className="text-sm text-muted-foreground">{(jobOrder.seasonSnapshots ?? []).map((season) => season.displayName).join(', ') || 'No Season snapshot'}</div>
+        <div className="text-sm text-muted-foreground">
+          {(jobOrder.seasonSnapshots ?? []).map((season) => season.displayName).join(', ') ||
+            'No Season snapshot'}
+        </div>
       </Panel>
 
       <Panel title="Audit Log">
@@ -587,10 +809,13 @@ export function JobOrderDetailPage() {
           </div>
         ) : jobOrder.status !== 'DRAFT' ? (
           <p className="text-sm text-muted-foreground">
-            No recorded disclaimer acknowledgement. This Job Order predates the acknowledgement workflow.
+            No recorded disclaimer acknowledgement. This Job Order predates the acknowledgement
+            workflow.
           </p>
         ) : (
-          <p className="text-sm text-muted-foreground">No acknowledgement is required while this Job Order is a draft.</p>
+          <p className="text-sm text-muted-foreground">
+            No acknowledgement is required while this Job Order is a draft.
+          </p>
         )}
       </Panel>
 

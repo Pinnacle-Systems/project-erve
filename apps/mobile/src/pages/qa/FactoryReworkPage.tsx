@@ -1,23 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ApiSuccessResponse, QaInspectionDetail, QaReworkTaskView } from '@erve/types';
+import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import type { ApiSuccessResponse, QaReworkTaskView } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 export function FactoryReworkPage() {
-  const qc = useQueryClient();
   const query = useQuery({
     queryKey: ['factory-rework'],
     queryFn: async () =>
       (await apiClient.get<ApiSuccessResponse<QaReworkTaskView[]>>('/qa/rework')).data.data,
-  });
-  const action = useMutation({
-    mutationFn: async ({ task, name }: { task: QaReworkTaskView; name: 'acknowledge' | 'ready' }) =>
-      (
-        await apiClient.post<ApiSuccessResponse<QaInspectionDetail>>(
-          `/qa/rework/${task.id}/${name}`,
-          { expectedVersion: task.version },
-          { headers: { 'Idempotency-Key': `mobile:rework:${name}:${task.id}:${task.version}` } },
-        )
-      ).data.data,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['factory-rework'] }),
   });
   return (
     <main className="min-h-full space-y-4 bg-background px-4 py-5">
@@ -44,20 +33,12 @@ export function FactoryReworkPage() {
             {task.defectCategory?.replaceAll('_', ' ')}{' '}
             {task.defectNotes ? `· ${task.defectNotes}` : ''}
           </p>
-          <button
-            className="mt-3 min-h-12 w-full rounded-lg bg-primary text-primary-foreground"
-            disabled={action.isPending}
-            onClick={() =>
-              action.mutate({
-                task,
-                name: task.status === 'PENDING_ACKNOWLEDGEMENT' ? 'acknowledge' : 'ready',
-              })
-            }
+          <Link
+            className="mt-3 flex min-h-12 w-full items-center justify-center rounded-lg bg-primary text-primary-foreground"
+            to={`/factory-tasks/${task.jobOrderId}`}
           >
-            {task.status === 'PENDING_ACKNOWLEDGEMENT'
-              ? 'Acknowledge rework'
-              : 'Mark ready for reinspection'}
-          </button>
+            Open original Job Order
+          </Link>
         </article>
       ))}
     </main>

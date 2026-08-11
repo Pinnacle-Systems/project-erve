@@ -117,7 +117,19 @@ const detailInclude = {
     },
     orderBy: { createdAt: 'asc' as const },
   },
-  qaReworkTasks: { include: { sourceLine: true } },
+  qaReworkTasks: {
+    include: {
+      sourceLine: {
+        include: {
+          session: { include: { inspector: { select: { id: true, name: true, email: true } } } },
+          evidence: { include: { file: true } },
+        },
+      },
+      acknowledgedBy: { select: { id: true, name: true, email: true } },
+      readyBy: { select: { id: true, name: true, email: true } },
+      reinspections: { select: { finalizedAt: true }, orderBy: { createdAt: 'desc' as const } },
+    },
+  },
 } satisfies Prisma.JobOrderInclude;
 type DetailRecord = Prisma.JobOrderGetPayload<{ include: typeof detailInclude }>;
 
@@ -153,7 +165,7 @@ function derive(record: DetailRecord) {
   const rejected = finalizedLines.reduce((n, line) => n + line.permanentlyRejectedQuantity, 0);
   const rework = finalizedLines.reduce((n, line) => n + line.reworkQuantity, 0);
   const awaiting = record.qaReworkTasks
-    .filter((task) => task.status !== 'CLOSED')
+    .filter((task) => task.status !== 'REINSPECTED')
     .reduce((n, task) => n + task.assignedQuantity, 0);
   const prepared = record.preparedQuantityTotal;
   const firstPassReserved = reservedFirstPass.reduce((n, line) => n + line.inspectedQuantity, 0);
@@ -180,12 +192,32 @@ function toRework(
     jobOrderNumber: record.jobOrderNumber,
     jobOrderLineSizeId: task.jobOrderLineSizeId,
     styleNumber: size.l.style.styleNumber,
+    styleName: size.l.style.styleName,
     sizeCode: size.s.size.code,
+    sizeLabel: size.s.size.label,
     assignedQuantity: task.assignedQuantity,
     attemptNumber: task.attemptNumber,
     status: task.status,
     defectCategory: task.sourceLine.defectCategory,
+    otherDefectDetails: task.sourceLine.otherDefectDetails,
     defectNotes: task.sourceLine.defectNotes,
+    qaRemarks: task.sourceLine.inspectionRemarks,
+    qaEvidence: task.sourceLine.evidence.map((evidence) => ({
+      id: evidence.id,
+      inspectionLineId: evidence.inspectionLineId,
+      fileName: evidence.file.fileName,
+      contentType: evidence.file.mimeType,
+      sizeBytes: evidence.file.sizeBytes,
+      createdAt: evidence.createdAt.toISOString(),
+    })),
+    requestedBy: task.sourceLine.session.inspector,
+    requestedAt: (task.sourceLine.finalizedAt ?? task.createdAt).toISOString(),
+    factoryNotes: task.notes,
+    acknowledgedBy: task.acknowledgedBy,
+    acknowledgedAt: task.acknowledgedAt?.toISOString() ?? null,
+    readyBy: task.readyBy,
+    readyAt: task.readyAt?.toISOString() ?? null,
+    reinspectedAt: task.reinspections[0]?.finalizedAt?.toISOString() ?? null,
     version: task.version,
     updatedAt: task.updatedAt.toISOString(),
   };
@@ -210,7 +242,7 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
       }
     }
   }
-  for (const task of record.qaReworkTasks.filter((t) => t.status !== 'CLOSED'))
+  for (const task of record.qaReworkTasks.filter((t) => t.status !== 'REINSPECTED'))
     lineFacts.get(task.jobOrderLineSizeId)!.awaiting += task.assignedQuantity;
   return {
     id: record.id,
@@ -400,6 +432,8 @@ export async function startInspection(
     if (job.version !== input.expectedVersion) throw HttpError.staleVersion(job.version);
     if (!QA_INSPECTION_START_STATUSES.includes(job.status))
       throw HttpError.conflict('Job order is not available for inspection');
+    if (job.status === 'READY_FOR_REINSPECTION' && input.sourceReworkTaskIds.length === 0)
+      throw HttpError.conflict('Select ready rework before starting reinspection');
     const activeDraft =
       job.status === 'QA_IN_PROGRESS'
         ? job.qaInspections.find((session) => session.status === 'DRAFT')
@@ -662,10 +696,7 @@ export async function finalizeSizeInspectionForm(
         field: 'quantities',
         message: `Final quantities must reconcile to ${capacity}.`,
       });
-    if (
-      (form.reworkQuantity > 0 || form.permanentlyRejectedQuantity > 0) &&
-      !form.defectCategory
-    )
+    if ((form.reworkQuantity > 0 || form.permanentlyRejectedQuantity > 0) && !form.defectCategory)
       incomplete.push({ field: 'defectCategory', message: 'A defect category is required.' });
     if (form.defectCategory === 'OTHER' && !form.otherDefectDetails?.trim())
       incomplete.push({
@@ -691,9 +722,10 @@ export async function finalizeSizeInspectionForm(
       const attempt =
         (await tx.qaReworkTask.count({ where: { jobOrderLineSizeId: form.jobOrderLineSizeId } })) +
         1;
+      const reworkTaskId = createId();
       await tx.qaReworkTask.create({
         data: {
-          id: createId(),
+          id: reworkTaskId,
           jobOrderId,
           jobOrderLineSizeId: form.jobOrderLineSizeId,
           sourceLineId: formId,
@@ -701,24 +733,46 @@ export async function finalizeSizeInspectionForm(
           assignedQuantity: form.reworkQuantity,
         },
       });
+      await recordAuditLog(
+        {
+          actorId: user.id,
+          action: 'QA_REWORK_REQUESTED',
+          entityType: 'JobOrder',
+          entityId: jobOrderId,
+          metadata: {
+            reworkTaskId,
+            sessionId,
+            jobOrderLineSizeId: form.jobOrderLineSizeId,
+            assignedQuantity: form.reworkQuantity,
+            defectCategory: form.defectCategory,
+            actorRoles: user.roles,
+          },
+        },
+        tx,
+      );
     }
     if (form.sourceReworkTaskId)
       await tx.qaReworkTask.update({
         where: { id: form.sourceReworkTaskId },
-        data: { status: 'CLOSED', version: { increment: 1 } },
+        data: { status: 'REINSPECTED', version: { increment: 1 } },
       });
     const updated = await tx.qaSizeInspectionForm.update({
       where: { id: formId },
       data: { status: 'FINALIZED', finalizedAt: new Date(), version: { increment: 1 } },
     });
     const session = await deriveSessionStatus(tx, sessionId);
-    const openRework = await tx.qaReworkTask.count({
-      where: { jobOrderId, status: { not: 'CLOSED' } },
+    const openRework = await tx.qaReworkTask.findMany({
+      where: { jobOrderId, status: { not: 'REINSPECTED' } },
+      select: { status: true },
     });
     await tx.jobOrder.update({
       where: { id: jobOrderId },
       data: {
-        status: openRework ? 'REWORK_REQUIRED' : 'QA_IN_PROGRESS',
+        status: openRework.some((task) => task.status === 'READY_FOR_REINSPECTION')
+          ? 'READY_FOR_REINSPECTION'
+          : openRework.length
+            ? 'REWORK_REQUIRED'
+            : 'QA_IN_PROGRESS',
         version: { increment: 1 },
       },
     });
@@ -738,6 +792,27 @@ export async function finalizeSizeInspectionForm(
       },
       tx,
     );
+    if (form.sourceReworkTaskId) {
+      await recordAuditLog(
+        {
+          actorId: user.id,
+          action: 'QA_REINSPECTION_COMPLETED',
+          entityType: 'JobOrder',
+          entityId: jobOrderId,
+          metadata: {
+            sessionId,
+            qaSizeInspectionFormId: formId,
+            sourceReworkTaskId: form.sourceReworkTaskId,
+            jobOrderLineSizeId: form.jobOrderLineSizeId,
+            acceptedQuantity: form.acceptedQuantity,
+            reworkQuantity: form.reworkQuantity,
+            permanentlyRejectedQuantity: form.permanentlyRejectedQuantity,
+            actorRoles: user.roles,
+          },
+        },
+        tx,
+      );
+    }
     await finish(tx, user.id, jobOrderId, 'QA_FORM_FINALIZE', key, requestHash, updated.version);
   });
   return getDetail(user, jobOrderId);
@@ -829,7 +904,7 @@ export async function approve(
     if (!job) throw HttpError.notFound('Job order not found');
     assertQaMutation(user, job.factoryId);
     if (job.version !== input.expectedVersion) throw HttpError.staleVersion(job.version);
-    if (job.qaReworkTasks.some((t) => t.status !== 'CLOSED'))
+    if (job.qaReworkTasks.some((t) => t.status !== 'REINSPECTED'))
       throw HttpError.conflict('Rework remains outstanding');
     const initial = job.qaInspections
       .flatMap((s) => s.forms)
@@ -875,7 +950,7 @@ export async function approve(
 export async function updateRework(
   user: CurrentUser,
   taskId: string,
-  action: 'ACKNOWLEDGE' | 'READY',
+  action: 'ACKNOWLEDGE' | 'READY' | 'NOTES',
   input: { expectedVersion: number; notes?: string | null },
   key: string,
 ) {
@@ -899,8 +974,11 @@ export async function updateRework(
     if (!isSupervisor(user) && task.jobOrder.factory.status !== 'ACTIVE')
       throw HttpError.conflict('This factory is inactive and cannot perform rework actions');
     if (task.version !== input.expectedVersion) throw HttpError.staleVersion(task.version);
-    const expected = action === 'ACKNOWLEDGE' ? 'PENDING_ACKNOWLEDGEMENT' : 'ACKNOWLEDGED';
-    if (task.status !== expected)
+    const expected = action === 'ACKNOWLEDGE' ? 'REWORK_REQUIRED' : 'ACKNOWLEDGED';
+    if (
+      (action !== 'NOTES' && task.status !== expected) ||
+      (action === 'NOTES' && task.status === 'REINSPECTED')
+    )
       throw HttpError.conflict(
         `Rework cannot be marked ${action.toLowerCase()} from its current status`,
       );
@@ -913,34 +991,57 @@ export async function updateRework(
             notes: input.notes,
             version: { increment: 1 },
           }
-        : {
-            status: 'READY_FOR_REINSPECTION' as const,
-            readyById: user.id,
-            readyAt: new Date(),
-            notes: input.notes,
-            version: { increment: 1 },
-          };
+        : action === 'READY'
+          ? {
+              status: 'READY_FOR_REINSPECTION' as const,
+              readyById: user.id,
+              readyAt: new Date(),
+              notes: input.notes,
+              version: { increment: 1 },
+            }
+          : { notes: input.notes ?? null, version: { increment: 1 } };
     const updatedTask = await tx.qaReworkTask.update({ where: { id: taskId }, data });
-    const status = action === 'READY' ? 'READY_FOR_REINSPECTION' : 'REWORK_REQUIRED';
-    const updated = await tx.jobOrder.update({
-      where: { id: jobOrderId },
-      data: { status, version: { increment: 1 } },
+    const openRework = await tx.qaReworkTask.findMany({
+      where: { jobOrderId, status: { not: 'REINSPECTED' } },
+      select: { status: true },
     });
+    const status = openRework.some((candidate) => candidate.status === 'READY_FOR_REINSPECTION')
+      ? 'READY_FOR_REINSPECTION'
+      : 'REWORK_REQUIRED';
+    const updated =
+      action === 'NOTES'
+        ? null
+        : await tx.jobOrder.update({
+            where: { id: jobOrderId },
+            data: { status, version: { increment: 1 } },
+          });
     await recordAuditLog(
       {
         actorId: user.id,
         action: `QA_REWORK_${action}`,
-        entityType: 'QaReworkTask',
-        entityId: taskId,
+        entityType: 'JobOrder',
+        entityId: jobOrderId,
         metadata: {
           jobOrderId,
+          reworkTaskId: taskId,
+          jobOrderLineSizeId: task.jobOrderLineSizeId,
           assignedQuantity: task.assignedQuantity,
+          notes: input.notes ?? null,
+          actorRoles: user.roles,
           resultVersion: updatedTask.version,
         },
       },
       tx,
     );
-    await finish(tx, user.id, jobOrderId, `QA_REWORK_${action}`, key, requestHash, updated.version);
+    await finish(
+      tx,
+      user.id,
+      jobOrderId,
+      `QA_REWORK_${action}`,
+      key,
+      requestHash,
+      updated?.version ?? updatedTask.version,
+    );
   });
   return toDetail(await load(jobOrderId));
 }
@@ -960,11 +1061,11 @@ export async function getFactoryReworkQueue(user: CurrentUser) {
   const jobs = await prisma.jobOrder.findMany({
     where: {
       factoryId: factoryId ?? undefined,
-      qaReworkTasks: { some: { status: { not: 'CLOSED' } } },
+      qaReworkTasks: { some: { status: { not: 'REINSPECTED' } } },
     },
     include: detailInclude,
   });
   return jobs.flatMap((job) =>
-    job.qaReworkTasks.filter((t) => t.status !== 'CLOSED').map((task) => toRework(job, task)),
+    job.qaReworkTasks.filter((t) => t.status !== 'REINSPECTED').map((task) => toRework(job, task)),
   );
 }

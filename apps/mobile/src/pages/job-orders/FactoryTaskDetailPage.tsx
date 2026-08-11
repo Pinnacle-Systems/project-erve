@@ -7,6 +7,7 @@ import type {
   ApiSuccessResponse,
   JobOrderDetail,
   UpdatePreparedQuantityInput,
+  QaReworkTaskView,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
@@ -50,8 +51,10 @@ function useTaskMutation(id: string, path: string) {
 export function FactoryTaskDetailPage() {
   const { user } = useAuth();
   const { id = '' } = useParams();
+  const queryClient = useQueryClient();
   const [prepared, setPrepared] = useState<Record<string, string>>({});
   const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
+  const [reworkNotes, setReworkNotes] = useState<Record<string, string>>({});
   const task = useQuery({
     queryKey: ['factory-task', id],
     queryFn: async () =>
@@ -61,6 +64,29 @@ export function FactoryTaskDetailPage() {
   const confirm = useTaskMutation(id, `/job-orders/${id}/actions/confirm`);
   const completeStage = useTaskMutation(id, `/job-orders/${id}/actions/complete-stage`);
   const savePrepared = useTaskMutation(id, `/job-orders/${id}/actions/update-prepared-quantity`);
+  const rework = useMutation({
+    mutationFn: async ({
+      task: item,
+      action,
+      notes,
+    }: {
+      task: QaReworkTaskView;
+      action: 'acknowledge' | 'ready' | 'notes';
+      notes: string;
+    }) => {
+      const config = {
+        headers: { 'Idempotency-Key': `mobile:rework:${action}:${item.id}:${item.version}` },
+      };
+      const body = { expectedVersion: item.version, notes: notes.trim() || null };
+      return action === 'notes'
+        ? apiClient.patch(`/qa/rework/${item.id}/notes`, body, config)
+        : apiClient.post(`/qa/rework/${item.id}/${action}`, body, config);
+    },
+    onSuccess: () => {
+      void task.refetch();
+      void queryClient.invalidateQueries({ queryKey: ['factory-rework'] });
+    },
+  });
   const job = task.data;
   const nextStage = job?.stages.find((stage) => stage.status !== 'COMPLETED');
   const sizes = useMemo(
@@ -129,6 +155,87 @@ export function FactoryTaskDetailPage() {
         </p>
       </section>
 
+      {job.reworkTasks.length > 0 && (
+        <section className="rounded-xl border border-border bg-surface p-4">
+          <h2 className="font-semibold">Rework on this Job Order</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Each entry is tied to its original QA size form and inspection cycle.
+          </p>
+          <div className="mt-3 space-y-4">
+            {job.reworkTasks.map((item) => {
+              const notes = reworkNotes[item.id] ?? item.factoryNotes ?? '';
+              const open = item.status !== 'REINSPECTED';
+              return (
+                <article key={item.id} className="rounded-lg border border-border p-3">
+                  <p className="font-medium">
+                    {item.styleNumber} {item.styleName} · Size {item.sizeLabel}
+                  </p>
+                  <p className="mt-1 text-sm">
+                    Quantity {item.assignedQuantity} · cycle {item.attemptNumber} ·{' '}
+                    {item.status.replaceAll('_', ' ')}
+                  </p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {item.defectCategory?.replaceAll('_', ' ') ?? 'Defect'} ·{' '}
+                    {item.otherDefectDetails ?? item.defectNotes ?? 'No defect details'}
+                  </p>
+                  <p className="mt-1 text-sm">QA remarks: {item.qaRemarks ?? 'Not recorded'}</p>
+                  <p className="mt-1 text-sm">
+                    QA evidence:{' '}
+                    {item.qaEvidence.map((evidence) => evidence.fileName).join(', ') ||
+                      'None attached'}
+                  </p>
+                  {open && canFactoryAcknowledge && (
+                    <>
+                      <label className="mt-3 block text-sm font-medium">
+                        Factory rework notes
+                        <textarea
+                          className="mt-1 min-h-24 w-full rounded-md border border-border bg-background p-3 font-normal"
+                          maxLength={1000}
+                          value={notes}
+                          onChange={(event) =>
+                            setReworkNotes((current) => ({
+                              ...current,
+                              [item.id]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <button
+                        className="mt-2 min-h-12 w-full rounded-lg border border-border px-4"
+                        disabled={rework.isPending}
+                        onClick={() => rework.mutate({ task: item, action: 'notes', notes })}
+                      >
+                        Save notes
+                      </button>
+                      {item.status === 'REWORK_REQUIRED' && (
+                        <button
+                          className="mt-2 min-h-12 w-full rounded-lg bg-primary px-4 text-primary-foreground"
+                          disabled={rework.isPending}
+                          onClick={() =>
+                            rework.mutate({ task: item, action: 'acknowledge', notes })
+                          }
+                        >
+                          Acknowledge rework
+                        </button>
+                      )}
+                      {item.status === 'ACKNOWLEDGED' && (
+                        <button
+                          className="mt-2 min-h-12 w-full rounded-lg bg-primary px-4 text-primary-foreground"
+                          disabled={rework.isPending}
+                          onClick={() => rework.mutate({ task: item, action: 'ready', notes })}
+                        >
+                          Mark complete quantity ready for reinspection
+                        </button>
+                      )}
+                    </>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {activeMutation?.isError && (
         <section className="rounded-lg border border-danger/40 bg-surface p-4" role="alert">
           <p>{mutationMessage(activeMutation.error)}</p>
@@ -155,31 +262,54 @@ export function FactoryTaskDetailPage() {
         <section className="rounded-xl border border-border bg-surface p-4">
           <h2 className="font-semibold">Factory commercial terms / disclaimer</h2>
           {job.disclaimerText ? (
-            <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-sm font-sans">{job.disclaimerText}</pre>
+            <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-sm font-sans">
+              {job.disclaimerText}
+            </pre>
           ) : (
-            <p className="mt-2 text-sm text-danger">No disclaimer is available. Contact the merchandiser.</p>
+            <p className="mt-2 text-sm text-danger">
+              No disclaimer is available. Contact the merchandiser.
+            </p>
           )}
-          <p className="mt-3 text-sm text-muted-foreground">Review the style, size quantities, total quantity, unit price, and process flow before confirming.</p>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Review the style, size quantities, total quantity, unit price, and process flow before
+            confirming.
+          </p>
           {canFactoryAcknowledge && (
             <label className="mt-4 flex min-h-12 items-center gap-3 text-sm font-medium">
-              <input className="size-5" type="checkbox" checked={acknowledgeDisclaimer} onChange={(event) => setAcknowledgedRevision(event.target.checked ? acknowledgementKey : '')} />
+              <input
+                className="size-5"
+                type="checkbox"
+                checked={acknowledgeDisclaimer}
+                onChange={(event) =>
+                  setAcknowledgedRevision(event.target.checked ? acknowledgementKey : '')
+                }
+              />
               I have read and acknowledge the Job Order commercial terms and disclaimer.
             </label>
           )}
-        {canFactoryAcknowledge && (
-        <button
-          className="min-h-12 w-full rounded-lg bg-primary px-5 font-medium text-primary-foreground"
-          disabled={confirm.isPending || !canFactoryAcknowledge || !acknowledgeDisclaimer || !job.disclaimerText}
-          onClick={() =>
-            confirm.mutate({
-              body: { expectedVersion: job.version, expectedDisclaimerRevision: job.disclaimerRevision, acknowledgeDisclaimer: true },
-              key: `${id}:confirm:${job.version}`,
-            })
-          }
-        >
-          {confirm.isPending ? 'Confirming…' : 'Confirm job order'}
-        </button>
-        )}
+          {canFactoryAcknowledge && (
+            <button
+              className="min-h-12 w-full rounded-lg bg-primary px-5 font-medium text-primary-foreground"
+              disabled={
+                confirm.isPending ||
+                !canFactoryAcknowledge ||
+                !acknowledgeDisclaimer ||
+                !job.disclaimerText
+              }
+              onClick={() =>
+                confirm.mutate({
+                  body: {
+                    expectedVersion: job.version,
+                    expectedDisclaimerRevision: job.disclaimerRevision,
+                    acknowledgeDisclaimer: true,
+                  },
+                  key: `${id}:confirm:${job.version}`,
+                })
+              }
+            >
+              {confirm.isPending ? 'Confirming…' : 'Confirm job order'}
+            </button>
+          )}
         </section>
       )}
 

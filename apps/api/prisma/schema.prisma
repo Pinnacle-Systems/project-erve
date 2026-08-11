@@ -761,10 +761,10 @@ enum QaDefectCategory {
 }
 
 enum QaReworkStatus {
-  PENDING_ACKNOWLEDGEMENT
+  REWORK_REQUIRED
   ACKNOWLEDGED
   READY_FOR_REINSPECTION
-  CLOSED
+  REINSPECTED
 }
 
 // These are the three marked columns on the supplied sample checklist. A
@@ -920,7 +920,8 @@ model QaSizeInspectionForm {
   // 20260729160000_add_qa_workflow so null source IDs are treated as equal.
   @@index([jobOrderLineSizeId])
   @@index([sourceReworkTaskId])
-  @@index([inspectionSessionId, status])
+  @@index([inspectionSessionId, status], map: "qa_size_inspection_forms_session_status_idx")
+  @@index([reopenedById])
   @@map("qa_size_inspection_forms")
 }
 
@@ -931,7 +932,7 @@ model QaReworkTask {
   sourceLineId       String         @unique @map("source_line_id")
   attemptNumber      Int            @map("attempt_number")
   assignedQuantity   Int            @map("assigned_quantity")
-  status             QaReworkStatus @default(PENDING_ACKNOWLEDGEMENT)
+  status             QaReworkStatus @default(REWORK_REQUIRED)
   acknowledgedById   String?        @map("acknowledged_by_id")
   acknowledgedAt     DateTime?      @map("acknowledged_at")
   readyById          String?        @map("ready_by_id")
@@ -965,7 +966,7 @@ model QaEvidence {
   form    QaSizeInspectionForm? @relation(fields: [inspectionLineId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   file    File                  @relation(fields: [fileId], references: [id], onDelete: Restrict, onUpdate: NoAction)
 
-  @@unique([inspectionSessionId, inspectionLineId, checksumSha256])
+  @@unique([inspectionSessionId, inspectionLineId, checksumSha256], map: "qa_evidence_inspection_session_id_inspection_line_id_checksum_s")
   @@index([inspectionLineId])
   @@index([fileId])
   @@map("qa_evidence")
