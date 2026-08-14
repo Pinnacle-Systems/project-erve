@@ -118,6 +118,47 @@ enum ProcessStageStatus {
   INACTIVE
 }
 
+enum QualityFormStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum QualityFormActivityType {
+  MEETING
+  INSPECTION
+}
+
+enum QualityFormExecutionScope {
+  JOB_ORDER
+  SIZE
+}
+
+// Published definitions are immutable. A changed definition is always a new
+// numbered draft so future workflows can safely retain an exact version.
+enum QualityFormVersionStatus {
+  DRAFT
+  PUBLISHED
+  RETIRED
+}
+
+enum QualityFormComponentType {
+  SYSTEM_CONTEXT
+  FIELD_GROUP
+  ATTENDEE_LIST
+  ACTION_LIST
+  CHECKLIST
+  AQL_RESULT
+  PRODUCTION_PROGRESS
+  DEFECT_LIST
+  CORRECTIVE_ACTIONS
+  TEST_RESULTS
+  COMMENTS
+  ATTACHMENTS
+  SIGNATURES
+  QUANTITY_RECONCILIATION
+  INSPECTION_OUTCOME
+}
+
 enum JobOrderStatus {
   DRAFT
   SENT_TO_FACTORY
@@ -557,6 +598,81 @@ model ProcessFlowVersionStage {
   @@unique([processFlowVersionId, sequence])
   @@index([processFlowVersionId])
   @@map("process_flow_version_stages")
+}
+
+// Quality Forms define WHAT is collected. They deliberately contain no
+// Process Flow timing, production-step association, or availability trigger.
+model QualityForm {
+  id          String            @id
+  code        String            @unique
+  name        String
+  description String?
+  status      QualityFormStatus @default(ACTIVE)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  versions QualityFormVersion[]
+
+  @@index([status])
+  @@map("quality_forms")
+}
+
+model QualityFormVersion {
+  id             String                    @id
+  qualityFormId  String                    @map("quality_form_id")
+  versionNumber  Int                       @map("version_number")
+  activityType   QualityFormActivityType   @map("activity_type")
+  executionScope QualityFormExecutionScope @map("execution_scope")
+  status         QualityFormVersionStatus  @default(DRAFT)
+  publishedAt    DateTime?                 @map("published_at")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  qualityForm QualityForm          @relation(fields: [qualityFormId], references: [id], onDelete: Cascade)
+  sections    QualityFormSection[]
+
+  @@unique([qualityFormId, versionNumber])
+  @@index([qualityFormId])
+  @@index([status])
+  @@index([activityType])
+  @@index([executionScope])
+  @@map("quality_form_versions")
+}
+
+model QualityFormSection {
+  id                   String   @id
+  qualityFormVersionId String   @map("quality_form_version_id")
+  sequence             Int
+  title                String
+  description          String?
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  version    QualityFormVersion     @relation(fields: [qualityFormVersionId], references: [id], onDelete: Cascade)
+  components QualityFormComponent[]
+
+  @@unique([qualityFormVersionId, sequence])
+  @@index([qualityFormVersionId])
+  @@map("quality_form_sections")
+}
+
+model QualityFormComponent {
+  id                   String                   @id
+  qualityFormSectionId String                   @map("quality_form_section_id")
+  sequence             Int
+  type                 QualityFormComponentType
+  title                String
+  description          String?
+  config               Json
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+
+  section QualityFormSection @relation(fields: [qualityFormSectionId], references: [id], onDelete: Cascade)
+
+  @@unique([qualityFormSectionId, sequence])
+  @@index([qualityFormSectionId])
+  @@index([type])
+  @@map("quality_form_components")
 }
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,10 @@ import { priceListsRouter } from './modules/price-lists/price-lists.routes.js';
 import { purchaseOrdersRouter } from './modules/purchase-orders/purchase-orders.routes.js';
 import { jobOrdersRouter } from './modules/job-orders/job-orders.routes.js';
 import { qaRouter } from './modules/qa/qa.routes.js';
+import {
+  qualityFormsRouter,
+  qualityFormVersionsRouter,
+} from './modules/quality-forms/quality-forms.routes.js';
 
 const READY_CHECK_TIMEOUT_MS = 2000;
 
@@ -94,6 +98,8 @@ export function createApp() {
   app.use('/distributors', distributorsRouter);
   app.use('/process-flows', processFlowsRouter);
   app.use('/process-flow-versions', processFlowVersionsRouter);
+  app.use('/quality-forms', qualityFormsRouter);
+  app.use('/quality-form-versions', qualityFormVersionsRouter);
   app.use('/price-lists', priceListsRouter);
   app.use('/purchase-orders', purchaseOrdersRouter);
   app.use('/job-orders', jobOrdersRouter);

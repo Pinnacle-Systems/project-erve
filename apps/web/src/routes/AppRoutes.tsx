@@ -13,6 +13,10 @@ import { ProcessFlowDetailPage } from '../pages/master-data/ProcessFlowDetailPag
 import { ProcessFlowCreatePage } from '../pages/master-data/ProcessFlowCreatePage.js';
 import { ProcessFlowListPage } from '../pages/master-data/ProcessFlowListPage.js';
 import { ProcessFlowVersionEditorPage } from '../pages/master-data/ProcessFlowVersionEditorPage.js';
+import { QualityFormListPage } from '../pages/master-data/QualityFormListPage.js';
+import { QualityFormFormPage } from '../pages/master-data/QualityFormFormPage.js';
+import { QualityFormDetailPage } from '../pages/master-data/QualityFormDetailPage.js';
+import { QualityFormVersionEditorPage } from '../pages/master-data/QualityFormVersionEditorPage.js';
 import { SizeListPage } from '../pages/master-data/SizeListPage.js';
 import { SizeDetailPage } from '../pages/master-data/SizeDetailPage.js';
 import { SizeFormPage } from '../pages/master-data/SizeFormPage.js';
@@ -46,6 +50,7 @@ import {
   PRICE_LIST_MANAGE_ROLES,
   PRICE_LIST_VIEW_ROLES,
   PROCESS_FLOW_MANAGE_ROLES,
+  QUALITY_FORM_MANAGE_ROLES,
   PURCHASE_ORDER_MANAGE_ROLES,
   PURCHASE_ORDER_VIEW_ROLES,
   QA_VIEW_ROLES,
@@ -55,7 +60,12 @@ import {
   USER_MANAGE_ROLES,
 } from '../auth/permissions.js';
 
-const MASTER_DATA_ROUTE_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER'] as const;
+const MASTER_DATA_ROUTE_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'FACTORY_USER',
+] as const;
 
 export function AppRoutes() {
   return (
@@ -101,7 +111,11 @@ export function AppRoutes() {
         />
         <Route
           path="seasons"
-          element={<RoleRoute allowed={SEASON_MANAGE_ROLES}><SeasonListPage /></RoleRoute>}
+          element={
+            <RoleRoute allowed={SEASON_MANAGE_ROLES}>
+              <SeasonListPage />
+            </RoleRoute>
+          }
         />
         <Route
           path="sizes"
@@ -244,6 +258,46 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={PROCESS_FLOW_MANAGE_ROLES}>
               <ProcessFlowVersionEditorPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="quality-forms"
+          element={
+            <RoleRoute allowed={QUALITY_FORM_MANAGE_ROLES}>
+              <QualityFormListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="quality-forms/new"
+          element={
+            <RoleRoute allowed={QUALITY_FORM_MANAGE_ROLES}>
+              <QualityFormFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="quality-forms/:id"
+          element={
+            <RoleRoute allowed={QUALITY_FORM_MANAGE_ROLES}>
+              <QualityFormDetailPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="quality-forms/:id/edit"
+          element={
+            <RoleRoute allowed={QUALITY_FORM_MANAGE_ROLES}>
+              <QualityFormFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="quality-form-versions/:versionId/edit"
+          element={
+            <RoleRoute allowed={QUALITY_FORM_MANAGE_ROLES}>
+              <QualityFormVersionEditorPage />
             </RoleRoute>
           }
         />

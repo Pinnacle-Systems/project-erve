@@ -1,5 +1,12 @@
 export type Status = 'ACTIVE' | 'INACTIVE';
-export interface Season { id: string; code: string; name: string; financialYear: string; displayName: string; status: Status; }
+export interface Season {
+  id: string;
+  code: string;
+  name: string;
+  financialYear: string;
+  displayName: string;
+  status: Status;
+}
 
 export interface Size {
   id: string;
@@ -152,5 +159,64 @@ export interface ProcessFlowVersion {
     status: Status;
   }>;
   createdAt: string;
+  updatedAt: string;
+}
+
+export type QualityFormComponentType =
+  | 'SYSTEM_CONTEXT'
+  | 'FIELD_GROUP'
+  | 'ATTENDEE_LIST'
+  | 'ACTION_LIST'
+  | 'CHECKLIST'
+  | 'AQL_RESULT'
+  | 'PRODUCTION_PROGRESS'
+  | 'DEFECT_LIST'
+  | 'CORRECTIVE_ACTIONS'
+  | 'TEST_RESULTS'
+  | 'COMMENTS'
+  | 'ATTACHMENTS'
+  | 'SIGNATURES'
+  | 'QUANTITY_RECONCILIATION'
+  | 'INSPECTION_OUTCOME';
+export interface QualityFormComponent {
+  id?: string;
+  sequence: number;
+  type: QualityFormComponentType;
+  title: string;
+  description: string | null;
+  config: Record<string, unknown>;
+}
+export interface QualityFormSection {
+  id?: string;
+  sequence: number;
+  title: string;
+  description: string | null;
+  components: QualityFormComponent[];
+}
+export interface QualityFormVersionSummary {
+  id: string;
+  versionNumber: number;
+  status: 'DRAFT' | 'PUBLISHED' | 'RETIRED';
+  activityType: 'MEETING' | 'INSPECTION';
+  executionScope: 'JOB_ORDER' | 'SIZE';
+  publishedAt: string | null;
+  createdAt: string;
+}
+export interface QualityForm {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  activityType: 'MEETING' | 'INSPECTION';
+  executionScope: 'JOB_ORDER' | 'SIZE';
+  status: Status;
+  versions: QualityFormVersionSummary[];
+  createdAt: string;
+  updatedAt: string;
+}
+export interface QualityFormVersion extends QualityFormVersionSummary {
+  qualityFormId: string;
+  qualityForm: QualityForm;
+  sections: QualityFormSection[];
   updatedAt: string;
 }

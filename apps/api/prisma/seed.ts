@@ -1,6 +1,8 @@
 import { createId } from '@erve/shared';
+import { QA_CHECKLIST_ITEMS } from '@erve/types';
 import { prisma, type RoleName } from '../src/db/prisma.js';
 import { hashPassword } from '../src/auth/password.js';
+import { qualityFormDefinitionSchema } from '../src/modules/quality-forms/quality-forms.validation.js';
 
 // Transporter delivery access is handled later via tokenized public
 // delivery links, not a normal logged-in role — do not add it here.
@@ -272,12 +274,438 @@ async function seedDefaultProcessFlow(): Promise<void> {
   }
 }
 
+type SeedComponent = {
+  type:
+    | 'SYSTEM_CONTEXT'
+    | 'FIELD_GROUP'
+    | 'ATTENDEE_LIST'
+    | 'ACTION_LIST'
+    | 'CHECKLIST'
+    | 'AQL_RESULT'
+    | 'PRODUCTION_PROGRESS'
+    | 'DEFECT_LIST'
+    | 'CORRECTIVE_ACTIONS'
+    | 'TEST_RESULTS'
+    | 'COMMENTS'
+    | 'ATTACHMENTS'
+    | 'SIGNATURES'
+    | 'QUANTITY_RECONCILIATION'
+    | 'INSPECTION_OUTCOME';
+  title: string;
+  config: object;
+};
+type SeedSection = { title: string; components: SeedComponent[] };
+const definitionKey = (label: string) =>
+  label
+    .replace(/&/g, ' and ')
+    .replace(/[^A-Za-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map((part, index) =>
+      index === 0
+        ? part.toLowerCase()
+        : `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`,
+    )
+    .join('');
+const context = (fields: string[]): SeedComponent => ({
+  type: 'SYSTEM_CONTEXT',
+  title: 'System context',
+  config: {
+    fields: fields.map((label) => ({
+      key: definitionKey(label),
+      label,
+      dataType: label.includes('Date')
+        ? 'DATE'
+        : label.includes('Quantity') || label.includes('Qty')
+          ? 'NUMBER'
+          : label === 'ETD'
+            ? 'DATE'
+            : 'TEXT',
+      source: 'SYSTEM',
+    })),
+  },
+});
+const signatures = (roles: string[]): SeedComponent => ({
+  type: 'SIGNATURES',
+  title: 'Sign-off',
+  config: {
+    roles: roles.map((label) => ({
+      key: definitionKey(label),
+      label,
+      required: true,
+    })),
+  },
+});
+const aql: SeedComponent = {
+  type: 'AQL_RESULT',
+  title: 'AQL defect summary',
+  config: {
+    inspectionLevel: 'General Inspection Level II',
+    criteria: [
+      { severity: 'CRITICAL', aql: 0 },
+      { severity: 'MAJOR', aql: 2.5 },
+      { severity: 'MINOR', aql: 4 },
+    ],
+  },
+};
+const defects: SeedComponent = {
+  type: 'DEFECT_LIST',
+  title: 'Workmanship defects',
+  config: { severities: ['CRITICAL', 'MAJOR', 'MINOR'], captureQuantity: true },
+};
+
+const DEFAULT_QUALITY_FORMS: Array<{
+  code: string;
+  name: string;
+  activityType: 'MEETING' | 'INSPECTION';
+  executionScope: 'JOB_ORDER' | 'SIZE';
+  sections: SeedSection[];
+}> = [
+  {
+    code: 'PPM',
+    name: 'Pre-Production Meeting Report',
+    activityType: 'MEETING',
+    executionScope: 'JOB_ORDER',
+    sections: [
+      {
+        title: 'Meeting context',
+        components: [
+          context([
+            'Supplier Name',
+            'Factory Name',
+            'Style',
+            'Customer',
+            'Order Number',
+            'Quantity',
+            'Meeting Date',
+            'Delivery Date',
+            'Cutting Planning Date',
+            'Sewing Planning Date',
+            'Meeting Conducted By',
+          ]),
+        ],
+      },
+      {
+        title: 'People and follow-up',
+        components: [
+          {
+            type: 'ATTENDEE_LIST',
+            title: 'Attendees',
+            config: {
+              roles: [
+                'Merchandiser',
+                'Sample Man',
+                'Fabric',
+                'Cutting',
+                'Molding',
+                'Sewing',
+                'Outward Processing',
+                'Finishing',
+                'QA',
+                'Mechanic',
+                'Washing',
+                'Others',
+              ],
+              allowOther: true,
+            },
+          },
+          {
+            type: 'ACTION_LIST',
+            title: 'Follow-up actions',
+            config: {
+              columns: [
+                { key: 'action', label: 'Comments / action', dataType: 'TEXT', required: true },
+                {
+                  key: 'followUpPerson',
+                  label: 'Follow-up person',
+                  dataType: 'TEXT',
+                  required: true,
+                },
+                { key: 'settleDate', label: 'Settle date', dataType: 'DATE' },
+              ],
+            },
+          },
+        ],
+      },
+      { title: 'Approval', components: [signatures(['Inspector', 'QA Manager', 'Supplier'])] },
+    ],
+  },
+  {
+    code: 'SAMPLE',
+    name: 'QA Sample Checklist',
+    activityType: 'INSPECTION',
+    executionScope: 'SIZE',
+    sections: [
+      {
+        title: 'Existing QA checklist',
+        components: [
+          {
+            type: 'CHECKLIST',
+            title: 'Sample checklist',
+            config: {
+              items: QA_CHECKLIST_ITEMS.map(({ code, label }) => ({
+                key: definitionKey(code),
+                label,
+              })),
+              responseOptions: ['YES', 'NO', 'AVAILABLE'],
+            },
+          },
+          defects,
+          { type: 'COMMENTS', title: 'Inspection remarks', config: { maxLength: 5000 } },
+          {
+            type: 'ATTACHMENTS',
+            title: 'Evidence',
+            config: { requirements: [{ key: 'inspectionEvidence', label: 'Inspection evidence' }] },
+          },
+        ],
+      },
+    ],
+  },
+  {
+    code: 'INLINE',
+    name: 'Inline Inspection Report',
+    activityType: 'INSPECTION',
+    executionScope: 'JOB_ORDER',
+    sections: [
+      {
+        title: 'Inspection context',
+        components: [
+          context(['Supplier', 'Style', 'Purchase Order', 'Customer', 'Report Date', 'ETD']),
+        ],
+      },
+      {
+        title: 'Inspection results',
+        components: [
+          aql,
+          {
+            type: 'PRODUCTION_PROGRESS',
+            title: 'Production status',
+            config: {
+              metrics: [
+                { key: 'cutPercentage', label: '% Cut', source: 'SYSTEM' },
+                { key: 'sewnPercentage', label: '% Sewn', source: 'SYSTEM' },
+                { key: 'finishPercentage', label: '% Finish', source: 'SYSTEM' },
+              ],
+            },
+          },
+          defects,
+        ],
+      },
+      {
+        title: 'Packing and corrective action',
+        components: [
+          {
+            type: 'CHECKLIST',
+            title: 'Pre-packing check',
+            config: {
+              items: [{ key: 'packing', label: 'Packing and carton information is correct' }],
+              responseOptions: ['YES', 'NO', 'N/A'],
+            },
+          },
+          {
+            type: 'CORRECTIVE_ACTIONS',
+            title: 'Corrective actions',
+            config: {
+              columns: [
+                {
+                  key: 'defectSpecification',
+                  label: 'Defect specifications',
+                  dataType: 'TEXT',
+                  required: true,
+                },
+                { key: 'action', label: 'Actions to be taken', dataType: 'TEXT', required: true },
+              ],
+            },
+          },
+          { type: 'COMMENTS', title: 'Conclusion and remarks', config: { maxLength: 5000 } },
+          {
+            type: 'INSPECTION_OUTCOME',
+            title: 'Inspection conclusion',
+            config: { allowedOutcomes: ['PASS', 'FAIL'], remarksRequiredWhen: 'FAIL' },
+          },
+          signatures(['Quality Controller', 'Supplier']),
+        ],
+      },
+    ],
+  },
+  {
+    code: 'FINAL',
+    name: 'Final Inspection Report',
+    activityType: 'INSPECTION',
+    executionScope: 'JOB_ORDER',
+    sections: [
+      {
+        title: 'Inspection context',
+        components: [
+          context([
+            'Supplier',
+            'Style',
+            'Customer',
+            'Purchase Order',
+            'Color',
+            'Order Qty',
+            'Ship Qty',
+            'Merchandiser',
+            'Report Date',
+          ]),
+        ],
+      },
+      {
+        title: 'Evidence and sampling',
+        components: [
+          {
+            type: 'ATTACHMENTS',
+            title: 'Required evidence',
+            config: {
+              requirements: [
+                { key: 'measurementSheet', label: 'Measurement Sheet', required: true },
+                { key: 'washingReport', label: 'Washing Report', required: true },
+                {
+                  key: 'failedPartEvidence',
+                  label: 'Failed Part Evidence',
+                  requiredWhen: 'INSPECTION_FAILED',
+                },
+              ],
+            },
+          },
+          {
+            type: 'QUANTITY_RECONCILIATION',
+            title: 'Inspection and shipment sampling',
+            config: {
+              fields: [
+                {
+                  key: 'totalOrderQuantity',
+                  label: 'Total Order Quantity',
+                  dataType: 'NUMBER',
+                  source: 'SYSTEM',
+                  required: true,
+                },
+                {
+                  key: 'quantityInspected',
+                  label: 'Quantity Inspected',
+                  dataType: 'NUMBER',
+                  required: true,
+                },
+                { key: 'numberOfBoxes', label: 'Number of Boxes', dataType: 'NUMBER' },
+                { key: 'openCartons', label: 'Open Cartons', dataType: 'NUMBER' },
+              ],
+            },
+          },
+          aql,
+        ],
+      },
+      {
+        title: 'Checks and tests',
+        components: [
+          {
+            type: 'CHECKLIST',
+            title: 'Summary inspection checklist',
+            config: {
+              items: [
+                'Conformity as per reference sample',
+                'Workmanship',
+                'Measurements',
+                'GSM',
+                'EAN Code',
+                'Packing & Labelling',
+                'Assortment',
+                'Test Results',
+                'Safety Requirements',
+              ].map((label) => ({
+                key: definitionKey(label),
+                label,
+              })),
+              responseOptions: ['PASSED', 'FAILED', 'N/A'],
+            },
+          },
+          {
+            type: 'CHECKLIST',
+            title: 'Packing and labelling',
+            config: {
+              items: [
+                { key: 'packingAndLabelling', label: 'Packing and labelling requirements are met' },
+              ],
+              responseOptions: ['YES', 'NO', 'N/A'],
+            },
+          },
+          defects,
+          {
+            type: 'TEST_RESULTS',
+            title: 'On-site tests',
+            config: {
+              tests: ['GSM', 'Metal Detection', 'Needle Policy', 'Pull Test'].map((label) => ({
+                key: definitionKey(label),
+                label,
+                responseOptions: ['PASSED', 'FAILED', 'N/A'],
+              })),
+            },
+          },
+        ],
+      },
+      {
+        title: 'Conclusion',
+        components: [
+          { type: 'COMMENTS', title: 'Comments', config: { maxLength: 5000 } },
+          signatures(['Quality Controller', 'Supplier']),
+        ],
+      },
+    ],
+  },
+];
+
+async function seedQualityForms(): Promise<void> {
+  for (const definition of DEFAULT_QUALITY_FORMS) {
+    const parsedDefinition = qualityFormDefinitionSchema.parse({ sections: definition.sections });
+    const form = await prisma.qualityForm.upsert({
+      where: { code: definition.code },
+      update: {},
+      create: {
+        id: createId(),
+        code: definition.code,
+        name: definition.name,
+      },
+    });
+    const existing = await prisma.qualityFormVersion.findUnique({
+      where: { qualityFormId_versionNumber: { qualityFormId: form.id, versionNumber: 1 } },
+    });
+    if (existing) continue;
+    await prisma.qualityFormVersion.create({
+      data: {
+        id: createId(),
+        qualityFormId: form.id,
+        versionNumber: 1,
+        activityType: definition.activityType,
+        executionScope: definition.executionScope,
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
+        sections: {
+          create: parsedDefinition.sections.map((section, sectionIndex) => ({
+            id: createId(),
+            sequence: sectionIndex + 1,
+            title: section.title,
+            components: {
+              create: section.components.map((component, componentIndex) => ({
+                id: createId(),
+                sequence: componentIndex + 1,
+                type: component.type,
+                title: component.title,
+                config: component.config,
+              })),
+            },
+          })),
+        },
+      },
+    });
+  }
+}
+
 async function main(): Promise<void> {
   await seedRoles();
   await seedDefaultAdminUser();
   await seedSizes();
   await seedFactories();
   await seedDefaultProcessFlow();
+  await seedQualityForms();
   await seedStyles();
 }
 
