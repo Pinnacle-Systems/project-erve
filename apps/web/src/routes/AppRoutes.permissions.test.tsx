@@ -10,17 +10,34 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock components to simplify route testing
 vi.mock('../pages/AppLayout.js', () => ({
-  AppLayout: () => <div data-testid="layout"><Outlet /></div>
+  AppLayout: () => (
+    <div data-testid="layout">
+      <Outlet />
+    </div>
+  ),
 }));
 vi.mock('../pages/DashboardPage.js', () => ({ DashboardPage: () => <div>DashboardPage</div> }));
 vi.mock('../pages/ForbiddenPage.js', () => ({ ForbiddenPage: () => <div>ForbiddenPage</div> }));
-vi.mock('../pages/master-data/FactoryListPage.js', () => ({ FactoryListPage: () => <div>FactoryListPage</div> }));
-vi.mock('../pages/purchase-orders/PurchaseOrderListPage.js', () => ({ PurchaseOrderListPage: () => <div>PurchaseOrderListPage</div> }));
-vi.mock('../pages/job-orders/JobOrderListPage.js', () => ({ JobOrderListPage: () => <div>JobOrderListPage</div> }));
-vi.mock('../pages/job-orders/JobOrderCreatePage.js', () => ({ JobOrderCreatePage: () => <div>JobOrderCreatePage</div> }));
-vi.mock('../pages/job-orders/JobOrderDetailPage.js', () => ({ JobOrderDetailPage: () => <div>JobOrderDetailPage</div> }));
+vi.mock('../pages/master-data/FactoryListPage.js', () => ({
+  FactoryListPage: () => <div>FactoryListPage</div>,
+}));
+vi.mock('../pages/purchase-orders/PurchaseOrderListPage.js', () => ({
+  PurchaseOrderListPage: () => <div>PurchaseOrderListPage</div>,
+}));
+vi.mock('../pages/job-orders/JobOrderListPage.js', () => ({
+  JobOrderListPage: () => <div>JobOrderListPage</div>,
+}));
+vi.mock('../pages/job-orders/JobOrderCreatePage.js', () => ({
+  JobOrderCreatePage: () => <div>JobOrderCreatePage</div>,
+}));
+vi.mock('../pages/job-orders/JobOrderDetailPage.js', () => ({
+  JobOrderDetailPage: () => <div>JobOrderDetailPage</div>,
+}));
 vi.mock('../pages/qa/QaQueuePage.js', () => ({ QaQueuePage: () => <div>QaQueuePage</div> }));
 vi.mock('../pages/qa/QaDetailPage.js', () => ({ QaDetailPage: () => <div>QaDetailPage</div> }));
+vi.mock('../pages/master-data/QualityFormListPage.js', () => ({
+  QualityFormListPage: () => <div>QualityFormListPage</div>,
+}));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -79,10 +96,10 @@ const renderRoutes = async (role: Role, initialUrl: string) => {
         <MemoryRouter initialEntries={[initialUrl]}>
           <AppRoutes />
         </MemoryRouter>
-      </QueryClientProvider>
+      </QueryClientProvider>,
     );
   });
-  
+
   await act(async () => {
     await flushMicrotasks();
   });
@@ -124,6 +141,10 @@ describe('AppRoutes Permissions', () => {
   });
 
   describe('ADMIN', () => {
+    it('is allowed access to Quality Form master', async () => {
+      await renderRoutes('ADMIN', '/master-data/quality-forms');
+      expect(getPageContent()).toContain('QualityFormListPage');
+    });
     it('is allowed access to /master-data/factories', async () => {
       await renderRoutes('ADMIN', '/master-data/factories');
       const content = getPageContent();
@@ -150,6 +171,10 @@ describe('AppRoutes Permissions', () => {
   });
 
   describe('QA_USER', () => {
+    it('is denied Quality Form master administration', async () => {
+      await renderRoutes('QA_USER', '/master-data/quality-forms');
+      expect(getPageContent()).toContain('ForbiddenPage');
+    });
     it('cannot access Job Order creation but retains contextual detail and QA access', async () => {
       await renderRoutes('QA_USER', '/job-orders/new');
       expect(getPageContent()).toContain('ForbiddenPage');

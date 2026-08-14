@@ -14,10 +14,7 @@ export const STYLE_VIEW_ROLES = [
 ] as const satisfies readonly Role[];
 export const STYLE_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
-export const SIZE_MANAGE_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-] as const satisfies readonly Role[];
+export const SIZE_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 export const SEASON_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
 export const FACTORY_VIEW_ROLES = [
@@ -33,19 +30,18 @@ export const DISTRIBUTOR_VIEW_ROLES = [
   'DISTRIBUTOR',
 ] as const satisfies readonly Role[];
 
-export const FACTORY_MANAGE_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-] as const satisfies readonly Role[];
+export const FACTORY_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
 export const PROCESS_FLOW_MANAGE_ROLES = [
   'ADMIN',
   'MERCHANDISER',
 ] as const satisfies readonly Role[];
-
-export const USER_MANAGE_ROLES = [
+export const QUALITY_FORM_MANAGE_ROLES = [
   'ADMIN',
+  'MERCHANDISER',
 ] as const satisfies readonly Role[];
+
+export const USER_MANAGE_ROLES = ['ADMIN'] as const satisfies readonly Role[];
 
 export const PRICE_LIST_VIEW_ROLES = [
   'ADMIN',
@@ -55,10 +51,7 @@ export const PRICE_LIST_VIEW_ROLES = [
   'DISTRIBUTOR',
 ] as const satisfies readonly Role[];
 
-export const PRICE_LIST_MANAGE_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-] as const satisfies readonly Role[];
+export const PRICE_LIST_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
 export const PURCHASE_ORDER_VIEW_ROLES = [
   'ADMIN',
@@ -92,10 +85,7 @@ export const JOB_ORDER_NAVIGATION_ROLES = [
   'FACTORY_USER',
 ] as const satisfies readonly Role[];
 
-export const JOB_ORDER_CREATE_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-] as const satisfies readonly Role[];
+export const JOB_ORDER_CREATE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
 export const JOB_ORDER_FACTORY_FILTER_ROLES = [
   'ADMIN',
@@ -119,12 +109,12 @@ function hasRole(user: AuthUser | null | undefined, roles: readonly Role[]): boo
 export const canViewMasterDataDashboardShortcut = (user: AuthUser | null | undefined) =>
   hasRole(user, MASTER_DATA_DASHBOARD_SHORTCUT_ROLES);
 
-export const canViewStyles = (user: AuthUser | null | undefined) =>
-  hasRole(user, STYLE_VIEW_ROLES);
+export const canViewStyles = (user: AuthUser | null | undefined) => hasRole(user, STYLE_VIEW_ROLES);
 
 export const canManageSizes = (user: AuthUser | null | undefined) =>
   hasRole(user, SIZE_MANAGE_ROLES);
-export const canManageSeasons = (user: AuthUser | null | undefined) => hasRole(user, SEASON_MANAGE_ROLES);
+export const canManageSeasons = (user: AuthUser | null | undefined) =>
+  hasRole(user, SEASON_MANAGE_ROLES);
 
 export const canViewFactories = (user: AuthUser | null | undefined) =>
   hasRole(user, FACTORY_VIEW_ROLES);
@@ -137,6 +127,8 @@ export const canViewDistributorMaster = (user: AuthUser | null | undefined) =>
 
 export const canManageProcessFlows = (user: AuthUser | null | undefined) =>
   hasRole(user, PROCESS_FLOW_MANAGE_ROLES);
+export const canManageQualityForms = (user: AuthUser | null | undefined) =>
+  hasRole(user, QUALITY_FORM_MANAGE_ROLES);
 
 export const canManageUsers = (user: AuthUser | null | undefined) =>
   hasRole(user, USER_MANAGE_ROLES);
@@ -165,5 +157,4 @@ export const canCreateJobOrders = (user: AuthUser | null | undefined) =>
 export const canFilterJobOrdersByFactory = (user: AuthUser | null | undefined) =>
   hasRole(user, JOB_ORDER_FACTORY_FILTER_ROLES);
 
-export const canViewQa = (user: AuthUser | null | undefined) =>
-  hasRole(user, QA_VIEW_ROLES);
+export const canViewQa = (user: AuthUser | null | undefined) => hasRole(user, QA_VIEW_ROLES);

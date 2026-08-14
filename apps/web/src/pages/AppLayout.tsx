@@ -12,11 +12,13 @@ import {
   Users,
   Workflow,
   ShieldCheck,
+  ClipboardCheck,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext.js';
 import { AppShell, type AppShellNavSection } from './AppShell.js';
 import {
   canManageProcessFlows,
+  canManageQualityForms,
   canManageSizes,
   canManageSeasons,
   canManageUsers,
@@ -39,9 +41,15 @@ export function AppLayout() {
     {
       heading: 'Master Data',
       items: [
-        ...(canViewStyles(user) ? [{ to: '/master-data/styles', label: 'Styles', icon: Shirt }] : []),
-        ...(canManageSeasons(user) ? [{ to: '/master-data/seasons', label: 'Seasons', icon: CalendarRange }] : []),
-        ...(canManageSizes(user) ? [{ to: '/master-data/sizes', label: 'Sizes', icon: Ruler }] : []),
+        ...(canViewStyles(user)
+          ? [{ to: '/master-data/styles', label: 'Styles', icon: Shirt }]
+          : []),
+        ...(canManageSeasons(user)
+          ? [{ to: '/master-data/seasons', label: 'Seasons', icon: CalendarRange }]
+          : []),
+        ...(canManageSizes(user)
+          ? [{ to: '/master-data/sizes', label: 'Sizes', icon: Ruler }]
+          : []),
         ...(canViewFactories(user)
           ? [{ to: '/master-data/factories', label: 'Factories', icon: Factory }]
           : []),
@@ -51,8 +59,15 @@ export function AppLayout() {
         ...(canManageProcessFlows(user)
           ? [{ to: '/master-data/process-flows', label: 'Process Flows', icon: Workflow }]
           : []),
-        ...(canViewPriceLists(user) ? [{ to: '/price-lists', label: 'Price Lists', icon: Tags }] : []),
-        ...(canManageUsers(user) ? [{ to: '/master-data/users', label: 'Users', icon: Users }] : []),
+        ...(canManageQualityForms(user)
+          ? [{ to: '/master-data/quality-forms', label: 'Quality Forms', icon: ClipboardCheck }]
+          : []),
+        ...(canViewPriceLists(user)
+          ? [{ to: '/price-lists', label: 'Price Lists', icon: Tags }]
+          : []),
+        ...(canManageUsers(user)
+          ? [{ to: '/master-data/users', label: 'Users', icon: Users }]
+          : []),
       ],
     },
     {
@@ -64,9 +79,7 @@ export function AppLayout() {
         ...(canNavigateToJobOrders(user)
           ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }]
           : []),
-        ...(canViewQa(user)
-          ? [{ to: '/qa', label: 'QA', icon: ShieldCheck }]
-          : []),
+        ...(canViewQa(user) ? [{ to: '/qa', label: 'QA', icon: ShieldCheck }] : []),
       ],
     },
   ];
