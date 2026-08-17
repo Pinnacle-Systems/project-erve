@@ -40,13 +40,10 @@ export function ProcessFlowVersionEditorPage() {
     // Hydrates the editor once the selected version has loaded.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStages(hydrated);
-    setInitialSignature(JSON.stringify(hydrated.map(({ name, code }) => ({ name, code }))));
+    setInitialSignature(JSON.stringify(hydrated));
   }, [versionQuery.data]);
 
-  const signature = useMemo(
-    () => JSON.stringify(stages.map(({ name, code }) => ({ name, code }))),
-    [stages],
-  );
+  const signature = useMemo(() => JSON.stringify(stages), [stages]);
   const dirty = Boolean(versionQuery.data) && signature !== initialSignature;
 
   useEffect(() => {
@@ -71,8 +68,26 @@ export function ProcessFlowVersionEditorPage() {
         `/process-flow-versions/${versionId}/stages`,
         {
           stages: stages.map((stage) => ({
+            activityKey: stage.key,
             name: stage.name.trim(),
             code: stage.code.trim() || null,
+            status: stage.status,
+            activityType: stage.activityType,
+            ...(stage.activityType === 'QUALITY'
+              ? {
+                  qualityFormVersionId: stage.qualityFormVersionId,
+                  qualityExecutionMode: stage.qualityExecutionMode,
+                  ...(stage.qualityExecutionMode === 'IN_PROCESS'
+                    ? {
+                        associatedProductionActivityKey: stage.associatedProductionActivityKey,
+                        qualityAvailabilityPolicy: stage.qualityAvailabilityPolicy,
+                        ...(stage.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE'
+                          ? { progressThresholdPercent: Number(stage.progressThresholdPercent) }
+                          : {}),
+                      }
+                    : {}),
+                }
+              : {}),
           })),
         },
       );
@@ -135,7 +150,7 @@ export function ProcessFlowVersionEditorPage() {
             mutation.mutate();
           }}
         >
-          <FormSection title="Ordered Stages">
+          <FormSection title="Ordered Activities">
             <ProcessStageEditor stages={stages} onChange={setStages} error={error} />
           </FormSection>
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
@@ -144,7 +159,7 @@ export function ProcessFlowVersionEditorPage() {
               Cancel
             </Button>
             <Button type="submit" variant="default" loading={mutation.isPending} disabled={!dirty}>
-              Save Stages
+              Save Activities
             </Button>
           </div>
         </form>

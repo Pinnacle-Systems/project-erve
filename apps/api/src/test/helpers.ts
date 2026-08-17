@@ -39,13 +39,13 @@ export async function resetDatabase(): Promise<void> {
   await prisma.distributorPurchaseOrderLineSize.deleteMany();
   await prisma.distributorPurchaseOrderLine.deleteMany();
   await prisma.distributorPurchaseOrder.deleteMany();
+  await prisma.processFlowVersionStage.deleteMany();
+  await prisma.processFlowVersion.deleteMany();
+  await prisma.processFlow.deleteMany();
   await prisma.qualityFormComponent.deleteMany();
   await prisma.qualityFormSection.deleteMany();
   await prisma.qualityFormVersion.deleteMany();
   await prisma.qualityForm.deleteMany();
-  await prisma.processFlowVersionStage.deleteMany();
-  await prisma.processFlowVersion.deleteMany();
-  await prisma.processFlow.deleteMany();
   await prisma.priceListLine.deleteMany();
   await prisma.priceList.deleteMany();
   await prisma.styleFactoryMapping.deleteMany();

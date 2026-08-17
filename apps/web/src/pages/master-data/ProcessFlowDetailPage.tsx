@@ -186,7 +186,9 @@ export function ProcessFlowDetailPage() {
         </Panel>
 
         <Panel
-          title={selectedVersion ? `Version ${selectedVersion.versionNumber} Stages` : 'Stages'}
+          title={
+            selectedVersion ? `Version ${selectedVersion.versionNumber} Activities` : 'Activities'
+          }
         >
           {versionQuery.isError ? (
             <ErrorState
@@ -261,8 +263,31 @@ export function ProcessFlowDetailPage() {
                     align: 'right',
                     width: '72px',
                   },
-                  { key: 'name', header: 'Stage', accessor: 'name' },
+                  { key: 'name', header: 'Activity', accessor: 'name' },
+                  {
+                    key: 'activityType',
+                    header: 'Type',
+                    render: (stage) =>
+                      stage.activityType === 'QUALITY' ? 'Quality' : 'Production',
+                  },
                   { key: 'code', header: 'Code', render: (stage) => stage.code ?? '—' },
+                  {
+                    key: 'qualityConfiguration',
+                    header: 'Quality configuration',
+                    render: (stage) => {
+                      if (stage.activityType !== 'QUALITY' || !stage.qualityFormVersion) return '—';
+                      const form = `${stage.qualityFormVersion.qualityForm.code} — ${stage.qualityFormVersion.qualityForm.name} — v${stage.qualityFormVersion.versionNumber}`;
+                      if (stage.qualityExecutionMode === 'SEQUENTIAL_GATE')
+                        return `${form} · Sequential gate`;
+                      const production =
+                        stage.associatedProductionActivity?.name ?? 'Production activity';
+                      const availability =
+                        stage.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE'
+                          ? `Available at ${stage.progressThresholdPercent}% ${production} progress`
+                          : `Available while ${production} is active`;
+                      return `${form} · In-process · ${availability}`;
+                    },
+                  },
                   {
                     key: 'status',
                     header: 'Status',
@@ -279,11 +304,11 @@ export function ProcessFlowDetailPage() {
                 loadingState={<LoadingState variant="rows" label="Loading stages" />}
                 emptyState={
                   <EmptyState
-                    title="No stages in this draft"
+                    title="No activities in this draft"
                     description={
                       selectedVersion?.status === 'DRAFT'
-                        ? 'Edit the draft to add stages before activation.'
-                        : 'This version contains no stages.'
+                        ? 'Edit the draft to add activities before activation.'
+                        : 'This version contains no activities.'
                     }
                   />
                 }
@@ -361,7 +386,7 @@ export function ProcessFlowDetailPage() {
         onOpenChange={setActivationOpen}
         title={`Activate ${flow.name} v${selectedVersion?.versionNumber ?? ''}?`}
         description={[
-          `Final stages: ${selectedVersion?.stages.map((stage) => `${stage.sequence}. ${stage.name}`).join('; ') || 'none'}.`,
+          `Final activities: ${selectedVersion?.stages.map((stage) => `${stage.sequence}. ${stage.name} (${stage.activityType === 'QUALITY' ? 'Quality' : 'Production'})`).join('; ') || 'none'}.`,
           'This version will become immutable.',
           activeVersion
             ? `Version ${activeVersion.versionNumber} will be retired.`

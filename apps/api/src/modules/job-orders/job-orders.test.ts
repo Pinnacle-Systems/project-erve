@@ -35,9 +35,22 @@ async function createSeedGraph() {
   const sizeB = await prisma.size.create({
     data: { id: createId(), code: 'AGE_4', label: '4', sizeType: 'AGE', sortOrder: 4 },
   });
-  const season = await prisma.season.create({ data: { id: createId(), code: 'JO-TEST', name: 'Job Order Test Season', financialYear: '26-27' } });
+  const season = await prisma.season.create({
+    data: {
+      id: createId(),
+      code: 'JO-TEST',
+      name: 'Job Order Test Season',
+      financialYear: '26-27',
+    },
+  });
   const style = await prisma.style.create({
-    data: { id: createId(), styleNumber: 'ST-JO', styleName: 'Job Style', finalMrp: 500, styleSeasons: { create: { seasonId: season.id } } },
+    data: {
+      id: createId(),
+      styleNumber: 'ST-JO',
+      styleName: 'Job Style',
+      finalMrp: 500,
+      styleSeasons: { create: { seasonId: season.id } },
+    },
   });
   await prisma.styleSize.createMany({
     data: [
@@ -142,6 +155,43 @@ async function createJobOrder(
 }
 
 describe('job orders API', () => {
+  it('rejects assignment of a Quality-enabled Process Flow until Quality runtime exists', async () => {
+    const graph = await createSeedGraph();
+    const qualityForm = await prisma.qualityForm.create({
+      data: { id: createId(), code: 'JO_QUALITY_GUARD', name: 'Job Order Quality Guard' },
+    });
+    const qualityFormVersion = await prisma.qualityFormVersion.create({
+      data: {
+        id: createId(),
+        qualityFormId: qualityForm.id,
+        versionNumber: 1,
+        activityType: 'INSPECTION',
+        executionScope: 'JOB_ORDER',
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
+      },
+    });
+    await prisma.processFlowVersionStage.create({
+      data: {
+        id: createId(),
+        processFlowVersionId: graph.processFlowVersionId,
+        sequence: 3,
+        name: 'Quality Gate',
+        activityType: 'QUALITY',
+        qualityFormVersionId: qualityFormVersion.id,
+        qualityExecutionMode: 'SEQUENTIAL_GATE',
+      },
+    });
+
+    const response = await createJobOrder(graph.admin.token, graph);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.message).toContain(
+      'cannot be assigned to Job Orders until Quality runtime integration is available',
+    );
+    expect(await prisma.jobOrder.count()).toBe(0);
+  });
+
   it('atomically prevents concurrent PO over-allocation', async () => {
     const graph = await createSeedGraph();
     const responses = await Promise.all([
@@ -271,7 +321,11 @@ describe('job orders API', () => {
     expect(res.body.data.orderedQuantityTotal).toBe(4);
     expect(res.body.data.unitPrice).toBe(199.5);
     expect(res.body.data.seasonSnapshots).toEqual([
-      expect.objectContaining({ code: 'JO-TEST', name: 'Job Order Test Season', financialYear: '26-27' }),
+      expect.objectContaining({
+        code: 'JO-TEST',
+        name: 'Job Order Test Season',
+        financialYear: '26-27',
+      }),
     ]);
     const persisted = await prisma.jobOrder.findUniqueOrThrow({ where: { id: res.body.data.id } });
     expect(persisted.unitPrice.toFixed(2)).toBe('199.50');
@@ -469,13 +523,21 @@ describe('job orders API', () => {
         .post(`/job-orders/${jobOrderId}/actions/confirm`)
         .set('Authorization', `Bearer ${otherFactoryUser.token}`)
         .set('Idempotency-Key', 'wrong-confirm')
-        .send({ expectedVersion: sendRes.body.data.version, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true }),
+        .send({
+          expectedVersion: sendRes.body.data.version,
+          expectedDisclaimerRevision: 1,
+          acknowledgeDisclaimer: true,
+        }),
     ).resolves.toMatchObject({ status: 403 });
     const confirmRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'workflow-confirm')
-      .send({ expectedVersion: sendRes.body.data.version, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
+      .send({
+        expectedVersion: sendRes.body.data.version,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      });
     expect(confirmRes.status).toBe(200);
     expect(confirmRes.body.data.status).toBe('CONFIRMED_BY_FACTORY');
     expect(confirmRes.body.data.stages).toHaveLength(2);
@@ -484,7 +546,11 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'workflow-confirm')
-      .send({ expectedVersion: sendRes.body.data.version, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true })
+      .send({
+        expectedVersion: sendRes.body.data.version,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
       .expect(200);
 
     const stages = confirmRes.body.data.stages;
@@ -661,9 +727,7 @@ describe('job orders API', () => {
       entityId: jobOrderId,
       action: { in: ['JOB_ORDER_DISCLAIMER_ACKNOWLEDGED', 'JOB_ORDER_FACTORY_CONFIRMED'] },
     };
-    expect(
-      await prisma.jobOrderAcknowledgement.count({ where: { jobOrderId } }),
-    ).toBe(0);
+    expect(await prisma.jobOrderAcknowledgement.count({ where: { jobOrderId } })).toBe(0);
     expect(await prisma.auditLog.count({ where: confirmationAuditWhere })).toBe(0);
 
     await request(app)
@@ -687,9 +751,7 @@ describe('job orders API', () => {
       },
     });
     expect(afterMerchandiserConfirm).toEqual(beforeMerchandiserConfirm);
-    expect(
-      await prisma.jobOrderAcknowledgement.count({ where: { jobOrderId } }),
-    ).toBe(0);
+    expect(await prisma.jobOrderAcknowledgement.count({ where: { jobOrderId } })).toBe(0);
     expect(await prisma.auditLog.count({ where: confirmationAuditWhere })).toBe(0);
 
     await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'INACTIVE' } });
@@ -699,7 +761,11 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'inactive-confirm')
-      .send({ expectedVersion: createRes.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
+      .send({
+        expectedVersion: createRes.body.data.version + 1,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      });
     expect(factoryUserConfirm.status).toBe(409);
     expect(factoryUserConfirm.body.error.message).toMatch(/inactive/i);
 
@@ -708,7 +774,11 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${otherFactoryUser.token}`)
       .set('Idempotency-Key', 'other-confirm')
-      .send({ expectedVersion: createRes.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true })
+      .send({
+        expectedVersion: createRes.body.data.version + 1,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
       .expect(403);
 
     // No new job order can be assigned to the inactive factory while existing work is unresolved.
@@ -721,7 +791,11 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${graph.admin.token}`)
       .set('Idempotency-Key', 'admin-confirm')
-      .send({ expectedVersion: createRes.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
+      .send({
+        expectedVersion: createRes.body.data.version + 1,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      });
     expect(confirmRes.status).toBe(403);
 
     // Confirm while the factory is active, then suspend it to exercise the
@@ -731,7 +805,11 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/confirm`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'active-confirm-before-suspension')
-      .send({ expectedVersion: createRes.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
+      .send({
+        expectedVersion: createRes.body.data.version + 1,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      });
     expect(activeFactoryConfirm.status).toBe(200);
     const stages = activeFactoryConfirm.body.data.stages;
     await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'INACTIVE' } });
@@ -741,7 +819,10 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'inactive-stage')
-      .send({ stageStatusId: stages[0].id, expectedVersion: activeFactoryConfirm.body.data.version })
+      .send({
+        stageStatusId: stages[0].id,
+        expectedVersion: activeFactoryConfirm.body.data.version,
+      })
       .expect(409);
 
     // MERCHANDISER retains its normal control over the existing job order.
@@ -749,7 +830,10 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${merchandiser.token}`)
       .set('Idempotency-Key', 'merch-stage')
-      .send({ stageStatusId: stages[0].id, expectedVersion: activeFactoryConfirm.body.data.version });
+      .send({
+        stageStatusId: stages[0].id,
+        expectedVersion: activeFactoryConfirm.body.data.version,
+      });
     expect(stage1Res.status).toBe(200);
     expect(stage1Res.body.data.status).toBe('IN_PRODUCTION');
 
@@ -834,7 +918,11 @@ describe('job orders API', () => {
       .post(`/job-orders/${jo2Res.body.data.id}/actions/confirm`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'restored-confirm')
-      .send({ expectedVersion: jo2Res.body.data.version + 1, expectedDisclaimerRevision: 1, acknowledgeDisclaimer: true });
+      .send({
+        expectedVersion: jo2Res.body.data.version + 1,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      });
     expect(restoredConfirm.status).toBe(200);
     expect(restoredConfirm.body.data.status).toBe('CONFIRMED_BY_FACTORY');
   });

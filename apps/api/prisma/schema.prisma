@@ -118,6 +118,21 @@ enum ProcessStageStatus {
   INACTIVE
 }
 
+enum ProcessFlowActivityType {
+  PRODUCTION
+  QUALITY
+}
+
+enum QualityExecutionMode {
+  SEQUENTIAL_GATE
+  IN_PROCESS
+}
+
+enum QualityAvailabilityPolicy {
+  WHILE_ASSOCIATED_ACTIVITY_ACTIVE
+  PROGRESS_PERCENTAGE
+}
+
 enum QualityFormStatus {
   ACTIVE
   INACTIVE
@@ -583,20 +598,32 @@ model ProcessFlowVersion {
 }
 
 model ProcessFlowVersionStage {
-  id                   String             @id
-  processFlowVersionId String             @map("process_flow_version_id")
-  sequence             Int
-  name                 String
-  code                 String?
-  status               ProcessStageStatus @default(ACTIVE)
-  createdAt            DateTime           @default(now()) @map("created_at")
-  updatedAt            DateTime           @updatedAt @map("updated_at")
+  id                             String                     @id
+  processFlowVersionId           String                     @map("process_flow_version_id")
+  sequence                       Int
+  name                           String
+  code                           String?
+  status                         ProcessStageStatus         @default(ACTIVE)
+  activityType                   ProcessFlowActivityType    @default(PRODUCTION) @map("activity_type")
+  qualityFormVersionId           String?                    @map("quality_form_version_id")
+  qualityExecutionMode           QualityExecutionMode?      @map("quality_execution_mode")
+  associatedProductionActivityId String?                    @map("associated_production_activity_id")
+  qualityAvailabilityPolicy      QualityAvailabilityPolicy? @map("quality_availability_policy")
+  progressThresholdPercent       Decimal?                   @map("progress_threshold_percent") @db.Decimal(5, 2)
+  createdAt                      DateTime                   @default(now()) @map("created_at")
+  updatedAt                      DateTime                   @updatedAt @map("updated_at")
 
-  processFlowVersion    ProcessFlowVersion    @relation(fields: [processFlowVersionId], references: [id], onDelete: Cascade)
-  jobOrderStageStatuses JobOrderStageStatus[]
+  processFlowVersion           ProcessFlowVersion        @relation(fields: [processFlowVersionId], references: [id], onDelete: Cascade)
+  qualityFormVersion           QualityFormVersion?       @relation(fields: [qualityFormVersionId], references: [id], onDelete: Restrict)
+  associatedProductionActivity ProcessFlowVersionStage?  @relation("ProcessFlowActivityAssociation", fields: [associatedProductionActivityId], references: [id], onDelete: Restrict)
+  associatedQualityActivities  ProcessFlowVersionStage[] @relation("ProcessFlowActivityAssociation")
+  jobOrderStageStatuses        JobOrderStageStatus[]
 
   @@unique([processFlowVersionId, sequence])
   @@index([processFlowVersionId])
+  @@index([qualityFormVersionId])
+  @@index([associatedProductionActivityId])
+  @@index([activityType])
   @@map("process_flow_version_stages")
 }
 
@@ -628,8 +655,9 @@ model QualityFormVersion {
   createdAt      DateTime                  @default(now()) @map("created_at")
   updatedAt      DateTime                  @updatedAt @map("updated_at")
 
-  qualityForm QualityForm          @relation(fields: [qualityFormId], references: [id], onDelete: Cascade)
-  sections    QualityFormSection[]
+  qualityForm           QualityForm               @relation(fields: [qualityFormId], references: [id], onDelete: Cascade)
+  sections              QualityFormSection[]
+  processFlowActivities ProcessFlowVersionStage[]
 
   @@unique([qualityFormId, versionNumber])
   @@index([qualityFormId])

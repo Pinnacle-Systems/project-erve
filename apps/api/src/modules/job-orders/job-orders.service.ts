@@ -526,7 +526,14 @@ export async function createJobOrderFromPO(
     prisma.factory.findUnique({ where: { id: input.factoryId } }),
     prisma.processFlowVersion.findUnique({
       where: { id: input.processFlowVersionId },
-      include: { stages: { where: { status: 'ACTIVE' }, orderBy: { sequence: 'asc' } } },
+      select: {
+        status: true,
+        stages: {
+          where: { activityType: 'QUALITY' },
+          select: { id: true },
+          take: 1,
+        },
+      },
     }),
   ]);
 
@@ -541,6 +548,11 @@ export async function createJobOrderFromPO(
   if (!processFlowVersion) throw HttpError.badRequest('Process flow version not found');
   if (processFlowVersion.status !== 'ACTIVE')
     throw HttpError.badRequest('Process flow version must be ACTIVE');
+  if (processFlowVersion.stages.length > 0) {
+    throw HttpError.badRequest(
+      'Quality-enabled Process Flow versions cannot be assigned to Job Orders until Quality runtime integration is available',
+    );
+  }
 
   const poLinesById = new Map(po.lines.map((line) => [line.id, line]));
   const poSizesById = new Map(
@@ -814,7 +826,12 @@ export async function confirmJobOrder(
       where: { id },
       include: {
         processFlowVersion: {
-          include: { stages: { where: { status: 'ACTIVE' }, orderBy: { sequence: 'asc' } } },
+          include: {
+            stages: {
+              where: { status: 'ACTIVE', activityType: 'PRODUCTION' },
+              orderBy: { sequence: 'asc' },
+            },
+          },
         },
         factory: { select: { status: true } },
       },
