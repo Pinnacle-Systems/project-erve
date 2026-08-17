@@ -1123,6 +1123,7 @@ model JobOrderStageStatus {
   stageSequence             Int                   @map("stage_sequence")
   stageNameSnapshot         String                @map("stage_name_snapshot")
   status                    ProductionStageStatus @default(NOT_STARTED)
+  completedQuantity         Int?                  @map("completed_quantity")
   completedBy               String?               @map("completed_by")
   completedAt               DateTime?             @map("completed_at")
   remarks                   String?

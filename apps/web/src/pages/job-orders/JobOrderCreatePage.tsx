@@ -241,7 +241,7 @@ export function JobOrderCreatePage() {
             label="Process Flow Version"
             value={processFlowVersionId || undefined}
             onValueChange={setProcessFlowVersionId}
-            helpText="Quality-enabled versions are unavailable until Job Order Quality runtime integration is implemented."
+            helpText="Quality-enabled versions are unavailable until Job Order Quality activity execution is implemented."
             width="fill"
           >
             {activeVersions.map((version) => (

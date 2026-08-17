@@ -2,7 +2,8 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
-import { prisma } from '../../db/prisma.js';
+import { Prisma, prisma } from '../../db/prisma.js';
+import { isProgressThresholdMet } from './job-orders.service.js';
 import {
   createTestDistributor,
   createTestFactory,
@@ -11,6 +12,16 @@ import {
 } from '../../test/helpers.js';
 
 const app = createApp();
+
+describe('Production percentage eligibility arithmetic', () => {
+  it('uses exact decimal-safe boundaries driven by configuration', () => {
+    expect(isProgressThresholdMet(419, 840, new Prisma.Decimal('50'))).toBe(false);
+    expect(isProgressThresholdMet(420, 840, new Prisma.Decimal('50'))).toBe(true);
+    expect(isProgressThresholdMet(251, 840, new Prisma.Decimal('30'))).toBe(false);
+    expect(isProgressThresholdMet(252, 840, new Prisma.Decimal('30'))).toBe(true);
+    expect(isProgressThresholdMet(504, 840, new Prisma.Decimal('60'))).toBe(true);
+  });
+});
 
 beforeEach(async () => {
   await resetDatabase();
@@ -155,6 +166,571 @@ async function createJobOrder(
 }
 
 describe('job orders API', () => {
+  it('tracks monotonic, versioned Production progress without implicitly completing a stage', async () => {
+    const graph = await createSeedGraph();
+    const factoryUser = await createTestUserAndToken({
+      email: 'progress-factory@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+    });
+    const created = await createJobOrder(graph.admin.token, graph, 4);
+    const sent = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'progress-send')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    const confirmed = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-confirm')
+      .send({
+        expectedVersion: sent.body.data.version,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
+      .expect(200);
+    const stage = confirmed.body.data.stages[0];
+    expect(stage).toMatchObject({
+      plannedQuantity: 4,
+      completedQuantity: 0,
+      remainingQuantity: 4,
+      progressPercent: 0,
+    });
+
+    const started = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-start')
+      .send({ expectedVersion: confirmed.body.data.version, stageStatusId: stage.id })
+      .expect(200);
+    expect(started.body.data.stages[0].status).toBe('IN_PROGRESS');
+
+    const first = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-one')
+      .send({
+        expectedVersion: started.body.data.version,
+        stageStatusId: stage.id,
+        completedQuantity: 2,
+      })
+      .expect(200);
+    expect(first.body.data.stages[0]).toMatchObject({
+      status: 'IN_PROGRESS',
+      completedQuantity: 2,
+      remainingQuantity: 2,
+      progressPercent: 50,
+    });
+
+    const earlyCompletion = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-early-completion')
+      .send({ expectedVersion: first.body.data.version, stageStatusId: stage.id })
+      .expect(400);
+    expect(earlyCompletion.body.error.message).toContain('Record 2 remaining units');
+    expect(earlyCompletion.body.error.code).toBe('VALIDATION_ERROR');
+    const afterRejectedCompletion = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .expect(200);
+    expect(afterRejectedCompletion.body.data.stages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: stage.id, status: 'IN_PROGRESS', completedQuantity: 2 }),
+        expect.objectContaining({ id: confirmed.body.data.stages[1].id, status: 'NOT_STARTED' }),
+      ]),
+    );
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-bypass-next-stage')
+      .send({
+        expectedVersion: first.body.data.version,
+        stageStatusId: confirmed.body.data.stages[1].id,
+      })
+      .expect(400);
+
+    const noOp = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-noop')
+      .send({
+        expectedVersion: first.body.data.version,
+        stageStatusId: stage.id,
+        completedQuantity: 2,
+      })
+      .expect(200);
+    expect(noOp.body.data.version).toBe(first.body.data.version);
+    expect(
+      await prisma.auditLog.count({ where: { action: 'JOB_ORDER_STAGE_PROGRESS_UPDATED' } }),
+    ).toBe(1);
+
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-decrease')
+      .send({
+        expectedVersion: first.body.data.version,
+        stageStatusId: stage.id,
+        completedQuantity: 1,
+      })
+      .expect(400);
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-over')
+      .send({
+        expectedVersion: first.body.data.version,
+        stageStatusId: stage.id,
+        completedQuantity: 5,
+      })
+      .expect(400);
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-negative')
+      .send({
+        expectedVersion: first.body.data.version,
+        stageStatusId: stage.id,
+        completedQuantity: -1,
+      })
+      .expect(400);
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-stale')
+      .send({
+        expectedVersion: started.body.data.version,
+        stageStatusId: stage.id,
+        completedQuantity: 3,
+      })
+      .expect(409);
+
+    const full = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-full')
+      .send({
+        expectedVersion: first.body.data.version,
+        stageStatusId: stage.id,
+        completedQuantity: 4,
+      })
+      .expect(200);
+    expect(full.body.data.stages[0]).toMatchObject({
+      status: 'IN_PROGRESS',
+      completedQuantity: 4,
+      remainingQuantity: 0,
+      progressPercent: 100,
+    });
+    expect(full.body.data.status).toBe('IN_PRODUCTION');
+
+    const wrongFactory = await createTestUserAndToken({
+      email: 'progress-wrong@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: wrongFactory.userId, factoryId: graph.otherFactory.id },
+    });
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${wrongFactory.token}`)
+      .set('Idempotency-Key', 'progress-wrong-factory')
+      .send({
+        expectedVersion: full.body.data.version,
+        stageStatusId: stage.id,
+        completedQuantity: 4,
+      })
+      .expect(403);
+
+    const explicitlyCompleted = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'progress-explicit-complete')
+      .send({ expectedVersion: full.body.data.version, stageStatusId: stage.id })
+      .expect(200);
+    expect(explicitlyCompleted.body.data.stages[0]).toMatchObject({
+      status: 'COMPLETED',
+      completedQuantity: 4,
+      progressPercent: 100,
+    });
+    expect(explicitlyCompleted.body.data.stages[1].status).toBe('NOT_STARTED');
+
+    await expect(
+      prisma.jobOrderStageStatus.update({
+        where: { id: stage.id },
+        data: { completedQuantity: -1 },
+      }),
+    ).rejects.toThrow();
+    const foreignActivity = await prisma.processFlowVersionStage.create({
+      data: {
+        id: createId(),
+        processFlowVersionId: graph.draftProcessFlowVersionId,
+        sequence: 1,
+        name: 'Foreign Production',
+      },
+    });
+    await expect(
+      prisma.jobOrderStageStatus.create({
+        data: {
+          id: createId(),
+          jobOrderId: created.body.data.id,
+          processFlowVersionStageId: foreignActivity.id,
+          stageSequence: 99,
+          stageNameSnapshot: foreignActivity.name,
+        },
+      }),
+    ).rejects.toThrow(/assigned Process Flow version/);
+
+    const historicalStageId = explicitlyCompleted.body.data.stages[1].id;
+    await prisma.jobOrderStageStatus.update({
+      where: { id: historicalStageId },
+      data: { completedQuantity: null },
+    });
+    const historicalView = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .expect(200);
+    expect(historicalView.body.data.stages[1]).toMatchObject({
+      completedQuantity: null,
+      remainingQuantity: null,
+      progressPercent: null,
+    });
+    const historicalCompletion = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'historical-progress-completion')
+      .send({
+        expectedVersion: historicalView.body.data.version,
+        stageStatusId: historicalStageId,
+      })
+      .expect(400);
+    expect(historicalCompletion.body.error.message).toContain('not captured');
+  });
+
+  it('derives Inline, percentage, and sequential Quality availability from exact versioned definitions', async () => {
+    const graph = await createSeedGraph();
+    await prisma.distributorPurchaseOrderLineSize.update({
+      where: { id: graph.poSizeAId },
+      data: { orderedQuantity: 840 },
+    });
+    const created = await createJobOrder(graph.admin.token, graph, 840);
+    const production = await prisma.processFlowVersionStage.findMany({
+      where: { processFlowVersionId: graph.processFlowVersionId },
+      orderBy: { sequence: 'asc' },
+    });
+    await prisma.processFlowVersionStage.update({
+      where: { id: production[1]!.id },
+      data: { sequence: 4 },
+    });
+    const form = await prisma.qualityForm.create({
+      data: { id: createId(), code: 'RUNTIME_QA', name: 'Runtime Inspection' },
+    });
+    const formV1 = await prisma.qualityFormVersion.create({
+      data: {
+        id: createId(),
+        qualityFormId: form.id,
+        versionNumber: 1,
+        activityType: 'INSPECTION',
+        executionScope: 'JOB_ORDER',
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
+      },
+    });
+    const [gate, inline, final, postSewingGate] = await Promise.all([
+      prisma.processFlowVersionStage.create({
+        data: {
+          id: createId(),
+          processFlowVersionId: graph.processFlowVersionId,
+          sequence: 2,
+          name: 'Cutting Gate',
+          activityType: 'QUALITY',
+          qualityFormVersionId: formV1.id,
+          qualityExecutionMode: 'SEQUENTIAL_GATE',
+        },
+      }),
+      prisma.processFlowVersionStage.create({
+        data: {
+          id: createId(),
+          processFlowVersionId: graph.processFlowVersionId,
+          sequence: 5,
+          name: 'Inline Inspection',
+          activityType: 'QUALITY',
+          qualityFormVersionId: formV1.id,
+          qualityExecutionMode: 'IN_PROCESS',
+          associatedProductionActivityId: production[1]!.id,
+          qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
+        },
+      }),
+      prisma.processFlowVersionStage.create({
+        data: {
+          id: createId(),
+          processFlowVersionId: graph.processFlowVersionId,
+          sequence: 6,
+          name: 'Final Inspection',
+          activityType: 'QUALITY',
+          qualityFormVersionId: formV1.id,
+          qualityExecutionMode: 'IN_PROCESS',
+          associatedProductionActivityId: production[1]!.id,
+          qualityAvailabilityPolicy: 'PROGRESS_PERCENTAGE',
+          progressThresholdPercent: '50',
+        },
+      }),
+      prisma.processFlowVersionStage.create({
+        data: {
+          id: createId(),
+          processFlowVersionId: graph.processFlowVersionId,
+          sequence: 7,
+          name: 'Post Sewing Gate',
+          activityType: 'QUALITY',
+          qualityFormVersionId: formV1.id,
+          qualityExecutionMode: 'SEQUENTIAL_GATE',
+        },
+      }),
+    ]);
+    const factoryUser = await createTestUserAndToken({
+      email: 'quality-runtime-factory@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+    });
+    const sent = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'quality-runtime-send')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    const confirmed = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-runtime-confirm')
+      .send({
+        expectedVersion: sent.body.data.version,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
+      .expect(200);
+    expect(confirmed.body.data.qualityActivities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ processFlowVersionStageId: gate.id, status: 'NOT_AVAILABLE' }),
+        expect.objectContaining({
+          processFlowVersionStageId: inline.id,
+          status: 'NOT_AVAILABLE',
+          qualityFormVersion: { id: formV1.id, versionNumber: 1 },
+        }),
+        expect.objectContaining({
+          processFlowVersionStageId: final.id,
+          status: 'NOT_AVAILABLE',
+          progressThresholdPercent: '50.00',
+        }),
+      ]),
+    );
+
+    const cuttingProgress = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-cutting-progress')
+      .send({
+        expectedVersion: confirmed.body.data.version,
+        stageStatusId: confirmed.body.data.stages[0].id,
+        completedQuantity: 840,
+      })
+      .expect(200);
+    const cuttingDone = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-cutting-done')
+      .send({
+        expectedVersion: cuttingProgress.body.data.version,
+        stageStatusId: confirmed.body.data.stages[0].id,
+      })
+      .expect(200);
+    expect(
+      cuttingDone.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) => item.processFlowVersionStageId === gate.id,
+      ).status,
+    ).toBe('AVAILABLE');
+    const sewing = cuttingDone.body.data.stages[1];
+    const sewingStarted = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-sewing-start')
+      .send({ expectedVersion: cuttingDone.body.data.version, stageStatusId: sewing.id })
+      .expect(200);
+    expect(
+      sewingStarted.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) =>
+          item.processFlowVersionStageId === inline.id,
+      ),
+    ).toMatchObject({ status: 'AVAILABLE', eligible: true });
+    expect(
+      sewingStarted.body.data.qualityActivities.every(
+        (item: { status: string }) => item.status !== 'IN_PROGRESS',
+      ),
+    ).toBe(true);
+    expect(
+      sewingStarted.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) =>
+          item.processFlowVersionStageId === postSewingGate.id,
+      ).status,
+    ).toBe('NOT_AVAILABLE');
+
+    const at300 = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-300')
+      .send({
+        expectedVersion: sewingStarted.body.data.version,
+        stageStatusId: sewing.id,
+        completedQuantity: 300,
+      })
+      .expect(200);
+    const concurrencyVersion = at300.body.data.version;
+    const requestA = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-concurrency-a')
+      .send({
+        expectedVersion: concurrencyVersion,
+        stageStatusId: sewing.id,
+        completedQuantity: 400,
+      })
+      .expect(200);
+    const requestB = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-concurrency-b')
+      .send({
+        expectedVersion: concurrencyVersion,
+        stageStatusId: sewing.id,
+        completedQuantity: 350,
+      })
+      .expect(409);
+    expect(requestB.body.error.code).toBe('STALE_VERSION');
+    const afterConcurrency = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .expect(200);
+    expect(afterConcurrency.body.data.stages[1].completedQuantity).toBe(400);
+
+    const at419 = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-419')
+      .send({
+        expectedVersion: requestA.body.data.version,
+        stageStatusId: sewing.id,
+        completedQuantity: 419,
+      })
+      .expect(200);
+    expect(
+      at419.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) =>
+          item.processFlowVersionStageId === final.id,
+      ).status,
+    ).toBe('NOT_AVAILABLE');
+    const at420 = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-420')
+      .send({
+        expectedVersion: at419.body.data.version,
+        stageStatusId: sewing.id,
+        completedQuantity: 420,
+      })
+      .expect(200);
+    expect(
+      at420.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) =>
+          item.processFlowVersionStageId === final.id,
+      ).status,
+    ).toBe('AVAILABLE');
+    const at839 = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-839')
+      .send({
+        expectedVersion: at420.body.data.version,
+        stageStatusId: sewing.id,
+        completedQuantity: 839,
+      })
+      .expect(200);
+    const completionAt839 = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-complete-839')
+      .send({ expectedVersion: at839.body.data.version, stageStatusId: sewing.id })
+      .expect(400);
+    expect(completionAt839.body.error.message).toContain('Record 1 remaining units');
+
+    const at840 = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-840')
+      .send({
+        expectedVersion: at839.body.data.version,
+        stageStatusId: sewing.id,
+        completedQuantity: 840,
+      })
+      .expect(200);
+    expect(
+      at840.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) =>
+          item.processFlowVersionStageId === final.id,
+      ).status,
+    ).toBe('AVAILABLE');
+
+    const sewingCompleted = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-sewing-complete')
+      .send({ expectedVersion: at840.body.data.version, stageStatusId: sewing.id })
+      .expect(200);
+    expect(
+      sewingCompleted.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) =>
+          item.processFlowVersionStageId === inline.id,
+      ).status,
+    ).toBe('NOT_AVAILABLE');
+    expect(
+      sewingCompleted.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) =>
+          item.processFlowVersionStageId === postSewingGate.id,
+      ).status,
+    ).toBe('AVAILABLE');
+
+    await prisma.qualityFormVersion.update({
+      where: { id: formV1.id },
+      data: { status: 'RETIRED' },
+    });
+    await prisma.qualityFormVersion.create({
+      data: {
+        id: createId(),
+        qualityFormId: form.id,
+        versionNumber: 2,
+        activityType: 'INSPECTION',
+        executionScope: 'JOB_ORDER',
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
+      },
+    });
+    const reread = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    expect(
+      reread.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) =>
+          item.processFlowVersionStageId === final.id,
+      ).qualityFormVersion,
+    ).toEqual({ id: formV1.id, versionNumber: 1 });
+  });
   it('rejects assignment of a Quality-enabled Process Flow until Quality runtime exists', async () => {
     const graph = await createSeedGraph();
     const qualityForm = await prisma.qualityForm.create({
@@ -187,7 +763,7 @@ describe('job orders API', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error.message).toContain(
-      'cannot be assigned to Job Orders until Quality runtime integration is available',
+      'cannot be assigned to Job Orders until Quality activity execution is available',
     );
     expect(await prisma.jobOrder.count()).toBe(0);
   });
@@ -562,11 +1138,21 @@ describe('job orders API', () => {
         .send({ stageStatusId: stages[1].id, expectedVersion: confirmRes.body.data.version }),
     ).resolves.toMatchObject({ status: 400 });
 
+    const firstStageProgress = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'stage-one-progress')
+      .send({
+        stageStatusId: stages[0].id,
+        completedQuantity: 4,
+        expectedVersion: confirmRes.body.data.version,
+      })
+      .expect(200);
     const firstStageRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'stage-one')
-      .send({ stageStatusId: stages[0].id, expectedVersion: confirmRes.body.data.version });
+      .send({ stageStatusId: stages[0].id, expectedVersion: firstStageProgress.body.data.version });
     expect(firstStageRes.body.data.status).toBe('IN_PRODUCTION');
 
     const stageAudit = await request(app)
@@ -591,7 +1177,7 @@ describe('job orders API', () => {
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'stage-one')
-      .send({ stageStatusId: stages[0].id, expectedVersion: confirmRes.body.data.version })
+      .send({ stageStatusId: stages[0].id, expectedVersion: firstStageProgress.body.data.version })
       .expect(200);
 
     await expect(
@@ -607,11 +1193,21 @@ describe('job orders API', () => {
         }),
     ).resolves.toMatchObject({ status: 400 });
 
+    const finalStageProgress = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'stage-two-progress')
+      .send({
+        stageStatusId: stages[1].id,
+        completedQuantity: 4,
+        expectedVersion: firstStageRes.body.data.version,
+      })
+      .expect(200);
     const finalStageRes = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'stage-two')
-      .send({ stageStatusId: stages[1].id, expectedVersion: firstStageRes.body.data.version });
+      .send({ stageStatusId: stages[1].id, expectedVersion: finalStageProgress.body.data.version });
     expect(finalStageRes.body.data.status).toBe('PRODUCTION_COMPLETE');
 
     const sizeId = finalStageRes.body.data.lines[0].sizes[0].id;
@@ -641,7 +1237,7 @@ describe('job orders API', () => {
       .get(`/job-orders/${jobOrderId}/variance`)
       .set('Authorization', `Bearer ${graph.admin.token}`);
     expect(varianceRes.body.data.varianceQuantity).toBe(-1);
-    await expect(prisma.auditLog.count({ where: { entityType: 'JobOrder' } })).resolves.toBe(7);
+    await expect(prisma.auditLog.count({ where: { entityType: 'JobOrder' } })).resolves.toBe(9);
   });
 
   it('blocks sending to a deactivated factory while keeping the existing job order readable', async () => {
@@ -826,22 +1422,42 @@ describe('job orders API', () => {
       .expect(409);
 
     // MERCHANDISER retains its normal control over the existing job order.
+    const stage1Progress = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'merch-stage-progress')
+      .send({
+        stageStatusId: stages[0].id,
+        completedQuantity: 4,
+        expectedVersion: activeFactoryConfirm.body.data.version,
+      })
+      .expect(200);
     const stage1Res = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${merchandiser.token}`)
       .set('Idempotency-Key', 'merch-stage')
       .send({
         stageStatusId: stages[0].id,
-        expectedVersion: activeFactoryConfirm.body.data.version,
+        expectedVersion: stage1Progress.body.data.version,
       });
     expect(stage1Res.status).toBe(200);
     expect(stage1Res.body.data.status).toBe('IN_PRODUCTION');
 
+    const stage2Progress = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/update-production-progress`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'admin-stage-progress')
+      .send({
+        stageStatusId: stages[1].id,
+        completedQuantity: 4,
+        expectedVersion: stage1Res.body.data.version,
+      })
+      .expect(200);
     const stage2Res = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
       .set('Authorization', `Bearer ${graph.admin.token}`)
       .set('Idempotency-Key', 'admin-stage')
-      .send({ stageStatusId: stages[1].id, expectedVersion: stage1Res.body.data.version });
+      .send({ stageStatusId: stages[1].id, expectedVersion: stage2Progress.body.data.version });
     expect(stage2Res.status).toBe(200);
     expect(stage2Res.body.data.status).toBe('PRODUCTION_COMPLETE');
 

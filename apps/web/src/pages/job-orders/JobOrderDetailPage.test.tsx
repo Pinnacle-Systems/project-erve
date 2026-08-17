@@ -39,6 +39,10 @@ const stage = (
   stageSequence: sequence,
   stageNameSnapshot: name,
   status,
+  plannedQuantity: 10,
+  completedQuantity: status === 'NOT_STARTED' ? 0 : 10,
+  remainingQuantity: status === 'NOT_STARTED' ? 10 : 0,
+  progressPercent: status === 'NOT_STARTED' ? 0 : 100,
   completedAt: status === 'COMPLETED' ? '2026-07-31T10:00:00Z' : null,
   completedBy:
     status === 'COMPLETED' ? { id: 'user-1', name: 'Alice', email: 'alice@test.local' } : null,
@@ -80,6 +84,7 @@ const mockJobOrder = (
   disclaimerRevision: 0,
   acknowledgement: null,
   reworkTasks: [],
+  qualityActivities: [],
   lines: [],
   stages:
     status === 'PRODUCTION_COMPLETE'

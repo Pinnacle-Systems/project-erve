@@ -28,6 +28,10 @@ const mockStages: JobOrderStage[] = [
     stageSequence: 1,
     stageNameSnapshot: 'Cutting',
     status: 'COMPLETED',
+    plannedQuantity: 10,
+    completedQuantity: 10,
+    remainingQuantity: 0,
+    progressPercent: 100,
     completedAt: '2026-07-31T10:00:00Z',
     completedBy: { id: 'user-1', name: 'Alice', email: 'alice@test.local' },
     remarks: null,
@@ -40,6 +44,10 @@ const mockStages: JobOrderStage[] = [
     stageSequence: 2,
     stageNameSnapshot: 'Printing',
     status: 'IN_PROGRESS',
+    plannedQuantity: 10,
+    completedQuantity: 4,
+    remainingQuantity: 6,
+    progressPercent: 40,
     completedAt: null,
     completedBy: null,
     remarks: null,
@@ -52,6 +60,10 @@ const mockStages: JobOrderStage[] = [
     stageSequence: 3,
     stageNameSnapshot: 'Sewing',
     status: 'NOT_STARTED',
+    plannedQuantity: 10,
+    completedQuantity: 0,
+    remainingQuantity: 10,
+    progressPercent: 0,
     completedAt: null,
     completedBy: null,
     remarks: null,
@@ -63,18 +75,49 @@ const mockStages: JobOrderStage[] = [
 describe('ProductionStageStepper', () => {
   it('renders nothing when there are no production stages', () => {
     act(() => {
-      root.render(
-        <ProductionStageStepper stages={[]} isPreparedQuantitiesUnlocked={true} />
-      );
+      root.render(<ProductionStageStepper stages={[]} isPreparedQuantitiesUnlocked={true} />);
     });
 
     expect(container.innerHTML).toBe('');
   });
 
+  it('renders authoritative quantity progress for Production activities', () => {
+    act(() => {
+      root.render(
+        <ProductionStageStepper
+          stages={mockStages}
+          currentStageId="stage-2"
+          isPreparedQuantitiesUnlocked={false}
+        />,
+      );
+    });
+    expect(container.textContent).toContain('4 / 10 completed · 40%');
+  });
+
+  it('renders migrated unknown progress without presenting it as zero', () => {
+    const historical = {
+      ...mockStages[0]!,
+      completedQuantity: null,
+      remainingQuantity: null,
+      progressPercent: null,
+    };
+    act(() => {
+      root.render(
+        <ProductionStageStepper stages={[historical]} isPreparedQuantitiesUnlocked={false} />,
+      );
+    });
+    expect(container.textContent).toContain('Historical progress not captured');
+    expect(container.textContent).not.toContain('0 / 10');
+  });
+
   it('renders all stages in an ordered list', () => {
     act(() => {
       root.render(
-        <ProductionStageStepper stages={mockStages} currentStageId="stage-2" isPreparedQuantitiesUnlocked={false} />
+        <ProductionStageStepper
+          stages={mockStages}
+          currentStageId="stage-2"
+          isPreparedQuantitiesUnlocked={false}
+        />,
       );
     });
 
@@ -87,7 +130,11 @@ describe('ProductionStageStepper', () => {
   it('identifies the current step semantically', () => {
     act(() => {
       root.render(
-        <ProductionStageStepper stages={mockStages} currentStageId="stage-2" isPreparedQuantitiesUnlocked={false} />
+        <ProductionStageStepper
+          stages={mockStages}
+          currentStageId="stage-2"
+          isPreparedQuantitiesUnlocked={false}
+        />,
       );
     });
 
@@ -100,7 +147,11 @@ describe('ProductionStageStepper', () => {
   it('renders completed stage metadata when available', () => {
     act(() => {
       root.render(
-        <ProductionStageStepper stages={mockStages} currentStageId="stage-2" isPreparedQuantitiesUnlocked={false} />
+        <ProductionStageStepper
+          stages={mockStages}
+          currentStageId="stage-2"
+          isPreparedQuantitiesUnlocked={false}
+        />,
       );
     });
 
@@ -112,11 +163,15 @@ describe('ProductionStageStepper', () => {
   it('handles missing stage metadata gracefully', () => {
     const stagesWithoutMeta = [
       { ...mockStages[0], completedAt: null, completedBy: null },
-      ...mockStages.slice(1)
+      ...mockStages.slice(1),
     ] as JobOrderStage[];
     act(() => {
       root.render(
-        <ProductionStageStepper stages={stagesWithoutMeta} currentStageId="stage-2" isPreparedQuantitiesUnlocked={false} />
+        <ProductionStageStepper
+          stages={stagesWithoutMeta}
+          currentStageId="stage-2"
+          isPreparedQuantitiesUnlocked={false}
+        />,
       );
     });
 
@@ -128,7 +183,11 @@ describe('ProductionStageStepper', () => {
   it('indicates the prepared quantities state', () => {
     act(() => {
       root.render(
-        <ProductionStageStepper stages={mockStages} currentStageId="stage-2" isPreparedQuantitiesUnlocked={false} />
+        <ProductionStageStepper
+          stages={mockStages}
+          currentStageId="stage-2"
+          isPreparedQuantitiesUnlocked={false}
+        />,
       );
     });
 
@@ -137,7 +196,11 @@ describe('ProductionStageStepper', () => {
 
     act(() => {
       root.render(
-        <ProductionStageStepper stages={mockStages} currentStageId="stage-2" isPreparedQuantitiesUnlocked={true} />
+        <ProductionStageStepper
+          stages={mockStages}
+          currentStageId="stage-2"
+          isPreparedQuantitiesUnlocked={true}
+        />,
       );
     });
 
@@ -147,7 +210,11 @@ describe('ProductionStageStepper', () => {
   it('applies responsive classes for structure (horizontal/vertical) instead of flex-wrap', () => {
     act(() => {
       root.render(
-        <ProductionStageStepper stages={mockStages} currentStageId="stage-2" isPreparedQuantitiesUnlocked={false} />
+        <ProductionStageStepper
+          stages={mockStages}
+          currentStageId="stage-2"
+          isPreparedQuantitiesUnlocked={false}
+        />,
       );
     });
 

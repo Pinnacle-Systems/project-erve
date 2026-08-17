@@ -118,7 +118,7 @@ describe('Job Order Process Flow assignment', () => {
     await flush();
 
     expect(container.textContent).toContain(
-      'Quality-enabled versions are unavailable until Job Order Quality runtime integration is implemented.',
+      'Quality-enabled versions are unavailable until Job Order Quality activity execution is implemented.',
     );
     const trigger = container.querySelector<HTMLButtonElement>('#select-process-flow-version');
     expect(trigger).not.toBeNull();

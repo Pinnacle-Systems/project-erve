@@ -8,7 +8,7 @@ A versioned Process Flow Quality activity defines **when the form becomes releva
 
 Job Order and QA runtime execution will later determine what is happening for a specific order. This phase does not create inspections, calculate progress, automatically start Quality work, route outcomes, block Production, or create rework.
 
-As a temporary operational safety rule, a Process Flow version containing any `QUALITY` activity cannot be assigned to a new Job Order. The API rejects such assignment and the web selector disables the version. This guard must be removed only when Job Order Quality runtime execution is implemented, so configured Quality work can never be silently ignored.
+As a temporary operational safety rule, a Process Flow version containing any `QUALITY` activity cannot be assigned to a new Job Order. The API rejects such assignment and the web selector disables the version. Production progress and Quality eligibility calculation now exist, but this guard must be removed only when Quality Form activity execution is implemented, so configured Quality work can never be silently ignored.
 
 ## Activity types and execution
 

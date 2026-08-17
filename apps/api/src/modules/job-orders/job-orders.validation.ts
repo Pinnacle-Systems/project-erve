@@ -98,6 +98,15 @@ export const completeStageSchema = z.object({
   remarks: z.string().trim().optional().nullable(),
 });
 
+export const startStageSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  stageStatusId: z.string().trim().min(1),
+});
+
+export const updateProductionProgressSchema = startStageSchema.extend({
+  completedQuantity: z.number().int().min(0),
+});
+
 export const updatePreparedQuantitySchema = z.object({
   expectedVersion: z.number().int().positive(),
   sizes: z

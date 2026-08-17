@@ -180,11 +180,30 @@ export interface JobOrderStage {
   stageSequence: number;
   stageNameSnapshot: string;
   status: ProductionStageStatus;
+  plannedQuantity: number;
+  completedQuantity: number | null;
+  remainingQuantity: number | null;
+  progressPercent: number | null;
   completedBy: { id: string; name: string; email: string } | null;
   completedAt: string | null;
   remarks: string | null;
   createdAt: string;
   updatedAt: string;
+}
+export type QualityRuntimeStatus = 'NOT_AVAILABLE' | 'AVAILABLE' | 'IN_PROGRESS' | 'COMPLETED';
+export interface JobOrderQualityActivity {
+  processFlowVersionStageId: string;
+  sequence: number;
+  name: string;
+  status: QualityRuntimeStatus;
+  eligible: boolean;
+  qualityForm: { id: string; code: string; name: string };
+  qualityFormVersion: { id: string; versionNumber: number };
+  executionMode: 'SEQUENTIAL_GATE' | 'IN_PROCESS';
+  associatedProductionActivity: { id: string; name: string } | null;
+  availabilityPolicy:
+    'SEQUENTIAL_PREDECESSOR_COMPLETED' | 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' | 'PROGRESS_PERCENTAGE';
+  progressThresholdPercent: string | null;
 }
 export interface JobOrderSummary extends VersionedResource {
   id: string;
@@ -223,6 +242,7 @@ export interface JobOrderDetail extends JobOrderSummary {
   creator: { id: string; name: string; email: string };
   lines: JobOrderLine[];
   stages: JobOrderStage[];
+  qualityActivities: JobOrderQualityActivity[];
   reworkTasks: QaReworkTaskView[];
 }
 
@@ -272,6 +292,13 @@ export interface ConfirmJobOrderInput extends VersionedMutationInput {
 export interface CompleteJobOrderStageInput extends VersionedMutationInput {
   stageStatusId: string;
   remarks?: string | null;
+}
+export interface StartJobOrderStageInput extends VersionedMutationInput {
+  stageStatusId: string;
+}
+export interface UpdateProductionProgressInput extends VersionedMutationInput {
+  stageStatusId: string;
+  completedQuantity: number;
 }
 export interface UpdatePreparedQuantityInput extends VersionedMutationInput {
   sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }>;

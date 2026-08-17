@@ -27,17 +27,14 @@ export function ProductionStageStepper({
           return (
             <li
               key={stage.id}
-              className={cn(
-                'relative flex flex-col md:flex-1',
-                isUpcoming && 'opacity-60'
-              )}
+              className={cn('relative flex flex-col md:flex-1', isUpcoming && 'opacity-60')}
               aria-current={isCurrent ? 'step' : undefined}
             >
               {/* Connector line for desktop */}
               <div
                 className={cn(
                   'hidden md:block absolute top-4 left-[50%] w-full h-[2px]',
-                  isCompleted ? 'bg-primary' : 'bg-muted'
+                  isCompleted ? 'bg-primary' : 'bg-muted',
                 )}
                 aria-hidden="true"
               />
@@ -46,7 +43,7 @@ export function ProductionStageStepper({
               <div
                 className={cn(
                   'md:hidden absolute left-[15px] top-[32px] w-[2px] h-[calc(100%+32px)]',
-                  isCompleted ? 'bg-primary' : 'bg-muted'
+                  isCompleted ? 'bg-primary' : 'bg-muted',
                 )}
                 aria-hidden="true"
               />
@@ -58,8 +55,8 @@ export function ProductionStageStepper({
                     isCompleted
                       ? 'border-primary text-primary'
                       : isCurrent
-                      ? 'border-primary text-primary'
-                      : 'border-muted text-muted-foreground'
+                        ? 'border-primary text-primary'
+                        : 'border-muted text-muted-foreground',
                   )}
                 >
                   {isCompleted ? (
@@ -72,8 +69,11 @@ export function ProductionStageStepper({
                 </div>
 
                 <div className="flex flex-col md:items-center md:text-center mt-1 md:mt-0">
-                  <span className="text-sm font-medium">
-                    {stage.stageNameSnapshot}
+                  <span className="text-sm font-medium">{stage.stageNameSnapshot}</span>
+                  <span className="mt-1 text-xs text-muted-foreground">
+                    {stage.completedQuantity === null
+                      ? 'Historical progress not captured'
+                      : `${stage.completedQuantity.toLocaleString()} / ${stage.plannedQuantity.toLocaleString()} completed · ${stage.progressPercent}%`}
                   </span>
 
                   {/* Textual state indicator for accessibility */}
@@ -86,9 +86,7 @@ export function ProductionStageStepper({
                       {formatDateTime(stage.completedAt) && (
                         <span>{formatDateTime(stage.completedAt)}</span>
                       )}
-                      {stage.completedBy?.name && (
-                        <span>by {stage.completedBy.name}</span>
-                      )}
+                      {stage.completedBy?.name && <span>by {stage.completedBy.name}</span>}
                     </div>
                   )}
                 </div>
@@ -101,7 +99,7 @@ export function ProductionStageStepper({
         <li
           className={cn(
             'relative flex flex-col md:flex-1',
-            !isPreparedQuantitiesUnlocked && 'opacity-60'
+            !isPreparedQuantitiesUnlocked && 'opacity-60',
           )}
         >
           <div className="flex flex-row md:flex-col items-start md:items-center gap-3 relative z-10 w-full">
@@ -110,7 +108,7 @@ export function ProductionStageStepper({
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 bg-background',
                 isPreparedQuantitiesUnlocked
                   ? 'border-primary text-primary'
-                  : 'border-muted text-muted-foreground'
+                  : 'border-muted text-muted-foreground',
               )}
             >
               {isPreparedQuantitiesUnlocked ? (
@@ -121,9 +119,7 @@ export function ProductionStageStepper({
             </div>
 
             <div className="flex flex-col md:items-center md:text-center mt-1 md:mt-0">
-              <span className="text-sm font-medium">
-                Prepared Quantities
-              </span>
+              <span className="text-sm font-medium">Prepared Quantities</span>
               <span className="sr-only">
                 {isPreparedQuantitiesUnlocked ? 'Unlocked' : 'Locked'}
               </span>
