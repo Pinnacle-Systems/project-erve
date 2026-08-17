@@ -67,6 +67,7 @@ export function JobOrderDetailPage() {
   const queryClient = useQueryClient();
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
+  const [stageProgress, setStageProgress] = useState<Record<string, number>>({});
   const [disclaimerDrafts, setDisclaimerDrafts] = useState<Record<string, string>>({});
   const [disclaimerError, setDisclaimerError] = useState('');
   const [sendError, setSendError] = useState('');
@@ -161,6 +162,38 @@ export function JobOrderDetailPage() {
         {
           headers: {
             'Idempotency-Key': `${id}:stage:${stageStatusId}:${jobOrderQuery.data!.version}`,
+          },
+        },
+      ),
+    onSuccess: invalidate,
+  });
+  const startStageMutation = useMutation({
+    mutationFn: async (stageStatusId: string) =>
+      apiClient.post<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/actions/start-stage`,
+        { stageStatusId, expectedVersion: jobOrderQuery.data!.version },
+        {
+          headers: {
+            'Idempotency-Key': `${id}:start-stage:${stageStatusId}:${jobOrderQuery.data!.version}`,
+          },
+        },
+      ),
+    onSuccess: invalidate,
+  });
+  const progressMutation = useMutation({
+    mutationFn: async ({
+      stageStatusId,
+      completedQuantity,
+    }: {
+      stageStatusId: string;
+      completedQuantity: number;
+    }) =>
+      apiClient.post<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/actions/update-production-progress`,
+        { stageStatusId, completedQuantity, expectedVersion: jobOrderQuery.data!.version },
+        {
+          headers: {
+            'Idempotency-Key': `${id}:stage-progress:${stageStatusId}:${completedQuantity}:${jobOrderQuery.data!.version}`,
           },
         },
       ),
@@ -663,14 +696,85 @@ export function JobOrderDetailPage() {
             <p className="text-sm text-muted-foreground">
               Complete {nextStage.stageNameSnapshot} when work for this stage has finished.
             </p>
-            <div className="flex">
+            <div className="flex flex-wrap items-end gap-3">
+              <TextField
+                aria-label={`${nextStage.stageNameSnapshot} completed quantity`}
+                label="Completed quantity"
+                type="number"
+                min={nextStage.completedQuantity ?? 0}
+                max={nextStage.plannedQuantity}
+                value={stageProgress[nextStage.id] ?? nextStage.completedQuantity ?? 0}
+                onChange={(event) =>
+                  setStageProgress((current) => ({
+                    ...current,
+                    [nextStage.id]: Number(event.target.value || 0),
+                  }))
+                }
+                density="compact"
+                width="xs"
+              />
+              {nextStage.status === 'NOT_STARTED' && (
+                <Button
+                  variant="secondary"
+                  onClick={() => startStageMutation.mutate(nextStage.id)}
+                  loading={startStageMutation.isPending}
+                >
+                  Start {nextStage.stageNameSnapshot}
+                </Button>
+              )}
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  progressMutation.mutate({
+                    stageStatusId: nextStage.id,
+                    completedQuantity:
+                      stageProgress[nextStage.id] ?? nextStage.completedQuantity ?? 0,
+                  })
+                }
+                loading={progressMutation.isPending}
+              >
+                Save progress
+              </Button>
               <Button
                 onClick={() => completeStageMutation.mutate(nextStage.id)}
                 loading={completeStageMutation.isPending}
+                disabled={nextStage.completedQuantity !== nextStage.plannedQuantity}
               >
                 Complete {nextStage.stageNameSnapshot}
               </Button>
             </div>
+          </div>
+        </Panel>
+      )}
+
+      {jobOrder.qualityActivities.length > 0 && (
+        <Panel
+          title="Quality activities"
+          description="Eligibility is calculated from the assigned Process Flow version and current Production runtime."
+        >
+          <div className="space-y-3">
+            {jobOrder.qualityActivities.map((activity) => (
+              <div
+                key={activity.processFlowVersionStageId}
+                className="rounded-md border border-border p-3 text-sm"
+              >
+                <p className="font-medium">{activity.name}</p>
+                <p className="text-muted-foreground">
+                  Quality ·{' '}
+                  {activity.executionMode === 'IN_PROCESS' ? 'In-process' : 'Sequential gate'}
+                </p>
+                <p>
+                  Form: {activity.qualityForm.name} v{activity.qualityFormVersion.versionNumber}
+                </p>
+                {activity.associatedProductionActivity && (
+                  <p>Associated with: {activity.associatedProductionActivity.name}</p>
+                )}
+                {activity.progressThresholdPercent && (
+                  <p>Available at: {Number(activity.progressThresholdPercent)}%</p>
+                )}
+                <p>Current eligibility: {activity.eligible ? 'Available' : 'Not available'}</p>
+              </div>
+            ))}
           </div>
         </Panel>
       )}

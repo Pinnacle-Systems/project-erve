@@ -28,6 +28,15 @@ const jobOrderInclude = {
   processFlowVersion: {
     include: {
       processFlow: { select: { id: true, code: true, name: true } },
+      stages: {
+        include: {
+          qualityFormVersion: {
+            include: { qualityForm: { select: { id: true, code: true, name: true } } },
+          },
+          associatedProductionActivity: { select: { id: true, name: true } },
+        },
+        orderBy: { sequence: 'asc' as const },
+      },
     },
   },
   creator: { select: { id: true, name: true, email: true } },
@@ -138,13 +147,24 @@ function totalOrdered(jobOrder: JobOrderRecord): number {
   return jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
 }
 
-function toStageView(stage: JobOrderRecord['stageStatuses'][number]) {
+function toStageView(stage: JobOrderRecord['stageStatuses'][number], plannedQuantity: number) {
+  const completedQuantity = stage.completedQuantity;
   return {
     id: stage.id,
     processFlowVersionStageId: stage.processFlowVersionStageId,
     stageSequence: stage.stageSequence,
     stageNameSnapshot: stage.stageNameSnapshot,
     status: stage.status,
+    plannedQuantity,
+    completedQuantity,
+    remainingQuantity:
+      completedQuantity === null ? null : Math.max(0, plannedQuantity - completedQuantity),
+    progressPercent:
+      completedQuantity === null
+        ? null
+        : plannedQuantity === 0
+          ? 0
+          : Math.round((completedQuantity * 10_000) / plannedQuantity) / 100,
     completedBy: stage.completer,
     completedAt: stage.completedAt?.toISOString() ?? null,
     remarks: stage.remarks,
@@ -153,7 +173,82 @@ function toStageView(stage: JobOrderRecord['stageStatuses'][number]) {
   };
 }
 
+function decimalHundredths(value: Prisma.Decimal): bigint {
+  const [whole, fraction = ''] = value.toFixed(2).split('.');
+  return BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, '0'));
+}
+
+export function isProgressThresholdMet(
+  completedQuantity: number,
+  plannedQuantity: number,
+  threshold: Prisma.Decimal,
+): boolean {
+  if (plannedQuantity <= 0) return false;
+  return (
+    BigInt(completedQuantity) * 10_000n >= BigInt(plannedQuantity) * decimalHundredths(threshold)
+  );
+}
+
+function toQualityActivityViews(jobOrder: JobOrderRecord) {
+  const runtimeByDefinitionId = new Map(
+    jobOrder.stageStatuses.map((runtime) => [runtime.processFlowVersionStageId, runtime]),
+  );
+  const definitions = jobOrder.processFlowVersion.stages;
+  return definitions
+    .filter((activity) => activity.activityType === 'QUALITY')
+    .map((activity) => {
+      const associated = activity.associatedProductionActivityId
+        ? runtimeByDefinitionId.get(activity.associatedProductionActivityId)
+        : undefined;
+      const previous = [...definitions]
+        .reverse()
+        .find(
+          (candidate) =>
+            candidate.sequence < activity.sequence &&
+            candidate.status === 'ACTIVE' &&
+            (candidate.activityType === 'PRODUCTION' ||
+              candidate.qualityExecutionMode === 'SEQUENTIAL_GATE'),
+        );
+      const previousRuntime = previous ? runtimeByDefinitionId.get(previous.id) : undefined;
+      let eligible = false;
+      if (activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE') {
+        eligible = associated?.status === 'IN_PROGRESS';
+      } else if (
+        activity.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE' &&
+        associated &&
+        associated.completedQuantity !== null &&
+        activity.progressThresholdPercent
+      ) {
+        eligible = isProgressThresholdMet(
+          associated.completedQuantity,
+          totalOrdered(jobOrder),
+          activity.progressThresholdPercent,
+        );
+      } else if (activity.qualityExecutionMode === 'SEQUENTIAL_GATE') {
+        eligible = previousRuntime?.status === 'COMPLETED';
+      }
+      const formVersion = activity.qualityFormVersion!;
+      return {
+        processFlowVersionStageId: activity.id,
+        sequence: activity.sequence,
+        name: activity.name,
+        status: eligible ? ('AVAILABLE' as const) : ('NOT_AVAILABLE' as const),
+        eligible,
+        qualityForm: formVersion.qualityForm,
+        qualityFormVersion: { id: formVersion.id, versionNumber: formVersion.versionNumber },
+        executionMode: activity.qualityExecutionMode!,
+        associatedProductionActivity: activity.associatedProductionActivity,
+        availabilityPolicy:
+          activity.qualityExecutionMode === 'SEQUENTIAL_GATE'
+            ? ('SEQUENTIAL_PREDECESSOR_COMPLETED' as const)
+            : activity.qualityAvailabilityPolicy!,
+        progressThresholdPercent: activity.progressThresholdPercent?.toFixed(2) ?? null,
+      };
+    });
+}
+
 function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
+  const plannedQuantity = totalOrdered(jobOrder);
   const acknowledgements = jobOrder.acknowledgements.map((acknowledgement) => ({
     id: acknowledgement.id,
     jobOrderVersion: acknowledgement.jobOrderVersion,
@@ -198,7 +293,7 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
     acknowledgements,
     productionStartedAt: jobOrder.productionStartedAt?.toISOString() ?? null,
     productionCompletedAt: jobOrder.productionCompletedAt?.toISOString() ?? null,
-    orderedQuantityTotal: totalOrdered(jobOrder),
+    orderedQuantityTotal: plannedQuantity,
     preparedQuantityTotal: jobOrder.preparedQuantityTotal,
     creator: jobOrder.creator,
     lines: jobOrder.lines.map((line) => ({
@@ -221,7 +316,8 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
         varianceQuantity: size.preparedQuantity - size.orderedQuantity,
       })),
     })),
-    stages: jobOrder.stageStatuses.map(toStageView),
+    stages: jobOrder.stageStatuses.map((stage) => toStageView(stage, plannedQuantity)),
+    qualityActivities: toQualityActivityViews(jobOrder),
     reworkTasks: jobOrder.qaReworkTasks.map((task) => {
       const context = jobOrder.lines
         .flatMap((line) => line.sizes.map((size) => ({ line, size })))
@@ -550,7 +646,7 @@ export async function createJobOrderFromPO(
     throw HttpError.badRequest('Process flow version must be ACTIVE');
   if (processFlowVersion.stages.length > 0) {
     throw HttpError.badRequest(
-      'Quality-enabled Process Flow versions cannot be assigned to Job Orders until Quality runtime integration is available',
+      'Quality-enabled Process Flow versions cannot be assigned to Job Orders until Quality activity execution is available',
     );
   }
 
@@ -889,6 +985,7 @@ export async function confirmJobOrder(
         processFlowVersionStageId: stage.id,
         stageSequence: stage.sequence,
         stageNameSnapshot: stage.name,
+        completedQuantity: 0,
       })),
       skipDuplicates: true,
     });
@@ -955,7 +1052,10 @@ export async function completeProductionStage(
   }
   const jobOrder = await prisma.jobOrder.findUnique({
     where: { id },
-    include: { stageStatuses: { orderBy: { stageSequence: 'asc' } } },
+    include: {
+      stageStatuses: { orderBy: { stageSequence: 'asc' } },
+      lines: { select: { orderedQuantityTotal: true } },
+    },
   });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
   assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
@@ -971,6 +1071,17 @@ export async function completeProductionStage(
   if (!nextStage) throw HttpError.badRequest('All production stages are already completed');
   if (nextStage.id !== input.stageStatusId)
     throw HttpError.badRequest('Production stages must be completed in sequence');
+  const plannedQuantity = jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
+  if (nextStage.completedQuantity === null) {
+    throw HttpError.badRequest(
+      'Production progress was not captured for this historical activity; recreate pre-production data before completing it',
+    );
+  }
+  if (nextStage.completedQuantity !== plannedQuantity) {
+    throw HttpError.badRequest(
+      `Record ${plannedQuantity - nextStage.completedQuantity} remaining units before completing ${nextStage.stageNameSnapshot}`,
+    );
+  }
 
   const isFinalStage =
     nextStage.stageSequence ===
@@ -1027,6 +1138,216 @@ export async function completeProductionStage(
       actor.id,
       id,
       'COMPLETE_STAGE',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
+  });
+  return getJobOrderDetail(actor, id);
+}
+
+export async function startProductionStage(
+  actor: CurrentUser,
+  id: string,
+  input: { expectedVersion: number; stageStatusId: string },
+  idempotencyKey: string,
+) {
+  const hash = requestHash(input);
+  const jobOrder = await prisma.jobOrder.findUnique({
+    where: { id },
+    include: { stageStatuses: { orderBy: { stageSequence: 'asc' } } },
+  });
+  if (!jobOrder) throw HttpError.notFound('Job order not found');
+  assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
+  await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
+  if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+  if (!['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status))
+    throw HttpError.badRequest('Production stages can only be started after factory confirmation');
+  const nextStage = jobOrder.stageStatuses.find((stage) => stage.status !== 'COMPLETED');
+  if (!nextStage) throw HttpError.badRequest('All production stages are already completed');
+  if (nextStage.id !== input.stageStatusId)
+    throw HttpError.badRequest('Production stages must be started in sequence');
+
+  await prisma.$transaction(async (tx) => {
+    if (await beginIdempotentOperation(tx, actor.id, id, 'START_STAGE', idempotencyKey, hash))
+      return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const current = await tx.jobOrder.findUnique({ where: { id }, select: { version: true } });
+    if (!current) throw HttpError.notFound('Job order not found');
+    if (current.version !== input.expectedVersion) throw HttpError.staleVersion(current.version);
+    const runtime = await tx.jobOrderStageStatus.findUniqueOrThrow({
+      where: { id: input.stageStatusId },
+    });
+    if (runtime.jobOrderId !== id)
+      throw HttpError.badRequest('Production stage does not belong to this job order');
+    if (runtime.status === 'IN_PROGRESS') {
+      await finishIdempotentOperation(
+        tx,
+        actor.id,
+        id,
+        'START_STAGE',
+        idempotencyKey,
+        hash,
+        current.version,
+      );
+      return;
+    }
+    if (runtime.status !== 'NOT_STARTED')
+      throw HttpError.badRequest('Production stage cannot be started');
+    const now = new Date();
+    await tx.jobOrderStageStatus.update({
+      where: { id: runtime.id },
+      data: { status: 'IN_PROGRESS' },
+    });
+    const updated = await tx.jobOrder.update({
+      where: { id },
+      data: {
+        status: 'IN_PRODUCTION',
+        productionStartedAt: jobOrder.productionStartedAt ?? now,
+        version: { increment: 1 },
+      },
+    });
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_STAGE_STARTED',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: {
+          stageStatusId: runtime.id,
+          processFlowVersionStageId: runtime.processFlowVersionStageId,
+          stageSequence: runtime.stageSequence,
+          stageName: runtime.stageNameSnapshot,
+        },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'START_STAGE',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
+  });
+  return getJobOrderDetail(actor, id);
+}
+
+export async function updateProductionProgress(
+  actor: CurrentUser,
+  id: string,
+  input: { expectedVersion: number; stageStatusId: string; completedQuantity: number },
+  idempotencyKey: string,
+) {
+  const hash = requestHash(input);
+  const jobOrder = await prisma.jobOrder.findUnique({
+    where: { id },
+    include: {
+      stageStatuses: { orderBy: { stageSequence: 'asc' } },
+      lines: { select: { orderedQuantityTotal: true } },
+    },
+  });
+  if (!jobOrder) throw HttpError.notFound('Job order not found');
+  assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
+  await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
+  if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+  if (!['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status))
+    throw HttpError.badRequest('Production progress can only be updated during production');
+  const plannedQuantity = jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
+  if (input.completedQuantity > plannedQuantity)
+    throw HttpError.badRequest('Completed quantity cannot exceed the Job Order planned quantity');
+  const nextStage = jobOrder.stageStatuses.find((stage) => stage.status !== 'COMPLETED');
+  if (!nextStage || nextStage.id !== input.stageStatusId)
+    throw HttpError.badRequest('Production progress must be updated in sequence');
+  if (nextStage.completedQuantity === null)
+    throw HttpError.badRequest(
+      'Production progress was not captured for this historical activity; recreate pre-production data before updating it',
+    );
+  if (input.completedQuantity < nextStage.completedQuantity)
+    throw HttpError.badRequest(
+      'Completed quantity cannot decrease through an ordinary progress update',
+    );
+
+  await prisma.$transaction(async (tx) => {
+    if (
+      await beginIdempotentOperation(
+        tx,
+        actor.id,
+        id,
+        'UPDATE_STAGE_PROGRESS',
+        idempotencyKey,
+        hash,
+      )
+    )
+      return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const current = await tx.jobOrder.findUnique({ where: { id }, select: { version: true } });
+    if (!current) throw HttpError.notFound('Job order not found');
+    if (current.version !== input.expectedVersion) throw HttpError.staleVersion(current.version);
+    const runtime = await tx.jobOrderStageStatus.findUniqueOrThrow({
+      where: { id: input.stageStatusId },
+    });
+    if (runtime.jobOrderId !== id)
+      throw HttpError.badRequest('Production stage does not belong to this job order');
+    if (runtime.completedQuantity === null)
+      throw HttpError.badRequest(
+        'Production progress was not captured for this historical activity; recreate pre-production data before updating it',
+      );
+    if (input.completedQuantity < runtime.completedQuantity)
+      throw HttpError.badRequest(
+        'Completed quantity cannot decrease through an ordinary progress update',
+      );
+    if (input.completedQuantity === runtime.completedQuantity) {
+      await finishIdempotentOperation(
+        tx,
+        actor.id,
+        id,
+        'UPDATE_STAGE_PROGRESS',
+        idempotencyKey,
+        hash,
+        current.version,
+      );
+      return;
+    }
+    await tx.jobOrderStageStatus.update({
+      where: { id: runtime.id },
+      data: {
+        completedQuantity: input.completedQuantity,
+        status: runtime.status === 'NOT_STARTED' ? 'IN_PROGRESS' : runtime.status,
+      },
+    });
+    const updated = await tx.jobOrder.update({
+      where: { id },
+      data: {
+        status: 'IN_PRODUCTION',
+        productionStartedAt: jobOrder.productionStartedAt ?? new Date(),
+        version: { increment: 1 },
+      },
+    });
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_STAGE_PROGRESS_UPDATED',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: {
+          stageStatusId: runtime.id,
+          processFlowVersionStageId: runtime.processFlowVersionStageId,
+          stageName: runtime.stageNameSnapshot,
+          previousCompletedQuantity: runtime.completedQuantity,
+          completedQuantity: input.completedQuantity,
+          plannedQuantity,
+        },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'UPDATE_STAGE_PROGRESS',
       idempotencyKey,
       hash,
       updated.version,

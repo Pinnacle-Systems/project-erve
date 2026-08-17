@@ -6,6 +6,8 @@ import { successResponse } from '../../utils/response.js';
 import { HttpError } from '../../errors/http-error.js';
 import {
   completeStageSchema,
+  startStageSchema,
+  updateProductionProgressSchema,
   confirmJobOrderSchema,
   assignedTasksQuerySchema,
   createJobOrderSchema,
@@ -114,6 +116,36 @@ jobOrdersRouter.post(
   asyncHandler(async (req, res) => {
     const input = confirmJobOrderSchema.parse(req.body);
     const jobOrder = await jobOrdersService.confirmJobOrder(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
+    res.status(200).json(successResponse(jobOrder));
+  }),
+);
+
+jobOrdersRouter.post(
+  '/:id/actions/start-stage',
+  canWorkflowJobOrders,
+  asyncHandler(async (req, res) => {
+    const input = startStageSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.startProductionStage(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
+    res.status(200).json(successResponse(jobOrder));
+  }),
+);
+
+jobOrdersRouter.post(
+  '/:id/actions/update-production-progress',
+  canWorkflowJobOrders,
+  asyncHandler(async (req, res) => {
+    const input = updateProductionProgressSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.updateProductionProgress(
       req.user!,
       req.params.id! as string,
       input,

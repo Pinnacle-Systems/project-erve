@@ -53,6 +53,7 @@ export function FactoryTaskDetailPage() {
   const { id = '' } = useParams();
   const queryClient = useQueryClient();
   const [prepared, setPrepared] = useState<Record<string, string>>({});
+  const [stageProgress, setStageProgress] = useState<Record<string, string>>({});
   const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
   const [reworkNotes, setReworkNotes] = useState<Record<string, string>>({});
   const task = useQuery({
@@ -63,6 +64,11 @@ export function FactoryTaskDetailPage() {
 
   const confirm = useTaskMutation(id, `/job-orders/${id}/actions/confirm`);
   const completeStage = useTaskMutation(id, `/job-orders/${id}/actions/complete-stage`);
+  const startStage = useTaskMutation(id, `/job-orders/${id}/actions/start-stage`);
+  const updateStageProgress = useTaskMutation(
+    id,
+    `/job-orders/${id}/actions/update-production-progress`,
+  );
   const savePrepared = useTaskMutation(id, `/job-orders/${id}/actions/update-prepared-quantity`);
   const rework = useMutation({
     mutationFn: async ({
@@ -96,7 +102,13 @@ export function FactoryTaskDetailPage() {
       ) ?? [],
     [job],
   );
-  const activeMutation = [confirm, completeStage, savePrepared].find((entry) => entry.isError);
+  const activeMutation = [
+    confirm,
+    startStage,
+    updateStageProgress,
+    completeStage,
+    savePrepared,
+  ].find((entry) => entry.isError);
   const canFactoryAcknowledge = Boolean(user?.roles.includes('FACTORY_USER'));
 
   if (task.isLoading)
@@ -323,24 +335,81 @@ export function FactoryTaskDetailPage() {
             >
               <span>
                 {stage.stageSequence}. {stage.stageNameSnapshot}
+                <span className="block text-xs text-muted-foreground">
+                  {stage.completedQuantity === null
+                    ? 'Historical progress not captured'
+                    : `${stage.completedQuantity} / ${stage.plannedQuantity} completed · ${stage.progressPercent}%`}
+                </span>
               </span>
               <span className="text-xs">{stage.status.replaceAll('_', ' ')}</span>
             </li>
           ))}
         </ol>
         {nextStage && ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(job.status) && (
-          <button
-            className="mt-3 min-h-12 w-full rounded-lg bg-primary px-5 text-primary-foreground"
-            disabled={completeStage.isPending}
-            onClick={() =>
-              completeStage.mutate({
-                body: { expectedVersion: job.version, stageStatusId: nextStage.id },
-                key: `${id}:stage:${nextStage.id}:${job.version}`,
-              })
-            }
-          >
-            {completeStage.isPending ? 'Completing…' : `Complete ${nextStage.stageNameSnapshot}`}
-          </button>
+          <div className="mt-3 space-y-2">
+            <label className="block text-sm font-medium">
+              {nextStage.stageNameSnapshot} completed quantity
+              <input
+                className="mt-1 min-h-12 w-full rounded-md border border-border bg-background px-3 text-lg"
+                type="number"
+                min={nextStage.completedQuantity ?? 0}
+                max={nextStage.plannedQuantity}
+                value={stageProgress[nextStage.id] ?? String(nextStage.completedQuantity ?? 0)}
+                onChange={(event) =>
+                  setStageProgress((current) => ({
+                    ...current,
+                    [nextStage.id]: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            {nextStage.status === 'NOT_STARTED' && (
+              <button
+                className="min-h-12 w-full rounded-lg border border-border px-5"
+                disabled={startStage.isPending}
+                onClick={() =>
+                  startStage.mutate({
+                    body: { expectedVersion: job.version, stageStatusId: nextStage.id },
+                    key: `${id}:start-stage:${nextStage.id}:${job.version}`,
+                  })
+                }
+              >
+                Start {nextStage.stageNameSnapshot}
+              </button>
+            )}
+            <button
+              className="min-h-12 w-full rounded-lg border border-border px-5"
+              disabled={updateStageProgress.isPending}
+              onClick={() =>
+                updateStageProgress.mutate({
+                  body: {
+                    expectedVersion: job.version,
+                    stageStatusId: nextStage.id,
+                    completedQuantity: Number(
+                      stageProgress[nextStage.id] ?? nextStage.completedQuantity ?? 0,
+                    ),
+                  },
+                  key: `${id}:stage-progress:${nextStage.id}:${stageProgress[nextStage.id] ?? nextStage.completedQuantity ?? 0}:${job.version}`,
+                })
+              }
+            >
+              Save progress
+            </button>
+            <button
+              className="mt-3 min-h-12 w-full rounded-lg bg-primary px-5 text-primary-foreground"
+              disabled={
+                completeStage.isPending || nextStage.completedQuantity !== nextStage.plannedQuantity
+              }
+              onClick={() =>
+                completeStage.mutate({
+                  body: { expectedVersion: job.version, stageStatusId: nextStage.id },
+                  key: `${id}:stage:${nextStage.id}:${job.version}`,
+                })
+              }
+            >
+              {completeStage.isPending ? 'Completing…' : `Complete ${nextStage.stageNameSnapshot}`}
+            </button>
+          </div>
         )}
       </section>
 
