@@ -15,4 +15,4 @@ Quality Forms intentionally contain no production stage, execution mode, availab
 
 The `SAMPLE` master record represents the existing QA Sample Checklist conceptually. ERVE-015 remains the runtime source of truth: its inspection sessions, per-size forms, quantities, defects, evidence, finalize/reopen lifecycle, and reinspection workflow are unchanged and are not generic form values.
 
-Future Process Flow work should reference a specific `QualityFormVersion`. That association can distinguish sequential quality gates from in-process quality checkpoints without changing or duplicating the form definition.
+Process Flow Quality activities reference a specific `QualityFormVersion`. That association distinguishes sequential quality gates from in-process quality checkpoints without changing or duplicating the form definition. See [Process Flow Quality Activities](./PROCESS_FLOW_QUALITY_ACTIVITIES.md).

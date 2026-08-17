@@ -35,8 +35,26 @@ export function ProcessFlowCreatePage() {
         name: name.trim(),
         description: description.trim() || null,
         stages: stages.map((stage) => ({
+          activityKey: stage.key,
           name: stage.name.trim(),
           code: stage.code.trim() || null,
+          status: stage.status,
+          activityType: stage.activityType,
+          ...(stage.activityType === 'QUALITY'
+            ? {
+                qualityFormVersionId: stage.qualityFormVersionId,
+                qualityExecutionMode: stage.qualityExecutionMode,
+                ...(stage.qualityExecutionMode === 'IN_PROCESS'
+                  ? {
+                      associatedProductionActivityKey: stage.associatedProductionActivityKey,
+                      qualityAvailabilityPolicy: stage.qualityAvailabilityPolicy,
+                      ...(stage.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE'
+                        ? { progressThresholdPercent: Number(stage.progressThresholdPercent) }
+                        : {}),
+                    }
+                  : {}),
+              }
+            : {}),
         })),
       });
       return response.data.data;
@@ -92,7 +110,7 @@ export function ProcessFlowCreatePage() {
               />
             </FormGrid>
           </FormSection>
-          <FormSection title="Initial Stages">
+          <FormSection title="Initial Activities">
             <ProcessStageEditor
               stages={stages}
               onChange={setStages}

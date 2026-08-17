@@ -10,9 +10,13 @@ export const factoryStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const processFlowStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const processFlowVersionStatusSchema = z.enum(['DRAFT', 'ACTIVE', 'RETIRED']);
 export const seasonStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
-const seasonIdsSchema = z.array(z.string().trim().min(1)).min(1, 'At least one Season is required').superRefine((ids, ctx) => {
-  if (new Set(ids).size !== ids.length) ctx.addIssue({ code: 'custom', message: 'Duplicate Season identifiers are not allowed' });
-});
+const seasonIdsSchema = z
+  .array(z.string().trim().min(1))
+  .min(1, 'At least one Season is required')
+  .superRefine((ids, ctx) => {
+    if (new Set(ids).size !== ids.length)
+      ctx.addIssue({ code: 'custom', message: 'Duplicate Season identifiers are not allowed' });
+  });
 
 export const createStyleSchema = z.object({
   styleNumber: z.string().trim().min(1),
@@ -40,19 +44,40 @@ export const updateStyleSchema = createStyleSchema
 
 export const updateStyleStatusSchema = z.object({ status: styleStatusSchema });
 const seasonFieldsSchema = z.object({
-  code: z.string().trim().min(1, 'Season code is required').max(20).regex(/^[A-Za-z0-9/-]+$/, 'Season code may contain letters, numbers, hyphens, and slashes only').transform((value) => value.toUpperCase()),
+  code: z
+    .string()
+    .trim()
+    .min(1, 'Season code is required')
+    .max(20)
+    .regex(
+      /^[A-Za-z0-9/-]+$/,
+      'Season code may contain letters, numbers, hyphens, and slashes only',
+    )
+    .transform((value) => value.toUpperCase()),
   name: z.string().trim().min(1, 'Season name is required').max(80),
-  financialYear: z.string().trim().regex(/^\d{2}-\d{2}$/, 'Financial year must use YY-YY format'),
+  financialYear: z
+    .string()
+    .trim()
+    .regex(/^\d{2}-\d{2}$/, 'Financial year must use YY-YY format'),
   status: seasonStatusSchema.optional(),
 });
 const hasConsecutiveFinancialYear = (financialYear: string) => {
   const [start = Number.NaN, end = Number.NaN] = financialYear.split('-').map(Number);
   return (start + 1) % 100 === end;
 };
-export const createSeasonSchema = seasonFieldsSchema.refine(({ financialYear }) => hasConsecutiveFinancialYear(financialYear), { message: 'Financial year must contain consecutive years', path: ['financialYear'] });
-export const updateSeasonSchema = seasonFieldsSchema.omit({ status: true }).partial()
+export const createSeasonSchema = seasonFieldsSchema.refine(
+  ({ financialYear }) => hasConsecutiveFinancialYear(financialYear),
+  { message: 'Financial year must contain consecutive years', path: ['financialYear'] },
+);
+export const updateSeasonSchema = seasonFieldsSchema
+  .omit({ status: true })
+  .partial()
   .refine((value) => Object.keys(value).length > 0, { message: 'At least one field is required' })
-  .refine((value) => value.financialYear === undefined || hasConsecutiveFinancialYear(value.financialYear), { message: 'Financial year must contain consecutive years', path: ['financialYear'] });
+  .refine(
+    (value) =>
+      value.financialYear === undefined || hasConsecutiveFinancialYear(value.financialYear),
+    { message: 'Financial year must contain consecutive years', path: ['financialYear'] },
+  );
 export const updateSeasonStatusSchema = z.object({ status: seasonStatusSchema });
 
 export const styleSizeSchema = z.object({
@@ -127,12 +152,69 @@ export const updateDistributorSchema = createDistributorSchema
 
 export const updateDistributorStatusSchema = z.object({ status: distributorStatusSchema });
 
-const processStageSchema = z.object({
+const processActivityBaseSchema = z.object({
+  activityKey: z.string().trim().min(1).max(100).optional(),
   sequence: z.coerce.number().int().positive().optional(),
   name: z.string().trim().min(1, 'Stage name is required').max(120),
   code: z.string().trim().max(50).optional().nullable(),
   status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
 });
+
+const productionActivitySchema = processActivityBaseSchema
+  .extend({
+    activityType: z.literal('PRODUCTION').optional().default('PRODUCTION'),
+  })
+  .strict();
+
+const sequentialQualityActivitySchema = processActivityBaseSchema
+  .extend({
+    activityType: z.literal('QUALITY'),
+    qualityFormVersionId: z.string().trim().min(1, 'Quality Form version is required'),
+    qualityExecutionMode: z.literal('SEQUENTIAL_GATE'),
+  })
+  .strict();
+
+const inProcessQualityActivitySchema = processActivityBaseSchema
+  .extend({
+    activityType: z.literal('QUALITY'),
+    qualityFormVersionId: z.string().trim().min(1, 'Quality Form version is required'),
+    qualityExecutionMode: z.literal('IN_PROCESS'),
+    associatedProductionActivityKey: z
+      .string()
+      .trim()
+      .min(1, 'Associated Production activity is required'),
+    qualityAvailabilityPolicy: z.enum(['WHILE_ASSOCIATED_ACTIVITY_ACTIVE', 'PROGRESS_PERCENTAGE']),
+    progressThresholdPercent: z.coerce.number().gt(0).max(100).optional(),
+  })
+  .strict()
+  .superRefine((activity, context) => {
+    if (
+      activity.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE' &&
+      activity.progressThresholdPercent === undefined
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Progress threshold is required for production progress percentage',
+        path: ['progressThresholdPercent'],
+      });
+    }
+    if (
+      activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' &&
+      activity.progressThresholdPercent !== undefined
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Progress threshold is not allowed while the Production activity is active',
+        path: ['progressThresholdPercent'],
+      });
+    }
+  });
+
+const processStageSchema = z.union([
+  productionActivitySchema,
+  sequentialQualityActivitySchema,
+  inProcessQualityActivitySchema,
+]);
 
 const processStagesSchema = z.array(processStageSchema).superRefine((stages, context) => {
   const names = new Set<string>();
@@ -146,6 +228,39 @@ const processStagesSchema = z.array(processStageSchema).superRefine((stages, con
       });
     }
     names.add(normalizedName);
+  });
+
+  const keys = new Map(
+    stages.map((stage, index) => [stage.activityKey ?? `activity-${index + 1}`, stage]),
+  );
+  if (keys.size !== stages.length) {
+    context.addIssue({ code: 'custom', message: 'Activity keys must be unique' });
+  }
+  stages.forEach((stage, index) => {
+    if (stage.activityType !== 'QUALITY' || stage.qualityExecutionMode !== 'IN_PROCESS') return;
+    const ownKey = stage.activityKey ?? `activity-${index + 1}`;
+    if (stage.associatedProductionActivityKey === ownKey) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A Quality activity cannot associate with itself',
+        path: [index, 'associatedProductionActivityKey'],
+      });
+      return;
+    }
+    const associated = keys.get(stage.associatedProductionActivityKey);
+    if (!associated) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Associated Production activity must belong to this Process Flow version',
+        path: [index, 'associatedProductionActivityKey'],
+      });
+    } else if (associated.activityType !== 'PRODUCTION') {
+      context.addIssue({
+        code: 'custom',
+        message: 'In-process Quality activities must associate with a Production activity',
+        path: [index, 'associatedProductionActivityKey'],
+      });
+    }
   });
 
   const suppliedSequences = stages.flatMap((stage) =>

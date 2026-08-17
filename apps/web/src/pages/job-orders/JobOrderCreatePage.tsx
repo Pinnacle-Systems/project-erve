@@ -68,7 +68,10 @@ export function JobOrderCreatePage() {
       (processFlowsQuery.data ?? []).flatMap((flow) =>
         flow.versions
           .filter((version) => version.status === 'ACTIVE')
-          .map((version) => ({ ...version, label: `${flow.name} v${version.versionNumber}` })),
+          .map((version) => ({
+            ...version,
+            label: `${flow.name} v${version.versionNumber}`,
+          })),
       ),
     [processFlowsQuery.data],
   );
@@ -159,7 +162,7 @@ export function JobOrderCreatePage() {
     selectedStyleId &&
     effectiveUnitPrice &&
     selectedTotal > 0 &&
-      !hasInvalidQuantity,
+    !hasInvalidQuantity,
   );
 
   return (
@@ -238,11 +241,17 @@ export function JobOrderCreatePage() {
             label="Process Flow Version"
             value={processFlowVersionId || undefined}
             onValueChange={setProcessFlowVersionId}
+            helpText="Quality-enabled versions are unavailable until Job Order Quality runtime integration is implemented."
             width="fill"
           >
             {activeVersions.map((version) => (
-              <SelectItem key={version.id} value={version.id}>
+              <SelectItem
+                key={version.id}
+                value={version.id}
+                disabled={version.hasQualityActivities}
+              >
                 {version.label}
+                {version.hasQualityActivities ? ' — Quality runtime pending' : ''}
               </SelectItem>
             ))}
           </SelectField>
@@ -255,8 +264,12 @@ export function JobOrderCreatePage() {
               onChange={(event) => setDisclaimerText(event.target.value)}
               aria-describedby="job-order-disclaimer-help"
             />
-            <span id="job-order-disclaimer-help" className="text-xs font-normal text-muted-foreground">
-              The factory must acknowledge these plain-text terms before confirmation. {disclaimerText.length}/10,000
+            <span
+              id="job-order-disclaimer-help"
+              className="text-xs font-normal text-muted-foreground"
+            >
+              The factory must acknowledge these plain-text terms before confirmation.{' '}
+              {disclaimerText.length}/10,000
             </span>
           </label>
         </FormGrid>

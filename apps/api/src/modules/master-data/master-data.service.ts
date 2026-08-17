@@ -25,12 +25,23 @@ const styleInclude = {
 } satisfies Prisma.StyleInclude;
 
 const processFlowInclude = {
-  versions: { orderBy: { versionNumber: 'desc' } },
+  versions: {
+    orderBy: { versionNumber: 'desc' },
+    include: {
+      _count: { select: { stages: { where: { activityType: 'QUALITY' } } } },
+    },
+  },
 } satisfies Prisma.ProcessFlowInclude;
 
 const processFlowVersionInclude = {
   processFlow: true,
-  stages: { orderBy: { sequence: 'asc' } },
+  stages: {
+    orderBy: { sequence: 'asc' },
+    include: {
+      qualityFormVersion: { include: { qualityForm: true } },
+      associatedProductionActivity: true,
+    },
+  },
 } satisfies Prisma.ProcessFlowVersionInclude;
 
 type StyleRecord = Prisma.StyleGetPayload<{ include: typeof styleInclude }>;
@@ -64,7 +75,14 @@ function toStyleView(style: StyleRecord) {
     finalMrp: decimalToNumber(style.finalMrp),
     royaltyPercentage: decimalToNumber(style.royaltyPercentage),
     status: style.status,
-    seasons: style.styleSeasons.map(({ season }) => ({ id: season.id, code: season.code, name: season.name, financialYear: season.financialYear, displayName: `${season.code} ${season.financialYear}`, status: season.status })),
+    seasons: style.styleSeasons.map(({ season }) => ({
+      id: season.id,
+      code: season.code,
+      name: season.name,
+      financialYear: season.financialYear,
+      displayName: `${season.code} ${season.financialYear}`,
+      status: season.status,
+    })),
     sizes: style.styleSizes.map((mapping) => ({
       id: mapping.size.id,
       code: mapping.size.code,
@@ -100,6 +118,7 @@ function toProcessFlowView(flow: ProcessFlowRecord) {
       id: version.id,
       versionNumber: version.versionNumber,
       status: version.status,
+      hasQualityActivities: version._count.stages > 0,
       effectiveFrom: version.effectiveFrom,
       createdAt: version.createdAt,
     })),
@@ -123,6 +142,31 @@ function toProcessFlowVersionView(version: ProcessFlowVersionRecord) {
       name: stage.name,
       code: stage.code,
       status: stage.status,
+      activityType: stage.activityType,
+      qualityFormVersionId: stage.qualityFormVersionId,
+      qualityFormVersion: stage.qualityFormVersion
+        ? {
+            id: stage.qualityFormVersion.id,
+            versionNumber: stage.qualityFormVersion.versionNumber,
+            status: stage.qualityFormVersion.status,
+            qualityForm: {
+              id: stage.qualityFormVersion.qualityForm.id,
+              code: stage.qualityFormVersion.qualityForm.code,
+              name: stage.qualityFormVersion.qualityForm.name,
+            },
+          }
+        : null,
+      qualityExecutionMode: stage.qualityExecutionMode,
+      associatedProductionActivityId: stage.associatedProductionActivityId,
+      associatedProductionActivity: stage.associatedProductionActivity
+        ? {
+            id: stage.associatedProductionActivity.id,
+            name: stage.associatedProductionActivity.name,
+            code: stage.associatedProductionActivity.code,
+          }
+        : null,
+      qualityAvailabilityPolicy: stage.qualityAvailabilityPolicy,
+      progressThresholdPercent: decimalToNumber(stage.progressThresholdPercent),
     })),
     createdAt: version.createdAt,
     updatedAt: version.updatedAt,
@@ -208,7 +252,10 @@ export async function updateStyle(
   styleId: string,
   input: Record<string, unknown>,
 ) {
-  const existing = await prisma.style.findUnique({ where: { id: styleId }, include: { styleSeasons: true } });
+  const existing = await prisma.style.findUnique({
+    where: { id: styleId },
+    include: { styleSeasons: true },
+  });
   if (!existing) {
     throw HttpError.notFound('Style not found');
   }
@@ -225,7 +272,11 @@ export async function updateStyle(
       where: { id: styleId },
       data: {
         ...Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'seasonIds')),
-        ...(seasonIds ? { styleSeasons: { deleteMany: {}, create: seasonIds.map((seasonId) => ({ seasonId })) } } : {}),
+        ...(seasonIds
+          ? {
+              styleSeasons: { deleteMany: {}, create: seasonIds.map((seasonId) => ({ seasonId })) },
+            }
+          : {}),
       },
     });
   } catch (error) {
@@ -246,12 +297,31 @@ export async function updateStyle(
   return getStyleById(styleId);
 }
 
-function toSeasonView(season: { id: string; code: string; name: string; financialYear: string; status: string; createdAt: Date; updatedAt: Date }) {
+function toSeasonView(season: {
+  id: string;
+  code: string;
+  name: string;
+  financialYear: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
   return { ...season, displayName: `${season.code} ${season.financialYear}` };
 }
 
 export async function listSeasons(filters: { status?: string; search?: string }) {
-  const seasons = await prisma.season.findMany({ where: { status: filters.status, OR: filters.search ? [{ name: { contains: filters.search, mode: 'insensitive' } }, { financialYear: { contains: filters.search } }] : undefined }, orderBy: [{ financialYear: 'desc' }, { name: 'asc' }] });
+  const seasons = await prisma.season.findMany({
+    where: {
+      status: filters.status,
+      OR: filters.search
+        ? [
+            { name: { contains: filters.search, mode: 'insensitive' } },
+            { financialYear: { contains: filters.search } },
+          ]
+        : undefined,
+    },
+    orderBy: [{ financialYear: 'desc' }, { name: 'asc' }],
+  });
   return seasons.map(toSeasonView);
 }
 export async function getSeasonById(id: string) {
@@ -262,27 +332,78 @@ export async function getSeasonById(id: string) {
 
 async function assertActiveSeasons(ids: string[]) {
   const seasons = await prisma.season.findMany({ where: { id: { in: ids }, status: 'ACTIVE' } });
-  if (seasons.length !== ids.length) throw HttpError.badRequest('Every selected Season must exist and be active');
+  if (seasons.length !== ids.length)
+    throw HttpError.badRequest('Every selected Season must exist and be active');
 }
 
-export async function createSeason(actor: CurrentUser, input: { code: string; name: string; financialYear: string; status?: 'ACTIVE' | 'INACTIVE' }) {
+export async function createSeason(
+  actor: CurrentUser,
+  input: { code: string; name: string; financialYear: string; status?: 'ACTIVE' | 'INACTIVE' },
+) {
   try {
-    const season = await prisma.season.create({ data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' } });
-    await recordAuditLog({ actorId: actor.id, action: 'SEASON_CREATED', entityType: 'Season', entityId: season.id, metadata: { code: season.code, name: season.name, financialYear: season.financialYear } });
+    const season = await prisma.season.create({
+      data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' },
+    });
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'SEASON_CREATED',
+      entityType: 'Season',
+      entityId: season.id,
+      metadata: { code: season.code, name: season.name, financialYear: season.financialYear },
+    });
     return toSeasonView(season);
-  } catch (error) { if (isUniqueConstraintError(error)) throw HttpError.conflict('A Season with this name and financial year already exists'); throw error; }
+  } catch (error) {
+    if (isUniqueConstraintError(error))
+      throw HttpError.conflict('A Season with this name and financial year already exists');
+    throw error;
+  }
 }
-export async function updateSeason(actor: CurrentUser, id: string, input: { code?: string; name?: string; financialYear?: string }) {
+export async function updateSeason(
+  actor: CurrentUser,
+  id: string,
+  input: { code?: string; name?: string; financialYear?: string },
+) {
   const existing = await prisma.season.findUnique({ where: { id } });
   if (!existing) throw HttpError.notFound('Season not found');
-  if ((input.code === undefined || input.code === existing.code) && (input.name === undefined || input.name === existing.name) && (input.financialYear === undefined || input.financialYear === existing.financialYear)) return toSeasonView(existing);
-  try { const season = await prisma.season.update({ where: { id }, data: input }); await recordAuditLog({ actorId: actor.id, action: 'SEASON_UPDATED', entityType: 'Season', entityId: id, metadata: { ...input } }); return toSeasonView(season); } catch (error) { if (isUniqueConstraintError(error)) throw HttpError.conflict('A Season with this name and financial year already exists'); throw error; }
+  if (
+    (input.code === undefined || input.code === existing.code) &&
+    (input.name === undefined || input.name === existing.name) &&
+    (input.financialYear === undefined || input.financialYear === existing.financialYear)
+  )
+    return toSeasonView(existing);
+  try {
+    const season = await prisma.season.update({ where: { id }, data: input });
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'SEASON_UPDATED',
+      entityType: 'Season',
+      entityId: id,
+      metadata: { ...input },
+    });
+    return toSeasonView(season);
+  } catch (error) {
+    if (isUniqueConstraintError(error))
+      throw HttpError.conflict('A Season with this name and financial year already exists');
+    throw error;
+  }
 }
-export async function updateSeasonStatus(actor: CurrentUser, id: string, status: 'ACTIVE' | 'INACTIVE') {
+export async function updateSeasonStatus(
+  actor: CurrentUser,
+  id: string,
+  status: 'ACTIVE' | 'INACTIVE',
+) {
   const existing = await prisma.season.findUnique({ where: { id } });
   if (!existing) throw HttpError.notFound('Season not found');
   if (existing.status === status) return toSeasonView(existing);
-  const season = await prisma.season.update({ where: { id }, data: { status } }); await recordAuditLog({ actorId: actor.id, action: `SEASON_${status}`, entityType: 'Season', entityId: id, metadata: { code: season.code, name: season.name, financialYear: season.financialYear } }); return toSeasonView(season);
+  const season = await prisma.season.update({ where: { id }, data: { status } });
+  await recordAuditLog({
+    actorId: actor.id,
+    action: `SEASON_${status}`,
+    entityType: 'Season',
+    entityId: id,
+    metadata: { code: season.code, name: season.name, financialYear: season.financialYear },
+  });
+  return toSeasonView(season);
 }
 
 export async function updateStyleStatus(actor: CurrentUser, styleId: string, status: StyleStatus) {
@@ -728,30 +849,178 @@ export async function listFactoryUsers(factoryId: string) {
 }
 
 type ProcessStageInput = {
+  activityKey?: string;
   sequence?: number;
   name: string;
   code?: string | null;
   status?: 'ACTIVE' | 'INACTIVE';
+  activityType?: 'PRODUCTION' | 'QUALITY';
+  qualityFormVersionId?: string;
+  qualityExecutionMode?: 'SEQUENTIAL_GATE' | 'IN_PROCESS';
+  associatedProductionActivityKey?: string;
+  qualityAvailabilityPolicy?: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' | 'PROGRESS_PERCENTAGE';
+  progressThresholdPercent?: number;
 };
 
 function normalizedStageData(stages: ProcessStageInput[]) {
-  return stages.map((stage, index) => ({
-    id: createId(),
-    sequence: index + 1,
-    name: stage.name.trim(),
-    code: stage.code?.trim() || null,
-    status: stage.status ?? 'ACTIVE',
-  }));
+  const ids = new Map(
+    stages.map((stage, index) => [stage.activityKey ?? `activity-${index + 1}`, createId()]),
+  );
+  return stages.map((stage, index) => {
+    const activityType = stage.activityType ?? 'PRODUCTION';
+    return {
+      id: ids.get(stage.activityKey ?? `activity-${index + 1}`)!,
+      sequence: index + 1,
+      name: stage.name.trim(),
+      code: stage.code?.trim() || null,
+      status: stage.status ?? 'ACTIVE',
+      activityType,
+      qualityFormVersionId:
+        activityType === 'QUALITY' ? (stage.qualityFormVersionId ?? null) : null,
+      qualityExecutionMode:
+        activityType === 'QUALITY' ? (stage.qualityExecutionMode ?? null) : null,
+      associatedProductionActivityId:
+        stage.qualityExecutionMode === 'IN_PROCESS'
+          ? (ids.get(stage.associatedProductionActivityKey!) ?? null)
+          : null,
+      qualityAvailabilityPolicy:
+        stage.qualityExecutionMode === 'IN_PROCESS'
+          ? (stage.qualityAvailabilityPolicy ?? null)
+          : null,
+      progressThresholdPercent:
+        stage.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE'
+          ? (stage.progressThresholdPercent ?? null)
+          : null,
+    };
+  });
 }
 
 function stageSummary(
-  stages: Array<{ sequence: number; name: string; code?: string | null; status: string }>,
+  stages: Array<{
+    id: string;
+    sequence: number;
+    name: string;
+    code?: string | null;
+    status: string;
+    activityType?: string;
+    qualityFormVersionId?: string | null;
+    qualityExecutionMode?: string | null;
+    associatedProductionActivityId?: string | null;
+    qualityAvailabilityPolicy?: string | null;
+    progressThresholdPercent?: number | Prisma.Decimal | null;
+  }>,
 ) {
-  return stages.map(({ sequence, name, code, status }) => ({
+  const activityById = new Map(stages.map((stage) => [stage.id, stage]));
+  return stages.map(({ sequence, name, code, status, ...quality }) => ({
     sequence,
     name,
     code: code ?? null,
     status,
+    activityType: quality.activityType ?? 'PRODUCTION',
+    qualityFormVersionId: quality.qualityFormVersionId ?? null,
+    qualityExecutionMode: quality.qualityExecutionMode ?? null,
+    associatedProductionActivity: quality.associatedProductionActivityId
+      ? (() => {
+          const associated = activityById.get(quality.associatedProductionActivityId);
+          return associated
+            ? {
+                sequence: associated.sequence,
+                name: associated.name,
+                code: associated.code ?? null,
+              }
+            : null;
+        })()
+      : null,
+    qualityAvailabilityPolicy: quality.qualityAvailabilityPolicy ?? null,
+    progressThresholdPercent:
+      quality.progressThresholdPercent instanceof Prisma.Decimal
+        ? quality.progressThresholdPercent.toNumber()
+        : (quality.progressThresholdPercent ?? null),
+  }));
+}
+
+async function assertUsableQualityFormVersions(
+  tx: Prisma.TransactionClient,
+  stages: ProcessStageInput[],
+  allowedExistingReferences: Map<string, string> = new Map(),
+) {
+  const selectedIds = [
+    ...new Set(
+      stages.flatMap((stage) =>
+        stage.activityType === 'QUALITY' && stage.qualityFormVersionId
+          ? [stage.qualityFormVersionId]
+          : [],
+      ),
+    ),
+  ];
+  if (selectedIds.length === 0) return;
+  const versions = await tx.qualityFormVersion.findMany({
+    where: { id: { in: selectedIds } },
+    select: { id: true, status: true, qualityForm: { select: { status: true } } },
+  });
+  const byId = new Map(versions.map((version) => [version.id, version]));
+  for (const stage of stages) {
+    if (stage.activityType !== 'QUALITY' || !stage.qualityFormVersionId) continue;
+    const id = stage.qualityFormVersionId;
+    const version = byId.get(id);
+    if (!version) throw HttpError.badRequest('Quality Form version not found');
+    const preservesExistingReference =
+      Boolean(stage.activityKey) && allowedExistingReferences.get(stage.activityKey!) === id;
+    if (
+      !preservesExistingReference &&
+      (version.status !== 'PUBLISHED' || version.qualityForm.status !== 'ACTIVE')
+    ) {
+      throw HttpError.badRequest(
+        'New Process Flow Quality activities must use a published version of an active Quality Form',
+      );
+    }
+  }
+}
+
+async function createVersionActivities(
+  tx: Prisma.TransactionClient,
+  processFlowVersionId: string,
+  stages: ReturnType<typeof normalizedStageData>,
+) {
+  const data = stages.map((stage) => ({ ...stage, processFlowVersionId }));
+  const production = data.filter((stage) => stage.activityType === 'PRODUCTION');
+  const quality = data.filter((stage) => stage.activityType === 'QUALITY');
+  if (production.length > 0) await tx.processFlowVersionStage.createMany({ data: production });
+  if (quality.length > 0) await tx.processFlowVersionStage.createMany({ data: quality });
+}
+
+function canonicalActivityConfiguration(
+  stages: Array<{
+    id: string;
+    sequence: number;
+    name: string;
+    code?: string | null;
+    status: string;
+    activityType: string;
+    qualityFormVersionId?: string | null;
+    qualityExecutionMode?: string | null;
+    associatedProductionActivityId?: string | null;
+    qualityAvailabilityPolicy?: string | null;
+    progressThresholdPercent?: number | Prisma.Decimal | null;
+  }>,
+) {
+  const sequenceById = new Map(stages.map((stage) => [stage.id, stage.sequence]));
+  return stages.map((stage) => ({
+    sequence: stage.sequence,
+    name: stage.name,
+    code: stage.code ?? null,
+    status: stage.status,
+    activityType: stage.activityType,
+    qualityFormVersionId: stage.qualityFormVersionId ?? null,
+    qualityExecutionMode: stage.qualityExecutionMode ?? null,
+    associatedProductionSequence: stage.associatedProductionActivityId
+      ? (sequenceById.get(stage.associatedProductionActivityId) ?? null)
+      : null,
+    qualityAvailabilityPolicy: stage.qualityAvailabilityPolicy ?? null,
+    progressThresholdPercent:
+      stage.progressThresholdPercent instanceof Prisma.Decimal
+        ? stage.progressThresholdPercent.toNumber()
+        : (stage.progressThresholdPercent ?? null),
   }));
 }
 
@@ -801,6 +1070,8 @@ export async function createProcessFlow(
         throw HttpError.conflict('A process flow with this code or name already exists');
       }
 
+      await assertUsableQualityFormVersions(tx, input.stages);
+
       const created = await tx.processFlow.create({
         data: {
           id: flowId,
@@ -813,12 +1084,12 @@ export async function createProcessFlow(
               id: versionId,
               versionNumber: 1,
               status: 'DRAFT',
-              stages: { create: stages },
             },
           },
         },
         include: processFlowInclude,
       });
+      await createVersionActivities(tx, versionId, stages);
       await recordAuditLog(
         {
           actorId: actor.id,
@@ -871,25 +1142,50 @@ export async function createProcessFlowVersion(
         }
       }
 
-      const sourceStages = source
-        ? source.stages.map(({ sequence, name, code, status }) => ({
-            sequence,
-            name,
-            code,
-            status,
-          }))
+      const sourceStages: ProcessStageInput[] = source
+        ? source.stages.map(
+            ({
+              id,
+              sequence,
+              name,
+              code,
+              status,
+              activityType,
+              qualityFormVersionId,
+              qualityExecutionMode,
+              associatedProductionActivityId,
+              qualityAvailabilityPolicy,
+              progressThresholdPercent,
+            }) => ({
+              activityKey: id,
+              sequence,
+              name,
+              code,
+              status,
+              activityType,
+              qualityFormVersionId: qualityFormVersionId ?? undefined,
+              qualityExecutionMode: qualityExecutionMode ?? undefined,
+              associatedProductionActivityKey: associatedProductionActivityId ?? undefined,
+              qualityAvailabilityPolicy: qualityAvailabilityPolicy ?? undefined,
+              progressThresholdPercent: progressThresholdPercent?.toNumber(),
+            }),
+          )
         : (input.stages ?? []);
+      if (!source) await assertUsableQualityFormVersions(tx, sourceStages);
       const stages = normalizedStageData(sourceStages);
       const versionId = createId();
-      const created = await tx.processFlowVersion.create({
+      await tx.processFlowVersion.create({
         data: {
           id: versionId,
           processFlowId,
           versionNumber: (flow.versions[0]?.versionNumber ?? 0) + 1,
           status: 'DRAFT',
           effectiveFrom: input.effectiveFrom,
-          stages: { create: stages },
         },
+      });
+      await createVersionActivities(tx, versionId, stages);
+      const created = await tx.processFlowVersion.findUniqueOrThrow({
+        where: { id: versionId },
         include: processFlowVersionInclude,
       });
       await recordAuditLog(
@@ -969,14 +1265,25 @@ export async function replaceProcessFlowVersionStages(
       throw HttpError.conflict('This version is no longer a draft and cannot be edited');
     }
 
+    const allowedExistingReferences = new Map(
+      existing.stages.flatMap((stage) =>
+        stage.qualityFormVersionId ? [[stage.id, stage.qualityFormVersionId] as const] : [],
+      ),
+    );
+    await assertUsableQualityFormVersions(tx, input.stages, allowedExistingReferences);
     const stages = normalizedStageData(input.stages);
     const before = stageSummary(existing.stages);
-    await tx.processFlowVersionStage.deleteMany({ where: { processFlowVersionId: id } });
-    if (stages.length > 0) {
-      await tx.processFlowVersionStage.createMany({
-        data: stages.map((stage) => ({ ...stage, processFlowVersionId: id })),
-      });
+    if (
+      JSON.stringify(canonicalActivityConfiguration(existing.stages)) ===
+      JSON.stringify(canonicalActivityConfiguration(stages))
+    ) {
+      return;
     }
+    await tx.processFlowVersionStage.deleteMany({
+      where: { processFlowVersionId: id, activityType: 'QUALITY' },
+    });
+    await tx.processFlowVersionStage.deleteMany({ where: { processFlowVersionId: id } });
+    await createVersionActivities(tx, id, stages);
     await recordAuditLog(
       {
         actorId: actor.id,

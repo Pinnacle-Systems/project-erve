@@ -136,6 +136,7 @@ export interface ProcessFlow {
     id: string;
     versionNumber: number;
     status: 'DRAFT' | 'ACTIVE' | 'RETIRED';
+    hasQualityActivities: boolean;
     effectiveFrom: string | null;
     createdAt: string;
   }>;
@@ -151,15 +152,30 @@ export interface ProcessFlowVersion {
   versionNumber: number;
   status: 'DRAFT' | 'ACTIVE' | 'RETIRED';
   effectiveFrom: string | null;
-  stages: Array<{
-    id: string;
-    sequence: number;
-    name: string;
-    code: string | null;
-    status: Status;
-  }>;
+  stages: ProcessFlowActivity[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProcessFlowActivity {
+  id: string;
+  sequence: number;
+  name: string;
+  code: string | null;
+  status: Status;
+  activityType: 'PRODUCTION' | 'QUALITY';
+  qualityFormVersionId: string | null;
+  qualityFormVersion: {
+    id: string;
+    versionNumber: number;
+    status: 'DRAFT' | 'PUBLISHED' | 'RETIRED';
+    qualityForm: { id: string; code: string; name: string };
+  } | null;
+  qualityExecutionMode: 'SEQUENTIAL_GATE' | 'IN_PROCESS' | null;
+  associatedProductionActivityId: string | null;
+  associatedProductionActivity: { id: string; name: string; code: string | null } | null;
+  qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' | 'PROGRESS_PERCENTAGE' | null;
+  progressThresholdPercent: number | null;
 }
 
 export type QualityFormComponentType =
