@@ -307,6 +307,27 @@ const definitionKey = (label: string) =>
         : `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`,
     )
     .join('');
+const CONTEXT_SOURCES: Record<string, string> = {
+  Supplier: 'SUPPLIER_NAME',
+  'Supplier Name': 'SUPPLIER_NAME',
+  'Factory Name': 'FACTORY_NAME',
+  Style: 'STYLE_NUMBER',
+  Customer: 'CUSTOMER_NAME',
+  'Purchase Order': 'PURCHASE_ORDER_NUMBER',
+  'Order Number': 'PURCHASE_ORDER_NUMBER',
+  'Order Qty': 'ORDER_QUANTITY',
+  Quantity: 'ORDER_QUANTITY',
+  'Report Date': 'REPORT_DATE',
+  'Meeting Date': 'REPORT_DATE',
+  ETD: 'ETD',
+  'Delivery Date': 'ETD',
+  Color: 'COLOUR',
+  'Ship Qty': 'SHIP_QUANTITY',
+  Merchandiser: 'MERCHANDISER_NAME',
+  'Cutting Planning Date': 'CUTTING_PLANNING_DATE',
+  'Sewing Planning Date': 'SEWING_PLANNING_DATE',
+  'Meeting Conducted By': 'MEETING_CONDUCTED_BY',
+};
 const context = (fields: string[]): SeedComponent => ({
   type: 'SYSTEM_CONTEXT',
   title: 'System context',
@@ -322,6 +343,7 @@ const context = (fields: string[]): SeedComponent => ({
             ? 'DATE'
             : 'TEXT',
       source: 'SYSTEM',
+      sourceKey: CONTEXT_SOURCES[label],
     })),
   },
 });
@@ -377,12 +399,20 @@ const DEFAULT_QUALITY_FORMS: Array<{
             'Customer',
             'Order Number',
             'Quantity',
-            'Meeting Date',
-            'Delivery Date',
-            'Cutting Planning Date',
-            'Sewing Planning Date',
-            'Meeting Conducted By',
           ]),
+          {
+            type: 'FIELD_GROUP',
+            title: 'Meeting details',
+            config: {
+              fields: [
+                { key: 'meetingDate', label: 'Meeting Date', dataType: 'DATE', source: 'USER', required: true },
+                { key: 'meetingConductedBy', label: 'Meeting Conducted By', dataType: 'TEXT', source: 'USER', required: true },
+                { key: 'deliveryDate', label: 'Delivery Date', dataType: 'DATE', source: 'USER' },
+                { key: 'cuttingPlanningDate', label: 'Cutting Planning Date', dataType: 'DATE', source: 'USER' },
+                { key: 'sewingPlanningDate', label: 'Sewing Planning Date', dataType: 'DATE', source: 'USER' },
+              ],
+            },
+          },
         ],
       },
       {
@@ -482,9 +512,24 @@ const DEFAULT_QUALITY_FORMS: Array<{
             title: 'Production status',
             config: {
               metrics: [
-                { key: 'cutPercentage', label: '% Cut', source: 'SYSTEM' },
-                { key: 'sewnPercentage', label: '% Sewn', source: 'SYSTEM' },
-                { key: 'finishPercentage', label: '% Finish', source: 'SYSTEM' },
+                {
+                  key: 'cutPercentage',
+                  label: '% Cut',
+                  source: 'SYSTEM',
+                  sourceActivityCode: 'CUTTING',
+                },
+                {
+                  key: 'sewnPercentage',
+                  label: '% Sewn',
+                  source: 'SYSTEM',
+                  sourceActivityCode: 'SEWING',
+                },
+                {
+                  key: 'finishPercentage',
+                  label: '% Finish',
+                  source: 'SYSTEM',
+                  sourceActivityCode: 'FINISHING',
+                },
               ],
             },
           },
@@ -578,12 +623,15 @@ const DEFAULT_QUALITY_FORMS: Array<{
                   label: 'Total Order Quantity',
                   dataType: 'NUMBER',
                   source: 'SYSTEM',
+                  sourceKey: 'ORDER_QUANTITY',
                   required: true,
                 },
                 {
                   key: 'quantityInspected',
                   label: 'Quantity Inspected',
                   dataType: 'NUMBER',
+                  source: 'SYSTEM',
+                  sourceKey: 'BATCH_INSPECTED_QUANTITY',
                   required: true,
                 },
                 { key: 'numberOfBoxes', label: 'Number of Boxes', dataType: 'NUMBER' },
@@ -646,6 +694,11 @@ const DEFAULT_QUALITY_FORMS: Array<{
         title: 'Conclusion',
         components: [
           { type: 'COMMENTS', title: 'Comments', config: { maxLength: 5000 } },
+          {
+            type: 'INSPECTION_OUTCOME',
+            title: 'Inspection conclusion',
+            config: { allowedOutcomes: ['PASS', 'FAIL'] },
+          },
           signatures(['Quality Controller', 'Supplier']),
         ],
       },

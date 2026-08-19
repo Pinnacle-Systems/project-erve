@@ -114,6 +114,7 @@ const detailInclude = {
       inspector: { select: { id: true, name: true, email: true } },
       forms: { include: { checklist: true } },
       evidence: { include: { file: true } },
+      qualityActivityExecution: true,
     },
     orderBy: { createdAt: 'asc' as const },
   },
@@ -289,6 +290,15 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
       createdAt: session.createdAt.toISOString(),
       updatedAt: session.updatedAt.toISOString(),
       version: session.version,
+      processFlowPpSample: session.qualityActivityExecution
+        ? {
+            executionId: session.qualityActivityExecution.id,
+            processFlowActivityId: session.qualityActivityExecution.processFlowActivityId,
+            qualityFormVersionId: session.qualityActivityExecution.qualityFormVersionId,
+            sampleQuantity: session.qualityActivityExecution.sampleQuantity!,
+            decision: session.qualityActivityExecution.outcome,
+          }
+        : null,
       forms: session.forms.map((line) => {
         const size = record.lines
           .flatMap((l) => l.sizes.map((s) => ({ l, s })))
@@ -537,7 +547,7 @@ export async function saveSizeInspectionForm(
   await prisma.$transaction(async (tx) => {
     const form = await tx.qaSizeInspectionForm.findUnique({
       where: { id: formId },
-      include: { session: { include: { jobOrder: true } }, checklist: true },
+      include: { session: { include: { jobOrder: true, qualityActivityExecution: true } }, checklist: true },
     });
     if (!form || form.inspectionSessionId !== sessionId)
       throw HttpError.notFound('Size inspection form not found');
@@ -550,6 +560,11 @@ export async function saveSizeInspectionForm(
     if (form.version !== input.expectedVersion) throw HttpError.staleVersion(form.version);
     if (!['DRAFT', 'REOPENED'].includes(form.status))
       throw HttpError.conflict('Size inspection form is finalized');
+    if (
+      form.session.qualityActivityExecution &&
+      input.sampleQuantity !== form.session.qualityActivityExecution.sampleQuantity
+    )
+      throw HttpError.conflict('PP Sample size and quantity are locked after inspection starts');
     const size = await tx.jobOrderLineSize.findFirst({
       where: { id: form.jobOrderLineSizeId, jobOrderLine: { jobOrderId } },
     });
@@ -564,7 +579,9 @@ export async function saveSizeInspectionForm(
     const consumed = other
       .filter((candidate) => candidate.sourceReworkTaskId === form.sourceReworkTaskId)
       .reduce((sum, candidate) => sum + candidate.inspectedQuantity, 0);
-    const capacity = form.sourceReworkTaskId
+    const capacity = form.session.qualityActivityExecution
+      ? form.session.qualityActivityExecution.sampleQuantity!
+      : form.sourceReworkTaskId
       ? (await tx.qaReworkTask.findUniqueOrThrow({ where: { id: form.sourceReworkTaskId } }))
           .assignedQuantity
       : size.preparedQuantity;
@@ -654,7 +671,7 @@ export async function finalizeSizeInspectionForm(
   user: CurrentUser,
   sessionId: string,
   formId: string,
-  input: { expectedVersion: number },
+  input: { expectedVersion: number; ppSampleDecision?: 'PASS' | 'FAIL' },
   key: string,
 ) {
   const requestHash = hash(input);
@@ -662,7 +679,10 @@ export async function finalizeSizeInspectionForm(
   await prisma.$transaction(async (tx) => {
     const form = await tx.qaSizeInspectionForm.findUnique({
       where: { id: formId },
-      include: { checklist: true, session: { include: { jobOrder: true } } },
+      include: {
+        checklist: true,
+        session: { include: { jobOrder: true, qualityActivityExecution: { include: { processFlowActivity: true } } } },
+      },
     });
     if (!form || form.inspectionSessionId !== sessionId)
       throw HttpError.notFound('Size inspection form not found');
@@ -675,7 +695,14 @@ export async function finalizeSizeInspectionForm(
     if (form.version !== input.expectedVersion) throw HttpError.staleVersion(form.version);
     if (form.status !== 'DRAFT')
       throw HttpError.conflict('Size inspection form is already finalized');
-    const capacity = form.sourceReworkTaskId
+    const ppExecution = form.session.qualityActivityExecution;
+    if (ppExecution && !input.ppSampleDecision)
+      throw HttpError.badRequest('An explicit PP Sample PASS or FAIL decision is required');
+    if (!ppExecution && input.ppSampleDecision)
+      throw HttpError.badRequest('PP Sample decision is only valid for a Process Flow PP Sample');
+    const capacity = ppExecution
+      ? ppExecution.sampleQuantity!
+      : form.sourceReworkTaskId
       ? (await tx.qaReworkTask.findUniqueOrThrow({ where: { id: form.sourceReworkTaskId } }))
           .assignedQuantity
       : (
@@ -718,7 +745,7 @@ export async function finalizeSizeInspectionForm(
       if (!evidence)
         throw HttpError.badRequest('Photo evidence is required for permanent rejection');
     }
-    if (form.reworkQuantity > 0) {
+    if (form.reworkQuantity > 0 && !ppExecution) {
       const attempt =
         (await tx.qaReworkTask.count({ where: { jobOrderLineSizeId: form.jobOrderLineSizeId } })) +
         1;
@@ -761,21 +788,52 @@ export async function finalizeSizeInspectionForm(
       data: { status: 'FINALIZED', finalizedAt: new Date(), version: { increment: 1 } },
     });
     const session = await deriveSessionStatus(tx, sessionId);
+    if (ppExecution) {
+      const executionUpdated = await tx.qualityActivityExecution.updateMany({
+        where: { id: ppExecution.id, status: 'DRAFT', version: ppExecution.version },
+        data: {
+          status: 'FINALIZED',
+          finalizedAt: new Date(),
+          finalizedById: user.id,
+          outcome: input.ppSampleDecision,
+          version: { increment: 1 },
+        },
+      });
+      if (executionUpdated.count !== 1) throw HttpError.staleVersion(ppExecution.version);
+      await recordAuditLog(
+        {
+          actorId: user.id,
+          action: 'PP_SAMPLE_FINALIZED',
+          entityType: 'QualityActivityExecution',
+          entityId: ppExecution.id,
+          metadata: {
+            jobOrderId,
+            processFlowActivityId: ppExecution.processFlowActivityId,
+            qualityFormVersionId: ppExecution.qualityFormVersionId,
+            jobOrderLineSizeId: ppExecution.sampleJobOrderLineSizeId,
+            sampleQuantity: ppExecution.sampleQuantity,
+            decision: input.ppSampleDecision,
+          },
+        },
+        tx,
+      );
+    }
     const openRework = await tx.qaReworkTask.findMany({
       where: { jobOrderId, status: { not: 'REINSPECTED' } },
       select: { status: true },
     });
-    await tx.jobOrder.update({
-      where: { id: jobOrderId },
-      data: {
-        status: openRework.some((task) => task.status === 'READY_FOR_REINSPECTION')
-          ? 'READY_FOR_REINSPECTION'
-          : openRework.length
-            ? 'REWORK_REQUIRED'
-            : 'QA_IN_PROGRESS',
-        version: { increment: 1 },
-      },
-    });
+    if (!ppExecution)
+      await tx.jobOrder.update({
+        where: { id: jobOrderId },
+        data: {
+          status: openRework.some((task) => task.status === 'READY_FOR_REINSPECTION')
+            ? 'READY_FOR_REINSPECTION'
+            : openRework.length
+              ? 'REWORK_REQUIRED'
+              : 'QA_IN_PROGRESS',
+          version: { increment: 1 },
+        },
+      });
     await recordAuditLog(
       {
         actorId: user.id,
@@ -839,6 +897,10 @@ export async function reopenSizeInspectionForm(
     jobOrderId = form.session.jobOrderId;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa:${jobOrderId}`}))`;
     if (await replayOrLock(tx, user.id, jobOrderId, 'QA_FORM_REOPEN', key, requestHash)) return;
+    if (form.session.qualityActivityExecutionId)
+      throw HttpError.conflict(
+        'Process Flow PP Sample decisions are immutable; retry is not implemented',
+      );
     if (form.session.jobOrder.status === 'QA_APPROVED')
       throw HttpError.conflict('Approved QA cannot be reopened after downstream release');
     if (form.version !== input.expectedVersion) throw HttpError.staleVersion(form.version);

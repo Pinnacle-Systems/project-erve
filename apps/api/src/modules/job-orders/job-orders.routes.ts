@@ -17,6 +17,8 @@ import {
   versionedMutationSchema,
 } from './job-orders.validation.js';
 import * as jobOrdersService from './job-orders.service.js';
+import * as qualityExecutionsService from '../quality-executions/quality-executions.service.js';
+import { startQualityExecutionSchema } from '../quality-executions/quality-executions.validation.js';
 
 export const jobOrdersRouter = Router();
 jobOrdersRouter.use(requireAuth);
@@ -48,6 +50,20 @@ jobOrdersRouter.get(
     const filters = listJobOrdersQuerySchema.parse(req.query);
     const jobOrders = await jobOrdersService.getJobOrderList(req.user!, filters);
     res.status(200).json(successResponse(jobOrders));
+  }),
+);
+
+jobOrdersRouter.post(
+  '/:id/quality-activities/:activityId/executions',
+  requireRoles('ADMIN', 'QA_USER'),
+  asyncHandler(async (req, res) => {
+    const execution = await qualityExecutionsService.start(
+      req.user!,
+      req.params.id! as string,
+      req.params.activityId! as string,
+      startQualityExecutionSchema.parse(req.body ?? {}),
+    );
+    res.status(201).json(successResponse(execution));
   }),
 );
 

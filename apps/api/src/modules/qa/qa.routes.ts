@@ -16,6 +16,7 @@ import {
   saveSizeInspectionFormSchema,
   startInspectionSchema,
   versionSchema,
+  finalizeSizeInspectionSchema,
 } from './qa.validation.js';
 
 export const qaRouter = Router();
@@ -93,7 +94,7 @@ qaRouter.post(
           req.user!,
           req.params.sessionId! as string,
           req.params.formId! as string,
-          versionSchema.parse(req.body),
+          finalizeSizeInspectionSchema.parse(req.body),
           key(req),
         ),
       ),

@@ -63,6 +63,27 @@ beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); (globalThis as { IS
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 
 describe('rendered mobile QA form workflow', () => {
+  it('renders one locked PP Sample form and requires an explicit QA decision', async () => {
+    const data = detail([form('form-m', 'M')]);
+    const selected = data.sessions[0].forms[0]!;
+    selected.sampleQuantity = 5;
+    selected.inspectedQuantity = 5;
+    selected.acceptedQuantity = 5;
+    selected.reworkQuantity = 0;
+    data.sessions[0].processFlowPpSample = { executionId: 'execution-1', processFlowActivityId: 'activity-1', qualityFormVersionId: 'sample-v1', sampleQuantity: 5, decision: null };
+    successfulUpdate(() => {});
+    await renderPage(data);
+    expect(container.textContent).toContain('PP Sample Decision');
+    expect(container.textContent).not.toContain('Size S');
+    expect((container.querySelector('[aria-label="Sample quantity"]') as HTMLInputElement).disabled).toBe(true);
+    await click('Finalize size M');
+    expect(container.textContent).toContain('Choose Pass or Fail');
+    expect(vi.mocked(apiClient.request)).not.toHaveBeenCalled();
+    await act(async () => (container.querySelector('input[name="pp-decision"][type="radio"]') as HTMLInputElement).click());
+    await click('Finalize size M');
+    expect(vi.mocked(apiClient.request)).toHaveBeenCalledWith(expect.objectContaining({ url: '/qa/inspections/session-1/forms/form-m/finalize', data: { expectedVersion: 1, ppSampleDecision: 'PASS' } }));
+  });
+
   it('navigates three rendered sizes without leaking their values', async () => {
     const data = detail(); data.sessions[0].forms[0].sampleQuantity = 2; data.sessions[0].forms[0].acceptedQuantity = 7; data.sessions[0].forms[1].sampleQuantity = 5; data.sessions[0].forms[1].acceptedQuantity = 3; data.sessions[0].forms[2].sampleQuantity = 4; data.sessions[0].forms[2].checklist[0]!.remarks = 'L only';
     await renderPage(data); expect(container.textContent).toContain('Size S'); expect(container.textContent).toContain('Size M'); expect(container.textContent).toContain('Size L');

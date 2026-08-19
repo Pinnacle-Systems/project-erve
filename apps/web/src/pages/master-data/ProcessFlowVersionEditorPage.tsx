@@ -77,6 +77,7 @@ export function ProcessFlowVersionEditorPage() {
               ? {
                   qualityFormVersionId: stage.qualityFormVersionId,
                   qualityExecutionMode: stage.qualityExecutionMode,
+                  executionMultiplicity: stage.executionMultiplicity,
                   ...(stage.qualityExecutionMode === 'IN_PROCESS'
                     ? {
                         associatedProductionActivityKey: stage.associatedProductionActivityKey,
@@ -84,8 +85,11 @@ export function ProcessFlowVersionEditorPage() {
                         ...(stage.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE'
                           ? { progressThresholdPercent: Number(stage.progressThresholdPercent) }
                           : {}),
+                        ...(stage.executionMultiplicity === 'BATCHED'
+                          ? { coverageTarget: stage.coverageTarget }
+                          : {}),
                       }
-                    : {}),
+                    : { gateSatisfactionRequirement: stage.gateSatisfactionRequirement }),
                 }
               : {}),
           })),

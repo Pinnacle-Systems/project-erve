@@ -56,7 +56,10 @@ const inProcess = (
   key: string,
   formVersionId: string,
   productionKey: string,
-  policy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' | 'PROGRESS_PERCENTAGE',
+  policy:
+    | 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE'
+    | 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'
+    | 'PROGRESS_PERCENTAGE',
   threshold?: number,
 ) => ({
   activityKey: key,
@@ -163,6 +166,87 @@ describe('Process Flow Quality activities', () => {
     await createFlow(token, [sequential('gate', draft.id)]).expect(400);
     await createFlow(token, [
       { ...production('sewing', 'Sewing'), qualityFormVersionId: draft.id },
+    ]).expect(400);
+  });
+
+  it('persists and copies explicit gate, completion availability, multiplicity and coverage semantics', async () => {
+    const { token } = await manager();
+    const sample = await qualityVersion('SAMPLE_GATE');
+    const ppm = await qualityVersion('PPM_GATE');
+    const inline = await qualityVersion('INLINE_SINGLE');
+    const final = await qualityVersion('FINAL_BATCHED');
+    const flow = await createFlow(token, [
+      {
+        ...sequential('sample', sample.id),
+        name: 'PP Sample Checklist',
+        gateSatisfactionRequirement: 'OUTCOME_PASS',
+        executionMultiplicity: 'SINGLE',
+      },
+      {
+        ...sequential('ppm', ppm.id),
+        name: 'Size Set / Pre-Production',
+        gateSatisfactionRequirement: 'FINALIZED',
+        executionMultiplicity: 'SINGLE',
+      },
+      production('sewing', 'Sewing'),
+      {
+        ...inProcess('inline', inline.id, 'sewing', 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE'),
+        executionMultiplicity: 'SINGLE',
+      },
+      {
+        ...inProcess('final', final.id, 'sewing', 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'),
+        executionMultiplicity: 'BATCHED',
+        coverageTarget: 'PREPARED_QUANTITY',
+      },
+    ]).expect(201);
+    const sourceId = flow.body.data.versions[0].id as string;
+    const copied = await request(app)
+      .post(`/process-flows/${flow.body.data.id}/versions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ copyFromVersionId: sourceId })
+      .expect(201);
+    const byName = new Map(
+      copied.body.data.stages.map((stage: { name: string }) => [stage.name, stage]),
+    );
+    expect(byName.get('PP Sample Checklist')).toMatchObject({
+      gateSatisfactionRequirement: 'OUTCOME_PASS',
+      executionMultiplicity: 'SINGLE',
+    });
+    expect(byName.get('Size Set / Pre-Production')).toMatchObject({
+      gateSatisfactionRequirement: 'FINALIZED',
+    });
+    expect(byName.get('Inline Inspection')).toMatchObject({
+      qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
+      executionMultiplicity: 'SINGLE',
+      coverageTarget: null,
+    });
+    expect(byName.get('Final Inspection')).toMatchObject({
+      qualityAvailabilityPolicy: 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES',
+      executionMultiplicity: 'BATCHED',
+      coverageTarget: 'PREPARED_QUANTITY',
+    });
+  });
+
+  it('rejects invalid gate, multiplicity and coverage combinations', async () => {
+    const { token } = await manager();
+    const form = await qualityVersion('INVALID_WORKFLOW');
+    await createFlow(token, [
+      { ...sequential('gate', form.id), executionMultiplicity: 'BATCHED', coverageTarget: 'PREPARED_QUANTITY' },
+    ]).expect(400);
+    await createFlow(token, [
+      production('sewing', 'Sewing'),
+      {
+        ...inProcess('final', form.id, 'sewing', 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'),
+        executionMultiplicity: 'BATCHED',
+      },
+    ]).expect(400);
+    await createFlow(token, [
+      production('sewing', 'Sewing'),
+      {
+        ...inProcess('inline', form.id, 'sewing', 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE'),
+        executionMultiplicity: 'SINGLE',
+        coverageTarget: 'PREPARED_QUANTITY',
+      },
     ]).expect(400);
   });
 
@@ -533,6 +617,8 @@ describe('Process Flow Quality database integrity', () => {
           activityType: 'QUALITY',
           qualityFormVersionId: form.id,
           qualityExecutionMode: 'SEQUENTIAL_GATE',
+          gateSatisfactionRequirement: 'FINALIZED',
+          executionMultiplicity: 'SINGLE',
           associatedProductionActivityId: production1.id,
           qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
         } as never,
@@ -548,6 +634,8 @@ describe('Process Flow Quality database integrity', () => {
           activityType: 'QUALITY',
           qualityFormVersionId: form.id,
           qualityExecutionMode: 'SEQUENTIAL_GATE',
+          gateSatisfactionRequirement: 'FINALIZED',
+          executionMultiplicity: 'SINGLE',
         },
       }),
     ).resolves.toBeDefined();
@@ -564,6 +652,8 @@ describe('Process Flow Quality database integrity', () => {
         activityType: 'QUALITY',
         qualityFormVersionId: form.id,
         qualityExecutionMode: 'SEQUENTIAL_GATE',
+        gateSatisfactionRequirement: 'FINALIZED',
+        executionMultiplicity: 'SINGLE',
       },
     });
     const input = (associatedProductionActivityId: string) => ({
@@ -576,6 +666,7 @@ describe('Process Flow Quality database integrity', () => {
       qualityExecutionMode: 'IN_PROCESS',
       associatedProductionActivityId,
       qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
+      executionMultiplicity: 'SINGLE',
     });
     await expect(
       prisma.processFlowVersionStage.create({ data: input(quality.id) as never }),
@@ -600,6 +691,7 @@ describe('Process Flow Quality database integrity', () => {
       qualityExecutionMode: 'IN_PROCESS',
       associatedProductionActivityId: production1.id,
       qualityAvailabilityPolicy: policy,
+      executionMultiplicity: 'SINGLE',
       ...(threshold === undefined ? {} : { progressThresholdPercent: threshold }),
     });
     await expect(

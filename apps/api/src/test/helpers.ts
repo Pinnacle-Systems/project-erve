@@ -32,6 +32,7 @@ export async function resetDatabase(): Promise<void> {
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "qa_inspection_sessions", "qa_size_inspection_forms", "qa_rework_tasks" CASCADE',
   );
+  await prisma.qualityActivityExecution.deleteMany();
   await prisma.jobOrderStageStatus.deleteMany();
   await prisma.jobOrderLineSize.deleteMany();
   await prisma.jobOrderLine.deleteMany();

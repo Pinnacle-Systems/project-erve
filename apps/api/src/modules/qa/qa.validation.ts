@@ -96,6 +96,10 @@ export const saveSizeInspectionFormSchema = z
   });
 
 export const versionSchema = z.object({ expectedVersion });
+export const finalizeSizeInspectionSchema = z.object({
+  expectedVersion,
+  ppSampleDecision: z.enum(['PASS', 'FAIL']).optional(),
+});
 export const reopenSchema = z.object({
   expectedVersion,
   reason: z.string().trim().min(3).max(1000),

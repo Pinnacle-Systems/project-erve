@@ -27,6 +27,7 @@ import {
   qualityFormsRouter,
   qualityFormVersionsRouter,
 } from './modules/quality-forms/quality-forms.routes.js';
+import { qualityExecutionsRouter } from './modules/quality-executions/quality-executions.routes.js';
 
 const READY_CHECK_TIMEOUT_MS = 2000;
 
@@ -100,6 +101,7 @@ export function createApp() {
   app.use('/process-flow-versions', processFlowVersionsRouter);
   app.use('/quality-forms', qualityFormsRouter);
   app.use('/quality-form-versions', qualityFormVersionsRouter);
+  app.use('/quality-executions', qualityExecutionsRouter);
   app.use('/price-lists', priceListsRouter);
   app.use('/purchase-orders', purchaseOrdersRouter);
   app.use('/job-orders', jobOrdersRouter);

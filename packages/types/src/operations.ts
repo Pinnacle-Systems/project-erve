@@ -190,20 +190,150 @@ export interface JobOrderStage {
   createdAt: string;
   updatedAt: string;
 }
-export type QualityRuntimeStatus = 'NOT_AVAILABLE' | 'AVAILABLE' | 'IN_PROGRESS' | 'COMPLETED';
+export type QualityRuntimeStatus =
+  | 'NOT_AVAILABLE'
+  | 'AVAILABLE'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'FAILED';
 export interface JobOrderQualityActivity {
   processFlowVersionStageId: string;
   sequence: number;
   name: string;
   status: QualityRuntimeStatus;
   eligible: boolean;
-  qualityForm: { id: string; code: string; name: string };
+  qualityForm: { id: string; code: string; name: string; executionScope: 'JOB_ORDER' | 'SIZE' };
   qualityFormVersion: { id: string; versionNumber: number };
   executionMode: 'SEQUENTIAL_GATE' | 'IN_PROCESS';
   associatedProductionActivity: { id: string; name: string } | null;
   availabilityPolicy:
-    'SEQUENTIAL_PREDECESSOR_COMPLETED' | 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' | 'PROGRESS_PERCENTAGE';
+    | 'SEQUENTIAL_PREDECESSOR_COMPLETED'
+    | 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE'
+    | 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'
+    | 'PROGRESS_PERCENTAGE';
   progressThresholdPercent: string | null;
+  gateSatisfactionRequirement: 'FINALIZED' | 'OUTCOME_PASS' | null;
+  executionMultiplicity: 'SINGLE' | 'BATCHED';
+  coverageTarget: 'PREPARED_QUANTITY' | null;
+  coverage: QualityCoverageView | null;
+  execution: {
+    id: string;
+    attemptNumber: number;
+    batchNumber: number;
+    inspectedQuantity: number | null;
+    status: 'DRAFT' | 'FINALIZED';
+    version: number;
+    outcome: 'PASS' | 'FAIL' | null;
+    startedAt: string;
+    finalizedAt: string | null;
+  } | null;
+}
+
+export interface QualityExecutionPayload {
+  expectedVersion: number;
+  checklistResponses: Array<{
+    componentId: string;
+    itemKey: string;
+    response: string;
+    remarks?: string | null;
+  }>;
+  aqlResults: Array<{
+    componentId: string;
+    severity: 'CRITICAL' | 'MAJOR' | 'MINOR';
+    maxAllowed?: number | null;
+    found?: number | null;
+  }>;
+  defects: Array<{
+    componentId: string;
+    description: string;
+    severity: 'CRITICAL' | 'MAJOR' | 'MINOR';
+    quantity?: number | null;
+  }>;
+  correctiveActions: Array<{
+    componentId: string;
+    values: Record<string, string | number | boolean | null>;
+  }>;
+  testResults: Array<{
+    componentId: string;
+    testKey: string;
+    response: string;
+    remarks?: string | null;
+  }>;
+  quantities: Array<{ componentId: string; fieldKey: string; value: number }>;
+  comments: Array<{ componentId: string; value: string }>;
+  fieldResponses: Array<{ componentId: string; fieldKey: string; value: string }>;
+  attendees: Array<{ componentId: string; roleKey: string; attendeeName: string }>;
+  actions: Array<{
+    componentId: string;
+    values: Record<string, string | number | boolean | null>;
+  }>;
+  signoffs: Array<{ componentId: string; roleKey: string; signatoryName: string }>;
+  outcome?: { componentId: string; value: 'PASS' | 'FAIL'; remarks?: string | null } | null;
+}
+export interface QualityExecutionView {
+  id: string;
+  jobOrderId: string;
+  processFlowActivityId: string;
+  activityName: string;
+  qualityForm: { id: string; code: string; name: string; versionId: string; versionNumber: number };
+  attemptNumber: number;
+  batchNumber: number;
+  inspectedQuantity: number | null;
+  status: 'DRAFT' | 'FINALIZED';
+  version: number;
+  startedAt: string;
+  finalizedAt: string | null;
+  ppSample: {
+    selectedSizeId: string;
+    sizeCode: string | null;
+    sizeLabel: string | null;
+    sampleQuantity: number;
+    sessionId: string | null;
+    formId: string | null;
+    decision: 'PASS' | 'FAIL' | null;
+  } | null;
+  coverage: QualityCoverageView | null;
+  sections: Array<{
+    id: string;
+    sequence: number;
+    title: string;
+    description?: string | null;
+    components: Array<{
+      id: string;
+      sequence: number;
+      type: string;
+      title: string;
+      description?: string | null;
+      config: Record<string, unknown>;
+      systemValue?: Array<{ key: string; value: unknown; available: boolean }>;
+    }>;
+  }>;
+  responses: QualityExecutionPayload;
+  attachments: Array<{
+    id: string;
+    componentId: string;
+    requirementKey: string;
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+    createdAt: string;
+  }>;
+}
+export interface QualityCoverageView {
+  preparedQuantityAuthoritative: boolean;
+  preparedQuantity: number | null;
+  inspectedQuantity: number;
+  remainingQuantity: number | null;
+  complete: boolean;
+  reconciliationConflict: boolean;
+  batches: Array<{
+    id: string;
+    batchNumber: number;
+    inspectedQuantity: number | null;
+    status: 'DRAFT' | 'FINALIZED';
+    outcome: 'PASS' | 'FAIL' | null;
+    finalizedAt: string | null;
+  }>;
 }
 export interface JobOrderSummary extends VersionedResource {
   id: string;
@@ -458,6 +588,13 @@ export interface QaInspectionSessionView extends VersionedResource {
   forms: QaSizeInspectionFormView[];
   evidence: QaEvidenceMetadata[];
   createdAt: string;
+  processFlowPpSample?: {
+    executionId: string;
+    processFlowActivityId: string;
+    qualityFormVersionId: string;
+    sampleQuantity: number;
+    decision: 'PASS' | 'FAIL' | null;
+  } | null;
 }
 export interface QaReworkTaskView extends VersionedResource {
   id: string;

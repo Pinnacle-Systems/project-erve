@@ -118,6 +118,9 @@ const productionActivity = (id: string, name: string): ProcessFlowActivity => ({
   associatedProductionActivity: null,
   qualityAvailabilityPolicy: null,
   progressThresholdPercent: null,
+  gateSatisfactionRequirement: null,
+  executionMultiplicity: null,
+  coverageTarget: null,
 });
 
 describe('process activity authoring', () => {
@@ -226,11 +229,13 @@ describe('process activity authoring', () => {
     await flush();
     expect(container.textContent).toContain('Quality Form version');
     expect(container.textContent).toContain('Sequential gate');
+    expect(container.textContent).toContain('Gate satisfied by');
     expect(container.textContent).not.toContain('Associated Production Activity');
 
     click('Configure in-process');
     expect(container.textContent).toContain('Associated Production Activity');
     expect(container.textContent).toContain('Available when');
+    expect(container.textContent).toContain('Execution multiplicity');
     expect(container.textContent).toContain('Progress threshold (%)');
     expect((container.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('50');
     expect(
@@ -377,6 +382,9 @@ describe('process-flow pages', () => {
             associatedProductionActivity: null,
             qualityAvailabilityPolicy: null,
             progressThresholdPercent: null,
+            gateSatisfactionRequirement: 'FINALIZED',
+            executionMultiplicity: 'SINGLE',
+            coverageTarget: null,
           },
         ],
         createdAt: '2026-02-01T00:00:00.000Z',

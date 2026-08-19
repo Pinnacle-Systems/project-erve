@@ -167,6 +167,9 @@ function toProcessFlowVersionView(version: ProcessFlowVersionRecord) {
         : null,
       qualityAvailabilityPolicy: stage.qualityAvailabilityPolicy,
       progressThresholdPercent: decimalToNumber(stage.progressThresholdPercent),
+      gateSatisfactionRequirement: stage.gateSatisfactionRequirement,
+      executionMultiplicity: stage.executionMultiplicity,
+      coverageTarget: stage.coverageTarget,
     })),
     createdAt: version.createdAt,
     updatedAt: version.updatedAt,
@@ -858,8 +861,14 @@ type ProcessStageInput = {
   qualityFormVersionId?: string;
   qualityExecutionMode?: 'SEQUENTIAL_GATE' | 'IN_PROCESS';
   associatedProductionActivityKey?: string;
-  qualityAvailabilityPolicy?: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' | 'PROGRESS_PERCENTAGE';
+  qualityAvailabilityPolicy?:
+    | 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE'
+    | 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'
+    | 'PROGRESS_PERCENTAGE';
   progressThresholdPercent?: number;
+  gateSatisfactionRequirement?: 'FINALIZED' | 'OUTCOME_PASS';
+  executionMultiplicity?: 'SINGLE' | 'BATCHED';
+  coverageTarget?: 'PREPARED_QUANTITY';
 };
 
 function normalizedStageData(stages: ProcessStageInput[]) {
@@ -891,6 +900,16 @@ function normalizedStageData(stages: ProcessStageInput[]) {
         stage.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE'
           ? (stage.progressThresholdPercent ?? null)
           : null,
+      gateSatisfactionRequirement:
+        stage.qualityExecutionMode === 'SEQUENTIAL_GATE'
+          ? (stage.gateSatisfactionRequirement ?? 'FINALIZED')
+          : null,
+      executionMultiplicity:
+        activityType === 'QUALITY' ? (stage.executionMultiplicity ?? 'SINGLE') : null,
+      coverageTarget:
+        activityType === 'QUALITY' && stage.executionMultiplicity === 'BATCHED'
+          ? (stage.coverageTarget ?? null)
+          : null,
     };
   });
 }
@@ -908,6 +927,9 @@ function stageSummary(
     associatedProductionActivityId?: string | null;
     qualityAvailabilityPolicy?: string | null;
     progressThresholdPercent?: number | Prisma.Decimal | null;
+    gateSatisfactionRequirement?: string | null;
+    executionMultiplicity?: string | null;
+    coverageTarget?: string | null;
   }>,
 ) {
   const activityById = new Map(stages.map((stage) => [stage.id, stage]));
@@ -936,6 +958,9 @@ function stageSummary(
       quality.progressThresholdPercent instanceof Prisma.Decimal
         ? quality.progressThresholdPercent.toNumber()
         : (quality.progressThresholdPercent ?? null),
+    gateSatisfactionRequirement: quality.gateSatisfactionRequirement ?? null,
+    executionMultiplicity: quality.executionMultiplicity ?? null,
+    coverageTarget: quality.coverageTarget ?? null,
   }));
 }
 
@@ -1002,6 +1027,9 @@ function canonicalActivityConfiguration(
     associatedProductionActivityId?: string | null;
     qualityAvailabilityPolicy?: string | null;
     progressThresholdPercent?: number | Prisma.Decimal | null;
+    gateSatisfactionRequirement?: string | null;
+    executionMultiplicity?: string | null;
+    coverageTarget?: string | null;
   }>,
 ) {
   const sequenceById = new Map(stages.map((stage) => [stage.id, stage.sequence]));
@@ -1021,6 +1049,9 @@ function canonicalActivityConfiguration(
       stage.progressThresholdPercent instanceof Prisma.Decimal
         ? stage.progressThresholdPercent.toNumber()
         : (stage.progressThresholdPercent ?? null),
+    gateSatisfactionRequirement: stage.gateSatisfactionRequirement ?? null,
+    executionMultiplicity: stage.executionMultiplicity ?? null,
+    coverageTarget: stage.coverageTarget ?? null,
   }));
 }
 
@@ -1156,6 +1187,9 @@ export async function createProcessFlowVersion(
               associatedProductionActivityId,
               qualityAvailabilityPolicy,
               progressThresholdPercent,
+              gateSatisfactionRequirement,
+              executionMultiplicity,
+              coverageTarget,
             }) => ({
               activityKey: id,
               sequence,
@@ -1168,6 +1202,9 @@ export async function createProcessFlowVersion(
               associatedProductionActivityKey: associatedProductionActivityId ?? undefined,
               qualityAvailabilityPolicy: qualityAvailabilityPolicy ?? undefined,
               progressThresholdPercent: progressThresholdPercent?.toNumber(),
+              gateSatisfactionRequirement: gateSatisfactionRequirement ?? undefined,
+              executionMultiplicity: executionMultiplicity ?? undefined,
+              coverageTarget: coverageTarget ?? undefined,
             }),
           )
         : (input.stages ?? []);

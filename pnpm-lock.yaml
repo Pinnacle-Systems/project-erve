@@ -299,6 +299,9 @@ importers:
       '@erve/theme':
         specifier: workspace:*
         version: link:../theme
+      '@erve/types':
+        specifier: workspace:*
+        version: link:../types
     devDependencies:
       '@erve/config':
         specifier: workspace:*
