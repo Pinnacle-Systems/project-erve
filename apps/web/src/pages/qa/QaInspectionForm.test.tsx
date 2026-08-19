@@ -11,6 +11,7 @@ import { apiClient } from '../../lib/api-client.js';
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   Object.defineProperty(Element.prototype, 'scrollIntoView', {
     configurable: true,
     value: vi.fn(),
@@ -285,6 +286,47 @@ describe('QaInspectionForm', () => {
   it('does not grant reopen access without an authenticated role', () => {
     expect(canReopenQaForm(undefined)).toBe(false);
   });
+
+  it('renders one locked PP Sample context and sends the explicit QA decision', async () => {
+    const source = detail();
+    const form = source.sessions[0]!.forms[0]!;
+    source.sessions[0]!.forms = [form];
+    source.sessions[0]!.processFlowPpSample = {
+      executionId: 'execution-1',
+      processFlowActivityId: 'activity-1',
+      qualityFormVersionId: 'sample-v1',
+      sampleQuantity: 5,
+      decision: null,
+    };
+    form.sampleQuantity = 5;
+    form.inspectedQuantity = 5;
+    form.acceptedQuantity = 5;
+    form.checklist = QA_CHECKLIST_ITEMS.map(({ code }) => ({
+      itemCode: code,
+      status: 'YES',
+      remarks: null,
+    }));
+    const requestCall = vi
+      .spyOn(apiClient, 'request')
+      .mockResolvedValue({ data: { data: source } } as never);
+    await renderHarness(source);
+
+    expect(container.textContent).toContain('Selected sizeM');
+    expect(container.textContent).not.toContain('Size L');
+    expect((container.querySelector('[aria-label="Quantity of samples"]') as HTMLInputElement).disabled).toBe(true);
+    await act(async () => button('Finalize size M').click());
+    expect(container.textContent).toContain('Choose Pass or Fail before finalizing PP Sample.');
+    expect(requestCall).not.toHaveBeenCalled();
+
+    await act(async () => (container.querySelector('input[value="FAIL"]') as HTMLInputElement).click());
+    await act(async () => button('Finalize size M').click());
+    expect(requestCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/qa/inspections/inspection-1/forms/form-1/finalize',
+        data: { expectedVersion: 1, ppSampleDecision: 'FAIL' },
+      }),
+    );
+  }, 15_000);
 
   it('renders every paper-form checkpoint once in documented order and restores saved values', async () => {
     await renderForm();

@@ -171,6 +171,8 @@ const sequentialQualityActivitySchema = processActivityBaseSchema
     activityType: z.literal('QUALITY'),
     qualityFormVersionId: z.string().trim().min(1, 'Quality Form version is required'),
     qualityExecutionMode: z.literal('SEQUENTIAL_GATE'),
+    gateSatisfactionRequirement: z.enum(['FINALIZED', 'OUTCOME_PASS']).optional().default('FINALIZED'),
+    executionMultiplicity: z.literal('SINGLE').optional().default('SINGLE'),
   })
   .strict();
 
@@ -183,8 +185,14 @@ const inProcessQualityActivitySchema = processActivityBaseSchema
       .string()
       .trim()
       .min(1, 'Associated Production activity is required'),
-    qualityAvailabilityPolicy: z.enum(['WHILE_ASSOCIATED_ACTIVITY_ACTIVE', 'PROGRESS_PERCENTAGE']),
+    qualityAvailabilityPolicy: z.enum([
+      'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
+      'AFTER_ASSOCIATED_ACTIVITY_COMPLETES',
+      'PROGRESS_PERCENTAGE',
+    ]),
     progressThresholdPercent: z.coerce.number().gt(0).max(100).optional(),
+    executionMultiplicity: z.enum(['SINGLE', 'BATCHED']).optional().default('SINGLE'),
+    coverageTarget: z.literal('PREPARED_QUANTITY').optional(),
   })
   .strict()
   .superRefine((activity, context) => {
@@ -199,13 +207,27 @@ const inProcessQualityActivitySchema = processActivityBaseSchema
       });
     }
     if (
-      activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' &&
+      activity.qualityAvailabilityPolicy !== 'PROGRESS_PERCENTAGE' &&
       activity.progressThresholdPercent !== undefined
     ) {
       context.addIssue({
         code: 'custom',
-        message: 'Progress threshold is not allowed while the Production activity is active',
+        message: 'Progress threshold is only allowed for percentage availability',
         path: ['progressThresholdPercent'],
+      });
+    }
+    if (activity.executionMultiplicity === 'BATCHED' && !activity.coverageTarget) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Batched Quality activities require a coverage target',
+        path: ['coverageTarget'],
+      });
+    }
+    if (activity.executionMultiplicity === 'SINGLE' && activity.coverageTarget) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Coverage targets are only valid for batched Quality activities',
+        path: ['coverageTarget'],
       });
     }
   });

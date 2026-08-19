@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type {
@@ -7,6 +7,7 @@ import type {
   ApiSuccessResponse,
   JobOrderAuditEntry,
   QaReworkTaskView,
+  QualityExecutionView,
 } from '@erve/types';
 import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
@@ -64,6 +65,7 @@ function QaEvidenceLink({ evidence }: { evidence: QaReworkTaskView['qaEvidence']
 
 export function JobOrderDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
@@ -73,6 +75,9 @@ export function JobOrderDetailPage() {
   const [sendError, setSendError] = useState('');
   const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
   const [reworkNotesDrafts, setReworkNotesDrafts] = useState<Record<string, string>>({});
+  const [qualityStartContexts, setQualityStartContexts] = useState<
+    Record<string, { sizeId: string; quantity: string }>
+  >({});
   const disclaimerRef = useRef<HTMLTextAreaElement>(null);
   const user = useOptionalAuth()?.user;
 
@@ -88,6 +93,17 @@ export function JobOrderDetailPage() {
     queryFn: async () =>
       (await apiClient.get<ApiSuccessResponse<JobOrderAuditEntry[]>>(`/job-orders/${id}/audit`))
         .data.data,
+  });
+  const qualityStartMutation = useMutation({
+    mutationFn: async ({ activityId, body }: { activityId: string; body?: object }) =>
+      (
+        await apiClient.post<ApiSuccessResponse<QualityExecutionView>>(
+          `/job-orders/${id}/quality-activities/${activityId}/executions`,
+          body ?? {},
+        )
+      ).data.data,
+    onSuccess: (execution) =>
+      navigate(execution.ppSample ? `/qa/${execution.jobOrderId}` : `/quality-executions/${execution.id}`),
   });
 
   const invalidate = () => {
@@ -772,7 +788,159 @@ export function JobOrderDetailPage() {
                 {activity.progressThresholdPercent && (
                   <p>Available at: {Number(activity.progressThresholdPercent)}%</p>
                 )}
-                <p>Current eligibility: {activity.eligible ? 'Available' : 'Not available'}</p>
+                <p>Current state: {activity.status.replaceAll('_', ' ')}</p>
+                {activity.coverage && (
+                  <p>
+                    Prepared:{' '}
+                    {activity.coverage.preparedQuantityAuthoritative
+                      ? activity.coverage.preparedQuantity
+                      : 'Not yet recorded'}{' '}
+                    · Inspected:{' '}
+                    {activity.coverage.inspectedQuantity} · Remaining:{' '}
+                    {activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
+                    {activity.coverage.reconciliationConflict
+                      ? ' · Reconciliation conflict'
+                      : activity.coverage.complete
+                        ? ' · Coverage complete'
+                        : ''}
+                  </p>
+                )}
+                {activity.execution ? (
+                  <div className="space-x-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        navigate(
+                          activity.qualityForm.executionScope === 'SIZE'
+                            ? `/qa/${jobOrder.id}`
+                            : `/quality-executions/${activity.execution!.id}`,
+                        )
+                      }
+                    >
+                      {activity.status === 'COMPLETED' || activity.status === 'FAILED'
+                        ? 'View Inspection'
+                        : 'Continue Inspection'}
+                    </Button>
+                    {activity.executionMultiplicity === 'BATCHED' &&
+                      activity.execution.status === 'FINALIZED' &&
+                      !activity.coverage?.complete &&
+                      !activity.coverage?.reconciliationConflict && (
+                        <>
+                          <input
+                            aria-label={`Inspected quantity for ${activity.name}`}
+                            type="number"
+                            min="1"
+                            value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
+                            onChange={(event) =>
+                              setQualityStartContexts((current) => ({
+                                ...current,
+                                [activity.processFlowVersionStageId]: {
+                                  sizeId: '',
+                                  quantity: event.target.value,
+                                },
+                              }))
+                            }
+                          />
+                          <Button
+                            onClick={() =>
+                              qualityStartMutation.mutate({
+                                activityId: activity.processFlowVersionStageId,
+                                body: {
+                                  inspectedQuantity: Number(
+                                    qualityStartContexts[activity.processFlowVersionStageId]?.quantity,
+                                  ),
+                                },
+                              })
+                            }
+                          >
+                            Start Next Batch
+                          </Button>
+                        </>
+                      )}
+                  </div>
+                ) : activity.status === 'AVAILABLE' &&
+                  user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') ? (
+                  <div className="space-y-2">
+                    {activity.qualityForm.executionScope === 'SIZE' && (
+                      <>
+                        <label className="block">
+                          Sample Size
+                          <select
+                            value={qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ?? ''}
+                            onChange={(event) =>
+                              setQualityStartContexts((current) => ({
+                                ...current,
+                                [activity.processFlowVersionStageId]: {
+                                  sizeId: event.target.value,
+                                  quantity: current[activity.processFlowVersionStageId]?.quantity ?? '',
+                                },
+                              }))
+                            }
+                          >
+                            <option value="">Select one size</option>
+                            {flatSizes.map((size) => (
+                              <option key={size.id} value={size.id}>
+                                {size.style} · {size.sizeLabel}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <TextField
+                          label="Sample Quantity"
+                          type="number"
+                          min="1"
+                          value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
+                          onChange={(event) =>
+                            setQualityStartContexts((current) => ({
+                              ...current,
+                              [activity.processFlowVersionStageId]: {
+                                sizeId: current[activity.processFlowVersionStageId]?.sizeId ?? '',
+                                quantity: event.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </>
+                    )}
+                    {activity.executionMultiplicity === 'BATCHED' && (
+                      <TextField
+                        label="Inspected Quantity"
+                        type="number"
+                        min="1"
+                        value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
+                        onChange={(event) =>
+                          setQualityStartContexts((current) => ({
+                            ...current,
+                            [activity.processFlowVersionStageId]: {
+                              sizeId: '',
+                              quantity: event.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    )}
+                    <Button
+                      loading={qualityStartMutation.isPending}
+                      onClick={() => {
+                        const context = qualityStartContexts[activity.processFlowVersionStageId];
+                        qualityStartMutation.mutate({
+                          activityId: activity.processFlowVersionStageId,
+                          body:
+                            activity.qualityForm.executionScope === 'SIZE'
+                              ? {
+                                  sampleJobOrderLineSizeId: context?.sizeId,
+                                  sampleQuantity: Number(context?.quantity),
+                                }
+                              : activity.executionMultiplicity === 'BATCHED'
+                                ? { inspectedQuantity: Number(context?.quantity) }
+                                : {},
+                        });
+                      }}
+                    >
+                      Start Inspection
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

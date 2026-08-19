@@ -174,8 +174,15 @@ export interface ProcessFlowActivity {
   qualityExecutionMode: 'SEQUENTIAL_GATE' | 'IN_PROCESS' | null;
   associatedProductionActivityId: string | null;
   associatedProductionActivity: { id: string; name: string; code: string | null } | null;
-  qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' | 'PROGRESS_PERCENTAGE' | null;
+  qualityAvailabilityPolicy:
+    | 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE'
+    | 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'
+    | 'PROGRESS_PERCENTAGE'
+    | null;
   progressThresholdPercent: number | null;
+  gateSatisfactionRequirement: 'FINALIZED' | 'OUTCOME_PASS' | null;
+  executionMultiplicity: 'SINGLE' | 'BATCHED' | null;
+  coverageTarget: 'PREPARED_QUANTITY' | null;
 }
 
 export type QualityFormComponentType =

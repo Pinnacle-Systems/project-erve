@@ -50,6 +50,24 @@ const keySchema = z
   .max(80)
   .regex(/^[a-z][A-Za-z0-9]*$/, 'Keys must use lower camel case');
 const optionSchema = z.string().trim().min(1).max(80);
+const systemContextSourceSchema = z.enum([
+  'SUPPLIER_NAME',
+  'FACTORY_NAME',
+  'STYLE_NUMBER',
+  'CUSTOMER_NAME',
+  'PURCHASE_ORDER_NUMBER',
+  'JOB_ORDER_NUMBER',
+  'ORDER_QUANTITY',
+  'REPORT_DATE',
+  'ETD',
+  'COLOUR',
+  'SHIP_QUANTITY',
+  'MERCHANDISER_NAME',
+  'CUTTING_PLANNING_DATE',
+  'SEWING_PLANNING_DATE',
+  'MEETING_CONDUCTED_BY',
+  'BATCH_INSPECTED_QUANTITY',
+]);
 const uniqueValues = (values: string[], context: z.RefinementCtx, message: string) => {
   if (new Set(values).size !== values.length) context.addIssue({ code: 'custom', message });
 };
@@ -60,9 +78,24 @@ const fieldSchema = z
     dataType: z.enum(['TEXT', 'NUMBER', 'DATE', 'BOOLEAN', 'SELECT']),
     required: z.boolean().optional(),
     source: z.enum(['SYSTEM', 'USER']).optional(),
+    sourceKey: systemContextSourceSchema.optional(),
     options: z.array(optionSchema).min(1).optional(),
   })
   .superRefine((field, context) => {
+    if (field.source === 'SYSTEM' && !field.sourceKey) {
+      context.addIssue({
+        code: 'custom',
+        path: ['sourceKey'],
+        message: 'System fields require a stable sourceKey',
+      });
+    }
+    if (field.source !== 'SYSTEM' && field.sourceKey) {
+      context.addIssue({
+        code: 'custom',
+        path: ['sourceKey'],
+        message: 'sourceKey is only valid for system fields',
+      });
+    }
     if (field.dataType === 'SELECT' && !field.options?.length) {
       context.addIssue({
         code: 'custom',
@@ -200,7 +233,14 @@ export const qualityFormComponentSchema = z.discriminatedUnion('type', [
     config: z
       .object({
         metrics: z
-          .array(z.object({ key: keySchema, label: requiredText, source: z.literal('SYSTEM') }))
+          .array(
+            z.object({
+              key: keySchema,
+              label: requiredText,
+              source: z.literal('SYSTEM'),
+              sourceActivityCode: codeSchema,
+            }),
+          )
           .min(1),
       })
       .superRefine(({ metrics }, context) => uniqueKeys(metrics, context)),

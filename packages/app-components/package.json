@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@erve/primitives": "workspace:*",
-    "@erve/theme": "workspace:*"
+    "@erve/theme": "workspace:*",
+    "@erve/types": "workspace:*"
   },
   "peerDependencies": {
     "react": "^19.2.7"

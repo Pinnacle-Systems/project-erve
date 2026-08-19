@@ -1,7 +1,6 @@
 import { canPerformQaOperation, createId } from '@erve/shared';
 import { createHash } from 'node:crypto';
 import {
-  QA_QUEUE_STATUSES,
   type AssignedFactoryTaskSummary,
   type JobOrderDetail,
   type PaginatedResponse,
@@ -53,7 +52,10 @@ const jobOrderInclude = {
     orderBy: { createdAt: 'asc' as const },
   },
   stageStatuses: {
-    include: { completer: { select: { id: true, name: true, email: true } } },
+    include: {
+      completer: { select: { id: true, name: true, email: true } },
+      processFlowVersionStage: { select: { activityType: true } },
+    },
     orderBy: { stageSequence: 'asc' as const },
   },
   acknowledgements: {
@@ -73,6 +75,21 @@ const jobOrderInclude = {
       reinspections: { select: { finalizedAt: true }, orderBy: { createdAt: 'desc' as const } },
     },
     orderBy: { createdAt: 'desc' as const },
+  },
+  qualityExecutions: {
+    select: {
+      id: true,
+      processFlowActivityId: true,
+      attemptNumber: true,
+      batchNumber: true,
+      inspectedQuantity: true,
+      status: true,
+      version: true,
+      outcome: true,
+      startedAt: true,
+      finalizedAt: true,
+    },
+    orderBy: [{ attemptNumber: 'desc' as const }, { batchNumber: 'desc' as const }],
   },
 } satisfies Prisma.JobOrderInclude;
 
@@ -108,8 +125,11 @@ function assertJobOrderViewAccess(
   jobOrder: { factoryId: string; status: JobOrderStatus },
 ): void {
   if (canViewAllJobOrders(user)) return;
+  // QA has global Job Order visibility under the established authorization
+  // matrix; Inline inspection can become eligible while Production is active,
+  // before a Job Order enters the legacy ERVE-015 QA queue states.
+  if (canPerformQaOperation(user)) return;
   if (canFactoryManage(user, jobOrder.factoryId) && jobOrder.status !== 'DRAFT') return;
-  if (canPerformQaOperation(user) && QA_QUEUE_STATUSES.includes(jobOrder.status)) return;
   throw HttpError.forbidden('You do not have access to this job order');
 }
 
@@ -197,6 +217,10 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
   return definitions
     .filter((activity) => activity.activityType === 'QUALITY')
     .map((activity) => {
+      const executions = jobOrder.qualityExecutions.filter(
+        (item) => item.processFlowActivityId === activity.id,
+      );
+      const execution = executions[0];
       const associated = activity.associatedProductionActivityId
         ? runtimeByDefinitionId.get(activity.associatedProductionActivityId)
         : undefined;
@@ -214,6 +238,10 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
       if (activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE') {
         eligible = associated?.status === 'IN_PROGRESS';
       } else if (
+        activity.qualityAvailabilityPolicy === 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'
+      ) {
+        eligible = associated?.status === 'COMPLETED';
+      } else if (
         activity.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE' &&
         associated &&
         associated.completedQuantity !== null &&
@@ -225,16 +253,51 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
           activity.progressThresholdPercent,
         );
       } else if (activity.qualityExecutionMode === 'SEQUENTIAL_GATE') {
-        eligible = previousRuntime?.status === 'COMPLETED';
+        eligible = previous
+          ? previous.activityType === 'PRODUCTION'
+            ? previousRuntime?.status === 'COMPLETED'
+            : previous.gateSatisfactionRequirement === 'OUTCOME_PASS'
+              ? jobOrder.qualityExecutions.some(
+                  (candidate) =>
+                    candidate.processFlowActivityId === previous.id &&
+                    candidate.status === 'FINALIZED' &&
+                    candidate.outcome === 'PASS',
+                )
+              : jobOrder.qualityExecutions.some(
+                  (candidate) =>
+                    candidate.processFlowActivityId === previous.id &&
+                    candidate.status === 'FINALIZED',
+                )
+          : jobOrder.factoryConfirmationStatus === 'CONFIRMED';
       }
+      const finalizedInspected = executions
+        .filter((candidate) => candidate.status === 'FINALIZED')
+        .reduce((sum, candidate) => sum + (candidate.inspectedQuantity ?? 0), 0);
+      const coverageComplete =
+        activity.executionMultiplicity === 'BATCHED' &&
+        jobOrder.preparedQuantityTotal > 0 &&
+        finalizedInspected === jobOrder.preparedQuantityTotal;
+      const preparedQuantityAuthoritative = jobOrder.preparedQuantityTotal > 0;
+      const reconciliationConflict =
+        preparedQuantityAuthoritative && finalizedInspected > jobOrder.preparedQuantityTotal;
       const formVersion = activity.qualityFormVersion!;
       return {
         processFlowVersionStageId: activity.id,
         sequence: activity.sequence,
         name: activity.name,
-        status: eligible ? ('AVAILABLE' as const) : ('NOT_AVAILABLE' as const),
+        status: execution
+          ? execution.status === 'DRAFT'
+            ? ('IN_PROGRESS' as const)
+            : activity.gateSatisfactionRequirement === 'OUTCOME_PASS' && execution.outcome !== 'PASS'
+              ? ('FAILED' as const)
+              : activity.executionMultiplicity === 'BATCHED' && !coverageComplete
+                ? ('IN_PROGRESS' as const)
+                : ('COMPLETED' as const)
+          : eligible
+            ? ('AVAILABLE' as const)
+            : ('NOT_AVAILABLE' as const),
         eligible,
-        qualityForm: formVersion.qualityForm,
+        qualityForm: { ...formVersion.qualityForm, executionScope: formVersion.executionScope },
         qualityFormVersion: { id: formVersion.id, versionNumber: formVersion.versionNumber },
         executionMode: activity.qualityExecutionMode!,
         associatedProductionActivity: activity.associatedProductionActivity,
@@ -243,6 +306,45 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
             ? ('SEQUENTIAL_PREDECESSOR_COMPLETED' as const)
             : activity.qualityAvailabilityPolicy!,
         progressThresholdPercent: activity.progressThresholdPercent?.toFixed(2) ?? null,
+        gateSatisfactionRequirement: activity.gateSatisfactionRequirement,
+        executionMultiplicity: activity.executionMultiplicity!,
+        coverageTarget: activity.coverageTarget,
+        coverage:
+          activity.executionMultiplicity === 'BATCHED'
+            ? {
+                preparedQuantityAuthoritative,
+                preparedQuantity: preparedQuantityAuthoritative
+                  ? jobOrder.preparedQuantityTotal
+                  : null,
+                inspectedQuantity: finalizedInspected,
+                remainingQuantity: preparedQuantityAuthoritative
+                  ? Math.max(0, jobOrder.preparedQuantityTotal - finalizedInspected)
+                  : null,
+                complete: coverageComplete,
+                reconciliationConflict,
+                batches: executions.map((candidate) => ({
+                  id: candidate.id,
+                  batchNumber: candidate.batchNumber,
+                  inspectedQuantity: candidate.inspectedQuantity,
+                  status: candidate.status,
+                  outcome: candidate.outcome,
+                  finalizedAt: candidate.finalizedAt?.toISOString() ?? null,
+                })),
+              }
+            : null,
+        execution: execution
+          ? {
+              id: execution.id,
+              attemptNumber: execution.attemptNumber,
+              batchNumber: execution.batchNumber,
+              inspectedQuantity: execution.inspectedQuantity,
+              status: execution.status,
+              version: execution.version,
+              outcome: execution.outcome,
+              startedAt: execution.startedAt.toISOString(),
+              finalizedAt: execution.finalizedAt?.toISOString() ?? null,
+            }
+          : null,
       };
     });
 }
@@ -316,7 +418,9 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
         varianceQuantity: size.preparedQuantity - size.orderedQuantity,
       })),
     })),
-    stages: jobOrder.stageStatuses.map((stage) => toStageView(stage, plannedQuantity)),
+    stages: jobOrder.stageStatuses
+      .filter((stage) => stage.processFlowVersionStage.activityType === 'PRODUCTION')
+      .map((stage) => toStageView(stage, plannedQuantity)),
     qualityActivities: toQualityActivityViews(jobOrder),
     reworkTasks: jobOrder.qaReworkTasks.map((task) => {
       const context = jobOrder.lines
@@ -471,7 +575,10 @@ export async function getJobOrderList(
 
   const where: Prisma.JobOrderWhereInput = {
     status: filters.status,
-    factoryId: canViewAllJobOrders(user) ? filters.factoryId : { in: user.factoryIds },
+    factoryId:
+      canViewAllJobOrders(user) || canPerformQaOperation(user)
+        ? filters.factoryId
+        : { in: user.factoryIds },
     OR: filters.search
       ? [
           { jobOrderNumber: { contains: filters.search, mode: 'insensitive' } },
@@ -545,6 +652,10 @@ export async function getAssignedFactoryTasks(
         },
       },
       lines: { select: { orderedQuantityTotal: true } },
+      processFlowVersion: { include: { stages: true } },
+      qualityExecutions: {
+        select: { processFlowActivityId: true, status: true, outcome: true },
+      },
       stageStatuses: {
         where: { status: { not: 'COMPLETED' } },
         orderBy: { stageSequence: 'asc' },
@@ -979,14 +1090,16 @@ export async function confirmJobOrder(
       },
     });
     await tx.jobOrderStageStatus.createMany({
-      data: jobOrder.processFlowVersion.stages.map((stage) => ({
+      data: jobOrder.processFlowVersion.stages
+        .filter((stage) => stage.activityType === 'PRODUCTION')
+        .map((stage) => ({
         id: createId(),
         jobOrderId: id,
         processFlowVersionStageId: stage.id,
         stageSequence: stage.sequence,
         stageNameSnapshot: stage.name,
         completedQuantity: 0,
-      })),
+        })),
       skipDuplicates: true,
     });
     await recordAuditLog(
@@ -1053,8 +1166,15 @@ export async function completeProductionStage(
   const jobOrder = await prisma.jobOrder.findUnique({
     where: { id },
     include: {
-      stageStatuses: { orderBy: { stageSequence: 'asc' } },
+      stageStatuses: {
+        include: { processFlowVersionStage: true },
+        orderBy: { stageSequence: 'asc' },
+      },
       lines: { select: { orderedQuantityTotal: true } },
+      processFlowVersion: { include: { stages: true } },
+      qualityExecutions: {
+        select: { processFlowActivityId: true, status: true, outcome: true },
+      },
     },
   });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
@@ -1067,25 +1187,28 @@ export async function completeProductionStage(
     );
   }
 
-  const nextStage = jobOrder.stageStatuses.find((stage) => stage.status !== 'COMPLETED');
+  const blockingStages = jobOrder.stageStatuses;
+  const nextStage = blockingStages.find((stage) => stage.status !== 'COMPLETED');
   if (!nextStage) throw HttpError.badRequest('All production stages are already completed');
+  const unsatisfiedGate = jobOrder.processFlowVersion.stages.find(
+    (stage) =>
+      stage.status === 'ACTIVE' &&
+      stage.qualityExecutionMode === 'SEQUENTIAL_GATE' &&
+      stage.sequence < nextStage.stageSequence &&
+      !jobOrder.qualityExecutions.some(
+        (execution) =>
+          execution.processFlowActivityId === stage.id &&
+          execution.status === 'FINALIZED' &&
+          (stage.gateSatisfactionRequirement === 'FINALIZED' || execution.outcome === 'PASS'),
+      ),
+  );
+  if (unsatisfiedGate)
+    throw HttpError.conflict('Production is locked pending completion of the pre-production Quality gate');
   if (nextStage.id !== input.stageStatusId)
     throw HttpError.badRequest('Production stages must be completed in sequence');
   const plannedQuantity = jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
-  if (nextStage.completedQuantity === null) {
-    throw HttpError.badRequest(
-      'Production progress was not captured for this historical activity; recreate pre-production data before completing it',
-    );
-  }
-  if (nextStage.completedQuantity !== plannedQuantity) {
-    throw HttpError.badRequest(
-      `Record ${plannedQuantity - nextStage.completedQuantity} remaining units before completing ${nextStage.stageNameSnapshot}`,
-    );
-  }
-
   const isFinalStage =
-    nextStage.stageSequence ===
-    jobOrder.stageStatuses[jobOrder.stageStatuses.length - 1]?.stageSequence;
+    nextStage.id === blockingStages[blockingStages.length - 1]?.id;
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
@@ -1105,6 +1228,7 @@ export async function completeProductionStage(
         status: 'COMPLETED',
         completedBy: actor.id,
         completedAt: now,
+        completedQuantity: plannedQuantity,
         remarks: input.remarks ?? null,
       },
     });
@@ -1155,7 +1279,16 @@ export async function startProductionStage(
   const hash = requestHash(input);
   const jobOrder = await prisma.jobOrder.findUnique({
     where: { id },
-    include: { stageStatuses: { orderBy: { stageSequence: 'asc' } } },
+    include: {
+      stageStatuses: {
+        include: { processFlowVersionStage: true },
+        orderBy: { stageSequence: 'asc' },
+      },
+      processFlowVersion: { include: { stages: true } },
+      qualityExecutions: {
+        select: { processFlowActivityId: true, status: true, outcome: true },
+      },
+    },
   });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
   assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
@@ -1163,8 +1296,24 @@ export async function startProductionStage(
   if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
   if (!['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status))
     throw HttpError.badRequest('Production stages can only be started after factory confirmation');
-  const nextStage = jobOrder.stageStatuses.find((stage) => stage.status !== 'COMPLETED');
+  const nextStage = jobOrder.stageStatuses.find(
+    (stage) => stage.status !== 'COMPLETED',
+  );
   if (!nextStage) throw HttpError.badRequest('All production stages are already completed');
+  const unsatisfiedGate = jobOrder.processFlowVersion.stages.find(
+    (stage) =>
+      stage.status === 'ACTIVE' &&
+      stage.qualityExecutionMode === 'SEQUENTIAL_GATE' &&
+      stage.sequence < nextStage.stageSequence &&
+      !jobOrder.qualityExecutions.some(
+        (execution) =>
+          execution.processFlowActivityId === stage.id &&
+          execution.status === 'FINALIZED' &&
+          (stage.gateSatisfactionRequirement === 'FINALIZED' || execution.outcome === 'PASS'),
+      ),
+  );
+  if (unsatisfiedGate)
+    throw HttpError.conflict('Production is locked pending completion of the pre-production Quality gate');
   if (nextStage.id !== input.stageStatusId)
     throw HttpError.badRequest('Production stages must be started in sequence');
 

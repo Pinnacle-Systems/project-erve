@@ -12,6 +12,7 @@ import { QaQueuePage } from '../pages/qa/QaQueuePage.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { OperationalJobOrderListPage } from '../pages/job-orders/OperationalJobOrderListPage.js';
 import { QA_OPERATION_ROLES } from '@erve/shared';
+import { QualityExecutionPage } from '../pages/qa/QualityExecutionPage.js';
 
 const QA_ROUTE_ROLES = [...QA_OPERATION_ROLES, 'MERCHANDISER'] as const;
 
@@ -43,7 +44,7 @@ export function AppRoutes() {
         <Route
           path="/job-orders"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'QA_USER']}>
               <OperationalJobOrderListPage />
             </RoleRoute>
           }
@@ -51,7 +52,7 @@ export function AppRoutes() {
         <Route
           path="/job-orders/:id"
           element={
-            <RoleRoute allowed={['ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={['ADMIN', 'MERCHANDISER', 'QA_USER']}>
               <FactoryTaskDetailPage />
             </RoleRoute>
           }
@@ -85,6 +86,14 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={QA_ROUTE_ROLES}>
               <QaInspectionPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="/quality-executions/:executionId"
+          element={
+            <RoleRoute allowed={['ADMIN', 'QA_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT']}>
+              <QualityExecutionPage />
             </RoleRoute>
           }
         />

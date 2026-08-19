@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type {
@@ -8,6 +8,7 @@ import type {
   JobOrderDetail,
   UpdatePreparedQuantityInput,
   QaReworkTaskView,
+  QualityExecutionView,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
@@ -51,15 +52,30 @@ function useTaskMutation(id: string, path: string) {
 export function FactoryTaskDetailPage() {
   const { user } = useAuth();
   const { id = '' } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [prepared, setPrepared] = useState<Record<string, string>>({});
   const [stageProgress, setStageProgress] = useState<Record<string, string>>({});
   const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
   const [reworkNotes, setReworkNotes] = useState<Record<string, string>>({});
+  const [qualityStartContexts, setQualityStartContexts] = useState<
+    Record<string, { sizeId: string; quantity: string }>
+  >({});
   const task = useQuery({
     queryKey: ['factory-task', id],
     queryFn: async () =>
       (await apiClient.get<ApiSuccessResponse<JobOrderDetail>>(`/job-orders/${id}`)).data.data,
+  });
+  const startQuality = useMutation({
+    mutationFn: async ({ activityId, body }: { activityId: string; body?: object }) =>
+      (
+        await apiClient.post<ApiSuccessResponse<QualityExecutionView>>(
+          `/job-orders/${id}/quality-activities/${activityId}/executions`,
+          body ?? {},
+        )
+      ).data.data,
+    onSuccess: (execution) =>
+      navigate(execution.ppSample ? `/qa/${execution.jobOrderId}` : `/quality-executions/${execution.id}`),
   });
 
   const confirm = useTaskMutation(id, `/job-orders/${id}/actions/confirm`);
@@ -412,6 +428,162 @@ export function FactoryTaskDetailPage() {
           </div>
         )}
       </section>
+
+      {job.qualityActivities.length > 0 && (
+        <section className="space-y-3 rounded-xl border border-border bg-surface p-4">
+          <h2 className="font-semibold">Quality activities</h2>
+          {job.qualityActivities.map((activity) => (
+            <article
+              key={activity.processFlowVersionStageId}
+              className="rounded border border-border p-3"
+            >
+              <h3 className="font-medium">{activity.name}</h3>
+              <p>
+                {activity.qualityForm.name} v{activity.qualityFormVersion.versionNumber} ·{' '}
+                {activity.status.replaceAll('_', ' ')}
+              </p>
+              {activity.coverage && (
+                <p className="text-sm">
+                  Prepared{' '}
+                  {activity.coverage.preparedQuantityAuthoritative
+                    ? activity.coverage.preparedQuantity
+                    : 'Not yet recorded'}{' '}
+                  · Inspected{' '}
+                  {activity.coverage.inspectedQuantity} · Remaining{' '}
+                  {activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
+                </p>
+              )}
+              {activity.execution ? (
+                <div>
+                  <button
+                    className="mt-2 min-h-11 rounded bg-primary px-4 text-primary-foreground"
+                    onClick={() =>
+                      navigate(
+                        activity.qualityForm.executionScope === 'SIZE'
+                          ? `/qa/${job.id}`
+                          : `/quality-executions/${activity.execution!.id}`,
+                      )
+                    }
+                  >
+                    {activity.status === 'COMPLETED' || activity.status === 'FAILED'
+                      ? 'View Inspection'
+                      : 'Continue Inspection'}
+                  </button>
+                  {activity.executionMultiplicity === 'BATCHED' &&
+                    activity.execution.status === 'FINALIZED' &&
+                    !activity.coverage?.complete && (
+                      <div className="mt-2">
+                        <input
+                          aria-label="Next batch inspected quantity"
+                          type="number"
+                          min="1"
+                          value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
+                          onChange={(event) =>
+                            setQualityStartContexts((current) => ({
+                              ...current,
+                              [activity.processFlowVersionStageId]: {
+                                sizeId: '',
+                                quantity: event.target.value,
+                              },
+                            }))
+                          }
+                        />
+                        <button
+                          className="min-h-11 rounded bg-primary px-4 text-primary-foreground"
+                          onClick={() =>
+                            startQuality.mutate({
+                              activityId: activity.processFlowVersionStageId,
+                              body: {
+                                inspectedQuantity: Number(
+                                  qualityStartContexts[activity.processFlowVersionStageId]?.quantity,
+                                ),
+                              },
+                            })
+                          }
+                        >
+                          Start Next Batch
+                        </button>
+                      </div>
+                    )}
+                </div>
+              ) : activity.status === 'AVAILABLE' &&
+                user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') ? (
+                <div className="mt-2 space-y-2">
+                  {activity.qualityForm.executionScope === 'SIZE' && (
+                    <>
+                      <label className="block">
+                        Sample Size
+                        <select
+                          value={qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ?? ''}
+                          onChange={(event) =>
+                            setQualityStartContexts((current) => ({
+                              ...current,
+                              [activity.processFlowVersionStageId]: {
+                                sizeId: event.target.value,
+                                quantity: current[activity.processFlowVersionStageId]?.quantity ?? '',
+                              },
+                            }))
+                          }
+                        >
+                          <option value="">Select one size</option>
+                          {sizes.map((size) => (
+                            <option key={size.id} value={size.id}>
+                              {size.style} · {size.sizeLabel}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  )}
+                  {(activity.qualityForm.executionScope === 'SIZE' ||
+                    activity.executionMultiplicity === 'BATCHED') && (
+                    <label className="block">
+                      {activity.qualityForm.executionScope === 'SIZE'
+                        ? 'Sample Quantity'
+                        : 'Inspected Quantity'}
+                      <input
+                        type="number"
+                        min="1"
+                        value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
+                        onChange={(event) =>
+                          setQualityStartContexts((current) => ({
+                            ...current,
+                            [activity.processFlowVersionStageId]: {
+                              sizeId: current[activity.processFlowVersionStageId]?.sizeId ?? '',
+                              quantity: event.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  )}
+                  <button
+                    className="min-h-11 rounded bg-primary px-4 text-primary-foreground"
+                    disabled={startQuality.isPending}
+                    onClick={() => {
+                      const context = qualityStartContexts[activity.processFlowVersionStageId];
+                      startQuality.mutate({
+                        activityId: activity.processFlowVersionStageId,
+                        body:
+                          activity.qualityForm.executionScope === 'SIZE'
+                            ? {
+                                sampleJobOrderLineSizeId: context?.sizeId,
+                                sampleQuantity: Number(context?.quantity),
+                              }
+                            : activity.executionMultiplicity === 'BATCHED'
+                              ? { inspectedQuantity: Number(context?.quantity) }
+                              : {},
+                      });
+                    }}
+                  >
+                    Start Inspection
+                  </button>
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </section>
+      )}
 
       <section className="rounded-xl border border-border bg-surface p-4">
         <h2 className="font-semibold">Final quantities ready for QA</h2>

@@ -16,8 +16,14 @@ export interface DraftStage {
   qualityFormVersionId: string;
   qualityExecutionMode: 'SEQUENTIAL_GATE' | 'IN_PROCESS';
   associatedProductionActivityKey: string;
-  qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' | 'PROGRESS_PERCENTAGE';
+  qualityAvailabilityPolicy:
+    | 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE'
+    | 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'
+    | 'PROGRESS_PERCENTAGE';
   progressThresholdPercent: string;
+  gateSatisfactionRequirement: 'FINALIZED' | 'OUTCOME_PASS';
+  executionMultiplicity: 'SINGLE' | 'BATCHED';
+  coverageTarget: 'PREPARED_QUANTITY';
   historicalQualityFormLabel?: string;
 }
 
@@ -37,6 +43,9 @@ export function newDraftStage(stage?: Partial<ProcessFlowActivity>): DraftStage 
     qualityAvailabilityPolicy:
       stage?.qualityAvailabilityPolicy ?? 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
     progressThresholdPercent: stage?.progressThresholdPercent?.toString() ?? '',
+    gateSatisfactionRequirement: stage?.gateSatisfactionRequirement ?? 'FINALIZED',
+    executionMultiplicity: stage?.executionMultiplicity ?? 'SINGLE',
+    coverageTarget: stage?.coverageTarget ?? 'PREPARED_QUANTITY',
     historicalQualityFormLabel: stage?.qualityFormVersion
       ? `${stage.qualityFormVersion.qualityForm.code} — ${stage.qualityFormVersion.qualityForm.name} — v${stage.qualityFormVersion.versionNumber}`
       : undefined,
@@ -237,6 +246,7 @@ export function ProcessStageEditor({
                           qualityExecutionMode: value as DraftStage['qualityExecutionMode'],
                           associatedProductionActivityKey: '',
                           progressThresholdPercent: '',
+                          executionMultiplicity: 'SINGLE',
                         })
                       }
                       width="fill"
@@ -244,6 +254,22 @@ export function ProcessStageEditor({
                       <SelectItem value="SEQUENTIAL_GATE">Sequential gate</SelectItem>
                       <SelectItem value="IN_PROCESS">In-process</SelectItem>
                     </SelectField>
+                    {stage.qualityExecutionMode === 'SEQUENTIAL_GATE' ? (
+                      <SelectField
+                        label="Gate satisfied by"
+                        value={stage.gateSatisfactionRequirement}
+                        onValueChange={(value) =>
+                          update(index, {
+                            gateSatisfactionRequirement:
+                              value as DraftStage['gateSatisfactionRequirement'],
+                          })
+                        }
+                        width="fill"
+                      >
+                        <SelectItem value="FINALIZED">Finalized</SelectItem>
+                        <SelectItem value="OUTCOME_PASS">Outcome is Pass</SelectItem>
+                      </SelectField>
+                    ) : null}
                     {stage.qualityExecutionMode === 'IN_PROCESS' ? (
                       <>
                         <SelectField
@@ -277,6 +303,9 @@ export function ProcessStageEditor({
                           <SelectItem value="WHILE_ASSOCIATED_ACTIVITY_ACTIVE">
                             While production activity is active
                           </SelectItem>
+                          <SelectItem value="AFTER_ASSOCIATED_ACTIVITY_COMPLETES">
+                            After production activity completes
+                          </SelectItem>
                           <SelectItem value="PROGRESS_PERCENTAGE">
                             Production progress percentage
                           </SelectItem>
@@ -293,6 +322,34 @@ export function ProcessStageEditor({
                               update(index, { progressThresholdPercent: event.target.value })
                             }
                           />
+                        ) : null}
+                        <SelectField
+                          label="Execution multiplicity"
+                          value={stage.executionMultiplicity}
+                          onValueChange={(value) =>
+                            update(index, {
+                              executionMultiplicity:
+                                value as DraftStage['executionMultiplicity'],
+                            })
+                          }
+                          width="fill"
+                        >
+                          <SelectItem value="SINGLE">Single execution</SelectItem>
+                          <SelectItem value="BATCHED">Multiple batches</SelectItem>
+                        </SelectField>
+                        {stage.executionMultiplicity === 'BATCHED' ? (
+                          <SelectField
+                            label="Coverage target"
+                            value={stage.coverageTarget}
+                            onValueChange={(value) =>
+                              update(index, {
+                                coverageTarget: value as DraftStage['coverageTarget'],
+                              })
+                            }
+                            width="fill"
+                          >
+                            <SelectItem value="PREPARED_QUANTITY">Prepared quantity</SelectItem>
+                          </SelectField>
                         ) : null}
                       </>
                     ) : null}

@@ -278,14 +278,20 @@ export function ProcessFlowDetailPage() {
                       if (stage.activityType !== 'QUALITY' || !stage.qualityFormVersion) return '—';
                       const form = `${stage.qualityFormVersion.qualityForm.code} — ${stage.qualityFormVersion.qualityForm.name} — v${stage.qualityFormVersion.versionNumber}`;
                       if (stage.qualityExecutionMode === 'SEQUENTIAL_GATE')
-                        return `${form} · Sequential gate`;
+                        return `${form} · Sequential gate · ${stage.gateSatisfactionRequirement === 'OUTCOME_PASS' ? 'Outcome Pass' : 'Finalized'}`;
                       const production =
                         stage.associatedProductionActivity?.name ?? 'Production activity';
                       const availability =
                         stage.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE'
                           ? `Available at ${stage.progressThresholdPercent}% ${production} progress`
-                          : `Available while ${production} is active`;
-                      return `${form} · In-process · ${availability}`;
+                          : stage.qualityAvailabilityPolicy === 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'
+                            ? `Available after ${production} completes`
+                            : `Available while ${production} is active`;
+                      const multiplicity =
+                        stage.executionMultiplicity === 'BATCHED'
+                          ? 'Batched · Prepared quantity coverage'
+                          : 'Single execution';
+                      return `${form} · In-process · ${availability} · ${multiplicity}`;
                     },
                   },
                   {

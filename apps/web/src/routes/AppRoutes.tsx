@@ -40,6 +40,7 @@ import { AppLayout } from '../pages/AppLayout.js';
 import { RoleRoute } from './RoleRoute.js';
 import { QaDetailPage } from '../pages/qa/QaDetailPage.js';
 import { QaQueuePage } from '../pages/qa/QaQueuePage.js';
+import { QualityExecutionPage } from '../pages/qa/QualityExecutionPage.js';
 
 import {
   DISTRIBUTOR_VIEW_ROLES,
@@ -402,6 +403,16 @@ export function AppRoutes() {
       >
         <Route index element={<QaQueuePage />} />
         <Route path=":id" element={<QaDetailPage />} />
+      </Route>
+      <Route
+        path="/quality-executions/:executionId"
+        element={
+          <RoleRoute allowed={['ADMIN', 'QA_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT']}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<QualityExecutionPage />} />
       </Route>
 
       <Route path="/" element={<Navigate to="/login" replace />} />

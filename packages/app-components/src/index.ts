@@ -50,3 +50,6 @@ export type { ThemeModeRadioListProps } from "./components/theme-mode-radio-list
 
 export { PoweredByPinnacle } from "./components/powered-by-pinnacle";
 export type { PoweredByPinnacleProps, PoweredByPinnacleVariant } from "./components/powered-by-pinnacle";
+
+export { QualityExecutionForm } from "./components/quality-execution-form";
+export type { QualityExecutionFormProps } from "./components/quality-execution-form";

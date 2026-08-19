@@ -226,24 +226,6 @@ describe('job orders API', () => {
       progressPercent: 50,
     });
 
-    const earlyCompletion = await request(app)
-      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
-      .set('Authorization', `Bearer ${factoryUser.token}`)
-      .set('Idempotency-Key', 'progress-early-completion')
-      .send({ expectedVersion: first.body.data.version, stageStatusId: stage.id })
-      .expect(400);
-    expect(earlyCompletion.body.error.message).toContain('Record 2 remaining units');
-    expect(earlyCompletion.body.error.code).toBe('VALIDATION_ERROR');
-    const afterRejectedCompletion = await request(app)
-      .get(`/job-orders/${created.body.data.id}`)
-      .set('Authorization', `Bearer ${factoryUser.token}`)
-      .expect(200);
-    expect(afterRejectedCompletion.body.data.stages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: stage.id, status: 'IN_PROGRESS', completedQuantity: 2 }),
-        expect.objectContaining({ id: confirmed.body.data.stages[1].id, status: 'NOT_STARTED' }),
-      ]),
-    );
     await request(app)
       .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
@@ -408,8 +390,13 @@ describe('job orders API', () => {
         expectedVersion: historicalView.body.data.version,
         stageStatusId: historicalStageId,
       })
-      .expect(400);
-    expect(historicalCompletion.body.error.message).toContain('not captured');
+      .expect(200);
+    expect(historicalCompletion.body.data.stages[1]).toMatchObject({
+      status: 'COMPLETED',
+      completedQuantity: 4,
+      remainingQuantity: 0,
+      progressPercent: 100,
+    });
   });
 
   it('derives Inline, percentage, and sequential Quality availability from exact versioned definitions', async () => {
@@ -451,6 +438,8 @@ describe('job orders API', () => {
           activityType: 'QUALITY',
           qualityFormVersionId: formV1.id,
           qualityExecutionMode: 'SEQUENTIAL_GATE',
+          gateSatisfactionRequirement: 'FINALIZED',
+          executionMultiplicity: 'SINGLE',
         },
       }),
       prisma.processFlowVersionStage.create({
@@ -462,6 +451,7 @@ describe('job orders API', () => {
           activityType: 'QUALITY',
           qualityFormVersionId: formV1.id,
           qualityExecutionMode: 'IN_PROCESS',
+          executionMultiplicity: 'SINGLE',
           associatedProductionActivityId: production[1]!.id,
           qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
         },
@@ -475,6 +465,7 @@ describe('job orders API', () => {
           activityType: 'QUALITY',
           qualityFormVersionId: formV1.id,
           qualityExecutionMode: 'IN_PROCESS',
+          executionMultiplicity: 'SINGLE',
           associatedProductionActivityId: production[1]!.id,
           qualityAvailabilityPolicy: 'PROGRESS_PERCENTAGE',
           progressThresholdPercent: '50',
@@ -489,6 +480,8 @@ describe('job orders API', () => {
           activityType: 'QUALITY',
           qualityFormVersionId: formV1.id,
           qualityExecutionMode: 'SEQUENTIAL_GATE',
+          gateSatisfactionRequirement: 'FINALIZED',
+          executionMultiplicity: 'SINGLE',
         },
       }),
     ]);
@@ -556,6 +549,20 @@ describe('job orders API', () => {
         (item: { processFlowVersionStageId: string }) => item.processFlowVersionStageId === gate.id,
       ).status,
     ).toBe('AVAILABLE');
+    await prisma.qualityActivityExecution.create({
+      data: {
+        id: createId(),
+        jobOrderId: created.body.data.id,
+        processFlowActivityId: gate.id,
+        qualityFormVersionId: formV1.id,
+        attemptNumber: 1,
+        batchNumber: 1,
+        status: 'FINALIZED',
+        startedById: graph.admin.userId,
+        finalizedById: graph.admin.userId,
+        finalizedAt: new Date(),
+      },
+    });
     const sewing = cuttingDone.body.data.stages[1];
     const sewingStarted = await request(app)
       .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
@@ -661,37 +668,19 @@ describe('job orders API', () => {
         completedQuantity: 839,
       })
       .expect(200);
-    const completionAt839 = await request(app)
+    const sewingCompleted = await request(app)
       .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'quality-complete-839')
       .send({ expectedVersion: at839.body.data.version, stageStatusId: sewing.id })
-      .expect(400);
-    expect(completionAt839.body.error.message).toContain('Record 1 remaining units');
-
-    const at840 = await request(app)
-      .post(`/job-orders/${created.body.data.id}/actions/update-production-progress`)
-      .set('Authorization', `Bearer ${factoryUser.token}`)
-      .set('Idempotency-Key', 'quality-840')
-      .send({
-        expectedVersion: at839.body.data.version,
-        stageStatusId: sewing.id,
-        completedQuantity: 840,
-      })
       .expect(200);
     expect(
-      at840.body.data.qualityActivities.find(
+      sewingCompleted.body.data.qualityActivities.find(
         (item: { processFlowVersionStageId: string }) =>
           item.processFlowVersionStageId === final.id,
       ).status,
     ).toBe('AVAILABLE');
-
-    const sewingCompleted = await request(app)
-      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
-      .set('Authorization', `Bearer ${factoryUser.token}`)
-      .set('Idempotency-Key', 'quality-sewing-complete')
-      .send({ expectedVersion: at840.body.data.version, stageStatusId: sewing.id })
-      .expect(200);
+    expect(sewingCompleted.body.data.stages[1].completedQuantity).toBe(840);
     expect(
       sewingCompleted.body.data.qualityActivities.find(
         (item: { processFlowVersionStageId: string }) =>
@@ -756,6 +745,8 @@ describe('job orders API', () => {
         activityType: 'QUALITY',
         qualityFormVersionId: qualityFormVersion.id,
         qualityExecutionMode: 'SEQUENTIAL_GATE',
+        gateSatisfactionRequirement: 'FINALIZED',
+        executionMultiplicity: 'SINGLE',
       },
     });
 

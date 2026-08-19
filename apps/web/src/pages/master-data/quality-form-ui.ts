@@ -27,7 +27,7 @@ export const componentLabel = (value: string) =>
 export const defaultConfig = (type: QualityFormComponentType): Record<string, unknown> =>
   ({
     SYSTEM_CONTEXT: {
-      fields: [{ key: 'contextValue', label: 'Context value', dataType: 'TEXT', source: 'SYSTEM' }],
+      fields: [{ key: 'contextValue', label: 'Context value', dataType: 'TEXT', source: 'SYSTEM', sourceKey: 'JOB_ORDER_NUMBER' }],
     },
     FIELD_GROUP: { fields: [{ key: 'fieldValue', label: 'Field value', dataType: 'TEXT' }] },
     ATTENDEE_LIST: { roles: ['Attendee'], allowOther: true },
@@ -46,7 +46,7 @@ export const defaultConfig = (type: QualityFormComponentType): Record<string, un
       ],
     },
     PRODUCTION_PROGRESS: {
-      metrics: [{ key: 'progress', label: 'Production progress', source: 'SYSTEM' }],
+      metrics: [{ key: 'progress', label: 'Production progress', source: 'SYSTEM', sourceActivityCode: 'SEWING' }],
     },
     DEFECT_LIST: { severities: ['CRITICAL', 'MAJOR', 'MINOR'], captureQuantity: true },
     CORRECTIVE_ACTIONS: {

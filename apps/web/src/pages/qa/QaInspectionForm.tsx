@@ -158,6 +158,7 @@ export function QaInspectionForm({
   const [notice, setNotice] = useState('');
   const [reopenOpen, setReopenOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
+  const [ppSampleDecision, setPpSampleDecision] = useState<'PASS' | 'FAIL' | ''>('');
   const evidenceInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!notice) return;
@@ -171,7 +172,8 @@ export function QaInspectionForm({
   const rework = selected
     ? detail.reworkTasks.find((item) => item.id === selected.sourceReworkTaskId)
     : undefined;
-  const capacity = rework?.assignedQuantity ?? selected?.preparedQuantity ?? 0;
+  const ppSample = session?.processFlowPpSample ?? null;
+  const capacity = ppSample?.sampleQuantity ?? rework?.assignedQuantity ?? selected?.preparedQuantity ?? 0;
   const remainingInspectable = rework?.assignedQuantity ?? line?.availableToInspect ?? capacity;
   const evidence = session?.evidence.filter((item) => item.inspectionLineId === selected?.id) ?? [];
   const update = (change: Partial<Draft>) => {
@@ -205,12 +207,14 @@ export function QaInspectionForm({
       body,
       finalizePath,
       formId,
+      finalizeBody,
     }: {
       path: string;
       method: 'post' | 'put';
       body: object;
       finalizePath?: string;
       formId?: string;
+      finalizeBody?: object;
     }) => {
       const saved = (
         await apiClient.request<ApiSuccessResponse<QaInspectionDetail>>({
@@ -229,7 +233,7 @@ export function QaInspectionForm({
         await apiClient.request<ApiSuccessResponse<QaInspectionDetail>>({
           url: finalizePath,
           method: 'post',
-          data: { expectedVersion: savedForm.version },
+          data: { expectedVersion: savedForm.version, ...finalizeBody },
           headers: { 'Idempotency-Key': requestKey(finalizePath, savedForm.version) },
         })
       ).data.data;
@@ -343,6 +347,8 @@ export function QaInspectionForm({
   const save = (finalizing: boolean) => {
     setNotice('');
     const next = validate(draft, capacity, finalizing, evidence.length);
+    if (finalizing && ppSample && !ppSampleDecision)
+      next.ppSampleDecision = 'Choose Pass or Fail before finalizing PP Sample.';
     if (Object.keys(next).length) {
       setErrors({
         ...next,
@@ -379,6 +385,8 @@ export function QaInspectionForm({
         ? `/qa/inspections/${session.id}/forms/${selected.id}/finalize`
         : undefined,
       formId: finalizing ? selected.id : undefined,
+      finalizeBody:
+        finalizing && ppSample ? { ppSampleDecision } : undefined,
     });
   };
   const reload = async () => {
@@ -450,7 +458,7 @@ export function QaInspectionForm({
         }
       >
         <div className="space-y-6">
-          <nav aria-label="Size inspection forms" className="flex flex-wrap gap-2">
+          {!ppSample && <nav aria-label="Size inspection forms" className="flex flex-wrap gap-2">
             {forms.map((form) => (
               <Button
                 type="button"
@@ -466,7 +474,7 @@ export function QaInspectionForm({
                 />
               </Button>
             ))}
-          </nav>
+          </nav>}
           <FormSection title="Inspection Details">
             <DescriptionList columns={3}>
               <DescriptionList.Item label="Job Order" value={detail.jobOrderNumber} />
@@ -475,6 +483,9 @@ export function QaInspectionForm({
                 value={`${selected.styleNumber} · ${selected.colour ?? '—'}`}
               />
               <DescriptionList.Item label="Selected size" value={selected.sizeLabel} />
+              {ppSample && (
+                <DescriptionList.Item label="Sample quantity" value={ppSample.sampleQuantity} />
+              )}
               <DescriptionList.Item label="Prepared" value={selected.preparedQuantity} />
               <DescriptionList.Item
                 label="Previously inspected"
@@ -493,12 +504,42 @@ export function QaInspectionForm({
               min={0}
               inputMode="numeric"
               width="xs"
-              disabled={readonly}
+              disabled={readonly || Boolean(ppSample)}
               value={draft.sample}
               errorMessage={errors.sample}
               onChange={(event) => update({ sample: event.target.value })}
             />
           </FormSection>
+          {ppSample && (
+            <FormSection title="PP Sample Decision">
+              <p>This decision is explicit and is not derived from checklist or quantity fields.</p>
+              <label>
+                <input
+                  type="radio"
+                  name="pp-sample-decision"
+                  value="PASS"
+                  disabled={readonly}
+                  checked={(ppSample.decision ?? ppSampleDecision) === 'PASS'}
+                  onChange={() => setPpSampleDecision('PASS')}
+                />
+                Pass — OK to proceed
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="pp-sample-decision"
+                  value="FAIL"
+                  disabled={readonly}
+                  checked={(ppSample.decision ?? ppSampleDecision) === 'FAIL'}
+                  onChange={() => setPpSampleDecision('FAIL')}
+                />
+                Fail — Not approved
+              </label>
+              {errors.ppSampleDecision && (
+                <ValidationMessage tone="error">{errors.ppSampleDecision}</ValidationMessage>
+              )}
+            </FormSection>
+          )}
           <FormSection title="Inspection Checklist">
             <DataTable
               density="compact"
