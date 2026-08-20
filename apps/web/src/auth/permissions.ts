@@ -30,6 +30,11 @@ export const DISTRIBUTOR_VIEW_ROLES = [
   'DISTRIBUTOR',
 ] as const satisfies readonly Role[];
 
+export const DISTRIBUTOR_MANAGE_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+] as const satisfies readonly Role[];
+
 export const FACTORY_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
 export const PROCESS_FLOW_MANAGE_ROLES = [
@@ -124,6 +129,9 @@ export const canManageFactories = (user: AuthUser | null | undefined) =>
 
 export const canViewDistributorMaster = (user: AuthUser | null | undefined) =>
   hasRole(user, DISTRIBUTOR_VIEW_ROLES);
+
+export const canManageDistributorMaster = (user: AuthUser | null | undefined) =>
+  hasRole(user, DISTRIBUTOR_MANAGE_ROLES);
 
 export const canManageProcessFlows = (user: AuthUser | null | undefined) =>
   hasRole(user, PROCESS_FLOW_MANAGE_ROLES);

@@ -9,6 +9,7 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { canManageDistributorMaster } from '../../auth/permissions.js';
 import type { AdminUserSummary, Distributor, DistributorUser } from './types.js';
 
 function toErrorMessage(caught: unknown, fallback: string): string {
@@ -49,7 +50,9 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
     () =>
       (usersQuery.data ?? []).filter(
         (user) =>
-          user.status === 'ACTIVE' && user.roles.includes('DISTRIBUTOR') && user.distributors.length === 0,
+          user.status === 'ACTIVE' &&
+          user.roles.includes('DISTRIBUTOR') &&
+          user.distributors.length === 0,
       ),
     [usersQuery.data],
   );
@@ -67,7 +70,9 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
       if (!selectedUserId) {
         throw new Error('Select a user to assign');
       }
-      await apiClient.post(`/users/${selectedUserId}/distributors`, { distributorId: distributor.id });
+      await apiClient.post(`/users/${selectedUserId}/distributors`, {
+        distributorId: distributor.id,
+      });
     },
     onSuccess: async () => {
       setSelectedUserId('');
@@ -114,12 +119,18 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
               </SelectItem>
             ))}
           </SelectField>
-          <Button type="submit" loading={assignMutation.isPending} disabled={distributor.status !== 'ACTIVE'}>
+          <Button
+            type="submit"
+            loading={assignMutation.isPending}
+            disabled={distributor.status !== 'ACTIVE'}
+          >
             Assign
           </Button>
         </form>
         {distributor.status !== 'ACTIVE' ? (
-          <p className="text-sm text-muted-foreground">Users cannot be assigned to an inactive distributor.</p>
+          <p className="text-sm text-muted-foreground">
+            Users cannot be assigned to an inactive distributor.
+          </p>
         ) : null}
         {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
 
@@ -132,7 +143,10 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
               key: 'status',
               header: 'Status',
               render: (user) => (
-                <StatusBadge label={user.status} tone={user.status === 'ACTIVE' ? 'success' : 'muted'} />
+                <StatusBadge
+                  label={user.status}
+                  tone={user.status === 'ACTIVE' ? 'success' : 'muted'}
+                />
               ),
             },
             {
@@ -162,7 +176,10 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
           }
           error={
             mappedUsersQuery.isError ? (
-              <ErrorState title="Unable to load mapped users" description={mappedUsersQuery.error.message} />
+              <ErrorState
+                title="Unable to load mapped users"
+                description={mappedUsersQuery.error.message}
+              />
             ) : undefined
           }
         />
@@ -194,7 +211,8 @@ export function DistributorDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const canManage = user?.roles.includes('ADMIN') ?? false;
+  const canManage = canManageDistributorMaster(user);
+  const canManageUserMappings = user?.roles.includes('ADMIN') ?? false;
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [statusError, setStatusError] = useState('');
 
@@ -234,7 +252,12 @@ export function DistributorDetailPage() {
     );
   }
   if (!distributor) {
-    return <EmptyState title="Distributor not found" description="The selected distributor could not be loaded." />;
+    return (
+      <EmptyState
+        title="Distributor not found"
+        description="The selected distributor could not be loaded."
+      />
+    );
   }
 
   const isActive = distributor.status === 'ACTIVE';
@@ -289,7 +312,7 @@ export function DistributorDetailPage() {
         </DescriptionList>
       </Panel>
 
-      {canManage ? <UserMappingPanel distributor={distributor} /> : null}
+      {canManageUserMappings ? <UserMappingPanel distributor={distributor} /> : null}
 
       <ConfirmDialog
         open={statusDialogOpen}

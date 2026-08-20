@@ -41,7 +41,8 @@ const canViewDistributors = requireRoles(
   'SENIOR_MANAGEMENT',
   'DISTRIBUTOR',
 );
-const canManageDistributors = requireRoles('ADMIN');
+const canManageDistributors = requireRoles('ADMIN', 'MERCHANDISER');
+const canManageDistributorUsers = requireRoles('ADMIN');
 
 export const stylesRouter = Router();
 export const sizesRouter = Router();
@@ -59,21 +60,65 @@ processFlowVersionsRouter.use(requireAuth);
 distributorsRouter.use(requireAuth);
 seasonsRouter.use(requireAuth);
 
-seasonsRouter.get('/', canManageMasterData, asyncHandler(async (req, res) => {
-  res.json(successResponse(await masterDataService.listSeasons(listStatusQuerySchema.parse(req.query))));
-}));
-seasonsRouter.post('/', canManageMasterData, asyncHandler(async (req, res) => {
-  res.status(201).json(successResponse(await masterDataService.createSeason(req.user!, createSeasonSchema.parse(req.body))));
-}));
-seasonsRouter.get('/:id', canManageMasterData, asyncHandler(async (req, res) => {
-  res.json(successResponse(await masterDataService.getSeasonById(String(req.params.id))));
-}));
-seasonsRouter.patch('/:id', canManageMasterData, asyncHandler(async (req, res) => {
-  res.json(successResponse(await masterDataService.updateSeason(req.user!, String(req.params.id), updateSeasonSchema.parse(req.body))));
-}));
-seasonsRouter.patch('/:id/status', canManageMasterData, asyncHandler(async (req, res) => {
-  res.json(successResponse(await masterDataService.updateSeasonStatus(req.user!, String(req.params.id), updateSeasonStatusSchema.parse(req.body).status)));
-}));
+seasonsRouter.get(
+  '/',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    res.json(
+      successResponse(await masterDataService.listSeasons(listStatusQuerySchema.parse(req.query))),
+    );
+  }),
+);
+seasonsRouter.post(
+  '/',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    res
+      .status(201)
+      .json(
+        successResponse(
+          await masterDataService.createSeason(req.user!, createSeasonSchema.parse(req.body)),
+        ),
+      );
+  }),
+);
+seasonsRouter.get(
+  '/:id',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    res.json(successResponse(await masterDataService.getSeasonById(String(req.params.id))));
+  }),
+);
+seasonsRouter.patch(
+  '/:id',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    res.json(
+      successResponse(
+        await masterDataService.updateSeason(
+          req.user!,
+          String(req.params.id),
+          updateSeasonSchema.parse(req.body),
+        ),
+      ),
+    );
+  }),
+);
+seasonsRouter.patch(
+  '/:id/status',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    res.json(
+      successResponse(
+        await masterDataService.updateSeasonStatus(
+          req.user!,
+          String(req.params.id),
+          updateSeasonStatusSchema.parse(req.body).status,
+        ),
+      ),
+    );
+  }),
+);
 
 distributorsRouter.get(
   '/',
@@ -137,7 +182,7 @@ distributorsRouter.patch(
 
 distributorsRouter.get(
   '/:id/users',
-  canManageDistributors,
+  canManageDistributorUsers,
   asyncHandler(async (req, res) => {
     const users = await masterDataService.listDistributorUsers(req.params.id! as string);
     res.status(200).json(successResponse(users));

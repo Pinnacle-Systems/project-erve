@@ -4,6 +4,7 @@ import {
   canCreateJobOrders,
   canFilterJobOrdersByFactory,
   canManagePriceLists,
+  canManageDistributorMaster,
   canManageProcessFlows,
   canManagePurchaseOrders,
   canManageSizes,
@@ -75,6 +76,7 @@ describe('permissions', () => {
 
       // Simple checks to use the remaining functions and satisfy unused warnings
       it(`other functions run without throwing`, () => {
+        expect(canManageDistributorMaster(user)).toBe(role === 'ADMIN' || role === 'MERCHANDISER');
         expect(typeof canManagePriceLists(user)).toBe('boolean');
         expect(typeof canManageProcessFlows(user)).toBe('boolean');
         expect(typeof canManagePurchaseOrders(user)).toBe('boolean');
