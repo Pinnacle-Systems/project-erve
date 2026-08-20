@@ -137,6 +137,7 @@ export interface ProcessFlow {
     versionNumber: number;
     status: 'DRAFT' | 'ACTIVE' | 'RETIRED';
     hasQualityActivities: boolean;
+    runtimeSupport: { supported: boolean; reasons: string[] };
     effectiveFrom: string | null;
     createdAt: string;
   }>;

@@ -42,7 +42,9 @@ const executionInclude = {
   actionResponses: true,
   signoffs: true,
   attachments: { include: { file: true } },
-  ppSampleSession: { include: { forms: { include: { jobOrderLineSize: { include: { size: true } } } } } },
+  ppSampleSession: {
+    include: { forms: { include: { jobOrderLineSize: { include: { size: true } } } } },
+  },
 } satisfies Prisma.QualityActivityExecutionInclude;
 type Execution = Prisma.QualityActivityExecutionGetPayload<{ include: typeof executionInclude }>;
 
@@ -157,11 +159,13 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
   for (const response of input.attendees) {
     const item = assertComponent(map, response.componentId, 'ATTENDEE_LIST');
     const roles = config(item).roles;
-    const configured = Array.isArray(roles) && roles.some((role) =>
-      typeof role === 'string'
-        ? role === response.roleKey
-        : (role as Record<string, unknown>).key === response.roleKey,
-    );
+    const configured =
+      Array.isArray(roles) &&
+      roles.some((role) =>
+        typeof role === 'string'
+          ? role === response.roleKey
+          : (role as Record<string, unknown>).key === response.roleKey,
+      );
     if (!configured && !(config(item).allowOther === true && response.roleKey === 'other'))
       throw HttpError.badRequest('Attendee role is not configured');
   }
@@ -171,7 +175,13 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
     if (Object.keys(response.values).some((key) => !columns.some((column) => column.key === key)))
       throw HttpError.badRequest('Unknown follow-up action column');
     columns.forEach((column) => assertCell(response.values[String(column.key)], column));
-    if (finalize && columns.some((column) => column.required === true && !String(response.values[String(column.key)] ?? '').trim()))
+    if (
+      finalize &&
+      columns.some(
+        (column) =>
+          column.required === true && !String(response.values[String(column.key)] ?? '').trim(),
+      )
+    )
       throw HttpError.badRequest('Follow-up action has missing required values');
   }
   for (const response of input.signoffs) {
@@ -396,10 +406,12 @@ function eligible(
     if (!prior) return jobOrder.factoryConfirmationStatus === 'CONFIRMED';
     if (prior.activityType === 'PRODUCTION')
       return jobOrder.stageStatuses.some(
-        (runtime) => runtime.processFlowVersionStageId === prior.id && runtime.status === 'COMPLETED',
+        (runtime) =>
+          runtime.processFlowVersionStageId === prior.id && runtime.status === 'COMPLETED',
       );
     const priorExecutions = jobOrder.qualityExecutions.filter(
-      (candidate) => candidate.processFlowActivityId === prior.id && candidate.status === 'FINALIZED',
+      (candidate) =>
+        candidate.processFlowActivityId === prior.id && candidate.status === 'FINALIZED',
     );
     return prior.gateSatisfactionRequirement === 'OUTCOME_PASS'
       ? priorExecutions.some((candidate) => candidate.outcome === 'PASS')
@@ -412,7 +424,11 @@ export async function start(
   user: CurrentUser,
   jobOrderId: string,
   processFlowActivityId: string,
-  input: { sampleJobOrderLineSizeId?: string; sampleQuantity?: number; inspectedQuantity?: number } = {},
+  input: {
+    sampleJobOrderLineSizeId?: string;
+    sampleQuantity?: number;
+    inspectedQuantity?: number;
+  } = {},
 ) {
   assertMutation(user);
   const jobOrder = await loadJobOrder(jobOrderId);
@@ -508,9 +524,15 @@ export async function start(
       throw HttpError.conflict('Inspection context is locked after the execution starts');
     return toView(existing, jobOrder);
   }
-  if (existing && activity.executionMultiplicity !== 'BATCHED')
+  if (
+    existing &&
+    activity.executionMultiplicity !== 'BATCHED' &&
+    (!ppSample || existing.outcome === 'PASS')
+  )
     throw HttpError.conflict(
-      'A finalized initial attempt already exists; reinspection is not implemented',
+      ppSample
+        ? 'PP Sample gate is already satisfied by a finalized PASS cycle'
+        : 'A finalized initial attempt already exists; reinspection is not implemented',
     );
   if (!eligible(jobOrder, activity))
     throw HttpError.conflict('Quality activity is not currently eligible to start');
@@ -518,8 +540,8 @@ export async function start(
     const created = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`quality:${jobOrderId}:${processFlowActivityId}`}))`;
       const currentExecutions = await tx.qualityActivityExecution.findMany({
-        where: { jobOrderId, processFlowActivityId, attemptNumber: 1 },
-        orderBy: { batchNumber: 'desc' },
+        where: { jobOrderId, processFlowActivityId },
+        orderBy: [{ attemptNumber: 'desc' }, { batchNumber: 'desc' }],
       });
       const currentDraft = currentExecutions.find((candidate) => candidate.status === 'DRAFT');
       if (currentDraft) {
@@ -536,8 +558,15 @@ export async function start(
           include: executionInclude,
         });
       }
-      if (activity.executionMultiplicity !== 'BATCHED' && currentExecutions.length)
+      if (activity.executionMultiplicity !== 'BATCHED' && currentExecutions.length && !ppSample)
         throw HttpError.conflict('This single Quality activity already has an execution');
+      if (
+        ppSample &&
+        currentExecutions.some(
+          (candidate) => candidate.status === 'FINALIZED' && candidate.outcome === 'PASS',
+        )
+      )
+        throw HttpError.conflict('PP Sample gate is already satisfied by a finalized PASS cycle');
       if (activity.executionMultiplicity === 'BATCHED') {
         const inspected = currentExecutions
           .filter((candidate) => candidate.status === 'FINALIZED')
@@ -545,14 +574,20 @@ export async function start(
         if (jobOrder.preparedQuantityTotal > 0 && inspected >= jobOrder.preparedQuantityTotal)
           throw HttpError.conflict('Final Inspection coverage is already complete');
       }
+      const attemptNumber = ppSample ? (currentExecutions[0]?.attemptNumber ?? 0) + 1 : 1;
+      const batchNumber =
+        activity.executionMultiplicity === 'BATCHED'
+          ? (currentExecutions.find((candidate) => candidate.attemptNumber === 1)?.batchNumber ??
+              0) + 1
+          : 1;
       const result = await tx.qualityActivityExecution.create({
         data: {
           id: createId(),
           jobOrderId,
           processFlowActivityId,
           qualityFormVersionId: form.id,
-          attemptNumber: 1,
-          batchNumber: (currentExecutions[0]?.batchNumber ?? 0) + 1,
+          attemptNumber,
+          batchNumber,
           inspectedQuantity: input.inspectedQuantity,
           sampleJobOrderLineSizeId: input.sampleJobOrderLineSizeId,
           sampleQuantity: input.sampleQuantity,
@@ -571,8 +606,7 @@ export async function start(
             id: createId(),
             jobOrderId,
             inspectorId: user.id,
-            cycleNumber:
-              (await tx.qaInspectionSession.count({ where: { jobOrderId } })) + 1,
+            cycleNumber: attemptNumber,
             qualityActivityExecutionId: result.id,
             forms: {
               create: {
@@ -585,7 +619,21 @@ export async function start(
                 permanentlyRejectedQuantity: 0,
                 checklist: {
                   create: [
-                    'FABRIC_COLOUR_QUALITY','TRIMS_CARD','FABRIC_GSM','MEASUREMENTS_REPORT','GARMENT_CONSTRUCTION','GENERAL_QUALITY_PRESENTATION','LABELLING_POSITION','FIT_SAMPLE_BUYER_COMMENTS','SPI','SAMPLE_TAG','DATA_SHEET_PULL_TEST_PINCH_SETTING','METAL_DETECTION','P_AND_P','PP_SAMPLE_FIT_COMMENTS','SOURCE_DECLARATION_FORM',
+                    'FABRIC_COLOUR_QUALITY',
+                    'TRIMS_CARD',
+                    'FABRIC_GSM',
+                    'MEASUREMENTS_REPORT',
+                    'GARMENT_CONSTRUCTION',
+                    'GENERAL_QUALITY_PRESENTATION',
+                    'LABELLING_POSITION',
+                    'FIT_SAMPLE_BUYER_COMMENTS',
+                    'SPI',
+                    'SAMPLE_TAG',
+                    'DATA_SHEET_PULL_TEST_PINCH_SETTING',
+                    'METAL_DETECTION',
+                    'P_AND_P',
+                    'PP_SAMPLE_FIT_COMMENTS',
+                    'SOURCE_DECLARATION_FORM',
                   ].map((itemCode) => ({ id: createId(), itemCode: itemCode as never })),
                 },
               },
@@ -606,8 +654,9 @@ export async function start(
           metadata: {
             jobOrderId,
             processFlowActivityId,
+            activityName: activity.name,
             qualityFormVersionId: form.id,
-            attemptNumber: 1,
+            attemptNumber,
             batchNumber: result.batchNumber,
             inspectedQuantity: input.inspectedQuantity ?? null,
             sampleJobOrderLineSizeId: input.sampleJobOrderLineSizeId ?? null,
@@ -882,10 +931,12 @@ async function persist(
         entityId: executionId,
         metadata: {
           processFlowActivityId: execution.processFlowActivityId,
+          activityName: execution.processFlowActivity.name,
           qualityFormVersionId: execution.qualityFormVersionId,
           attemptNumber: execution.attemptNumber,
           batchNumber: execution.batchNumber,
           inspectedQuantity: execution.inspectedQuantity,
+          outcome: input.outcome?.value ?? null,
         },
       },
       tx,
@@ -951,7 +1002,10 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
           .map((field) => ({
             key: field.key,
             ...(field.sourceKey === 'BATCH_INSPECTED_QUANTITY'
-              ? { value: execution.inspectedQuantity, available: execution.inspectedQuantity != null }
+              ? {
+                  value: execution.inspectedQuantity,
+                  available: execution.inspectedQuantity != null,
+                }
               : derivedSystemContext(jobOrder, String(field.sourceKey))),
           }));
       return {
@@ -997,38 +1051,60 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
           decision: execution.outcome,
         }
       : null,
-    coverage: execution.processFlowActivity.executionMultiplicity === 'BATCHED'
-      ? (() => {
-          const batches = jobOrder.qualityExecutions.filter(
-            (candidate) =>
-              candidate.processFlowActivityId === execution.processFlowActivityId &&
-              candidate.attemptNumber === execution.attemptNumber,
-          );
-          const inspected = batches
-            .filter((candidate) => candidate.status === 'FINALIZED')
-            .reduce((sum, candidate) => sum + (candidate.inspectedQuantity ?? 0), 0);
-          const prepared = jobOrder.preparedQuantityTotal;
-          const preparedQuantityAuthoritative = prepared > 0;
-          return {
-            preparedQuantityAuthoritative,
-            preparedQuantity: preparedQuantityAuthoritative ? prepared : null,
-            inspectedQuantity: inspected,
-            remainingQuantity: preparedQuantityAuthoritative
-              ? Math.max(0, prepared - inspected)
-              : null,
-            complete: preparedQuantityAuthoritative && inspected === prepared,
-            reconciliationConflict: preparedQuantityAuthoritative && inspected > prepared,
-            batches: batches.map((candidate) => ({
-              id: candidate.id,
-              batchNumber: candidate.batchNumber,
-              inspectedQuantity: candidate.inspectedQuantity,
-              status: candidate.status,
-              outcome: candidate.outcome,
-              finalizedAt: candidate.finalizedAt?.toISOString() ?? null,
-            })),
-          };
-        })()
-      : null,
+    coverage:
+      execution.processFlowActivity.executionMultiplicity === 'BATCHED'
+        ? (() => {
+            const batches = jobOrder.qualityExecutions.filter(
+              (candidate) =>
+                candidate.processFlowActivityId === execution.processFlowActivityId &&
+                candidate.attemptNumber === execution.attemptNumber,
+            );
+            const inspected = batches
+              .filter((candidate) => candidate.status === 'FINALIZED')
+              .reduce((sum, candidate) => sum + (candidate.inspectedQuantity ?? 0), 0);
+            const prepared = jobOrder.preparedQuantityTotal;
+            const preparedQuantityAuthoritative = prepared > 0;
+            const finalizedBatches = batches.filter(
+              (candidate) => candidate.status === 'FINALIZED',
+            );
+            const passedBatches = finalizedBatches.filter(
+              (candidate) => candidate.outcome === 'PASS',
+            ).length;
+            const failedBatches = finalizedBatches.filter(
+              (candidate) => candidate.outcome === 'FAIL',
+            ).length;
+            const reconciliationConflict = preparedQuantityAuthoritative && inspected > prepared;
+            const complete = preparedQuantityAuthoritative && inspected === prepared;
+            return {
+              preparedQuantityAuthoritative,
+              preparedQuantity: preparedQuantityAuthoritative ? prepared : null,
+              inspectedQuantity: inspected,
+              remainingQuantity: preparedQuantityAuthoritative
+                ? Math.max(0, prepared - inspected)
+                : null,
+              complete,
+              reconciliationConflict,
+              state: reconciliationConflict
+                ? ('CONFLICT' as const)
+                : complete
+                  ? ('COMPLETE' as const)
+                  : preparedQuantityAuthoritative
+                    ? ('IN_PROGRESS' as const)
+                    : ('UNKNOWN' as const),
+              passedBatches,
+              failedBatches,
+              hasFailedBatches: failedBatches > 0,
+              batches: batches.map((candidate) => ({
+                id: candidate.id,
+                batchNumber: candidate.batchNumber,
+                inspectedQuantity: candidate.inspectedQuantity,
+                status: candidate.status,
+                outcome: candidate.outcome,
+                finalizedAt: candidate.finalizedAt?.toISOString() ?? null,
+              })),
+            };
+          })()
+        : null,
     sections,
     responses: currentPayload(execution),
     attachments: execution.attachments.map((x) => ({

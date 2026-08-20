@@ -103,7 +103,9 @@ export function JobOrderDetailPage() {
         )
       ).data.data,
     onSuccess: (execution) =>
-      navigate(execution.ppSample ? `/qa/${execution.jobOrderId}` : `/quality-executions/${execution.id}`),
+      navigate(
+        execution.ppSample ? `/qa/${execution.jobOrderId}` : `/quality-executions/${execution.id}`,
+      ),
   });
 
   const invalidate = () => {
@@ -259,6 +261,11 @@ export function JobOrderDetailPage() {
     [jobOrder],
   );
   const nextStage = jobOrder?.stages.find((stage) => stage.status !== 'COMPLETED');
+  const productionQualityGateLocked = Boolean(
+    jobOrder?.qualityActivities.some(
+      (activity) => activity.executionMode === 'SEQUENTIAL_GATE' && activity.status !== 'COMPLETED',
+    ),
+  );
 
   if (jobOrderQuery.isLoading) return <LoadingState label="Loading job order" />;
   if (!jobOrder)
@@ -281,7 +288,9 @@ export function JobOrderDetailPage() {
   const canConfirm =
     jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
   const canCompleteStage =
-    ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) && Boolean(nextStage);
+    ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) &&
+    Boolean(nextStage) &&
+    !productionQualityGateLocked;
   const canUpdatePrepared = jobOrder.status === 'PRODUCTION_COMPLETE';
   const canPerformFactoryRework = Boolean(user?.roles.includes('FACTORY_USER'));
   const openRework = jobOrder.reworkTasks.filter((task) => task.status !== 'REINSPECTED');
@@ -706,6 +715,12 @@ export function JobOrderDetailPage() {
         />
       )}
 
+      {productionQualityGateLocked && jobOrder.factoryConfirmationStatus === 'CONFIRMED' && (
+        <Panel title="Production locked">
+          <p>Production is locked pending pre-production Quality gates.</p>
+        </Panel>
+      )}
+
       {canCompleteStage && nextStage && (
         <Panel title={`Current Stage: ${nextStage.stageNameSnapshot}`}>
           <div className="flex flex-col gap-4">
@@ -790,23 +805,48 @@ export function JobOrderDetailPage() {
                 )}
                 <p>Current state: {activity.status.replaceAll('_', ' ')}</p>
                 {activity.coverage && (
-                  <p>
-                    Prepared:{' '}
-                    {activity.coverage.preparedQuantityAuthoritative
-                      ? activity.coverage.preparedQuantity
-                      : 'Not yet recorded'}{' '}
-                    · Inspected:{' '}
-                    {activity.coverage.inspectedQuantity} · Remaining:{' '}
-                    {activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
-                    {activity.coverage.reconciliationConflict
-                      ? ' · Reconciliation conflict'
-                      : activity.coverage.complete
-                        ? ' · Coverage complete'
-                        : ''}
+                  <div>
+                    <p>
+                      Prepared:{' '}
+                      {activity.coverage.preparedQuantityAuthoritative
+                        ? activity.coverage.preparedQuantity
+                        : 'Not yet recorded'}{' '}
+                      · Inspected: {activity.coverage.inspectedQuantity} · Remaining:{' '}
+                      {activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
+                      {activity.coverage.reconciliationConflict
+                        ? ' · Reconciliation conflict'
+                        : activity.coverage.complete
+                          ? ' · Coverage complete'
+                          : ''}
+                    </p>
+                    <p>
+                      Coverage: {activity.coverage.state} Â· Passed batches:{' '}
+                      {activity.coverage.passedBatches} Â· Failed batches:{' '}
+                      {activity.coverage.failedBatches}
+                    </p>
+                  </div>
+                )}
+                {activity.status === 'MISSED' && (
+                  <p className="text-muted-foreground">
+                    Not performed during the associated Production activity.
                   </p>
                 )}
+                {activity.qualityForm.executionScope === 'SIZE' &&
+                  activity.executionHistory.length > 0 && (
+                    <div className="my-2">
+                      <p className="font-medium">PP Sample cycles</p>
+                      {activity.executionHistory.map((cycle) => (
+                        <p key={cycle.id}>
+                          Cycle {cycle.attemptNumber}:{' '}
+                          {cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size'} Â· Qty{' '}
+                          {cycle.sampleQuantity} Â·{' '}
+                          {cycle.status === 'DRAFT' ? 'IN PROGRESS' : cycle.outcome}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 {activity.execution ? (
-                  <div className="space-x-2">
+                  <div className="space-y-2">
                     <Button
                       variant="secondary"
                       onClick={() =>
@@ -821,6 +861,74 @@ export function JobOrderDetailPage() {
                         ? 'View Inspection'
                         : 'Continue Inspection'}
                     </Button>
+                    {activity.status === 'FAILED' &&
+                      activity.eligible &&
+                      activity.qualityForm.executionScope === 'SIZE' &&
+                      user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') && (
+                        <div className="space-y-2 rounded-md border border-border p-2">
+                          <p>New PP Sample required</p>
+                          <label className="block">
+                            Sample Size
+                            <select
+                              value={
+                                qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ??
+                                ''
+                              }
+                              onChange={(event) =>
+                                setQualityStartContexts((current) => ({
+                                  ...current,
+                                  [activity.processFlowVersionStageId]: {
+                                    sizeId: event.target.value,
+                                    quantity:
+                                      current[activity.processFlowVersionStageId]?.quantity ?? '',
+                                  },
+                                }))
+                              }
+                            >
+                              <option value="">Select one size</option>
+                              {flatSizes.map((size) => (
+                                <option key={size.id} value={size.id}>
+                                  {size.style} Â· {size.sizeLabel}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <TextField
+                            label="Sample Quantity"
+                            type="number"
+                            min="1"
+                            value={
+                              qualityStartContexts[activity.processFlowVersionStageId]?.quantity ??
+                              ''
+                            }
+                            onChange={(event) =>
+                              setQualityStartContexts((current) => ({
+                                ...current,
+                                [activity.processFlowVersionStageId]: {
+                                  sizeId: current[activity.processFlowVersionStageId]?.sizeId ?? '',
+                                  quantity: event.target.value,
+                                },
+                              }))
+                            }
+                          />
+                          <Button
+                            loading={qualityStartMutation.isPending}
+                            onClick={() => {
+                              const context =
+                                qualityStartContexts[activity.processFlowVersionStageId];
+                              qualityStartMutation.mutate({
+                                activityId: activity.processFlowVersionStageId,
+                                body: {
+                                  sampleJobOrderLineSizeId: context?.sizeId,
+                                  sampleQuantity: Number(context?.quantity),
+                                },
+                              });
+                            }}
+                          >
+                            Start New PP Sample
+                          </Button>
+                        </div>
+                      )}
                     {activity.executionMultiplicity === 'BATCHED' &&
                       activity.execution.status === 'FINALIZED' &&
                       !activity.coverage?.complete &&
@@ -830,7 +938,10 @@ export function JobOrderDetailPage() {
                             aria-label={`Inspected quantity for ${activity.name}`}
                             type="number"
                             min="1"
-                            value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
+                            value={
+                              qualityStartContexts[activity.processFlowVersionStageId]?.quantity ??
+                              ''
+                            }
                             onChange={(event) =>
                               setQualityStartContexts((current) => ({
                                 ...current,
@@ -847,7 +958,8 @@ export function JobOrderDetailPage() {
                                 activityId: activity.processFlowVersionStageId,
                                 body: {
                                   inspectedQuantity: Number(
-                                    qualityStartContexts[activity.processFlowVersionStageId]?.quantity,
+                                    qualityStartContexts[activity.processFlowVersionStageId]
+                                      ?.quantity,
                                   ),
                                 },
                               })
@@ -866,13 +978,16 @@ export function JobOrderDetailPage() {
                         <label className="block">
                           Sample Size
                           <select
-                            value={qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ?? ''}
+                            value={
+                              qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ?? ''
+                            }
                             onChange={(event) =>
                               setQualityStartContexts((current) => ({
                                 ...current,
                                 [activity.processFlowVersionStageId]: {
                                   sizeId: event.target.value,
-                                  quantity: current[activity.processFlowVersionStageId]?.quantity ?? '',
+                                  quantity:
+                                    current[activity.processFlowVersionStageId]?.quantity ?? '',
                                 },
                               }))
                             }
@@ -889,7 +1004,9 @@ export function JobOrderDetailPage() {
                           label="Sample Quantity"
                           type="number"
                           min="1"
-                          value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
+                          value={
+                            qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''
+                          }
                           onChange={(event) =>
                             setQualityStartContexts((current) => ({
                               ...current,
@@ -907,7 +1024,9 @@ export function JobOrderDetailPage() {
                         label="Inspected Quantity"
                         type="number"
                         min="1"
-                        value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
+                        value={
+                          qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''
+                        }
                         onChange={(event) =>
                           setQualityStartContexts((current) => ({
                             ...current,

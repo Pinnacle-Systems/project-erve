@@ -8,6 +8,7 @@ import type {
   PaginatedResponse,
   QaQueueFilter,
   QaQueueSummary,
+  JobOrderQualityActivity,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 
@@ -37,6 +38,22 @@ export function QaQueuePage() {
         await apiClient.get<ApiSuccessResponse<PaginatedResponse<QaQueueSummary>>>('/qa/queue', {
           params: { filter: filter || undefined, search: search || undefined, limit: 50 },
         })
+      ).data.data,
+  });
+  const processFlowQuery = useQuery({
+    queryKey: ['process-flow-quality-work'],
+    queryFn: async () =>
+      (
+        await apiClient.get<
+          ApiSuccessResponse<
+            Array<{
+              jobOrderId: string;
+              jobOrderNumber: string;
+              factory: { id: string; code: string; name: string };
+              activity: JobOrderQualityActivity;
+            }>
+          >
+        >('/job-orders/quality-work')
       ).data.data,
   });
   return (
@@ -77,6 +94,34 @@ export function QaQueuePage() {
       >
         {query.isFetching ? 'Refreshing…' : 'Refresh'}
       </button>
+      <section className="space-y-2">
+        <h2 className="font-semibold">Process Flow Quality work</h2>
+        {processFlowQuery.isLoading && <p>Loading Process Flow Quality workâ€¦</p>}
+        {(processFlowQuery.data ?? []).map((item) => (
+          <Link
+            key={`${item.jobOrderId}:${item.activity.processFlowVersionStageId}`}
+            to={`/job-orders/${item.jobOrderId}`}
+            className="block rounded-lg border border-border bg-surface p-3"
+          >
+            <p className="font-medium">
+              {item.jobOrderNumber} Â· {item.activity.name}
+            </p>
+            <p>
+              {item.factory.name} Â· {item.activity.status.replaceAll('_', ' ')}
+            </p>
+            {item.activity.status === 'FAILED' && <p>Retry available</p>}
+            {item.activity.status === 'MISSED' && (
+              <p>Not performed during associated Production activity</p>
+            )}
+            {item.activity.coverage && (
+              <p>
+                Remaining {item.activity.coverage.remainingQuantity ?? 'Unknown'} Â·{' '}
+                {item.activity.coverage.state}
+              </p>
+            )}
+          </Link>
+        ))}
+      </section>
       {query.isLoading && <p role="status">Loading QA queue…</p>}
       {query.isError && (
         <section role="alert" className="rounded-lg border border-danger/40 bg-surface p-4">

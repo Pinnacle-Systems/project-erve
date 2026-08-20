@@ -6,6 +6,7 @@ import type {
   PaginatedResponse,
   QaQueueFilter,
   QaQueueSummary,
+  JobOrderQualityActivity,
 } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -21,6 +22,23 @@ export function QaQueuePage() {
         await apiClient.get<ApiSuccessResponse<PaginatedResponse<QaQueueSummary>>>('/qa/queue', {
           params: { search: search || undefined, filter: filter || undefined },
         })
+      ).data.data,
+  });
+  const processFlowQuery = useQuery({
+    queryKey: ['process-flow-quality-work'],
+    queryFn: async () =>
+      (
+        await apiClient.get<
+          ApiSuccessResponse<
+            Array<{
+              jobOrderId: string;
+              jobOrderNumber: string;
+              purchaseOrderNumber: string;
+              factory: { id: string; code: string; name: string };
+              activity: JobOrderQualityActivity;
+            }>
+          >
+        >('/job-orders/quality-work')
       ).data.data,
   });
   return (
@@ -50,6 +68,46 @@ export function QaQueuePage() {
           <option value="COMPLETED">Completed</option>
         </select>
       </div>
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Process Flow Quality work</h2>
+        {processFlowQuery.isLoading && (
+          <LoadingState variant="rows" label="Loading Process Flow Quality work" />
+        )}
+        {processFlowQuery.isError && (
+          <ErrorState
+            title="Unable to load Process Flow Quality work"
+            description={processFlowQuery.error.message}
+          />
+        )}
+        {(processFlowQuery.data ?? []).map((item) => (
+          <div
+            key={`${item.jobOrderId}:${item.activity.processFlowVersionStageId}`}
+            className="rounded-md border border-border p-3"
+          >
+            <Link
+              className="font-medium text-[var(--erp-text-link)]"
+              to={`/job-orders/${item.jobOrderId}`}
+            >
+              {item.jobOrderNumber} Â· {item.activity.name}
+            </Link>
+            <p>
+              {item.factory.name} Â· {item.activity.status.replaceAll('_', ' ')}
+            </p>
+            {item.activity.status === 'FAILED' && <p>Retry available</p>}
+            {item.activity.status === 'MISSED' && (
+              <p>Not performed during associated Production activity</p>
+            )}
+            {item.activity.coverage && (
+              <p>
+                Prepared {item.activity.coverage.preparedQuantity ?? 'Unknown'} Â· Inspected{' '}
+                {item.activity.coverage.inspectedQuantity} Â· Remaining{' '}
+                {item.activity.coverage.remainingQuantity ?? 'Unknown'} Â· Coverage{' '}
+                {item.activity.coverage.state}
+              </p>
+            )}
+          </div>
+        ))}
+      </section>
       <DataTable
         data={query.data?.items ?? []}
         loading={query.isLoading}

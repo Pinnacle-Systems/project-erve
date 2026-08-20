@@ -241,17 +241,19 @@ export function JobOrderCreatePage() {
             label="Process Flow Version"
             value={processFlowVersionId || undefined}
             onValueChange={setProcessFlowVersionId}
-            helpText="Quality-enabled versions are unavailable until Job Order Quality activity execution is implemented."
+            helpText="Unsupported versions remain configurable in Process Flow Master but cannot be assigned to new Job Orders."
             width="fill"
           >
             {activeVersions.map((version) => (
               <SelectItem
                 key={version.id}
                 value={version.id}
-                disabled={version.hasQualityActivities}
+                disabled={!version.runtimeSupport.supported}
               >
                 {version.label}
-                {version.hasQualityActivities ? ' — Quality runtime pending' : ''}
+                {!version.runtimeSupport.supported
+                  ? ` — ${version.runtimeSupport.reasons[0] ?? 'Unsupported by the Job Order runtime'}`
+                  : ''}
               </SelectItem>
             ))}
           </SelectField>
