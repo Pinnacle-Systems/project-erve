@@ -103,6 +103,16 @@ jobOrdersRouter.get(
 );
 
 jobOrdersRouter.get(
+  '/quality-work',
+  requireRoles('ADMIN', 'QA_USER'),
+  asyncHandler(async (req, res) => {
+    res
+      .status(200)
+      .json(successResponse(await jobOrdersService.getProcessFlowQualityWork(req.user!)));
+  }),
+);
+
+jobOrdersRouter.get(
   '/:id',
   canViewJobOrders,
   asyncHandler(async (req, res) => {

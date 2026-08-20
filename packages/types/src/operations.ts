@@ -191,11 +191,7 @@ export interface JobOrderStage {
   updatedAt: string;
 }
 export type QualityRuntimeStatus =
-  | 'NOT_AVAILABLE'
-  | 'AVAILABLE'
-  | 'IN_PROGRESS'
-  | 'COMPLETED'
-  | 'FAILED';
+  'NOT_AVAILABLE' | 'AVAILABLE' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'MISSED';
 export interface JobOrderQualityActivity {
   processFlowVersionStageId: string;
   sequence: number;
@@ -227,6 +223,24 @@ export interface JobOrderQualityActivity {
     startedAt: string;
     finalizedAt: string | null;
   } | null;
+  executionHistory: Array<{
+    id: string;
+    attemptNumber: number;
+    batchNumber: number;
+    inspectedQuantity: number | null;
+    sampleJobOrderLineSizeId: string | null;
+    sampleQuantity: number | null;
+    sampleSizeCode: string | null;
+    sampleSizeLabel: string | null;
+    ppSampleSessionId: string | null;
+    ppSampleFormId: string | null;
+    status: 'DRAFT' | 'FINALIZED';
+    outcome: 'PASS' | 'FAIL' | null;
+    startedBy: { id: string; name: string; email: string };
+    finalizedBy: { id: string; name: string; email: string } | null;
+    startedAt: string;
+    finalizedAt: string | null;
+  }>;
 }
 
 export interface QualityExecutionPayload {
@@ -326,6 +340,10 @@ export interface QualityCoverageView {
   remainingQuantity: number | null;
   complete: boolean;
   reconciliationConflict: boolean;
+  state: 'UNKNOWN' | 'IN_PROGRESS' | 'COMPLETE' | 'CONFLICT';
+  passedBatches: number;
+  failedBatches: number;
+  hasFailedBatches: boolean;
   batches: Array<{
     id: string;
     batchNumber: number;

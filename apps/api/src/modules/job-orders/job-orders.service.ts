@@ -11,6 +11,7 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
+import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 
 const jobOrderInclude = {
   seasonSnapshots: { orderBy: [{ financialYear: 'asc' as const }, { name: 'asc' as const }] },
@@ -83,11 +84,26 @@ const jobOrderInclude = {
       attemptNumber: true,
       batchNumber: true,
       inspectedQuantity: true,
+      sampleJobOrderLineSizeId: true,
+      sampleQuantity: true,
       status: true,
       version: true,
       outcome: true,
       startedAt: true,
       finalizedAt: true,
+      startedBy: { select: { id: true, name: true, email: true } },
+      finalizedBy: { select: { id: true, name: true, email: true } },
+      ppSampleSession: {
+        select: {
+          id: true,
+          forms: {
+            select: {
+              id: true,
+              jobOrderLineSize: { select: { size: { select: { code: true, label: true } } } },
+            },
+          },
+        },
+      },
     },
     orderBy: [{ attemptNumber: 'desc' as const }, { batchNumber: 'desc' as const }],
   },
@@ -215,7 +231,7 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
   );
   const definitions = jobOrder.processFlowVersion.stages;
   return definitions
-    .filter((activity) => activity.activityType === 'QUALITY')
+    .filter((activity) => activity.status === 'ACTIVE' && activity.activityType === 'QUALITY')
     .map((activity) => {
       const executions = jobOrder.qualityExecutions.filter(
         (item) => item.processFlowActivityId === activity.id,
@@ -237,9 +253,7 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
       let eligible = false;
       if (activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE') {
         eligible = associated?.status === 'IN_PROGRESS';
-      } else if (
-        activity.qualityAvailabilityPolicy === 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES'
-      ) {
+      } else if (activity.qualityAvailabilityPolicy === 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES') {
         eligible = associated?.status === 'COMPLETED';
       } else if (
         activity.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE' &&
@@ -280,6 +294,17 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
       const preparedQuantityAuthoritative = jobOrder.preparedQuantityTotal > 0;
       const reconciliationConflict =
         preparedQuantityAuthoritative && finalizedInspected > jobOrder.preparedQuantityTotal;
+      const finalizedBatches = executions.filter((candidate) => candidate.status === 'FINALIZED');
+      const passedBatches = finalizedBatches.filter(
+        (candidate) => candidate.outcome === 'PASS',
+      ).length;
+      const failedBatches = finalizedBatches.filter(
+        (candidate) => candidate.outcome === 'FAIL',
+      ).length;
+      const missed =
+        executions.length === 0 &&
+        activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' &&
+        associated?.status === 'COMPLETED';
       const formVersion = activity.qualityFormVersion!;
       return {
         processFlowVersionStageId: activity.id,
@@ -288,14 +313,17 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
         status: execution
           ? execution.status === 'DRAFT'
             ? ('IN_PROGRESS' as const)
-            : activity.gateSatisfactionRequirement === 'OUTCOME_PASS' && execution.outcome !== 'PASS'
+            : activity.gateSatisfactionRequirement === 'OUTCOME_PASS' &&
+                execution.outcome !== 'PASS'
               ? ('FAILED' as const)
               : activity.executionMultiplicity === 'BATCHED' && !coverageComplete
                 ? ('IN_PROGRESS' as const)
                 : ('COMPLETED' as const)
-          : eligible
-            ? ('AVAILABLE' as const)
-            : ('NOT_AVAILABLE' as const),
+          : missed
+            ? ('MISSED' as const)
+            : eligible
+              ? ('AVAILABLE' as const)
+              : ('NOT_AVAILABLE' as const),
         eligible,
         qualityForm: { ...formVersion.qualityForm, executionScope: formVersion.executionScope },
         qualityFormVersion: { id: formVersion.id, versionNumber: formVersion.versionNumber },
@@ -322,6 +350,16 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
                   : null,
                 complete: coverageComplete,
                 reconciliationConflict,
+                state: reconciliationConflict
+                  ? ('CONFLICT' as const)
+                  : coverageComplete
+                    ? ('COMPLETE' as const)
+                    : preparedQuantityAuthoritative
+                      ? ('IN_PROGRESS' as const)
+                      : ('UNKNOWN' as const),
+                passedBatches,
+                failedBatches,
+                hasFailedBatches: failedBatches > 0,
                 batches: executions.map((candidate) => ({
                   id: candidate.id,
                   batchNumber: candidate.batchNumber,
@@ -345,6 +383,24 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
               finalizedAt: execution.finalizedAt?.toISOString() ?? null,
             }
           : null,
+        executionHistory: executions.map((candidate) => ({
+          id: candidate.id,
+          attemptNumber: candidate.attemptNumber,
+          batchNumber: candidate.batchNumber,
+          inspectedQuantity: candidate.inspectedQuantity,
+          sampleJobOrderLineSizeId: candidate.sampleJobOrderLineSizeId,
+          sampleQuantity: candidate.sampleQuantity,
+          sampleSizeCode: candidate.ppSampleSession?.forms[0]?.jobOrderLineSize.size.code ?? null,
+          sampleSizeLabel: candidate.ppSampleSession?.forms[0]?.jobOrderLineSize.size.label ?? null,
+          ppSampleSessionId: candidate.ppSampleSession?.id ?? null,
+          ppSampleFormId: candidate.ppSampleSession?.forms[0]?.id ?? null,
+          status: candidate.status,
+          outcome: candidate.outcome,
+          startedBy: candidate.startedBy,
+          finalizedBy: candidate.finalizedBy,
+          startedAt: candidate.startedAt.toISOString(),
+          finalizedAt: candidate.finalizedAt?.toISOString() ?? null,
+        })),
       };
     });
 }
@@ -708,6 +764,36 @@ export async function getJobOrderDetail(user: CurrentUser, id: string) {
   return toJobOrderView(jobOrder);
 }
 
+export async function getProcessFlowQualityWork(user: CurrentUser) {
+  if (!canPerformQaOperation(user))
+    throw HttpError.forbidden('Only QA operations users may view Process Flow Quality work');
+  const jobs = await prisma.jobOrder.findMany({
+    where: {
+      factoryConfirmationStatus: 'CONFIRMED',
+      processFlowVersion: {
+        stages: { some: { status: 'ACTIVE', activityType: 'QUALITY' } },
+      },
+    },
+    include: jobOrderInclude,
+    orderBy: { updatedAt: 'desc' },
+    take: 100,
+  });
+  return jobs.flatMap((job) =>
+    toQualityActivityViews(job)
+      .filter(
+        (activity) =>
+          activity.status !== 'NOT_AVAILABLE' || activity.coverage?.reconciliationConflict === true,
+      )
+      .map((activity) => ({
+        jobOrderId: job.id,
+        jobOrderNumber: job.jobOrderNumber,
+        purchaseOrderNumber: job.purchaseOrder.poNumber,
+        factory: job.factory,
+        activity,
+      })),
+  );
+}
+
 export async function createJobOrderFromPO(
   actor: CurrentUser,
   input: {
@@ -733,12 +819,13 @@ export async function createJobOrderFromPO(
     prisma.factory.findUnique({ where: { id: input.factoryId } }),
     prisma.processFlowVersion.findUnique({
       where: { id: input.processFlowVersionId },
-      select: {
-        status: true,
+      include: {
         stages: {
-          where: { activityType: 'QUALITY' },
-          select: { id: true },
-          take: 1,
+          include: {
+            qualityFormVersion: {
+              include: { sections: { include: { components: true } } },
+            },
+          },
         },
       },
     }),
@@ -755,11 +842,11 @@ export async function createJobOrderFromPO(
   if (!processFlowVersion) throw HttpError.badRequest('Process flow version not found');
   if (processFlowVersion.status !== 'ACTIVE')
     throw HttpError.badRequest('Process flow version must be ACTIVE');
-  if (processFlowVersion.stages.length > 0) {
+  const runtimeSupport = evaluateProcessFlowRuntimeSupport(processFlowVersion);
+  if (!runtimeSupport.supported)
     throw HttpError.badRequest(
-      'Quality-enabled Process Flow versions cannot be assigned to Job Orders until Quality activity execution is available',
+      `Process Flow version is not supported by the Job Order runtime: ${runtimeSupport.reasons.join(' ')}`,
     );
-  }
 
   const poLinesById = new Map(po.lines.map((line) => [line.id, line]));
   const poSizesById = new Map(
@@ -1093,12 +1180,12 @@ export async function confirmJobOrder(
       data: jobOrder.processFlowVersion.stages
         .filter((stage) => stage.activityType === 'PRODUCTION')
         .map((stage) => ({
-        id: createId(),
-        jobOrderId: id,
-        processFlowVersionStageId: stage.id,
-        stageSequence: stage.sequence,
-        stageNameSnapshot: stage.name,
-        completedQuantity: 0,
+          id: createId(),
+          jobOrderId: id,
+          processFlowVersionStageId: stage.id,
+          stageSequence: stage.sequence,
+          stageNameSnapshot: stage.name,
+          completedQuantity: 0,
         })),
       skipDuplicates: true,
     });
@@ -1203,12 +1290,13 @@ export async function completeProductionStage(
       ),
   );
   if (unsatisfiedGate)
-    throw HttpError.conflict('Production is locked pending completion of the pre-production Quality gate');
+    throw HttpError.conflict(
+      'Production is locked pending completion of the pre-production Quality gate',
+    );
   if (nextStage.id !== input.stageStatusId)
     throw HttpError.badRequest('Production stages must be completed in sequence');
   const plannedQuantity = jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
-  const isFinalStage =
-    nextStage.id === blockingStages[blockingStages.length - 1]?.id;
+  const isFinalStage = nextStage.id === blockingStages[blockingStages.length - 1]?.id;
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
@@ -1296,9 +1384,7 @@ export async function startProductionStage(
   if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
   if (!['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status))
     throw HttpError.badRequest('Production stages can only be started after factory confirmation');
-  const nextStage = jobOrder.stageStatuses.find(
-    (stage) => stage.status !== 'COMPLETED',
-  );
+  const nextStage = jobOrder.stageStatuses.find((stage) => stage.status !== 'COMPLETED');
   if (!nextStage) throw HttpError.badRequest('All production stages are already completed');
   const unsatisfiedGate = jobOrder.processFlowVersion.stages.find(
     (stage) =>
@@ -1313,7 +1399,9 @@ export async function startProductionStage(
       ),
   );
   if (unsatisfiedGate)
-    throw HttpError.conflict('Production is locked pending completion of the pre-production Quality gate');
+    throw HttpError.conflict(
+      'Production is locked pending completion of the pre-production Quality gate',
+    );
   if (nextStage.id !== input.stageStatusId)
     throw HttpError.badRequest('Production stages must be started in sequence');
 
@@ -1531,7 +1619,10 @@ export async function updatePreparedQuantity(
   }
   const jobOrder = await prisma.jobOrder.findUnique({
     where: { id },
-    include: { lines: { include: { sizes: true } } },
+    include: {
+      lines: { include: { sizes: true } },
+      processFlowVersion: { include: { stages: true } },
+    },
   });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
   assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
@@ -1547,6 +1638,14 @@ export async function updatePreparedQuantity(
     jobOrder.lines.flatMap((line) => line.sizes.map((size) => size.id)),
   );
   const seenSizeIds = new Set<string>();
+  const usesProcessFlowFinal = jobOrder.processFlowVersion.stages.some(
+    (stage) =>
+      stage.status === 'ACTIVE' &&
+      stage.activityType === 'QUALITY' &&
+      stage.qualityExecutionMode === 'IN_PROCESS' &&
+      stage.executionMultiplicity === 'BATCHED' &&
+      stage.coverageTarget === 'PREPARED_QUANTITY',
+  );
   for (const size of input.sizes) {
     if (!allowedSizeIds.has(size.jobOrderLineSizeId)) {
       throw HttpError.badRequest('Prepared quantity line size does not belong to this job order');
@@ -1592,7 +1691,10 @@ export async function updatePreparedQuantity(
       );
       await tx.jobOrderLine.update({
         where: { id: line.id },
-        data: { preparedQuantityTotal, status: 'READY_FOR_QA' },
+        data: {
+          preparedQuantityTotal,
+          status: usesProcessFlowFinal ? 'PRODUCTION_COMPLETE' : 'READY_FOR_QA',
+        },
       });
     }
 
@@ -1603,7 +1705,11 @@ export async function updatePreparedQuantity(
     );
     const updated = await tx.jobOrder.update({
       where: { id },
-      data: { preparedQuantityTotal, status: 'READY_FOR_QA', version: { increment: 1 } },
+      data: {
+        preparedQuantityTotal,
+        status: usesProcessFlowFinal ? 'PRODUCTION_COMPLETE' : 'READY_FOR_QA',
+        version: { increment: 1 },
+      },
     });
     await recordAuditLog(
       {

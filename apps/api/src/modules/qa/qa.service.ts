@@ -547,7 +547,10 @@ export async function saveSizeInspectionForm(
   await prisma.$transaction(async (tx) => {
     const form = await tx.qaSizeInspectionForm.findUnique({
       where: { id: formId },
-      include: { session: { include: { jobOrder: true, qualityActivityExecution: true } }, checklist: true },
+      include: {
+        session: { include: { jobOrder: true, qualityActivityExecution: true } },
+        checklist: true,
+      },
     });
     if (!form || form.inspectionSessionId !== sessionId)
       throw HttpError.notFound('Size inspection form not found');
@@ -573,6 +576,7 @@ export async function saveSizeInspectionForm(
       where: {
         id: { not: formId },
         jobOrderLineSizeId: form.jobOrderLineSizeId,
+        inspectionSessionId: form.session.qualityActivityExecution ? sessionId : undefined,
         status: { in: ['DRAFT', 'FINALIZED'] },
       },
     });
@@ -582,9 +586,9 @@ export async function saveSizeInspectionForm(
     const capacity = form.session.qualityActivityExecution
       ? form.session.qualityActivityExecution.sampleQuantity!
       : form.sourceReworkTaskId
-      ? (await tx.qaReworkTask.findUniqueOrThrow({ where: { id: form.sourceReworkTaskId } }))
-          .assignedQuantity
-      : size.preparedQuantity;
+        ? (await tx.qaReworkTask.findUniqueOrThrow({ where: { id: form.sourceReworkTaskId } }))
+            .assignedQuantity
+        : size.preparedQuantity;
     if (consumed + input.inspectedQuantity > capacity)
       throw HttpError.badRequest('Inspection exceeds quantity available for this size', {
         issues: [
@@ -681,7 +685,12 @@ export async function finalizeSizeInspectionForm(
       where: { id: formId },
       include: {
         checklist: true,
-        session: { include: { jobOrder: true, qualityActivityExecution: { include: { processFlowActivity: true } } } },
+        session: {
+          include: {
+            jobOrder: true,
+            qualityActivityExecution: { include: { processFlowActivity: true } },
+          },
+        },
       },
     });
     if (!form || form.inspectionSessionId !== sessionId)
@@ -703,13 +712,13 @@ export async function finalizeSizeInspectionForm(
     const capacity = ppExecution
       ? ppExecution.sampleQuantity!
       : form.sourceReworkTaskId
-      ? (await tx.qaReworkTask.findUniqueOrThrow({ where: { id: form.sourceReworkTaskId } }))
-          .assignedQuantity
-      : (
-          await tx.jobOrderLineSize.findUniqueOrThrow({
-            where: { id: form.jobOrderLineSizeId },
-          })
-        ).preparedQuantity;
+        ? (await tx.qaReworkTask.findUniqueOrThrow({ where: { id: form.sourceReworkTaskId } }))
+            .assignedQuantity
+        : (
+            await tx.jobOrderLineSize.findUniqueOrThrow({
+              where: { id: form.jobOrderLineSizeId },
+            })
+          ).preparedQuantity;
     const incomplete: Array<{ field: string; message: string }> = [];
     if (form.sampleQuantity === null)
       incomplete.push({ field: 'sampleQuantity', message: 'Sample quantity is required.' });
@@ -813,6 +822,7 @@ export async function finalizeSizeInspectionForm(
             jobOrderLineSizeId: ppExecution.sampleJobOrderLineSizeId,
             sampleQuantity: ppExecution.sampleQuantity,
             decision: input.ppSampleDecision,
+            cycleNumber: ppExecution.attemptNumber,
           },
         },
         tx,
@@ -899,7 +909,7 @@ export async function reopenSizeInspectionForm(
     if (await replayOrLock(tx, user.id, jobOrderId, 'QA_FORM_REOPEN', key, requestHash)) return;
     if (form.session.qualityActivityExecutionId)
       throw HttpError.conflict(
-        'Process Flow PP Sample decisions are immutable; retry is not implemented',
+        'Process Flow PP Sample decisions are immutable; start a new PP Sample cycle instead',
       );
     if (form.session.jobOrder.status === 'QA_APPROVED')
       throw HttpError.conflict('Approved QA cannot be reopened after downstream release');

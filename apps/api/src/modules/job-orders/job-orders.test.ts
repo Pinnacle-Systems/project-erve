@@ -686,7 +686,7 @@ describe('job orders API', () => {
         (item: { processFlowVersionStageId: string }) =>
           item.processFlowVersionStageId === inline.id,
       ).status,
-    ).toBe('NOT_AVAILABLE');
+    ).toBe('MISSED');
     expect(
       sewingCompleted.body.data.qualityActivities.find(
         (item: { processFlowVersionStageId: string }) =>
@@ -720,7 +720,46 @@ describe('job orders API', () => {
       ).qualityFormVersion,
     ).toEqual({ id: formV1.id, versionNumber: 1 });
   });
-  it('rejects assignment of a Quality-enabled Process Flow until Quality runtime exists', async () => {
+  it('assigns a semantically supported Quality-enabled Process Flow without starting Quality work', async () => {
+    const graph = await createSeedGraph();
+    const qualityForm = await prisma.qualityForm.create({
+      data: { id: createId(), code: 'SUPPORTED_PPM', name: 'Consolidated pre-production report' },
+    });
+    const qualityFormVersion = await prisma.qualityFormVersion.create({
+      data: {
+        id: createId(),
+        qualityFormId: qualityForm.id,
+        versionNumber: 1,
+        activityType: 'MEETING',
+        executionScope: 'JOB_ORDER',
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
+      },
+    });
+    await prisma.processFlowVersionStage.create({
+      data: {
+        id: createId(),
+        processFlowVersionId: graph.processFlowVersionId,
+        sequence: 3,
+        name: 'Pre-Production Report',
+        activityType: 'QUALITY',
+        qualityFormVersionId: qualityFormVersion.id,
+        qualityExecutionMode: 'SEQUENTIAL_GATE',
+        gateSatisfactionRequirement: 'FINALIZED',
+        executionMultiplicity: 'SINGLE',
+      },
+    });
+
+    const response = await createJobOrder(graph.admin.token, graph);
+    expect(response.status).toBe(201);
+    expect(response.body.data.qualityActivities).toHaveLength(1);
+    expect(response.body.data.qualityActivities[0].status).toBe('NOT_AVAILABLE');
+    expect(
+      await prisma.qualityActivityExecution.count({ where: { jobOrderId: response.body.data.id } }),
+    ).toBe(0);
+  });
+
+  it('rejects assignment of an unsupported Quality-enabled Process Flow with an actionable reason', async () => {
     const graph = await createSeedGraph();
     const qualityForm = await prisma.qualityForm.create({
       data: { id: createId(), code: 'JO_QUALITY_GUARD', name: 'Job Order Quality Guard' },
@@ -754,7 +793,7 @@ describe('job orders API', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error.message).toContain(
-      'cannot be assigned to Job Orders until Quality activity execution is available',
+      'Quality activity "Quality Gate" uses an unsupported runtime pattern',
     );
     expect(await prisma.jobOrder.count()).toBe(0);
   });

@@ -51,7 +51,7 @@ async function flush() {
 }
 
 describe('Job Order Process Flow assignment', () => {
-  it('disables Quality-enabled versions and explains the temporary runtime guard', async () => {
+  it('selects supported Production and Quality versions and explains unsupported versions', async () => {
     apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
       if (config.url === '/factories') return ok(config, { success: true, data: [] });
       if (config.url === '/process-flows')
@@ -70,6 +70,7 @@ describe('Job Order Process Flow assignment', () => {
                   versionNumber: 1,
                   status: 'ACTIVE',
                   hasQualityActivities: false,
+                  runtimeSupport: { supported: true, reasons: [] },
                   effectiveFrom: null,
                   createdAt: '2026-01-01T00:00:00.000Z',
                 },
@@ -89,12 +90,38 @@ describe('Job Order Process Flow assignment', () => {
                   versionNumber: 2,
                   status: 'ACTIVE',
                   hasQualityActivities: true,
+                  runtimeSupport: { supported: true, reasons: [] },
                   effectiveFrom: null,
                   createdAt: '2026-01-02T00:00:00.000Z',
                 },
               ],
               createdAt: '2026-01-01T00:00:00.000Z',
               updatedAt: '2026-01-02T00:00:00.000Z',
+            },
+            {
+              id: 'flow-unsupported',
+              code: 'FUTURE',
+              name: 'External Audit Flow',
+              description: null,
+              status: 'ACTIVE',
+              versions: [
+                {
+                  id: 'version-unsupported',
+                  versionNumber: 1,
+                  status: 'ACTIVE',
+                  hasQualityActivities: true,
+                  runtimeSupport: {
+                    supported: false,
+                    reasons: [
+                      'Quality activity "External Audit" uses an unsupported runtime pattern.',
+                    ],
+                  },
+                  effectiveFrom: null,
+                  createdAt: '2026-01-03T00:00:00.000Z',
+                },
+              ],
+              createdAt: '2026-01-03T00:00:00.000Z',
+              updatedAt: '2026-01-03T00:00:00.000Z',
             },
           ],
         });
@@ -118,7 +145,7 @@ describe('Job Order Process Flow assignment', () => {
     await flush();
 
     expect(container.textContent).toContain(
-      'Quality-enabled versions are unavailable until Job Order Quality activity execution is implemented.',
+      'Unsupported versions remain configurable in Process Flow Master but cannot be assigned to new Job Orders.',
     );
     const trigger = container.querySelector<HTMLButtonElement>('#select-process-flow-version');
     expect(trigger).not.toBeNull();
@@ -130,8 +157,12 @@ describe('Job Order Process Flow assignment', () => {
       option.textContent?.includes('Production Only v1'),
     );
     const qualityOption = options.find((option) => option.textContent?.includes('Quality Flow v2'));
+    const unsupportedOption = options.find((option) =>
+      option.textContent?.includes('External Audit Flow v1'),
+    );
     expect(productionOption?.getAttribute('data-disabled')).toBeNull();
-    expect(qualityOption?.getAttribute('data-disabled')).not.toBeNull();
-    expect(qualityOption?.textContent).toContain('Quality runtime pending');
+    expect(qualityOption?.getAttribute('data-disabled')).toBeNull();
+    expect(unsupportedOption?.getAttribute('data-disabled')).not.toBeNull();
+    expect(unsupportedOption?.textContent).toContain('External Audit');
   });
 });

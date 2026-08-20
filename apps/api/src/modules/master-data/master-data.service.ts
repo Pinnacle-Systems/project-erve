@@ -13,6 +13,7 @@ import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { toStyleImageView } from './style-images.service.js';
+import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 
 const styleInclude = {
   styleSeasons: { include: { season: true }, orderBy: { season: { name: 'asc' } } },
@@ -29,6 +30,13 @@ const processFlowInclude = {
     orderBy: { versionNumber: 'desc' },
     include: {
       _count: { select: { stages: { where: { activityType: 'QUALITY' } } } },
+      stages: {
+        include: {
+          qualityFormVersion: {
+            include: { sections: { include: { components: true } } },
+          },
+        },
+      },
     },
   },
 } satisfies Prisma.ProcessFlowInclude;
@@ -114,14 +122,18 @@ function toProcessFlowView(flow: ProcessFlowRecord) {
     name: flow.name,
     description: flow.description,
     status: flow.status,
-    versions: flow.versions.map((version) => ({
-      id: version.id,
-      versionNumber: version.versionNumber,
-      status: version.status,
-      hasQualityActivities: version._count.stages > 0,
-      effectiveFrom: version.effectiveFrom,
-      createdAt: version.createdAt,
-    })),
+    versions: flow.versions.map((version) => {
+      const runtimeSupport = evaluateProcessFlowRuntimeSupport(version);
+      return {
+        id: version.id,
+        versionNumber: version.versionNumber,
+        status: version.status,
+        hasQualityActivities: version._count.stages > 0,
+        runtimeSupport,
+        effectiveFrom: version.effectiveFrom,
+        createdAt: version.createdAt,
+      };
+    }),
     createdAt: flow.createdAt,
     updatedAt: flow.updatedAt,
   };
