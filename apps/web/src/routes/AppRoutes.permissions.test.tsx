@@ -21,6 +21,15 @@ vi.mock('../pages/ForbiddenPage.js', () => ({ ForbiddenPage: () => <div>Forbidde
 vi.mock('../pages/master-data/FactoryListPage.js', () => ({
   FactoryListPage: () => <div>FactoryListPage</div>,
 }));
+vi.mock('../pages/master-data/DistributorListPage.js', () => ({
+  DistributorListPage: () => <div>DistributorListPage</div>,
+}));
+vi.mock('../pages/master-data/DistributorDetailPage.js', () => ({
+  DistributorDetailPage: () => <div>DistributorDetailPage</div>,
+}));
+vi.mock('../pages/master-data/DistributorFormPage.js', () => ({
+  DistributorFormPage: () => <div>DistributorFormPage</div>,
+}));
 vi.mock('../pages/purchase-orders/PurchaseOrderListPage.js', () => ({
   PurchaseOrderListPage: () => <div>PurchaseOrderListPage</div>,
 }));
@@ -110,6 +119,19 @@ function getPageContent(): string {
 }
 
 describe('AppRoutes Permissions', () => {
+  it.each([
+    ['ADMIN', true],
+    ['MERCHANDISER', true],
+    ['FACTORY_USER', false],
+    ['QA_USER', false],
+    ['DISTRIBUTOR', false],
+  ] as const)('allows distributor maintenance routes for %s = %s', async (role, allowed) => {
+    for (const path of ['/master-data/distributors/new', '/master-data/distributors/dist-1/edit']) {
+      await renderRoutes(role, path);
+      expect(getPageContent()).toContain(allowed ? 'DistributorFormPage' : 'ForbiddenPage');
+    }
+  });
+
   describe('FACTORY_USER', () => {
     it("can access the factory list, where the API applies the user's factory scope", async () => {
       await renderRoutes('FACTORY_USER', '/master-data/factories');

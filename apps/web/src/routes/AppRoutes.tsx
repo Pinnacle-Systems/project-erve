@@ -44,6 +44,7 @@ import { QualityExecutionPage } from '../pages/qa/QualityExecutionPage.js';
 
 import {
   DISTRIBUTOR_VIEW_ROLES,
+  DISTRIBUTOR_MANAGE_ROLES,
   FACTORY_VIEW_ROLES,
   FACTORY_MANAGE_ROLES,
   JOB_ORDER_CREATE_ROLES,
@@ -177,7 +178,7 @@ export function AppRoutes() {
         <Route
           path="distributors/new"
           element={
-            <RoleRoute allowed={['ADMIN']}>
+            <RoleRoute allowed={DISTRIBUTOR_MANAGE_ROLES}>
               <DistributorFormPage />
             </RoleRoute>
           }
@@ -193,7 +194,7 @@ export function AppRoutes() {
         <Route
           path="distributors/:id/edit"
           element={
-            <RoleRoute allowed={['ADMIN']}>
+            <RoleRoute allowed={DISTRIBUTOR_MANAGE_ROLES}>
               <DistributorFormPage />
             </RoleRoute>
           }

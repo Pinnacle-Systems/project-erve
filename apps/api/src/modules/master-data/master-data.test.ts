@@ -27,9 +27,19 @@ async function createSize(code = 'AGE_3') {
   });
 }
 
-async function createActiveSeason(overrides?: Partial<{ code: string; name: string; financialYear: string }>) {
+async function createActiveSeason(
+  overrides?: Partial<{ code: string; name: string; financialYear: string }>,
+) {
   const suffix = createId().slice(-6);
-  return prisma.season.create({ data: { id: createId(), code: `T-${suffix}`, name: `Test Season ${suffix}`, financialYear: '26-27', ...overrides } });
+  return prisma.season.create({
+    data: {
+      id: createId(),
+      code: `T-${suffix}`,
+      name: `Test Season ${suffix}`,
+      financialYear: '26-27',
+      ...overrides,
+    },
+  });
 }
 
 async function createStyle(token: string, overrides?: Record<string, unknown>) {
@@ -159,26 +169,82 @@ describe('styles API', () => {
 
 describe('seasons API', () => {
   it('allows management roles to create, read, update and toggle Seasons', async () => {
-    const { token } = await createTestUserAndToken({ email: 'season-admin@test.local', password: 'password', roles: ['ADMIN'] });
-    const created = await request(app).post('/seasons').set('Authorization', `Bearer ${token}`).send({ code: ' aw-core ', name: ' Autumn/Winter ', financialYear: '26-27' });
+    const { token } = await createTestUserAndToken({
+      email: 'season-admin@test.local',
+      password: 'password',
+      roles: ['ADMIN'],
+    });
+    const created = await request(app)
+      .post('/seasons')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: ' aw-core ', name: ' Autumn/Winter ', financialYear: '26-27' });
     expect(created.status).toBe(201);
-    expect(created.body.data).toMatchObject({ code: 'AW-CORE', name: 'Autumn/Winter', financialYear: '26-27', displayName: 'AW-CORE 26-27' });
-    const read = await request(app).get(`/seasons/${created.body.data.id}`).set('Authorization', `Bearer ${token}`);
+    expect(created.body.data).toMatchObject({
+      code: 'AW-CORE',
+      name: 'Autumn/Winter',
+      financialYear: '26-27',
+      displayName: 'AW-CORE 26-27',
+    });
+    const read = await request(app)
+      .get(`/seasons/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`);
     expect(read.status).toBe(200);
-    const updated = await request(app).patch(`/seasons/${created.body.data.id}`).set('Authorization', `Bearer ${token}`).send({ name: 'Autumn Winter' });
+    const updated = await request(app)
+      .patch(`/seasons/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Autumn Winter' });
     expect(updated.body.data.name).toBe('Autumn Winter');
-    const inactive = await request(app).patch(`/seasons/${created.body.data.id}/status`).set('Authorization', `Bearer ${token}`).send({ status: 'INACTIVE' });
+    const inactive = await request(app)
+      .patch(`/seasons/${created.body.data.id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'INACTIVE' });
     expect(inactive.body.data.status).toBe('INACTIVE');
   });
 
   it('enforces configurable code/year identity and Season-management authorization', async () => {
-    const admin = await createTestUserAndToken({ email: 'season-admin@test.local', password: 'password', roles: ['ADMIN'] });
-    const factory = await createTestUserAndToken({ email: 'season-factory@test.local', password: 'password', roles: ['FACTORY_USER'] });
+    const admin = await createTestUserAndToken({
+      email: 'season-admin@test.local',
+      password: 'password',
+      roles: ['ADMIN'],
+    });
+    const factory = await createTestUserAndToken({
+      email: 'season-factory@test.local',
+      password: 'password',
+      roles: ['FACTORY_USER'],
+    });
     const payload = { code: 'custom-1', name: 'Shared descriptive name', financialYear: '26-27' };
-    expect((await request(app).post('/seasons').set('Authorization', `Bearer ${admin.token}`).send(payload)).status).toBe(201);
-    expect((await request(app).post('/seasons').set('Authorization', `Bearer ${admin.token}`).send({ ...payload, code: 'CUSTOM-2' })).status).toBe(201);
-    expect((await request(app).post('/seasons').set('Authorization', `Bearer ${admin.token}`).send({ ...payload, code: 'custom-1' })).status).toBe(409);
-    expect((await request(app).post('/seasons').set('Authorization', `Bearer ${factory.token}`).send(payload)).status).toBe(403);
+    expect(
+      (
+        await request(app)
+          .post('/seasons')
+          .set('Authorization', `Bearer ${admin.token}`)
+          .send(payload)
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await request(app)
+          .post('/seasons')
+          .set('Authorization', `Bearer ${admin.token}`)
+          .send({ ...payload, code: 'CUSTOM-2' })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await request(app)
+          .post('/seasons')
+          .set('Authorization', `Bearer ${admin.token}`)
+          .send({ ...payload, code: 'custom-1' })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await request(app)
+          .post('/seasons')
+          .set('Authorization', `Bearer ${factory.token}`)
+          .send(payload)
+      ).status,
+    ).toBe(403);
     expect((await request(app).get('/seasons')).status).toBe(401);
   });
 });
@@ -971,28 +1037,37 @@ describe('distributors API', () => {
     expect(audit?.actorId).toBe(userId);
   });
 
-  it('rejects non-ADMIN roles from creating, updating, or changing distributor status', async () => {
-    const { token: merchToken } = await createTestUserAndToken({
-      email: 'merch@test.local',
-      password: 'merch-password',
-      roles: ['MERCHANDISER'],
-    });
-    const distributor = await createTestDistributor();
+  it.each([
+    ['ADMIN', 201, 200],
+    ['MERCHANDISER', 201, 200],
+    ['FACTORY_USER', 403, 403],
+    ['QA_USER', 403, 403],
+    ['DISTRIBUTOR', 403, 403],
+  ] as const)(
+    'applies distributor mutation permissions for %s',
+    async (role, expectedCreateStatus, expectedUpdateStatus) => {
+      const { token } = await createTestUserAndToken({
+        email: `${role.toLowerCase()}@test.local`,
+        password: 'test-password',
+        roles: [role],
+      });
+      const distributor = await createTestDistributor();
 
-    const created = await createDistributorViaApi(merchToken);
-    const updated = await request(app)
-      .patch(`/distributors/${distributor.id}`)
-      .set('Authorization', `Bearer ${merchToken}`)
-      .send({ name: 'Renamed' });
-    const statusChanged = await request(app)
-      .patch(`/distributors/${distributor.id}/status`)
-      .set('Authorization', `Bearer ${merchToken}`)
-      .send({ status: 'INACTIVE' });
+      const created = await createDistributorViaApi(token);
+      const updated = await request(app)
+        .patch(`/distributors/${distributor.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Renamed' });
+      const statusChanged = await request(app)
+        .patch(`/distributors/${distributor.id}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'INACTIVE' });
 
-    expect(created.status).toBe(403);
-    expect(updated.status).toBe(403);
-    expect(statusChanged.status).toBe(403);
-  });
+      expect(created.status).toBe(expectedCreateStatus);
+      expect(updated.status).toBe(expectedUpdateStatus);
+      expect(statusChanged.status).toBe(expectedUpdateStatus);
+    },
+  );
 
   it('validates required fields and rejects duplicate code or name', async () => {
     const { token } = await createAdmin();

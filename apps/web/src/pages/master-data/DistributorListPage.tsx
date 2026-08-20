@@ -7,19 +7,26 @@ import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { canManageDistributorMaster } from '../../auth/permissions.js';
 import type { DistributorSummary, Status } from './types.js';
 
 export function DistributorListPage() {
   const { user } = useAuth();
-  const canManage = user?.roles.includes('ADMIN') ?? false;
+  const canManage = canManageDistributorMaster(user);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<Status | ''>('');
-  const params = useMemo(() => ({ search: search || undefined, status: status || undefined }), [search, status]);
+  const params = useMemo(
+    () => ({ search: search || undefined, status: status || undefined }),
+    [search, status],
+  );
 
   const distributorsQuery = useQuery({
     queryKey: ['distributors', params],
     queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<DistributorSummary[]>>('/distributors', { params });
+      const response = await apiClient.get<ApiSuccessResponse<DistributorSummary[]>>(
+        '/distributors',
+        { params },
+      );
       return response.data.data;
     },
   });
@@ -71,23 +78,38 @@ export function DistributorListPage() {
             ),
           },
           { key: 'name', header: 'Name', accessor: 'name' },
-          { key: 'contactName', header: 'Contact', render: (distributor) => distributor.contactName ?? '—' },
+          {
+            key: 'contactName',
+            header: 'Contact',
+            render: (distributor) => distributor.contactName ?? '—',
+          },
           { key: 'city', header: 'City', render: (distributor) => distributor.city ?? '—' },
           {
             key: 'status',
             header: 'Status',
             render: (distributor) => (
-              <StatusBadge label={distributor.status} tone={distributor.status === 'ACTIVE' ? 'success' : 'muted'} />
+              <StatusBadge
+                label={distributor.status}
+                tone={distributor.status === 'ACTIVE' ? 'success' : 'muted'}
+              />
             ),
           },
         ]}
         data={distributorsQuery.data ?? []}
         loading={distributorsQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading distributors" />}
-        emptyState={<EmptyState title="No distributors found" description="Distributor records will appear here." />}
+        emptyState={
+          <EmptyState
+            title="No distributors found"
+            description="Distributor records will appear here."
+          />
+        }
         error={
           distributorsQuery.isError ? (
-            <ErrorState title="Unable to load distributors" description={distributorsQuery.error.message} />
+            <ErrorState
+              title="Unable to load distributors"
+              description={distributorsQuery.error.message}
+            />
           ) : undefined
         }
       />
