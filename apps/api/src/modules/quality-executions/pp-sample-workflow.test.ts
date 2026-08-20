@@ -963,5 +963,118 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     expect((await prisma.jobOrder.findUniqueOrThrow({ where: { id: f.job.id } })).status).toBe(
       'PRODUCTION_COMPLETE',
     );
+
+    await prisma.auditLog.create({
+      data: {
+        id: createId(),
+        actorId: f.qa.userId,
+        action: 'QUALITY_ACTIVITY_ATTACHMENT_ADDED',
+        entityType: 'QualityActivityExecution',
+        entityId: firstFinal.id,
+        metadata: { attachmentId: createId(), requirementKey: 'measurement_sheet' },
+      },
+    });
+
+    const audit = await request(app)
+      .get(`/job-orders/${f.job.id}/audit`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    const history = audit.body.data as Array<{
+      id: string;
+      action: string;
+      createdAt: string;
+      metadata: Record<string, unknown>;
+      entityType?: string;
+      entityId?: string;
+    }>;
+    const expectedOrder = [...history].sort((left, right) => {
+      const byTime = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+      return byTime || left.id.localeCompare(right.id);
+    });
+    expect(history.map(({ id }) => id)).toEqual(expectedOrder.map(({ id }) => id));
+    expect(history.some(({ action }) => action === 'JOB_ORDER_FACTORY_CONFIRMED')).toBe(true);
+    expect(history.some(({ action }) => action === 'JOB_ORDER_STAGE_COMPLETED')).toBe(true);
+    expect(
+      history
+        .filter(({ action }) => action === 'PP_SAMPLE_FINALIZED')
+        .map(({ metadata }) => [metadata.cycleNumber, metadata.decision]),
+    ).toEqual([
+      [1, 'FAIL'],
+      [2, 'PASS'],
+    ]);
+    expect(
+      history.some(
+        ({ action, metadata }) =>
+          action === 'QUALITY_ACTIVITY_FINALIZED' &&
+          metadata.activityName === 'Size Set / Pre-Production',
+      ),
+    ).toBe(true);
+    expect(
+      history.some(
+        ({ action, metadata }) =>
+          action === 'QUALITY_ACTIVITY_FINALIZED' &&
+          metadata.activityName === 'Inline Inspection' &&
+          metadata.outcome === 'FAIL',
+      ),
+    ).toBe(true);
+    expect(
+      history
+        .filter(({ action }) => action === 'FINAL_INSPECTION_BATCH_FINALIZED')
+        .map(({ metadata }) => [
+          metadata.batchNumber,
+          metadata.inspectedQuantity,
+          metadata.outcome,
+        ]),
+    ).toEqual([
+      [1, 5, 'PASS'],
+      [2, 5, 'FAIL'],
+      [3, 10, 'PASS'],
+    ]);
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'QUALITY_ACTIVITY_ATTACHMENT_ADDED',
+          metadata: expect.objectContaining({
+            activityName: 'Final Inspection',
+            batchNumber: 1,
+            requirementKey: 'measurement_sheet',
+          }),
+        }),
+      ]),
+    );
+    expect(history.every(({ entityType, entityId }) => !entityType && !entityId)).toBe(true);
+
+    await request(app)
+      .get(`/job-orders/${f.job.id}/audit`)
+      .set('Authorization', `Bearer ${f.merchandiser.token}`)
+      .expect(200);
+    await request(app)
+      .get(`/job-orders/${f.job.id}/audit`)
+      .set('Authorization', `Bearer ${f.factoryUser.token}`)
+      .expect(200);
+
+    const wrongFactoryUser = await createTestUserAndToken({
+      email: `wrong-factory-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    const wrongFactory = await createTestFactory();
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: wrongFactoryUser.userId, factoryId: wrongFactory.id },
+    });
+    await request(app)
+      .get(`/job-orders/${f.job.id}/audit`)
+      .set('Authorization', `Bearer ${wrongFactoryUser.token}`)
+      .expect(403);
+
+    const distributorUser = await createTestUserAndToken({
+      email: `distributor-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['DISTRIBUTOR'],
+    });
+    await request(app)
+      .get(`/job-orders/${f.job.id}/audit`)
+      .set('Authorization', `Bearer ${distributorUser.token}`)
+      .expect(403);
   }, 30_000);
 });

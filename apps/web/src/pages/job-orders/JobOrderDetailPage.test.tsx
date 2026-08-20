@@ -398,6 +398,38 @@ describe('JobOrderDetailPage audit history', () => {
     expect(content()).toContain('Production stage completed — Cutting');
     expect(content()).toContain('Production stage completed — Printing');
   });
+
+  it('renders Quality attempts, outcomes, batches, and attachments in the same history', async () => {
+    await renderPage('IN_PRODUCTION', standardStages, [
+      audit('pp-fail', { attemptNumber: 1, decision: 'FAIL' }, 'PP_SAMPLE_FINALIZED'),
+      audit('pp-pass', { attemptNumber: 2, decision: 'PASS' }, 'PP_SAMPLE_FINALIZED'),
+      audit('ppm', { activityName: 'Size Set / Pre-Production' }, 'QUALITY_ACTIVITY_FINALIZED'),
+      audit('cutting', { stageName: 'Cutting' }),
+      audit(
+        'final-pass',
+        { activityName: 'Final Inspection', batchNumber: 1, outcome: 'PASS' },
+        'FINAL_INSPECTION_BATCH_FINALIZED',
+      ),
+      audit(
+        'attachment',
+        { activityName: 'Final Inspection', batchNumber: 2, requirementKey: 'measurement_sheet' },
+        'QUALITY_ACTIVITY_ATTACHMENT_ADDED',
+      ),
+      audit(
+        'final-fail',
+        { activityName: 'Final Inspection', batchNumber: 2, outcome: 'FAIL' },
+        'FINAL_INSPECTION_BATCH_FINALIZED',
+      ),
+    ]);
+
+    expect(content()).toContain('PP Sample attempt 1 finalized — FAIL');
+    expect(content()).toContain('PP Sample attempt 2 finalized — PASS');
+    expect(content()).toContain('Size Set / Pre-Production finalized');
+    expect(content()).toContain('Production stage completed — Cutting');
+    expect(content()).toContain('Final Inspection batch 1 finalized — PASS');
+    expect(content()).toContain('Final Inspection batch 2 attachment added — Measurement sheet');
+    expect(content()).toContain('Final Inspection batch 2 finalized — FAIL');
+  });
 });
 
 describe('JobOrderDetailPage stage completion mutation', () => {

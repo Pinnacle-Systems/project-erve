@@ -31,10 +31,84 @@ function sentenceCaseAction(action: string): string {
   return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : 'Unknown event';
 }
 
+function auditMetadata(metadata: unknown): Record<string, unknown> {
+  return metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)
+    : {};
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function withOutcome(title: string, metadata: Record<string, unknown>): string {
+  const outcome = nonEmptyString(metadata.outcome) ?? nonEmptyString(metadata.decision);
+  return outcome ? `${title} — ${outcome}` : title;
+}
+
+function activityTitle(metadata: Record<string, unknown>, fallback: string): string {
+  return nonEmptyString(metadata.activityName) ?? fallback;
+}
+
+function attemptTitle(metadata: Record<string, unknown>): string {
+  const attempt = positiveInteger(metadata.attemptNumber) ?? positiveInteger(metadata.cycleNumber);
+  return attempt ? `PP Sample attempt ${attempt}` : 'PP Sample';
+}
+
+function finalBatchTitle(metadata: Record<string, unknown>): string {
+  const batch = positiveInteger(metadata.batchNumber);
+  return batch ? `Final Inspection batch ${batch}` : 'Final Inspection batch';
+}
+
+function attachmentRequirement(metadata: Record<string, unknown>): string | undefined {
+  const requirement = nonEmptyString(metadata.requirementKey);
+  return requirement ? sentenceCaseAction(requirement) : undefined;
+}
+
+function attachmentActivityTitle(metadata: Record<string, unknown>): string {
+  const title = activityTitle(metadata, 'Quality activity');
+  const batch = positiveInteger(metadata.batchNumber);
+  return batch ? `${title} batch ${batch}` : title;
+}
+
 export function formatJobOrderAuditTitle(action: string, metadata: unknown): string {
   if (action === 'JOB_ORDER_STAGE_COMPLETED') {
     const stageName = getCompletedStageName(metadata);
     return stageName ? `Production stage completed — ${stageName}` : 'Job order stage completed';
+  }
+
+  const details = auditMetadata(metadata);
+  if (action === 'PP_SAMPLE_STARTED') return `${attemptTitle(details)} started`;
+  if (action === 'PP_SAMPLE_FINALIZED') {
+    return withOutcome(`${attemptTitle(details)} finalized`, details);
+  }
+  if (action === 'FINAL_INSPECTION_BATCH_STARTED') {
+    return `${finalBatchTitle(details)} started`;
+  }
+  if (action === 'FINAL_INSPECTION_BATCH_FINALIZED') {
+    return withOutcome(`${finalBatchTitle(details)} finalized`, details);
+  }
+  if (action === 'QUALITY_ACTIVITY_STARTED') {
+    return `${activityTitle(details, 'Quality activity')} started`;
+  }
+  if (action === 'QUALITY_ACTIVITY_DRAFT_SAVED') {
+    return `${activityTitle(details, 'Quality activity')} draft saved`;
+  }
+  if (action === 'QUALITY_ACTIVITY_FINALIZED') {
+    return withOutcome(`${activityTitle(details, 'Quality activity')} finalized`, details);
+  }
+  if (action === 'QUALITY_ACTIVITY_ATTACHMENT_ADDED') {
+    const requirement = attachmentRequirement(details);
+    return requirement
+      ? `${attachmentActivityTitle(details)} attachment added — ${requirement}`
+      : `${attachmentActivityTitle(details)} attachment added`;
+  }
+  if (action === 'QUALITY_ACTIVITY_ATTACHMENT_REMOVED') {
+    return `${attachmentActivityTitle(details)} attachment removed`;
   }
 
   return JOB_ORDER_AUDIT_TITLES[action] ?? sentenceCaseAction(action);
