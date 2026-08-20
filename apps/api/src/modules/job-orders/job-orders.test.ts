@@ -1202,6 +1202,14 @@ describe('job orders API', () => {
         }),
       ]),
     );
+    expect(
+      stageAudit.body.data.some((entry: { action: string }) =>
+        entry.action.startsWith('QUALITY_ACTIVITY_'),
+      ),
+    ).toBe(false);
+    expect(new Set(stageAudit.body.data.map((entry: { id: string }) => entry.id)).size).toBe(
+      stageAudit.body.data.length,
+    );
 
     await request(app)
       .post(`/job-orders/${jobOrderId}/actions/complete-stage`)

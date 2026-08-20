@@ -1741,16 +1741,60 @@ export async function getJobOrderStages(user: CurrentUser, id: string) {
 
 export async function getJobOrderAuditHistory(user: CurrentUser, id: string) {
   await getJobOrderDetail(user, id);
-  return prisma.auditLog.findMany({
-    where: { entityType: 'JobOrder', entityId: id },
+
+  const qualityExecutions = await prisma.qualityActivityExecution.findMany({
+    where: { jobOrderId: id },
+    select: {
+      id: true,
+      attemptNumber: true,
+      batchNumber: true,
+      processFlowActivity: { select: { name: true } },
+    },
+  });
+  const qualityExecutionById = new Map(
+    qualityExecutions.map((execution) => [execution.id, execution]),
+  );
+
+  const history = await prisma.auditLog.findMany({
+    where: {
+      OR: [
+        { entityType: 'JobOrder', entityId: id },
+        {
+          entityType: 'QualityActivityExecution',
+          entityId: { in: [...qualityExecutionById.keys()] },
+        },
+      ],
+    },
     select: {
       id: true,
       action: true,
+      entityType: true,
+      entityId: true,
       createdAt: true,
       metadata: true,
       actor: { select: { id: true, name: true, email: true } },
     },
-    orderBy: { createdAt: 'asc' },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
+
+  return history.map(({ entityType, entityId, metadata, ...entry }) => {
+    const execution =
+      entityType === 'QualityActivityExecution' ? qualityExecutionById.get(entityId) : undefined;
+    if (!execution) return { ...entry, metadata };
+
+    const auditMetadata =
+      metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+        ? (metadata as Record<string, unknown>)
+        : {};
+    return {
+      ...entry,
+      metadata: {
+        ...auditMetadata,
+        activityName: auditMetadata.activityName ?? execution.processFlowActivity.name,
+        attemptNumber: auditMetadata.attemptNumber ?? execution.attemptNumber,
+        batchNumber: auditMetadata.batchNumber ?? execution.batchNumber,
+      },
+    };
   });
 }
 
