@@ -651,8 +651,8 @@ model ProcessFlowVersionStage {
   updatedAt                      DateTime                   @updatedAt @map("updated_at")
 
   processFlowVersion           ProcessFlowVersion         @relation(fields: [processFlowVersionId], references: [id], onDelete: Cascade)
-  qualityFormVersion           QualityFormVersion?        @relation(fields: [qualityFormVersionId], references: [id], onDelete: Restrict)
-  associatedProductionActivity ProcessFlowVersionStage?   @relation("ProcessFlowActivityAssociation", fields: [associatedProductionActivityId], references: [id], onDelete: Restrict)
+  qualityFormVersion           QualityFormVersion?        @relation(fields: [qualityFormVersionId], references: [id], onDelete: Restrict, map: "process_flow_activity_quality_form_version_fkey")
+  associatedProductionActivity ProcessFlowVersionStage?   @relation("ProcessFlowActivityAssociation", fields: [associatedProductionActivityId], references: [id], onDelete: Restrict, map: "process_flow_activity_associated_production_fkey")
   associatedQualityActivities  ProcessFlowVersionStage[]  @relation("ProcessFlowActivityAssociation")
   jobOrderStageStatuses        JobOrderStageStatus[]
   qualityExecutions            QualityActivityExecution[]
@@ -660,7 +660,7 @@ model ProcessFlowVersionStage {
   @@unique([processFlowVersionId, sequence])
   @@index([processFlowVersionId])
   @@index([qualityFormVersionId])
-  @@index([associatedProductionActivityId])
+  @@index([associatedProductionActivityId], map: "process_flow_version_stages_associated_production_activity_id_i")
   @@index([activityType])
   @@map("process_flow_version_stages")
 }
@@ -908,11 +908,11 @@ model QualityActivityExecution {
   createdAt             DateTime                       @default(now()) @map("created_at")
   updatedAt             DateTime                       @updatedAt @map("updated_at")
 
-  jobOrder            JobOrder                   @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
-  processFlowActivity ProcessFlowVersionStage    @relation(fields: [processFlowActivityId], references: [id], onDelete: Restrict)
-  qualityFormVersion  QualityFormVersion         @relation(fields: [qualityFormVersionId], references: [id], onDelete: Restrict)
-  startedBy           User                       @relation("QualityExecutionStarter", fields: [startedById], references: [id], onDelete: Restrict)
-  finalizedBy         User?                      @relation("QualityExecutionFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict)
+  jobOrder            JobOrder                   @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_activity_executions_job_order_id_fkey")
+  processFlowActivity ProcessFlowVersionStage    @relation(fields: [processFlowActivityId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_process_flow_activity_id_fkey")
+  qualityFormVersion  QualityFormVersion         @relation(fields: [qualityFormVersionId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_quality_form_version_id_fkey")
+  startedBy           User                       @relation("QualityExecutionStarter", fields: [startedById], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_started_by_id_fkey")
+  finalizedBy         User?                      @relation("QualityExecutionFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_finalized_by_id_fkey")
   checklistResponses  QualityChecklistResponse[]
   aqlResults          QualityAqlResult[]
   defects             QualityDefect[]
@@ -926,11 +926,11 @@ model QualityActivityExecution {
   attendeeResponses   QualityAttendeeResponse[]
   actionResponses     QualityActionResponse[]
   ppSampleSession     QaInspectionSession?
-  sampleJobOrderLineSize JobOrderLineSize? @relation("QualityExecutionSampleSize", fields: [sampleJobOrderLineSizeId], references: [id], onDelete: Restrict)
+  sampleJobOrderLineSize JobOrderLineSize? @relation("QualityExecutionSampleSize", fields: [sampleJobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_sample_size_id_fkey")
 
-  @@unique([jobOrderId, processFlowActivityId, attemptNumber, batchNumber])
-  @@index([jobOrderId, processFlowActivityId, status])
-  @@index([qualityFormVersionId])
+  @@unique([jobOrderId, processFlowActivityId, attemptNumber, batchNumber], map: "quality_execution_attempt_batch_key")
+  @@index([jobOrderId, processFlowActivityId, status], map: "quality_execution_status_idx")
+  @@index([qualityFormVersionId], map: "quality_execution_form_idx")
   @@map("quality_activity_executions")
 }
 
@@ -940,9 +940,9 @@ model QualityFieldResponse {
   componentId String                   @map("component_id")
   fieldKey    String                   @map("field_key")
   value       String
-  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_field_responses_execution_id_fkey")
 
-  @@unique([executionId, componentId, fieldKey])
+  @@unique([executionId, componentId, fieldKey], map: "quality_field_response_key")
   @@map("quality_field_responses")
 }
 
@@ -952,9 +952,9 @@ model QualityAttendeeResponse {
   componentId  String                   @map("component_id")
   roleKey      String                   @map("role_key")
   attendeeName String                   @map("attendee_name")
-  execution    QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution    QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_attendee_responses_execution_id_fkey")
 
-  @@unique([executionId, componentId, roleKey, attendeeName])
+  @@unique([executionId, componentId, roleKey, attendeeName], map: "quality_attendee_response_key")
   @@map("quality_attendee_responses")
 }
 
@@ -964,9 +964,9 @@ model QualityActionResponse {
   componentId String                   @map("component_id")
   rowNumber   Int                      @map("row_number")
   values      Json
-  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_action_responses_execution_id_fkey")
 
-  @@unique([executionId, componentId, rowNumber])
+  @@unique([executionId, componentId, rowNumber], map: "quality_action_response_key")
   @@map("quality_action_responses")
 }
 
@@ -977,9 +977,9 @@ model QualityChecklistResponse {
   itemKey     String                   @map("item_key")
   response    String
   remarks     String?
-  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_checklist_responses_execution_id_fkey")
 
-  @@unique([executionId, componentId, itemKey])
+  @@unique([executionId, componentId, itemKey], map: "quality_checklist_response_key")
   @@map("quality_checklist_responses")
 }
 
@@ -991,9 +991,9 @@ model QualityAqlResult {
   maxAllowed  Int?                      @map("max_allowed")
   found       Int?
   result      QualityInspectionOutcome?
-  execution   QualityActivityExecution  @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution   QualityActivityExecution  @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_aql_results_execution_id_fkey")
 
-  @@unique([executionId, componentId, severity])
+  @@unique([executionId, componentId, severity], map: "quality_aql_result_key")
   @@map("quality_aql_results")
 }
 
@@ -1004,9 +1004,9 @@ model QualityDefect {
   description String
   severity    QualityDefectSeverity
   quantity    Int?
-  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_defects_execution_id_fkey")
 
-  @@index([executionId, componentId, severity])
+  @@index([executionId, componentId, severity], map: "quality_defect_reporting_idx")
   @@map("quality_defects")
 }
 
@@ -1015,9 +1015,9 @@ model QualityCorrectiveAction {
   executionId String                   @map("execution_id")
   componentId String                   @map("component_id")
   values      Json
-  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_corrective_actions_execution_id_fkey")
 
-  @@index([executionId, componentId])
+  @@index([executionId, componentId], map: "quality_corrective_action_idx")
   @@map("quality_corrective_actions")
 }
 
@@ -1028,9 +1028,9 @@ model QualityTestResult {
   testKey     String                   @map("test_key")
   response    String
   remarks     String?
-  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_test_results_execution_id_fkey")
 
-  @@unique([executionId, componentId, testKey])
+  @@unique([executionId, componentId, testKey], map: "quality_test_result_key")
   @@map("quality_test_results")
 }
 
@@ -1040,9 +1040,9 @@ model QualityQuantityResponse {
   componentId String                   @map("component_id")
   fieldKey    String                   @map("field_key")
   value       Decimal                  @db.Decimal(14, 3)
-  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_quantity_responses_execution_id_fkey")
 
-  @@unique([executionId, componentId, fieldKey])
+  @@unique([executionId, componentId, fieldKey], map: "quality_quantity_response_key")
   @@map("quality_quantity_responses")
 }
 
@@ -1051,9 +1051,9 @@ model QualityCommentResponse {
   executionId String                   @map("execution_id")
   componentId String                   @map("component_id")
   value       String
-  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  execution   QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_comment_responses_execution_id_fkey")
 
-  @@unique([executionId, componentId])
+  @@unique([executionId, componentId], map: "quality_comment_response_key")
   @@map("quality_comment_responses")
 }
 
@@ -1065,10 +1065,10 @@ model QualitySignoff {
   signatoryName String                   @map("signatory_name")
   recordedById  String                   @map("recorded_by_id")
   recordedAt    DateTime                 @default(now()) @map("recorded_at")
-  execution     QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
-  recordedBy    User                     @relation("QualitySignoffRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+  execution     QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_signoffs_execution_id_fkey")
+  recordedBy    User                     @relation("QualitySignoffRecorder", fields: [recordedById], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_signoffs_recorded_by_id_fkey")
 
-  @@unique([executionId, componentId, roleKey])
+  @@unique([executionId, componentId, roleKey], map: "quality_signoff_key")
   @@map("quality_signoffs")
 }
 
@@ -1080,11 +1080,11 @@ model QualityAttachment {
   fileId         String                   @map("file_id")
   checksumSha256 String                   @map("checksum_sha256")
   createdAt      DateTime                 @default(now()) @map("created_at")
-  execution      QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
-  file           File                     @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  execution      QualityActivityExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_attachments_execution_id_fkey")
+  file           File                     @relation(fields: [fileId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_attachments_file_id_fkey")
 
-  @@unique([executionId, componentId, requirementKey, checksumSha256])
-  @@index([fileId])
+  @@unique([executionId, componentId, requirementKey, checksumSha256], map: "quality_attachment_scope_checksum_key")
+  @@index([fileId], map: "quality_attachment_file_idx")
   @@map("quality_attachments")
 }
 
@@ -1243,14 +1243,14 @@ model QaInspectionSession {
   reopenReason String?            @map("reopen_reason")
   createdAt    DateTime           @default(now()) @map("created_at")
   updatedAt    DateTime           @updatedAt @map("updated_at")
-  qualityActivityExecutionId String? @unique @map("quality_activity_execution_id")
+  qualityActivityExecutionId String? @unique(map: "qa_inspection_sessions_quality_execution_key") @map("quality_activity_execution_id")
 
   jobOrder   JobOrder               @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   inspector  User                   @relation("QaInspector", fields: [inspectorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   reopenedBy User?                  @relation("QaReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
   forms      QaSizeInspectionForm[]
   evidence   QaEvidence[]
-  qualityActivityExecution QualityActivityExecution? @relation(fields: [qualityActivityExecutionId], references: [id], onDelete: Restrict)
+  qualityActivityExecution QualityActivityExecution? @relation(fields: [qualityActivityExecutionId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "qa_inspection_sessions_quality_execution_fkey")
 
   @@index([jobOrderId, status])
   @@index([inspectorId])
