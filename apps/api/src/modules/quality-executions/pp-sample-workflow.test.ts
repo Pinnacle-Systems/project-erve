@@ -517,6 +517,20 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         checklist: checklistCodes.map((itemCode) => ({ itemCode, status: null, remarks: null })),
       })
       .expect(409);
+    await request(app)
+      .put(`/qa/inspections/${session.id}/forms/${session.forms[0]!.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send({
+        expectedVersion: 1,
+        sampleQuantity: 5,
+        checklist: checklistCodes.map((itemCode) => ({
+          itemCode,
+          status: 'AVAILABLE',
+          remarks: null,
+        })),
+      })
+      .expect(400);
   });
 
   it.each(['PASS', 'FAIL'] as const)(
@@ -535,7 +549,26 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       const form = session.forms[0]!;
       await prisma.qaSizeInspectionChecklistItem.updateMany({
         where: { inspectionFormId: form.id },
-        data: { status: 'YES' },
+        data: { status: 'AVAILABLE' },
+      });
+      const invalidChecklist = await request(app)
+        .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
+        .set('Authorization', `Bearer ${f.qa.token}`)
+        .set('Idempotency-Key', createId())
+        .send({ expectedVersion: form.version, ppSampleDecision: decision })
+        .expect(400);
+      expect(invalidChecklist.body.error.details.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'checklist',
+            message: 'Every PP Sample checklist response must be Yes or No.',
+          }),
+        ]),
+      );
+      await prisma.qaSizeInspectionChecklistItem.updateMany({
+        where: { inspectionFormId: form.id },
+        // Checklist marks are observations. They never determine the explicit decision.
+        data: { status: decision === 'PASS' ? 'NO' : 'YES' },
       });
       await request(app)
         .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)

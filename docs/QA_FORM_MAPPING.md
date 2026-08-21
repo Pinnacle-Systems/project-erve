@@ -3,25 +3,26 @@
 The supplied paper form is represented by the existing Job Order context and
 the inspection session. No current master-data value is copied into QA.
 
-| Paper form field                                            | System representation                                                                                     |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Factory, PO/Customer, item/style, description, colour, size | Read-only Job Order, PO, Style and `JobOrderLineSize` context                                             |
-| Date, inspector/signatures                                  | Inspection creation/finalization timestamps and authenticated inspector; no signature image is fabricated |
-| Season                                                      | Immutable `JobOrderSeasonSnapshot` display value                                                          |
-| Quantity of samples                                         | Optional `QaInspectionSession.sampleQuantity`                                                             |
+| Paper form field                                            | System representation                                                                                         |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Factory, PO/Customer, item/style, description, colour, size | Read-only Job Order, PO, Style and `JobOrderLineSize` context                                                 |
+| Date, inspector/signatures                                  | Inspection creation/finalization timestamps and authenticated inspector; no signature image is fabricated     |
+| Season                                                      | Immutable `JobOrderSeasonSnapshot` display value                                                              |
+| Quantity of samples                                         | Optional `QaInspectionSession.sampleQuantity`                                                                 |
 | Remarks                                                     | Optional `QaInspectionSession.notes` / API `notes`; multiline, trimmed, max 2,000 characters, null when blank |
-| Fabric construction, stated GSM                             | No existing authoritative Job Order field; unsupported rather than guessed                                |
-| 15 checklist rows, Yes / No / Available columns, Remarks    | `QaInspectionChecklistItem.itemCode`, nullable `status`, and optional `remarks`                           |
-| Pass/fail disposition and defect evidence                   | Existing size-wise QA quantity, defect, evidence, approval, and rework model                              |
+| Fabric construction, stated GSM                             | No existing authoritative Job Order field; unsupported rather than guessed                                    |
+| 15 checklist rows, Yes / No responses, Remarks              | `QaInspectionChecklistItem.itemCode`, nullable `status`, and optional `remarks`                               |
+| Pass/fail disposition and defect evidence                   | Existing size-wise QA quantity, defect, evidence, approval, and rework model                                  |
 
 ## Checklist rows
 
 All rows below are optional while a session is editable. A blank paper-form
 mark is persisted and returned as `null`; remarks are independently optional.
-The allowed stored/API values are exactly `YES`, `NO`, and `AVAILABLE`, which
-are the literal headings printed on the paper form (not an inferred N/A
-value). Web and mobile render the controls in this order and use the same
-persisted/API values.
+PP Sample accepts `YES` and `NO`; an unanswered draft row is stored as `null`.
+Every row must be answered before finalization. `AVAILABLE` remains in the
+shared database/API type for historical data and retained general-inspection
+infrastructure, but the PP Sample adapter rejects it. Web and mobile render
+PP Sample controls in the order Unanswered, Yes, No.
 
 | Paper-form label                                                                                      | DB/API item code                     | Web and mobile |
 | ----------------------------------------------------------------------------------------------------- | ------------------------------------ | -------------- |
@@ -46,8 +47,8 @@ persisted/API values.
 conversion or defaults are applied. `sample_quantity` is likewise optional,
 and is exposed as `sampleQuantity`.
 
-The paper form does not establish a separate finalization rule for unanswered
-checks, so draft/finalization behavior remains the existing QA lifecycle.
+PP Sample finalization rejects unanswered rows. Its explicit PASS/FAIL decision
+is independent of checklist responses, so a `NO` response does not infer FAIL.
 
 `OTHER` is a line-level `QaInspectionLine.defectCategory` value. Its required,
 trimmed explanation is stored on that same line as `otherDefectDetails` (max

@@ -499,7 +499,7 @@ const DEFAULT_QUALITY_FORMS: Array<{
                 key: definitionKey(code),
                 label,
               })),
-              responseOptions: ['YES', 'NO', 'AVAILABLE'],
+              responseOptions: ['YES', 'NO'],
             },
           },
           defects,
