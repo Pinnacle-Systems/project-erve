@@ -124,7 +124,10 @@ function validate(
   if (finalizing) {
     if (!draft.sample) errors.sample = 'Sample quantity is required to finalize.';
     for (const item of QA_CHECKLIST_ITEMS)
-      if (!draft.checks[item.code]?.status)
+      if (
+        !draft.checks[item.code]?.status ||
+        (ppSample && draft.checks[item.code]?.status === 'AVAILABLE')
+      )
         errors[`check.${item.code}`] = 'A response is required to finalize.';
     if (!ppSample && accepted + rework + rejected !== capacity)
       errors.quantities = `Final quantities must reconcile to ${capacity}.`;
@@ -381,7 +384,10 @@ export function QaInspectionForm({
       inspectionRemarks: draft.remarks.trim() || null,
       checklist: QA_CHECKLIST_ITEMS.map((item) => ({
         itemCode: item.code,
-        status: draft.checks[item.code]?.status || null,
+        status:
+          ppSample && draft.checks[item.code]?.status === 'AVAILABLE'
+            ? null
+            : draft.checks[item.code]?.status || null,
         remarks: draft.checks[item.code]?.remarks.trim() || null,
       })),
       ...disposition,
@@ -604,7 +610,7 @@ export function QaInspectionForm({
                         <SelectItem value="UNANSWERED">Unanswered</SelectItem>
                         <SelectItem value="YES">Yes</SelectItem>
                         <SelectItem value="NO">No</SelectItem>
-                        <SelectItem value="AVAILABLE">Available</SelectItem>
+                        {!ppSample && <SelectItem value="AVAILABLE">Available</SelectItem>}
                       </SelectField>
                     );
                   },

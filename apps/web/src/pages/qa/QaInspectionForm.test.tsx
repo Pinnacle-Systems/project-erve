@@ -319,6 +319,15 @@ describe('QaInspectionForm', () => {
     expect(
       (container.querySelector('[aria-label="Quantity of samples"]') as HTMLInputElement).disabled,
     ).toBe(true);
+    const ppResponse = responseControl(QA_CHECKLIST_ITEMS[0]!.label);
+    await act(async () => ppResponse.click());
+    const ppOptions = Array.from(document.body.querySelectorAll('[role="option"]'));
+    expect(ppOptions.map((option) => option.textContent?.trim())).toEqual([
+      'Unanswered',
+      'Yes',
+      'No',
+    ]);
+    await act(async () => (ppOptions[1] as HTMLElement).click());
     await act(async () => button('Finalize size M').click());
     expect(container.textContent).toContain('Choose Pass or Fail before finalizing PP Sample.');
     expect(requestCall).not.toHaveBeenCalled();

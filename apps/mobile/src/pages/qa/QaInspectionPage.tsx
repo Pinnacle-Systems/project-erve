@@ -102,7 +102,13 @@ export function validateDraft(
     errors.other = 'Describe the other defect.';
   if (finalizing) {
     if (!draft.sampleQuantity) errors.sampleQuantity ??= 'Sample quantity is required to finalize.';
-    if (QA_CHECKLIST_ITEMS.some((item) => !draft.checklist[item.code]?.status))
+    if (
+      QA_CHECKLIST_ITEMS.some(
+        (item) =>
+          !draft.checklist[item.code]?.status ||
+          (ppSample && draft.checklist[item.code]?.status === 'AVAILABLE'),
+      )
+    )
       errors.checklist = 'Complete all 15 checklist responses before finalizing.';
     if (!ppSample && total === 0)
       errors.quantities ??= 'Record an inspection outcome before finalizing.';
@@ -121,7 +127,10 @@ function formPayload(draft: QaFormDraft, version: number, ppSample = false) {
     inspectionRemarks: draft.remarks.trim() || null,
     checklist: QA_CHECKLIST_ITEMS.map((item) => ({
       itemCode: item.code,
-      status: draft.checklist[item.code]?.status || null,
+      status:
+        ppSample && draft.checklist[item.code]?.status === 'AVAILABLE'
+          ? null
+          : draft.checklist[item.code]?.status || null,
       remarks: draft.checklist[item.code]?.remarks.trim() || null,
     })),
     ...(ppSample
@@ -418,7 +427,7 @@ export function QaInspectionPage() {
                         <option value="">Unanswered</option>
                         <option value="YES">Yes</option>
                         <option value="NO">No</option>
-                        <option value="AVAILABLE">Available</option>
+                        {!ppSample && <option value="AVAILABLE">Available</option>}
                       </select>
                     </label>
                     <textarea

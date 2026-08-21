@@ -261,6 +261,11 @@ describe('rendered mobile QA form workflow', () => {
     expect(
       (container.querySelector('[aria-label="Sample quantity"]') as HTMLInputElement).disabled,
     ).toBe(true);
+    expect(
+      Array.from(
+        (container.querySelector('[aria-label$="response"]') as HTMLSelectElement).options,
+      ).map((option) => option.textContent),
+    ).toEqual(['Unanswered', 'Yes', 'No']);
     await click('Save size form');
     const savedPayload = vi.mocked(apiClient.request).mock.calls[0]![0].data;
     expect(savedPayload).not.toHaveProperty('inspectedQuantity');

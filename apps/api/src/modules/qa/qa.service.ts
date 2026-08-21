@@ -569,6 +569,8 @@ export async function saveSizeInspectionForm(
     )
       throw HttpError.conflict('PP Sample size and quantity are locked after inspection starts');
     const ppSample = Boolean(form.session.qualityActivityExecution);
+    if (ppSample && input.checklist.some((item) => item.status === 'AVAILABLE'))
+      throw HttpError.badRequest('PP Sample checklist responses must be Yes, No, or unanswered');
     const dispositionQuantities = [
       input.inspectedQuantity,
       input.acceptedQuantity,
@@ -737,9 +739,16 @@ export async function finalizeSizeInspectionForm(
       incomplete.push({ field: 'sampleQuantity', message: 'Sample quantity is required.' });
     if (
       form.checklist.length !== checklistOrder.length ||
-      form.checklist.some((item) => item.status === null)
+      form.checklist.some(
+        (item) => item.status === null || (ppExecution && item.status === 'AVAILABLE'),
+      )
     )
-      incomplete.push({ field: 'checklist', message: 'Every checklist response is required.' });
+      incomplete.push({
+        field: 'checklist',
+        message: ppExecution
+          ? 'Every PP Sample checklist response must be Yes or No.'
+          : 'Every checklist response is required.',
+      });
     if (!ppExecution && form.inspectedQuantity !== capacity)
       incomplete.push({
         field: 'quantities',
