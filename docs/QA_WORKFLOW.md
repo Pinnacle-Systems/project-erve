@@ -1,5 +1,7 @@
 # QA inspection and rework domain
 
+> **Retained infrastructure, not an operational Job Order route.** New Job Orders receive all QA work from configured Process Flow Quality activities. Prepared quantity is coverage input for activities such as Final Inspection and never transitions a Job Order into this ERVE-015 state machine or queue. The records and endpoints below remain for PP Sample reuse and historical-data compatibility unless explicitly noted.
+
 ## Decisions and bounded assumptions
 
 ### ERVE-015 pre-production migration treatment
@@ -9,7 +11,7 @@
 - Session-wide `qa_inspection_sessions.sample_quantity` and `notes` are removed without copying them to forms. No placeholder sample quantity, checklist response, remark, or inspection remark is created.
 - QA sessions, evidence, rework tasks and size-owned inspection outcomes are retained. Job orders, POs, styles, sizes, factories, distributors and all other master data are untouched.
 
-- An active `QA_USER` initiates an inspection from the global QA queue. Factory mappings are not required for QA visibility or inspection; admins and merchandisers may also act for exception resolution. Senior management is read-only.
+- Factory mappings are not required for QA visibility or inspection; admins and merchandisers may also act for exception resolution. Senior management is read-only. New operational work is initiated from the unified Process Flow-driven QA Work view.
 - The shared `user_factories` relation remains for `FACTORY_USER` workflows and other legitimate mappings; it is no longer read by the active QA workflow, so no schema migration removes shared mapping data.
 - Inspection is a partial, versioned session against job-order size allocations. Each inspected `JobOrderLineSize` owns a complete `QaSizeInspectionForm`: its sample quantity, all 15 checklist responses and row remarks, inspection remarks, quantities, outcome and defect detail. A session holds only the shared job order, cycle, inspector and lifecycle facts.
 - Draft forms reserve first-pass or rework quantity. A user can correct their own draft. Finalized sessions and their per-size forms are immutable facts.
@@ -22,7 +24,7 @@
 - Evidence uses the existing production `FileStorage` adapter. JPEG, PNG and WebP signatures and maximum size are checked server-side. Server-generated keys and checksums avoid trusting names. Duplicate content in a session returns the existing record. Upload is a separate draft attachment action, so quantity finalization never commits while a fragile upload is in flight.
 - Android draft entries are stored locally per job order until successful finalization. Submitted requests are retried with an unchanged idempotency key by the mutation retry control; server state always wins after a stale-version response. This is intentionally not a general offline-sync subsystem.
 
-## State machine
+## Retained ERVE-015 state machine
 
 ```text
 READY_FOR_QA
@@ -62,7 +64,7 @@ First-pass finalized plus draft-reserved quantity cannot exceed prepared quantit
 
 The former session-wide routes are intentionally absent. Test migration must retain their business assertions using the replacement form selected from the started session.
 
-- `GET /qa/queue` — compact cursor-paginated queue; filters: state, factory, date range and job/PO search.
+- `GET /qa/queue` — compatibility endpoint for retained ERVE-015 records; it is not a user-facing operational queue.
 - `GET /qa/job-orders/:id` — reconciliation, sessions, evidence metadata and rework.
 - `POST /qa/job-orders/:id/inspections` — start first inspection or selected reinspection.
 - `PUT /qa/inspections/:sessionId/forms/:formId` — save exactly one versioned size form. The server creates all eligible forms at session start; clients cannot add, remove, or overwrite sibling forms.
