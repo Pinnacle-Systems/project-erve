@@ -1,6 +1,6 @@
 # Quality Form Master
 
-The Quality Form Master defines **what information is collected**. A future Process Flow enhancement will define **when a quality activity occurs**, and runtime quality records will store **what actually happened**.
+The Quality Form Master defines **what information is collected**. Process Flow Quality activities define **when a quality activity occurs**, and runtime quality records store **what actually happened**.
 
 ## Phase-one boundary
 
@@ -14,6 +14,6 @@ Quality Forms intentionally contain no production stage, execution mode, availab
 
 ## Runtime compatibility
 
-The `SAMPLE` master record represents the existing QA Sample Checklist conceptually. ERVE-015 remains the runtime source of truth: its inspection sessions, per-size forms, quantities, defects, evidence, finalize/reopen lifecycle, and reinspection workflow are unchanged and are not generic form values.
+The `SAMPLE` master record represents the QA Sample Checklist conceptually. PP Sample execution reuses the strongly typed ERVE-015 session and per-size form internals; those internals do not constitute a separate prepared-quantity QA workflow.
 
 Process Flow Quality activities reference a specific `QualityFormVersion`. That association distinguishes sequential quality gates from in-process quality checkpoints without changing or duplicating the form definition. See [Process Flow Quality Activities](./PROCESS_FLOW_QUALITY_ACTIVITIES.md).

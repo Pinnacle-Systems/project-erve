@@ -10,7 +10,7 @@ import type {
   QualityExecutionView,
 } from '@erve/types';
 import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -22,8 +22,10 @@ import { formatJobOrderAuditTitle } from './job-order-audit.js';
 import {
   CONFIRMATION_LABELS,
   JOB_ORDER_STATUS_LABELS,
+  QUALITY_RUNTIME_STATUS_LABELS,
   confirmationTone,
   formatDateTime,
+  qualityRuntimeStatusTone,
   statusTone,
 } from './job-order-ui.js';
 
@@ -785,68 +787,116 @@ export function JobOrderDetailPage() {
         >
           <div className="space-y-3">
             {jobOrder.qualityActivities.map((activity) => (
-              <div
+              <Panel
                 key={activity.processFlowVersionStageId}
-                className="rounded-md border border-border p-3 text-sm"
+                variant="bordered"
+                padding="sm"
+                title={activity.name}
+                description={`${activity.qualityForm.name} v${activity.qualityFormVersion.versionNumber}`}
+                actions={
+                  <StatusBadge
+                    label={QUALITY_RUNTIME_STATUS_LABELS[activity.status]}
+                    tone={qualityRuntimeStatusTone(activity.status)}
+                  />
+                }
               >
-                <p className="font-medium">{activity.name}</p>
-                <p className="text-muted-foreground">
-                  Quality ·{' '}
-                  {activity.executionMode === 'IN_PROCESS' ? 'In-process' : 'Sequential gate'}
-                </p>
-                <p>
-                  Form: {activity.qualityForm.name} v{activity.qualityFormVersion.versionNumber}
-                </p>
-                {activity.associatedProductionActivity && (
-                  <p>Associated with: {activity.associatedProductionActivity.name}</p>
-                )}
-                {activity.progressThresholdPercent && (
-                  <p>Available at: {Number(activity.progressThresholdPercent)}%</p>
-                )}
-                <p>Current state: {activity.status.replaceAll('_', ' ')}</p>
+                <DescriptionList columns={4} density="compact">
+                  <DescriptionList.Item
+                    label="Mode"
+                    value={
+                      activity.executionMode === 'IN_PROCESS' ? 'In-process' : 'Sequential gate'
+                    }
+                  />
+                  <DescriptionList.Item
+                    label="Associated production activity"
+                    value={activity.associatedProductionActivity?.name ?? 'Not applicable'}
+                  />
+                  <DescriptionList.Item
+                    label="Availability"
+                    value={
+                      activity.progressThresholdPercent
+                        ? `${Number(activity.progressThresholdPercent)}% progress`
+                        : activity.availabilityPolicy.toLowerCase().replaceAll('_', ' ')
+                    }
+                  />
+                  <DescriptionList.Item
+                    label="Execution"
+                    value={activity.executionMultiplicity === 'BATCHED' ? 'Batched' : 'Single'}
+                  />
+                </DescriptionList>
                 {activity.coverage && (
-                  <div>
-                    <p>
-                      Prepared:{' '}
-                      {activity.coverage.preparedQuantityAuthoritative
-                        ? activity.coverage.preparedQuantity
-                        : 'Not yet recorded'}{' '}
-                      · Inspected: {activity.coverage.inspectedQuantity} · Remaining:{' '}
-                      {activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
-                      {activity.coverage.reconciliationConflict
-                        ? ' · Reconciliation conflict'
-                        : activity.coverage.complete
-                          ? ' · Coverage complete'
-                          : ''}
-                    </p>
-                    <p>
-                      Coverage: {activity.coverage.state} Â· Passed batches:{' '}
-                      {activity.coverage.passedBatches} Â· Failed batches:{' '}
-                      {activity.coverage.failedBatches}
-                    </p>
-                  </div>
+                  <DescriptionList columns={4} density="compact" className="mt-4">
+                    <DescriptionList.Item
+                      label="Prepared"
+                      value={
+                        activity.coverage.preparedQuantityAuthoritative
+                          ? activity.coverage.preparedQuantity
+                          : 'Not yet recorded'
+                      }
+                    />
+                    <DescriptionList.Item
+                      label="Inspected"
+                      value={activity.coverage.inspectedQuantity}
+                    />
+                    <DescriptionList.Item
+                      label="Remaining"
+                      value={activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
+                    />
+                    <DescriptionList.Item label="Coverage" value={activity.coverage.state} />
+                    <DescriptionList.Item
+                      label="Passed batches"
+                      value={activity.coverage.passedBatches}
+                    />
+                    <DescriptionList.Item
+                      label="Failed batches"
+                      value={activity.coverage.failedBatches}
+                    />
+                  </DescriptionList>
                 )}
                 {activity.status === 'MISSED' && (
-                  <p className="text-muted-foreground">
+                  <p className="mt-4 text-sm text-muted-foreground">
                     Not performed during the associated Production activity.
                   </p>
                 )}
                 {activity.qualityForm.executionScope === 'SIZE' &&
                   activity.executionHistory.length > 0 && (
-                    <div className="my-2">
-                      <p className="font-medium">PP Sample cycles</p>
-                      {activity.executionHistory.map((cycle) => (
-                        <p key={cycle.id}>
-                          Cycle {cycle.attemptNumber}:{' '}
-                          {cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size'} Â· Qty{' '}
-                          {cycle.sampleQuantity} Â·{' '}
-                          {cycle.status === 'DRAFT' ? 'IN PROGRESS' : cycle.outcome}
-                        </p>
-                      ))}
-                    </div>
+                    <DataTable
+                      density="compact"
+                      containerClassName="mt-4"
+                      rowKey="id"
+                      data={activity.executionHistory}
+                      columns={[
+                        { key: 'attempt', header: 'Cycle', accessor: 'attemptNumber' },
+                        {
+                          key: 'size',
+                          header: 'Sample size',
+                          render: (cycle) =>
+                            cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size',
+                        },
+                        {
+                          key: 'quantity',
+                          header: 'Quantity',
+                          accessor: 'sampleQuantity',
+                          align: 'right',
+                        },
+                        {
+                          key: 'status',
+                          header: 'Result',
+                          render: (cycle) =>
+                            cycle.status === 'DRAFT' ? (
+                              <StatusBadge label="In Progress" tone="info" />
+                            ) : (
+                              <StatusBadge
+                                label={cycle.outcome ?? 'Finalized'}
+                                tone={cycle.outcome === 'PASS' ? 'success' : 'danger'}
+                              />
+                            ),
+                        },
+                      ]}
+                    />
                   )}
                 {activity.execution ? (
-                  <div className="space-y-2">
+                  <div className="mt-4 space-y-3">
                     <Button
                       variant="secondary"
                       onClick={() =>
@@ -865,79 +915,81 @@ export function JobOrderDetailPage() {
                       activity.eligible &&
                       activity.qualityForm.executionScope === 'SIZE' &&
                       user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') && (
-                        <div className="space-y-2 rounded-md border border-border p-2">
-                          <p>New PP Sample required</p>
-                          <label className="block">
-                            Sample Size
-                            <select
+                        <Panel variant="subtle" padding="sm" title="New PP Sample required">
+                          <div className="flex flex-wrap items-end gap-3">
+                            <SelectField
+                              label="Sample Size"
                               value={
-                                qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ??
-                                ''
+                                qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ||
+                                'NONE'
                               }
-                              onChange={(event) =>
+                              onValueChange={(value) =>
                                 setQualityStartContexts((current) => ({
                                   ...current,
                                   [activity.processFlowVersionStageId]: {
-                                    sizeId: event.target.value,
+                                    sizeId: value === 'NONE' ? '' : value,
                                     quantity:
                                       current[activity.processFlowVersionStageId]?.quantity ?? '',
                                   },
                                 }))
                               }
                             >
-                              <option value="">Select one size</option>
+                              <SelectItem value="NONE">Select one size</SelectItem>
                               {flatSizes.map((size) => (
-                                <option key={size.id} value={size.id}>
-                                  {size.style} Â· {size.sizeLabel}
-                                </option>
+                                <SelectItem key={size.id} value={size.id}>
+                                  {size.style} — {size.sizeLabel}
+                                </SelectItem>
                               ))}
-                            </select>
-                          </label>
-                          <TextField
-                            label="Sample Quantity"
-                            type="number"
-                            min="1"
-                            value={
-                              qualityStartContexts[activity.processFlowVersionStageId]?.quantity ??
-                              ''
-                            }
-                            onChange={(event) =>
-                              setQualityStartContexts((current) => ({
-                                ...current,
-                                [activity.processFlowVersionStageId]: {
-                                  sizeId: current[activity.processFlowVersionStageId]?.sizeId ?? '',
-                                  quantity: event.target.value,
-                                },
-                              }))
-                            }
-                          />
-                          <Button
-                            loading={qualityStartMutation.isPending}
-                            onClick={() => {
-                              const context =
-                                qualityStartContexts[activity.processFlowVersionStageId];
-                              qualityStartMutation.mutate({
-                                activityId: activity.processFlowVersionStageId,
-                                body: {
-                                  sampleJobOrderLineSizeId: context?.sizeId,
-                                  sampleQuantity: Number(context?.quantity),
-                                },
-                              });
-                            }}
-                          >
-                            Start New PP Sample
-                          </Button>
-                        </div>
+                            </SelectField>
+                            <TextField
+                              label="Sample Quantity"
+                              type="number"
+                              min="1"
+                              width="xs"
+                              value={
+                                qualityStartContexts[activity.processFlowVersionStageId]
+                                  ?.quantity ?? ''
+                              }
+                              onChange={(event) =>
+                                setQualityStartContexts((current) => ({
+                                  ...current,
+                                  [activity.processFlowVersionStageId]: {
+                                    sizeId:
+                                      current[activity.processFlowVersionStageId]?.sizeId ?? '',
+                                    quantity: event.target.value,
+                                  },
+                                }))
+                              }
+                            />
+                            <Button
+                              loading={qualityStartMutation.isPending}
+                              onClick={() => {
+                                const context =
+                                  qualityStartContexts[activity.processFlowVersionStageId];
+                                qualityStartMutation.mutate({
+                                  activityId: activity.processFlowVersionStageId,
+                                  body: {
+                                    sampleJobOrderLineSizeId: context?.sizeId,
+                                    sampleQuantity: Number(context?.quantity),
+                                  },
+                                });
+                              }}
+                            >
+                              Start New PP Sample
+                            </Button>
+                          </div>
+                        </Panel>
                       )}
                     {activity.executionMultiplicity === 'BATCHED' &&
                       activity.execution.status === 'FINALIZED' &&
                       !activity.coverage?.complete &&
                       !activity.coverage?.reconciliationConflict && (
                         <>
-                          <input
+                          <TextField
                             aria-label={`Inspected quantity for ${activity.name}`}
                             type="number"
                             min="1"
+                            width="xs"
                             value={
                               qualityStartContexts[activity.processFlowVersionStageId]?.quantity ??
                               ''
@@ -972,38 +1024,38 @@ export function JobOrderDetailPage() {
                   </div>
                 ) : activity.status === 'AVAILABLE' &&
                   user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') ? (
-                  <div className="space-y-2">
+                  <div className="mt-4 flex flex-wrap items-end gap-3">
                     {activity.qualityForm.executionScope === 'SIZE' && (
                       <>
-                        <label className="block">
-                          Sample Size
-                          <select
-                            value={
-                              qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ?? ''
-                            }
-                            onChange={(event) =>
-                              setQualityStartContexts((current) => ({
-                                ...current,
-                                [activity.processFlowVersionStageId]: {
-                                  sizeId: event.target.value,
-                                  quantity:
-                                    current[activity.processFlowVersionStageId]?.quantity ?? '',
-                                },
-                              }))
-                            }
-                          >
-                            <option value="">Select one size</option>
-                            {flatSizes.map((size) => (
-                              <option key={size.id} value={size.id}>
-                                {size.style} · {size.sizeLabel}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                        <SelectField
+                          label="Sample Size"
+                          value={
+                            qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ||
+                            'NONE'
+                          }
+                          onValueChange={(value) =>
+                            setQualityStartContexts((current) => ({
+                              ...current,
+                              [activity.processFlowVersionStageId]: {
+                                sizeId: value === 'NONE' ? '' : value,
+                                quantity:
+                                  current[activity.processFlowVersionStageId]?.quantity ?? '',
+                              },
+                            }))
+                          }
+                        >
+                          <SelectItem value="NONE">Select one size</SelectItem>
+                          {flatSizes.map((size) => (
+                            <SelectItem key={size.id} value={size.id}>
+                              {size.style} — {size.sizeLabel}
+                            </SelectItem>
+                          ))}
+                        </SelectField>
                         <TextField
                           label="Sample Quantity"
                           type="number"
                           min="1"
+                          width="xs"
                           value={
                             qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''
                           }
@@ -1024,6 +1076,7 @@ export function JobOrderDetailPage() {
                         label="Inspected Quantity"
                         type="number"
                         min="1"
+                        width="xs"
                         value={
                           qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''
                         }
@@ -1060,7 +1113,7 @@ export function JobOrderDetailPage() {
                     </Button>
                   </div>
                 ) : null}
-              </div>
+              </Panel>
             ))}
           </div>
         </Panel>

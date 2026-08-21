@@ -142,8 +142,7 @@ function assertJobOrderViewAccess(
 ): void {
   if (canViewAllJobOrders(user)) return;
   // QA has global Job Order visibility under the established authorization
-  // matrix; Inline inspection can become eligible while Production is active,
-  // before a Job Order enters the legacy ERVE-015 QA queue states.
+  // matrix because configured Quality activities are interwoven with Production.
   if (canPerformQaOperation(user)) return;
   if (canFactoryManage(user, jobOrder.factoryId) && jobOrder.status !== 'DRAFT') return;
   throw HttpError.forbidden('You do not have access to this job order');
@@ -766,7 +765,7 @@ export async function getJobOrderDetail(user: CurrentUser, id: string) {
 
 export async function getProcessFlowQualityWork(user: CurrentUser) {
   if (!canPerformQaOperation(user))
-    throw HttpError.forbidden('Only QA operations users may view Process Flow Quality work');
+    throw HttpError.forbidden('Only QA operations users may view QA work');
   const jobs = await prisma.jobOrder.findMany({
     where: {
       factoryConfirmationStatus: 'CONFIRMED',
@@ -1621,7 +1620,6 @@ export async function updatePreparedQuantity(
     where: { id },
     include: {
       lines: { include: { sizes: true } },
-      processFlowVersion: { include: { stages: true } },
     },
   });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
@@ -1638,14 +1636,6 @@ export async function updatePreparedQuantity(
     jobOrder.lines.flatMap((line) => line.sizes.map((size) => size.id)),
   );
   const seenSizeIds = new Set<string>();
-  const usesProcessFlowFinal = jobOrder.processFlowVersion.stages.some(
-    (stage) =>
-      stage.status === 'ACTIVE' &&
-      stage.activityType === 'QUALITY' &&
-      stage.qualityExecutionMode === 'IN_PROCESS' &&
-      stage.executionMultiplicity === 'BATCHED' &&
-      stage.coverageTarget === 'PREPARED_QUANTITY',
-  );
   for (const size of input.sizes) {
     if (!allowedSizeIds.has(size.jobOrderLineSizeId)) {
       throw HttpError.badRequest('Prepared quantity line size does not belong to this job order');
@@ -1693,7 +1683,7 @@ export async function updatePreparedQuantity(
         where: { id: line.id },
         data: {
           preparedQuantityTotal,
-          status: usesProcessFlowFinal ? 'PRODUCTION_COMPLETE' : 'READY_FOR_QA',
+          status: 'PRODUCTION_COMPLETE',
         },
       });
     }
@@ -1707,7 +1697,7 @@ export async function updatePreparedQuantity(
       where: { id },
       data: {
         preparedQuantityTotal,
-        status: usesProcessFlowFinal ? 'PRODUCTION_COMPLETE' : 'READY_FOR_QA',
+        status: 'PRODUCTION_COMPLETE',
         version: { increment: 1 },
       },
     });

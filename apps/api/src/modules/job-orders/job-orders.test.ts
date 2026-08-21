@@ -1258,7 +1258,7 @@ describe('job orders API', () => {
         sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }],
       });
     expect(preparedRes.status).toBe(200);
-    expect(preparedRes.body.data.status).toBe('READY_FOR_QA');
+    expect(preparedRes.body.data.status).toBe('PRODUCTION_COMPLETE');
     expect(preparedRes.body.data.preparedQuantityTotal).toBe(3);
     const preparedReplay = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
@@ -1519,15 +1519,15 @@ describe('job orders API', () => {
         sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }],
       });
     expect(preparedRes.status).toBe(200);
-    expect(preparedRes.body.data.status).toBe('READY_FOR_QA');
+    expect(preparedRes.body.data.status).toBe('PRODUCTION_COMPLETE');
 
-    // An unmapped QA user can inspect already-prepared quantities at any factory;
+    // An unmapped QA user can view Process Flow Quality work at any factory;
     // view access depends on active QA role membership, not factory mapping.
     const qaView = await request(app)
       .get(`/job-orders/${jobOrderId}`)
       .set('Authorization', `Bearer ${qaUser.token}`);
     expect(qaView.status).toBe(200);
-    expect(qaView.body.data.status).toBe('READY_FOR_QA');
+    expect(qaView.body.data.status).toBe('PRODUCTION_COMPLETE');
 
     // Existing history remains fully readable through every read endpoint.
     await request(app)

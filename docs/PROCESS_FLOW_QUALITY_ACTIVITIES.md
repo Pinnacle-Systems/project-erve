@@ -31,7 +31,7 @@ Inline is available only while Sewing is active. A draft started in that window 
 
 Final becomes available when Sewing completes, independently of Finishing percentage or incremental factory quantities. It is consolidated at Job Order scope. Finalized `inspectedQuantity` values reconcile against the sum of `JobOrderLineSize.preparedQuantity`; drafts do not count. Zero/unsubmitted prepared quantity is treated as unknown, so a draft can be saved but not finalized. Coverage is `UNKNOWN`, `IN_PROGRESS`, `COMPLETE`, or `CONFLICT`. Batch PASS/FAIL counts are reported separately; a failed batch still counts as physical coverage and has no automatic rework or Production effect.
 
-For this Process Flow, recording prepared quantity keeps the top-level Job Order at `PRODUCTION_COMPLETE` and feeds Final coverage. It does not enter the legacy `READY_FOR_QA` queue. Production-only flows retain the existing `READY_FOR_QA` transition and full multi-size ERVE-015 inspection/rework/approval lifecycle. Detailed Production stages, Quality gates, Final coverage, and Quality outcomes remain separate runtime facts; Production completion is not presented as QA approval.
+Recording prepared quantity keeps the top-level Job Order at `PRODUCTION_COMPLETE` and feeds configured Final Inspection coverage. It never routes a Job Order into a separate prepared-quantity QA workflow. All QA orchestration comes from the assigned Process Flow; a flow with no Quality activities therefore creates no QA work. Detailed Production stages, Quality gates, Final coverage, and Quality outcomes remain separate runtime facts; Production completion is not presented as QA approval.
 
 ## Activity types and execution
 
@@ -59,7 +59,7 @@ Availability means eligible or ready to start; it does not automatically execute
 - Inline: `INSPECTION / JOB_ORDER / IN_PROCESS / SINGLE / WHILE_ASSOCIATED_ACTIVITY_ACTIVE`.
 - Final: `INSPECTION / JOB_ORDER / IN_PROCESS / BATCHED / AFTER_ASSOCIATED_ACTIVITY_COMPLETES / PREPARED_QUANTITY`.
 
-The existing QA supervision navigation also lists Process Flow Quality work, including available work, failed PP Sample retry, Inline draft/missed state, Final remaining quantity, and reconciliation conflicts.
+The QA Work view lists configured Process Flow Quality activities in one queue, including available work, failed PP Sample retry, Inline draft/missed state, Final coverage, and reconciliation conflicts.
 
 ## Intentionally unsupported
 

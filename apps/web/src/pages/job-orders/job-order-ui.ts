@@ -1,3 +1,4 @@
+import type { QualityRuntimeStatus } from '@erve/types';
 import type { FactoryConfirmationStatus, JobOrderStatus, ProductionStageStatus } from './types.js';
 
 export const JOB_ORDER_STATUS_LABELS: Record<JobOrderStatus, string> = {
@@ -27,6 +28,15 @@ export const STAGE_LABELS: Record<ProductionStageStatus, string> = {
   NOT_STARTED: 'Not Started',
   IN_PROGRESS: 'In Progress',
   COMPLETED: 'Completed',
+};
+
+export const QUALITY_RUNTIME_STATUS_LABELS: Record<QualityRuntimeStatus, string> = {
+  NOT_AVAILABLE: 'Not Available',
+  AVAILABLE: 'Available',
+  IN_PROGRESS: 'In Progress',
+  COMPLETED: 'Completed',
+  FAILED: 'Failed',
+  MISSED: 'Missed',
 };
 
 export function formatDateTime(iso: string | null | undefined) {
@@ -59,4 +69,13 @@ export function stageTone(status: ProductionStageStatus) {
   if (status === 'COMPLETED') return 'success';
   if (status === 'IN_PROGRESS') return 'submitted';
   return 'muted';
+}
+
+export function qualityRuntimeStatusTone(status: QualityRuntimeStatus) {
+  if (status === 'COMPLETED') return 'success';
+  if (status === 'FAILED') return 'danger';
+  if (status === 'MISSED') return 'warning';
+  if (status === 'IN_PROGRESS') return 'info';
+  if (status === 'NOT_AVAILABLE') return 'muted';
+  return 'pending';
 }
