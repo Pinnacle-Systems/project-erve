@@ -79,6 +79,7 @@ export function QaDetailPage() {
   const canMutate =
     user?.roles.some((role) => ['ADMIN', 'MERCHANDISER', 'QA_USER'].includes(role)) ?? false;
   const canReopen = canReopenQaForm(user?.roles);
+  const hasProcessFlowPpSample = data.sessions.some((session) => session.processFlowPpSample);
   return (
     <div className="space-y-5">
       <PageHeader
@@ -145,61 +146,70 @@ export function QaDetailPage() {
             ) : null}
           </Panel>
         )}
-      <Panel title="Inspection summary" padding="sm">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-          {Object.entries(data.totals).map(([label, value]) => (
-            <div key={label}>
-              <p className="text-xs text-muted-foreground">{qaTotalLabels[label] ?? label}</p>
-              <p className="text-xl font-semibold tabular-nums">{value}</p>
-            </div>
-          ))}
-        </div>
-      </Panel>
-      <Panel title="Quantity reconciliation">
-        <DataTable
-          density="compact"
-          rowKey="jobOrderLineSizeId"
-          data={data.lines}
-          columns={[
-            {
-              key: 'styleSize',
-              header: 'Style / size',
-              render: (line) => `${line.styleNumber} · ${line.sizeLabel}`,
-            },
-            {
-              key: 'preparedQuantity',
-              header: 'Prepared',
-              accessor: 'preparedQuantity',
-              align: 'right',
-            },
-            {
-              key: 'availableToInspect',
-              header: 'Available',
-              accessor: 'availableToInspect',
-              align: 'right',
-            },
-            {
-              key: 'acceptedQuantity',
-              header: 'Accepted',
-              accessor: 'acceptedQuantity',
-              align: 'right',
-            },
-            { key: 'reworkQuantity', header: 'Rework', accessor: 'reworkQuantity', align: 'right' },
-            {
-              key: 'awaitingReinspectionQuantity',
-              header: 'Awaiting',
-              accessor: 'awaitingReinspectionQuantity',
-              align: 'right',
-            },
-            {
-              key: 'permanentlyRejectedQuantity',
-              header: 'Rejected',
-              accessor: 'permanentlyRejectedQuantity',
-              align: 'right',
-            },
-          ]}
-        />
-      </Panel>
+      {!hasProcessFlowPpSample && (
+        <Panel title="Inspection summary" padding="sm">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+            {Object.entries(data.totals).map(([label, value]) => (
+              <div key={label}>
+                <p className="text-xs text-muted-foreground">{qaTotalLabels[label] ?? label}</p>
+                <p className="text-xl font-semibold tabular-nums">{value}</p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+      {!hasProcessFlowPpSample && (
+        <Panel title="Quantity reconciliation">
+          <DataTable
+            density="compact"
+            rowKey="jobOrderLineSizeId"
+            data={data.lines}
+            columns={[
+              {
+                key: 'styleSize',
+                header: 'Style / size',
+                render: (line) => `${line.styleNumber} · ${line.sizeLabel}`,
+              },
+              {
+                key: 'preparedQuantity',
+                header: 'Prepared',
+                accessor: 'preparedQuantity',
+                align: 'right',
+              },
+              {
+                key: 'availableToInspect',
+                header: 'Available',
+                accessor: 'availableToInspect',
+                align: 'right',
+              },
+              {
+                key: 'acceptedQuantity',
+                header: 'Accepted',
+                accessor: 'acceptedQuantity',
+                align: 'right',
+              },
+              {
+                key: 'reworkQuantity',
+                header: 'Rework',
+                accessor: 'reworkQuantity',
+                align: 'right',
+              },
+              {
+                key: 'awaitingReinspectionQuantity',
+                header: 'Awaiting',
+                accessor: 'awaitingReinspectionQuantity',
+                align: 'right',
+              },
+              {
+                key: 'permanentlyRejectedQuantity',
+                header: 'Rejected',
+                accessor: 'permanentlyRejectedQuantity',
+                align: 'right',
+              },
+            ]}
+          />
+        </Panel>
+      )}
       <Panel title="Inspection history">
         <div className="space-y-4">
           {data.sessions.map((session) => (
@@ -223,7 +233,11 @@ export function QaDetailPage() {
                     variant="subtle"
                     padding="sm"
                     title={`Size ${form.sizeLabel}`}
-                    description={`${form.styleNumber} · ${form.inspectedQuantity} inspected`}
+                    description={
+                      session.processFlowPpSample
+                        ? `${form.styleNumber} · Sample quantity ${session.processFlowPpSample.sampleQuantity}`
+                        : `${form.styleNumber} · ${form.inspectedQuantity} inspected`
+                    }
                     actions={
                       <StatusBadge
                         label={form.status}
@@ -232,13 +246,25 @@ export function QaDetailPage() {
                     }
                   >
                     <DescriptionList columns={4} density="compact">
-                      <DescriptionList.Item label="Accepted" value={form.acceptedQuantity} />
-                      <DescriptionList.Item label="Rework" value={form.reworkQuantity} />
-                      <DescriptionList.Item
-                        label="Rejected"
-                        value={form.permanentlyRejectedQuantity}
-                      />
-                      <DescriptionList.Item label="Samples" value={form.sampleQuantity} />
+                      {session.processFlowPpSample ? (
+                        <>
+                          <DescriptionList.Item label="Samples" value={form.sampleQuantity} />
+                          <DescriptionList.Item
+                            label="Decision"
+                            value={session.processFlowPpSample.decision ?? 'Pending'}
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <DescriptionList.Item label="Accepted" value={form.acceptedQuantity} />
+                          <DescriptionList.Item label="Rework" value={form.reworkQuantity} />
+                          <DescriptionList.Item
+                            label="Rejected"
+                            value={form.permanentlyRejectedQuantity}
+                          />
+                          <DescriptionList.Item label="Samples" value={form.sampleQuantity} />
+                        </>
+                      )}
                     </DescriptionList>
                     {form.checklist.some((item) => item.status || item.remarks) ? (
                       <ul className="mt-3 space-y-1 text-sm">

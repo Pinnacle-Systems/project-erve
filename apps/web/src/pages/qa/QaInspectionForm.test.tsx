@@ -299,8 +299,8 @@ describe('QaInspectionForm', () => {
       decision: null,
     };
     form.sampleQuantity = 5;
-    form.inspectedQuantity = 5;
-    form.acceptedQuantity = 5;
+    form.inspectedQuantity = 0;
+    form.acceptedQuantity = 0;
     form.checklist = QA_CHECKLIST_ITEMS.map(({ code }) => ({
       itemCode: code,
       status: 'YES',
@@ -313,13 +313,25 @@ describe('QaInspectionForm', () => {
 
     expect(container.textContent).toContain('Selected sizeM');
     expect(container.textContent).not.toContain('Size L');
-    expect((container.querySelector('[aria-label="Quantity of samples"]') as HTMLInputElement).disabled).toBe(true);
+    expect(container.querySelector('[aria-label="M accepted"]')).toBeNull();
+    expect(container.querySelector('[aria-label="M rework"]')).toBeNull();
+    expect(container.querySelector('[aria-label="M rejected"]')).toBeNull();
+    expect(
+      (container.querySelector('[aria-label="Quantity of samples"]') as HTMLInputElement).disabled,
+    ).toBe(true);
     await act(async () => button('Finalize size M').click());
     expect(container.textContent).toContain('Choose Pass or Fail before finalizing PP Sample.');
     expect(requestCall).not.toHaveBeenCalled();
 
-    await act(async () => (container.querySelector('input[value="FAIL"]') as HTMLInputElement).click());
+    await act(async () =>
+      (container.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+    );
     await act(async () => button('Finalize size M').click());
+    const savedPayload = requestCall.mock.calls[0]![0].data as Record<string, unknown>;
+    expect(savedPayload).not.toHaveProperty('inspectedQuantity');
+    expect(savedPayload).not.toHaveProperty('acceptedQuantity');
+    expect(savedPayload).not.toHaveProperty('reworkQuantity');
+    expect(savedPayload).not.toHaveProperty('permanentlyRejectedQuantity');
     expect(requestCall).toHaveBeenCalledWith(
       expect.objectContaining({
         url: '/qa/inspections/inspection-1/forms/form-1/finalize',
@@ -391,7 +403,9 @@ describe('QaInspectionForm', () => {
     await act(async () => button('Finalize size M').click());
     expect(request).toHaveBeenCalledTimes(1);
     expect(container.textContent).not.toContain('Size form updated.');
-    expect(container.textContent).toContain('Size M was not finalized. Review the highlighted fields.');
+    expect(container.textContent).toContain(
+      'Size M was not finalized. Review the highlighted fields.',
+    );
     expect(container.textContent).toContain('A response is required to finalize.');
   });
 
@@ -407,7 +421,9 @@ describe('QaInspectionForm', () => {
     await act(async () => button('Finalize size M').click());
 
     expect(request).not.toHaveBeenCalled();
-    expect(container.textContent).toContain('Size M was not finalized. Review the highlighted field.');
+    expect(container.textContent).toContain(
+      'Size M was not finalized. Review the highlighted field.',
+    );
     expect(container.textContent).toContain('Choose a defect category.');
     expect(container.querySelector('#select-defect-category')?.getAttribute('aria-invalid')).toBe(
       'true',
@@ -739,9 +755,9 @@ describe('QaInspectionForm', () => {
       }),
     });
     expect(request.mock.calls[1]![0]).toMatchObject({
-        url: '/qa/inspections/inspection-1/forms/form-1/finalize',
-        method: 'post',
-        data: { expectedVersion: 2 },
+      url: '/qa/inspections/inspection-1/forms/form-1/finalize',
+      method: 'post',
+      data: { expectedVersion: 2 },
     });
     expect(container.textContent).toContain('Size M finalized.');
   });

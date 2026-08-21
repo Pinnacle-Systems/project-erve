@@ -524,10 +524,10 @@ export async function saveSizeInspectionForm(
       status: 'YES' | 'NO' | 'AVAILABLE' | null;
       remarks: string | null;
     }>;
-    inspectedQuantity: number;
-    acceptedQuantity: number;
-    reworkQuantity: number;
-    permanentlyRejectedQuantity: number;
+    inspectedQuantity?: number;
+    acceptedQuantity?: number;
+    reworkQuantity?: number;
+    permanentlyRejectedQuantity?: number;
     defectCategory?:
       | 'STITCHING'
       | 'FABRIC'
@@ -568,6 +568,17 @@ export async function saveSizeInspectionForm(
       input.sampleQuantity !== form.session.qualityActivityExecution.sampleQuantity
     )
       throw HttpError.conflict('PP Sample size and quantity are locked after inspection starts');
+    const ppSample = Boolean(form.session.qualityActivityExecution);
+    const dispositionQuantities = [
+      input.inspectedQuantity,
+      input.acceptedQuantity,
+      input.reworkQuantity,
+      input.permanentlyRejectedQuantity,
+    ];
+    if (ppSample && dispositionQuantities.some((quantity) => quantity !== undefined))
+      throw HttpError.badRequest('Disposition quantities do not apply to a Process Flow PP Sample');
+    if (!ppSample && dispositionQuantities.some((quantity) => quantity === undefined))
+      throw HttpError.badRequest('Disposition quantities are required for a general inspection');
     const size = await tx.jobOrderLineSize.findFirst({
       where: { id: form.jobOrderLineSizeId, jobOrderLine: { jobOrderId } },
     });
@@ -589,7 +600,7 @@ export async function saveSizeInspectionForm(
         ? (await tx.qaReworkTask.findUniqueOrThrow({ where: { id: form.sourceReworkTaskId } }))
             .assignedQuantity
         : size.preparedQuantity;
-    if (consumed + input.inspectedQuantity > capacity)
+    if (!ppSample && consumed + input.inspectedQuantity! > capacity)
       throw HttpError.badRequest('Inspection exceeds quantity available for this size', {
         issues: [
           {
@@ -604,10 +615,12 @@ export async function saveSizeInspectionForm(
     const normalized = {
       sampleQuantity: input.sampleQuantity ?? null,
       inspectionRemarks: input.inspectionRemarks?.trim() || null,
-      inspectedQuantity: input.inspectedQuantity,
-      acceptedQuantity: input.acceptedQuantity,
-      reworkQuantity: input.reworkQuantity,
-      permanentlyRejectedQuantity: input.permanentlyRejectedQuantity,
+      inspectedQuantity: ppSample ? form.inspectedQuantity : input.inspectedQuantity!,
+      acceptedQuantity: ppSample ? form.acceptedQuantity : input.acceptedQuantity!,
+      reworkQuantity: ppSample ? form.reworkQuantity : input.reworkQuantity!,
+      permanentlyRejectedQuantity: ppSample
+        ? form.permanentlyRejectedQuantity
+        : input.permanentlyRejectedQuantity!,
       defectCategory: input.defectCategory ?? null,
       otherDefectDetails:
         input.defectCategory === 'OTHER' ? input.otherDefectDetails?.trim() || null : null,
@@ -727,12 +740,16 @@ export async function finalizeSizeInspectionForm(
       form.checklist.some((item) => item.status === null)
     )
       incomplete.push({ field: 'checklist', message: 'Every checklist response is required.' });
-    if (form.inspectedQuantity !== capacity)
+    if (!ppExecution && form.inspectedQuantity !== capacity)
       incomplete.push({
         field: 'quantities',
         message: `Final quantities must reconcile to ${capacity}.`,
       });
-    if ((form.reworkQuantity > 0 || form.permanentlyRejectedQuantity > 0) && !form.defectCategory)
+    if (
+      !ppExecution &&
+      (form.reworkQuantity > 0 || form.permanentlyRejectedQuantity > 0) &&
+      !form.defectCategory
+    )
       incomplete.push({ field: 'defectCategory', message: 'A defect category is required.' });
     if (form.defectCategory === 'OTHER' && !form.otherDefectDetails?.trim())
       incomplete.push({
@@ -747,7 +764,7 @@ export async function finalizeSizeInspectionForm(
           ...issue,
         })),
       });
-    if (form.permanentlyRejectedQuantity > 0) {
+    if (!ppExecution && form.permanentlyRejectedQuantity > 0) {
       const evidence = await tx.qaEvidence.count({
         where: { inspectionSessionId: sessionId, inspectionLineId: formId },
       });
@@ -794,7 +811,22 @@ export async function finalizeSizeInspectionForm(
       });
     const updated = await tx.qaSizeInspectionForm.update({
       where: { id: formId },
-      data: { status: 'FINALIZED', finalizedAt: new Date(), version: { increment: 1 } },
+      data: {
+        status: 'FINALIZED',
+        finalizedAt: new Date(),
+        // Compatibility only: the shared ERVE-015 columns are non-null and reconciled.
+        // For linked PP Samples these zeros have no disposition meaning; the authoritative
+        // result is sampleQuantity plus the Quality execution's explicit PASS/FAIL outcome.
+        ...(ppExecution
+          ? {
+              inspectedQuantity: 0,
+              acceptedQuantity: 0,
+              reworkQuantity: 0,
+              permanentlyRejectedQuantity: 0,
+            }
+          : {}),
+        version: { increment: 1 },
+      },
     });
     const session = await deriveSessionStatus(tx, sessionId);
     if (ppExecution) {

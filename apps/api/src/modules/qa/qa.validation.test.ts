@@ -9,7 +9,11 @@ const form = {
   reworkQuantity: 0,
   permanentlyRejectedQuantity: 0,
   sampleQuantity: 2,
-  checklist: QA_CHECKLIST_ITEMS.map((item) => ({ itemCode: item.code, status: null, remarks: null })),
+  checklist: QA_CHECKLIST_ITEMS.map((item) => ({
+    itemCode: item.code,
+    status: null,
+    remarks: null,
+  })),
 };
 
 describe('QA inspection form validation', () => {
@@ -55,5 +59,25 @@ describe('QA inspection form validation', () => {
         otherDefectDetails: null,
       }).success,
     ).toBe(true);
+  });
+
+  it('allows PP Sample adapters to omit the complete disposition quantity set', () => {
+    const {
+      inspectedQuantity: _inspectedQuantity,
+      acceptedQuantity: _acceptedQuantity,
+      reworkQuantity: _reworkQuantity,
+      permanentlyRejectedQuantity: _permanentlyRejectedQuantity,
+      ...withoutDisposition
+    } = form;
+    expect(
+      saveSizeInspectionFormSchema.safeParse({ expectedVersion: 1, ...withoutDisposition }).success,
+    ).toBe(true);
+    expect(
+      saveSizeInspectionFormSchema.safeParse({
+        expectedVersion: 1,
+        ...withoutDisposition,
+        acceptedQuantity: 1,
+      }).success,
+    ).toBe(false);
   });
 });
