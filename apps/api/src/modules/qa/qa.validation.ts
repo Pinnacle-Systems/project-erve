@@ -74,18 +74,33 @@ export const saveSizeInspectionFormSchema = z
             message: 'Duplicate checklist items are not allowed',
           });
       }),
-    inspectedQuantity: z.number().int().min(0),
-    acceptedQuantity: z.number().int().min(0),
-    reworkQuantity: z.number().int().min(0),
-    permanentlyRejectedQuantity: z.number().int().min(0),
+    inspectedQuantity: z.number().int().min(0).optional(),
+    acceptedQuantity: z.number().int().min(0).optional(),
+    reworkQuantity: z.number().int().min(0).optional(),
+    permanentlyRejectedQuantity: z.number().int().min(0).optional(),
     defectCategory: defectCategory.nullable().optional(),
     otherDefectDetails: z.string().trim().min(1).max(2000).nullable().optional(),
     defectNotes: z.string().trim().max(2000).nullable().optional(),
   })
   .superRefine((form, context) => {
+    const dispositions = [
+      form.inspectedQuantity,
+      form.acceptedQuantity,
+      form.reworkQuantity,
+      form.permanentlyRejectedQuantity,
+    ];
     if (
+      dispositions.some((quantity) => quantity !== undefined) &&
+      dispositions.some((quantity) => quantity === undefined)
+    )
+      context.addIssue({
+        code: 'custom',
+        message: 'All disposition quantities must be supplied together',
+      });
+    else if (
+      dispositions.every((quantity) => quantity !== undefined) &&
       form.inspectedQuantity !==
-      form.acceptedQuantity + form.reworkQuantity + form.permanentlyRejectedQuantity
+        form.acceptedQuantity! + form.reworkQuantity! + form.permanentlyRejectedQuantity!
     )
       context.addIssue({
         code: 'custom',

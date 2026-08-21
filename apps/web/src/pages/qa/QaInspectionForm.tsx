@@ -100,18 +100,24 @@ function EvidenceAttachment({
     />
   );
 }
-function validate(draft: Draft, capacity: number, finalizing: boolean, evidence: number): Errors {
+function validate(
+  draft: Draft,
+  capacity: number,
+  finalizing: boolean,
+  evidence: number,
+  ppSample: boolean,
+): Errors {
   const errors: Errors = {};
   const quantity = (value: string, name: string) => {
     if (value && !/^\d+$/.test(value)) errors[name] = 'Enter a non-negative whole number.';
     return Number(value || 0);
   };
   const sample = quantity(draft.sample, 'sample');
-  const accepted = quantity(draft.accepted, 'accepted');
-  const rework = quantity(draft.rework, 'rework');
-  const rejected = quantity(draft.rejected, 'rejected');
+  const accepted = ppSample ? 0 : quantity(draft.accepted, 'accepted');
+  const rework = ppSample ? 0 : quantity(draft.rework, 'rework');
+  const rejected = ppSample ? 0 : quantity(draft.rejected, 'rejected');
   if (sample > 2147483647) errors.sample = 'Sample quantity is too large.';
-  if (accepted + rework + rejected > capacity)
+  if (!ppSample && accepted + rework + rejected > capacity)
     errors.quantities = `Quantities cannot exceed ${capacity}, the available capacity for this size.`;
   if (draft.category !== 'OTHER' && draft.other.trim())
     errors.other = 'Clear OTHER details unless OTHER is selected.';
@@ -120,7 +126,7 @@ function validate(draft: Draft, capacity: number, finalizing: boolean, evidence:
     for (const item of QA_CHECKLIST_ITEMS)
       if (!draft.checks[item.code]?.status)
         errors[`check.${item.code}`] = 'A response is required to finalize.';
-    if (accepted + rework + rejected !== capacity)
+    if (!ppSample && accepted + rework + rejected !== capacity)
       errors.quantities = `Final quantities must reconcile to ${capacity}.`;
     if ((rework || rejected) && !draft.category) errors.category = 'Choose a defect category.';
     if (draft.category === 'OTHER' && !draft.other.trim())
@@ -173,7 +179,8 @@ export function QaInspectionForm({
     ? detail.reworkTasks.find((item) => item.id === selected.sourceReworkTaskId)
     : undefined;
   const ppSample = session?.processFlowPpSample ?? null;
-  const capacity = ppSample?.sampleQuantity ?? rework?.assignedQuantity ?? selected?.preparedQuantity ?? 0;
+  const capacity =
+    ppSample?.sampleQuantity ?? rework?.assignedQuantity ?? selected?.preparedQuantity ?? 0;
   const remainingInspectable = rework?.assignedQuantity ?? line?.availableToInspect ?? capacity;
   const evidence = session?.evidence.filter((item) => item.inspectionLineId === selected?.id) ?? [];
   const update = (change: Partial<Draft>) => {
@@ -346,7 +353,7 @@ export function QaInspectionForm({
   const readonly = selected.status === 'FINALIZED' || !canMutate;
   const save = (finalizing: boolean) => {
     setNotice('');
-    const next = validate(draft, capacity, finalizing, evidence.length);
+    const next = validate(draft, capacity, finalizing, evidence.length, Boolean(ppSample));
     if (finalizing && ppSample && !ppSampleDecision)
       next.ppSampleDecision = 'Choose Pass or Fail before finalizing PP Sample.';
     if (Object.keys(next).length) {
@@ -359,6 +366,15 @@ export function QaInspectionForm({
       return;
     }
     setErrors({});
+    const disposition = ppSample
+      ? {}
+      : {
+          inspectedQuantity:
+            Number(draft.accepted || 0) + Number(draft.rework || 0) + Number(draft.rejected || 0),
+          acceptedQuantity: Number(draft.accepted || 0),
+          reworkQuantity: Number(draft.rework || 0),
+          permanentlyRejectedQuantity: Number(draft.rejected || 0),
+        };
     const body = {
       expectedVersion: selected.version,
       sampleQuantity: draft.sample ? Number(draft.sample) : null,
@@ -368,11 +384,7 @@ export function QaInspectionForm({
         status: draft.checks[item.code]?.status || null,
         remarks: draft.checks[item.code]?.remarks.trim() || null,
       })),
-      inspectedQuantity:
-        Number(draft.accepted || 0) + Number(draft.rework || 0) + Number(draft.rejected || 0),
-      acceptedQuantity: Number(draft.accepted || 0),
-      reworkQuantity: Number(draft.rework || 0),
-      permanentlyRejectedQuantity: Number(draft.rejected || 0),
+      ...disposition,
       defectCategory: draft.category || null,
       otherDefectDetails: draft.category === 'OTHER' ? draft.other.trim() : null,
       defectNotes: draft.category === 'OTHER' ? null : draft.notes.trim() || null,
@@ -385,8 +397,7 @@ export function QaInspectionForm({
         ? `/qa/inspections/${session.id}/forms/${selected.id}/finalize`
         : undefined,
       formId: finalizing ? selected.id : undefined,
-      finalizeBody:
-        finalizing && ppSample ? { ppSampleDecision } : undefined,
+      finalizeBody: finalizing && ppSample ? { ppSampleDecision } : undefined,
     });
   };
   const reload = async () => {
@@ -458,23 +469,25 @@ export function QaInspectionForm({
         }
       >
         <div className="space-y-6">
-          {!ppSample && <nav aria-label="Size inspection forms" className="flex flex-wrap gap-2">
-            {forms.map((form) => (
-              <Button
-                type="button"
-                key={form.id}
-                aria-pressed={form.id === selected.id}
-                onClick={() => selectForm(form.id)}
-                variant={form.id === selected.id ? 'default' : 'secondary'}
-              >
-                Size {form.sizeLabel}
-                <StatusBadge
-                  label={form.status}
-                  tone={form.status === 'FINALIZED' ? 'approved' : 'draft'}
-                />
-              </Button>
-            ))}
-          </nav>}
+          {!ppSample && (
+            <nav aria-label="Size inspection forms" className="flex flex-wrap gap-2">
+              {forms.map((form) => (
+                <Button
+                  type="button"
+                  key={form.id}
+                  aria-pressed={form.id === selected.id}
+                  onClick={() => selectForm(form.id)}
+                  variant={form.id === selected.id ? 'default' : 'secondary'}
+                >
+                  Size {form.sizeLabel}
+                  <StatusBadge
+                    label={form.status}
+                    tone={form.status === 'FINALIZED' ? 'approved' : 'draft'}
+                  />
+                </Button>
+              ))}
+            </nav>
+          )}
           <FormSection title="Inspection Details">
             <DescriptionList columns={3}>
               <DescriptionList.Item label="Job Order" value={detail.jobOrderNumber} />
@@ -512,9 +525,10 @@ export function QaInspectionForm({
           </FormSection>
           {ppSample && (
             <FormSection title="PP Sample Decision">
-              <p>This decision is explicit and is not derived from checklist or quantity fields.</p>
-              <label>
+              <p>This decision is explicit and is not inferred from checklist or defect details.</p>
+              <label className="flex items-center gap-2">
                 <input
+                  className="m-0 shrink-0"
                   type="radio"
                   name="pp-sample-decision"
                   value="PASS"
@@ -524,8 +538,9 @@ export function QaInspectionForm({
                 />
                 Pass — OK to proceed
               </label>
-              <label>
+              <label className="flex items-center gap-2">
                 <input
+                  className="m-0 shrink-0"
                   type="radio"
                   name="pp-sample-decision"
                   value="FAIL"
@@ -631,27 +646,29 @@ export function QaInspectionForm({
               onChange={(event) => update({ remarks: event.target.value })}
             />
           </FormSection>
-          <FormSection title="Inspection outcome">
-            <FormGrid layout="content">
-              {(['accepted', 'rework', 'rejected'] as const).map((field) => (
-                <TextField
-                  key={field}
-                  label={field[0]!.toUpperCase() + field.slice(1)}
-                  aria-label={`${selected.sizeLabel} ${field}`}
-                  type="number"
-                  min={0}
-                  inputMode="numeric"
-                  width="xs"
-                  disabled={readonly}
-                  value={draft[field]}
-                  onChange={(event) => update({ [field]: event.target.value } as Partial<Draft>)}
-                />
-              ))}
-            </FormGrid>
-            {errors.quantities && (
-              <ValidationMessage tone="error">{errors.quantities}</ValidationMessage>
-            )}
-          </FormSection>
+          {!ppSample && (
+            <FormSection title="Inspection outcome">
+              <FormGrid layout="content">
+                {(['accepted', 'rework', 'rejected'] as const).map((field) => (
+                  <TextField
+                    key={field}
+                    label={field[0]!.toUpperCase() + field.slice(1)}
+                    aria-label={`${selected.sizeLabel} ${field}`}
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    width="xs"
+                    disabled={readonly}
+                    value={draft[field]}
+                    onChange={(event) => update({ [field]: event.target.value } as Partial<Draft>)}
+                  />
+                ))}
+              </FormGrid>
+              {errors.quantities && (
+                <ValidationMessage tone="error">{errors.quantities}</ValidationMessage>
+              )}
+            </FormSection>
+          )}
           <FormSection title="Defect Information">
             <FormGrid columns={2}>
               <SelectField
@@ -744,7 +761,7 @@ export function QaInspectionForm({
                 </Button>
               </>
             )}
-            {Number(draft.rejected || 0) > 0 && !errors.evidence && (
+            {!ppSample && Number(draft.rejected || 0) > 0 && !errors.evidence && (
               <p>Permanent rejection requires evidence attached to this exact size.</p>
             )}
             {errors.evidence && <p role="alert">{errors.evidence}</p>}

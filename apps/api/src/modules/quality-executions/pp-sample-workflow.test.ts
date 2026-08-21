@@ -449,10 +449,6 @@ async function finalizeStartedPp(
       sampleQuantity: quantity,
       inspectionRemarks: null,
       checklist: checklistCodes.map((itemCode) => ({ itemCode, status: 'YES', remarks: null })),
-      inspectedQuantity: quantity,
-      acceptedQuantity: quantity,
-      reworkQuantity: 0,
-      permanentlyRejectedQuantity: 0,
       defectCategory: null,
       otherDefectDetails: null,
       defectNotes: null,
@@ -503,12 +499,22 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       .set('Idempotency-Key', createId())
       .send({
         expectedVersion: 1,
-        sampleQuantity: 6,
+        sampleQuantity: 5,
         checklist: checklistCodes.map((itemCode) => ({ itemCode, status: null, remarks: null })),
         inspectedQuantity: 0,
         acceptedQuantity: 0,
         reworkQuantity: 0,
         permanentlyRejectedQuantity: 0,
+      })
+      .expect(400);
+    await request(app)
+      .put(`/qa/inspections/${session.id}/forms/${session.forms[0]!.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send({
+        expectedVersion: 1,
+        sampleQuantity: 6,
+        checklist: checklistCodes.map((itemCode) => ({ itemCode, status: null, remarks: null })),
       })
       .expect(409);
   });
@@ -531,10 +537,6 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         where: { inspectionFormId: form.id },
         data: { status: 'YES' },
       });
-      await prisma.qaSizeInspectionForm.update({
-        where: { id: form.id },
-        data: { inspectedQuantity: 5, acceptedQuantity: 5 },
-      });
       await request(app)
         .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
         .set('Authorization', `Bearer ${f.qa.token}`)
@@ -555,6 +557,12 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         .expect(200);
       const finalizedForm = await prisma.qaSizeInspectionForm.findUniqueOrThrow({
         where: { id: form.id },
+      });
+      expect(finalizedForm).toMatchObject({
+        inspectedQuantity: 0,
+        acceptedQuantity: 0,
+        reworkQuantity: 0,
+        permanentlyRejectedQuantity: 0,
       });
       await request(app)
         .post(`/qa/inspections/${session.id}/forms/${form.id}/reopen`)
@@ -582,6 +590,52 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       ).toBe(decision === 'PASS' ? 'AVAILABLE' : 'NOT_AVAILABLE');
     },
   );
+
+  it('ignores legacy disposition values when finalizing a linked PP Sample', async () => {
+    const f = await workflow();
+    await prisma.jobOrder.update({
+      where: { id: f.job.id },
+      data: { status: 'CONFIRMED_BY_FACTORY', factoryConfirmationStatus: 'CONFIRMED' },
+    });
+    const started = await startPp(f).expect(201);
+    const session = await prisma.qaInspectionSession.findUniqueOrThrow({
+      where: { qualityActivityExecutionId: started.body.data.id },
+      include: { forms: true },
+    });
+    const form = session.forms[0]!;
+    await prisma.qaSizeInspectionChecklistItem.updateMany({
+      where: { inspectionFormId: form.id },
+      data: { status: 'YES' },
+    });
+    await prisma.qaSizeInspectionForm.update({
+      where: { id: form.id },
+      data: {
+        inspectedQuantity: 5,
+        permanentlyRejectedQuantity: 5,
+        defectCategory: null,
+      },
+    });
+
+    await request(app)
+      .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send({ expectedVersion: form.version, ppSampleDecision: 'PASS' })
+      .expect(200);
+
+    await expect(prisma.qaReworkTask.count({ where: { jobOrderId: f.job.id } })).resolves.toBe(0);
+    await expect(
+      prisma.qaEvidence.count({ where: { inspectionSessionId: session.id } }),
+    ).resolves.toBe(0);
+    await expect(
+      prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } }),
+    ).resolves.toMatchObject({
+      inspectedQuantity: 0,
+      acceptedQuantity: 0,
+      reworkQuantity: 0,
+      permanentlyRejectedQuantity: 0,
+    });
+  });
 
   it('PASS unlocks PPM, not Production; PPM finalization unlocks Cutting', async () => {
     const f = await workflow();

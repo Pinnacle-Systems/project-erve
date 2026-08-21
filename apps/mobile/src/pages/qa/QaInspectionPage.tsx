@@ -2,63 +2,617 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import type { ApiErrorResponse, ApiSuccessResponse, QaChecklistStatus, QaDefectCategory, QaInspectionDetail, QaSizeInspectionFormView } from '@erve/types';
+import type {
+  ApiErrorResponse,
+  ApiSuccessResponse,
+  QaChecklistStatus,
+  QaDefectCategory,
+  QaInspectionDetail,
+  QaSizeInspectionFormView,
+} from '@erve/types';
 import { canStartQaInspection, qaInspectionAction, QA_CHECKLIST_ITEMS } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 
 type ChecklistEntry = { status: QaChecklistStatus | ''; remarks: string };
-export type QaFormDraft = { sampleQuantity: string; accepted: string; rework: string; rejected: string; category: QaDefectCategory | ''; other: string; notes: string; remarks: string; checklist: Record<string, ChecklistEntry> };
+export type QaFormDraft = {
+  sampleQuantity: string;
+  accepted: string;
+  rework: string;
+  rejected: string;
+  category: QaDefectCategory | '';
+  other: string;
+  notes: string;
+  remarks: string;
+  checklist: Record<string, ChecklistEntry>;
+};
 type Errors = Record<string, string>;
-const categories: QaDefectCategory[] = ['STITCHING', 'FABRIC', 'PRINT_EMBROIDERY', 'MEASUREMENT', 'FINISHING', 'PACKAGING', 'OTHER'];
-const blank = (): QaFormDraft => ({ sampleQuantity: '', accepted: '', rework: '', rejected: '', category: '', other: '', notes: '', remarks: '', checklist: {} });
-export function draftFrom(form: QaSizeInspectionFormView): QaFormDraft { return { sampleQuantity: form.sampleQuantity?.toString() ?? '', accepted: String(form.acceptedQuantity), rework: String(form.reworkQuantity), rejected: String(form.permanentlyRejectedQuantity), category: form.defectCategory ?? '', other: form.otherDefectDetails ?? '', notes: form.defectNotes ?? '', remarks: form.inspectionRemarks ?? '', checklist: Object.fromEntries(form.checklist.map((item) => [item.itemCode, { status: item.status ?? '', remarks: item.remarks ?? '' }])) }; }
-function requestKey(action: string, version: number) { return `mobile:${action}:${version}:${crypto.randomUUID()}`; }
-function apiMessage(error: unknown) { if (!isAxiosError<ApiErrorResponse>(error)) return 'The request did not complete. You can safely retry.'; const code = error.response?.data.error.code; if (code === 'STALE_VERSION' || code === 'CONFLICT') return 'This size inspection changed on another device.'; if (code === 'UNAUTHORIZED') return 'Your session expired. Sign in again.'; if (code === 'FORBIDDEN') return 'Your QA permission changed.'; return error.response?.data.error.message ?? 'The request did not complete.'; }
-export function validateDraft(draft: QaFormDraft, capacity: number, finalizing: boolean, evidenceCount: number): Errors {
-  const errors: Errors = {}; const integer = (value: string) => /^\d+$/.test(value);
-  if (draft.sampleQuantity && (!integer(draft.sampleQuantity) || Number(draft.sampleQuantity) > 2147483647)) errors.sampleQuantity = 'Sample quantity must be a non-negative whole number.';
-  const values = [draft.accepted, draft.rework, draft.rejected];
-  if (values.some((value) => value && !integer(value))) errors.quantities = 'Quantities must be non-negative whole numbers.';
+const categories: QaDefectCategory[] = [
+  'STITCHING',
+  'FABRIC',
+  'PRINT_EMBROIDERY',
+  'MEASUREMENT',
+  'FINISHING',
+  'PACKAGING',
+  'OTHER',
+];
+const blank = (): QaFormDraft => ({
+  sampleQuantity: '',
+  accepted: '',
+  rework: '',
+  rejected: '',
+  category: '',
+  other: '',
+  notes: '',
+  remarks: '',
+  checklist: {},
+});
+export function draftFrom(form: QaSizeInspectionFormView): QaFormDraft {
+  return {
+    sampleQuantity: form.sampleQuantity?.toString() ?? '',
+    accepted: String(form.acceptedQuantity),
+    rework: String(form.reworkQuantity),
+    rejected: String(form.permanentlyRejectedQuantity),
+    category: form.defectCategory ?? '',
+    other: form.otherDefectDetails ?? '',
+    notes: form.defectNotes ?? '',
+    remarks: form.inspectionRemarks ?? '',
+    checklist: Object.fromEntries(
+      form.checklist.map((item) => [
+        item.itemCode,
+        { status: item.status ?? '', remarks: item.remarks ?? '' },
+      ]),
+    ),
+  };
+}
+function requestKey(action: string, version: number) {
+  return `mobile:${action}:${version}:${crypto.randomUUID()}`;
+}
+function apiMessage(error: unknown) {
+  if (!isAxiosError<ApiErrorResponse>(error))
+    return 'The request did not complete. You can safely retry.';
+  const code = error.response?.data.error.code;
+  if (code === 'STALE_VERSION' || code === 'CONFLICT')
+    return 'This size inspection changed on another device.';
+  if (code === 'UNAUTHORIZED') return 'Your session expired. Sign in again.';
+  if (code === 'FORBIDDEN') return 'Your QA permission changed.';
+  return error.response?.data.error.message ?? 'The request did not complete.';
+}
+export function validateDraft(
+  draft: QaFormDraft,
+  capacity: number,
+  finalizing: boolean,
+  evidenceCount: number,
+  ppSample = false,
+): Errors {
+  const errors: Errors = {};
+  const integer = (value: string) => /^\d+$/.test(value);
+  if (
+    draft.sampleQuantity &&
+    (!integer(draft.sampleQuantity) || Number(draft.sampleQuantity) > 2147483647)
+  )
+    errors.sampleQuantity = 'Sample quantity must be a non-negative whole number.';
+  const values = ppSample ? [] : [draft.accepted, draft.rework, draft.rejected];
+  if (!ppSample && values.some((value) => value && !integer(value)))
+    errors.quantities = 'Quantities must be non-negative whole numbers.';
   const total = values.reduce((sum, value) => sum + (value ? Number(value) : 0), 0);
-  if (!errors.quantities && total > capacity) errors.quantities = `Total cannot exceed ${capacity} available for this size.`;
-  if (draft.category === 'OTHER' && !draft.other.trim()) errors.other = 'Describe the other defect.';
-  if (finalizing) { if (!draft.sampleQuantity) errors.sampleQuantity ??= 'Sample quantity is required to finalize.'; if (QA_CHECKLIST_ITEMS.some((item) => !draft.checklist[item.code]?.status)) errors.checklist = 'Complete all 15 checklist responses before finalizing.'; if (total === 0) errors.quantities ??= 'Record an inspection outcome before finalizing.'; if (Number(draft.rejected || 0) > 0 && evidenceCount === 0) errors.evidence = 'Permanent rejection requires evidence for this size.'; }
+  if (!ppSample && !errors.quantities && total > capacity)
+    errors.quantities = `Total cannot exceed ${capacity} available for this size.`;
+  if (draft.category === 'OTHER' && !draft.other.trim())
+    errors.other = 'Describe the other defect.';
+  if (finalizing) {
+    if (!draft.sampleQuantity) errors.sampleQuantity ??= 'Sample quantity is required to finalize.';
+    if (QA_CHECKLIST_ITEMS.some((item) => !draft.checklist[item.code]?.status))
+      errors.checklist = 'Complete all 15 checklist responses before finalizing.';
+    if (!ppSample && total === 0)
+      errors.quantities ??= 'Record an inspection outcome before finalizing.';
+    if (!ppSample && Number(draft.rejected || 0) > 0 && evidenceCount === 0)
+      errors.evidence = 'Permanent rejection requires evidence for this size.';
+  }
   return errors;
 }
-function formPayload(draft: QaFormDraft, version: number) { const accepted = Number(draft.accepted || 0), rework = Number(draft.rework || 0), rejected = Number(draft.rejected || 0); return { expectedVersion: version, sampleQuantity: draft.sampleQuantity === '' ? null : Number(draft.sampleQuantity), inspectionRemarks: draft.remarks.trim() || null, checklist: QA_CHECKLIST_ITEMS.map((item) => ({ itemCode: item.code, status: draft.checklist[item.code]?.status || null, remarks: draft.checklist[item.code]?.remarks.trim() || null })), inspectedQuantity: accepted + rework + rejected, acceptedQuantity: accepted, reworkQuantity: rework, permanentlyRejectedQuantity: rejected, defectCategory: draft.category || null, otherDefectDetails: draft.category === 'OTHER' ? draft.other.trim() || null : null, defectNotes: draft.notes.trim() || null }; }
+function formPayload(draft: QaFormDraft, version: number, ppSample = false) {
+  const accepted = Number(draft.accepted || 0),
+    rework = Number(draft.rework || 0),
+    rejected = Number(draft.rejected || 0);
+  return {
+    expectedVersion: version,
+    sampleQuantity: draft.sampleQuantity === '' ? null : Number(draft.sampleQuantity),
+    inspectionRemarks: draft.remarks.trim() || null,
+    checklist: QA_CHECKLIST_ITEMS.map((item) => ({
+      itemCode: item.code,
+      status: draft.checklist[item.code]?.status || null,
+      remarks: draft.checklist[item.code]?.remarks.trim() || null,
+    })),
+    ...(ppSample
+      ? {}
+      : {
+          inspectedQuantity: accepted + rework + rejected,
+          acceptedQuantity: accepted,
+          reworkQuantity: rework,
+          permanentlyRejectedQuantity: rejected,
+        }),
+    defectCategory: draft.category || null,
+    otherDefectDetails: draft.category === 'OTHER' ? draft.other.trim() || null : null,
+    defectNotes: draft.notes.trim() || null,
+  };
+}
 
 export function QaInspectionPage() {
-  const { id = '' } = useParams(); const { user } = useAuth(); const queryClient = useQueryClient(); const storageKey = `erve:qa-form-drafts:${id}`;
-  const [drafts, setDrafts] = useState<Record<string, QaFormDraft>>(() => { try { return JSON.parse(localStorage.getItem(storageKey) ?? '{}'); } catch { return {}; } });
-  const [selectedId, setSelectedId] = useState(''); const [errors, setErrors] = useState<Errors>({}); const [serverIssues, setServerIssues] = useState<string[]>([]); const [stale, setStale] = useState(false);
+  const { id = '' } = useParams();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const storageKey = `erve:qa-form-drafts:${id}`;
+  const [drafts, setDrafts] = useState<Record<string, QaFormDraft>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey) ?? '{}');
+    } catch {
+      return {};
+    }
+  });
+  const [selectedId, setSelectedId] = useState('');
+  const [errors, setErrors] = useState<Errors>({});
+  const [serverIssues, setServerIssues] = useState<string[]>([]);
+  const [stale, setStale] = useState(false);
   const [ppSampleDecision, setPpSampleDecision] = useState<'PASS' | 'FAIL' | ''>('');
-  const query = useQuery({ queryKey: ['qa-detail', id], queryFn: async () => (await apiClient.get<ApiSuccessResponse<QaInspectionDetail>>(`/qa/job-orders/${id}`)).data.data });
-  const detail = query.data; const editableSession = detail?.sessions.find((session) => session.forms.some((form) => form.status === 'DRAFT' || form.status === 'REOPENED'));
-  const displayedSession = editableSession ?? detail?.sessions.at(-1); const forms = displayedSession?.forms ?? []; const selected = forms.find((form) => form.id === selectedId) ?? forms[0];
-  useEffect(() => { localStorage.setItem(storageKey, JSON.stringify(drafts)); }, [drafts, storageKey]);
-  const updateDetail = (data: QaInspectionDetail, formId?: string) => { queryClient.setQueryData(['qa-detail', id], data); void queryClient.invalidateQueries({ queryKey: ['qa-queue'] }); if (formId) setDrafts((all) => { const next = { ...all }; delete next[formId]; return next; }); setErrors({}); setStale(false); };
-  const mutate = useMutation({ mutationFn: async ({ url, method, body, key }: { url: string; method: 'post' | 'put'; body: object; key: string }) => (await apiClient.request<ApiSuccessResponse<QaInspectionDetail>>({ url, method, data: body, headers: { 'Idempotency-Key': key } })).data.data, onSuccess: (data, variables) => updateDetail(data, variables.url.split('/forms/')[1]?.split('/')[0]), onError: (error) => { const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined; setStale(api?.code === 'STALE_VERSION' || api?.code === 'CONFLICT'); const issues = (api?.details as { issues?: Array<{ qaSizeInspectionFormId?: string; jobOrderLineSizeId?: string; field?: string; path?: Array<string | number>; message?: string }> } | undefined)?.issues ?? []; const own: Errors = {}; const other: string[] = []; for (const issue of issues) { const form = forms.find((candidate) => candidate.id === issue.qaSizeInspectionFormId || candidate.jobOrderLineSizeId === issue.jobOrderLineSizeId); const raw = issue.field ?? issue.path?.map(String).join('.') ?? 'form'; const target = ['acceptedQuantity', 'reworkQuantity', 'permanentlyRejectedQuantity', 'inspectedQuantity'].includes(raw) ? 'quantities' : raw === 'otherDefectDetails' ? 'other' : raw.startsWith('checklist') ? 'checklist' : raw; const text = issue.message ?? 'Invalid value'; if (form && form.id !== selected?.id) other.push(`Size ${form.sizeLabel} — ${text}`); else own[target] = text; } setErrors(own); setServerIssues(other); } });
-  const start = useMutation({ mutationFn: async () => (await apiClient.post<ApiSuccessResponse<QaInspectionDetail>>(`/qa/job-orders/${id}/inspections`, { expectedVersion: detail!.version, sourceReworkTaskIds: detail!.reworkTasks.filter((task) => task.status === 'READY_FOR_REINSPECTION').map((task) => task.id) }, { headers: { 'Idempotency-Key': requestKey('start', detail!.version) } })).data.data, onSuccess: updateDetail });
-  if (query.isLoading) return <main className="p-5" role="status">Loading inspection…</main>;
-  if (!detail || query.isError) return <main className="p-5" role="alert"><p>{apiMessage(query.error)}</p><button onClick={() => void query.refetch()}>Reload</button></main>;
-  const draft = selected ? drafts[selected.id] ?? draftFrom(selected) : blank(); const line = selected && detail.lines.find((item) => item.jobOrderLineSizeId === selected.jobOrderLineSizeId); const rework = selected && detail.reworkTasks.find((task) => task.id === selected.sourceReworkTaskId); const ppSample = displayedSession?.processFlowPpSample ?? null; const capacity = ppSample?.sampleQuantity ?? rework?.assignedQuantity ?? line?.availableToInspect ?? 0; const evidence = selected ? displayedSession?.evidence.filter((item) => item.inspectionLineId === selected.id) ?? [] : []; const readonly = !editableSession || selected?.status === 'FINALIZED';
-  const change = (patch: Partial<QaFormDraft>) => selected && setDrafts((all) => ({ ...all, [selected.id]: { ...draft, ...patch } }));
-  const submit = (finalizing: boolean) => { if (!selected || !editableSession) return; const next = validateDraft(draft, capacity, finalizing, evidence.length); if (finalizing && ppSample && !ppSampleDecision) next.ppSampleDecision = 'Choose Pass or Fail before finalizing.'; setErrors(next); setServerIssues([]); if (Object.keys(next).length) return; mutate.mutate({ url: `/qa/inspections/${editableSession.id}/forms/${selected.id}${finalizing ? '/finalize' : ''}`, method: finalizing ? 'post' : 'put', body: finalizing ? { expectedVersion: selected.version, ...(ppSample ? { ppSampleDecision } : {}) } : formPayload(draft, selected.version), key: requestKey(finalizing ? 'finalize' : 'save', selected.version) }); };
-  const canReopen = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'));
-  return <main className="min-h-full space-y-4 bg-background px-4 py-5"><Link to="/qa">← QA queue</Link><section className="rounded-xl border border-border bg-surface p-4"><p className="text-sm">{detail.purchaseOrderNumber} · {detail.factory.name}</p><h1 className="text-2xl font-semibold">{detail.jobOrderNumber}</h1><p>{detail.status.replaceAll('_', ' ')} · Version {detail.version}</p></section>
-    {(mutate.isError || start.isError) && <section role="alert" className="rounded border border-danger/40 p-3"><p>{apiMessage(mutate.error ?? start.error)}</p>{stale && <button onClick={() => void query.refetch()}>Reload latest size inspection</button>}</section>}
-    {!editableSession && canStartQaInspection(detail.status) && <button className="min-h-12 w-full rounded-lg bg-primary text-primary-foreground" onClick={() => start.mutate(undefined)}>{qaInspectionAction(detail.status) === 'REINSPECTION' ? 'Start reinspection' : 'Start inspection'}</button>}
-    {displayedSession && selected && <><section className="rounded-xl border border-border bg-surface p-4"><p>Cycle {displayedSession.cycleNumber}{displayedSession.cycleNumber > 1 ? ' · Reinspection' : ''}</p>{!ppSample && <nav aria-label="Size inspection forms" className="mt-3 flex flex-wrap gap-2">{forms.map((form) => <button key={form.id} aria-pressed={form.id === selected.id} onClick={() => { setSelectedId(form.id); setErrors({}); setServerIssues([]); }} className="rounded border px-3 py-2">Size {form.sizeLabel}<span className="block text-xs">{form.status}</span></button>)}</nav>}</section>
-      <section className="space-y-4 rounded-xl border border-border bg-surface p-4"><h2 className="text-lg font-semibold">Size {selected.sizeLabel} · {selected.status}</h2><p className="text-sm">{selected.styleNumber} · prepared {selected.preparedQuantity} · inspectable {capacity}</p>
-        <label>Sample quantity<input aria-label="Sample quantity" disabled={readonly || Boolean(ppSample)} type="text" inputMode="numeric" value={draft.sampleQuantity} onChange={(event) => change({ sampleQuantity: event.target.value })} /></label>{errors.sampleQuantity && <p role="alert">{errors.sampleQuantity}</p>}
-        <section><h3>Checklist (15 items)</h3>{QA_CHECKLIST_ITEMS.map((item) => { const check = draft.checklist[item.code] ?? { status: '', remarks: '' }; return <div key={item.code}><label>{item.label}<select aria-label={`${item.label} response`} disabled={readonly} value={check.status} onChange={(event) => change({ checklist: { ...draft.checklist, [item.code]: { ...check, status: event.target.value as QaChecklistStatus | '' } } })}><option value="">Unanswered</option><option value="YES">Yes</option><option value="NO">No</option><option value="AVAILABLE">Available</option></select></label><textarea aria-label={`${item.label} remarks`} disabled={readonly} placeholder="Checklist-row remarks" value={check.remarks} onChange={(event) => change({ checklist: { ...draft.checklist, [item.code]: { ...check, remarks: event.target.value } } })} /></div>; })}</section>{errors.checklist && <p role="alert">{errors.checklist}</p>}
-        <label>Inspection remarks<textarea aria-label="Inspection remarks" disabled={readonly} value={draft.remarks} onChange={(event) => change({ remarks: event.target.value })} /></label>
-        <section><h3>Size-specific quantities</h3>{(['accepted', 'rework', 'rejected'] as const).map((field) => <label key={field}>{field}<input aria-label={`${selected.sizeLabel} ${field}`} disabled={readonly} inputMode="numeric" value={draft[field]} onChange={(event) => change({ [field]: event.target.value } as Partial<QaFormDraft>)} /></label>)}{errors.quantities && <p role="alert">{errors.quantities}</p>}</section>
-        <section><h3>Defect information</h3><select aria-label="Defect category" disabled={readonly} value={draft.category} onChange={(event) => change({ category: event.target.value as QaDefectCategory | '', other: event.target.value === 'OTHER' ? draft.other : '' })}><option value="">No defect category</option>{categories.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}</select>{draft.category === 'OTHER' && <textarea aria-label="Other defect details" disabled={readonly} value={draft.other} onChange={(event) => change({ other: event.target.value })} />}{errors.other && <p role="alert">{errors.other}</p>}<textarea aria-label="Defect notes" disabled={readonly} value={draft.notes} onChange={(event) => change({ notes: event.target.value })} /></section>
-        <section><h3>Evidence for size {selected.sizeLabel}</h3>{evidence.length ? evidence.map((item) => <p key={item.id}>{item.fileName}</p>) : <p>No evidence attached to this size.</p>}{!readonly && <input aria-label={`Upload evidence for size ${selected.sizeLabel}`} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('image', file); body.append('inspectionLineId', selected.id); await apiClient.post(`/qa/inspections/${editableSession!.id}/evidence`, body); await query.refetch(); }} />}{errors.evidence && <p role="alert">{errors.evidence}</p>}</section>
-        {ppSample && <section><h3>PP Sample Decision</h3><p>Explicit QA decision; not derived from checklist or quantities.</p><label><input type="radio" name="pp-decision" disabled={readonly} checked={(ppSample.decision ?? ppSampleDecision) === 'PASS'} onChange={() => setPpSampleDecision('PASS')} />Pass — OK to proceed</label><label><input type="radio" name="pp-decision" disabled={readonly} checked={(ppSample.decision ?? ppSampleDecision) === 'FAIL'} onChange={() => setPpSampleDecision('FAIL')} />Fail — Not approved</label>{errors.ppSampleDecision && <p role="alert">{errors.ppSampleDecision}</p>}</section>}
-        {errors.form && <p role="alert">{errors.form}</p>}{serverIssues.map((issue) => <p role="alert" key={issue}>{issue}</p>)}<div className="flex gap-2">{!readonly && <><button onClick={() => submit(false)} disabled={mutate.isPending}>Save size form</button><button onClick={() => submit(true)} disabled={mutate.isPending}>Finalize size {selected.sizeLabel}</button></>}{selected.status === 'FINALIZED' && canReopen && <button onClick={() => { const reason = window.prompt(`Reason for reopening size ${selected.sizeLabel}`); if (reason?.trim()) mutate.mutate({ url: `/qa/inspections/${displayedSession.id}/forms/${selected.id}/reopen`, method: 'post', body: { expectedVersion: selected.version, reason: reason.trim() }, key: requestKey('reopen', selected.version) }); }}>Reopen size</button>}</div></section></>}
-    <section className="rounded-xl border border-border bg-surface p-4"><h2>Inspection history</h2>{detail.sessions.map((session) => <article key={session.id}><p>Cycle {session.cycleNumber}{session.cycleNumber > 1 ? ' · Reinspection' : ''}</p>{session.forms.map((form) => <p key={form.id}>Size {form.sizeLabel} · {form.status} · accepted {form.acceptedQuantity}, rework {form.reworkQuantity}, rejected {form.permanentlyRejectedQuantity}</p>)}</article>)}</section>
-  </main>;
+  const query = useQuery({
+    queryKey: ['qa-detail', id],
+    queryFn: async () =>
+      (await apiClient.get<ApiSuccessResponse<QaInspectionDetail>>(`/qa/job-orders/${id}`)).data
+        .data,
+  });
+  const detail = query.data;
+  const editableSession = detail?.sessions.find((session) =>
+    session.forms.some((form) => form.status === 'DRAFT' || form.status === 'REOPENED'),
+  );
+  const displayedSession = editableSession ?? detail?.sessions.at(-1);
+  const forms = displayedSession?.forms ?? [];
+  const selected = forms.find((form) => form.id === selectedId) ?? forms[0];
+  useEffect(() => {
+    localStorage.setItem(storageKey, JSON.stringify(drafts));
+  }, [drafts, storageKey]);
+  const updateDetail = (data: QaInspectionDetail, formId?: string) => {
+    queryClient.setQueryData(['qa-detail', id], data);
+    void queryClient.invalidateQueries({ queryKey: ['qa-queue'] });
+    if (formId)
+      setDrafts((all) => {
+        const next = { ...all };
+        delete next[formId];
+        return next;
+      });
+    setErrors({});
+    setStale(false);
+  };
+  const mutate = useMutation({
+    mutationFn: async ({
+      url,
+      method,
+      body,
+      key,
+    }: {
+      url: string;
+      method: 'post' | 'put';
+      body: object;
+      key: string;
+    }) =>
+      (
+        await apiClient.request<ApiSuccessResponse<QaInspectionDetail>>({
+          url,
+          method,
+          data: body,
+          headers: { 'Idempotency-Key': key },
+        })
+      ).data.data,
+    onSuccess: (data, variables) =>
+      updateDetail(data, variables.url.split('/forms/')[1]?.split('/')[0]),
+    onError: (error) => {
+      const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined;
+      setStale(api?.code === 'STALE_VERSION' || api?.code === 'CONFLICT');
+      const issues =
+        (
+          api?.details as
+            | {
+                issues?: Array<{
+                  qaSizeInspectionFormId?: string;
+                  jobOrderLineSizeId?: string;
+                  field?: string;
+                  path?: Array<string | number>;
+                  message?: string;
+                }>;
+              }
+            | undefined
+        )?.issues ?? [];
+      const own: Errors = {};
+      const other: string[] = [];
+      for (const issue of issues) {
+        const form = forms.find(
+          (candidate) =>
+            candidate.id === issue.qaSizeInspectionFormId ||
+            candidate.jobOrderLineSizeId === issue.jobOrderLineSizeId,
+        );
+        const raw = issue.field ?? issue.path?.map(String).join('.') ?? 'form';
+        const target = [
+          'acceptedQuantity',
+          'reworkQuantity',
+          'permanentlyRejectedQuantity',
+          'inspectedQuantity',
+        ].includes(raw)
+          ? 'quantities'
+          : raw === 'otherDefectDetails'
+            ? 'other'
+            : raw.startsWith('checklist')
+              ? 'checklist'
+              : raw;
+        const text = issue.message ?? 'Invalid value';
+        if (form && form.id !== selected?.id) other.push(`Size ${form.sizeLabel} — ${text}`);
+        else own[target] = text;
+      }
+      setErrors(own);
+      setServerIssues(other);
+    },
+  });
+  const start = useMutation({
+    mutationFn: async () =>
+      (
+        await apiClient.post<ApiSuccessResponse<QaInspectionDetail>>(
+          `/qa/job-orders/${id}/inspections`,
+          {
+            expectedVersion: detail!.version,
+            sourceReworkTaskIds: detail!.reworkTasks
+              .filter((task) => task.status === 'READY_FOR_REINSPECTION')
+              .map((task) => task.id),
+          },
+          { headers: { 'Idempotency-Key': requestKey('start', detail!.version) } },
+        )
+      ).data.data,
+    onSuccess: updateDetail,
+  });
+  if (query.isLoading)
+    return (
+      <main className="p-5" role="status">
+        Loading inspection…
+      </main>
+    );
+  if (!detail || query.isError)
+    return (
+      <main className="p-5" role="alert">
+        <p>{apiMessage(query.error)}</p>
+        <button onClick={() => void query.refetch()}>Reload</button>
+      </main>
+    );
+  const draft = selected ? (drafts[selected.id] ?? draftFrom(selected)) : blank();
+  const line =
+    selected &&
+    detail.lines.find((item) => item.jobOrderLineSizeId === selected.jobOrderLineSizeId);
+  const rework =
+    selected && detail.reworkTasks.find((task) => task.id === selected.sourceReworkTaskId);
+  const ppSample = displayedSession?.processFlowPpSample ?? null;
+  const capacity =
+    ppSample?.sampleQuantity ?? rework?.assignedQuantity ?? line?.availableToInspect ?? 0;
+  const evidence = selected
+    ? (displayedSession?.evidence.filter((item) => item.inspectionLineId === selected.id) ?? [])
+    : [];
+  const readonly = !editableSession || selected?.status === 'FINALIZED';
+  const change = (patch: Partial<QaFormDraft>) =>
+    selected && setDrafts((all) => ({ ...all, [selected.id]: { ...draft, ...patch } }));
+  const submit = (finalizing: boolean) => {
+    if (!selected || !editableSession) return;
+    const next = validateDraft(draft, capacity, finalizing, evidence.length, Boolean(ppSample));
+    if (finalizing && ppSample && !ppSampleDecision)
+      next.ppSampleDecision = 'Choose Pass or Fail before finalizing.';
+    setErrors(next);
+    setServerIssues([]);
+    if (Object.keys(next).length) return;
+    mutate.mutate({
+      url: `/qa/inspections/${editableSession.id}/forms/${selected.id}${finalizing ? '/finalize' : ''}`,
+      method: finalizing ? 'post' : 'put',
+      body: finalizing
+        ? { expectedVersion: selected.version, ...(ppSample ? { ppSampleDecision } : {}) }
+        : formPayload(draft, selected.version, Boolean(ppSample)),
+      key: requestKey(finalizing ? 'finalize' : 'save', selected.version),
+    });
+  };
+  const canReopen = Boolean(
+    user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'),
+  );
+  return (
+    <main className="min-h-full space-y-4 bg-background px-4 py-5">
+      <Link to="/qa">← QA queue</Link>
+      <section className="rounded-xl border border-border bg-surface p-4">
+        <p className="text-sm">
+          {detail.purchaseOrderNumber} · {detail.factory.name}
+        </p>
+        <h1 className="text-2xl font-semibold">{detail.jobOrderNumber}</h1>
+        <p>
+          {detail.status.replaceAll('_', ' ')} · Version {detail.version}
+        </p>
+      </section>
+      {(mutate.isError || start.isError) && (
+        <section role="alert" className="rounded border border-danger/40 p-3">
+          <p>{apiMessage(mutate.error ?? start.error)}</p>
+          {stale && (
+            <button onClick={() => void query.refetch()}>Reload latest size inspection</button>
+          )}
+        </section>
+      )}
+      {!editableSession && canStartQaInspection(detail.status) && (
+        <button
+          className="min-h-12 w-full rounded-lg bg-primary text-primary-foreground"
+          onClick={() => start.mutate(undefined)}
+        >
+          {qaInspectionAction(detail.status) === 'REINSPECTION'
+            ? 'Start reinspection'
+            : 'Start inspection'}
+        </button>
+      )}
+      {displayedSession && selected && (
+        <>
+          <section className="rounded-xl border border-border bg-surface p-4">
+            <p>
+              Cycle {displayedSession.cycleNumber}
+              {displayedSession.cycleNumber > 1 ? ' · Reinspection' : ''}
+            </p>
+            {!ppSample && (
+              <nav aria-label="Size inspection forms" className="mt-3 flex flex-wrap gap-2">
+                {forms.map((form) => (
+                  <button
+                    key={form.id}
+                    aria-pressed={form.id === selected.id}
+                    onClick={() => {
+                      setSelectedId(form.id);
+                      setErrors({});
+                      setServerIssues([]);
+                    }}
+                    className="rounded border px-3 py-2"
+                  >
+                    Size {form.sizeLabel}
+                    <span className="block text-xs">{form.status}</span>
+                  </button>
+                ))}
+              </nav>
+            )}
+          </section>
+          <section className="space-y-4 rounded-xl border border-border bg-surface p-4">
+            <h2 className="text-lg font-semibold">
+              Size {selected.sizeLabel} · {selected.status}
+            </h2>
+            <p className="text-sm">
+              {selected.styleNumber} · prepared {selected.preparedQuantity} · inspectable {capacity}
+            </p>
+            <label>
+              Sample quantity
+              <input
+                aria-label="Sample quantity"
+                disabled={readonly || Boolean(ppSample)}
+                type="text"
+                inputMode="numeric"
+                value={draft.sampleQuantity}
+                onChange={(event) => change({ sampleQuantity: event.target.value })}
+              />
+            </label>
+            {errors.sampleQuantity && <p role="alert">{errors.sampleQuantity}</p>}
+            <section>
+              <h3>Checklist (15 items)</h3>
+              {QA_CHECKLIST_ITEMS.map((item) => {
+                const check = draft.checklist[item.code] ?? { status: '', remarks: '' };
+                return (
+                  <div key={item.code}>
+                    <label>
+                      {item.label}
+                      <select
+                        aria-label={`${item.label} response`}
+                        disabled={readonly}
+                        value={check.status}
+                        onChange={(event) =>
+                          change({
+                            checklist: {
+                              ...draft.checklist,
+                              [item.code]: {
+                                ...check,
+                                status: event.target.value as QaChecklistStatus | '',
+                              },
+                            },
+                          })
+                        }
+                      >
+                        <option value="">Unanswered</option>
+                        <option value="YES">Yes</option>
+                        <option value="NO">No</option>
+                        <option value="AVAILABLE">Available</option>
+                      </select>
+                    </label>
+                    <textarea
+                      aria-label={`${item.label} remarks`}
+                      disabled={readonly}
+                      placeholder="Checklist-row remarks"
+                      value={check.remarks}
+                      onChange={(event) =>
+                        change({
+                          checklist: {
+                            ...draft.checklist,
+                            [item.code]: { ...check, remarks: event.target.value },
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                );
+              })}
+            </section>
+            {errors.checklist && <p role="alert">{errors.checklist}</p>}
+            <label>
+              Inspection remarks
+              <textarea
+                aria-label="Inspection remarks"
+                disabled={readonly}
+                value={draft.remarks}
+                onChange={(event) => change({ remarks: event.target.value })}
+              />
+            </label>
+            {!ppSample && (
+              <section>
+                <h3>Size-specific quantities</h3>
+                {(['accepted', 'rework', 'rejected'] as const).map((field) => (
+                  <label key={field}>
+                    {field}
+                    <input
+                      aria-label={`${selected.sizeLabel} ${field}`}
+                      disabled={readonly}
+                      inputMode="numeric"
+                      value={draft[field]}
+                      onChange={(event) =>
+                        change({ [field]: event.target.value } as Partial<QaFormDraft>)
+                      }
+                    />
+                  </label>
+                ))}
+                {errors.quantities && <p role="alert">{errors.quantities}</p>}
+              </section>
+            )}
+            <section>
+              <h3>Defect information</h3>
+              <select
+                aria-label="Defect category"
+                disabled={readonly}
+                value={draft.category}
+                onChange={(event) =>
+                  change({
+                    category: event.target.value as QaDefectCategory | '',
+                    other: event.target.value === 'OTHER' ? draft.other : '',
+                  })
+                }
+              >
+                <option value="">No defect category</option>
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {category.replaceAll('_', ' ')}
+                  </option>
+                ))}
+              </select>
+              {draft.category === 'OTHER' && (
+                <textarea
+                  aria-label="Other defect details"
+                  disabled={readonly}
+                  value={draft.other}
+                  onChange={(event) => change({ other: event.target.value })}
+                />
+              )}
+              {errors.other && <p role="alert">{errors.other}</p>}
+              <textarea
+                aria-label="Defect notes"
+                disabled={readonly}
+                value={draft.notes}
+                onChange={(event) => change({ notes: event.target.value })}
+              />
+            </section>
+            <section>
+              <h3>Evidence for size {selected.sizeLabel}</h3>
+              {evidence.length ? (
+                evidence.map((item) => <p key={item.id}>{item.fileName}</p>)
+              ) : (
+                <p>No evidence attached to this size.</p>
+              )}
+              {!readonly && (
+                <input
+                  aria-label={`Upload evidence for size ${selected.sizeLabel}`}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  capture="environment"
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    const body = new FormData();
+                    body.append('image', file);
+                    body.append('inspectionLineId', selected.id);
+                    await apiClient.post(`/qa/inspections/${editableSession!.id}/evidence`, body);
+                    await query.refetch();
+                  }}
+                />
+              )}
+              {errors.evidence && <p role="alert">{errors.evidence}</p>}
+            </section>
+            {ppSample && (
+              <section>
+                <h3>PP Sample Decision</h3>
+                <p>Explicit QA decision; not inferred from checklist or defect details.</p>
+                <label>
+                  <input
+                    type="radio"
+                    name="pp-decision"
+                    disabled={readonly}
+                    checked={(ppSample.decision ?? ppSampleDecision) === 'PASS'}
+                    onChange={() => setPpSampleDecision('PASS')}
+                  />
+                  Pass — OK to proceed
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="pp-decision"
+                    disabled={readonly}
+                    checked={(ppSample.decision ?? ppSampleDecision) === 'FAIL'}
+                    onChange={() => setPpSampleDecision('FAIL')}
+                  />
+                  Fail — Not approved
+                </label>
+                {errors.ppSampleDecision && <p role="alert">{errors.ppSampleDecision}</p>}
+              </section>
+            )}
+            {errors.form && <p role="alert">{errors.form}</p>}
+            {serverIssues.map((issue) => (
+              <p role="alert" key={issue}>
+                {issue}
+              </p>
+            ))}
+            <div className="flex gap-2">
+              {!readonly && (
+                <>
+                  <button onClick={() => submit(false)} disabled={mutate.isPending}>
+                    Save size form
+                  </button>
+                  <button onClick={() => submit(true)} disabled={mutate.isPending}>
+                    Finalize size {selected.sizeLabel}
+                  </button>
+                </>
+              )}
+              {selected.status === 'FINALIZED' && canReopen && (
+                <button
+                  onClick={() => {
+                    const reason = window.prompt(`Reason for reopening size ${selected.sizeLabel}`);
+                    if (reason?.trim())
+                      mutate.mutate({
+                        url: `/qa/inspections/${displayedSession.id}/forms/${selected.id}/reopen`,
+                        method: 'post',
+                        body: { expectedVersion: selected.version, reason: reason.trim() },
+                        key: requestKey('reopen', selected.version),
+                      });
+                  }}
+                >
+                  Reopen size
+                </button>
+              )}
+            </div>
+          </section>
+        </>
+      )}
+      <section className="rounded-xl border border-border bg-surface p-4">
+        <h2>Inspection history</h2>
+        {detail.sessions.map((session) => (
+          <article key={session.id}>
+            <p>
+              Cycle {session.cycleNumber}
+              {session.cycleNumber > 1 ? ' · Reinspection' : ''}
+            </p>
+            {session.forms.map((form) => (
+              <p key={form.id}>
+                {session.processFlowPpSample
+                  ? `Size ${form.sizeLabel} · ${form.status} · decision ${session.processFlowPpSample.decision ?? 'pending'}`
+                  : `Size ${form.sizeLabel} · ${form.status} · accepted ${form.acceptedQuantity}, rework ${form.reworkQuantity}, rejected ${form.permanentlyRejectedQuantity}`}
+              </p>
+            ))}
+          </article>
+        ))}
+      </section>
+    </main>
+  );
 }

@@ -19,7 +19,9 @@ The PP Sample Process Flow path reuses the ERVE-015 `QaInspectionSession` and `Q
 
 QA must explicitly select `PASS` or `FAIL` while finalizing the size form. This gate outcome is stored on the linked Quality execution and is not inferred from checklist, accepted, rework, rejection, or defect values. A Process Flow gate configured as `OUTCOME_PASS` is satisfied only by explicit `PASS`; `FAIL` leaves the following PPM gate locked. The decision is immutable, and PP retry/reopen is intentionally unavailable until a retry model is defined.
 
-Unlinked ERVE-015 sessions retain their existing multi-size, evidence, rework, reopen, reinspection, and whole-order approval behavior.
+The ERVE-015 session and size-form internals remain reusable infrastructure for PP Sample execution. Unlinked sessions are not an alternative end-user workflow and prepared quantity does not create or route work into them.
+
+The PP Sample adapter reuses the strongly typed checklist, remarks, defect information, and evidence association only. Its save contract omits inspected, accepted, rework, and permanently rejected quantities; its shared form row retains inert zero defaults for physical-schema compatibility. PP finalization does not reconcile those columns, require disposition evidence, or create rework. The selected size, locked sample quantity, completed checklist, and explicit `PASS` or `FAIL` are authoritative.
 
 ## PPM / Size Set
 
