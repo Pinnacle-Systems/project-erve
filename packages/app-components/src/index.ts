@@ -37,7 +37,10 @@ export { AttachmentList } from "./components/attachment-list";
 export type { AttachmentListProps, AttachmentItem } from "./components/attachment-list";
 
 export { ApprovalActionBar } from "./components/approval-action-bar";
-export type { ApprovalActionBarProps, ApprovalActionConfig } from "./components/approval-action-bar";
+export type {
+  ApprovalActionBarProps,
+  ApprovalActionConfig,
+} from "./components/approval-action-bar";
 
 export { TotalsPanel } from "./components/totals-panel";
 export type { TotalsPanelProps, TotalsPanelItem } from "./components/totals-panel";
@@ -49,7 +52,16 @@ export { ThemeModeRadioList } from "./components/theme-mode-radio-list";
 export type { ThemeModeRadioListProps } from "./components/theme-mode-radio-list";
 
 export { PoweredByPinnacle } from "./components/powered-by-pinnacle";
-export type { PoweredByPinnacleProps, PoweredByPinnacleVariant } from "./components/powered-by-pinnacle";
+export type {
+  PoweredByPinnacleProps,
+  PoweredByPinnacleVariant,
+} from "./components/powered-by-pinnacle";
 
 export { QualityExecutionForm } from "./components/quality-execution-form";
 export type { QualityExecutionFormProps } from "./components/quality-execution-form";
+
+export { getJobOrderOperationalPresentation } from "./job-order-operational-presentation.js";
+export type {
+  JobOrderOperationalPresentation,
+  OperationalPresentationLane,
+} from "./job-order-operational-presentation.js";

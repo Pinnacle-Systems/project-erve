@@ -192,6 +192,23 @@ export interface JobOrderStage {
 }
 export type QualityRuntimeStatus =
   'NOT_AVAILABLE' | 'AVAILABLE' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'MISSED';
+
+export type OperationalStateTone = 'muted' | 'pending' | 'info' | 'success' | 'warning' | 'danger';
+
+export interface OperationalStateValue {
+  code: string;
+  label: string;
+  tone: OperationalStateTone;
+  activityId: string | null;
+  activityName: string | null;
+}
+
+export interface JobOrderOperationalState {
+  lifecycleContext: OperationalStateValue;
+  productionState: OperationalStateValue | null;
+  qualityState: OperationalStateValue | null;
+  primaryDisplayState: OperationalStateValue;
+}
 export interface JobOrderQualityActivity {
   processFlowVersionStageId: string;
   sequence: number;
@@ -360,6 +377,7 @@ export interface JobOrderSummary extends VersionedResource {
   factory: { id: string; code: string; name: string };
   unitPrice: number;
   status: JobOrderStatus;
+  operationalState: JobOrderOperationalState;
   factoryConfirmationStatus: FactoryConfirmationStatus;
   orderedQuantityTotal: number;
   preparedQuantityTotal: number;
@@ -409,6 +427,7 @@ export interface AssignedFactoryTaskSummary extends VersionedResource {
   distributor: { id: string; code: string; name: string };
   factory: { id: string; code: string; name: string };
   status: JobOrderStatus;
+  operationalState: JobOrderOperationalState;
   currentStage: { id: string; sequence: number; name: string } | null;
   orderedQuantityTotal: number;
   preparedQuantityTotal: number;

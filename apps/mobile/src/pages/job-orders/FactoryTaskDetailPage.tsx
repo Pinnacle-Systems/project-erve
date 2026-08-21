@@ -12,6 +12,7 @@ import type {
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { getJobOrderOperationalPresentation } from '@erve/app-components';
 
 interface MutationVariables {
   body: object;
@@ -168,6 +169,7 @@ export function FactoryTaskDetailPage() {
   };
   const acknowledgementKey = `${job.id}:${job.version}:${job.disclaimerRevision}`;
   const acknowledgeDisclaimer = acknowledgedRevision === acknowledgementKey;
+  const operationalPresentation = getJobOrderOperationalPresentation(job.operationalState);
 
   return (
     <main className="min-h-full space-y-4 bg-background px-4 py-5">
@@ -182,11 +184,29 @@ export function FactoryTaskDetailPage() {
           {job.purchaseOrder.poNumber} · {job.factory.name}
         </p>
         <h1 className="text-2xl font-semibold">{job.jobOrderNumber}</h1>
-        <p className="mt-2 text-sm">
-          {job.status.replaceAll('_', ' ')} · Version {job.version}
-        </p>
+        <div className="mt-3 border-l-2 border-primary pl-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {operationalPresentation.heading}
+          </p>
+          <div className="mt-1 flex flex-wrap items-baseline gap-2">
+            <span className="font-semibold">{operationalPresentation.name}</span>
+            {operationalPresentation.stateLabel && (
+              <span className="text-sm">{operationalPresentation.stateLabel}</span>
+            )}
+          </div>
+          {operationalPresentation.secondaryLanes.map((lane) => (
+            <p key={lane.domain} className="mt-1 text-sm text-muted-foreground">
+              <span className="font-medium">{lane.heading}:</span>{' '}
+              {lane.name === lane.heading ? '' : `${lane.name} `}
+              <span className="font-medium text-foreground">{lane.stateLabel}</span>
+            </p>
+          ))}
+        </div>
         <p className="mt-1 text-sm">
           Prepared {job.preparedQuantityTotal} of {job.orderedQuantityTotal}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Lifecycle: {job.operationalState.lifecycleContext.label} · Version {job.version}
         </p>
       </section>
 

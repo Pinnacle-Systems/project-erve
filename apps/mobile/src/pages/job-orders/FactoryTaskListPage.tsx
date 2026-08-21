@@ -96,11 +96,10 @@ export function FactoryTaskListPage() {
               )}
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-              <span>Status: {task.status.replaceAll('_', ' ')}</span>
+              <span>Current: {task.operationalState.primaryDisplayState.label}</span>
               <span className="text-right">
                 {task.preparedQuantityTotal}/{task.orderedQuantityTotal}
               </span>
-              <span className="col-span-2">Next: {task.currentStage?.name ?? '—'}</span>
             </div>
           </Link>
         ))}

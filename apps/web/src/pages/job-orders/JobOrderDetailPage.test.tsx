@@ -66,6 +66,24 @@ const mockJobOrder = (
   id: 'jo-1',
   jobOrderNumber: 'JO-001',
   status,
+  operationalState: {
+    lifecycleContext: {
+      code: status,
+      label: status.replaceAll('_', ' '),
+      tone: 'pending',
+      activityId: null,
+      activityName: null,
+    },
+    productionState: null,
+    qualityState: null,
+    primaryDisplayState: {
+      code: status,
+      label: status.replaceAll('_', ' '),
+      tone: 'pending',
+      activityId: null,
+      activityName: null,
+    },
+  },
   factoryConfirmationStatus:
     status === 'DRAFT' || status === 'SENT_TO_FACTORY' ? 'PENDING' : 'CONFIRMED',
   orderedQuantityTotal: 10,
@@ -146,6 +164,58 @@ describe('ProductionStageStepper', () => {
 });
 
 describe('JobOrderDetailPage workflow rendering', () => {
+  it('shows primary Production and concurrent Quality without duplicating Production or Lifecycle', async () => {
+    await renderPage('CONFIRMED_BY_FACTORY', standardStages, [], {
+      operationalState: {
+        lifecycleContext: {
+          code: 'CONFIRMED_BY_FACTORY',
+          label: 'Factory Confirmed',
+          tone: 'pending',
+          activityId: null,
+          activityName: null,
+        },
+        productionState: {
+          code: 'IN_PROGRESS',
+          label: 'Sewing In Progress',
+          tone: 'info',
+          activityId: 'sewing',
+          activityName: 'Sewing',
+        },
+        qualityState: {
+          code: 'PENDING',
+          label: 'Inline Inspection Pending',
+          tone: 'pending',
+          activityId: 'inline',
+          activityName: 'Inline Inspection',
+        },
+        primaryDisplayState: {
+          code: 'IN_PROGRESS',
+          label: 'Sewing In Progress',
+          tone: 'info',
+          activityId: 'sewing',
+          activityName: 'Sewing',
+        },
+      },
+    });
+    const operational = container.querySelector(
+      '[aria-label="Current Job Order operational state"]',
+    )!;
+    expect(operational.textContent).toContain('Current Activity');
+    expect(operational.textContent).toContain('Sewing');
+    expect(operational.textContent).toContain('In Progress');
+    expect(operational.textContent).toContain('Quality');
+    expect(operational.textContent).toContain('Inline Inspection');
+    expect(operational.textContent?.match(/Sewing/g)).toHaveLength(1);
+    expect(operational.textContent).not.toContain('Lifecycle');
+    expect(content()).toContain('Lifecycle');
+    expect(content()).toContain('Confirmed');
+    const detailLabels = Array.from(container.querySelectorAll('.text-label')).map(
+      (item) => item.textContent,
+    );
+    expect(detailLabels).toContain('Lifecycle');
+    expect(detailLabels).not.toContain('Confirmation');
+  });
+
   it('shows size-level rework inside the original Job Order and performs factory actions', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: {} } });
     await renderPage('REWORK_REQUIRED', standardStages, [], {

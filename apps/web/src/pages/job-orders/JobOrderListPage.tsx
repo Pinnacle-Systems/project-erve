@@ -13,7 +13,6 @@ import {
   JOB_ORDER_STATUS_LABELS,
   confirmationTone,
   formatDateTime,
-  statusTone,
 } from './job-order-ui.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { useSearchParams } from 'react-router-dom';
@@ -100,9 +99,11 @@ export function JobOrderListPage() {
         onSearchChange={setSearch}
         searchPlaceholder="Search job order or PO"
         statusValue={status || 'ALL'}
+        statusAriaLabel="Lifecycle"
+        statusPlaceholder="All lifecycle states"
         onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as JobOrderStatus))}
         statusOptions={[
-          { label: 'All statuses', value: 'ALL' },
+          { label: 'All lifecycle states', value: 'ALL' },
           ...(Object.keys(JOB_ORDER_STATUS_LABELS) as JobOrderStatus[]).map((s) => ({
             label: JOB_ORDER_STATUS_LABELS[s],
             value: s,
@@ -161,12 +162,13 @@ export function JobOrderListPage() {
               `${jobOrder.processFlowVersion.processFlow.name} v${jobOrder.processFlowVersion.versionNumber}`,
           },
           {
-            key: 'status',
-            header: 'Status',
+            key: 'workflow',
+            header: 'Current State',
             render: (jobOrder) => (
               <StatusBadge
-                label={JOB_ORDER_STATUS_LABELS[jobOrder.status]}
-                tone={statusTone(jobOrder.status)}
+                label={jobOrder.operationalState.primaryDisplayState.label}
+                tone={jobOrder.operationalState.primaryDisplayState.tone}
+                className="max-w-[18rem] whitespace-normal break-words leading-tight"
               />
             ),
           },

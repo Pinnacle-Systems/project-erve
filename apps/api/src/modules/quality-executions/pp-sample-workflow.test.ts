@@ -843,6 +843,15 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.pp.id,
       ).status,
     ).toBe('AVAILABLE');
+    expect(confirmed.body.data).toMatchObject({
+      status: 'CONFIRMED_BY_FACTORY',
+      operationalState: {
+        lifecycleContext: { code: 'CONFIRMED_BY_FACTORY' },
+        productionState: { label: 'Production Locked' },
+        qualityState: { label: `${f.pp.name} Pending` },
+        primaryDisplayState: { label: `${f.pp.name} Pending` },
+      },
+    });
     const qualityWork = await request(app)
       .get('/job-orders/quality-work')
       .set('Authorization', `Bearer ${f.qa.token}`)
@@ -859,15 +868,15 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       .expect(403);
 
     await completePp(f, 'FAIL');
+    const afterPpFail = (
+      await request(app).get(`/job-orders/${f.job.id}`).set('Authorization', `Bearer ${f.qa.token}`)
+    ).body.data;
     expect(
-      (
-        await request(app)
-          .get(`/job-orders/${f.job.id}`)
-          .set('Authorization', `Bearer ${f.qa.token}`)
-      ).body.data.qualityActivities.find(
+      afterPpFail.qualityActivities.find(
         (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.ppm.id,
       ).status,
     ).toBe('NOT_AVAILABLE');
+    expect(afterPpFail.operationalState.primaryDisplayState.label).toBe(`${f.pp.name} Failed`);
     await completePp(f, 'PASS');
 
     const ppmStarted = (
@@ -909,6 +918,14 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       .get(`/job-orders/${f.job.id}`)
       .set('Authorization', `Bearer ${f.factoryUser.token}`)
       .expect(200);
+    expect(current.body.data).toMatchObject({
+      status: 'CONFIRMED_BY_FACTORY',
+      operationalState: {
+        productionState: { label: 'Cutting Ready' },
+        qualityState: { label: `${f.ppm.name} Completed` },
+        primaryDisplayState: { label: 'Cutting Ready' },
+      },
+    });
     const runStage = async (definitionId: string, complete = true) => {
       const runtime = current.body.data.stages.find(
         (stage: { processFlowVersionStageId: string }) =>
@@ -936,6 +953,11 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.inline.id,
       ).status,
     ).toBe('AVAILABLE');
+    expect(current.body.data.operationalState).toMatchObject({
+      productionState: { label: 'Sewing In Progress' },
+      qualityState: { label: 'Inline Inspection Pending' },
+      primaryDisplayState: { label: 'Sewing In Progress' },
+    });
     const inlineStarted = (
       await request(app)
         .post(`/job-orders/${f.job.id}/quality-activities/${f.inline.id}/executions`)
@@ -949,6 +971,11 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.final.id,
       ).status,
     ).toBe('AVAILABLE');
+    expect(current.body.data.operationalState).toMatchObject({
+      productionState: { label: 'Finishing Pending' },
+      qualityState: { label: 'Final Inspection Pending' },
+      primaryDisplayState: { label: 'Finishing Pending' },
+    });
     const inlineReplay = await request(app)
       .post(`/job-orders/${f.job.id}/quality-activities/${f.inline.id}/executions`)
       .set('Authorization', `Bearer ${f.qa.token}`)
@@ -1045,6 +1072,18 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       passedBatches: 2,
       failedBatches: 1,
       hasFailedBatches: true,
+    });
+    const completedDetail = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(completedDetail.body.data).toMatchObject({
+      status: 'PRODUCTION_COMPLETE',
+      operationalState: {
+        productionState: { label: 'Production Completed' },
+        qualityState: { label: 'Final Inspection Completed' },
+        primaryDisplayState: { label: 'Workflow Completed' },
+      },
     });
     expect(await prisma.qaReworkTask.count({ where: { jobOrderId: f.job.id } })).toBe(0);
     expect((await prisma.jobOrder.findUniqueOrThrow({ where: { id: f.job.id } })).status).toBe(

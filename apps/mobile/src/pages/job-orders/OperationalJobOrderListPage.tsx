@@ -24,7 +24,7 @@ export function OperationalJobOrderListPage() {
       <header>
         <h1 className="text-2xl font-semibold text-foreground">Active job orders</h1>
         <p className="text-sm text-muted-foreground">
-          Monitor current production status across factories.
+          Monitor current Job Order activity across factories.
         </p>
       </header>
       <input
@@ -72,7 +72,9 @@ export function OperationalJobOrderListPage() {
                   PO {job.purchaseOrder.poNumber} · {job.factory.name}
                 </p>
               </div>
-              <span className="text-right text-xs">{job.status.replaceAll('_', ' ')}</span>
+              <span className="max-w-[55%] break-words text-right text-xs">
+                {job.operationalState.primaryDisplayState.label}
+              </span>
             </div>
             <p className="mt-3 text-sm">
               Prepared {job.preparedQuantityTotal} of {job.orderedQuantityTotal}

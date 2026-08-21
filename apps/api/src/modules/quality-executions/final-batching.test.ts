@@ -278,6 +278,11 @@ describe('Final Inspection batching and prepared coverage', () => {
     });
     expect(view.body.data.attemptNumber).toBe(1);
     expect(view.body.data.batchNumber).toBe(3);
+    const job = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(job.body.data.operationalState.qualityState.label).toBe('Final Inspection Completed');
   });
 
   it('does not count drafts, rejects over-inspection, and surfaces later prepared-quantity changes', async () => {
@@ -311,6 +316,14 @@ describe('Final Inspection batching and prepared coverage', () => {
       remainingQuantity: 0,
       reconciliationConflict: true,
       complete: false,
+    });
+    const conflictedJob = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(conflictedJob.body.data.operationalState).toMatchObject({
+      qualityState: { label: 'Final Inspection Conflict' },
+      primaryDisplayState: { label: 'Final Inspection Conflict' },
     });
   });
 

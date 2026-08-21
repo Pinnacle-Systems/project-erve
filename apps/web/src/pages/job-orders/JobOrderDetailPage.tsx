@@ -9,7 +9,13 @@ import type {
   QaReworkTaskView,
   QualityExecutionView,
 } from '@erve/types';
-import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
+import {
+  AuditTrail,
+  ConfirmDialog,
+  getJobOrderOperationalPresentation,
+  PageHeader,
+  StatusBadge,
+} from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
@@ -26,7 +32,6 @@ import {
   confirmationTone,
   formatDateTime,
   qualityRuntimeStatusTone,
-  statusTone,
 } from './job-order-ui.js';
 
 type FlatSize = JobOrderLineSize & {
@@ -332,6 +337,7 @@ export function JobOrderDetailPage() {
   const sendToFactory = () => {
     if (validateDisclaimerForSend()) sendMutation.mutate();
   };
+  const operationalPresentation = getJobOrderOperationalPresentation(jobOrder.operationalState);
 
   return (
     <div className="space-y-5">
@@ -339,10 +345,45 @@ export function JobOrderDetailPage() {
         title={jobOrder.jobOrderNumber}
         subtitle={`From ${jobOrder.purchaseOrder.poNumber}`}
         status={
-          <StatusBadge
-            label={JOB_ORDER_STATUS_LABELS[jobOrder.status]}
-            tone={statusTone(jobOrder.status)}
-          />
+          <div
+            className="min-w-0 max-w-xl border-l border-border-subtle pl-3"
+            aria-label="Current Job Order operational state"
+          >
+            <p className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
+              {operationalPresentation.heading}
+            </p>
+            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
+              <span className="min-w-0 break-words text-sm font-semibold text-foreground">
+                {operationalPresentation.name}
+              </span>
+              {operationalPresentation.stateLabel && (
+                <StatusBadge
+                  label={operationalPresentation.stateLabel}
+                  tone={operationalPresentation.tone}
+                />
+              )}
+            </div>
+            {operationalPresentation.secondaryLanes.length > 0 && (
+              <div className="mt-1 flex min-w-0 flex-wrap gap-x-4 gap-y-1">
+                {operationalPresentation.secondaryLanes.map((lane) => (
+                  <div
+                    key={lane.domain}
+                    className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs"
+                  >
+                    <span className="font-medium text-muted-foreground">{lane.heading}:</span>
+                    {lane.name !== lane.heading && (
+                      <span className="min-w-0 break-words font-medium text-foreground">
+                        {lane.name}
+                      </span>
+                    )}
+                    {lane.stateLabel && (
+                      <span className="font-medium text-foreground">{lane.stateLabel}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         }
         secondaryActions={
           <Button asChild variant="secondary">
@@ -395,6 +436,10 @@ export function JobOrderDetailPage() {
 
       <Panel title="Job Order Header">
         <DescriptionList columns={4}>
+          <DescriptionList.Item
+            label="Lifecycle"
+            value={JOB_ORDER_STATUS_LABELS[jobOrder.status]}
+          />
           <DescriptionList.Item label="Source PO" value={jobOrder.purchaseOrder.poNumber} />
           <DescriptionList.Item label="Factory" value={jobOrder.factory.name} />
           <DescriptionList.Item
@@ -405,15 +450,17 @@ export function JobOrderDetailPage() {
             label="Process Flow"
             value={`${jobOrder.processFlowVersion.processFlow.name} v${jobOrder.processFlowVersion.versionNumber}`}
           />
-          <DescriptionList.Item
-            label="Confirmation"
-            value={
-              <StatusBadge
-                label={CONFIRMATION_LABELS[jobOrder.factoryConfirmationStatus]}
-                tone={confirmationTone(jobOrder.factoryConfirmationStatus)}
-              />
-            }
-          />
+          {jobOrder.factoryConfirmationStatus !== 'CONFIRMED' && (
+            <DescriptionList.Item
+              label="Confirmation"
+              value={
+                <StatusBadge
+                  label={CONFIRMATION_LABELS[jobOrder.factoryConfirmationStatus]}
+                  tone={confirmationTone(jobOrder.factoryConfirmationStatus)}
+                />
+              }
+            />
+          )}
           <DescriptionList.Item
             label="Ordered Qty"
             value={jobOrder.orderedQuantityTotal.toLocaleString()}
