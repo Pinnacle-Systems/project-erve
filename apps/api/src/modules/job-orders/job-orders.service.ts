@@ -12,6 +12,7 @@ import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
+import { deriveJobOrderOperationalState } from './job-order-operational-state.js';
 
 const jobOrderInclude = {
   seasonSnapshots: { orderBy: [{ financialYear: 'asc' as const }, { name: 'asc' as const }] },
@@ -406,6 +407,10 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
 
 function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
   const plannedQuantity = totalOrdered(jobOrder);
+  const stages = jobOrder.stageStatuses
+    .filter((stage) => stage.processFlowVersionStage.activityType === 'PRODUCTION')
+    .map((stage) => toStageView(stage, plannedQuantity));
+  const qualityActivities = toQualityActivityViews(jobOrder);
   const acknowledgements = jobOrder.acknowledgements.map((acknowledgement) => ({
     id: acknowledgement.id,
     jobOrderVersion: acknowledgement.jobOrderVersion,
@@ -433,6 +438,12 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
       processFlow: jobOrder.processFlowVersion.processFlow,
     },
     status: jobOrder.status,
+    operationalState: deriveJobOrderOperationalState({
+      status: jobOrder.status,
+      factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
+      stages,
+      qualityActivities,
+    }),
     factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
     unitPrice: jobOrder.unitPrice.toNumber(),
     seasonSnapshots: jobOrder.seasonSnapshots.map((season) => ({
@@ -473,10 +484,8 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
         varianceQuantity: size.preparedQuantity - size.orderedQuantity,
       })),
     })),
-    stages: jobOrder.stageStatuses
-      .filter((stage) => stage.processFlowVersionStage.activityType === 'PRODUCTION')
-      .map((stage) => toStageView(stage, plannedQuantity)),
-    qualityActivities: toQualityActivityViews(jobOrder),
+    stages,
+    qualityActivities,
     reworkTasks: jobOrder.qaReworkTasks.map((task) => {
       const context = jobOrder.lines
         .flatMap((line) => line.sizes.map((size) => ({ line, size })))
@@ -691,33 +700,7 @@ export async function getAssignedFactoryTasks(
           ]
         : undefined,
     },
-    select: {
-      id: true,
-      jobOrderNumber: true,
-      status: true,
-      version: true,
-      updatedAt: true,
-      preparedQuantityTotal: true,
-      factory: { select: { id: true, code: true, name: true } },
-      purchaseOrder: {
-        select: {
-          poNumber: true,
-          requiredDeliveryDate: true,
-          distributor: { select: { id: true, code: true, name: true } },
-        },
-      },
-      lines: { select: { orderedQuantityTotal: true } },
-      processFlowVersion: { include: { stages: true } },
-      qualityExecutions: {
-        select: { processFlowActivityId: true, status: true, outcome: true },
-      },
-      stageStatuses: {
-        where: { status: { not: 'COMPLETED' } },
-        orderBy: { stageSequence: 'asc' },
-        take: 1,
-        select: { id: true, stageSequence: true, stageNameSnapshot: true },
-      },
-    },
+    include: jobOrderInclude,
     orderBy: { id: 'desc' },
     take: filters.limit + 1,
     cursor: filters.cursor ? { id: filters.cursor } : undefined,
@@ -726,32 +709,40 @@ export async function getAssignedFactoryTasks(
   const hasMore = records.length > filters.limit;
   const page = hasMore ? records.slice(0, filters.limit) : records;
   return {
-    items: page.map((record) => ({
-      id: record.id,
-      jobOrderNumber: record.jobOrderNumber,
-      purchaseOrderNumber: record.purchaseOrder.poNumber,
-      distributor: record.purchaseOrder.distributor,
-      factory: record.factory,
-      status: record.status,
-      currentStage: record.stageStatuses[0]
-        ? {
-            id: record.stageStatuses[0].id,
-            sequence: record.stageStatuses[0].stageSequence,
-            name: record.stageStatuses[0].stageNameSnapshot,
-          }
-        : null,
-      orderedQuantityTotal: record.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0),
-      preparedQuantityTotal: record.preparedQuantityTotal,
-      requiredDeliveryDate: record.purchaseOrder.requiredDeliveryDate?.toISOString() ?? null,
-      version: record.version,
-      updatedAt: record.updatedAt.toISOString(),
-      actionRequired: [
-        'SENT_TO_FACTORY',
-        'CONFIRMED_BY_FACTORY',
-        'IN_PRODUCTION',
-        'PRODUCTION_COMPLETE',
-      ].includes(record.status),
-    })),
+    items: page.map((record) => {
+      const view = toJobOrderView(record);
+      const currentStage = view.stages.find((stage) => stage.status !== 'COMPLETED');
+      return {
+        id: record.id,
+        jobOrderNumber: record.jobOrderNumber,
+        purchaseOrderNumber: record.purchaseOrder.poNumber,
+        distributor: record.purchaseOrder.distributor,
+        factory: record.factory,
+        status: record.status,
+        operationalState: view.operationalState,
+        currentStage: currentStage
+          ? {
+              id: currentStage.id,
+              sequence: currentStage.stageSequence,
+              name: currentStage.stageNameSnapshot,
+            }
+          : null,
+        orderedQuantityTotal: record.lines.reduce(
+          (sum, line) => sum + line.orderedQuantityTotal,
+          0,
+        ),
+        preparedQuantityTotal: record.preparedQuantityTotal,
+        requiredDeliveryDate: record.purchaseOrder.requiredDeliveryDate?.toISOString() ?? null,
+        version: record.version,
+        updatedAt: record.updatedAt.toISOString(),
+        actionRequired: [
+          'SENT_TO_FACTORY',
+          'CONFIRMED_BY_FACTORY',
+          'IN_PRODUCTION',
+          'PRODUCTION_COMPLETE',
+        ].includes(record.status),
+      };
+    }),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }

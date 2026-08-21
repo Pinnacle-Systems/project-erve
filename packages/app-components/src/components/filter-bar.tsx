@@ -1,12 +1,6 @@
-import { type ReactNode } from "react";
-import {
-  TextField,
-  Button,
-  SelectField,
-  SelectItem,
-  cn,
-} from "@erve/primitives";
-import { useTheme, type Density } from "@erve/theme";
+import { type ReactNode } from 'react';
+import { TextField, Button, SelectField, SelectItem, cn } from '@erve/primitives';
+import { useTheme, type Density } from '@erve/theme';
 
 export interface FilterOption {
   label: string;
@@ -20,6 +14,8 @@ export interface FilterBarProps {
   statusOptions?: FilterOption[];
   statusValue?: string;
   onStatusChange?: (value: string) => void;
+  statusAriaLabel?: string;
+  statusPlaceholder?: string;
   dateFrom?: string;
   onDateFromChange?: (value: string) => void;
   dateTo?: string;
@@ -32,12 +28,14 @@ export interface FilterBarProps {
 }
 
 export const FilterBar = ({
-  searchValue = "",
+  searchValue = '',
   onSearchChange,
-  searchPlaceholder = "Search...",
+  searchPlaceholder = 'Search...',
   statusOptions,
   statusValue,
   onStatusChange,
+  statusAriaLabel = 'Status',
+  statusPlaceholder = 'All statuses',
   dateFrom,
   onDateFromChange,
   dateTo,
@@ -56,7 +54,7 @@ export const FilterBar = ({
   return (
     <div
       className={cn(
-        "flex flex-wrap items-end gap-2 border-b border-border-subtle bg-surface-muted px-4 py-2.5",
+        'flex flex-wrap items-end gap-2 border-b border-border-subtle bg-surface-muted px-4 py-2.5',
         className,
       )}
       data-density={resolvedDensity}
@@ -74,10 +72,10 @@ export const FilterBar = ({
         <SelectField
           value={statusValue}
           onValueChange={onStatusChange}
-          placeholder="All statuses"
+          placeholder={statusPlaceholder}
           density={resolvedDensity}
           width="sm"
-          aria-label="Status"
+          aria-label={statusAriaLabel}
         >
           {statusOptions.map((opt) => (
             <SelectItem key={opt.value} value={opt.value}>
@@ -90,7 +88,7 @@ export const FilterBar = ({
       {showDateFrom && (
         <TextField
           type="date"
-          value={dateFrom ?? ""}
+          value={dateFrom ?? ''}
           onChange={(e) => onDateFromChange?.(e.target.value)}
           density={resolvedDensity}
           width="sm"
@@ -101,7 +99,7 @@ export const FilterBar = ({
       {showDateTo && (
         <TextField
           type="date"
-          value={dateTo ?? ""}
+          value={dateTo ?? ''}
           onChange={(e) => onDateToChange?.(e.target.value)}
           density={resolvedDensity}
           width="sm"
@@ -127,4 +125,4 @@ export const FilterBar = ({
   );
 };
 
-FilterBar.displayName = "FilterBar";
+FilterBar.displayName = 'FilterBar';

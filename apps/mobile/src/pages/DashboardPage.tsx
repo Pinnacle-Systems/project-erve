@@ -123,7 +123,7 @@ export function DashboardPage({ user }: { user: AuthUser }) {
       id: `factory-${task.id}`,
       to: `/factory-tasks/${task.id}`,
       title: task.jobOrderNumber,
-      detail: `${statusLabel(task.status)} · ${task.currentStage?.name ?? 'Production updated'}`,
+      detail: `${task.operationalState.primaryDisplayState.label} · ${task.factory.name}`,
       updatedAt: task.updatedAt,
     })) ?? []),
     ...(qaQueue.data?.items.map((task) => ({
@@ -137,7 +137,7 @@ export function DashboardPage({ user }: { user: AuthUser }) {
       id: `operations-${job.id}`,
       to: `/job-orders/${job.id}`,
       title: job.jobOrderNumber,
-      detail: `${statusLabel(job.status)} · ${job.factory.name}`,
+      detail: `${job.operationalState.primaryDisplayState.label} · ${job.factory.name}`,
       updatedAt: job.updatedAt,
     })),
   ]
