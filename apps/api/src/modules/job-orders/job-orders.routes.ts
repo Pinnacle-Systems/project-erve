@@ -18,6 +18,7 @@ import {
 import * as jobOrdersService from './job-orders.service.js';
 import * as qualityExecutionsService from '../quality-executions/quality-executions.service.js';
 import { startQualityExecutionSchema } from '../quality-executions/quality-executions.validation.js';
+import { JOB_ORDER_PRODUCTION_MUTATION_ROLES } from '@erve/shared';
 
 export const jobOrdersRouter = Router();
 jobOrdersRouter.use(requireAuth);
@@ -30,7 +31,7 @@ const canViewJobOrders = requireRoles(
   'SENIOR_MANAGEMENT',
 );
 const canCreateJobOrders = requireRoles('ADMIN', 'MERCHANDISER');
-const canWorkflowJobOrders = requireRoles('ADMIN', 'MERCHANDISER', 'FACTORY_USER');
+const canWorkflowJobOrders = requireRoles(...JOB_ORDER_PRODUCTION_MUTATION_ROLES);
 
 function idempotencyKey(req: { get(name: string): string | undefined }): string {
   const key = req.get('Idempotency-Key')?.trim();
