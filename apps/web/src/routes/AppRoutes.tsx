@@ -39,7 +39,6 @@ import { JobOrderListPage } from '../pages/job-orders/JobOrderListPage.js';
 import { AppLayout } from '../pages/AppLayout.js';
 import { RoleRoute } from './RoleRoute.js';
 import { QaDetailPage } from '../pages/qa/QaDetailPage.js';
-import { QaQueuePage } from '../pages/qa/QaQueuePage.js';
 import { QualityExecutionPage } from '../pages/qa/QualityExecutionPage.js';
 
 import {
@@ -402,7 +401,7 @@ export function AppRoutes() {
           </RoleRoute>
         }
       >
-        <Route index element={<QaQueuePage />} />
+        <Route index element={<Navigate to="/job-orders" replace />} />
         <Route path=":id" element={<QaDetailPage />} />
       </Route>
       <Route

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
-import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
+import { FilterBar, getQaStatusPresentation, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -25,6 +25,7 @@ export function JobOrderListPage() {
 
   const canCreate = canCreateJobOrders(user);
   const mayFilterByFactory = canFilterJobOrdersByFactory(user);
+  const showQaWork = user?.roles.includes('QA_USER') ?? false;
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<JobOrderStatus | ''>('');
@@ -163,14 +164,34 @@ export function JobOrderListPage() {
           },
           {
             key: 'workflow',
-            header: 'Current State',
-            render: (jobOrder) => (
-              <StatusBadge
-                label={jobOrder.operationalState.primaryDisplayState.label}
-                tone={jobOrder.operationalState.primaryDisplayState.tone}
-                className="max-w-[18rem] whitespace-normal break-words leading-tight"
-              />
-            ),
+            header: showQaWork ? 'Status' : 'Current State',
+            render: (jobOrder) => {
+              if (!showQaWork) {
+                return (
+                  <StatusBadge
+                    label={jobOrder.operationalState.primaryDisplayState.label}
+                    tone={jobOrder.operationalState.primaryDisplayState.tone}
+                    className="max-w-[18rem] whitespace-normal break-words leading-tight"
+                  />
+                );
+              }
+
+              const status = getQaStatusPresentation(jobOrder.operationalState);
+              return (
+                <div className="max-w-[18rem] space-y-1">
+                  <StatusBadge
+                    label={status.primary.label}
+                    tone={status.primary.tone}
+                    className="whitespace-normal break-words leading-tight"
+                  />
+                  {status.secondaryLabel ? (
+                    <div className="text-xs leading-tight text-muted-foreground">
+                      Production: {status.secondaryLabel}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            },
           },
           {
             key: 'factoryConfirmationStatus',

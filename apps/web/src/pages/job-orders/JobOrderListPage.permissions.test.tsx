@@ -128,6 +128,95 @@ describe('JobOrderListPage Permissions', () => {
     expect(container.querySelector('[aria-label="Lifecycle"]')).not.toBeNull();
   });
 
+  it('combines QA work and production context into one Status column for QA_USER', async () => {
+    jobOrderItems = [
+      {
+        id: 'job-1',
+        jobOrderNumber: 'JO-001',
+        purchaseOrder: { poNumber: 'PO-001' },
+        factory: { name: 'Factory One' },
+        processFlowVersion: { versionNumber: 1, processFlow: { name: 'Erve Flow' } },
+        status: 'IN_PRODUCTION',
+        factoryConfirmationStatus: 'CONFIRMED',
+        orderedQuantityTotal: 100,
+        preparedQuantityTotal: 0,
+        createdAt: '2026-08-21T00:00:00.000Z',
+        operationalState: {
+          lifecycleContext: { code: 'IN_PRODUCTION', label: 'In Production', tone: 'pending' },
+          primaryDisplayState: {
+            code: 'PENDING',
+            label: 'Inline Inspection Pending',
+            tone: 'pending',
+            activityId: 'inline',
+            activityName: 'Inline Inspection',
+          },
+          productionState: {
+            code: 'IN_PROGRESS',
+            label: 'Sewing In Progress',
+            tone: 'info',
+            activityId: 'sewing',
+            activityName: 'Sewing',
+          },
+          qualityState: {
+            code: 'PENDING',
+            label: 'Inline Inspection Pending',
+            tone: 'pending',
+            activityId: 'inline',
+            activityName: 'Inline Inspection',
+          },
+        },
+      },
+    ];
+
+    await renderJobOrderListPage('QA_USER');
+    await vi.waitFor(() => expect(getPageContent()).toContain('Inline Inspection Available'));
+    const qaHeaders = Array.from(container.querySelectorAll('th')).map((item) => item.textContent);
+    expect(qaHeaders).toContain('Status');
+    expect(qaHeaders).not.toContain('Current State');
+    expect(qaHeaders).not.toContain('QA Work');
+    expect(getPageContent()).toContain('Production: Sewing In Progress');
+    expect(container.querySelectorAll('a[href="/job-orders/job-1"]')).toHaveLength(1);
+
+    act(() => root.unmount());
+    container.innerHTML = '';
+    root = createRoot(container);
+    await renderJobOrderListPage('ADMIN');
+    await vi.waitFor(() => expect(getPageContent()).toContain('Inline Inspection Pending'));
+    expect(Array.from(container.querySelectorAll('th')).map((item) => item.textContent)).toContain(
+      'Current State',
+    );
+  });
+
+  it('does not add a No QA Action filler for QA_USER', async () => {
+    jobOrderItems = [
+      {
+        id: 'job-1',
+        jobOrderNumber: 'JO-001',
+        purchaseOrder: { poNumber: 'PO-001' },
+        factory: { name: 'Factory One' },
+        processFlowVersion: { versionNumber: 1, processFlow: { name: 'Erve Flow' } },
+        status: 'DRAFT',
+        factoryConfirmationStatus: 'PENDING',
+        orderedQuantityTotal: 100,
+        preparedQuantityTotal: 0,
+        createdAt: '2026-08-21T00:00:00.000Z',
+        operationalState: {
+          lifecycleContext: { code: 'DRAFT', label: 'Draft', tone: 'muted' },
+          primaryDisplayState: { code: 'DRAFT', label: 'Draft', tone: 'muted' },
+          productionState: null,
+          qualityState: null,
+        },
+      },
+    ];
+
+    await renderJobOrderListPage('QA_USER');
+    await vi.waitFor(() => expect(getPageContent()).toContain('Draft'));
+    expect(getPageContent()).not.toContain('No QA Action');
+    expect(Array.from(container.querySelectorAll('th')).map((item) => item.textContent)).toContain(
+      'Status',
+    );
+  });
+
   it('ADMIN sees Create Job Order button and factory filter', async () => {
     await renderJobOrderListPage('ADMIN');
     expect(getPageContent()).toContain('Create Job Order');

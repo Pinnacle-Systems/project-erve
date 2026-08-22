@@ -20,6 +20,16 @@ export interface JobOrderOperationalPresentation {
   secondaryLanes: OperationalPresentationLane[];
 }
 
+export interface QaWorkPresentation {
+  label: string;
+  tone: OperationalStateTone;
+}
+
+export interface QaStatusPresentation {
+  primary: QaWorkPresentation;
+  secondaryLabel: string | null;
+}
+
 const stateLabels: Record<string, string> = {
   PENDING: 'Pending',
   READY: 'Ready',
@@ -116,5 +126,75 @@ export function getJobOrderOperationalPresentation(
     stateLabel: primaryParts.stateLabel,
     tone: primary.tone,
     secondaryLanes,
+  };
+}
+
+/**
+ * Presents the QA dimension already derived by the Job Order runtime. This is
+ * intentionally not a second lifecycle: it only translates operational state
+ * into a compact list label.
+ */
+export function getQaWorkPresentation(state: JobOrderOperationalState): QaWorkPresentation {
+  if (state.lifecycleContext.code === 'READY_FOR_REINSPECTION') {
+    return { label: 'Reinspection Required', tone: 'warning' };
+  }
+  if (state.lifecycleContext.code === 'REWORK_REQUIRED') {
+    return { label: 'Rework Required', tone: 'warning' };
+  }
+
+  const quality = state.qualityState;
+  if (!quality) {
+    const complete = ['QA_APPROVED', 'QA_PASSED', 'CLOSED'].includes(state.lifecycleContext.code);
+    return complete
+      ? { label: 'QA Complete', tone: 'success' }
+      : { label: 'No QA Action', tone: 'muted' };
+  }
+
+  const name = quality.activityName ? displayActivityName(quality.activityName) : quality.label;
+  const suffix =
+    quality.code === 'PENDING'
+      ? name === 'PPM'
+        ? 'Required'
+        : 'Available'
+      : quality.code === 'COMPLETED'
+        ? 'Complete'
+        : stateLabels[quality.code];
+  return { label: suffix ? `${name} ${suffix}` : quality.label, tone: quality.tone };
+}
+
+/**
+ * Combines the operational and quality dimensions for the QA-facing Job Order
+ * list without changing either underlying state. Actionable quality work wins;
+ * production is retained as secondary context only when it adds information.
+ */
+export function getQaStatusPresentation(state: JobOrderOperationalState): QaStatusPresentation {
+  const qualityIsActionable =
+    state.lifecycleContext.code === 'READY_FOR_REINSPECTION' ||
+    state.lifecycleContext.code === 'REWORK_REQUIRED' ||
+    Boolean(
+      state.qualityState && !['COMPLETED', 'NOT_AVAILABLE'].includes(state.qualityState.code),
+    );
+
+  if (!qualityIsActionable) {
+    return {
+      primary: {
+        label: state.primaryDisplayState.label,
+        tone: state.primaryDisplayState.tone,
+      },
+      secondaryLabel: null,
+    };
+  }
+
+  const primary = getQaWorkPresentation(state);
+  const production = state.productionState;
+  const productionAddsContext =
+    production &&
+    production.code !== 'NOT_AVAILABLE' &&
+    (!state.qualityState || !isSameState(production, state.qualityState)) &&
+    production.label !== primary.label;
+
+  return {
+    primary,
+    secondaryLabel: productionAddsContext ? production.label.replace(/^Production\s+/i, '') : null,
   };
 }

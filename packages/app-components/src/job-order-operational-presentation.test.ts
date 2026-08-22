@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { JobOrderOperationalState, OperationalStateValue } from '@erve/types';
-import { getJobOrderOperationalPresentation } from './job-order-operational-presentation.js';
+import {
+  getJobOrderOperationalPresentation,
+  getQaStatusPresentation,
+  getQaWorkPresentation,
+} from './job-order-operational-presentation.js';
 
 function value(
   code: string,
@@ -100,5 +104,102 @@ describe('Job Order operational presentation', () => {
     expect(presentation(quality, null, quality).name).toBe('Size Set / Pre-Production Report');
     const ppm = value('PENDING', 'PPM Pending', 'ppm', 'PPM');
     expect(presentation(ppm, null, ppm).name).toBe('PPM');
+  });
+});
+
+describe('QA Work presentation', () => {
+  it.each([
+    ['PP Sample', 'PENDING', 'PP Sample Available'],
+    ['PP Sample', 'COMPLETED', 'PP Sample Complete'],
+    ['PPM', 'PENDING', 'PPM Required'],
+    ['PPM', 'COMPLETED', 'PPM Complete'],
+    ['Inline Inspection', 'PENDING', 'Inline Inspection Available'],
+    ['Inline Inspection', 'IN_PROGRESS', 'Inline Inspection In Progress'],
+    ['Final Inspection', 'PENDING', 'Final Inspection Available'],
+    ['Final Inspection', 'IN_PROGRESS', 'Final Inspection In Progress'],
+  ] as const)('presents %s %s from derived quality state', (name, code, label) => {
+    const quality = value(code, `${name} ${code}`, name, name);
+    const state = {
+      lifecycleContext: value('IN_PRODUCTION', 'In Production', null, null),
+      primaryDisplayState: quality,
+      productionState: null,
+      qualityState: quality,
+    } satisfies JobOrderOperationalState;
+    expect(getQaWorkPresentation(state).label).toBe(label);
+  });
+
+  it('promotes the existing reinspection lifecycle and otherwise stays neutral', () => {
+    const lifecycle = value('READY_FOR_REINSPECTION', 'Ready for Reinspection', null, null);
+    expect(
+      getQaWorkPresentation({
+        lifecycleContext: lifecycle,
+        primaryDisplayState: lifecycle,
+        productionState: null,
+        qualityState: null,
+      }),
+    ).toEqual({ label: 'Reinspection Required', tone: 'warning' });
+
+    const production = value('IN_PROGRESS', 'Sewing In Progress', 'sewing', 'Sewing');
+    expect(
+      getQaWorkPresentation({
+        lifecycleContext: value('IN_PRODUCTION', 'In Production', null, null),
+        primaryDisplayState: production,
+        productionState: production,
+        qualityState: null,
+      }),
+    ).toEqual({ label: 'No QA Action', tone: 'muted' });
+  });
+});
+
+describe('QA Status presentation', () => {
+  it('makes actionable QA work primary and adds distinct production context', () => {
+    const quality = value('PENDING', 'Inline Inspection Pending', 'inline', 'Inline Inspection');
+    const production = value('IN_PROGRESS', 'Sewing In Progress', 'sewing', 'Sewing');
+
+    expect(
+      getQaStatusPresentation({
+        lifecycleContext: value('IN_PRODUCTION', 'In Production', null, null),
+        primaryDisplayState: quality,
+        productionState: production,
+        qualityState: quality,
+      }),
+    ).toEqual({
+      primary: { label: 'Inline Inspection Available', tone: 'info' },
+      secondaryLabel: 'Sewing In Progress',
+    });
+  });
+
+  it('shows the operational state alone when QA has no actionable work', () => {
+    const draft = value('DRAFT', 'Draft', null, null);
+
+    expect(
+      getQaStatusPresentation({
+        lifecycleContext: draft,
+        primaryDisplayState: draft,
+        productionState: null,
+        qualityState: null,
+      }),
+    ).toEqual({ primary: { label: 'Draft', tone: 'info' }, secondaryLabel: null });
+  });
+
+  it('does not repeat the quality state as production context', () => {
+    const quality = value(
+      'IN_PROGRESS',
+      'Final Inspection In Progress',
+      'final',
+      'Final Inspection',
+    );
+
+    expect(
+      getQaStatusPresentation({
+        lifecycleContext: value('IN_PRODUCTION', 'In Production', null, null),
+        primaryDisplayState: quality,
+        productionState: quality,
+        qualityState: quality,
+      }),
+    ).toEqual({
+      primary: { label: 'Final Inspection In Progress', tone: 'info' },
+      secondaryLabel: null,
+    });
   });
 });
