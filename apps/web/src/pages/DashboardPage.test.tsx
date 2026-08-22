@@ -88,8 +88,8 @@ describe('DashboardPage', () => {
     expect(labels).toContain('Job Orders');
   });
 
-  it('QA_USER is not directed to the generic Job Orders shortcut', async () => {
+  it('directs QA_USER to the shared Job Orders workflow', async () => {
     await renderDashboard('QA_USER');
-    expect(getButtonTexts()).not.toContain('Job Orders');
+    expect(getButtonTexts()).toContain('Job Orders');
   });
 });

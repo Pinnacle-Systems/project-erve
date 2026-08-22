@@ -60,8 +60,14 @@ export type {
 export { QualityExecutionForm } from "./components/quality-execution-form";
 export type { QualityExecutionFormProps } from "./components/quality-execution-form";
 
-export { getJobOrderOperationalPresentation } from "./job-order-operational-presentation.js";
+export {
+  getJobOrderOperationalPresentation,
+  getQaStatusPresentation,
+  getQaWorkPresentation,
+} from "./job-order-operational-presentation.js";
 export type {
   JobOrderOperationalPresentation,
   OperationalPresentationLane,
+  QaStatusPresentation,
+  QaWorkPresentation,
 } from "./job-order-operational-presentation.js";

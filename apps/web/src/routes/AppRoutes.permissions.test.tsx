@@ -197,7 +197,7 @@ describe('AppRoutes Permissions', () => {
       await renderRoutes('QA_USER', '/master-data/quality-forms');
       expect(getPageContent()).toContain('ForbiddenPage');
     });
-    it('cannot access Job Order creation but retains contextual detail and QA access', async () => {
+    it('cannot create Job Orders, retains detail access, and redirects the retired QA queue', async () => {
       await renderRoutes('QA_USER', '/job-orders/new');
       expect(getPageContent()).toContain('ForbiddenPage');
 
@@ -206,7 +206,8 @@ describe('AppRoutes Permissions', () => {
       expect(getPageContent()).not.toContain('ForbiddenPage');
 
       await renderRoutes('QA_USER', '/qa');
-      expect(getPageContent()).toContain('QaQueuePage');
+      expect(getPageContent()).toContain('JobOrderListPage');
+      expect(getPageContent()).not.toContain('QaQueuePage');
     });
   });
 });

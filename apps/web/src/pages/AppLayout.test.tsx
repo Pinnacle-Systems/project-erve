@@ -164,13 +164,15 @@ describe('AppLayout — role-gated navigation', () => {
     expect(text).toContain('Orders');
   });
 
-  it('QA_USER sees QA but not the generic Job Orders destination', async () => {
+  it('QA_USER sees Job Orders and no retired QA destination', async () => {
     await renderAppLayout(['QA_USER']);
     const labels = sidebarLinkLabels();
     const text = sidebarTextContent();
 
-    expect(labels).toContain('QA');
-    expect(labels).not.toContain('Job Orders');
+    expect(labels).toContain('Job Orders');
+    expect(labels).not.toContain('QA');
+    expect(container.querySelector('a[href="/job-orders"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/qa"]')).toBeNull();
     expect(text).toContain('Orders');
   });
 

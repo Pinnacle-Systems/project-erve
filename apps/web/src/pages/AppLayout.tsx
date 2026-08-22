@@ -11,7 +11,6 @@ import {
   Tags,
   Users,
   Workflow,
-  ShieldCheck,
   ClipboardCheck,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext.js';
@@ -27,7 +26,6 @@ import {
   canNavigateToJobOrders,
   canViewPriceLists,
   canViewPurchaseOrders,
-  canViewQa,
   canViewStyles,
 } from '../auth/permissions.js';
 
@@ -79,7 +77,6 @@ export function AppLayout() {
         ...(canNavigateToJobOrders(user)
           ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }]
           : []),
-        ...(canViewQa(user) ? [{ to: '/qa', label: 'QA', icon: ShieldCheck }] : []),
       ],
     },
   ];
