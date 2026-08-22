@@ -3,12 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  DatePicker,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@erve/primitives";
+import { DatePicker, Dialog, DialogContent, DialogTitle } from "@erve/primitives";
 import { ThemeProvider } from "@erve/theme";
 
 let container: HTMLDivElement;
@@ -32,8 +27,16 @@ afterEach(() => {
 });
 
 function renderDatePicker(node = <DatePicker id="delivery-date" />) {
-  act(() => root.render(<ThemeProvider theme="clientB" density="touch">{node}</ThemeProvider>));
-  return document.body.querySelector<HTMLButtonElement>('[aria-label="Open date picker calendar"]')!;
+  act(() =>
+    root.render(
+      <ThemeProvider theme="clientB" density="touch">
+        {node}
+      </ThemeProvider>,
+    ),
+  );
+  return document.body.querySelector<HTMLButtonElement>(
+    '[aria-label="Open date picker calendar"]',
+  )!;
 }
 
 function openPicker(trigger: HTMLButtonElement) {
@@ -69,7 +72,9 @@ describe("DatePicker portal lifecycle", () => {
   it("dismisses on Escape and restores focus to the calendar trigger", async () => {
     const trigger = renderDatePicker();
     openPicker(trigger);
-    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    act(() =>
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
     expect(document.activeElement).toBe(trigger);
@@ -78,7 +83,11 @@ describe("DatePicker portal lifecycle", () => {
   it("opens from the mobile keyboard shortcut and moves focus into the calendar", async () => {
     renderDatePicker();
     const input = container.querySelector<HTMLInputElement>("#delivery-date")!;
-    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", altKey: true, bubbles: true })));
+    act(() =>
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", altKey: true, bubbles: true }),
+      ),
+    );
     const popup = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
     expect(popup).not.toBeNull();
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -105,6 +114,46 @@ describe("DatePicker portal lifecycle", () => {
     bottom = 180;
     act(() => window.dispatchEvent(new Event("scroll")));
     expect(popup.style.top).toBe("184px");
+  });
+
+  it("keeps full month names intrinsically sized and uses a narrow-viewport fallback", () => {
+    const trigger = renderDatePicker(<DatePicker id="delivery-date" value="2026-09-15" />);
+    const popup = openPicker(trigger);
+    const month = popup.querySelector<HTMLSelectElement>('select[aria-label="Month"]')!;
+    const year = popup.querySelector<HTMLSelectElement>('select[aria-label="Year"]')!;
+    const header = month.parentElement!;
+
+    expect([...month.options].map((option) => option.text)).toContain("September");
+    expect([...month.options].map((option) => option.text)).toContain("December");
+    expect(month.value).toBe("8");
+    expect(month.className).toContain("min-w-[7.5rem]");
+    expect(month.className).toContain("w-full");
+    expect(month.className).toContain("sm:w-max");
+    expect(year.className).toContain("min-w-[5rem]");
+    expect(header.className).toContain("grid-cols-4");
+    expect(header.className).toContain("sm:grid-cols-");
+    expect(popup.className).toContain("max-w-[calc(100vw-0.5rem)]");
+  });
+
+  it("positions the popup inside narrow viewport gutters", () => {
+    vi.stubGlobal("innerWidth", 320);
+    const trigger = renderDatePicker();
+    trigger.getBoundingClientRect = () => ({
+      bottom: 100,
+      height: 44,
+      left: 300,
+      right: 344,
+      top: 56,
+      width: 44,
+      x: 300,
+      y: 56,
+      toJSON: () => ({}),
+    });
+    const popup = openPicker(trigger);
+
+    expect(popup.style.left).toBe("4px");
+    expect(popup.className).toContain("max-w-[calc(100vw-0.5rem)]");
+    expect(popup.querySelector<HTMLElement>('[role="gridcell"]')!.className).toContain("min-w-0");
   });
 
   it("renders above an open modal dialog without becoming aria-hidden", () => {

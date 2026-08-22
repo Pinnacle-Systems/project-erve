@@ -33,7 +33,8 @@ const datePickerFieldVariants = cva(
       },
       error: {
         true: "border-[var(--erp-form-field-error-border)] focus-visible:border-[var(--erp-form-field-error-border)]",
-        false: "border-[var(--erp-form-field-border)] focus-visible:border-[var(--erp-form-field-focus-border)]",
+        false:
+          "border-[var(--erp-form-field-border)] focus-visible:border-[var(--erp-form-field-focus-border)]",
       },
     },
     defaultVariants: {
@@ -43,15 +44,21 @@ const datePickerFieldVariants = cva(
 );
 
 const popoverDensityClasses = {
-  compact: "w-[20rem] p-3",
-  comfortable: "w-[22rem] p-3",
-  touch: "w-[23.5rem] p-3",
+  compact: "w-[28rem] p-3",
+  comfortable: "w-[29rem] p-3",
+  touch: "w-[30rem] p-3",
 } as const;
 
 const calendarActionDensityClasses = {
   compact: "h-8 min-h-8 w-8 min-w-8 text-sm",
   comfortable: "h-9 min-h-9 w-9 min-w-9 text-sm",
   touch: "h-11 min-h-11 w-11 min-w-11 text-base",
+} as const;
+
+const calendarDayDensityClasses = {
+  compact: "h-8 min-h-8 w-full min-w-0 text-sm",
+  comfortable: "h-9 min-h-9 w-full min-w-0 text-sm",
+  touch: "h-11 min-h-11 w-full min-w-0 text-base",
 } as const;
 
 const calendarSelectDensityClasses = {
@@ -95,7 +102,9 @@ const labelFormatter = new Intl.DateTimeFormat("en", {
   day: "numeric",
   year: "numeric",
 });
-const monthNames = Array.from({ length: 12 }, (_, month) => new Intl.DateTimeFormat("en", { month: "short" }).format(new Date(2025, month, 1)));
+const monthNames = Array.from({ length: 12 }, (_, month) =>
+  new Intl.DateTimeFormat("en", { month: "long" }).format(new Date(2025, month, 1)),
+);
 
 type PopoverPosition = {
   left: number;
@@ -116,7 +125,8 @@ const fieldWidthClasses: Record<DatePickerWidth, string> = {
 };
 
 export interface DatePickerProps
-  extends Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "defaultValue" | "onChange">,
+  extends
+    Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "defaultValue" | "onChange">,
     Omit<VariantProps<typeof datePickerFieldVariants>, "error"> {
   label?: ReactNode;
   description?: ReactNode;
@@ -144,7 +154,8 @@ function parseInputDate(value: string | undefined): Date | undefined {
 function createValidDate(year: number, month: number, day: number): Date | undefined {
   if (!year || !month || !day) return undefined;
   const date = new Date(year, month - 1, day);
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return undefined;
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day)
+    return undefined;
   return date;
 }
 
@@ -159,7 +170,11 @@ function isSameDate(a: Date | undefined, b: Date | undefined): boolean {
   return !!a && !!b && toInputDate(a) === toInputDate(b);
 }
 
-function isOutOfRange(date: Date, min: InputHTMLAttributes<HTMLInputElement>["min"], max: InputHTMLAttributes<HTMLInputElement>["max"]): boolean {
+function isOutOfRange(
+  date: Date,
+  min: InputHTMLAttributes<HTMLInputElement>["min"],
+  max: InputHTMLAttributes<HTMLInputElement>["max"],
+): boolean {
   const value = toInputDate(date);
   const minValue = typeof min === "string" ? min : undefined;
   const maxValue = typeof max === "string" ? max : undefined;
@@ -220,7 +235,11 @@ function parseTypedDate(value: string, displayFormat: DateDisplayFormat): Date |
 
 function isCompleteTypedDate(value: string): boolean {
   const trimmed = value.trim();
-  return /^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed) || /^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(trimmed) || /[a-z]/i.test(trimmed);
+  return (
+    /^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed) ||
+    /^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(trimmed) ||
+    /[a-z]/i.test(trimmed)
+  );
 }
 
 function getCalendarDays(monthDate: Date): Date[] {
@@ -235,13 +254,20 @@ function getCalendarDays(monthDate: Date): Date[] {
   });
 }
 
-function getDateLabel(date: Date, isToday: boolean, isSelected: boolean, isDisabled: boolean): string {
+function getDateLabel(
+  date: Date,
+  isToday: boolean,
+  isSelected: boolean,
+  isDisabled: boolean,
+): string {
   return [
     labelFormatter.format(date),
     isToday ? "today" : undefined,
     isSelected ? "selected" : undefined,
     isDisabled ? "unavailable" : undefined,
-  ].filter(Boolean).join(", ");
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
@@ -291,22 +317,29 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     const headingId = `${inputId}-heading`;
     const validationError = error ?? draftError;
     const errorId = validationError ? `${inputId}-error` : undefined;
-    const ariaDescribedBy = [errorId, descId, props["aria-describedby"]].filter(Boolean).join(" ") || undefined;
+    const ariaDescribedBy =
+      [errorId, descId, props["aria-describedby"]].filter(Boolean).join(" ") || undefined;
     const isDraftDirty = draftValue !== selectedDisplayValue;
-    const normalizedSubmitValue = draftError || isDraftDirty ? "" : selectedValue ?? "";
+    const normalizedSubmitValue = draftError || isDraftDirty ? "" : (selectedValue ?? "");
     const effectivePlaceholder = placeholder ?? displayFormat;
     const minDate = typeof props.min === "string" ? parseInputDate(props.min) : undefined;
     const maxDate = typeof props.max === "string" ? parseInputDate(props.max) : undefined;
     const minYear = minDate?.getFullYear() ?? visibleMonth.getFullYear() - 10;
     const maxYear = maxDate?.getFullYear() ?? visibleMonth.getFullYear() + 10;
-    const yearOptions = Array.from({ length: maxYear - minYear + 1 }, (_, index) => minYear + index);
+    const yearOptions = Array.from(
+      { length: maxYear - minYear + 1 },
+      (_, index) => minYear + index,
+    );
     const canMoveToMonth = (offset: number) => {
       const nextMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + offset, 1);
       const nextMonthIndex = toMonthIndex(nextMonth);
       const minMonthIndex = minDate ? toMonthIndex(minDate) : undefined;
       const maxMonthIndex = maxDate ? toMonthIndex(maxDate) : undefined;
 
-      return (minMonthIndex === undefined || nextMonthIndex >= minMonthIndex) && (maxMonthIndex === undefined || nextMonthIndex <= maxMonthIndex);
+      return (
+        (minMonthIndex === undefined || nextMonthIndex >= minMonthIndex) &&
+        (maxMonthIndex === undefined || nextMonthIndex <= maxMonthIndex)
+      );
     };
     const canMovePreviousYear = canMoveToMonth(-12);
     const canMovePreviousMonth = canMoveToMonth(-1);
@@ -328,9 +361,17 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
 
-      const desiredPopoverWidth = resolvedDensity === "compact" ? 320 : resolvedDensity === "comfortable" ? 352 : 376;
-      const popoverWidth = Math.min(desiredPopoverWidth, window.innerWidth);
-      const left = Math.min(Math.max(0, rect.left), Math.max(0, window.innerWidth - popoverWidth));
+      const desiredPopoverWidth =
+        resolvedDensity === "compact" ? 448 : resolvedDensity === "comfortable" ? 464 : 480;
+      const viewportGutter = 4;
+      const popoverWidth = Math.min(
+        desiredPopoverWidth,
+        Math.max(0, window.innerWidth - viewportGutter * 2),
+      );
+      const left = Math.min(
+        Math.max(viewportGutter, rect.left),
+        Math.max(viewportGutter, window.innerWidth - popoverWidth - viewportGutter),
+      );
       setPopoverPosition({ left, top: rect.bottom + 4 });
     };
 
@@ -343,16 +384,29 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
 
     const getFocusableDayIndex = (preferredDate?: Date) => {
       const preferredIndex = preferredDate
-        ? days.findIndex((day) => isSameDate(day, preferredDate) && day.getMonth() === visibleMonth.getMonth() && !isOutOfRange(day, props.min, props.max))
+        ? days.findIndex(
+            (day) =>
+              isSameDate(day, preferredDate) &&
+              day.getMonth() === visibleMonth.getMonth() &&
+              !isOutOfRange(day, props.min, props.max),
+          )
         : -1;
 
       if (preferredIndex >= 0) return preferredIndex;
       const todayIndex = today
-        ? days.findIndex((day) => isSameDate(day, today) && day.getMonth() === visibleMonth.getMonth() && !isOutOfRange(day, props.min, props.max))
+        ? days.findIndex(
+            (day) =>
+              isSameDate(day, today) &&
+              day.getMonth() === visibleMonth.getMonth() &&
+              !isOutOfRange(day, props.min, props.max),
+          )
         : -1;
       if (todayIndex >= 0) return todayIndex;
 
-      return days.findIndex((day) => day.getMonth() === visibleMonth.getMonth() && !isOutOfRange(day, props.min, props.max));
+      return days.findIndex(
+        (day) =>
+          day.getMonth() === visibleMonth.getMonth() && !isOutOfRange(day, props.min, props.max),
+      );
     };
 
     const focusDay = (index: number) => {
@@ -397,7 +451,10 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
       if (!isOpen) return;
 
       const onPointerDown = (event: MouseEvent) => {
-        if (!rootRef.current?.contains(event.target as Node) && !popoverRef.current?.contains(event.target as Node)) {
+        if (
+          !rootRef.current?.contains(event.target as Node) &&
+          !popoverRef.current?.contains(event.target as Node)
+        ) {
           closePopover(false);
         }
       };
@@ -573,7 +630,12 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
           {...props}
           readOnly
         />
-        <div className={cn(datePickerFieldVariants({ density: resolvedDensity, error: !!validationError }), className)}>
+        <div
+          className={cn(
+            datePickerFieldVariants({ density: resolvedDensity, error: !!validationError }),
+            className,
+          )}
+        >
           <input
             ref={ref}
             id={inputId}
@@ -636,148 +698,185 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             </svg>
           </button>
         </div>
-        {isOpen && createPortal(
-          <div
-            ref={popoverRef}
-            id={popoverId}
-            data-density={resolvedDensity}
-            role="dialog"
-            aria-modal="false"
-            aria-labelledby={headingId}
-            className={cn(
-              "fixed z-50 max-h-[calc(100vh-0.5rem)] max-w-[100vw] overflow-auto rounded-md border border-border bg-surface shadow-popover",
-              popoverDensityClasses[resolvedDensity],
-            )}
-            style={{ left: popoverPosition.left, top: popoverPosition.top }}
-          >
-            <div className="mb-3 flex items-center justify-between gap-1.5">
-              <button
-                type="button"
-                aria-label="Previous year"
-                disabled={!canMovePreviousYear}
-                className={cn("flex items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]", calendarActionDensityClasses[resolvedDensity])}
-                onClick={() => moveYear(-1)}
-              >
-                <span aria-hidden="true">«</span>
-              </button>
-              <button
-                type="button"
-                aria-label="Previous month"
-                disabled={!canMovePreviousMonth}
-                className={cn("flex items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]", calendarActionDensityClasses[resolvedDensity])}
-                onClick={() => moveMonth(-1)}
-              >
-                <span aria-hidden="true">‹</span>
-              </button>
-              <div id={headingId} className="sr-only" aria-live="polite">
-                {monthFormatter.format(visibleMonth)}
-              </div>
-              <select
-                aria-label="Month"
-                value={visibleMonth.getMonth()}
-                onChange={handleMonthChange}
-                className={cn("min-w-0 rounded-xs border border-border bg-surface font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]", calendarSelectDensityClasses[resolvedDensity])}
-              >
-                {monthNames.map((month, index) => (
-                  <option key={month} value={index}>{month}</option>
-                ))}
-              </select>
-              <select
-                aria-label="Year"
-                value={visibleMonth.getFullYear()}
-                onChange={handleYearChange}
-                className={cn("rounded-xs border border-border bg-surface font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]", calendarSelectDensityClasses[resolvedDensity])}
-              >
-                {yearOptions.map((year) => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-              <button
-                type="button"
-                aria-label="Next month"
-                disabled={!canMoveNextMonth}
-                className={cn("flex items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]", calendarActionDensityClasses[resolvedDensity])}
-                onClick={() => moveMonth(1)}
-              >
-                <span aria-hidden="true">›</span>
-              </button>
-              <button
-                type="button"
-                aria-label="Next year"
-                disabled={!canMoveNextYear}
-                className={cn("flex items-center justify-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)]", calendarActionDensityClasses[resolvedDensity])}
-                onClick={() => moveYear(1)}
-              >
-                <span aria-hidden="true">»</span>
-              </button>
-            </div>
-            <div role="grid" aria-labelledby={headingId} className="grid grid-cols-7 gap-1 text-center">
-              {weekdayLabels.map((day) => (
-                <div key={day} role="columnheader" className="py-1 text-xs font-medium text-muted-foreground">
-                  {day}
+        {isOpen &&
+          createPortal(
+            <div
+              ref={popoverRef}
+              id={popoverId}
+              data-density={resolvedDensity}
+              role="dialog"
+              aria-modal="false"
+              aria-labelledby={headingId}
+              className={cn(
+                "fixed z-50 max-h-[calc(100vh-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-auto rounded-md border border-border bg-surface shadow-popover",
+                popoverDensityClasses[resolvedDensity],
+              )}
+              style={{ left: popoverPosition.left, top: popoverPosition.top }}
+            >
+              <div className="mb-3 grid grid-cols-4 items-center gap-1.5 sm:grid-cols-[auto_auto_minmax(7.5rem,max-content)_minmax(5rem,max-content)_auto_auto]">
+                <button
+                  type="button"
+                  aria-label="Previous year"
+                  disabled={!canMovePreviousYear}
+                  className={cn(
+                    "order-3 flex items-center justify-center justify-self-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)] sm:order-none",
+                    calendarActionDensityClasses[resolvedDensity],
+                  )}
+                  onClick={() => moveYear(-1)}
+                >
+                  <span aria-hidden="true">«</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Previous month"
+                  disabled={!canMovePreviousMonth}
+                  className={cn(
+                    "order-4 flex items-center justify-center justify-self-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)] sm:order-none",
+                    calendarActionDensityClasses[resolvedDensity],
+                  )}
+                  onClick={() => moveMonth(-1)}
+                >
+                  <span aria-hidden="true">‹</span>
+                </button>
+                <div id={headingId} className="sr-only" aria-live="polite">
+                  {monthFormatter.format(visibleMonth)}
                 </div>
-              ))}
-              {days.map((day, index) => {
-                const inCurrentMonth = day.getMonth() === visibleMonth.getMonth();
-                const isSelected = isSameDate(day, selectedDate);
-                const isToday = isSameDate(day, today);
-                const isDisabled = !inCurrentMonth || isOutOfRange(day, props.min, props.max);
-                const dayLabel = getDateLabel(day, isToday, isSelected, isDisabled);
-                const focusableDayIndex = getFocusableDayIndex(selectedDate);
-                return (
-                  <button
-                    key={toInputDate(day)}
-                    ref={(node) => {
-                      dayRefs.current[index] = node;
-                    }}
-                    type="button"
-                    role="gridcell"
-                    disabled={isDisabled}
-                    tabIndex={index === focusableDayIndex ? 0 : -1}
-                    data-selected={isSelected || undefined}
-                    data-today={isToday || undefined}
-                    aria-label={dayLabel}
-                    aria-pressed={isSelected}
-                    aria-current={isToday ? "date" : undefined}
-                    data-density={resolvedDensity}
-                    className={cn(dayButtonClassName, calendarActionDensityClasses[resolvedDensity])}
-                    onClick={() => selectDate(day)}
-                    onKeyDown={(event) => handleDayKeyDown(event, index)}
+                <select
+                  aria-label="Month"
+                  value={visibleMonth.getMonth()}
+                  onChange={handleMonthChange}
+                  className={cn(
+                    "order-1 col-span-2 w-full min-w-[7.5rem] rounded-xs border border-border bg-surface font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] sm:order-none sm:col-span-1 sm:w-max",
+                    calendarSelectDensityClasses[resolvedDensity],
+                  )}
+                >
+                  {monthNames.map((month, index) => (
+                    <option key={month} value={index}>
+                      {month}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Year"
+                  value={visibleMonth.getFullYear()}
+                  onChange={handleYearChange}
+                  className={cn(
+                    "order-2 col-span-2 w-full min-w-[5rem] rounded-xs border border-border bg-surface font-semibold text-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] sm:order-none sm:col-span-1 sm:w-max",
+                    calendarSelectDensityClasses[resolvedDensity],
+                  )}
+                >
+                  {yearOptions.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  aria-label="Next month"
+                  disabled={!canMoveNextMonth}
+                  className={cn(
+                    "order-5 flex items-center justify-center justify-self-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)] sm:order-none",
+                    calendarActionDensityClasses[resolvedDensity],
+                  )}
+                  onClick={() => moveMonth(1)}
+                >
+                  <span aria-hidden="true">›</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Next year"
+                  disabled={!canMoveNextYear}
+                  className={cn(
+                    "order-6 flex items-center justify-center justify-self-center rounded-xs text-muted-foreground outline-hidden transition-colors hover:bg-[var(--erp-surface-hover)] hover:text-foreground focus-visible:bg-[var(--erp-surface-hover)] focus-visible:text-foreground focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:opacity-[var(--erp-disabled-opacity)] sm:order-none",
+                    calendarActionDensityClasses[resolvedDensity],
+                  )}
+                  onClick={() => moveYear(1)}
+                >
+                  <span aria-hidden="true">»</span>
+                </button>
+              </div>
+              <div
+                role="grid"
+                aria-labelledby={headingId}
+                className="grid grid-cols-7 gap-1 text-center"
+              >
+                {weekdayLabels.map((day) => (
+                  <div
+                    key={day}
+                    role="columnheader"
+                    className="py-1 text-xs font-medium text-muted-foreground"
                   >
-                    {day.getDate()}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
-              <button
-                type="button"
-                className={cn("font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]", calendarTextActionDensityClasses[resolvedDensity])}
-                aria-label="Clear selected date"
-                onClick={() => {
-                  setDraftValue("");
-                  setDraftError(undefined);
-                  setDateValue(undefined);
-                  closePopover();
-                }}
-              >
-                Clear
-              </button>
-              <button
-                type="button"
-                disabled={todayDisabled}
-                aria-label="Select today"
-                className={cn("font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:no-underline disabled:opacity-[var(--erp-disabled-opacity)]", calendarTextActionDensityClasses[resolvedDensity])}
-                onClick={() => {
-                  if (today) selectDate(today);
-                }}
-              >
-                Today
-              </button>
-            </div>
-          </div>,
-          document.body,
-        )}
+                    {day}
+                  </div>
+                ))}
+                {days.map((day, index) => {
+                  const inCurrentMonth = day.getMonth() === visibleMonth.getMonth();
+                  const isSelected = isSameDate(day, selectedDate);
+                  const isToday = isSameDate(day, today);
+                  const isDisabled = !inCurrentMonth || isOutOfRange(day, props.min, props.max);
+                  const dayLabel = getDateLabel(day, isToday, isSelected, isDisabled);
+                  const focusableDayIndex = getFocusableDayIndex(selectedDate);
+                  return (
+                    <button
+                      key={toInputDate(day)}
+                      ref={(node) => {
+                        dayRefs.current[index] = node;
+                      }}
+                      type="button"
+                      role="gridcell"
+                      disabled={isDisabled}
+                      tabIndex={index === focusableDayIndex ? 0 : -1}
+                      data-selected={isSelected || undefined}
+                      data-today={isToday || undefined}
+                      aria-label={dayLabel}
+                      aria-pressed={isSelected}
+                      aria-current={isToday ? "date" : undefined}
+                      data-density={resolvedDensity}
+                      className={cn(dayButtonClassName, calendarDayDensityClasses[resolvedDensity])}
+                      onClick={() => selectDate(day)}
+                      onKeyDown={(event) => handleDayKeyDown(event, index)}
+                    >
+                      {day.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
+                <button
+                  type="button"
+                  className={cn(
+                    "font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]",
+                    calendarTextActionDensityClasses[resolvedDensity],
+                  )}
+                  aria-label="Clear selected date"
+                  onClick={() => {
+                    setDraftValue("");
+                    setDraftError(undefined);
+                    setDateValue(undefined);
+                    closePopover();
+                  }}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  disabled={todayDisabled}
+                  aria-label="Select today"
+                  className={cn(
+                    "font-medium text-[var(--erp-text-link)] underline-offset-4 outline-hidden hover:underline focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)] disabled:pointer-events-none disabled:text-[var(--erp-text-disabled)] disabled:no-underline disabled:opacity-[var(--erp-disabled-opacity)]",
+                    calendarTextActionDensityClasses[resolvedDensity],
+                  )}
+                  onClick={() => {
+                    if (today) selectDate(today);
+                  }}
+                >
+                  Today
+                </button>
+              </div>
+            </div>,
+            document.body,
+          )}
       </div>
     );
 
@@ -790,22 +889,27 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     }
 
     return (
-      <div
-        data-width={width}
-        className={cn("flex flex-col gap-1.5", fieldWidthClasses[width])}
-      >
+      <div data-width={width} className={cn("flex flex-col gap-1.5", fieldWidthClasses[width])}>
         {label && (
           <label htmlFor={inputId} className="text-sm font-semibold text-foreground">
             {label}
-            {required && <span className="ml-1 text-danger" aria-hidden="true">*</span>}
+            {required && (
+              <span className="ml-1 text-danger" aria-hidden="true">
+                *
+              </span>
+            )}
           </label>
         )}
         {description && (
-          <p id={descId} className="text-sm text-muted-foreground">{description}</p>
+          <p id={descId} className="text-sm text-muted-foreground">
+            {description}
+          </p>
         )}
         {dateInput}
         {validationError && (
-          <ValidationMessage id={errorId} tone="error">{validationError}</ValidationMessage>
+          <ValidationMessage id={errorId} tone="error">
+            {validationError}
+          </ValidationMessage>
         )}
       </div>
     );

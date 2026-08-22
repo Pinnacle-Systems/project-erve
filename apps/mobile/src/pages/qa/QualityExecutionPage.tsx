@@ -7,6 +7,7 @@ import type {
   ApiErrorResponse,
   ApiSuccessResponse,
   QualityExecutionPayload,
+  QualityExecutionValidationError,
   QualityExecutionView,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
@@ -15,6 +16,7 @@ export function QualityExecutionPage() {
   const { executionId = '' } = useParams();
   const client = useQueryClient();
   const [message, setMessage] = useState('');
+  const [validationErrors, setValidationErrors] = useState<QualityExecutionValidationError[]>([]);
   const query = useQuery({
     queryKey: ['quality-execution', executionId],
     queryFn: async () =>
@@ -42,9 +44,12 @@ export function QualityExecutionPage() {
     onSuccess: (data) => {
       client.setQueryData(['quality-execution', executionId], data);
       setMessage('');
+      setValidationErrors([]);
     },
     onError: async (error) => {
       const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined;
+      const details = api?.details as { validationErrors?: QualityExecutionValidationError[] };
+      setValidationErrors(Array.isArray(details?.validationErrors) ? details.validationErrors : []);
       setMessage(
         api?.code === 'STALE_VERSION'
           ? 'Newer inspection data was found and reloaded.'
@@ -85,6 +90,7 @@ export function QualityExecutionPage() {
         execution={query.data}
         busy={mutation.isPending}
         error={message}
+        validationErrors={validationErrors}
         onSave={(payload) =>
           mutation.mutateAsync({ payload, finalize: false }).then(() => undefined)
         }

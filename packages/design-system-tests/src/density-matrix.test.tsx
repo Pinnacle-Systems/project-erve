@@ -44,7 +44,9 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  document.body.querySelectorAll("[data-radix-popper-content-wrapper]").forEach((node) => node.remove());
+  document.body
+    .querySelectorAll("[data-radix-popper-content-wrapper]")
+    .forEach((node) => node.remove());
   vi.unstubAllGlobals();
 });
 
@@ -62,7 +64,9 @@ describe.each([
       density,
       <>
         <Checkbox id="terms" label="Terms" />
-        <RadioGroup defaultValue="one"><Radio id="one" value="one" label="One" /></RadioGroup>
+        <RadioGroup defaultValue="one">
+          <Radio id="one" value="one" label="One" />
+        </RadioGroup>
         <Switch id="alerts" label="Alerts" />
         <GridCellInput aria-label="Quantity" />
       </>,
@@ -92,7 +96,12 @@ describe.each([
 
 describe("compound density precedence and portals", () => {
   it("propagates a RadioGroup override to its items", () => {
-    renderAtDensity("touch", <RadioGroup density="compact"><Radio value="one" label="One" /></RadioGroup>);
+    renderAtDensity(
+      "touch",
+      <RadioGroup density="compact">
+        <Radio value="one" label="One" />
+      </RadioGroup>,
+    );
     expect(container.querySelector<HTMLElement>('[role="radio"]')!.dataset.density).toBe("compact");
   });
 
@@ -115,7 +124,9 @@ describe("compound density precedence and portals", () => {
       "touch",
       <DropdownMenu open>
         <DropdownMenuTrigger>Open</DropdownMenuTrigger>
-        <DropdownMenuContent density="compact"><DropdownMenuItem>One</DropdownMenuItem></DropdownMenuContent>
+        <DropdownMenuContent density="compact">
+          <DropdownMenuItem>One</DropdownMenuItem>
+        </DropdownMenuContent>
       </DropdownMenu>,
     );
     const item = document.body.querySelector<HTMLElement>('[role="menuitem"]')!;
@@ -126,7 +137,9 @@ describe("compound density precedence and portals", () => {
 
   it("portals DatePicker content and applies touch targets to every popup control", () => {
     renderAtDensity("touch", <DatePicker id="delivery" />);
-    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Open date picker calendar"]')!;
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open date picker calendar"]',
+    )!;
     act(() => trigger.click());
 
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
@@ -137,7 +150,7 @@ describe("compound density precedence and portals", () => {
     for (const control of dialog.querySelectorAll<HTMLElement>("button, select")) {
       expect(control.className).toContain("min-h-11");
     }
-    expect(dialog.querySelector<HTMLElement>('[role="gridcell"]')!.className).toContain("w-11");
+    expect(dialog.querySelector<HTMLElement>('[role="gridcell"]')!.className).toContain("w-full");
   });
 });
 
@@ -150,20 +163,43 @@ describe("Pagination and FilterBar", () => {
     renderAtDensity(
       density,
       <>
-        <Pagination page={1} pageSize={10} total={30} onPageChange={() => {}} onPageSizeChange={() => {}} />
-        <FilterBar statusOptions={[{ label: "Open", value: "open" }]} onStatusChange={() => {}} hasActiveFilters onClearFilters={() => {}} />
+        <Pagination
+          page={1}
+          pageSize={10}
+          total={30}
+          onPageChange={() => {}}
+          onPageSizeChange={() => {}}
+        />
+        <FilterBar
+          statusOptions={[{ label: "Open", value: "open" }]}
+          onStatusChange={() => {}}
+          hasActiveFilters
+          onClearFilters={() => {}}
+        />
       </>,
     );
 
     const pagination = container.querySelector<HTMLElement>(`div[data-density="${density}"]`)!;
-    expect(pagination.querySelector<HTMLButtonElement>('button[aria-label="Go to next page"]')!.className).toContain(expectedHeight);
-    expect(pagination.querySelector<HTMLSelectElement>('select[aria-label="Rows per page"]')!.className).toContain(expectedHeight);
-    const filterBar = Array.from(container.querySelectorAll<HTMLElement>(`div[data-density="${density}"]`)).at(-1)!;
-    expect(filterBar.querySelector<HTMLInputElement>('input[aria-label="Search"]')!.className).toContain(density === "compact" ? "h-8" : density === "comfortable" ? "h-control" : "h-11");
+    expect(
+      pagination.querySelector<HTMLButtonElement>('button[aria-label="Go to next page"]')!
+        .className,
+    ).toContain(expectedHeight);
+    expect(
+      pagination.querySelector<HTMLSelectElement>('select[aria-label="Rows per page"]')!.className,
+    ).toContain(expectedHeight);
+    const filterBar = Array.from(
+      container.querySelectorAll<HTMLElement>(`div[data-density="${density}"]`),
+    ).at(-1)!;
+    expect(
+      filterBar.querySelector<HTMLInputElement>('input[aria-label="Search"]')!.className,
+    ).toContain(density === "compact" ? "h-8" : density === "comfortable" ? "h-control" : "h-11");
   });
 
   it("honors explicit compact overrides inside a touch application", () => {
-    renderAtDensity("touch", <Pagination density="compact" page={1} pageSize={10} total={30} onPageChange={() => {}} />);
+    renderAtDensity(
+      "touch",
+      <Pagination density="compact" page={1} pageSize={10} total={30} onPageChange={() => {}} />,
+    );
     expect(container.firstElementChild!.getAttribute("data-density")).toBe("compact");
   });
 });
