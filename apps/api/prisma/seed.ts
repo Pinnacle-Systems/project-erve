@@ -381,6 +381,7 @@ const DEFAULT_QUALITY_FORMS: Array<{
   name: string;
   activityType: 'MEETING' | 'INSPECTION';
   executionScope: 'JOB_ORDER' | 'SIZE';
+  versionNumber?: number;
   sections: SeedSection[];
 }> = [
   {
@@ -728,8 +729,25 @@ const DEFAULT_QUALITY_FORMS: Array<{
   },
 ];
 
+const inlineV1 = DEFAULT_QUALITY_FORMS.find((definition) => definition.code === 'INLINE');
+if (!inlineV1) throw new Error('Seeded Inline Quality Form definition is required');
+
+const SEEDED_QUALITY_FORM_VERSIONS = [
+  ...DEFAULT_QUALITY_FORMS,
+  {
+    ...inlineV1,
+    versionNumber: 2,
+    sections: inlineV1.sections.map((section) => ({
+      ...section,
+      components: section.components.filter(
+        (component) => component.type !== 'PRODUCTION_PROGRESS',
+      ),
+    })),
+  },
+];
+
 async function seedQualityForms(): Promise<void> {
-  for (const definition of DEFAULT_QUALITY_FORMS) {
+  for (const definition of SEEDED_QUALITY_FORM_VERSIONS) {
     const parsedDefinition = qualityFormDefinitionSchema.parse({ sections: definition.sections });
     const form = await prisma.qualityForm.upsert({
       where: { code: definition.code },
@@ -740,18 +758,32 @@ async function seedQualityForms(): Promise<void> {
         name: definition.name,
       },
     });
+    const versionNumber = definition.versionNumber ?? 1;
+    const isLatestSeededVersion = !SEEDED_QUALITY_FORM_VERSIONS.some(
+      (candidate) =>
+        candidate.code === definition.code && (candidate.versionNumber ?? 1) > versionNumber,
+    );
     const existing = await prisma.qualityFormVersion.findUnique({
-      where: { qualityFormId_versionNumber: { qualityFormId: form.id, versionNumber: 1 } },
+      where: { qualityFormId_versionNumber: { qualityFormId: form.id, versionNumber } },
     });
-    if (existing) continue;
+    if (existing) {
+      await prisma.qualityFormVersion.update({
+        where: { id: existing.id },
+        data: {
+          status: isLatestSeededVersion ? 'PUBLISHED' : 'RETIRED',
+          publishedAt: existing.publishedAt ?? new Date(),
+        },
+      });
+      continue;
+    }
     await prisma.qualityFormVersion.create({
       data: {
         id: createId(),
         qualityFormId: form.id,
-        versionNumber: 1,
+        versionNumber,
         activityType: definition.activityType,
         executionScope: definition.executionScope,
-        status: 'PUBLISHED',
+        status: isLatestSeededVersion ? 'PUBLISHED' : 'RETIRED',
         publishedAt: new Date(),
         sections: {
           create: parsedDefinition.sections.map((section, sectionIndex) => ({
@@ -777,17 +809,17 @@ async function seedQualityForms(): Promise<void> {
 async function seedErveProductionQualityFlow(): Promise<void> {
   const forms = await prisma.qualityForm.findMany({
     where: { code: { in: ['SAMPLE', 'PPM', 'INLINE', 'FINAL'] } },
-    include: {
-      versions: {
-        where: { status: 'PUBLISHED' },
-        orderBy: { versionNumber: 'desc' },
-        take: 1,
-      },
-    },
+    include: { versions: true },
   });
-  const formVersion = new Map(forms.map((form) => [form.code, form.versions[0]?.id]));
-  for (const code of ['SAMPLE', 'PPM', 'INLINE', 'FINAL']) {
-    if (!formVersion.get(code)) throw new Error(`Published ${code} Quality Form is required`);
+  const formVersion = new Map(
+    forms.flatMap((form) =>
+      form.versions.map(
+        (version) => [`${form.code}:${version.versionNumber}`, version.id] as const,
+      ),
+    ),
+  );
+  for (const key of ['SAMPLE:1', 'PPM:1', 'INLINE:1', 'INLINE:2', 'FINAL:1']) {
+    if (!formVersion.get(key)) throw new Error(`Seeded ${key} Quality Form version is required`);
   }
 
   const flow = await prisma.processFlow.upsert({
@@ -800,116 +832,132 @@ async function seedErveProductionQualityFlow(): Promise<void> {
       description: 'Confirmed Erve pre-production, Production, Inline, and Final workflow',
     },
   });
-  const existing = await prisma.processFlowVersion.findUnique({
-    where: { processFlowId_versionNumber: { processFlowId: flow.id, versionNumber: 1 } },
-    include: { stages: true },
-  });
-  if (existing?.stages.length) return; // Never upgrade an existing immutable assignment silently.
+  const seedVersion = async (versionNumber: number, inlineFormVersion: number) => {
+    const existing = await prisma.processFlowVersion.findUnique({
+      where: { processFlowId_versionNumber: { processFlowId: flow.id, versionNumber } },
+      include: { stages: true },
+    });
+    if (existing?.stages.length) return existing.id; // Published definitions remain immutable.
 
-  await prisma.$transaction(async (tx) => {
-    const version =
-      existing ??
-      (await tx.processFlowVersion.create({
-        data: {
-          id: createId(),
-          processFlowId: flow.id,
-          versionNumber: 1,
-          status: 'ACTIVE',
-          effectiveFrom: new Date(),
-        },
-      }));
-    const cuttingId = createId();
-    const printingId = createId();
-    const sewingId = createId();
-    const finishingId = createId();
-    await tx.processFlowVersionStage.createMany({
-      data: [
-        {
-          id: cuttingId,
-          processFlowVersionId: version.id,
-          sequence: 3,
-          name: 'CUTTING',
-          code: 'CUTTING',
-        },
-        {
-          id: printingId,
-          processFlowVersionId: version.id,
-          sequence: 4,
-          name: 'PRINTING',
-          code: 'PRINTING',
-        },
-        {
-          id: sewingId,
-          processFlowVersionId: version.id,
-          sequence: 5,
-          name: 'SEWING',
-          code: 'SEWING',
-        },
-        {
-          id: finishingId,
-          processFlowVersionId: version.id,
-          sequence: 7,
-          name: 'FINISHING',
-          code: 'FINISHING',
-        },
-      ],
+    return prisma.$transaction(async (tx) => {
+      const version =
+        existing ??
+        (await tx.processFlowVersion.create({
+          data: {
+            id: createId(),
+            processFlowId: flow.id,
+            versionNumber,
+            status: versionNumber === 2 ? 'ACTIVE' : 'RETIRED',
+            effectiveFrom: new Date(),
+          },
+        }));
+      const cuttingId = createId();
+      const printingId = createId();
+      const sewingId = createId();
+      const finishingId = createId();
+      await tx.processFlowVersionStage.createMany({
+        data: [
+          {
+            id: cuttingId,
+            processFlowVersionId: version.id,
+            sequence: 3,
+            name: 'CUTTING',
+            code: 'CUTTING',
+          },
+          {
+            id: printingId,
+            processFlowVersionId: version.id,
+            sequence: 4,
+            name: 'PRINTING',
+            code: 'PRINTING',
+          },
+          {
+            id: sewingId,
+            processFlowVersionId: version.id,
+            sequence: 5,
+            name: 'SEWING',
+            code: 'SEWING',
+          },
+          {
+            id: finishingId,
+            processFlowVersionId: version.id,
+            sequence: 7,
+            name: 'FINISHING',
+            code: 'FINISHING',
+          },
+        ],
+      });
+      await tx.processFlowVersionStage.createMany({
+        data: [
+          {
+            id: createId(),
+            processFlowVersionId: version.id,
+            sequence: 1,
+            name: 'PP SAMPLE CHECKLIST',
+            code: 'PP_SAMPLE',
+            activityType: 'QUALITY',
+            qualityFormVersionId: formVersion.get('SAMPLE:1')!,
+            qualityExecutionMode: 'SEQUENTIAL_GATE',
+            gateSatisfactionRequirement: 'OUTCOME_PASS',
+            executionMultiplicity: 'SINGLE',
+          },
+          {
+            id: createId(),
+            processFlowVersionId: version.id,
+            sequence: 2,
+            name: 'SIZE SET / PRE-PRODUCTION REPORT',
+            code: 'PPM',
+            activityType: 'QUALITY',
+            qualityFormVersionId: formVersion.get('PPM:1')!,
+            qualityExecutionMode: 'SEQUENTIAL_GATE',
+            gateSatisfactionRequirement: 'FINALIZED',
+            executionMultiplicity: 'SINGLE',
+          },
+          {
+            id: createId(),
+            processFlowVersionId: version.id,
+            sequence: 6,
+            name: 'INLINE INSPECTION',
+            code: 'INLINE',
+            activityType: 'QUALITY',
+            qualityFormVersionId: formVersion.get(`INLINE:${inlineFormVersion}`)!,
+            qualityExecutionMode: 'IN_PROCESS',
+            associatedProductionActivityId: sewingId,
+            qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
+            executionMultiplicity: 'SINGLE',
+          },
+          {
+            id: createId(),
+            processFlowVersionId: version.id,
+            sequence: 8,
+            name: 'FINAL INSPECTION',
+            code: 'FINAL',
+            activityType: 'QUALITY',
+            qualityFormVersionId: formVersion.get('FINAL:1')!,
+            qualityExecutionMode: 'IN_PROCESS',
+            associatedProductionActivityId: sewingId,
+            qualityAvailabilityPolicy: 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES',
+            executionMultiplicity: 'BATCHED',
+            coverageTarget: 'PREPARED_QUANTITY',
+          },
+        ],
+      });
+      return version.id;
     });
-    await tx.processFlowVersionStage.createMany({
-      data: [
-        {
-          id: createId(),
-          processFlowVersionId: version.id,
-          sequence: 1,
-          name: 'PP SAMPLE CHECKLIST',
-          code: 'PP_SAMPLE',
-          activityType: 'QUALITY',
-          qualityFormVersionId: formVersion.get('SAMPLE')!,
-          qualityExecutionMode: 'SEQUENTIAL_GATE',
-          gateSatisfactionRequirement: 'OUTCOME_PASS',
-          executionMultiplicity: 'SINGLE',
-        },
-        {
-          id: createId(),
-          processFlowVersionId: version.id,
-          sequence: 2,
-          name: 'SIZE SET / PRE-PRODUCTION REPORT',
-          code: 'PPM',
-          activityType: 'QUALITY',
-          qualityFormVersionId: formVersion.get('PPM')!,
-          qualityExecutionMode: 'SEQUENTIAL_GATE',
-          gateSatisfactionRequirement: 'FINALIZED',
-          executionMultiplicity: 'SINGLE',
-        },
-        {
-          id: createId(),
-          processFlowVersionId: version.id,
-          sequence: 6,
-          name: 'INLINE INSPECTION',
-          code: 'INLINE',
-          activityType: 'QUALITY',
-          qualityFormVersionId: formVersion.get('INLINE')!,
-          qualityExecutionMode: 'IN_PROCESS',
-          associatedProductionActivityId: sewingId,
-          qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
-          executionMultiplicity: 'SINGLE',
-        },
-        {
-          id: createId(),
-          processFlowVersionId: version.id,
-          sequence: 8,
-          name: 'FINAL INSPECTION',
-          code: 'FINAL',
-          activityType: 'QUALITY',
-          qualityFormVersionId: formVersion.get('FINAL')!,
-          qualityExecutionMode: 'IN_PROCESS',
-          associatedProductionActivityId: sewingId,
-          qualityAvailabilityPolicy: 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES',
-          executionMultiplicity: 'BATCHED',
-          coverageTarget: 'PREPARED_QUANTITY',
-        },
-      ],
-    });
-  });
+  };
+
+  await seedVersion(1, 1);
+  const activeVersionId = await seedVersion(2, 2);
+  await prisma.$transaction([
+    prisma.processFlowVersion.updateMany({
+      where: { processFlowId: flow.id, id: { not: activeVersionId }, status: 'ACTIVE' },
+      data: { status: 'RETIRED' },
+    }),
+    prisma.processFlowVersion.update({
+      where: { id: activeVersionId },
+      data: { status: 'ACTIVE' },
+    }),
+  ]);
 }
 
 async function main(): Promise<void> {

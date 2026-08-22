@@ -180,10 +180,6 @@ export interface JobOrderStage {
   stageSequence: number;
   stageNameSnapshot: string;
   status: ProductionStageStatus;
-  plannedQuantity: number;
-  completedQuantity: number | null;
-  remainingQuantity: number | null;
-  progressPercent: number | null;
   completedBy: { id: string; name: string; email: string } | null;
   completedAt: string | null;
   remarks: string | null;
@@ -462,10 +458,6 @@ export interface CompleteJobOrderStageInput extends VersionedMutationInput {
 }
 export interface StartJobOrderStageInput extends VersionedMutationInput {
   stageStatusId: string;
-}
-export interface UpdateProductionProgressInput extends VersionedMutationInput {
-  stageStatusId: string;
-  completedQuantity: number;
 }
 export interface UpdatePreparedQuantityInput extends VersionedMutationInput {
   sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }>;

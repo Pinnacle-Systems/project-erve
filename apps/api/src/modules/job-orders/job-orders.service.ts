@@ -183,24 +183,13 @@ function totalOrdered(jobOrder: JobOrderRecord): number {
   return jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
 }
 
-function toStageView(stage: JobOrderRecord['stageStatuses'][number], plannedQuantity: number) {
-  const completedQuantity = stage.completedQuantity;
+function toStageView(stage: JobOrderRecord['stageStatuses'][number]) {
   return {
     id: stage.id,
     processFlowVersionStageId: stage.processFlowVersionStageId,
     stageSequence: stage.stageSequence,
     stageNameSnapshot: stage.stageNameSnapshot,
     status: stage.status,
-    plannedQuantity,
-    completedQuantity,
-    remainingQuantity:
-      completedQuantity === null ? null : Math.max(0, plannedQuantity - completedQuantity),
-    progressPercent:
-      completedQuantity === null
-        ? null
-        : plannedQuantity === 0
-          ? 0
-          : Math.round((completedQuantity * 10_000) / plannedQuantity) / 100,
     completedBy: stage.completer,
     completedAt: stage.completedAt?.toISOString() ?? null,
     remarks: stage.remarks,
@@ -409,7 +398,7 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
   const plannedQuantity = totalOrdered(jobOrder);
   const stages = jobOrder.stageStatuses
     .filter((stage) => stage.processFlowVersionStage.activityType === 'PRODUCTION')
-    .map((stage) => toStageView(stage, plannedQuantity));
+    .map((stage) => toStageView(stage));
   const qualityActivities = toQualityActivityViews(jobOrder);
   const acknowledgements = jobOrder.acknowledgements.map((acknowledgement) => ({
     id: acknowledgement.id,
@@ -1175,7 +1164,6 @@ export async function confirmJobOrder(
           processFlowVersionStageId: stage.id,
           stageSequence: stage.sequence,
           stageNameSnapshot: stage.name,
-          completedQuantity: 0,
         })),
       skipDuplicates: true,
     });
@@ -1285,7 +1273,8 @@ export async function completeProductionStage(
     );
   if (nextStage.id !== input.stageStatusId)
     throw HttpError.badRequest('Production stages must be completed in sequence');
-  const plannedQuantity = jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
+  if (nextStage.status !== 'IN_PROGRESS')
+    throw HttpError.badRequest('Production stage must be started before it can be completed');
   const isFinalStage = nextStage.id === blockingStages[blockingStages.length - 1]?.id;
   const now = new Date();
 
@@ -1306,7 +1295,6 @@ export async function completeProductionStage(
         status: 'COMPLETED',
         completedBy: actor.id,
         completedAt: now,
-        completedQuantity: plannedQuantity,
         remarks: input.remarks ?? null,
       },
     });
@@ -1454,127 +1442,6 @@ export async function startProductionStage(
       actor.id,
       id,
       'START_STAGE',
-      idempotencyKey,
-      hash,
-      updated.version,
-    );
-  });
-  return getJobOrderDetail(actor, id);
-}
-
-export async function updateProductionProgress(
-  actor: CurrentUser,
-  id: string,
-  input: { expectedVersion: number; stageStatusId: string; completedQuantity: number },
-  idempotencyKey: string,
-) {
-  const hash = requestHash(input);
-  const jobOrder = await prisma.jobOrder.findUnique({
-    where: { id },
-    include: {
-      stageStatuses: { orderBy: { stageSequence: 'asc' } },
-      lines: { select: { orderedQuantityTotal: true } },
-    },
-  });
-  if (!jobOrder) throw HttpError.notFound('Job order not found');
-  assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
-  await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
-  if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
-  if (!['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status))
-    throw HttpError.badRequest('Production progress can only be updated during production');
-  const plannedQuantity = jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
-  if (input.completedQuantity > plannedQuantity)
-    throw HttpError.badRequest('Completed quantity cannot exceed the Job Order planned quantity');
-  const nextStage = jobOrder.stageStatuses.find((stage) => stage.status !== 'COMPLETED');
-  if (!nextStage || nextStage.id !== input.stageStatusId)
-    throw HttpError.badRequest('Production progress must be updated in sequence');
-  if (nextStage.completedQuantity === null)
-    throw HttpError.badRequest(
-      'Production progress was not captured for this historical activity; recreate pre-production data before updating it',
-    );
-  if (input.completedQuantity < nextStage.completedQuantity)
-    throw HttpError.badRequest(
-      'Completed quantity cannot decrease through an ordinary progress update',
-    );
-
-  await prisma.$transaction(async (tx) => {
-    if (
-      await beginIdempotentOperation(
-        tx,
-        actor.id,
-        id,
-        'UPDATE_STAGE_PROGRESS',
-        idempotencyKey,
-        hash,
-      )
-    )
-      return;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
-    const current = await tx.jobOrder.findUnique({ where: { id }, select: { version: true } });
-    if (!current) throw HttpError.notFound('Job order not found');
-    if (current.version !== input.expectedVersion) throw HttpError.staleVersion(current.version);
-    const runtime = await tx.jobOrderStageStatus.findUniqueOrThrow({
-      where: { id: input.stageStatusId },
-    });
-    if (runtime.jobOrderId !== id)
-      throw HttpError.badRequest('Production stage does not belong to this job order');
-    if (runtime.completedQuantity === null)
-      throw HttpError.badRequest(
-        'Production progress was not captured for this historical activity; recreate pre-production data before updating it',
-      );
-    if (input.completedQuantity < runtime.completedQuantity)
-      throw HttpError.badRequest(
-        'Completed quantity cannot decrease through an ordinary progress update',
-      );
-    if (input.completedQuantity === runtime.completedQuantity) {
-      await finishIdempotentOperation(
-        tx,
-        actor.id,
-        id,
-        'UPDATE_STAGE_PROGRESS',
-        idempotencyKey,
-        hash,
-        current.version,
-      );
-      return;
-    }
-    await tx.jobOrderStageStatus.update({
-      where: { id: runtime.id },
-      data: {
-        completedQuantity: input.completedQuantity,
-        status: runtime.status === 'NOT_STARTED' ? 'IN_PROGRESS' : runtime.status,
-      },
-    });
-    const updated = await tx.jobOrder.update({
-      where: { id },
-      data: {
-        status: 'IN_PRODUCTION',
-        productionStartedAt: jobOrder.productionStartedAt ?? new Date(),
-        version: { increment: 1 },
-      },
-    });
-    await recordAuditLog(
-      {
-        actorId: actor.id,
-        action: 'JOB_ORDER_STAGE_PROGRESS_UPDATED',
-        entityType: 'JobOrder',
-        entityId: id,
-        metadata: {
-          stageStatusId: runtime.id,
-          processFlowVersionStageId: runtime.processFlowVersionStageId,
-          stageName: runtime.stageNameSnapshot,
-          previousCompletedQuantity: runtime.completedQuantity,
-          completedQuantity: input.completedQuantity,
-          plannedQuantity,
-        },
-      },
-      tx,
-    );
-    await finishIdempotentOperation(
-      tx,
-      actor.id,
-      id,
-      'UPDATE_STAGE_PROGRESS',
       idempotencyKey,
       hash,
       updated.version,
