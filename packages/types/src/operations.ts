@@ -297,6 +297,19 @@ export interface QualityExecutionPayload {
   signoffs: Array<{ componentId: string; roleKey: string; signatoryName: string }>;
   outcome?: { componentId: string; value: 'PASS' | 'FAIL'; remarks?: string | null } | null;
 }
+
+export interface QualityExecutionValidationError {
+  sectionId: string;
+  sectionTitle: string;
+  componentId: string;
+  componentTitle: string;
+  fieldKey: string;
+  fieldLabel: string;
+  rowIndex?: number;
+  code: 'REQUIRED' | 'INVALID';
+  message: string;
+}
+
 export interface QualityExecutionView {
   id: string;
   jobOrderId: string;

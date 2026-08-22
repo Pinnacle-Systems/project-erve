@@ -33,10 +33,18 @@ function Harness() {
         const element = document.querySelector<HTMLElement>(selector);
         if (!element) throw new Error(`Missing geometry target: ${selector}`);
         const box = element.getBoundingClientRect();
-        return { width: box.width, height: box.height, fontSize: getComputedStyle(element).fontSize };
+        return {
+          width: box.width,
+          height: box.height,
+          fontSize: getComputedStyle(element).fontSize,
+        };
       };
       const measurements = {
-        viewport: { width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth },
+        viewport: {
+          width: innerWidth,
+          height: innerHeight,
+          scrollWidth: document.documentElement.scrollWidth,
+        },
         density: document.documentElement.dataset.density,
         checkbox: rect('[data-test="checkbox"]'),
         radio: rect('[data-test="radio"]'),
@@ -56,26 +64,68 @@ function Harness() {
         filterSelect: rect('[data-test="filter-bar"] button[role="combobox"]'),
       };
 
-      const interactive = density === "touch"
-        ? Object.entries(measurements).filter(([key]) => !["viewport", "density"].includes(key))
-        : [];
+      const interactive =
+        density === "touch"
+          ? Object.entries(measurements).filter(([key]) => !["viewport", "density"].includes(key))
+          : [];
       const failures = interactive.flatMap(([key, value]) => {
         const box = value as { width: number; height: number };
-        return box.height < 44 || (["checkbox", "radio", "switch", "dateTrigger", "dateNavigation", "dateDay", "paginationNext"].includes(key) && box.width < 44)
+        return box.height < 44 ||
+          ([
+            "checkbox",
+            "radio",
+            "switch",
+            "dateTrigger",
+            "dateNavigation",
+            "dateDay",
+            "paginationNext",
+          ].includes(key) &&
+            box.width < 44)
           ? [`${key}=${box.width}x${box.height}`]
           : [];
       });
       if (density === "compact") {
-        const expected32 = ["dateNavigation", "dateMonth", "dateYear", "dateDay", "selectOption", "dropdownItem", "paginationNext", "paginationSelect", "filterSearch", "filterSelect"];
+        const expected32 = [
+          "dateNavigation",
+          "dateMonth",
+          "dateYear",
+          "dateDay",
+          "selectOption",
+          "dropdownItem",
+          "paginationNext",
+          "paginationSelect",
+          "filterSearch",
+          "filterSelect",
+        ];
         for (const key of expected32) {
-          const height = (measurements[key as keyof typeof measurements] as { height: number }).height;
+          const height = (measurements[key as keyof typeof measurements] as { height: number })
+            .height;
           if (height !== 32) failures.push(`${key}.height=${height}`);
         }
-        if (measurements.dateTrigger.height !== 28) failures.push(`dateTrigger.height=${measurements.dateTrigger.height}`);
-        if (measurements.gridCell.height !== 24) failures.push(`gridCell.height=${measurements.gridCell.height}`);
+        if (measurements.dateTrigger.height !== 28)
+          failures.push(`dateTrigger.height=${measurements.dateTrigger.height}`);
+        if (measurements.gridCell.height !== 24)
+          failures.push(`gridCell.height=${measurements.gridCell.height}`);
       }
       if (measurements.viewport.scrollWidth > measurements.viewport.width) {
-        failures.push(`horizontalOverflow=${measurements.viewport.scrollWidth - measurements.viewport.width}`);
+        failures.push(
+          `horizontalOverflow=${measurements.viewport.scrollWidth - measurements.viewport.width}`,
+        );
+      }
+      const datePopup = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      const popupBox = datePopup.getBoundingClientRect();
+      const monthSelect = datePopup.querySelector<HTMLSelectElement>('select[aria-label="Month"]')!;
+      if (popupBox.left < 0 || popupBox.right > innerWidth) {
+        failures.push(`datePopupViewport=${popupBox.left}:${popupBox.right}/${innerWidth}`);
+      }
+      if (datePopup.scrollWidth > datePopup.clientWidth) {
+        failures.push(`datePopupOverflow=${datePopup.scrollWidth - datePopup.clientWidth}`);
+      }
+      if (monthSelect.scrollWidth > monthSelect.clientWidth) {
+        failures.push(`dateMonthClipped=${monthSelect.scrollWidth - monthSelect.clientWidth}`);
+      }
+      if (![...monthSelect.options].some((option) => option.text === "September")) {
+        failures.push("dateMonthNamesNotFull");
       }
 
       const result = document.createElement("pre");
@@ -91,22 +141,51 @@ function Harness() {
       result.textContent = JSON.stringify({ failures: [String(error)] });
       document.body.appendChild(result);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
     <div className="space-y-2 p-2">
       <Checkbox data-test="checkbox" aria-label="Checkbox" />
-      <RadioGroup defaultValue="one"><Radio data-test="radio" aria-label="Radio" value="one" /></RadioGroup>
+      <RadioGroup defaultValue="one">
+        <Radio data-test="radio" aria-label="Radio" value="one" />
+      </RadioGroup>
       <Switch data-test="switch" aria-label="Switch" />
       <DatePicker id="geometry-date" />
-      <SelectField open value="one" aria-label="Select"><SelectItem data-test="select-option" value="one">One</SelectItem></SelectField>
-      <DropdownMenu open><DropdownMenuTrigger>Menu</DropdownMenuTrigger><DropdownMenuContent><DropdownMenuItem data-test="dropdown-item">One</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+      <SelectField open value="one" aria-label="Select">
+        <SelectItem data-test="select-option" value="one">
+          One
+        </SelectItem>
+      </SelectField>
+      <DropdownMenu open>
+        <DropdownMenuTrigger>Menu</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem data-test="dropdown-item">One</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <GridCellInput data-test="grid-cell" aria-label="Grid cell" />
-      <Pagination page={1} pageSize={10} total={30} onPageChange={() => {}} onPageSizeChange={() => {}} />
-      <div data-test="filter-bar"><FilterBar className="[&]:border-0" statusOptions={[{ label: "Open", value: "open" }]} onStatusChange={() => {}} /></div>
+      <Pagination
+        page={1}
+        pageSize={10}
+        total={30}
+        onPageChange={() => {}}
+        onPageSizeChange={() => {}}
+      />
+      <div data-test="filter-bar">
+        <FilterBar
+          className="[&]:border-0"
+          statusOptions={[{ label: "Open", value: "open" }]}
+          onStatusChange={() => {}}
+        />
+      </div>
     </div>
   );
 }
 
-createRoot(document.getElementById("root")!).render(<ThemeProvider density={density}><Harness /></ThemeProvider>);
+createRoot(document.getElementById("root")!).render(
+  <ThemeProvider density={density}>
+    <Harness />
+  </ThemeProvider>,
+);

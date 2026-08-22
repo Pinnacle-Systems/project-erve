@@ -8,6 +8,7 @@ import { env } from '../../config/env.js';
 import { FileNotFoundInStorageError, getFileStorage } from '../../storage/index.js';
 import { sanitizeDisplayFileName, sniffImage } from '../../storage/image-sniff.js';
 import type { QualityExecutionPayload } from './quality-executions.validation.js';
+import type { QualityExecutionValidationError } from '@erve/types';
 
 type Config = Record<string, unknown>;
 type DefinitionComponent = {
@@ -76,7 +77,7 @@ function assertOption(value: string, allowed: unknown, message: string) {
 }
 function assertCell(value: unknown, column: Record<string, unknown>) {
   const type = column.dataType;
-  if (value === null || value === '') return;
+  if (value == null || value === '') return;
   if (type === 'NUMBER' && (typeof value !== 'number' || !Number.isFinite(value)))
     throw HttpError.badRequest('Corrective action number is invalid');
   if (type === 'BOOLEAN' && typeof value !== 'boolean')
@@ -114,14 +115,6 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
     if (keys.some((key) => !columns.some((column) => column.key === key)))
       throw HttpError.badRequest('Unknown corrective action column');
     columns.forEach((column) => assertCell(response.values[String(column.key)], column));
-    if (
-      finalize &&
-      columns.some(
-        (column) =>
-          column.required === true && !String(response.values[String(column.key)] ?? '').trim(),
-      )
-    )
-      throw HttpError.badRequest('Corrective action has missing required values');
   }
   for (const response of input.testResults) {
     const item = assertComponent(map, response.componentId, 'TEST_RESULTS');
@@ -175,14 +168,6 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
     if (Object.keys(response.values).some((key) => !columns.some((column) => column.key === key)))
       throw HttpError.badRequest('Unknown follow-up action column');
     columns.forEach((column) => assertCell(response.values[String(column.key)], column));
-    if (
-      finalize &&
-      columns.some(
-        (column) =>
-          column.required === true && !String(response.values[String(column.key)] ?? '').trim(),
-      )
-    )
-      throw HttpError.badRequest('Follow-up action has missing required values');
   }
   for (const response of input.signoffs) {
     const item = assertComponent(map, response.componentId, 'SIGNATURES');
@@ -196,11 +181,31 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
       config(item).allowedOutcomes,
       'Inspection outcome is not configured',
     );
-    if (config(item).remarksRequiredWhen === input.outcome.value && !input.outcome.remarks?.trim())
-      throw HttpError.badRequest('Outcome remarks are required');
   }
   if (!finalize) return;
-  const missing: Array<{ componentId: string; message: string }> = [];
+  const missing: QualityExecutionValidationError[] = [];
+  const add = (
+    item: DefinitionComponent,
+    fieldKey: string,
+    fieldLabel: string,
+    message: string,
+    rowIndex?: number,
+  ) => {
+    const section = execution.qualityFormVersion.sections.find((candidate) =>
+      candidate.components.some((component) => component.id === item.id),
+    )!;
+    missing.push({
+      sectionId: section.id,
+      sectionTitle: section.title,
+      componentId: item.id,
+      componentTitle: item.title,
+      fieldKey,
+      fieldLabel,
+      ...(rowIndex === undefined ? {} : { rowIndex }),
+      code: 'REQUIRED',
+      message,
+    });
+  };
   for (const item of components(execution)) {
     const cfg = config(item);
     if (item.type === 'CHECKLIST')
@@ -210,25 +215,36 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
             (x) => x.componentId === item.id && x.itemKey === definition.key,
           )
         )
-          missing.push({
-            componentId: item.id,
-            message: `Checklist item ${String(definition.label)} is required`,
-          });
+          add(
+            item,
+            String(definition.key),
+            String(definition.label),
+            `${String(definition.label)} is required`,
+          );
     if (item.type === 'AQL_RESULT')
       for (const criterion of list(cfg.criteria)) {
         const row = input.aqlResults.find(
           (x) => x.componentId === item.id && x.severity === criterion.severity,
         );
-        if (!row || row.maxAllowed == null || row.found == null)
-          missing.push({
-            componentId: item.id,
-            message: `${String(criterion.severity)} AQL max and found values are required`,
-          });
+        if (!row || row.maxAllowed == null)
+          add(
+            item,
+            `${String(criterion.severity)}.maxAllowed`,
+            `${String(criterion.severity)} max`,
+            `${String(criterion.severity)} AQL max is required`,
+          );
+        if (!row || row.found == null)
+          add(
+            item,
+            `${String(criterion.severity)}.found`,
+            `${String(criterion.severity)} found`,
+            `${String(criterion.severity)} AQL found is required`,
+          );
       }
     if (item.type === 'TEST_RESULTS')
       for (const test of list(cfg.tests))
         if (!input.testResults.some((x) => x.componentId === item.id && x.testKey === test.key))
-          missing.push({ componentId: item.id, message: `Test ${String(test.label)} is required` });
+          add(item, String(test.key), String(test.label), `${String(test.label)} is required`);
     if (item.type === 'QUANTITY_RECONCILIATION')
       for (const field of list(cfg.fields))
         if (
@@ -236,16 +252,13 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
           field.source !== 'SYSTEM' &&
           !input.quantities.some((x) => x.componentId === item.id && x.fieldKey === field.key)
         )
-          missing.push({
-            componentId: item.id,
-            message: `Quantity ${String(field.label)} is required`,
-          });
+          add(item, String(field.key), String(field.label), `${String(field.label)} is required`);
     if (
       item.type === 'COMMENTS' &&
       cfg.required === true &&
       !input.comments.find((x) => x.componentId === item.id)?.value.trim()
     )
-      missing.push({ componentId: item.id, message: 'Comment is required' });
+      add(item, 'value', item.title, `${item.title} is required`);
     if (item.type === 'FIELD_GROUP')
       for (const field of list(cfg.fields))
         if (
@@ -258,22 +271,62 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
               response.value.trim(),
           )
         )
-          missing.push({
-            componentId: item.id,
-            message: `Field ${String(field.label)} is required`,
-          });
+          add(item, String(field.key), String(field.label), `${String(field.label)} is required`);
+    if (item.type === 'ATTENDEE_LIST')
+      for (const role of list(cfg.roles))
+        if (
+          role.required === true &&
+          !input.attendees.some(
+            (response) =>
+              response.componentId === item.id &&
+              response.roleKey === role.key &&
+              response.attendeeName.trim(),
+          )
+        )
+          add(item, String(role.key), String(role.label), `${String(role.label)} is required`);
+    if (item.type === 'ACTION_LIST') {
+      const componentRows = input.actions.filter((response) => response.componentId === item.id);
+      componentRows.forEach((response, rowIndex) => {
+        for (const column of list(cfg.columns))
+          if (column.required === true && !String(response.values[String(column.key)] ?? '').trim())
+            add(
+              item,
+              String(column.key),
+              String(column.label),
+              `${String(column.label)} is required`,
+              rowIndex,
+            );
+      });
+    }
+    if (item.type === 'CORRECTIVE_ACTIONS') {
+      const componentRows = input.correctiveActions.filter(
+        (response) => response.componentId === item.id,
+      );
+      componentRows.forEach((response, rowIndex) => {
+        for (const column of list(cfg.columns))
+          if (column.required === true && !String(response.values[String(column.key)] ?? '').trim())
+            add(
+              item,
+              String(column.key),
+              String(column.label),
+              `${String(column.label)} is required`,
+              rowIndex,
+            );
+      });
+    }
     if (item.type === 'SIGNATURES')
       for (const role of list(cfg.roles))
         if (
           role.required === true &&
           !input.signoffs.some((x) => x.componentId === item.id && x.roleKey === role.key)
         )
-          missing.push({
-            componentId: item.id,
-            message: `Sign-off ${String(role.label)} is required`,
-          });
-    if (item.type === 'INSPECTION_OUTCOME' && input.outcome?.componentId !== item.id)
-      missing.push({ componentId: item.id, message: 'Inspection outcome is required' });
+          add(item, String(role.key), String(role.label), `${String(role.label)} is required`);
+    if (item.type === 'INSPECTION_OUTCOME') {
+      if (input.outcome?.componentId !== item.id)
+        add(item, 'value', item.title, `${item.title} is required`);
+      else if (cfg.remarksRequiredWhen === input.outcome.value && !input.outcome.remarks?.trim())
+        add(item, 'remarks', 'Outcome remarks', 'Outcome remarks are required');
+    }
     if (item.type === 'ATTACHMENTS')
       for (const requirement of list(cfg.requirements)) {
         const required =
@@ -286,14 +339,18 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
             (x) => x.componentId === item.id && x.requirementKey === requirement.key,
           )
         )
-          missing.push({
-            componentId: item.id,
-            message: `Attachment ${String(requirement.label)} is required`,
-          });
+          add(
+            item,
+            String(requirement.key),
+            String(requirement.label),
+            `${String(requirement.label)} is required`,
+          );
       }
   }
   if (missing.length)
-    throw HttpError.badRequest('Quality form is incomplete', { validationErrors: missing });
+    throw HttpError.badRequest('Please complete the required fields', {
+      validationErrors: missing,
+    });
 }
 
 function derivedSystemContext(

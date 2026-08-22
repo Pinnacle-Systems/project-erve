@@ -716,6 +716,29 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         attendees: [{ componentId: f.attendeeId, roleKey: 'Unknown', attendeeName: 'Invalid' }],
       })
       .expect(400);
+    const missingAction = await request(app)
+      .post(`/quality-executions/${ppmStarted.body.data.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({
+        ...payload,
+        actions: [
+          payload.actions[0],
+          { componentId: f.actionId, values: { settleDate: '2026-08-20' } },
+        ],
+      });
+    expect(missingAction.status).toBe(400);
+    expect(missingAction.body.error.details.validationErrors).toContainEqual(
+      expect.objectContaining({
+        sectionTitle: 'Meeting',
+        componentId: f.actionId,
+        componentTitle: 'Actions',
+        fieldKey: 'action',
+        fieldLabel: 'Action',
+        rowIndex: 1,
+        code: 'REQUIRED',
+        message: 'Action is required',
+      }),
+    );
     await request(app)
       .post(`/quality-executions/${ppmStarted.body.data.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)

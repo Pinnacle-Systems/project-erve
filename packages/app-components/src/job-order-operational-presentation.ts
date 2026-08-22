@@ -32,7 +32,7 @@ const stateLabels: Record<string, string> = {
   NOT_AVAILABLE: 'Not Available',
 };
 
-function displayActivityName(name: string): string {
+export function displayActivityName(name: string): string {
   if (name !== name.toUpperCase()) return name;
   return name.replace(/[A-Z]+/g, (word) => {
     const acronymLike = word.length > 1 && !/[AEIOU]/.test(word);

@@ -431,6 +431,23 @@ describe('Quality Activity Execution API', () => {
         .set('Authorization', `Bearer ${f.qa.token}`)
         .send({ ...completePayload(f, execution, outcome), signoffs: [] });
       expect(missing.status).toBe(400);
+      expect(missing.body.error).toMatchObject({
+        code: 'VALIDATION_ERROR',
+        message: 'Please complete the required fields',
+        details: {
+          validationErrors: expect.arrayContaining([
+            expect.objectContaining({
+              sectionTitle: 'Inspection',
+              componentId: f.components[5]!.id,
+              componentTitle: 'Sign-off',
+              fieldKey: 'qualityController',
+              fieldLabel: 'Quality Controller',
+              code: 'REQUIRED',
+              message: 'Quality Controller is required',
+            }),
+          ]),
+        },
+      });
       if (outcome === 'FAIL') {
         const missingConditionalEvidence = await request(app)
           .post(`/quality-executions/${execution.id}/finalize`)
