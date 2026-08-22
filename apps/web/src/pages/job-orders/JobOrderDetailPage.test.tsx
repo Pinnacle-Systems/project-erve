@@ -8,15 +8,19 @@ import { JobOrderDetailPage } from './JobOrderDetailPage.js';
 import { ProductionStageStepper } from './ProductionStageStepper.js';
 import { apiClient } from '../../lib/api-client.js';
 import type { JobOrderStage } from './types.js';
+import { STAGE_LABELS } from './job-order-ui.js';
+
+const authState = vi.hoisted(() => ({ roles: ['MERCHANDISER', 'FACTORY_USER'] }));
 
 vi.mock('../../auth/AuthContext.js', () => ({
-  useOptionalAuth: () => ({ user: { roles: ['MERCHANDISER', 'FACTORY_USER'] } }),
+  useOptionalAuth: () => ({ user: { roles: authState.roles } }),
 }));
 
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  authState.roles = ['MERCHANDISER', 'FACTORY_USER'];
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -664,5 +668,33 @@ describe('JobOrderDetailPage stage completion mutation', () => {
     act(() => button?.click());
     await vi.waitFor(() => expect(content()).toContain('Stage completion failed'));
     expect(content()).toContain('Current Stage: Cutting');
+  });
+
+  it.each([
+    ['CONFIRMED_BY_FACTORY', 'NOT_STARTED'],
+    ['IN_PRODUCTION', 'IN_PROGRESS'],
+    ['IN_PRODUCTION', 'NOT_STARTED'],
+  ] as const)(
+    'shows production context without mutation controls to QA for %s/%s',
+    async (status, stageStatus) => {
+      authState.roles = ['QA_USER'];
+      await renderPage(status, [stage('stage-1', 'Cutting', 1, stageStatus)]);
+
+      expect(content()).toContain('Current Stage: Cutting');
+      expect(content()).toContain(`Production status: ${STAGE_LABELS[stageStatus]}`);
+      expect(content()).not.toContain('Complete Cutting when work for this stage has finished.');
+      expect(content()).not.toContain('Start Cutting');
+      expect(content()).not.toContain('Complete Cutting');
+    },
+  );
+
+  it('shows completed production quantities read-only to QA', async () => {
+    authState.roles = ['QA_USER'];
+    await renderPage('PRODUCTION_COMPLETE');
+
+    expect(content()).toContain('Prepared Quantity');
+    expect(content()).not.toContain('Update size-wise prepared quantities');
+    expect(content()).not.toContain('Save Prepared Quantity');
+    expect(container.querySelector('input[aria-label^="Prepared quantity for"]')).toBeNull();
   });
 });

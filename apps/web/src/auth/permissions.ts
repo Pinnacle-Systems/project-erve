@@ -1,5 +1,6 @@
 import type { AuthUser } from '@erve/types';
 import type { Role } from '@erve/types';
+import { canMutateJobOrderProduction } from '@erve/shared';
 
 export const MASTER_DATA_DASHBOARD_SHORTCUT_ROLES = [
   'ADMIN',
@@ -161,6 +162,9 @@ export const canNavigateToJobOrders = (user: AuthUser | null | undefined) =>
 
 export const canCreateJobOrders = (user: AuthUser | null | undefined) =>
   hasRole(user, JOB_ORDER_CREATE_ROLES);
+
+export const canManageJobOrderProduction = (user: AuthUser | null | undefined) =>
+  Boolean(user && canMutateJobOrderProduction(user));
 
 export const canFilterJobOrdersByFactory = (user: AuthUser | null | undefined) =>
   hasRole(user, JOB_ORDER_FACTORY_FILTER_ROLES);

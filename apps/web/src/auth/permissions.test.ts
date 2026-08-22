@@ -4,6 +4,7 @@ import {
   canCreateJobOrders,
   canFilterJobOrdersByFactory,
   canManagePriceLists,
+  canManageJobOrderProduction,
   canManageDistributorMaster,
   canManageProcessFlows,
   canManagePurchaseOrders,
@@ -70,6 +71,12 @@ describe('permissions', () => {
         expect(canViewJobOrders(user)).toBe(expectedJobOrders);
       });
 
+      it(`canManageJobOrderProduction follows the backend production role set`, () => {
+        expect(canManageJobOrderProduction(user)).toBe(
+          role === 'ADMIN' || role === 'MERCHANDISER' || role === 'FACTORY_USER',
+        );
+      });
+
       it(`canManageSizes = ${expectedManageSizes}`, () => {
         expect(canManageSizes(user)).toBe(expectedManageSizes);
       });
@@ -88,4 +95,11 @@ describe('permissions', () => {
       });
     },
   );
+
+  it('keeps QA production access read-only', () => {
+    const qaUser = mockUser('QA_USER');
+
+    expect(canViewJobOrders(qaUser)).toBe(true);
+    expect(canManageJobOrderProduction(qaUser)).toBe(false);
+  });
 });

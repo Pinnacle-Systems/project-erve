@@ -1318,6 +1318,29 @@ describe('job orders API', () => {
     expect(qaView.status).toBe(200);
     expect(qaView.body.data.status).toBe('PRODUCTION_COMPLETE');
 
+    // Production remains read-only for QA even though the same Job Order is visible.
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/start-stage`)
+      .set('Authorization', `Bearer ${qaUser.token}`)
+      .set('Idempotency-Key', 'qa-stage-start-denied')
+      .send({ stageStatusId: stages[0].id, expectedVersion: preparedRes.body.data.version })
+      .expect(403);
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${qaUser.token}`)
+      .set('Idempotency-Key', 'qa-stage-complete-denied')
+      .send({ stageStatusId: stages[0].id, expectedVersion: preparedRes.body.data.version })
+      .expect(403);
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
+      .set('Authorization', `Bearer ${qaUser.token}`)
+      .set('Idempotency-Key', 'qa-prepared-denied')
+      .send({
+        expectedVersion: preparedRes.body.data.version,
+        sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 4 }],
+      })
+      .expect(403);
+
     // Existing history remains fully readable through every read endpoint.
     await request(app)
       .get(`/job-orders/${jobOrderId}/stages`)

@@ -22,6 +22,7 @@ import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
+import { canManageJobOrderProduction } from '../../auth/permissions.js';
 import type { JobOrder, JobOrderLineSize } from './types.js';
 import { ProductionStageStepper } from './ProductionStageStepper.js';
 import { formatJobOrderAuditTitle } from './job-order-audit.js';
@@ -29,6 +30,7 @@ import {
   CONFIRMATION_LABELS,
   JOB_ORDER_STATUS_LABELS,
   QUALITY_RUNTIME_STATUS_LABELS,
+  STAGE_LABELS,
   confirmationTone,
   formatDateTime,
   qualityRuntimeStatusTone,
@@ -274,11 +276,14 @@ export function JobOrderDetailPage() {
   const canEditDisclaimer = jobOrder.status === 'DRAFT' && canManageJobOrders;
   const canConfirm =
     jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
+  const canMutateProduction = canManageJobOrderProduction(user);
   const canManageProductionStage =
+    canMutateProduction &&
     ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) &&
     Boolean(nextStage) &&
     !productionQualityGateLocked;
-  const canUpdatePrepared = jobOrder.status === 'PRODUCTION_COMPLETE';
+  const isPreparedQuantitiesUnlocked = jobOrder.status === 'PRODUCTION_COMPLETE';
+  const canUpdatePrepared = canMutateProduction && isPreparedQuantitiesUnlocked;
   const canPerformFactoryRework = Boolean(user?.roles.includes('FACTORY_USER'));
   const openRework = jobOrder.reworkTasks.filter((task) => task.status !== 'REINSPECTED');
   const historicalRework = jobOrder.reworkTasks.filter((task) => task.status === 'REINSPECTED');
@@ -748,38 +753,46 @@ export function JobOrderDetailPage() {
         <ProductionStageStepper
           stages={jobOrder.stages}
           currentStageId={nextStage?.id}
-          isPreparedQuantitiesUnlocked={canUpdatePrepared}
+          isPreparedQuantitiesUnlocked={isPreparedQuantitiesUnlocked}
         />
       )}
 
-      {canManageProductionStage && nextStage && (
-        <Panel title={`Current Stage: ${nextStage.stageNameSnapshot}`}>
-          <div className="flex flex-col gap-4">
-            <p className="text-sm text-muted-foreground">
-              Complete {nextStage.stageNameSnapshot} when work for this stage has finished.
-            </p>
-            <div className="flex flex-wrap items-end gap-3">
-              {nextStage.status === 'NOT_STARTED' && (
-                <Button
-                  variant="secondary"
-                  onClick={() => startStageMutation.mutate(nextStage.id)}
-                  loading={startStageMutation.isPending}
-                >
-                  Start {nextStage.stageNameSnapshot}
-                </Button>
-              )}
-              {nextStage.status === 'IN_PROGRESS' && (
-                <Button
-                  onClick={() => completeStageMutation.mutate(nextStage.id)}
-                  loading={completeStageMutation.isPending}
-                >
-                  Complete {nextStage.stageNameSnapshot}
-                </Button>
-              )}
-            </div>
-          </div>
-        </Panel>
-      )}
+      {['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) &&
+        !productionQualityGateLocked &&
+        nextStage && (
+          <Panel title={`Current Stage: ${nextStage.stageNameSnapshot}`}>
+            {canManageProductionStage ? (
+              <div className="flex flex-col gap-4">
+                <p className="text-sm text-muted-foreground">
+                  Complete {nextStage.stageNameSnapshot} when work for this stage has finished.
+                </p>
+                <div className="flex flex-wrap items-end gap-3">
+                  {nextStage.status === 'NOT_STARTED' && (
+                    <Button
+                      variant="secondary"
+                      onClick={() => startStageMutation.mutate(nextStage.id)}
+                      loading={startStageMutation.isPending}
+                    >
+                      Start {nextStage.stageNameSnapshot}
+                    </Button>
+                  )}
+                  {nextStage.status === 'IN_PROGRESS' && (
+                    <Button
+                      onClick={() => completeStageMutation.mutate(nextStage.id)}
+                      loading={completeStageMutation.isPending}
+                    >
+                      Complete {nextStage.stageNameSnapshot}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Production status: {STAGE_LABELS[nextStage.status]}
+              </p>
+            )}
+          </Panel>
+        )}
 
       {jobOrder.qualityActivities.length > 0 && (
         <Panel
@@ -1174,6 +1187,27 @@ export function JobOrderDetailPage() {
                       width="xs"
                     />
                   ),
+                },
+              ]}
+              data={flatSizes}
+              rowKey="id"
+            />
+          ) : isPreparedQuantitiesUnlocked ? (
+            <DataTable
+              columns={[
+                { key: 'style', header: 'Style', accessor: 'style' },
+                { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
+                {
+                  key: 'orderedQuantity',
+                  header: 'Ordered',
+                  align: 'right',
+                  render: (size) => size.orderedQuantity.toLocaleString(),
+                },
+                {
+                  key: 'preparedQuantity',
+                  header: 'Prepared',
+                  align: 'right',
+                  render: (size) => size.preparedQuantity.toLocaleString(),
                 },
               ]}
               data={flatSizes}
