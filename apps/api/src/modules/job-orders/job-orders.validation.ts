@@ -103,10 +103,6 @@ export const startStageSchema = z.object({
   stageStatusId: z.string().trim().min(1),
 });
 
-export const updateProductionProgressSchema = startStageSchema.extend({
-  completedQuantity: z.number().int().min(0),
-});
-
 export const updatePreparedQuantitySchema = z.object({
   expectedVersion: z.number().int().positive(),
   sizes: z

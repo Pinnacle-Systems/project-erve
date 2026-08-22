@@ -1370,6 +1370,8 @@ model JobOrderStageStatus {
   stageSequence             Int                   @map("stage_sequence")
   stageNameSnapshot         String                @map("stage_name_snapshot")
   status                    ProductionStageStatus @default(NOT_STARTED)
+  // Compatibility storage for legacy/future generic progress policies. The supported Factory
+  // production workflow is state-only and does not write or expose this value.
   completedQuantity         Int?                  @map("completed_quantity")
   completedBy               String?               @map("completed_by")
   completedAt               DateTime?             @map("completed_at")

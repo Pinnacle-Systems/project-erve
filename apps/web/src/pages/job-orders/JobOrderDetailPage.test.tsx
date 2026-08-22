@@ -39,10 +39,6 @@ const stage = (
   stageSequence: sequence,
   stageNameSnapshot: name,
   status,
-  plannedQuantity: 10,
-  completedQuantity: status === 'NOT_STARTED' ? 0 : 10,
-  remainingQuantity: status === 'NOT_STARTED' ? 10 : 0,
-  progressPercent: status === 'NOT_STARTED' ? 0 : 100,
   completedAt: status === 'COMPLETED' ? '2026-07-31T10:00:00Z' : null,
   completedBy:
     status === 'COMPLETED' ? { id: 'user-1', name: 'Alice', email: 'alice@test.local' } : null,
@@ -165,7 +161,13 @@ describe('ProductionStageStepper', () => {
 
 describe('JobOrderDetailPage workflow rendering', () => {
   it('shows primary Production and concurrent Quality without duplicating Production or Lifecycle', async () => {
-    await renderPage('CONFIRMED_BY_FACTORY', standardStages, [], {
+    const concurrentStages = [
+      stage('stage-1', 'Cutting', 1, 'COMPLETED'),
+      stage('stage-2', 'Printing', 2, 'COMPLETED'),
+      stage('stage-3', 'Sewing', 3, 'IN_PROGRESS'),
+      stage('stage-4', 'Finishing', 4, 'NOT_STARTED'),
+    ];
+    await renderPage('CONFIRMED_BY_FACTORY', concurrentStages, [], {
       operationalState: {
         lifecycleContext: {
           code: 'CONFIRMED_BY_FACTORY',
@@ -214,6 +216,92 @@ describe('JobOrderDetailPage workflow rendering', () => {
     );
     expect(detailLabels).toContain('Lifecycle');
     expect(detailLabels).not.toContain('Confirmation');
+    const currentStage = container.querySelector('li[aria-current="step"]')!;
+    expect(currentStage.textContent).toContain('SewingCurrent');
+    expect(content()).not.toContain('10 / 10 completed');
+    expect(content()).not.toContain('100%');
+    expect(content()).not.toContain('Completed quantity');
+    expect(content()).not.toContain('Save progress');
+  });
+
+  it('prioritizes pending pre-production Quality and presents Production as locked', async () => {
+    await renderPage('CONFIRMED_BY_FACTORY', standardStages, [], {
+      operationalState: {
+        lifecycleContext: {
+          code: 'CONFIRMED_BY_FACTORY',
+          label: 'Factory Confirmed',
+          tone: 'pending',
+          activityId: null,
+          activityName: null,
+        },
+        productionState: {
+          code: 'LOCKED',
+          label: 'Production Locked',
+          tone: 'pending',
+          activityId: null,
+          activityName: null,
+        },
+        qualityState: {
+          code: 'PENDING',
+          label: 'Size Set / Pre-Production Report Pending',
+          tone: 'pending',
+          activityId: 'quality-1',
+          activityName: 'Size Set / Pre-Production Report',
+        },
+        primaryDisplayState: {
+          code: 'PENDING',
+          label: 'Size Set / Pre-Production Report Pending',
+          tone: 'pending',
+          activityId: 'quality-1',
+          activityName: 'Size Set / Pre-Production Report',
+        },
+      },
+      qualityActivities: [
+        {
+          processFlowVersionStageId: 'quality-1',
+          sequence: 1,
+          name: 'Size Set / Pre-Production Report',
+          status: 'AVAILABLE',
+          eligible: true,
+          qualityForm: {
+            id: 'form-1',
+            code: 'PP_REPORT',
+            name: 'Size Set / Pre-Production Report',
+            executionScope: 'JOB_ORDER',
+          },
+          qualityFormVersion: { id: 'form-version-1', versionNumber: 1 },
+          executionMode: 'SEQUENTIAL_GATE',
+          associatedProductionActivity: null,
+          availabilityPolicy: 'SEQUENTIAL_PREDECESSOR_COMPLETED',
+          progressThresholdPercent: null,
+          gateSatisfactionRequirement: 'FINALIZED',
+          executionMultiplicity: 'SINGLE',
+          coverageTarget: null,
+          coverage: null,
+          execution: null,
+          executionHistory: [],
+        },
+      ],
+    });
+
+    const operational = container.querySelector(
+      '[aria-label="Current Job Order operational state"]',
+    )!;
+    expect(operational.textContent).toContain('Current Activity');
+    expect(operational.textContent).toContain('Size Set / Pre-Production Report');
+    expect(operational.textContent).toContain('Pending');
+    expect(operational.textContent).toContain('Production:Locked');
+    expect(content()).toContain('Locked until pre-production Quality gates are completed.');
+    expect(content()).not.toContain('Planned Production Flow');
+    expect(content()).not.toContain('Workflow sequence only');
+    const currentStage = container.querySelector('li[aria-current="step"]')!;
+    expect(currentStage.textContent).toContain('CuttingCurrent');
+    expect(currentStage.closest('ol')?.querySelectorAll('.rounded-full')).toHaveLength(5);
+    expect(content()).toContain('Quality activities');
+    expect(content()).toContain('Available');
+    expect(content()).not.toContain('0 / 10');
+    expect(content()).not.toContain('0%');
+    expect(content()).not.toContain('Historical progress not captured');
   });
 
   it('shows size-level rework inside the original Job Order and performs factory actions', async () => {
@@ -503,6 +591,19 @@ describe('JobOrderDetailPage audit history', () => {
 });
 
 describe('JobOrderDetailPage stage completion mutation', () => {
+  it('shows only Start for a not-started Production stage', async () => {
+    await renderPage('CONFIRMED_BY_FACTORY', [stage('stage-1', 'Cutting', 1, 'NOT_STARTED')]);
+
+    expect(content()).toContain('Start Cutting');
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (button) => button.textContent?.trim() === 'Complete Cutting',
+      ),
+    ).toBe(false);
+    expect(content()).not.toContain('Completed quantity');
+    expect(content()).not.toContain('Save progress');
+  });
+
   it('keeps the current stage while pending and advances only after refreshed data', async () => {
     let readCount = 0;
     let resolvePost!: (value: unknown) => void;

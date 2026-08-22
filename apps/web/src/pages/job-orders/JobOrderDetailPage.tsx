@@ -76,7 +76,6 @@ export function JobOrderDetailPage() {
   const queryClient = useQueryClient();
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
-  const [stageProgress, setStageProgress] = useState<Record<string, number>>({});
   const [disclaimerDrafts, setDisclaimerDrafts] = useState<Record<string, string>>({});
   const [disclaimerError, setDisclaimerError] = useState('');
   const [sendError, setSendError] = useState('');
@@ -205,25 +204,6 @@ export function JobOrderDetailPage() {
       ),
     onSuccess: invalidate,
   });
-  const progressMutation = useMutation({
-    mutationFn: async ({
-      stageStatusId,
-      completedQuantity,
-    }: {
-      stageStatusId: string;
-      completedQuantity: number;
-    }) =>
-      apiClient.post<ApiSuccessResponse<JobOrder>>(
-        `/job-orders/${id}/actions/update-production-progress`,
-        { stageStatusId, completedQuantity, expectedVersion: jobOrderQuery.data!.version },
-        {
-          headers: {
-            'Idempotency-Key': `${id}:stage-progress:${stageStatusId}:${completedQuantity}:${jobOrderQuery.data!.version}`,
-          },
-        },
-      ),
-    onSuccess: invalidate,
-  });
   const preparedMutation = useMutation({
     mutationFn: async (sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }>) =>
       apiClient.post<ApiSuccessResponse<JobOrder>>(
@@ -294,7 +274,7 @@ export function JobOrderDetailPage() {
   const canEditDisclaimer = jobOrder.status === 'DRAFT' && canManageJobOrders;
   const canConfirm =
     jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
-  const canCompleteStage =
+  const canManageProductionStage =
     ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) &&
     Boolean(nextStage) &&
     !productionQualityGateLocked;
@@ -756,6 +736,14 @@ export function JobOrderDetailPage() {
         </Panel>
       )}
 
+      {productionQualityGateLocked && jobOrder.factoryConfirmationStatus === 'CONFIRMED' && (
+        <Panel title="Production" actions={<StatusBadge label="Locked" tone="pending" />}>
+          <p className="text-sm text-muted-foreground">
+            Locked until pre-production Quality gates are completed.
+          </p>
+        </Panel>
+      )}
+
       {hasProductionStarted && (
         <ProductionStageStepper
           stages={jobOrder.stages}
@@ -764,35 +752,13 @@ export function JobOrderDetailPage() {
         />
       )}
 
-      {productionQualityGateLocked && jobOrder.factoryConfirmationStatus === 'CONFIRMED' && (
-        <Panel title="Production locked">
-          <p>Production is locked pending pre-production Quality gates.</p>
-        </Panel>
-      )}
-
-      {canCompleteStage && nextStage && (
+      {canManageProductionStage && nextStage && (
         <Panel title={`Current Stage: ${nextStage.stageNameSnapshot}`}>
           <div className="flex flex-col gap-4">
             <p className="text-sm text-muted-foreground">
               Complete {nextStage.stageNameSnapshot} when work for this stage has finished.
             </p>
             <div className="flex flex-wrap items-end gap-3">
-              <TextField
-                aria-label={`${nextStage.stageNameSnapshot} completed quantity`}
-                label="Completed quantity"
-                type="number"
-                min={nextStage.completedQuantity ?? 0}
-                max={nextStage.plannedQuantity}
-                value={stageProgress[nextStage.id] ?? nextStage.completedQuantity ?? 0}
-                onChange={(event) =>
-                  setStageProgress((current) => ({
-                    ...current,
-                    [nextStage.id]: Number(event.target.value || 0),
-                  }))
-                }
-                density="compact"
-                width="xs"
-              />
               {nextStage.status === 'NOT_STARTED' && (
                 <Button
                   variant="secondary"
@@ -802,26 +768,14 @@ export function JobOrderDetailPage() {
                   Start {nextStage.stageNameSnapshot}
                 </Button>
               )}
-              <Button
-                variant="secondary"
-                onClick={() =>
-                  progressMutation.mutate({
-                    stageStatusId: nextStage.id,
-                    completedQuantity:
-                      stageProgress[nextStage.id] ?? nextStage.completedQuantity ?? 0,
-                  })
-                }
-                loading={progressMutation.isPending}
-              >
-                Save progress
-              </Button>
-              <Button
-                onClick={() => completeStageMutation.mutate(nextStage.id)}
-                loading={completeStageMutation.isPending}
-                disabled={nextStage.completedQuantity !== nextStage.plannedQuantity}
-              >
-                Complete {nextStage.stageNameSnapshot}
-              </Button>
+              {nextStage.status === 'IN_PROGRESS' && (
+                <Button
+                  onClick={() => completeStageMutation.mutate(nextStage.id)}
+                  loading={completeStageMutation.isPending}
+                >
+                  Complete {nextStage.stageNameSnapshot}
+                </Button>
+              )}
             </div>
           </div>
         </Panel>

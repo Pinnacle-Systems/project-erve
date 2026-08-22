@@ -28,10 +28,6 @@ const mockStages: JobOrderStage[] = [
     stageSequence: 1,
     stageNameSnapshot: 'Cutting',
     status: 'COMPLETED',
-    plannedQuantity: 10,
-    completedQuantity: 10,
-    remainingQuantity: 0,
-    progressPercent: 100,
     completedAt: '2026-07-31T10:00:00Z',
     completedBy: { id: 'user-1', name: 'Alice', email: 'alice@test.local' },
     remarks: null,
@@ -44,10 +40,6 @@ const mockStages: JobOrderStage[] = [
     stageSequence: 2,
     stageNameSnapshot: 'Printing',
     status: 'IN_PROGRESS',
-    plannedQuantity: 10,
-    completedQuantity: 4,
-    remainingQuantity: 6,
-    progressPercent: 40,
     completedAt: null,
     completedBy: null,
     remarks: null,
@@ -60,10 +52,6 @@ const mockStages: JobOrderStage[] = [
     stageSequence: 3,
     stageNameSnapshot: 'Sewing',
     status: 'NOT_STARTED',
-    plannedQuantity: 10,
-    completedQuantity: 0,
-    remainingQuantity: 10,
-    progressPercent: 0,
     completedAt: null,
     completedBy: null,
     remarks: null,
@@ -81,7 +69,7 @@ describe('ProductionStageStepper', () => {
     expect(container.innerHTML).toBe('');
   });
 
-  it('renders authoritative quantity progress for Production activities', () => {
+  it('does not render production quantities, percentages, or missing-progress messaging', () => {
     act(() => {
       root.render(
         <ProductionStageStepper
@@ -91,26 +79,28 @@ describe('ProductionStageStepper', () => {
         />,
       );
     });
-    expect(container.textContent).toContain('4 / 10 completed · 40%');
+
+    expect(container.textContent).not.toContain('4 / 10 completed');
+    expect(container.textContent).not.toContain('40%');
+    expect(container.textContent).not.toContain('0%');
+    expect(container.textContent).not.toContain('Historical progress not captured');
   });
 
-  it('renders migrated unknown progress without presenting it as zero', () => {
+  it('does not explain missing quantitative progress for historical stages', () => {
     const historical = {
       ...mockStages[0]!,
-      completedQuantity: null,
-      remainingQuantity: null,
-      progressPercent: null,
     };
     act(() => {
       root.render(
         <ProductionStageStepper stages={[historical]} isPreparedQuantitiesUnlocked={false} />,
       );
     });
-    expect(container.textContent).toContain('Historical progress not captured');
+
+    expect(container.textContent).not.toContain('Historical progress not captured');
     expect(container.textContent).not.toContain('0 / 10');
   });
 
-  it('renders all stages in an ordered list', () => {
+  it('renders all stages in the original ordered-list structure', () => {
     act(() => {
       root.render(
         <ProductionStageStepper
@@ -121,13 +111,30 @@ describe('ProductionStageStepper', () => {
       );
     });
 
-    const list = container.querySelector('ol');
-    expect(list).not.toBeNull();
+    expect(container.querySelector('ol')).not.toBeNull();
+    expect(container.querySelectorAll('li')).toHaveLength(4);
+    expect(container.querySelectorAll('.rounded-full')).toHaveLength(4);
+  });
+
+  it('preserves completed, current, and upcoming stage semantics', () => {
+    act(() => {
+      root.render(
+        <ProductionStageStepper
+          stages={mockStages}
+          currentStageId="stage-2"
+          isPreparedQuantitiesUnlocked={false}
+        />,
+      );
+    });
+
     const items = container.querySelectorAll('li');
-    expect(items.length).toBe(4); // 3 stages + 1 final prepared quantities step
+    expect(items[0]?.textContent).toContain('CuttingCompleted');
+    expect(items[1]?.getAttribute('aria-current')).toBe('step');
+    expect(items[1]?.textContent).toContain('PrintingCurrent');
+    expect(items[2]?.textContent).toContain('SewingUpcoming');
   });
 
-  it('identifies the current step semantically', () => {
+  it('retains genuine completed-stage timestamp and actor metadata', () => {
     act(() => {
       root.render(
         <ProductionStageStepper
@@ -138,29 +145,11 @@ describe('ProductionStageStepper', () => {
       );
     });
 
-    // Find the item with aria-current="step"
-    const currentStep = container.querySelector('li[aria-current="step"]');
-    expect(currentStep).not.toBeNull();
-    expect(currentStep?.textContent).toContain('Printing');
-  });
-
-  it('renders completed stage metadata when available', () => {
-    act(() => {
-      root.render(
-        <ProductionStageStepper
-          stages={mockStages}
-          currentStageId="stage-2"
-          isPreparedQuantitiesUnlocked={false}
-        />,
-      );
-    });
-
-    expect(container.textContent).toContain('Completed');
-    expect(container.textContent).toContain('Cutting');
+    expect(container.textContent).toContain('31 Jul 2026');
     expect(container.textContent).toContain('by Alice');
   });
 
-  it('handles missing stage metadata gracefully', () => {
+  it('handles missing completion metadata gracefully', () => {
     const stagesWithoutMeta = [
       { ...mockStages[0], completedAt: null, completedBy: null },
       ...mockStages.slice(1),
@@ -175,8 +164,7 @@ describe('ProductionStageStepper', () => {
       );
     });
 
-    expect(container.textContent).toContain('Completed');
-    expect(container.textContent).toContain('Cutting');
+    expect(container.textContent).toContain('CuttingCompleted');
     expect(container.textContent).not.toContain('by Alice');
   });
 
@@ -191,8 +179,7 @@ describe('ProductionStageStepper', () => {
       );
     });
 
-    expect(container.textContent).toContain('Prepared Quantities');
-    expect(container.textContent).toContain('Locked');
+    expect(container.textContent).toContain('Prepared QuantitiesLocked');
 
     act(() => {
       root.render(
@@ -204,10 +191,10 @@ describe('ProductionStageStepper', () => {
       );
     });
 
-    expect(container.textContent).toContain('Unlocked');
+    expect(container.textContent).toContain('Prepared QuantitiesUnlocked');
   });
 
-  it('applies responsive classes for structure (horizontal/vertical) instead of flex-wrap', () => {
+  it('preserves the original responsive horizontal/vertical structure', () => {
     act(() => {
       root.render(
         <ProductionStageStepper

@@ -70,11 +70,6 @@ export function ProductionStageStepper({
 
                 <div className="flex flex-col md:items-center md:text-center mt-1 md:mt-0">
                   <span className="text-sm font-medium">{stage.stageNameSnapshot}</span>
-                  <span className="mt-1 text-xs text-muted-foreground">
-                    {stage.completedQuantity === null
-                      ? 'Historical progress not captured'
-                      : `${stage.completedQuantity.toLocaleString()} / ${stage.plannedQuantity.toLocaleString()} completed · ${stage.progressPercent}%`}
-                  </span>
 
                   {/* Textual state indicator for accessibility */}
                   <span className="sr-only">
