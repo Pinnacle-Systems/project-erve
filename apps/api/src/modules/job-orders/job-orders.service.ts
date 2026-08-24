@@ -92,6 +92,7 @@ const jobOrderInclude = {
       outcome: true,
       startedAt: true,
       finalizedAt: true,
+      finalQualityBatchId: true,
       startedBy: { select: { id: true, name: true, email: true } },
       finalizedBy: { select: { id: true, name: true, email: true } },
       ppSampleSession: {
@@ -108,10 +109,53 @@ const jobOrderInclude = {
     },
     orderBy: [{ attemptNumber: 'desc' as const }, { batchNumber: 'desc' as const }],
   },
+  finalQualityBatches: {
+    include: {
+      allocations: true,
+      executions: {
+        select: {
+          id: true,
+          attemptNumber: true,
+          inspectedQuantity: true,
+          status: true,
+          outcome: true,
+          finalizedAt: true,
+        },
+        orderBy: { attemptNumber: 'asc' as const },
+      },
+      release: { include: { lines: true } },
+    },
+    orderBy: { batchNumber: 'asc' as const },
+  },
 } satisfies Prisma.JobOrderInclude;
 
 type JobOrderRecord = Prisma.JobOrderGetPayload<{ include: typeof jobOrderInclude }>;
 type Tx = Prisma.TransactionClient;
+
+function isProcessFlowFinalActivity(activity: {
+  status: string;
+  activityType: string;
+  qualityExecutionMode: string | null;
+  executionMultiplicity: string | null;
+  coverageTarget: string | null;
+  qualityFormVersion: { activityType: string; executionScope: string } | null;
+}) {
+  return (
+    activity.status === 'ACTIVE' &&
+    activity.activityType === 'QUALITY' &&
+    activity.qualityExecutionMode === 'IN_PROCESS' &&
+    activity.executionMultiplicity === 'BATCHED' &&
+    activity.coverageTarget === 'PREPARED_QUANTITY' &&
+    activity.qualityFormVersion?.activityType === 'INSPECTION' &&
+    activity.qualityFormVersion.executionScope === 'JOB_ORDER'
+  );
+}
+
+function isPreparedQuantityEntryAvailable(
+  associated: { status: string } | undefined,
+): boolean {
+  return associated?.status === 'IN_PROGRESS' || associated?.status === 'COMPLETED';
+}
 
 function canManageJobOrders(user: CurrentUser): boolean {
   return user.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER');
@@ -223,7 +267,7 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
     .filter((activity) => activity.status === 'ACTIVE' && activity.activityType === 'QUALITY')
     .map((activity) => {
       const executions = jobOrder.qualityExecutions.filter(
-        (item) => item.processFlowActivityId === activity.id,
+        (item) => item.processFlowActivityId === activity.id && item.status !== 'CANCELLED',
       );
       const execution = executions[0];
       const associated = activity.associatedProductionActivityId
@@ -241,7 +285,9 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
       const previousRuntime = previous ? runtimeByDefinitionId.get(previous.id) : undefined;
       let eligible = false;
       if (activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE') {
-        eligible = associated?.status === 'IN_PROGRESS';
+        eligible =
+          associated?.status === 'IN_PROGRESS' ||
+          (isProcessFlowFinalActivity(activity) && associated?.status === 'COMPLETED');
       } else if (activity.qualityAvailabilityPolicy === 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES') {
         eligible = associated?.status === 'COMPLETED';
       } else if (
@@ -273,22 +319,54 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
                 )
           : jobOrder.factoryConfirmationStatus === 'CONFIRMED';
       }
-      const finalizedInspected = executions
-        .filter((candidate) => candidate.status === 'FINALIZED')
-        .reduce((sum, candidate) => sum + (candidate.inspectedQuantity ?? 0), 0);
-      const coverageComplete =
-        activity.executionMultiplicity === 'BATCHED' &&
-        jobOrder.preparedQuantityTotal > 0 &&
-        finalizedInspected === jobOrder.preparedQuantityTotal;
+      const physicalBatches = jobOrder.finalQualityBatches.filter(
+        (batch) => batch.processFlowActivityId === activity.id && batch.disposition !== 'CANCELLED',
+      );
+      const inspectionActivityQuantity = physicalBatches
+        .flatMap((batch) => batch.executions)
+        .filter((attempt) => attempt.status === 'FINALIZED')
+        .reduce((sum, attempt) => sum + (attempt.inspectedQuantity ?? 0), 0);
+      const reservedForFinalQuantity = physicalBatches.reduce(
+        (sum, batch) => sum + batch.physicalQuantity,
+        0,
+      );
+      const inspectedPhysicalCoverage = physicalBatches
+        .filter((batch) => batch.executions.some((attempt) => attempt.status === 'FINALIZED'))
+        .reduce((sum, batch) => sum + batch.physicalQuantity, 0);
+      const resolvedPhysicalCoverage = physicalBatches
+        .filter((batch) => ['RELEASED', 'PERMANENTLY_REJECTED'].includes(batch.disposition))
+        .reduce((sum, batch) => sum + batch.physicalQuantity, 0);
       const preparedQuantityAuthoritative = jobOrder.preparedQuantityTotal > 0;
       const reconciliationConflict =
-        preparedQuantityAuthoritative && finalizedInspected > jobOrder.preparedQuantityTotal;
-      const finalizedBatches = executions.filter((candidate) => candidate.status === 'FINALIZED');
-      const passedBatches = finalizedBatches.filter(
-        (candidate) => candidate.outcome === 'PASS',
+        preparedQuantityAuthoritative && reservedForFinalQuantity > jobOrder.preparedQuantityTotal;
+      const coverageCompleteSoFar =
+        preparedQuantityAuthoritative &&
+        resolvedPhysicalCoverage === jobOrder.preparedQuantityTotal;
+      const releasedQuantity = physicalBatches.reduce(
+        (sum, batch) =>
+          sum + (batch.release?.lines.reduce((lineSum, line) => lineSum + line.quantity, 0) ?? 0),
+        0,
+      );
+      const permanentlyRejectedQuantity = physicalBatches
+        .filter((batch) => batch.disposition === 'PERMANENTLY_REJECTED')
+        .reduce((sum, batch) => sum + batch.physicalQuantity, 0);
+      const awaitingReinspectionQuantity = physicalBatches
+        .filter((batch) => batch.disposition === 'AWAITING_REINSPECTION')
+        .reduce((sum, batch) => sum + batch.physicalQuantity, 0);
+      const finalQaComplete =
+        jobOrder.productionCompletedAt !== null &&
+        coverageCompleteSoFar &&
+        awaitingReinspectionQuantity === 0 &&
+        physicalBatches.every((batch) =>
+          ['RELEASED', 'PERMANENTLY_REJECTED'].includes(batch.disposition),
+        );
+      const passedBatches = physicalBatches.filter(
+        (batch) => batch.disposition === 'RELEASED',
       ).length;
-      const failedBatches = finalizedBatches.filter(
-        (candidate) => candidate.outcome === 'FAIL',
+      const failedBatches = physicalBatches.filter((batch) =>
+        batch.executions.some(
+          (attempt) => attempt.status === 'FINALIZED' && attempt.outcome === 'FAIL',
+        ),
       ).length;
       const missed =
         executions.length === 0 &&
@@ -305,7 +383,7 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
             : activity.gateSatisfactionRequirement === 'OUTCOME_PASS' &&
                 execution.outcome !== 'PASS'
               ? ('FAILED' as const)
-              : activity.executionMultiplicity === 'BATCHED' && !coverageComplete
+              : activity.executionMultiplicity === 'BATCHED' && !finalQaComplete
                 ? ('IN_PROGRESS' as const)
                 : ('COMPLETED' as const)
           : missed
@@ -333,15 +411,28 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
                 preparedQuantity: preparedQuantityAuthoritative
                   ? jobOrder.preparedQuantityTotal
                   : null,
-                inspectedQuantity: finalizedInspected,
+                inspectedQuantity: inspectionActivityQuantity,
+                inspectionActivityQuantity,
+                reservedForFinalQuantity,
+                inspectedPhysicalCoverage,
+                resolvedPhysicalCoverage,
+                physicalFinalCoverage: inspectedPhysicalCoverage,
+                releasedQuantity,
+                permanentlyRejectedQuantity,
+                awaitingReinspectionQuantity,
                 remainingQuantity: preparedQuantityAuthoritative
-                  ? Math.max(0, jobOrder.preparedQuantityTotal - finalizedInspected)
+                  ? Math.max(0, jobOrder.preparedQuantityTotal - resolvedPhysicalCoverage)
                   : null,
-                complete: coverageComplete,
+                availableForNewFinalBatch: preparedQuantityAuthoritative
+                  ? Math.max(0, jobOrder.preparedQuantityTotal - reservedForFinalQuantity)
+                  : null,
+                complete: coverageCompleteSoFar,
+                coverageCompleteSoFar,
+                finalQaComplete,
                 reconciliationConflict,
                 state: reconciliationConflict
                   ? ('CONFLICT' as const)
-                  : coverageComplete
+                  : coverageCompleteSoFar
                     ? ('COMPLETE' as const)
                     : preparedQuantityAuthoritative
                       ? ('IN_PROGRESS' as const)
@@ -349,13 +440,48 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
                 passedBatches,
                 failedBatches,
                 hasFailedBatches: failedBatches > 0,
-                batches: executions.map((candidate) => ({
-                  id: candidate.id,
-                  batchNumber: candidate.batchNumber,
-                  inspectedQuantity: candidate.inspectedQuantity,
-                  status: candidate.status,
-                  outcome: candidate.outcome,
-                  finalizedAt: candidate.finalizedAt?.toISOString() ?? null,
+                availableBySize: jobOrder.lines.flatMap((line) =>
+                  line.sizes.map((size) => {
+                    const allocated = physicalBatches
+                      .flatMap((batch) => batch.allocations)
+                      .filter((allocation) => allocation.jobOrderLineSizeId === size.id)
+                      .reduce((sum, allocation) => sum + allocation.quantity, 0);
+                    return {
+                      jobOrderLineSizeId: size.id,
+                      sizeCode: size.size.code,
+                      sizeLabel: size.size.label,
+                      preparedQuantity: size.preparedQuantity,
+                      allocatedQuantity: allocated,
+                      availableQuantity: Math.max(0, size.preparedQuantity - allocated),
+                    };
+                  }),
+                ),
+                batches: physicalBatches.map((batch) => ({
+                  id: batch.id,
+                  batchNumber: batch.batchNumber,
+                  physicalQuantity: batch.physicalQuantity,
+                  inspectedQuantity: batch.executions.some(
+                    (attempt) => attempt.status === 'FINALIZED',
+                  )
+                    ? batch.physicalQuantity
+                    : 0,
+                  disposition: batch.disposition,
+                  status: batch.executions.some((attempt) => attempt.status === 'DRAFT')
+                    ? ('DRAFT' as const)
+                    : ('FINALIZED' as const),
+                  outcome:
+                    batch.executions.filter((attempt) => attempt.status === 'FINALIZED').at(-1)
+                      ?.outcome ?? null,
+                  finalizedAt:
+                    batch.executions
+                      .filter((attempt) => attempt.status === 'FINALIZED')
+                      .at(-1)
+                      ?.finalizedAt?.toISOString() ?? null,
+                  allocations: batch.allocations.map((allocation) => ({
+                    jobOrderLineSizeId: allocation.jobOrderLineSizeId,
+                    quantity: allocation.quantity,
+                  })),
+                  attemptCount: batch.executions.length,
                 })),
               }
             : null,
@@ -400,6 +526,23 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
     .filter((stage) => stage.processFlowVersionStage.activityType === 'PRODUCTION')
     .map((stage) => toStageView(stage));
   const qualityActivities = toQualityActivityViews(jobOrder);
+  const processFlowFinal = qualityActivities.find(
+    (activity) =>
+      activity.executionMultiplicity === 'BATCHED' &&
+      activity.coverageTarget === 'PREPARED_QUANTITY',
+  );
+  const processFlowFinalDefinition = processFlowFinal
+    ? jobOrder.processFlowVersion.stages.find(
+        (stage) => stage.id === processFlowFinal.processFlowVersionStageId,
+      )
+    : undefined;
+  const preparedAssociatedRuntime = processFlowFinalDefinition?.associatedProductionActivityId
+    ? jobOrder.stageStatuses.find(
+        (stage) =>
+          stage.processFlowVersionStageId ===
+          processFlowFinalDefinition.associatedProductionActivityId,
+      )
+    : undefined;
   const acknowledgements = jobOrder.acknowledgements.map((acknowledgement) => ({
     id: acknowledgement.id,
     jobOrderVersion: acknowledgement.jobOrderVersion,
@@ -427,6 +570,13 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
       processFlow: jobOrder.processFlowVersion.processFlow,
     },
     status: jobOrder.status,
+    preparedQuantityEntry: {
+      available: processFlowFinalDefinition
+        ? isPreparedQuantityEntryAvailable(preparedAssociatedRuntime)
+        : false,
+      processFlowActivityId: processFlowFinal?.processFlowVersionStageId ?? null,
+      associatedProductionActivity: processFlowFinal?.associatedProductionActivity ?? null,
+    },
     operationalState: deriveJobOrderOperationalState({
       status: jobOrder.status,
       factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
@@ -1478,17 +1628,30 @@ export async function updatePreparedQuantity(
     where: { id },
     include: {
       lines: { include: { sizes: true } },
+      stageStatuses: true,
+      processFlowVersion: {
+        include: {
+          stages: {
+            include: { qualityFormVersion: true },
+          },
+        },
+      },
     },
   });
   if (!jobOrder) throw HttpError.notFound('Job order not found');
   assertJobOrderWorkflowAuthorization(actor, jobOrder.factoryId);
   await assertFactoryUserFactoryActive(actor, jobOrder.factoryId);
   if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
-  if (jobOrder.status !== 'PRODUCTION_COMPLETE') {
-    throw HttpError.badRequest(
-      'Prepared quantity can only be updated after production is complete',
+  const finalActivity = jobOrder.processFlowVersion.stages.find(isProcessFlowFinalActivity);
+  if (!finalActivity)
+    throw HttpError.conflict('The Job Order Process Flow has no supported Final activity');
+  const associated = jobOrder.stageStatuses.find(
+    (stage) => stage.processFlowVersionStageId === finalActivity.associatedProductionActivityId,
+  );
+  if (!isPreparedQuantityEntryAvailable(associated))
+    throw HttpError.conflict(
+      'Prepared quantity becomes available when the configured Final-associated Production activity starts',
     );
-  }
 
   const allowedSizeIds = new Set(
     jobOrder.lines.flatMap((line) => line.sizes.map((size) => size.id)),
@@ -1505,6 +1668,7 @@ export async function updatePreparedQuantity(
   }
 
   await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${id}`}))`;
     if (
       await beginIdempotentOperation(
         tx,
@@ -1516,15 +1680,40 @@ export async function updatePreparedQuantity(
       )
     )
       return;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
     const currentVersion = await tx.jobOrder.findUnique({
       where: { id },
-      select: { version: true },
+      include: {
+        lines: { include: { sizes: { include: { size: true } } } },
+        finalQualityBatches: {
+          where: { disposition: { not: 'CANCELLED' } },
+          include: { allocations: true },
+        },
+      },
     });
     if (!currentVersion) throw HttpError.notFound('Job order not found');
     if (currentVersion.version !== input.expectedVersion)
       throw HttpError.staleVersion(currentVersion.version);
+    const committedBySize = new Map<string, number>();
+    for (const allocation of currentVersion.finalQualityBatches.flatMap(
+      (batch) => batch.allocations,
+    ))
+      committedBySize.set(
+        allocation.jobOrderLineSizeId,
+        (committedBySize.get(allocation.jobOrderLineSizeId) ?? 0) + allocation.quantity,
+      );
     for (const size of input.sizes) {
+      const authoritativeSize = currentVersion.lines
+        .flatMap((line) => line.sizes)
+        .find((candidate) => candidate.id === size.jobOrderLineSizeId)!;
+      const committed = committedBySize.get(size.jobOrderLineSizeId) ?? 0;
+      if (size.preparedQuantity < committed)
+        throw HttpError.conflict(
+          `Prepared quantity for size ${authoritativeSize.size.code} cannot be reduced below ${committed} units already reserved for Final inspection.`,
+        );
+      if (size.preparedQuantity > authoritativeSize.orderedQuantity)
+        throw HttpError.badRequest(
+          `Prepared quantity for size ${authoritativeSize.size.code} cannot exceed the Job Order quantity of ${authoritativeSize.orderedQuantity}.`,
+        );
       await tx.jobOrderLineSize.update({
         where: { id: size.jobOrderLineSizeId },
         data: { preparedQuantity: size.preparedQuantity },
@@ -1541,7 +1730,7 @@ export async function updatePreparedQuantity(
         where: { id: line.id },
         data: {
           preparedQuantityTotal,
-          status: 'PRODUCTION_COMPLETE',
+          status: line.status,
         },
       });
     }
@@ -1555,7 +1744,7 @@ export async function updatePreparedQuantity(
       where: { id },
       data: {
         preparedQuantityTotal,
-        status: 'PRODUCTION_COMPLETE',
+        status: currentVersion.status,
         version: { increment: 1 },
       },
     });

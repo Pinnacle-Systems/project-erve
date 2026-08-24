@@ -38,7 +38,18 @@ async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCO
       styleName: 'Test Style',
       finalMrp: 500,
       status: overrides?.status ?? 'ACTIVE',
-      styleSeasons: { create: { season: { create: { id: seasonId, code: `T-${seasonId.slice(-6)}`, name: 'Test Season', financialYear: '26-27' } } } },
+      styleSeasons: {
+        create: {
+          season: {
+            create: {
+              id: seasonId,
+              code: `T-${seasonId.slice(-6)}`,
+              name: 'Test Season',
+              financialYear: '26-27',
+            },
+          },
+        },
+      },
     },
   });
 }
@@ -96,7 +107,10 @@ describe('purchase orders API', () => {
       expect(res.body.data.totalOrderedQuantity).toBe(168);
       expect(res.body.data.lines[0].seasonSnapshots).toHaveLength(1);
       expect(res.body.data.lines[0].seasonSnapshots[0]).toMatchObject({
-        seasonId: expect.any(String), code: expect.any(String), name: 'Test Season', financialYear: '26-27',
+        seasonId: expect.any(String),
+        code: expect.any(String),
+        name: 'Test Season',
+        financialYear: '26-27',
       });
     });
 
@@ -817,7 +831,34 @@ describe('purchase orders API', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.data.lines[0].totals.ordered).toBe(50);
+      expect(res.body.data.lines[0].totals.orderRemaining).toBe(50);
+      expect(res.body.data.lines[0].totals.qaReleasedPendingDispatch).toBe(0);
+      expect(res.body.data.lines[0].totals.releaseDispatchIntegrityConflict).toBe(false);
+      expect(res.body.data.lines[0].sizes[0]).toMatchObject({
+        pendingDispatchQuantity: 50,
+        orderRemainingQuantity: 50,
+        qaReleasedPendingDispatchQuantity: 0,
+      });
       expect(res.body.data.lines[0].totals.dispatched).toBe(0);
+
+      await prisma.distributorPurchaseOrderLineSize.update({
+        where: { id: createRes.body.data.lines[0].sizes[0].id },
+        data: { dispatchedQuantity: 10 },
+      });
+      const inconsistent = await request(app)
+        .get(`/purchase-orders/${poId}/fulfilment-summary`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(inconsistent.body.data.lines[0].sizes[0]).toMatchObject({
+        orderRemainingQuantity: 40,
+        qaReleasedPendingDispatchQuantity: 0,
+        releaseDispatchDeficitQuantity: 10,
+        releaseDispatchIntegrityConflict: true,
+      });
+      expect(inconsistent.body.data.lines[0].totals).toMatchObject({
+        releaseDispatchDeficit: 10,
+        releaseDispatchIntegrityConflict: true,
+      });
     });
   });
 });

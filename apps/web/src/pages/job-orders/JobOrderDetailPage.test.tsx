@@ -154,6 +154,60 @@ const changeTextarea = (textarea: HTMLTextAreaElement, value: string) => {
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
 };
 
+const changeInput = (input: HTMLInputElement, value: string) => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+};
+
+const finalQualityActivity = (overrides: Record<string, unknown> = {}) => ({
+  processFlowVersionStageId: 'final-quality',
+  sequence: 5,
+  name: 'Final Inspection',
+  status: 'AVAILABLE',
+  eligible: true,
+  qualityForm: {
+    id: 'final-form',
+    code: 'FINAL',
+    name: 'Final Inspection Report',
+    executionScope: 'JOB_ORDER',
+  },
+  qualityFormVersion: { id: 'final-version', versionNumber: 1 },
+  executionMode: 'IN_PROCESS',
+  associatedProductionActivity: null,
+  availabilityPolicy: 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES',
+  progressThresholdPercent: null,
+  gateSatisfactionRequirement: 'FINALIZED',
+  executionMultiplicity: 'BATCHED',
+  coverageTarget: 'PREPARED_QUANTITY',
+  coverage: {
+    preparedQuantityAuthoritative: true,
+    preparedQuantity: 40,
+    inspectedQuantity: 0,
+    remainingQuantity: 40,
+    complete: false,
+    reconciliationConflict: false,
+    state: 'UNKNOWN',
+    passedBatches: 0,
+    failedBatches: 0,
+    hasFailedBatches: false,
+    batches: [],
+    availableBySize: [
+      {
+        jobOrderLineSizeId: 'line-size-m',
+        sizeCode: 'M',
+        sizeLabel: 'M',
+        preparedQuantity: 40,
+        allocatedQuantity: 0,
+        availableQuantity: 40,
+      },
+    ],
+  },
+  execution: null,
+  executionHistory: [],
+  ...overrides,
+});
+
 describe('ProductionStageStepper', () => {
   it('renders nothing when production stages are empty', () => {
     act(() => {
@@ -164,6 +218,95 @@ describe('ProductionStageStepper', () => {
 });
 
 describe('JobOrderDetailPage workflow rendering', () => {
+  it('validates a Final size allocation, clears the error, and starts once', async () => {
+    authState.roles = ['QA_USER'];
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: {
+        data: {
+          id: 'execution-1',
+          jobOrderId: 'jo-1',
+          ppSample: null,
+        },
+      },
+    });
+    await renderPage('IN_PRODUCTION', standardStages, [], {
+      qualityActivities: [finalQualityActivity()],
+    });
+    const start = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Start Inspection',
+    ) as HTMLButtonElement;
+    const quantity = container.querySelector(
+      'input[aria-label="Final batch quantity for size M"]',
+    ) as HTMLInputElement;
+
+    act(() => start.click());
+
+    expect(post).not.toHaveBeenCalled();
+    expect(content()).toContain('Allocate at least one prepared unit to this Final batch.');
+
+    await act(async () => changeInput(quantity, '0'));
+    act(() => start.click());
+    expect(post).not.toHaveBeenCalled();
+    expect(content()).toContain('Allocate at least one prepared unit to this Final batch.');
+
+    await act(async () => changeInput(quantity, '-1'));
+    act(() => start.click());
+    expect(post).not.toHaveBeenCalled();
+    expect(content()).toContain('Allocate at least one prepared unit to this Final batch.');
+
+    await act(async () => changeInput(quantity, '1.5'));
+    act(() => start.click());
+    expect(post).not.toHaveBeenCalled();
+    expect(content()).toContain(
+      'Each batch allocation must be a whole number within the available size quantity.',
+    );
+
+    await act(async () => changeInput(quantity, '25'));
+    expect(content()).not.toContain('Allocate at least one prepared unit');
+
+    await act(async () => {
+      start.click();
+      start.click();
+    });
+    expect(post).toHaveBeenCalledOnce();
+    expect(post).toHaveBeenCalledWith(
+      '/job-orders/jo-1/quality-activities/final-quality/executions',
+      { allocations: [{ jobOrderLineSizeId: 'line-size-m', quantity: 25 }] },
+    );
+  });
+
+  it('surfaces a Final allocation conflict returned by the API', async () => {
+    authState.roles = ['QA_USER'];
+    vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        data: {
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Final batch allocation exceeds available prepared quantity',
+          },
+        },
+      },
+    });
+    await renderPage('IN_PRODUCTION', standardStages, [], {
+      qualityActivities: [finalQualityActivity()],
+    });
+    const quantity = container.querySelector(
+      'input[aria-label="Final batch quantity for size M"]',
+    ) as HTMLInputElement;
+    await act(async () => changeInput(quantity, '25'));
+    const start = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Start Inspection',
+    ) as HTMLButtonElement;
+
+    await act(async () => start.click());
+    await vi.waitFor(() =>
+      expect(content()).toContain('Final batch allocation exceeds available prepared quantity'),
+    );
+
+    expect(quantity.value).toBe('25');
+  });
+
   it('shows primary Production and concurrent Quality without duplicating Production or Lifecycle', async () => {
     const concurrentStages = [
       stage('stage-1', 'Cutting', 1, 'COMPLETED'),
@@ -464,7 +607,7 @@ describe('JobOrderDetailPage workflow rendering', () => {
       expect(content()).toContain('Printing');
       expect(content()).toContain('Current Stage: Cutting');
       expect(content()).toContain(
-        'Prepared quantities become available after Finishing is completed.',
+        'Prepared quantities become available after Finishing satisfies the Process Flow rule.',
       );
     },
   );
@@ -473,7 +616,7 @@ describe('JobOrderDetailPage workflow rendering', () => {
     await renderPage('PRODUCTION_COMPLETE');
     expect(content()).toContain('Cutting');
     expect(content()).toContain(
-      'Update size-wise prepared quantities after production is complete.',
+      'Update the cumulative size-wise quantity prepared for Final inspection so far.',
     );
     expect(content()).not.toContain('Prepared quantities become available after');
   });
@@ -490,7 +633,7 @@ describe('JobOrderDetailPage workflow rendering', () => {
     expect(content()).toContain('Final Inspection');
     expect(content()).toContain('Current Stage: Fabric Preparation');
     expect(content()).toContain(
-      'Prepared quantities become available after Final Inspection is completed.',
+      'Prepared quantities become available after Final Inspection satisfies the Process Flow rule.',
     );
     expect(content()).not.toContain('Cutting');
   });

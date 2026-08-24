@@ -192,11 +192,20 @@ enum QualityFormComponentType {
 enum QualityActivityExecutionStatus {
   DRAFT
   FINALIZED
+  CANCELLED
 }
 
 enum QualityInspectionOutcome {
   PASS
   FAIL
+}
+
+enum FinalQualityBatchDisposition {
+  DRAFT
+  AWAITING_REINSPECTION
+  RELEASED
+  PERMANENTLY_REJECTED
+  CANCELLED
 }
 
 enum QualityDefectSeverity {
@@ -253,26 +262,29 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  userRoles                  UserRole[]
-  userDistributors           UserDistributor[]
-  userFactories              UserFactory[]
-  uploadedFiles              File[]                     @relation("FileUploadedBy")
-  auditLogs                  AuditLog[]                 @relation("AuditLogActor")
-  refreshSessions            RefreshSession[]
-  createdPurchaseOrders      DistributorPurchaseOrder[] @relation("POCreator")
-  merchandisedPurchaseOrders DistributorPurchaseOrder[] @relation("POMerchandiser")
-  createdJobOrders           JobOrder[]                 @relation("JobOrderCreator")
-  confirmedJobOrders         JobOrder[]                 @relation("JobOrderConfirmer")
-  jobOrderAcknowledgements   JobOrderAcknowledgement[]  @relation("JobOrderAcknowledgedBy")
-  completedJobOrderStages    JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
-  qaInspections              QaInspectionSession[]      @relation("QaInspector")
-  reopenedQaInspections      QaInspectionSession[]      @relation("QaReopenedBy")
-  reopenedQaSizeForms        QaSizeInspectionForm[]     @relation("QaSizeFormReopenedBy")
-  acknowledgedQaReworks      QaReworkTask[]             @relation("QaReworkAcknowledgedBy")
-  readiedQaReworks           QaReworkTask[]             @relation("QaReworkReadiedBy")
-  startedQualityExecutions   QualityActivityExecution[] @relation("QualityExecutionStarter")
-  finalizedQualityExecutions QualityActivityExecution[] @relation("QualityExecutionFinalizer")
-  qualitySignoffs            QualitySignoff[]           @relation("QualitySignoffRecorder")
+  userRoles                   UserRole[]
+  userDistributors            UserDistributor[]
+  userFactories               UserFactory[]
+  uploadedFiles               File[]                     @relation("FileUploadedBy")
+  auditLogs                   AuditLog[]                 @relation("AuditLogActor")
+  refreshSessions             RefreshSession[]
+  createdPurchaseOrders       DistributorPurchaseOrder[] @relation("POCreator")
+  merchandisedPurchaseOrders  DistributorPurchaseOrder[] @relation("POMerchandiser")
+  createdJobOrders            JobOrder[]                 @relation("JobOrderCreator")
+  confirmedJobOrders          JobOrder[]                 @relation("JobOrderConfirmer")
+  jobOrderAcknowledgements    JobOrderAcknowledgement[]  @relation("JobOrderAcknowledgedBy")
+  completedJobOrderStages     JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
+  qaInspections               QaInspectionSession[]      @relation("QaInspector")
+  reopenedQaInspections       QaInspectionSession[]      @relation("QaReopenedBy")
+  reopenedQaSizeForms         QaSizeInspectionForm[]     @relation("QaSizeFormReopenedBy")
+  acknowledgedQaReworks       QaReworkTask[]             @relation("QaReworkAcknowledgedBy")
+  readiedQaReworks            QaReworkTask[]             @relation("QaReworkReadiedBy")
+  startedQualityExecutions    QualityActivityExecution[] @relation("QualityExecutionStarter")
+  finalizedQualityExecutions  QualityActivityExecution[] @relation("QualityExecutionFinalizer")
+  qualitySignoffs             QualitySignoff[]           @relation("QualitySignoffRecorder")
+  createdFinalQualityBatches  FinalQualityBatch[]        @relation("FinalQualityBatchCreator")
+  terminalFinalQualityBatches FinalQualityBatch[]        @relation("FinalQualityBatchTerminalActor")
+  qaReleases                  QaRelease[]                @relation("QaReleaseActor")
 
   @@index([status])
   @@map("users")
@@ -632,23 +644,23 @@ model ProcessFlowVersion {
 }
 
 model ProcessFlowVersionStage {
-  id                             String                     @id
-  processFlowVersionId           String                     @map("process_flow_version_id")
+  id                             String                              @id
+  processFlowVersionId           String                              @map("process_flow_version_id")
   sequence                       Int
   name                           String
   code                           String?
-  status                         ProcessStageStatus         @default(ACTIVE)
-  activityType                   ProcessFlowActivityType    @default(PRODUCTION) @map("activity_type")
-  qualityFormVersionId           String?                    @map("quality_form_version_id")
-  qualityExecutionMode           QualityExecutionMode?      @map("quality_execution_mode")
-  associatedProductionActivityId String?                    @map("associated_production_activity_id")
-  qualityAvailabilityPolicy      QualityAvailabilityPolicy? @map("quality_availability_policy")
-  progressThresholdPercent       Decimal?                   @map("progress_threshold_percent") @db.Decimal(5, 2)
+  status                         ProcessStageStatus                  @default(ACTIVE)
+  activityType                   ProcessFlowActivityType             @default(PRODUCTION) @map("activity_type")
+  qualityFormVersionId           String?                             @map("quality_form_version_id")
+  qualityExecutionMode           QualityExecutionMode?               @map("quality_execution_mode")
+  associatedProductionActivityId String?                             @map("associated_production_activity_id")
+  qualityAvailabilityPolicy      QualityAvailabilityPolicy?          @map("quality_availability_policy")
+  progressThresholdPercent       Decimal?                            @map("progress_threshold_percent") @db.Decimal(5, 2)
   gateSatisfactionRequirement    QualityGateSatisfactionRequirement? @map("gate_satisfaction_requirement")
-  executionMultiplicity          QualityExecutionMultiplicity? @map("execution_multiplicity")
-  coverageTarget                 QualityCoverageTarget?     @map("coverage_target")
-  createdAt                      DateTime                   @default(now()) @map("created_at")
-  updatedAt                      DateTime                   @updatedAt @map("updated_at")
+  executionMultiplicity          QualityExecutionMultiplicity?       @map("execution_multiplicity")
+  coverageTarget                 QualityCoverageTarget?              @map("coverage_target")
+  createdAt                      DateTime                            @default(now()) @map("created_at")
+  updatedAt                      DateTime                            @updatedAt @map("updated_at")
 
   processFlowVersion           ProcessFlowVersion         @relation(fields: [processFlowVersionId], references: [id], onDelete: Cascade)
   qualityFormVersion           QualityFormVersion?        @relation(fields: [qualityFormVersionId], references: [id], onDelete: Restrict, map: "process_flow_activity_quality_form_version_fkey")
@@ -656,6 +668,7 @@ model ProcessFlowVersionStage {
   associatedQualityActivities  ProcessFlowVersionStage[]  @relation("ProcessFlowActivityAssociation")
   jobOrderStageStatuses        JobOrderStageStatus[]
   qualityExecutions            QualityActivityExecution[]
+  finalQualityBatches          FinalQualityBatch[]
 
   @@unique([processFlowVersionId, sequence])
   @@index([processFlowVersionId])
@@ -830,6 +843,7 @@ model DistributorPurchaseOrderLineSize {
   purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Cascade)
   size              Size                         @relation(fields: [sizeId], references: [id], onDelete: Restrict)
   jobOrderLineSizes JobOrderLineSize[]
+  qaReleaseLines    QaReleaseLine[]
 
   @@unique([purchaseOrderLineId, sizeId])
   @@index([purchaseOrderLineId])
@@ -862,19 +876,21 @@ model JobOrder {
   updatedAt                 DateTime                  @updatedAt @map("updated_at")
   version                   Int                       @default(1)
 
-  purchaseOrder      DistributorPurchaseOrder    @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
-  factory            Factory                     @relation(fields: [factoryId], references: [id], onDelete: Restrict)
-  processFlowVersion ProcessFlowVersion          @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
-  confirmer          User?                       @relation("JobOrderConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
-  creator            User                        @relation("JobOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
-  lines              JobOrderLine[]
-  stageStatuses      JobOrderStageStatus[]
-  idempotencyRecords JobOrderIdempotencyRecord[]
-  qaInspections      QaInspectionSession[]
-  qaReworkTasks      QaReworkTask[]
-  acknowledgements   JobOrderAcknowledgement[]
-  seasonSnapshots    JobOrderSeasonSnapshot[]
-  qualityExecutions  QualityActivityExecution[]
+  purchaseOrder       DistributorPurchaseOrder    @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  factory             Factory                     @relation(fields: [factoryId], references: [id], onDelete: Restrict)
+  processFlowVersion  ProcessFlowVersion          @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
+  confirmer           User?                       @relation("JobOrderConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
+  creator             User                        @relation("JobOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  lines               JobOrderLine[]
+  stageStatuses       JobOrderStageStatus[]
+  idempotencyRecords  JobOrderIdempotencyRecord[]
+  qaInspections       QaInspectionSession[]
+  qaReworkTasks       QaReworkTask[]
+  acknowledgements    JobOrderAcknowledgement[]
+  seasonSnapshots     JobOrderSeasonSnapshot[]
+  qualityExecutions   QualityActivityExecution[]
+  finalQualityBatches FinalQualityBatch[]
+  qaReleases          QaRelease[]
 
   @@index([purchaseOrderId])
   @@index([factoryId])
@@ -887,51 +903,131 @@ model JobOrder {
 // Start eligibility applies only at creation. A valid draft remains editable
 // and finalizable after its associated Production activity changes state.
 model QualityActivityExecution {
-  id                    String                         @id
-  jobOrderId            String                         @map("job_order_id")
-  processFlowActivityId String                         @map("process_flow_activity_id")
-  qualityFormVersionId  String                         @map("quality_form_version_id")
-  attemptNumber         Int                            @default(1) @map("attempt_number")
-  batchNumber           Int                            @default(1) @map("batch_number")
-  inspectedQuantity     Int?                           @map("inspected_quantity")
-  sampleJobOrderLineSizeId String?                     @map("sample_job_order_line_size_id")
-  sampleQuantity        Int?                           @map("sample_quantity")
-  status                QualityActivityExecutionStatus @default(DRAFT)
-  startedById           String                         @map("started_by_id")
-  startedAt             DateTime                       @default(now()) @map("started_at")
-  finalizedById         String?                        @map("finalized_by_id")
-  finalizedAt           DateTime?                      @map("finalized_at")
-  outcomeComponentId    String?                        @map("outcome_component_id")
-  outcome               QualityInspectionOutcome?
-  outcomeRemarks        String?                        @map("outcome_remarks")
-  version               Int                            @default(1)
-  createdAt             DateTime                       @default(now()) @map("created_at")
-  updatedAt             DateTime                       @updatedAt @map("updated_at")
+  id                       String                         @id
+  jobOrderId               String                         @map("job_order_id")
+  processFlowActivityId    String                         @map("process_flow_activity_id")
+  qualityFormVersionId     String                         @map("quality_form_version_id")
+  attemptNumber            Int                            @default(1) @map("attempt_number")
+  batchNumber              Int                            @default(1) @map("batch_number")
+  inspectedQuantity        Int?                           @map("inspected_quantity")
+  sampleJobOrderLineSizeId String?                        @map("sample_job_order_line_size_id")
+  sampleQuantity           Int?                           @map("sample_quantity")
+  finalQualityBatchId      String?                        @map("final_quality_batch_id")
+  status                   QualityActivityExecutionStatus @default(DRAFT)
+  startedById              String                         @map("started_by_id")
+  startedAt                DateTime                       @default(now()) @map("started_at")
+  finalizedById            String?                        @map("finalized_by_id")
+  finalizedAt              DateTime?                      @map("finalized_at")
+  outcomeComponentId       String?                        @map("outcome_component_id")
+  outcome                  QualityInspectionOutcome?
+  outcomeRemarks           String?                        @map("outcome_remarks")
+  version                  Int                            @default(1)
+  createdAt                DateTime                       @default(now()) @map("created_at")
+  updatedAt                DateTime                       @updatedAt @map("updated_at")
 
-  jobOrder            JobOrder                   @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_activity_executions_job_order_id_fkey")
-  processFlowActivity ProcessFlowVersionStage    @relation(fields: [processFlowActivityId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_process_flow_activity_id_fkey")
-  qualityFormVersion  QualityFormVersion         @relation(fields: [qualityFormVersionId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_quality_form_version_id_fkey")
-  startedBy           User                       @relation("QualityExecutionStarter", fields: [startedById], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_started_by_id_fkey")
-  finalizedBy         User?                      @relation("QualityExecutionFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_finalized_by_id_fkey")
-  checklistResponses  QualityChecklistResponse[]
-  aqlResults          QualityAqlResult[]
-  defects             QualityDefect[]
-  correctiveActions   QualityCorrectiveAction[]
-  testResults         QualityTestResult[]
-  quantities          QualityQuantityResponse[]
-  comments            QualityCommentResponse[]
-  signoffs            QualitySignoff[]
-  attachments         QualityAttachment[]
-  fieldResponses      QualityFieldResponse[]
-  attendeeResponses   QualityAttendeeResponse[]
-  actionResponses     QualityActionResponse[]
-  ppSampleSession     QaInspectionSession?
-  sampleJobOrderLineSize JobOrderLineSize? @relation("QualityExecutionSampleSize", fields: [sampleJobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_sample_size_id_fkey")
+  jobOrder               JobOrder                   @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quality_activity_executions_job_order_id_fkey")
+  processFlowActivity    ProcessFlowVersionStage    @relation(fields: [processFlowActivityId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_process_flow_activity_id_fkey")
+  qualityFormVersion     QualityFormVersion         @relation(fields: [qualityFormVersionId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_quality_form_version_id_fkey")
+  startedBy              User                       @relation("QualityExecutionStarter", fields: [startedById], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_started_by_id_fkey")
+  finalizedBy            User?                      @relation("QualityExecutionFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_finalized_by_id_fkey")
+  checklistResponses     QualityChecklistResponse[]
+  aqlResults             QualityAqlResult[]
+  defects                QualityDefect[]
+  correctiveActions      QualityCorrectiveAction[]
+  testResults            QualityTestResult[]
+  quantities             QualityQuantityResponse[]
+  comments               QualityCommentResponse[]
+  signoffs               QualitySignoff[]
+  attachments            QualityAttachment[]
+  fieldResponses         QualityFieldResponse[]
+  attendeeResponses      QualityAttendeeResponse[]
+  actionResponses        QualityActionResponse[]
+  ppSampleSession        QaInspectionSession?
+  sampleJobOrderLineSize JobOrderLineSize?          @relation("QualityExecutionSampleSize", fields: [sampleJobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_sample_size_id_fkey")
+  finalQualityBatch      FinalQualityBatch?         @relation(fields: [finalQualityBatchId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_final_quality_batch_id_fkey")
+  qaRelease              QaRelease?
 
   @@unique([jobOrderId, processFlowActivityId, attemptNumber, batchNumber], map: "quality_execution_attempt_batch_key")
   @@index([jobOrderId, processFlowActivityId, status], map: "quality_execution_status_idx")
   @@index([qualityFormVersionId], map: "quality_execution_form_idx")
+  @@index([finalQualityBatchId, attemptNumber], map: "quality_execution_final_batch_attempt_idx")
   @@map("quality_activity_executions")
+}
+
+model FinalQualityBatch {
+  id                    String                       @id
+  jobOrderId            String                       @map("job_order_id")
+  processFlowActivityId String                       @map("process_flow_activity_id")
+  batchNumber           Int                          @map("batch_number")
+  physicalQuantity      Int                          @map("physical_quantity")
+  disposition           FinalQualityBatchDisposition @default(DRAFT)
+  createdById           String                       @map("created_by_id")
+  createdAt             DateTime                     @default(now()) @map("created_at")
+  updatedAt             DateTime                     @updatedAt @map("updated_at")
+  terminalById          String?                      @map("terminal_by_id")
+  terminalAt            DateTime?                    @map("terminal_at")
+  terminalReason        String?                      @map("terminal_reason")
+
+  jobOrder            JobOrder                      @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  processFlowActivity ProcessFlowVersionStage       @relation(fields: [processFlowActivityId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  createdBy           User                          @relation("FinalQualityBatchCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  terminalBy          User?                         @relation("FinalQualityBatchTerminalActor", fields: [terminalById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocations         FinalQualityBatchAllocation[]
+  executions          QualityActivityExecution[]
+  release             QaRelease?
+
+  @@unique([jobOrderId, processFlowActivityId, batchNumber], map: "final_quality_batch_number_key")
+  @@index([jobOrderId, processFlowActivityId, disposition], map: "final_quality_batch_state_idx")
+  @@map("final_quality_batches")
+}
+
+model FinalQualityBatchAllocation {
+  id                  String   @id
+  finalQualityBatchId String   @map("final_quality_batch_id")
+  jobOrderLineSizeId  String   @map("job_order_line_size_id")
+  quantity            Int
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  finalQualityBatch FinalQualityBatch @relation(fields: [finalQualityBatchId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  jobOrderLineSize  JobOrderLineSize  @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([finalQualityBatchId, jobOrderLineSizeId], map: "final_quality_batch_allocation_size_key")
+  @@index([jobOrderLineSizeId], map: "final_quality_batch_allocation_size_idx")
+  @@map("final_quality_batch_allocations")
+}
+
+model QaRelease {
+  id                       String   @id
+  jobOrderId               String   @map("job_order_id")
+  sourceQualityExecutionId String   @unique(map: "qa_release_source_execution_key") @map("source_quality_execution_id")
+  finalQualityBatchId      String   @unique(map: "qa_release_final_batch_key") @map("final_quality_batch_id")
+  releasedById             String   @map("released_by_id")
+  releasedAt               DateTime @default(now()) @map("released_at")
+
+  jobOrder               JobOrder                 @relation(fields: [jobOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sourceQualityExecution QualityActivityExecution @relation(fields: [sourceQualityExecutionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  finalQualityBatch      FinalQualityBatch        @relation(fields: [finalQualityBatchId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  releasedBy             User                     @relation("QaReleaseActor", fields: [releasedById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  lines                  QaReleaseLine[]
+
+  @@index([jobOrderId, releasedAt], map: "qa_release_job_order_idx")
+  @@map("qa_releases")
+}
+
+model QaReleaseLine {
+  id                      String @id
+  qaReleaseId             String @map("qa_release_id")
+  jobOrderLineSizeId      String @map("job_order_line_size_id")
+  purchaseOrderLineSizeId String @map("purchase_order_line_size_id")
+  quantity                Int
+
+  release               QaRelease                        @relation(fields: [qaReleaseId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  jobOrderLineSize      JobOrderLineSize                 @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  purchaseOrderLineSize DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([qaReleaseId, jobOrderLineSizeId], map: "qa_release_line_size_key")
+  @@index([purchaseOrderLineSizeId], map: "qa_release_line_po_size_idx")
+  @@map("qa_release_lines")
 }
 
 model QualityFieldResponse {
@@ -1214,12 +1310,14 @@ model JobOrderLineSize {
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 
-  jobOrderLine          JobOrderLine                     @relation(fields: [jobOrderLineId], references: [id], onDelete: Cascade)
-  purchaseOrderLineSize DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict)
-  size                  Size                             @relation(fields: [sizeId], references: [id], onDelete: Restrict)
-  qaSizeInspectionForms QaSizeInspectionForm[]
-  qaReworkTasks         QaReworkTask[]
-  qualitySampleExecutions QualityActivityExecution[] @relation("QualityExecutionSampleSize")
+  jobOrderLine                 JobOrderLine                     @relation(fields: [jobOrderLineId], references: [id], onDelete: Cascade)
+  purchaseOrderLineSize        DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict)
+  size                         Size                             @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+  qaSizeInspectionForms        QaSizeInspectionForm[]
+  qaReworkTasks                QaReworkTask[]
+  qualitySampleExecutions      QualityActivityExecution[]       @relation("QualityExecutionSampleSize")
+  finalQualityBatchAllocations FinalQualityBatchAllocation[]
+  qaReleaseLines               QaReleaseLine[]
 
   @@unique([jobOrderLineId, purchaseOrderLineSizeId])
   @@index([jobOrderLineId])
@@ -1231,25 +1329,25 @@ model JobOrderLineSize {
 // A session records the shared inspection cycle and lifecycle only. Every size
 // inspected in that cycle has its own complete form below.
 model QaInspectionSession {
-  id           String             @id
-  jobOrderId   String             @map("job_order_id")
-  inspectorId  String             @map("inspector_id")
-  cycleNumber  Int                @map("cycle_number")
-  status       QaInspectionStatus @default(DRAFT)
-  version      Int                @default(1)
-  finalizedAt  DateTime?          @map("finalized_at")
-  reopenedAt   DateTime?          @map("reopened_at")
-  reopenedById String?            @map("reopened_by_id")
-  reopenReason String?            @map("reopen_reason")
-  createdAt    DateTime           @default(now()) @map("created_at")
-  updatedAt    DateTime           @updatedAt @map("updated_at")
-  qualityActivityExecutionId String? @unique(map: "qa_inspection_sessions_quality_execution_key") @map("quality_activity_execution_id")
+  id                         String             @id
+  jobOrderId                 String             @map("job_order_id")
+  inspectorId                String             @map("inspector_id")
+  cycleNumber                Int                @map("cycle_number")
+  status                     QaInspectionStatus @default(DRAFT)
+  version                    Int                @default(1)
+  finalizedAt                DateTime?          @map("finalized_at")
+  reopenedAt                 DateTime?          @map("reopened_at")
+  reopenedById               String?            @map("reopened_by_id")
+  reopenReason               String?            @map("reopen_reason")
+  createdAt                  DateTime           @default(now()) @map("created_at")
+  updatedAt                  DateTime           @updatedAt @map("updated_at")
+  qualityActivityExecutionId String?            @unique(map: "qa_inspection_sessions_quality_execution_key") @map("quality_activity_execution_id")
 
-  jobOrder   JobOrder               @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  inspector  User                   @relation("QaInspector", fields: [inspectorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  reopenedBy User?                  @relation("QaReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  forms      QaSizeInspectionForm[]
-  evidence   QaEvidence[]
+  jobOrder                 JobOrder                  @relation(fields: [jobOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  inspector                User                      @relation("QaInspector", fields: [inspectorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reopenedBy               User?                     @relation("QaReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  forms                    QaSizeInspectionForm[]
+  evidence                 QaEvidence[]
   qualityActivityExecution QualityActivityExecution? @relation(fields: [qualityActivityExecutionId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "qa_inspection_sessions_quality_execution_fkey")
 
   @@index([jobOrderId, status])

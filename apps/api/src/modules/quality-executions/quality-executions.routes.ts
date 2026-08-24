@@ -8,6 +8,7 @@ import { successResponse } from '../../utils/response.js';
 import * as service from './quality-executions.service.js';
 import {
   attachmentParamsSchema,
+  finalBatchActionSchema,
   qualityExecutionPayloadSchema,
 } from './quality-executions.validation.js';
 
@@ -45,6 +46,56 @@ qualityExecutionsRouter.post(
           req.user!,
           req.params.id! as string,
           qualityExecutionPayloadSchema.parse(req.body),
+        ),
+      ),
+    ),
+  ),
+);
+qualityExecutionsRouter.get(
+  '/final-batches/:batchId',
+  requireRoles('ADMIN', 'QA_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT'),
+  asyncHandler(async (req, res) =>
+    res.json(
+      successResponse(await service.getFinalBatch(req.user!, req.params.batchId! as string)),
+    ),
+  ),
+);
+qualityExecutionsRouter.post(
+  '/final-batches/:batchId/reinspect',
+  requireRoles('ADMIN', 'QA_USER'),
+  asyncHandler(async (req, res) => {
+    const execution = await service.startFinalBatchReinspection(
+      req.user!,
+      req.params.batchId! as string,
+    );
+    res.status(201).json(successResponse(execution));
+  }),
+);
+qualityExecutionsRouter.post(
+  '/final-batches/:batchId/cancel',
+  requireRoles('ADMIN', 'QA_USER'),
+  asyncHandler(async (req, res) =>
+    res.json(
+      successResponse(
+        await service.cancelFinalBatch(
+          req.user!,
+          req.params.batchId! as string,
+          finalBatchActionSchema.parse(req.body),
+        ),
+      ),
+    ),
+  ),
+);
+qualityExecutionsRouter.post(
+  '/final-batches/:batchId/permanently-reject',
+  requireRoles('ADMIN', 'QA_USER'),
+  asyncHandler(async (req, res) =>
+    res.json(
+      successResponse(
+        await service.permanentlyRejectFinalBatch(
+          req.user!,
+          req.params.batchId! as string,
+          finalBatchActionSchema.parse(req.body),
         ),
       ),
     ),

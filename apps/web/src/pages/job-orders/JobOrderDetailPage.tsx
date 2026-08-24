@@ -7,11 +7,13 @@ import type {
   ApiSuccessResponse,
   JobOrderAuditEntry,
   QaReworkTaskView,
+  QualityCoverageView,
   QualityExecutionView,
 } from '@erve/types';
 import {
   AuditTrail,
   ConfirmDialog,
+  FinalBatchAllocationForm,
   getJobOrderOperationalPresentation,
   PageHeader,
   StatusBadge,
@@ -51,6 +53,13 @@ function mutationErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function finalBatchStartError(error: unknown): string {
+  if (!isAxiosError<ApiErrorResponse>(error))
+    return 'Unable to create the Final batch. Review its size allocation and try again.';
+  const response = error.response?.data.error;
+  return response?.message ?? 'Unable to create the Final batch. Review its size allocation.';
+}
+
 const REWORK_STATUS_LABELS: Record<QaReworkTaskView['status'], string> = {
   REWORK_REQUIRED: 'Rework required',
   ACKNOWLEDGED: 'Acknowledged',
@@ -86,7 +95,12 @@ export function JobOrderDetailPage() {
   const [qualityStartContexts, setQualityStartContexts] = useState<
     Record<string, { sizeId: string; quantity: string }>
   >({});
+  const [qualityBatchAllocations, setQualityBatchAllocations] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const [qualityBatchErrors, setQualityBatchErrors] = useState<Record<string, string>>({});
   const disclaimerRef = useRef<HTMLTextAreaElement>(null);
+  const qualityStartBatchPendingRef = useRef(false);
   const user = useOptionalAuth()?.user;
 
   const jobOrderQuery = useQuery({
@@ -114,7 +128,65 @@ export function JobOrderDetailPage() {
       navigate(
         execution.ppSample ? `/qa/${execution.jobOrderId}` : `/quality-executions/${execution.id}`,
       ),
+    onError: (error, variables) => {
+      if (!Object.prototype.hasOwnProperty.call(variables.body ?? {}, 'allocations')) return;
+      qualityStartBatchPendingRef.current = false;
+      setQualityBatchErrors((current) => ({
+        ...current,
+        [variables.activityId]: finalBatchStartError(error),
+      }));
+    },
   });
+
+  const updateFinalBatchAllocation = (activityId: string, sizeId: string, quantity: string) => {
+    setQualityBatchAllocations((current) => ({
+      ...current,
+      [activityId]: { ...current[activityId], [sizeId]: quantity },
+    }));
+    setQualityBatchErrors((current) => {
+      if (!current[activityId]) return current;
+      const next = { ...current };
+      delete next[activityId];
+      return next;
+    });
+  };
+
+  const startQualityBatch = (activityId: string, coverage: QualityCoverageView | null) => {
+    if (qualityStartBatchPendingRef.current || qualityStartMutation.isPending) return;
+    const values = qualityBatchAllocations[activityId] ?? {};
+    const allocations = (coverage?.availableBySize ?? []).flatMap((size) => {
+      const quantity = Number(values[size.jobOrderLineSizeId] || 0);
+      return quantity > 0 ? [{ jobOrderLineSizeId: size.jobOrderLineSizeId, quantity }] : [];
+    });
+    const invalid = allocations.some((allocation) => {
+      const capacity = coverage?.availableBySize?.find(
+        (size) => size.jobOrderLineSizeId === allocation.jobOrderLineSizeId,
+      )?.availableQuantity;
+      return (
+        !Number.isInteger(allocation.quantity) || capacity == null || allocation.quantity > capacity
+      );
+    });
+    if (!allocations.length || invalid) {
+      setQualityBatchErrors((current) => ({
+        ...current,
+        [activityId]: !allocations.length
+          ? 'Allocate at least one prepared unit to this Final batch.'
+          : 'Each batch allocation must be a whole number within the available size quantity.',
+      }));
+      return;
+    }
+    setQualityBatchErrors((current) => {
+      if (!current[activityId]) return current;
+      const next = { ...current };
+      delete next[activityId];
+      return next;
+    });
+    qualityStartBatchPendingRef.current = true;
+    qualityStartMutation.mutate({
+      activityId,
+      body: { allocations },
+    });
+  };
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['job-order', id] });
@@ -282,7 +354,8 @@ export function JobOrderDetailPage() {
     ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) &&
     Boolean(nextStage) &&
     !productionQualityGateLocked;
-  const isPreparedQuantitiesUnlocked = jobOrder.status === 'PRODUCTION_COMPLETE';
+  const isPreparedQuantitiesUnlocked =
+    jobOrder.preparedQuantityEntry?.available ?? jobOrder.status === 'PRODUCTION_COMPLETE';
   const canUpdatePrepared = canMutateProduction && isPreparedQuantitiesUnlocked;
   const canPerformFactoryRework = Boolean(user?.roles.includes('FACTORY_USER'));
   const openRework = jobOrder.reworkTasks.filter((task) => task.status !== 'REINSPECTED');
@@ -850,10 +923,13 @@ export function JobOrderDetailPage() {
                     />
                     <DescriptionList.Item
                       label="Inspected"
-                      value={activity.coverage.inspectedQuantity}
+                      value={
+                        activity.coverage.inspectedPhysicalCoverage ??
+                        activity.coverage.inspectedQuantity
+                      }
                     />
                     <DescriptionList.Item
-                      label="Remaining"
+                      label="Unresolved"
                       value={activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
                     />
                     <DescriptionList.Item label="Coverage" value={activity.coverage.state} />
@@ -998,42 +1074,34 @@ export function JobOrderDetailPage() {
                       activity.execution.status === 'FINALIZED' &&
                       !activity.coverage?.complete &&
                       !activity.coverage?.reconciliationConflict && (
-                        <>
-                          <TextField
-                            aria-label={`Inspected quantity for ${activity.name}`}
-                            type="number"
-                            min="1"
-                            width="xs"
-                            value={
-                              qualityStartContexts[activity.processFlowVersionStageId]?.quantity ??
-                              ''
+                        <div className="w-full space-y-3">
+                          <FinalBatchAllocationForm
+                            coverage={activity.coverage!}
+                            values={
+                              qualityBatchAllocations[activity.processFlowVersionStageId] ?? {}
                             }
-                            onChange={(event) =>
-                              setQualityStartContexts((current) => ({
-                                ...current,
-                                [activity.processFlowVersionStageId]: {
-                                  sizeId: '',
-                                  quantity: event.target.value,
-                                },
-                              }))
+                            onChange={(sizeId, value) =>
+                              updateFinalBatchAllocation(
+                                activity.processFlowVersionStageId,
+                                sizeId,
+                                value,
+                              )
                             }
+                            error={qualityBatchErrors[activity.processFlowVersionStageId]}
+                            disabled={qualityStartMutation.isPending}
                           />
                           <Button
+                            loading={qualityStartMutation.isPending}
                             onClick={() =>
-                              qualityStartMutation.mutate({
-                                activityId: activity.processFlowVersionStageId,
-                                body: {
-                                  inspectedQuantity: Number(
-                                    qualityStartContexts[activity.processFlowVersionStageId]
-                                      ?.quantity,
-                                  ),
-                                },
-                              })
+                              startQualityBatch(
+                                activity.processFlowVersionStageId,
+                                activity.coverage,
+                              )
                             }
                           >
                             Start Next Batch
                           </Button>
-                        </>
+                        </div>
                       )}
                   </div>
                 ) : activity.status === 'AVAILABLE' &&
@@ -1086,29 +1154,28 @@ export function JobOrderDetailPage() {
                       </>
                     )}
                     {activity.executionMultiplicity === 'BATCHED' && (
-                      <TextField
-                        label="Inspected Quantity"
-                        type="number"
-                        min="1"
-                        width="xs"
-                        value={
-                          qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''
+                      <FinalBatchAllocationForm
+                        coverage={activity.coverage!}
+                        values={qualityBatchAllocations[activity.processFlowVersionStageId] ?? {}}
+                        onChange={(sizeId, value) =>
+                          updateFinalBatchAllocation(
+                            activity.processFlowVersionStageId,
+                            sizeId,
+                            value,
+                          )
                         }
-                        onChange={(event) =>
-                          setQualityStartContexts((current) => ({
-                            ...current,
-                            [activity.processFlowVersionStageId]: {
-                              sizeId: '',
-                              quantity: event.target.value,
-                            },
-                          }))
-                        }
+                        error={qualityBatchErrors[activity.processFlowVersionStageId]}
+                        disabled={qualityStartMutation.isPending}
                       />
                     )}
                     <Button
                       loading={qualityStartMutation.isPending}
                       onClick={() => {
                         const context = qualityStartContexts[activity.processFlowVersionStageId];
+                        if (activity.executionMultiplicity === 'BATCHED') {
+                          startQualityBatch(activity.processFlowVersionStageId, activity.coverage);
+                          return;
+                        }
                         qualityStartMutation.mutate({
                           activityId: activity.processFlowVersionStageId,
                           body:
@@ -1117,9 +1184,7 @@ export function JobOrderDetailPage() {
                                   sampleJobOrderLineSizeId: context?.sizeId,
                                   sampleQuantity: Number(context?.quantity),
                                 }
-                              : activity.executionMultiplicity === 'BATCHED'
-                                ? { inspectedQuantity: Number(context?.quantity) }
-                                : {},
+                              : {},
                         });
                       }}
                     >
@@ -1138,7 +1203,7 @@ export function JobOrderDetailPage() {
           title="Prepared Quantity"
           description={
             canUpdatePrepared
-              ? 'Update size-wise prepared quantities after production is complete.'
+              ? 'Update the cumulative size-wise quantity prepared for Final inspection so far.'
               : undefined
           }
           footer={
@@ -1175,6 +1240,7 @@ export function JobOrderDetailPage() {
                       aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
                       type="number"
                       min={0}
+                      max={size.orderedQuantity}
                       value={preparedQuantities[size.id] ?? size.preparedQuantity}
                       onChange={(event) =>
                         setPreparedQuantities((current) => ({
@@ -1216,8 +1282,10 @@ export function JobOrderDetailPage() {
           ) : (
             <div className="p-4 bg-muted/30 rounded-md border text-sm text-muted-foreground">
               Prepared quantities become available after{' '}
-              {jobOrder.stages[jobOrder.stages.length - 1]?.stageNameSnapshot ?? 'the final stage'}{' '}
-              is completed.
+              {jobOrder.preparedQuantityEntry?.associatedProductionActivity?.name ??
+                jobOrder.stages[jobOrder.stages.length - 1]?.stageNameSnapshot ??
+                'the configured Production activity'}{' '}
+              satisfies the Process Flow rule.
             </div>
           )}
         </Panel>

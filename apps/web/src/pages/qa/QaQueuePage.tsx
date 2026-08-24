@@ -20,12 +20,7 @@ type QualityWorkItem = {
 };
 
 type QualityWorkFilter =
-  | 'AVAILABLE'
-  | 'IN_PROGRESS'
-  | 'FAILED'
-  | 'MISSED'
-  | 'COMPLETED'
-  | 'RECONCILIATION_CONFLICT';
+  'AVAILABLE' | 'IN_PROGRESS' | 'FAILED' | 'MISSED' | 'COMPLETED' | 'RECONCILIATION_CONFLICT';
 
 export function QaQueuePage() {
   const [search, setSearch] = useState('');
@@ -33,11 +28,8 @@ export function QaQueuePage() {
   const query = useQuery({
     queryKey: ['process-flow-quality-work'],
     queryFn: async () =>
-      (
-        await apiClient.get<ApiSuccessResponse<Array<QualityWorkItem>>>(
-          '/job-orders/quality-work',
-        )
-      ).data.data,
+      (await apiClient.get<ApiSuccessResponse<Array<QualityWorkItem>>>('/job-orders/quality-work'))
+        .data.data,
   });
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const qualityWork = (query.data ?? []).filter((item) => {
@@ -69,9 +61,7 @@ export function QaQueuePage() {
         onSearchChange={setSearch}
         searchPlaceholder="Search job order, PO, activity or factory"
         statusValue={filter || 'ALL'}
-        onStatusChange={(value) =>
-          setFilter(value === 'ALL' ? '' : (value as QualityWorkFilter))
-        }
+        onStatusChange={(value) => setFilter(value === 'ALL' ? '' : (value as QualityWorkFilter))}
         statusOptions={[
           { label: 'All statuses', value: 'ALL' },
           { label: 'Available', value: 'AVAILABLE' },
@@ -143,8 +133,8 @@ export function QaQueuePage() {
                 const coverage = item.activity.coverage;
                 if (!coverage) return '—';
                 return coverage.preparedQuantityAuthoritative
-                  ? `${coverage.inspectedQuantity} / ${coverage.preparedQuantity}`
-                  : `${coverage.inspectedQuantity} / —`;
+                  ? `${coverage.inspectedPhysicalCoverage ?? coverage.inspectedQuantity} / ${coverage.preparedQuantity}`
+                  : `${coverage.inspectedPhysicalCoverage ?? coverage.inspectedQuantity} / —`;
               },
             },
           ]}

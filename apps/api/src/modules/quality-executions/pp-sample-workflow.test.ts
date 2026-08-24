@@ -833,7 +833,10 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     const f = await workflow();
     await prisma.jobOrder.update({
       where: { id: f.job.id },
-      data: { status: 'READY_FOR_QA', preparedQuantityTotal: 20 },
+      data: {
+        status: 'READY_FOR_QA',
+        preparedQuantityTotal: 20,
+      },
     });
     await prisma.jobOrderLineSize.updateMany({
       where: { jobOrderLine: { jobOrderId: f.job.id } },
@@ -999,6 +1002,18 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       qualityState: { label: 'Final Inspection Pending' },
       primaryDisplayState: { label: 'Finishing Pending' },
     });
+    current = await request(app)
+      .post(`/job-orders/${f.job.id}/actions/update-prepared-quantity`)
+      .set('Authorization', `Bearer ${f.factoryUser.token}`)
+      .set('Idempotency-Key', createId())
+      .send({
+        expectedVersion: current.body.data.version,
+        sizes: f.job.lines[0]!.sizes.map((size, index) => ({
+          jobOrderLineSizeId: size.id,
+          preparedQuantity: index === 0 ? 5 : 0,
+        })),
+      })
+      .expect(200);
     const inlineReplay = await request(app)
       .post(`/job-orders/${f.job.id}/quality-activities/${f.inline.id}/executions`)
       .set('Authorization', `Bearer ${f.qa.token}`)
@@ -1038,7 +1053,9 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       await request(app)
         .post(`/job-orders/${f.job.id}/quality-activities/${f.final.id}/executions`)
         .set('Authorization', `Bearer ${f.qa.token}`)
-        .send({ inspectedQuantity: 5 })
+        .send({
+          allocations: [{ jobOrderLineSizeId: f.job.lines[0]!.sizes[0]!.id, quantity: 5 }],
+        })
         .expect(201)
     ).body.data;
     const firstSaved = await request(app)
@@ -1046,11 +1063,11 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       .set('Authorization', `Bearer ${f.qa.token}`)
       .send(qualityPayload(firstFinal.version, f.finalOutcomeId, 'PASS'))
       .expect(200);
-    await request(app)
+    const firstFinalized = await request(app)
       .post(`/quality-executions/${firstFinal.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
       .send(qualityPayload(firstSaved.body.data.version, f.finalOutcomeId, 'PASS'))
-      .expect(409);
+      .expect(200);
 
     await runStage(f.finishing.id);
     current = await request(app)
@@ -1066,20 +1083,23 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       })
       .expect(200);
     expect(current.body.data.status).toBe('PRODUCTION_COMPLETE');
-    let finalized = await request(app)
-      .post(`/quality-executions/${firstFinal.id}/finalize`)
-      .set('Authorization', `Bearer ${f.qa.token}`)
-      .send(qualityPayload(firstSaved.body.data.version, f.finalOutcomeId, 'PASS'))
-      .expect(200);
-    for (const [quantity, outcome] of [
-      [5, 'FAIL'],
-      [10, 'PASS'],
+    let finalized = firstFinalized;
+    for (const [sizeIndex, quantity, outcome] of [
+      [0, 5, 'FAIL'],
+      [1, 10, 'PASS'],
     ] as const) {
       const batch = (
         await request(app)
           .post(`/job-orders/${f.job.id}/quality-activities/${f.final.id}/executions`)
           .set('Authorization', `Bearer ${f.qa.token}`)
-          .send({ inspectedQuantity: quantity })
+          .send({
+            allocations: [
+              {
+                jobOrderLineSizeId: f.job.lines[0]!.sizes[sizeIndex]!.id,
+                quantity,
+              },
+            ],
+          })
           .expect(201)
       ).body.data;
       finalized = await request(app)
@@ -1087,6 +1107,12 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         .set('Authorization', `Bearer ${f.qa.token}`)
         .send(qualityPayload(batch.version, f.finalOutcomeId, outcome))
         .expect(200);
+      if (outcome === 'FAIL')
+        await request(app)
+          .post(`/quality-executions/final-batches/${batch.finalBatch.id}/permanently-reject`)
+          .set('Authorization', `Bearer ${f.qa.token}`)
+          .send({ reason: 'End-to-end fixture terminal rejection' })
+          .expect(200);
     }
     expect(finalized.body.data.coverage).toMatchObject({
       state: 'COMPLETE',
@@ -1095,6 +1121,9 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       passedBatches: 2,
       failedBatches: 1,
       hasFailedBatches: true,
+      permanentlyRejectedQuantity: 5,
+      awaitingReinspectionQuantity: 0,
+      finalQaComplete: true,
     });
     const completedDetail = await request(app)
       .get(`/job-orders/${f.job.id}`)

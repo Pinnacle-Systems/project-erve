@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import {
+  qaChecklistChoices,
   QA_CHECKLIST_ITEMS,
   type ApiSuccessResponse,
   type JobOrderAuditEntry,
@@ -11,10 +12,17 @@ import {
   ErrorState,
   LoadingState,
   PageHeader,
+  QualityChecklist,
+  QualityChecklistRemark,
+  QualityChecklistResult,
+  QualityChecklistRow,
+  QualityExecutionHeader,
+  QualityExecutionPageShell,
+  QualityExecutionSection,
   StatusBadge,
 } from '@erve/app-components';
 import { DataTable } from '@erve/data-display';
-import { Button, ValidationMessage } from '@erve/primitives';
+import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
@@ -51,20 +59,6 @@ export function QaDetailPage() {
       (await apiClient.get<ApiSuccessResponse<JobOrderAuditEntry[]>>(`/job-orders/${id}/audit`))
         .data.data,
   });
-  const approve = useMutation({
-    mutationFn: async ({ version }: { version: number }) =>
-      (
-        await apiClient.post<ApiSuccessResponse<QaInspectionDetail>>(
-          `/qa/job-orders/${id}/approve`,
-          { expectedVersion: version },
-          { headers: { 'Idempotency-Key': `web:qa-approve:${id}:${version}` } },
-        )
-      ).data.data,
-    onSuccess: (updated) => {
-      qc.setQueryData(['qa-detail', id], updated);
-      void qc.invalidateQueries({ queryKey: ['qa-queue'] });
-    },
-  });
   if (query.isLoading) return <LoadingState label="Loading QA inspection" />;
   if (!query.data || query.isError)
     return (
@@ -79,34 +73,61 @@ export function QaDetailPage() {
   const canMutate =
     user?.roles.some((role) => ['ADMIN', 'MERCHANDISER', 'QA_USER'].includes(role)) ?? false;
   const canReopen = canReopenQaForm(user?.roles);
-  const hasProcessFlowPpSample = data.sessions.some((session) => session.processFlowPpSample);
-  return (
+  const ppSampleSession = data.sessions.find((session) => session.processFlowPpSample);
+  const hasProcessFlowPpSample = Boolean(ppSampleSession);
+  const content = (
     <div className="space-y-5">
-      <PageHeader
-        title={data.jobOrderNumber}
-        subtitle={`From ${data.purchaseOrderNumber}`}
-        status={
-          <StatusBadge label={data.status.replaceAll('_', ' ')} tone={statusTone(data.status)} />
-        }
-        secondaryActions={
-          <Button asChild variant="secondary">
-            <Link to="/qa">Back</Link>
-          </Button>
-        }
-      />
-      <Panel title="Inspection context">
-        <DescriptionList columns={3}>
-          <DescriptionList.Item
-            label="Distributor"
-            value={data.distributor?.name ?? 'Not available'}
-          />
-          <DescriptionList.Item
-            label="Season snapshot"
-            value={data.seasons.map((season) => season.displayName).join(', ') || 'Not recorded'}
-          />
-          <DescriptionList.Item label="Prepared quantity" value={data.totals.prepared} />
-        </DescriptionList>
-      </Panel>
+      {ppSampleSession ? (
+        <QualityExecutionHeader
+          title="PP Sample Checklist"
+          formName="PP Sample form"
+          attemptNumber={ppSampleSession.cycleNumber}
+          status={ppSampleSession.status}
+          context={`${data.purchaseOrderNumber} · ${data.factory.name}`}
+        />
+      ) : (
+        <PageHeader
+          title={data.jobOrderNumber}
+          subtitle={`From ${data.purchaseOrderNumber}`}
+          status={
+            <StatusBadge label={data.status.replaceAll('_', ' ')} tone={statusTone(data.status)} />
+          }
+          secondaryActions={
+            <Button asChild variant="secondary">
+              <Link to="/qa">Back</Link>
+            </Button>
+          }
+        />
+      )}
+      {ppSampleSession ? (
+        <QualityExecutionSection title="Inspection context">
+          <DescriptionList columns={3}>
+            <DescriptionList.Item label="Job Order" value={data.jobOrderNumber} />
+            <DescriptionList.Item
+              label="Distributor"
+              value={data.distributor?.name ?? 'Not available'}
+            />
+            <DescriptionList.Item
+              label="Season snapshot"
+              value={data.seasons.map((season) => season.displayName).join(', ') || 'Not recorded'}
+            />
+          </DescriptionList>
+        </QualityExecutionSection>
+      ) : (
+        <Panel title="Inspection context">
+          <DescriptionList columns={3}>
+            <DescriptionList.Item
+              label="Distributor"
+              value={data.distributor?.name ?? 'Not available'}
+            />
+            <DescriptionList.Item
+              label="Season snapshot"
+              value={data.seasons.map((season) => season.displayName).join(', ') || 'Not recorded'}
+            />
+            <DescriptionList.Item label="Prepared quantity" value={data.totals.prepared} />
+          </DescriptionList>
+        </Panel>
+      )}
       <QaInspectionForm
         detail={data}
         canMutate={canMutate}
@@ -116,36 +137,6 @@ export function QaDetailPage() {
           void qc.invalidateQueries({ queryKey: ['qa-queue'] });
         }}
       />
-      {canMutate &&
-        data.status === 'QA_IN_PROGRESS' &&
-        !data.sessions.some(
-          (session) => session.status === 'DRAFT' || session.status === 'REOPENED',
-        ) &&
-        data.totals.availableToInspect === 0 &&
-        data.totals.awaitingReinspection === 0 && (
-          <Panel
-            title="QA approval"
-            description="Publish the reconciled accepted quantity as the final approved quantity."
-            footer={
-              <div className="flex justify-end">
-                <Button
-                  loading={approve.isPending}
-                  onClick={() => approve.mutate({ version: data.version })}
-                >
-                  Approve final QA quantity
-                </Button>
-              </div>
-            }
-          >
-            {approve.isError ? (
-              <ValidationMessage tone="error">
-                {approve.error instanceof Error
-                  ? approve.error.message
-                  : 'Unable to approve the final QA quantity.'}
-              </ValidationMessage>
-            ) : null}
-          </Panel>
-        )}
       {!hasProcessFlowPpSample && (
         <Panel title="Inspection summary" padding="sm">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
@@ -211,7 +202,7 @@ export function QaDetailPage() {
         </Panel>
       )}
       <Panel title="Inspection history">
-        <div className="space-y-4">
+        <div className={hasProcessFlowPpSample ? 'space-y-3' : 'space-y-4'}>
           {data.sessions.map((session) => (
             <Panel
               key={session.id}
@@ -226,7 +217,7 @@ export function QaDetailPage() {
                 />
               }
             >
-              <div className="space-y-3">
+              <div className={session.processFlowPpSample ? 'space-y-2' : 'space-y-3'}>
                 {session.forms.map((form) => (
                   <Panel
                     key={form.id}
@@ -235,7 +226,7 @@ export function QaDetailPage() {
                     title={`Size ${form.sizeLabel}`}
                     description={
                       session.processFlowPpSample
-                        ? `${form.styleNumber} · Sample quantity ${session.processFlowPpSample.sampleQuantity}`
+                        ? `${form.styleNumber} · Sample quantity ${session.processFlowPpSample.sampleQuantity} · Decision: ${session.processFlowPpSample.decision ?? 'Pending'}`
                         : `${form.styleNumber} · ${form.inspectedQuantity} inspected`
                     }
                     actions={
@@ -245,16 +236,8 @@ export function QaDetailPage() {
                       />
                     }
                   >
-                    <DescriptionList columns={4} density="compact">
-                      {session.processFlowPpSample ? (
-                        <>
-                          <DescriptionList.Item label="Samples" value={form.sampleQuantity} />
-                          <DescriptionList.Item
-                            label="Decision"
-                            value={session.processFlowPpSample.decision ?? 'Pending'}
-                          />
-                        </>
-                      ) : (
+                    {!session.processFlowPpSample ? (
+                      <DescriptionList columns={4} density="compact">
                         <>
                           <DescriptionList.Item label="Accepted" value={form.acceptedQuantity} />
                           <DescriptionList.Item label="Rework" value={form.reworkQuantity} />
@@ -264,9 +247,35 @@ export function QaDetailPage() {
                           />
                           <DescriptionList.Item label="Samples" value={form.sampleQuantity} />
                         </>
-                      )}
-                    </DescriptionList>
-                    {form.checklist.some((item) => item.status || item.remarks) ? (
+                      </DescriptionList>
+                    ) : null}
+                    {session.processFlowPpSample ? (
+                      <div className="mt-2">
+                        <QualityChecklist supplementaryHeading="Remarks">
+                          {form.checklist.map((item) => {
+                            const label =
+                              QA_CHECKLIST_ITEMS.find(
+                                (definition) => definition.code === item.itemCode,
+                              )?.label ?? item.itemCode.replaceAll('_', ' ');
+                            return (
+                              <QualityChecklistRow
+                                key={item.itemCode}
+                                label={label}
+                                required
+                                control={
+                                  <QualityChecklistResult
+                                    label={`${label} response`}
+                                    choices={qaChecklistChoices(true)}
+                                    value={item.status ?? ''}
+                                  />
+                                }
+                                supplementary={<QualityChecklistRemark value={item.remarks} />}
+                              />
+                            );
+                          })}
+                        </QualityChecklist>
+                      </div>
+                    ) : form.checklist.some((item) => item.status || item.remarks) ? (
                       <ul className="mt-3 space-y-1 text-sm">
                         {form.checklist
                           .filter((item) => item.status || item.remarks)
@@ -349,5 +358,12 @@ export function QaDetailPage() {
         </p>
       </Panel>
     </div>
+  );
+  return ppSampleSession ? (
+    <QualityExecutionPageShell jobOrderId={id} jobOrderNumber={data.jobOrderNumber}>
+      {content}
+    </QualityExecutionPageShell>
+  ) : (
+    content
   );
 }

@@ -14,12 +14,7 @@ type QualityWorkItem = {
 };
 
 type QualityWorkFilter =
-  | 'AVAILABLE'
-  | 'IN_PROGRESS'
-  | 'FAILED'
-  | 'MISSED'
-  | 'COMPLETED'
-  | 'RECONCILIATION_CONFLICT';
+  'AVAILABLE' | 'IN_PROGRESS' | 'FAILED' | 'MISSED' | 'COMPLETED' | 'RECONCILIATION_CONFLICT';
 
 const QUALITY_FILTERS: QualityWorkFilter[] = [
   'AVAILABLE',
@@ -47,11 +42,8 @@ export function QaQueuePage() {
   const query = useQuery({
     queryKey: ['process-flow-quality-work'],
     queryFn: async () =>
-      (
-        await apiClient.get<ApiSuccessResponse<Array<QualityWorkItem>>>(
-          '/job-orders/quality-work',
-        )
-      ).data.data,
+      (await apiClient.get<ApiSuccessResponse<Array<QualityWorkItem>>>('/job-orders/quality-work'))
+        .data.data,
   });
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const qualityWork = (query.data ?? []).filter((item) => {
@@ -144,9 +136,7 @@ export function QaQueuePage() {
                   <p className="text-sm text-muted-foreground">{item.activity.name}</p>
                 </div>
                 <span className="text-xs">
-                  {conflict
-                    ? 'Reconciliation conflict'
-                    : item.activity.status.replaceAll('_', ' ')}
+                  {conflict ? 'Reconciliation conflict' : item.activity.status.replaceAll('_', ' ')}
                 </span>
               </div>
               <p className="mt-2 text-sm">
@@ -158,7 +148,7 @@ export function QaQueuePage() {
               )}
               {coverage && (
                 <p className="mt-2 text-sm">
-                  Coverage {coverage.inspectedQuantity} /{' '}
+                  Coverage {coverage.inspectedPhysicalCoverage ?? coverage.inspectedQuantity} /{' '}
                   {coverage.preparedQuantityAuthoritative ? coverage.preparedQuantity : '—'}
                 </p>
               )}

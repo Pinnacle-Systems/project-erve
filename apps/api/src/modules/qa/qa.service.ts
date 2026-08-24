@@ -427,7 +427,7 @@ export async function startInspection(
   const requestHash = hash(input);
   let sessionId = '';
   await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa:${jobOrderId}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${jobOrderId}`}))`;
     if (await replayOrLock(tx, user.id, jobOrderId, 'QA_START', key, requestHash)) return;
     const job = await tx.jobOrder.findUnique({
       where: { id: jobOrderId },
@@ -992,70 +992,6 @@ export async function reopenSizeInspectionForm(
       tx,
     );
     await finish(tx, user.id, jobOrderId, 'QA_FORM_REOPEN', key, requestHash, changed.version);
-  });
-  return getDetail(user, jobOrderId);
-}
-
-export async function approve(
-  user: CurrentUser,
-  jobOrderId: string,
-  input: { expectedVersion: number },
-  key: string,
-) {
-  const requestHash = hash(input);
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa:${jobOrderId}`}))`;
-    if (await replayOrLock(tx, user.id, jobOrderId, 'QA_APPROVE', key, requestHash)) return;
-    const job = await tx.jobOrder.findUnique({
-      where: { id: jobOrderId },
-      include: {
-        lines: { include: { sizes: true } },
-        qaInspections: { where: { status: 'FINALIZED' }, include: { forms: true } },
-        qaReworkTasks: true,
-      },
-    });
-    if (!job) throw HttpError.notFound('Job order not found');
-    assertQaMutation(user, job.factoryId);
-    if (job.version !== input.expectedVersion) throw HttpError.staleVersion(job.version);
-    if (job.qaReworkTasks.some((t) => t.status !== 'REINSPECTED'))
-      throw HttpError.conflict('Rework remains outstanding');
-    const initial = job.qaInspections
-      .flatMap((s) => s.forms)
-      .filter((l) => !l.sourceReworkTaskId)
-      .reduce((n, l) => n + l.inspectedQuantity, 0);
-    if (initial !== job.preparedQuantityTotal)
-      throw HttpError.conflict('Prepared quantities have not been fully inspected');
-    const terminal = job.qaInspections
-      .flatMap((s) => s.forms)
-      .reduce((n, l) => n + l.acceptedQuantity + l.permanentlyRejectedQuantity, 0);
-    if (terminal !== job.preparedQuantityTotal)
-      throw HttpError.conflict('QA quantities do not reconcile to prepared quantity');
-    const acceptedBySize = new Map<string, number>();
-    for (const line of job.qaInspections.flatMap((s) => s.forms))
-      acceptedBySize.set(
-        line.jobOrderLineSizeId,
-        (acceptedBySize.get(line.jobOrderLineSizeId) ?? 0) + line.acceptedQuantity,
-      );
-    for (const size of job.lines.flatMap((l) => l.sizes))
-      await tx.distributorPurchaseOrderLineSize.update({
-        where: { id: size.purchaseOrderLineSizeId },
-        data: { qaPassedQuantity: { increment: acceptedBySize.get(size.id) ?? 0 } },
-      });
-    const updated = await tx.jobOrder.update({
-      where: { id: jobOrderId },
-      data: { status: 'QA_APPROVED', version: { increment: 1 } },
-    });
-    await recordAuditLog(
-      {
-        actorId: user.id,
-        action: 'QA_APPROVED',
-        entityType: 'JobOrder',
-        entityId: jobOrderId,
-        metadata: { approvedQuantity: [...acceptedBySize.values()].reduce((a, b) => a + b, 0) },
-      },
-      tx,
-    );
-    await finish(tx, user.id, jobOrderId, 'QA_APPROVE', key, requestHash, updated.version);
   });
   return getDetail(user, jobOrderId);
 }

@@ -6,8 +6,10 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { JobOrderDetail, JobOrderStage } from '@erve/types';
 
+const authState = vi.hoisted(() => ({ roles: ['FACTORY_USER'] }));
+
 vi.mock('../../auth/AuthContext.js', () => ({
-  useAuth: () => ({ user: { roles: ['FACTORY_USER'] } }),
+  useAuth: () => ({ user: { roles: authState.roles } }),
 }));
 vi.mock('../../lib/api-client.js', () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
@@ -123,11 +125,65 @@ async function renderTask(value: JobOrderDetail) {
 }
 
 beforeEach(() => {
+  authState.roles = ['FACTORY_USER'];
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
 });
+
+const finalQualityActivity = () => ({
+  processFlowVersionStageId: 'final-quality',
+  sequence: 5,
+  name: 'Final Inspection',
+  status: 'AVAILABLE' as const,
+  eligible: true,
+  qualityForm: {
+    id: 'final-form',
+    code: 'FINAL',
+    name: 'Final Inspection Report',
+    executionScope: 'JOB_ORDER' as const,
+  },
+  qualityFormVersion: { id: 'final-version', versionNumber: 1 },
+  executionMode: 'IN_PROCESS' as const,
+  associatedProductionActivity: null,
+  availabilityPolicy: 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES' as const,
+  progressThresholdPercent: null,
+  gateSatisfactionRequirement: 'FINALIZED' as const,
+  executionMultiplicity: 'BATCHED' as const,
+  coverageTarget: 'PREPARED_QUANTITY' as const,
+  coverage: {
+    preparedQuantityAuthoritative: true,
+    preparedQuantity: 20,
+    inspectedQuantity: 0,
+    remainingQuantity: 20,
+    complete: false,
+    reconciliationConflict: false,
+    state: 'UNKNOWN' as const,
+    passedBatches: 0,
+    failedBatches: 0,
+    hasFailedBatches: false,
+    batches: [],
+    availableBySize: [
+      {
+        jobOrderLineSizeId: 'line-size-m',
+        sizeCode: 'M',
+        sizeLabel: 'M',
+        preparedQuantity: 20,
+        allocatedQuantity: 0,
+        availableQuantity: 20,
+      },
+    ],
+  },
+  execution: null,
+  executionHistory: [],
+});
+
+function changeInput(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
 
 afterEach(() => {
   act(() => root.unmount());
@@ -136,6 +192,39 @@ afterEach(() => {
 });
 
 describe('FactoryTaskDetailPage production stages', () => {
+  it('validates a Final size allocation and starts only after correction', async () => {
+    authState.roles = ['QA_USER'];
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { data: { id: 'execution-1', jobOrderId: 'job-1', ppSample: null } },
+    });
+    await renderTask(job({ qualityActivities: [finalQualityActivity()] }));
+    const start = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Start Inspection',
+    ) as HTMLButtonElement;
+    const quantity = container.querySelector(
+      'input[aria-label="Final batch quantity for size M"]',
+    ) as HTMLInputElement;
+
+    act(() => start.click());
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(
+      'Allocate at least one prepared unit to this Final batch.',
+    );
+
+    await act(async () => changeInput(quantity, '12'));
+    expect(container.textContent).not.toContain('Allocate at least one prepared unit');
+
+    await act(async () => {
+      start.click();
+      start.click();
+    });
+    expect(apiClient.post).toHaveBeenCalledOnce();
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/job-orders/job-1/quality-activities/final-quality/executions',
+      { allocations: [{ jobOrderLineSizeId: 'line-size-m', quantity: 12 }] },
+    );
+  });
+
   it('preserves the original mobile list and omits quantitative progress text', async () => {
     await renderTask(job());
 

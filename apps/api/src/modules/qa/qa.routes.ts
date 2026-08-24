@@ -15,7 +15,6 @@ import {
   reworkNotesSchema,
   saveSizeInspectionFormSchema,
   startInspectionSchema,
-  versionSchema,
   finalizeSizeInspectionSchema,
 } from './qa.validation.js';
 
@@ -95,22 +94,6 @@ qaRouter.post(
           req.params.sessionId! as string,
           req.params.formId! as string,
           finalizeSizeInspectionSchema.parse(req.body),
-          key(req),
-        ),
-      ),
-    ),
-  ),
-);
-qaRouter.post(
-  '/job-orders/:id/approve',
-  canInspect,
-  asyncHandler(async (req, res) =>
-    res.json(
-      successResponse(
-        await service.approve(
-          req.user!,
-          req.params.id! as string,
-          versionSchema.parse(req.body),
           key(req),
         ),
       ),

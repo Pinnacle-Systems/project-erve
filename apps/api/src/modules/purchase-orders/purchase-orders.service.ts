@@ -61,7 +61,13 @@ function toLineView(line: PORecord['lines'][number]) {
     styleName: line.style.styleName,
     lineStatus: line.lineStatus,
     remarks: line.remarks,
-    seasonSnapshots: line.seasonSnapshots.map((season) => ({ seasonId: season.seasonId, code: season.code, name: season.name, financialYear: season.financialYear, displayName: season.displayName })),
+    seasonSnapshots: line.seasonSnapshots.map((season) => ({
+      seasonId: season.seasonId,
+      code: season.code,
+      name: season.name,
+      financialYear: season.financialYear,
+      displayName: season.displayName,
+    })),
     sizes: line.sizes.map((s) => ({
       id: s.id,
       sizeId: s.sizeId,
@@ -204,9 +210,15 @@ export async function createPurchaseOrder(
   if (distributor.status !== 'ACTIVE') throw HttpError.badRequest('Distributor is not active');
 
   await validateLines(input.lines);
-  const styles = await prisma.style.findMany({ where: { id: { in: input.lines.map((line) => line.styleId) } }, include: { styleSeasons: { include: { season: true } } } });
-  const seasonsByStyle = new Map(styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]));
-  if ([...seasonsByStyle.values()].some((seasons) => seasons.length === 0)) throw HttpError.badRequest('Every purchase-order Style must have Seasons assigned');
+  const styles = await prisma.style.findMany({
+    where: { id: { in: input.lines.map((line) => line.styleId) } },
+    include: { styleSeasons: { include: { season: true } } },
+  });
+  const seasonsByStyle = new Map(
+    styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]),
+  );
+  if ([...seasonsByStyle.values()].some((seasons) => seasons.length === 0))
+    throw HttpError.badRequest('Every purchase-order Style must have Seasons assigned');
 
   const poId = createId();
   await prisma.$transaction(async (tx) => {
@@ -230,7 +242,16 @@ export async function createPurchaseOrder(
             id: createId(),
             styleId: line.styleId,
             remarks: line.remarks ?? null,
-            seasonSnapshots: { create: (seasonsByStyle.get(line.styleId) ?? []).map((season) => ({ id: createId(), seasonId: season.id, code: season.code, name: season.name, financialYear: season.financialYear, displayName: `${season.code} ${season.financialYear}` })) },
+            seasonSnapshots: {
+              create: (seasonsByStyle.get(line.styleId) ?? []).map((season) => ({
+                id: createId(),
+                seasonId: season.id,
+                code: season.code,
+                name: season.name,
+                financialYear: season.financialYear,
+                displayName: `${season.code} ${season.financialYear}`,
+              })),
+            },
             sizes: {
               create: line.sizes.map((sz) => ({
                 id: createId(),
@@ -302,9 +323,15 @@ export async function updatePurchaseOrderDraft(
     });
 
     if (input.lines) {
-      const styles = await tx.style.findMany({ where: { id: { in: input.lines.map((line) => line.styleId) } }, include: { styleSeasons: { include: { season: true } } } });
-      const seasonsByStyle = new Map(styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]));
-      if ([...seasonsByStyle.values()].some((seasons) => seasons.length === 0)) throw HttpError.badRequest('Every purchase-order Style must have Seasons assigned');
+      const styles = await tx.style.findMany({
+        where: { id: { in: input.lines.map((line) => line.styleId) } },
+        include: { styleSeasons: { include: { season: true } } },
+      });
+      const seasonsByStyle = new Map(
+        styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]),
+      );
+      if ([...seasonsByStyle.values()].some((seasons) => seasons.length === 0))
+        throw HttpError.badRequest('Every purchase-order Style must have Seasons assigned');
       // Replace all lines atomically
       await tx.distributorPurchaseOrderLine.deleteMany({ where: { purchaseOrderId: id } });
       for (const line of input.lines) {
@@ -315,7 +342,16 @@ export async function updatePurchaseOrderDraft(
             purchaseOrderId: id,
             styleId: line.styleId,
             remarks: line.remarks ?? null,
-            seasonSnapshots: { create: (seasonsByStyle.get(line.styleId) ?? []).map((season) => ({ id: createId(), seasonId: season.id, code: season.code, name: season.name, financialYear: season.financialYear, displayName: `${season.code} ${season.financialYear}` })) },
+            seasonSnapshots: {
+              create: (seasonsByStyle.get(line.styleId) ?? []).map((season) => ({
+                id: createId(),
+                seasonId: season.id,
+                code: season.code,
+                name: season.name,
+                financialYear: season.financialYear,
+                displayName: `${season.code} ${season.financialYear}`,
+              })),
+            },
             sizes: {
               create: line.sizes.map((sz) => ({
                 id: createId(),
@@ -465,12 +501,34 @@ export async function getFulfilmentSummary(user: CurrentUser, id: string) {
     const totals = line.sizes.reduce(
       (acc, s) => ({
         ordered: acc.ordered + s.orderedQuantity,
+        released: acc.released + s.qaPassedQuantity,
+        orderRemaining: acc.orderRemaining + Math.max(0, s.orderedQuantity - s.dispatchedQuantity),
+        pendingDispatch:
+          acc.pendingDispatch + Math.max(0, s.orderedQuantity - s.dispatchedQuantity),
+        qaReleasedPendingDispatch:
+          acc.qaReleasedPendingDispatch + Math.max(0, s.qaPassedQuantity - s.dispatchedQuantity),
+        releaseDispatchDeficit:
+          acc.releaseDispatchDeficit + Math.max(0, s.dispatchedQuantity - s.qaPassedQuantity),
+        releaseDispatchIntegrityConflict:
+          acc.releaseDispatchIntegrityConflict || s.dispatchedQuantity > s.qaPassedQuantity,
         dispatched: acc.dispatched + s.dispatchedQuantity,
         delivered: acc.delivered + s.deliveredQuantity,
         sold: acc.sold + s.actualSoldQuantity,
         returned: acc.returned + s.returnedQuantity,
       }),
-      { ordered: 0, dispatched: 0, delivered: 0, sold: 0, returned: 0 },
+      {
+        ordered: 0,
+        released: 0,
+        orderRemaining: 0,
+        pendingDispatch: 0,
+        qaReleasedPendingDispatch: 0,
+        releaseDispatchDeficit: 0,
+        releaseDispatchIntegrityConflict: false,
+        dispatched: 0,
+        delivered: 0,
+        sold: 0,
+        returned: 0,
+      },
     );
 
     return {
@@ -483,11 +541,16 @@ export async function getFulfilmentSummary(user: CurrentUser, id: string) {
         sizeCode: s.size.code,
         sizeLabel: s.size.label,
         orderedQuantity: s.orderedQuantity,
+        downstreamReleasedQuantity: s.qaPassedQuantity,
         dispatchedQuantity: s.dispatchedQuantity,
         deliveredQuantity: s.deliveredQuantity,
         actualSoldQuantity: s.actualSoldQuantity,
         returnedQuantity: s.returnedQuantity,
-        pendingDispatchQuantity: s.orderedQuantity - s.dispatchedQuantity,
+        pendingDispatchQuantity: Math.max(0, s.orderedQuantity - s.dispatchedQuantity),
+        orderRemainingQuantity: Math.max(0, s.orderedQuantity - s.dispatchedQuantity),
+        qaReleasedPendingDispatchQuantity: Math.max(0, s.qaPassedQuantity - s.dispatchedQuantity),
+        releaseDispatchDeficitQuantity: Math.max(0, s.dispatchedQuantity - s.qaPassedQuantity),
+        releaseDispatchIntegrityConflict: s.dispatchedQuantity > s.qaPassedQuantity,
       })),
       totals,
     };

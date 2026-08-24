@@ -1,0 +1,1 @@
+ALTER TYPE "QualityActivityExecutionStatus" ADD VALUE IF NOT EXISTS 'CANCELLED';

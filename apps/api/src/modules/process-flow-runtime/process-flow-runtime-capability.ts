@@ -107,7 +107,7 @@ function isSupportedPattern(activity: RuntimeActivity): boolean {
   // Consolidated, batched Final inspection.
   return (
     activity.executionMultiplicity === 'BATCHED' &&
-    activity.qualityAvailabilityPolicy === 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES' &&
+    activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' &&
     activity.coverageTarget === 'PREPARED_QUANTITY'
   );
 }
