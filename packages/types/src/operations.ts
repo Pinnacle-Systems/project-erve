@@ -230,7 +230,7 @@ export interface JobOrderQualityActivity {
     attemptNumber: number;
     batchNumber: number;
     inspectedQuantity: number | null;
-    status: 'DRAFT' | 'FINALIZED';
+    status: 'DRAFT' | 'FINALIZED' | 'CANCELLED';
     version: number;
     outcome: 'PASS' | 'FAIL' | null;
     startedAt: string;
@@ -247,7 +247,7 @@ export interface JobOrderQualityActivity {
     sampleSizeLabel: string | null;
     ppSampleSessionId: string | null;
     ppSampleFormId: string | null;
-    status: 'DRAFT' | 'FINALIZED';
+    status: 'DRAFT' | 'FINALIZED' | 'CANCELLED';
     outcome: 'PASS' | 'FAIL' | null;
     startedBy: { id: string; name: string; email: string };
     finalizedBy: { id: string; name: string; email: string } | null;
@@ -310,16 +310,28 @@ export interface QualityExecutionValidationError {
   message: string;
 }
 
+export interface QualityProductionContext {
+  associatedActivity: { id: string; code: string | null; name: string } | null;
+  stages: Array<{
+    id: string;
+    code: string | null;
+    name: string;
+    status: ProductionStageStatus;
+    relationship: 'PREVIOUS' | 'ASSOCIATED' | 'FOLLOWING';
+  }>;
+}
+
 export interface QualityExecutionView {
   id: string;
   jobOrderId: string;
+  jobOrderNumber: string;
   processFlowActivityId: string;
   activityName: string;
   qualityForm: { id: string; code: string; name: string; versionId: string; versionNumber: number };
   attemptNumber: number;
   batchNumber: number;
   inspectedQuantity: number | null;
-  status: 'DRAFT' | 'FINALIZED';
+  status: 'DRAFT' | 'FINALIZED' | 'CANCELLED';
   version: number;
   startedAt: string;
   finalizedAt: string | null;
@@ -332,6 +344,8 @@ export interface QualityExecutionView {
     formId: string | null;
     decision: 'PASS' | 'FAIL' | null;
   } | null;
+  finalBatch?: FinalQualityBatchView | null;
+  productionContext: QualityProductionContext | null;
   coverage: QualityCoverageView | null;
   sections: Array<{
     id: string;
@@ -363,21 +377,78 @@ export interface QualityCoverageView {
   preparedQuantityAuthoritative: boolean;
   preparedQuantity: number | null;
   inspectedQuantity: number;
+  inspectionActivityQuantity?: number;
+  reservedForFinalQuantity?: number;
+  inspectedPhysicalCoverage?: number;
+  resolvedPhysicalCoverage?: number;
+  /** Compatibility alias for inspectedPhysicalCoverage. */
+  physicalFinalCoverage?: number;
+  releasedQuantity?: number;
+  permanentlyRejectedQuantity?: number;
+  awaitingReinspectionQuantity?: number;
   remainingQuantity: number | null;
+  availableForNewFinalBatch?: number | null;
   complete: boolean;
+  coverageCompleteSoFar?: boolean;
+  finalQaComplete?: boolean;
   reconciliationConflict: boolean;
   state: 'UNKNOWN' | 'IN_PROGRESS' | 'COMPLETE' | 'CONFLICT';
   passedBatches: number;
   failedBatches: number;
   hasFailedBatches: boolean;
+  availableBySize?: Array<{
+    jobOrderLineSizeId: string;
+    sizeCode: string;
+    sizeLabel: string;
+    preparedQuantity: number;
+    allocatedQuantity: number;
+    availableQuantity: number;
+  }>;
   batches: Array<{
     id: string;
     batchNumber: number;
+    physicalQuantity?: number;
     inspectedQuantity: number | null;
     status: 'DRAFT' | 'FINALIZED';
     outcome: 'PASS' | 'FAIL' | null;
+    disposition?:
+      'DRAFT' | 'AWAITING_REINSPECTION' | 'RELEASED' | 'PERMANENTLY_REJECTED' | 'CANCELLED';
+    finalizedAt: string | null;
+    allocations?: Array<{ jobOrderLineSizeId: string; quantity: number }>;
+    attemptCount?: number;
+  }>;
+}
+
+export interface FinalQualityBatchView {
+  id: string;
+  jobOrderId?: string;
+  processFlowActivityId?: string;
+  batchNumber: number;
+  physicalQuantity: number;
+  disposition:
+    'DRAFT' | 'AWAITING_REINSPECTION' | 'RELEASED' | 'PERMANENTLY_REJECTED' | 'CANCELLED';
+  createdBy?: { id: string; name: string; email: string };
+  createdAt?: string;
+  terminalBy?: { id: string; name: string; email: string } | null;
+  terminalAt?: string | null;
+  terminalReason?: string | null;
+  allocations: Array<{
+    jobOrderLineSizeId: string;
+    sizeCode: string;
+    sizeLabel: string;
+    quantity: number;
+  }>;
+  attempts: Array<{
+    id: string;
+    attemptNumber: number;
+    status: 'DRAFT' | 'FINALIZED' | 'CANCELLED';
+    outcome: 'PASS' | 'FAIL' | null;
+    startedBy?: { id: string; name: string; email: string };
+    startedAt: string;
+    finalizedBy?: { id: string; name: string; email: string } | null;
     finalizedAt: string | null;
   }>;
+  release: { id: string; releasedAt: string; quantity: number } | null;
 }
 export interface JobOrderSummary extends VersionedResource {
   id: string;
@@ -393,6 +464,11 @@ export interface JobOrderSummary extends VersionedResource {
   createdAt: string;
 }
 export interface JobOrderDetail extends JobOrderSummary {
+  preparedQuantityEntry?: {
+    available: boolean;
+    processFlowActivityId: string | null;
+    associatedProductionActivity: { id: string; name: string } | null;
+  };
   seasonSnapshots: Array<{
     seasonId: string | null;
     code: string;
@@ -510,6 +586,17 @@ export type QaDefectCategory =
 export type QaReworkStatus =
   'REWORK_REQUIRED' | 'ACKNOWLEDGED' | 'READY_FOR_REINSPECTION' | 'REINSPECTED';
 export type QaChecklistStatus = 'YES' | 'NO' | 'AVAILABLE';
+export const QA_CHECKLIST_CHOICES: ReadonlyArray<{
+  value: QaChecklistStatus;
+  label: string;
+  ppSample: boolean;
+}> = [
+  { value: 'YES', label: 'Yes', ppSample: true },
+  { value: 'NO', label: 'No', ppSample: true },
+  { value: 'AVAILABLE', label: 'Available', ppSample: false },
+];
+export const qaChecklistChoices = (ppSample: boolean) =>
+  QA_CHECKLIST_CHOICES.filter((choice) => !ppSample || choice.ppSample);
 export type QaChecklistItemCode =
   | 'FABRIC_COLOUR_QUALITY'
   | 'TRIMS_CARD'

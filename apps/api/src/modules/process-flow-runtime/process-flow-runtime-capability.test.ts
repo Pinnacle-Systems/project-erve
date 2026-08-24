@@ -27,6 +27,7 @@ const production = (id: string, name: string, code: string, sequence: number) =>
 describe('Process Flow runtime capability', () => {
   it('supports the confirmed semantic configuration without relying on form codes', () => {
     const sewing = production('sewing', 'Sewing', 'SEWING', 5);
+    const finishing = production('finishing', 'Finishing', 'FINISHING', 7);
     const stages = [
       {
         ...production('pp', 'PP Sample Checklist', 'ANY_PP_CODE', 1),
@@ -56,15 +57,15 @@ describe('Process Flow runtime capability', () => {
         associatedProductionActivityId: sewing.id,
         qualityFormVersion: form('INSPECTION', 'JOB_ORDER'),
       },
-      production('finishing', 'Finishing', 'FINISHING', 7),
+      finishing,
       {
         ...production('final', 'Final Inspection', 'ANY_FINAL_CODE', 8),
         activityType: 'QUALITY' as const,
         qualityExecutionMode: 'IN_PROCESS' as const,
         executionMultiplicity: 'BATCHED' as const,
-        qualityAvailabilityPolicy: 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES' as const,
+        qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' as const,
         coverageTarget: 'PREPARED_QUANTITY' as const,
-        associatedProductionActivityId: sewing.id,
+        associatedProductionActivityId: finishing.id,
         qualityFormVersion: form('INSPECTION', 'JOB_ORDER'),
       },
     ];

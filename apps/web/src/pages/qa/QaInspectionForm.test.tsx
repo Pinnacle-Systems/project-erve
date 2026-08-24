@@ -2,11 +2,15 @@
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QA_CHECKLIST_ITEMS, type QaInspectionDetail } from '@erve/types';
 import { QaInspectionForm } from './QaInspectionForm.js';
-import { canReopenQaForm } from './QaDetailPage.js';
+import { canReopenQaForm, QaDetailPage } from './QaDetailPage.js';
 import { apiClient } from '../../lib/api-client.js';
+import { useAuth } from '../../auth/AuthContext.js';
+
+vi.mock('../../auth/AuthContext.js', () => ({ useAuth: vi.fn() }));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -267,10 +271,68 @@ function button(label: string) {
 }
 
 function responseControl(label: string) {
-  return container.querySelector(`[aria-label="${label} response"]`) as HTMLButtonElement;
+  return container.querySelector(
+    `[role="radiogroup"][aria-label="${label} response"]`,
+  ) as HTMLElement;
 }
 
 describe('QaInspectionForm', () => {
+  it('renders PP Sample in the shared shell and links back to its Job Order detail', async () => {
+    const data = detail();
+    data.sessions[0]!.forms = [data.sessions[0]!.forms[0]!];
+    data.sessions[0]!.processFlowPpSample = {
+      executionId: 'execution-1',
+      processFlowActivityId: 'activity-1',
+      qualityFormVersionId: 'sample-v1',
+      sampleQuantity: 5,
+      decision: null,
+    };
+    vi.mocked(useAuth).mockReturnValue({
+      user: {
+        id: 'qa-1',
+        name: 'QA User',
+        email: 'qa@example.com',
+        mobile: null,
+        roles: ['QA_USER'],
+      },
+      status: 'authenticated',
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => ({
+      data: { data: String(url).includes('/audit') ? [] : data },
+    }));
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <MemoryRouter initialEntries={['/qa/jo-1']}>
+            <Routes>
+              <Route path="/qa/:id" element={<QaDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelector('[data-quality-execution-shell="true"]')).not.toBeNull();
+    expect(container.querySelector('h1')?.textContent).toBe('PP Sample Checklist');
+    expect(container.textContent).toContain('PP Sample form · Attempt 1 · DRAFT');
+    const back = container.querySelector('a[aria-label="Back to Job Order JO-001"]');
+    expect(back?.textContent).toContain('Job Order JO-001');
+    expect(back?.getAttribute('href')).toBe('/job-orders/jo-1');
+    expect(
+      container.querySelector('[data-quality-execution-header="true"]')?.textContent,
+    ).not.toContain('JO-001');
+    expect(container.textContent).toContain('Job OrderJO-001');
+    expect(container.textContent).not.toContain('Back');
+  });
+
   it.each([
     ['ADMIN', true],
     ['MERCHANDISER', true],
@@ -320,14 +382,15 @@ describe('QaInspectionForm', () => {
       (container.querySelector('[aria-label="Quantity of samples"]') as HTMLInputElement).disabled,
     ).toBe(true);
     const ppResponse = responseControl(QA_CHECKLIST_ITEMS[0]!.label);
-    await act(async () => ppResponse.click());
-    const ppOptions = Array.from(document.body.querySelectorAll('[role="option"]'));
-    expect(ppOptions.map((option) => option.textContent?.trim())).toEqual([
-      'Unanswered',
-      'Yes',
-      'No',
-    ]);
-    await act(async () => (ppOptions[1] as HTMLElement).click());
+    expect(
+      Array.from(ppResponse.querySelectorAll('input[type="radio"]')).map(
+        (option) => (option as HTMLInputElement).value,
+      ),
+    ).toEqual(['YES', 'NO']);
+    await act(async () =>
+      (ppResponse.querySelector('input[value="NO"]') as HTMLInputElement).click(),
+    );
+    expect((ppResponse.querySelector('input[value="NO"]') as HTMLInputElement).checked).toBe(true);
     await act(async () => button('Finalize size M').click());
     expect(container.textContent).toContain('Choose Pass or Fail before finalizing PP Sample.');
     expect(requestCall).not.toHaveBeenCalled();
@@ -353,7 +416,9 @@ describe('QaInspectionForm', () => {
     await renderForm();
     const labels = QA_CHECKLIST_ITEMS.map(({ label }) => label);
     expect(container.textContent).toContain('QA Inspection Form');
-    expect(container.querySelectorAll('button[aria-label$="response"]')).toHaveLength(15);
+    expect(container.querySelectorAll('[role="radiogroup"][aria-label$="response"]')).toHaveLength(
+      15,
+    );
     expect(labels.every((label) => container.textContent?.includes(label))).toBe(true);
     expect(container.textContent!.indexOf(labels[0]!)).toBeLessThan(
       container.textContent!.indexOf(labels[14]!),
@@ -367,7 +432,92 @@ describe('QaInspectionForm', () => {
     expect(
       (container.querySelector('[aria-label="Quantity of samples"]') as HTMLInputElement).value,
     ).toBe('2');
-    expect(responseControl(labels[0]!).textContent).toContain('Yes');
+    expect(
+      (responseControl(labels[0]!).querySelector('input[value="YES"]') as HTMLInputElement).checked,
+    ).toBe(true);
+  });
+
+  it('keeps finalized PP Sample answers in the same readable, non-editable checklist', async () => {
+    const source = detail();
+    const form = source.sessions[0]!.forms[0]!;
+    source.sessions[0]!.forms = [form];
+    source.sessions[0]!.status = 'FINALIZED';
+    source.sessions[0]!.finalizedAt = '2026-08-06T12:00:00Z';
+    source.sessions[0]!.processFlowPpSample = {
+      executionId: 'execution-1',
+      processFlowActivityId: 'activity-1',
+      qualityFormVersionId: 'sample-v1',
+      sampleQuantity: 5,
+      decision: 'PASS',
+    };
+    form.status = 'FINALIZED';
+    form.finalizedAt = '2026-08-06T12:00:00Z';
+    form.checklist = QA_CHECKLIST_ITEMS.map(({ code }) => ({
+      itemCode: code,
+      status: 'YES',
+      remarks: 'Approved',
+    }));
+    source.sessions.push({
+      ...source.sessions[0]!,
+      id: 'inspection-2',
+      cycleNumber: 2,
+      forms: [
+        {
+          ...form,
+          id: 'form-2',
+          checklist: form.checklist.map((item) => ({ ...item })),
+        },
+      ],
+      processFlowPpSample: {
+        ...source.sessions[0]!.processFlowPpSample!,
+        executionId: 'execution-2',
+      },
+    });
+
+    vi.mocked(useAuth).mockReturnValue({
+      user: {
+        id: 'qa-1',
+        name: 'QA User',
+        email: 'qa@example.com',
+        mobile: null,
+        roles: ['QA_USER'],
+      },
+      status: 'authenticated',
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => ({
+      data: { data: String(url).includes('/audit') ? [] : source },
+    }));
+    await act(async () => {
+      root.render(
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <MemoryRouter initialEntries={['/qa/jo-1']}>
+            <Routes>
+              <Route path="/qa/:id" element={<QaDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelectorAll('[data-quality-checklist-row="true"]')).toHaveLength(30);
+    expect(container.querySelectorAll('[data-quality-checklist-result="true"]')).toHaveLength(30);
+    const first = container.querySelector(
+      `[data-quality-checklist-result="true"][aria-label="${QA_CHECKLIST_ITEMS[0]!.label} response: Yes"]`,
+    )!;
+    expect(first.textContent).toContain('\u2713Yes');
+    expect(container.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(container.querySelector('input[disabled][type="radio"]')).toBeNull();
+    expect(container.querySelector('[data-quality-checklist-remark="true"]')?.textContent).toBe(
+      'Approved',
+    );
+    expect(container.textContent).toContain('Sample quantity 5 · Decision: PASS');
   });
 
   it('saves sample quantity, checklist values, remarks, and canonical size-allocation IDs', async () => {
@@ -527,13 +677,12 @@ describe('QaInspectionForm', () => {
   it('retains a reserved draft size row and exposes the exact response choices without defaults', async () => {
     await renderForm();
     const response = responseControl(QA_CHECKLIST_ITEMS[1]!.label);
-    expect(response.textContent).toContain('Unanswered');
-    await act(async () => response.click());
     expect(
-      Array.from(document.body.querySelectorAll('[role="option"]')).map((option) =>
-        option.textContent?.trim(),
+      Array.from(response.querySelectorAll('input[type="radio"]')).map(
+        (option) => (option as HTMLInputElement).value,
       ),
-    ).toEqual(['Unanswered', 'Yes', 'No', 'Available']);
+    ).toEqual(['YES', 'NO', 'AVAILABLE']);
+    expect(response.querySelector('input:checked')).toBeNull();
     expect((container.querySelector('[aria-label="M accepted"]') as HTMLInputElement).value).toBe(
       '10',
     );
@@ -564,7 +713,11 @@ describe('QaInspectionForm', () => {
     expect(
       (container.querySelector('[aria-label="Quantity of samples"]') as HTMLInputElement).value,
     ).toBe('3');
-    expect(responseControl(QA_CHECKLIST_ITEMS[0]!.label).textContent).toContain('No');
+    expect(
+      container.querySelector(
+        `[data-quality-checklist-result="true"][aria-label="${QA_CHECKLIST_ITEMS[0]!.label} response: No"]`,
+      )?.textContent,
+    ).toContain('No');
     const xl = Array.from(container.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('Size XL'),
     )!;

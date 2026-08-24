@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import {
   canStartQaInspection,
+  qaChecklistChoices,
   QA_CHECKLIST_ITEMS,
   type ApiErrorResponse,
   type ApiSuccessResponse,
@@ -24,8 +25,17 @@ import {
   TextField,
   ValidationMessage,
 } from '@erve/primitives';
-import { AttachmentList, StatusBadge } from '@erve/app-components';
-import { DataTable } from '@erve/data-display';
+import {
+  AttachmentList,
+  QualityChecklist,
+  QualityChecklistRemark,
+  QualityChecklistResult,
+  QualityChecklistRow,
+  QualityChoiceGroup,
+  QualityExecutionActions,
+  QualityExecutionSection,
+  StatusBadge,
+} from '@erve/app-components';
 import { DescriptionList, FormGrid, FormSection, Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
@@ -423,56 +433,54 @@ export function QaInspectionForm({
     setNotice(`Reloaded size ${selected.sizeLabel}.`);
     onUpdated(updated);
   };
+  const formActions = (
+    <QualityExecutionActions
+      message={
+        errors.form ? (
+          <ValidationMessage tone="error" role="alert">
+            {errors.form}
+          </ValidationMessage>
+        ) : notice ? (
+          <ValidationMessage tone="success" role="status">
+            {notice}
+          </ValidationMessage>
+        ) : null
+      }
+    >
+      {!readonly && (
+        <>
+          <Button
+            type="button"
+            variant="secondary"
+            loading={mutation.isPending}
+            onClick={() => save(false)}
+          >
+            Save size form
+          </Button>
+          <Button type="button" loading={mutation.isPending} onClick={() => save(true)}>
+            Finalize size {selected.sizeLabel}
+          </Button>
+        </>
+      )}
+      {selected.status === 'FINALIZED' && canReopen && (
+        <Button
+          type="button"
+          loading={mutation.isPending}
+          onClick={() => {
+            setReopenReason('');
+            setReopenOpen(true);
+          }}
+        >
+          Reopen size {selected.sizeLabel}
+        </Button>
+      )}
+    </QualityExecutionActions>
+  );
   return (
     <>
-      <Panel
+      <QualityExecutionSection
         title="QA Inspection Form"
         description={`Cycle ${session.cycleNumber} · ${forms.filter((form) => form.status === 'FINALIZED').length} of ${forms.length} forms finalized`}
-        padding="md"
-        footer={
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              {errors.form ? (
-                <ValidationMessage tone="error" role="alert">
-                  {errors.form}
-                </ValidationMessage>
-              ) : notice ? (
-                <ValidationMessage tone="success" role="status">
-                  {notice}
-                </ValidationMessage>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap justify-end gap-3">
-              {!readonly && (
-                <>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    loading={mutation.isPending}
-                    onClick={() => save(false)}
-                  >
-                    Save size form
-                  </Button>
-                  <Button type="button" loading={mutation.isPending} onClick={() => save(true)}>
-                    Finalize size {selected.sizeLabel}
-                  </Button>
-                </>
-              )}
-              {selected.status === 'FINALIZED' && canReopen && (
-                <Button
-                  type="button"
-                  loading={mutation.isPending}
-                  onClick={() => {
-                    setReopenReason('');
-                    setReopenOpen(true);
-                  }}
-                >
-                  Reopen size {selected.sizeLabel}
-                </Button>
-              )}
-            </div>
-          </div>
-        }
       >
         <div className="space-y-6">
           {!ppSample && (
@@ -562,86 +570,68 @@ export function QaInspectionForm({
             </FormSection>
           )}
           <FormSection title="Inspection Checklist">
-            <DataTable
-              density="compact"
-              rowKey={(item) => item.code}
-              data={[...QA_CHECKLIST_ITEMS]}
-              columns={[
-                {
-                  key: 'checkpoint',
-                  header: 'Inspection checkpoint',
-                  className: 'whitespace-normal max-w-none',
-                  render: (item) => (
-                    <div>
-                      {item.label}
-                      {errors[`check.${item.code}`] ? (
-                        <ValidationMessage tone="error">
-                          {errors[`check.${item.code}`]}
-                        </ValidationMessage>
-                      ) : null}
-                    </div>
-                  ),
-                },
-                {
-                  key: 'response',
-                  header: 'Response',
-                  className: 'max-w-none overflow-visible',
-                  render: (item) => {
-                    const check = draft.checks[item.code] ?? { status: '', remarks: '' };
-                    return (
-                      <SelectField
-                        aria-label={`${item.label} response`}
-                        density="compact"
-                        width="sm"
-                        disabled={readonly}
-                        value={check.status || 'UNANSWERED'}
-                        onValueChange={(value) =>
-                          update({
-                            checks: {
-                              ...draft.checks,
-                              [item.code]: {
-                                ...check,
-                                status: value === 'UNANSWERED' ? '' : (value as QaChecklistStatus),
+            <QualityChecklist supplementaryHeading="Remarks">
+              {QA_CHECKLIST_ITEMS.map((item) => {
+                const check = draft.checks[item.code] ?? { status: '', remarks: '' };
+                const choices = qaChecklistChoices(Boolean(ppSample));
+                return (
+                  <QualityChecklistRow
+                    key={item.code}
+                    label={item.label}
+                    required
+                    error={errors[`check.${item.code}`]}
+                    control={
+                      readonly ? (
+                        <QualityChecklistResult
+                          label={`${item.label} response`}
+                          choices={choices}
+                          value={check.status}
+                        />
+                      ) : (
+                        <QualityChoiceGroup
+                          id={`qa-check-${item.code}`}
+                          label={`${item.label} response`}
+                          choices={choices}
+                          value={check.status}
+                          required
+                          onChange={(value) =>
+                            update({
+                              checks: {
+                                ...draft.checks,
+                                [item.code]: {
+                                  ...check,
+                                  status: value as QaChecklistStatus,
+                                },
                               },
-                            },
-                          })
-                        }
-                      >
-                        <SelectItem value="UNANSWERED">Unanswered</SelectItem>
-                        <SelectItem value="YES">Yes</SelectItem>
-                        <SelectItem value="NO">No</SelectItem>
-                        {!ppSample && <SelectItem value="AVAILABLE">Available</SelectItem>}
-                      </SelectField>
-                    );
-                  },
-                },
-                {
-                  key: 'remarks',
-                  header: 'Remarks',
-                  className: 'max-w-none overflow-visible',
-                  render: (item) => {
-                    const check = draft.checks[item.code] ?? { status: '', remarks: '' };
-                    return (
-                      <TextField
-                        aria-label={`${item.label} remarks`}
-                        density="compact"
-                        width="lg"
-                        disabled={readonly}
-                        value={check.remarks}
-                        onChange={(event) =>
-                          update({
-                            checks: {
-                              ...draft.checks,
-                              [item.code]: { ...check, remarks: event.target.value },
-                            },
-                          })
-                        }
-                      />
-                    );
-                  },
-                },
-              ]}
-            />
+                            })
+                          }
+                        />
+                      )
+                    }
+                    supplementary={
+                      readonly ? (
+                        <QualityChecklistRemark value={check.remarks} />
+                      ) : (
+                        <TextField
+                          aria-label={`${item.label} remarks`}
+                          density="compact"
+                          width="full"
+                          value={check.remarks}
+                          onChange={(event) =>
+                            update({
+                              checks: {
+                                ...draft.checks,
+                                [item.code]: { ...check, remarks: event.target.value },
+                              },
+                            })
+                          }
+                        />
+                      )
+                    }
+                  />
+                );
+              })}
+            </QualityChecklist>
           </FormSection>
           <FormSection title="Inspection remarks">
             <textarea
@@ -787,7 +777,8 @@ export function QaInspectionForm({
             <ValidationMessage tone="error">Unable to remove evidence.</ValidationMessage>
           ) : null}
         </div>
-      </Panel>
+      </QualityExecutionSection>
+      {formActions}
       <Dialog open={reopenOpen} onOpenChange={setReopenOpen}>
         <DialogContent>
           <DialogHeader>

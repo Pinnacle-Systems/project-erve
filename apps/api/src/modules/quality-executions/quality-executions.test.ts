@@ -83,7 +83,7 @@ async function fixture(
       type: 'PRODUCTION_PROGRESS' as const,
       title: 'Progress',
       config: {
-        metrics: [{ key: 'sewn', label: 'Sewn', source: 'SYSTEM', sourceActivityCode: 'SEWING' }],
+        metrics: [{ key: 'sewn', label: '% Sewn', source: 'SYSTEM', sourceActivityCode: 'SEWING' }],
       },
     },
     {
@@ -290,10 +290,37 @@ describe('Quality Activity Execution API', () => {
     const started = await start(f);
     expect(started.status).toBe(201);
     expect(started.body.data).toMatchObject({
+      jobOrderId: f.jobOrder.id,
+      jobOrderNumber: f.jobOrder.jobOrderNumber,
       processFlowActivityId: f.activity.id,
       status: 'DRAFT',
       attemptNumber: 1,
       qualityForm: { versionId: f.form.versions[0]!.id },
+      productionContext: {
+        associatedActivity: { id: f.sewing.id, code: 'SEWING', name: 'Sewing' },
+        stages: [
+          {
+            id: f.sewing.id,
+            code: 'SEWING',
+            name: 'Sewing',
+            status: 'IN_PROGRESS',
+            relationship: 'ASSOCIATED',
+          },
+        ],
+      },
+    });
+    const progress = started.body.data.sections
+      .flatMap(
+        (section: { components: Array<{ type: string; systemValue?: unknown }> }) =>
+          section.components,
+      )
+      .find((component: { type: string }) => component.type === 'PRODUCTION_PROGRESS');
+    expect(progress).not.toHaveProperty('systemValue');
+    const storedLegacyComponent = await prisma.qualityFormComponent.findUniqueOrThrow({
+      where: { id: f.components[1]!.id },
+    });
+    expect(storedLegacyComponent.config).toMatchObject({
+      metrics: [{ key: 'sewn', label: '% Sewn', sourceActivityCode: 'SEWING' }],
     });
     await prisma.qualityActivityExecution.delete({ where: { id: started.body.data.id } });
     await prisma.jobOrderStageStatus.update({

@@ -10,7 +10,26 @@ import type {
   QaInspectionDetail,
   QaSizeInspectionFormView,
 } from '@erve/types';
-import { canStartQaInspection, qaInspectionAction, QA_CHECKLIST_ITEMS } from '@erve/types';
+import {
+  canStartQaInspection,
+  qaChecklistChoices,
+  qaInspectionAction,
+  QA_CHECKLIST_ITEMS,
+} from '@erve/types';
+import {
+  QualityChecklist,
+  QualityChecklistRemark,
+  QualityChecklistResult,
+  QualityChecklistRow,
+  QualityChoiceGroup,
+  QualityExecutionActions,
+  QualityExecutionHeader,
+  QualityExecutionPageShell,
+  QualityExecutionSection,
+  qualityExecutionControlClass,
+  qualityExecutionTextAreaClass,
+} from '@erve/app-components';
+import { Button } from '@erve/primitives';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 
@@ -324,18 +343,28 @@ export function QaInspectionPage() {
   const canReopen = Boolean(
     user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'),
   );
-  return (
-    <main className="min-h-full space-y-4 bg-background px-4 py-5">
-      <Link to="/qa">← QA queue</Link>
-      <section className="rounded-xl border border-border bg-surface p-4">
-        <p className="text-sm">
-          {detail.purchaseOrderNumber} · {detail.factory.name}
-        </p>
-        <h1 className="text-2xl font-semibold">{detail.jobOrderNumber}</h1>
-        <p>
-          {detail.status.replaceAll('_', ' ')} · Version {detail.version}
-        </p>
-      </section>
+  const content = (
+    <div className="space-y-5">
+      {!ppSample ? <Link to="/qa">← QA queue</Link> : null}
+      {ppSample && displayedSession ? (
+        <QualityExecutionHeader
+          title="PP Sample Checklist"
+          formName="PP Sample form"
+          attemptNumber={displayedSession.cycleNumber}
+          status={displayedSession.status}
+          context={`${detail.purchaseOrderNumber} · ${detail.factory.name}`}
+        />
+      ) : (
+        <section className="rounded-xl border border-border bg-surface p-4">
+          <p className="text-sm">
+            {detail.purchaseOrderNumber} · {detail.factory.name}
+          </p>
+          <h1 className="text-2xl font-semibold">{detail.jobOrderNumber}</h1>
+          <p>
+            {detail.status.replaceAll('_', ' ')} · Version {detail.version}
+          </p>
+        </section>
+      )}
       {(mutate.isError || start.isError) && (
         <section role="alert" className="rounded border border-danger/40 p-3">
           <p>{apiMessage(mutate.error ?? start.error)}</p>
@@ -381,16 +410,14 @@ export function QaInspectionPage() {
               </nav>
             )}
           </section>
-          <section className="space-y-4 rounded-xl border border-border bg-surface p-4">
-            <h2 className="text-lg font-semibold">
-              Size {selected.sizeLabel} · {selected.status}
-            </h2>
-            <p className="text-sm">
-              {selected.styleNumber} · prepared {selected.preparedQuantity} · inspectable {capacity}
-            </p>
+          <QualityExecutionSection
+            title={`Size ${selected.sizeLabel} · ${selected.status}`}
+            description={`${selected.styleNumber} · prepared ${selected.preparedQuantity} · inspectable ${capacity}`}
+          >
             <label>
               Sample quantity
               <input
+                className={qualityExecutionControlClass}
                 aria-label="Sample quantity"
                 disabled={readonly || Boolean(ppSample)}
                 type="text"
@@ -402,56 +429,73 @@ export function QaInspectionPage() {
             {errors.sampleQuantity && <p role="alert">{errors.sampleQuantity}</p>}
             <section>
               <h3>Checklist (15 items)</h3>
-              {QA_CHECKLIST_ITEMS.map((item) => {
-                const check = draft.checklist[item.code] ?? { status: '', remarks: '' };
-                return (
-                  <div key={item.code}>
-                    <label>
-                      {item.label}
-                      <select
-                        aria-label={`${item.label} response`}
-                        disabled={readonly}
-                        value={check.status}
-                        onChange={(event) =>
-                          change({
-                            checklist: {
-                              ...draft.checklist,
-                              [item.code]: {
-                                ...check,
-                                status: event.target.value as QaChecklistStatus | '',
-                              },
-                            },
-                          })
-                        }
-                      >
-                        <option value="">Unanswered</option>
-                        <option value="YES">Yes</option>
-                        <option value="NO">No</option>
-                        {!ppSample && <option value="AVAILABLE">Available</option>}
-                      </select>
-                    </label>
-                    <textarea
-                      aria-label={`${item.label} remarks`}
-                      disabled={readonly}
-                      placeholder="Checklist-row remarks"
-                      value={check.remarks}
-                      onChange={(event) =>
-                        change({
-                          checklist: {
-                            ...draft.checklist,
-                            [item.code]: { ...check, remarks: event.target.value },
-                          },
-                        })
+              <QualityChecklist supplementaryHeading="Remarks">
+                {QA_CHECKLIST_ITEMS.map((item) => {
+                  const check = draft.checklist[item.code] ?? { status: '', remarks: '' };
+                  const choices = qaChecklistChoices(Boolean(ppSample));
+                  return (
+                    <QualityChecklistRow
+                      key={item.code}
+                      label={item.label}
+                      required
+                      control={
+                        readonly ? (
+                          <QualityChecklistResult
+                            label={`${item.label} response`}
+                            choices={choices}
+                            value={check.status}
+                          />
+                        ) : (
+                          <QualityChoiceGroup
+                            id={`qa-check-${item.code}`}
+                            label={`${item.label} response`}
+                            choices={choices}
+                            value={check.status}
+                            required
+                            onChange={(value) =>
+                              change({
+                                checklist: {
+                                  ...draft.checklist,
+                                  [item.code]: {
+                                    ...check,
+                                    status: value as QaChecklistStatus,
+                                  },
+                                },
+                              })
+                            }
+                          />
+                        )
+                      }
+                      supplementary={
+                        readonly ? (
+                          <QualityChecklistRemark value={check.remarks} />
+                        ) : (
+                          <textarea
+                            className={`${qualityExecutionTextAreaClass} min-h-10`}
+                            aria-label={`${item.label} remarks`}
+                            placeholder="Checklist-row remarks"
+                            value={check.remarks}
+                            onChange={(event) =>
+                              change({
+                                checklist: {
+                                  ...draft.checklist,
+                                  [item.code]: { ...check, remarks: event.target.value },
+                                },
+                              })
+                            }
+                          />
+                        )
                       }
                     />
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </QualityChecklist>
             </section>
             {errors.checklist && <p role="alert">{errors.checklist}</p>}
             <label>
               Inspection remarks
               <textarea
+                className={qualityExecutionTextAreaClass}
                 aria-label="Inspection remarks"
                 disabled={readonly}
                 value={draft.remarks}
@@ -465,6 +509,7 @@ export function QaInspectionPage() {
                   <label key={field}>
                     {field}
                     <input
+                      className={qualityExecutionControlClass}
                       aria-label={`${selected.sizeLabel} ${field}`}
                       disabled={readonly}
                       inputMode="numeric"
@@ -481,6 +526,7 @@ export function QaInspectionPage() {
             <section>
               <h3>Defect information</h3>
               <select
+                className={qualityExecutionControlClass}
                 aria-label="Defect category"
                 disabled={readonly}
                 value={draft.category}
@@ -500,6 +546,7 @@ export function QaInspectionPage() {
               </select>
               {draft.category === 'OTHER' && (
                 <textarea
+                  className={qualityExecutionTextAreaClass}
                   aria-label="Other defect details"
                   disabled={readonly}
                   value={draft.other}
@@ -508,6 +555,7 @@ export function QaInspectionPage() {
               )}
               {errors.other && <p role="alert">{errors.other}</p>}
               <textarea
+                className={qualityExecutionTextAreaClass}
                 aria-label="Defect notes"
                 disabled={readonly}
                 value={draft.notes}
@@ -573,19 +621,23 @@ export function QaInspectionPage() {
                 {issue}
               </p>
             ))}
-            <div className="flex gap-2">
+            <QualityExecutionActions>
               {!readonly && (
                 <>
-                  <button onClick={() => submit(false)} disabled={mutate.isPending}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => submit(false)}
+                    disabled={mutate.isPending}
+                  >
                     Save size form
-                  </button>
-                  <button onClick={() => submit(true)} disabled={mutate.isPending}>
+                  </Button>
+                  <Button onClick={() => submit(true)} disabled={mutate.isPending}>
                     Finalize size {selected.sizeLabel}
-                  </button>
+                  </Button>
                 </>
               )}
               {selected.status === 'FINALIZED' && canReopen && (
-                <button
+                <Button
                   onClick={() => {
                     const reason = window.prompt(`Reason for reopening size ${selected.sizeLabel}`);
                     if (reason?.trim())
@@ -598,30 +650,64 @@ export function QaInspectionPage() {
                   }}
                 >
                   Reopen size
-                </button>
+                </Button>
               )}
-            </div>
-          </section>
+            </QualityExecutionActions>
+          </QualityExecutionSection>
         </>
       )}
-      <section className="rounded-xl border border-border bg-surface p-4">
-        <h2>Inspection history</h2>
+      <QualityExecutionSection title="Inspection history">
         {detail.sessions.map((session) => (
-          <article key={session.id}>
-            <p>
+          <article key={session.id} className="border-b border-border-subtle py-2 last:border-b-0">
+            <p className="text-sm font-semibold">
               Cycle {session.cycleNumber}
               {session.cycleNumber > 1 ? ' · Reinspection' : ''}
             </p>
             {session.forms.map((form) => (
-              <p key={form.id}>
-                {session.processFlowPpSample
-                  ? `Size ${form.sizeLabel} · ${form.status} · decision ${session.processFlowPpSample.decision ?? 'pending'}`
-                  : `Size ${form.sizeLabel} · ${form.status} · accepted ${form.acceptedQuantity}, rework ${form.reworkQuantity}, rejected ${form.permanentlyRejectedQuantity}`}
-              </p>
+              <div key={form.id} className="mt-1 min-w-0">
+                <p className="text-sm text-muted-foreground">
+                  {session.processFlowPpSample
+                    ? `Size ${form.sizeLabel} · ${form.styleNumber} · sample quantity ${session.processFlowPpSample.sampleQuantity} · decision ${session.processFlowPpSample.decision ?? 'pending'} · ${form.status}`
+                    : `Size ${form.sizeLabel} · ${form.status} · accepted ${form.acceptedQuantity}, rework ${form.reworkQuantity}, rejected ${form.permanentlyRejectedQuantity}`}
+                </p>
+                {session.processFlowPpSample ? (
+                  <div className="mt-1">
+                    <QualityChecklist supplementaryHeading="Remarks">
+                      {form.checklist.map((item) => {
+                        const label =
+                          QA_CHECKLIST_ITEMS.find((definition) => definition.code === item.itemCode)
+                            ?.label ?? item.itemCode.replaceAll('_', ' ');
+                        return (
+                          <QualityChecklistRow
+                            key={item.itemCode}
+                            label={label}
+                            required
+                            control={
+                              <QualityChecklistResult
+                                label={`${label} response`}
+                                choices={qaChecklistChoices(true)}
+                                value={item.status ?? ''}
+                              />
+                            }
+                            supplementary={<QualityChecklistRemark value={item.remarks} />}
+                          />
+                        );
+                      })}
+                    </QualityChecklist>
+                  </div>
+                ) : null}
+              </div>
             ))}
           </article>
         ))}
-      </section>
-    </main>
+      </QualityExecutionSection>
+    </div>
+  );
+  return ppSample ? (
+    <QualityExecutionPageShell jobOrderId={detail.id} jobOrderNumber={detail.jobOrderNumber}>
+      {content}
+    </QualityExecutionPageShell>
+  ) : (
+    <main className="min-h-full bg-background px-4 py-5">{content}</main>
   );
 }

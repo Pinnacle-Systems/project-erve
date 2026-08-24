@@ -253,6 +253,16 @@ describe('rendered mobile QA form workflow', () => {
     };
     successfulUpdate(() => {});
     await renderPage(data);
+    expect(container.querySelector('[data-quality-execution-shell="true"]')).not.toBeNull();
+    expect(container.querySelector('h1')?.textContent).toBe('PP Sample Checklist');
+    expect(container.textContent).toContain('PP Sample form · Attempt 1 · DRAFT');
+    const back = container.querySelector('a[aria-label="Back to Job Order JO-1"]');
+    expect(back?.textContent).toContain('Job Order JO-1');
+    expect(back?.getAttribute('href')).toBe('/job-orders/job-1');
+    expect(
+      container.querySelector('[data-quality-execution-header="true"]')?.textContent,
+    ).not.toContain('JO-1');
+    expect(container.textContent).not.toContain('← QA queue');
     expect(container.textContent).toContain('PP Sample Decision');
     expect(container.textContent).not.toContain('Size S');
     expect(container.querySelector('[aria-label="M accepted"]')).toBeNull();
@@ -261,11 +271,15 @@ describe('rendered mobile QA form workflow', () => {
     expect(
       (container.querySelector('[aria-label="Sample quantity"]') as HTMLInputElement).disabled,
     ).toBe(true);
+    const firstResponse = container.querySelector('[role="radiogroup"][aria-label$="response"]')!;
     expect(
-      Array.from(
-        (container.querySelector('[aria-label$="response"]') as HTMLSelectElement).options,
-      ).map((option) => option.textContent),
-    ).toEqual(['Unanswered', 'Yes', 'No']);
+      Array.from(firstResponse.querySelectorAll('input[type="radio"]')).map(
+        (option) => (option as HTMLInputElement).value,
+      ),
+    ).toEqual(['YES', 'NO']);
+    expect((firstResponse.querySelector('input[value="YES"]') as HTMLInputElement).checked).toBe(
+      true,
+    );
     await click('Save size form');
     const savedPayload = vi.mocked(apiClient.request).mock.calls[0]![0].data;
     expect(savedPayload).not.toHaveProperty('inspectedQuantity');
@@ -588,5 +602,35 @@ describe('rendered mobile QA form workflow', () => {
     expect(container.textContent).toContain('Size M · DRAFT · accepted 3');
     expect(container.textContent).toContain('Size M · DRAFT · accepted 9');
     expect(container.textContent).not.toContain('form-m-cycle-2');
+  });
+
+  it('uses the same semantic read-only checklist for finalized PP Sample cycles', async () => {
+    const data = detail([form('form-m', 'M')]);
+    const session = data.sessions[0]!;
+    const finalized = session.forms[0]!;
+    session.status = 'FINALIZED';
+    finalized.status = 'FINALIZED';
+    session.processFlowPpSample = {
+      executionId: 'execution-1',
+      processFlowActivityId: 'activity-1',
+      qualityFormVersionId: 'sample-v1',
+      sampleQuantity: 5,
+      decision: 'PASS',
+    };
+    finalized.checklist = QA_CHECKLIST_ITEMS.map(({ code }) => ({
+      itemCode: code,
+      status: 'YES',
+      remarks: 'Approved',
+    }));
+
+    await renderPage(data);
+
+    expect(container.querySelectorAll('[data-quality-checklist-result="true"]')).toHaveLength(30);
+    expect(container.querySelector('[role="radiogroup"][aria-label$="response"]')).toBeNull();
+    expect(
+      container.querySelector('[data-quality-checklist="true"] input[type="radio"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain('\u2713Yes');
+    expect(container.textContent).toContain('sample quantity 5 · decision PASS · FINALIZED');
   });
 });

@@ -847,7 +847,7 @@ async function seedErveProductionQualityFlow(): Promise<void> {
             id: createId(),
             processFlowId: flow.id,
             versionNumber,
-            status: versionNumber === 2 ? 'ACTIVE' : 'RETIRED',
+            status: versionNumber === 3 ? 'ACTIVE' : 'RETIRED',
             effectiveFrom: new Date(),
           },
         }));
@@ -935,8 +935,11 @@ async function seedErveProductionQualityFlow(): Promise<void> {
             activityType: 'QUALITY',
             qualityFormVersionId: formVersion.get('FINAL:1')!,
             qualityExecutionMode: 'IN_PROCESS',
-            associatedProductionActivityId: sewingId,
-            qualityAvailabilityPolicy: 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES',
+            associatedProductionActivityId: versionNumber >= 3 ? finishingId : sewingId,
+            qualityAvailabilityPolicy:
+              versionNumber >= 3
+                ? 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE'
+                : 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES',
             executionMultiplicity: 'BATCHED',
             coverageTarget: 'PREPARED_QUANTITY',
           },
@@ -947,7 +950,8 @@ async function seedErveProductionQualityFlow(): Promise<void> {
   };
 
   await seedVersion(1, 1);
-  const activeVersionId = await seedVersion(2, 2);
+  await seedVersion(2, 2);
+  const activeVersionId = await seedVersion(3, 2);
   await prisma.$transaction([
     prisma.processFlowVersion.updateMany({
       where: { processFlowId: flow.id, id: { not: activeVersionId }, status: 'ACTIVE' },

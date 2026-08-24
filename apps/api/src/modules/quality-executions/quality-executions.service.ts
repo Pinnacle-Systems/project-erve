@@ -46,8 +46,83 @@ const executionInclude = {
   ppSampleSession: {
     include: { forms: { include: { jobOrderLineSize: { include: { size: true } } } } },
   },
+  finalQualityBatch: {
+    include: {
+      allocations: { include: { jobOrderLineSize: { include: { size: true } } } },
+      executions: {
+        select: {
+          id: true,
+          attemptNumber: true,
+          batchNumber: true,
+          inspectedQuantity: true,
+          status: true,
+          outcome: true,
+          startedAt: true,
+          finalizedAt: true,
+        },
+        orderBy: { attemptNumber: 'asc' as const },
+      },
+      release: { include: { lines: true } },
+    },
+  },
 } satisfies Prisma.QualityActivityExecutionInclude;
 type Execution = Prisma.QualityActivityExecutionGetPayload<{ include: typeof executionInclude }>;
+const finalBatchInclude = {
+  createdBy: { select: { id: true, name: true, email: true } },
+  terminalBy: { select: { id: true, name: true, email: true } },
+  allocations: {
+    include: { jobOrderLineSize: { include: { size: true } } },
+    orderBy: { jobOrderLineSize: { size: { sortOrder: 'asc' as const } } },
+  },
+  executions: {
+    include: {
+      startedBy: { select: { id: true, name: true, email: true } },
+      finalizedBy: { select: { id: true, name: true, email: true } },
+    },
+    orderBy: { attemptNumber: 'asc' as const },
+  },
+  release: { include: { lines: true } },
+} satisfies Prisma.FinalQualityBatchInclude;
+type FinalBatch = Prisma.FinalQualityBatchGetPayload<{ include: typeof finalBatchInclude }>;
+
+function toFinalBatchView(batch: FinalBatch) {
+  return {
+    id: batch.id,
+    jobOrderId: batch.jobOrderId,
+    processFlowActivityId: batch.processFlowActivityId,
+    batchNumber: batch.batchNumber,
+    physicalQuantity: batch.physicalQuantity,
+    disposition: batch.disposition,
+    createdBy: batch.createdBy,
+    createdAt: batch.createdAt.toISOString(),
+    terminalBy: batch.terminalBy,
+    terminalAt: batch.terminalAt?.toISOString() ?? null,
+    terminalReason: batch.terminalReason,
+    allocations: batch.allocations.map((allocation) => ({
+      jobOrderLineSizeId: allocation.jobOrderLineSizeId,
+      sizeCode: allocation.jobOrderLineSize.size.code,
+      sizeLabel: allocation.jobOrderLineSize.size.label,
+      quantity: allocation.quantity,
+    })),
+    attempts: batch.executions.map((attempt) => ({
+      id: attempt.id,
+      attemptNumber: attempt.attemptNumber,
+      status: attempt.status,
+      outcome: attempt.outcome,
+      startedBy: attempt.startedBy,
+      startedAt: attempt.startedAt.toISOString(),
+      finalizedBy: attempt.finalizedBy,
+      finalizedAt: attempt.finalizedAt?.toISOString() ?? null,
+    })),
+    release: batch.release
+      ? {
+          id: batch.release.id,
+          releasedAt: batch.release.releasedAt.toISOString(),
+          quantity: batch.release.lines.reduce((sum, line) => sum + line.quantity, 0),
+        }
+      : null,
+  };
+}
 
 function assertMutation(user: CurrentUser) {
   if (!canPerformQaOperation(user))
@@ -394,7 +469,13 @@ async function loadJobOrder(jobOrderId: string) {
     include: {
       factory: true,
       purchaseOrder: { include: { distributor: true, merchandiser: true } },
-      lines: { include: { style: true, purchaseOrderLine: true } },
+      lines: {
+        include: {
+          style: true,
+          purchaseOrderLine: true,
+          sizes: { include: { size: true } },
+        },
+      },
       stageStatuses: true,
       qualityExecutions: {
         select: {
@@ -406,6 +487,24 @@ async function loadJobOrder(jobOrderId: string) {
           inspectedQuantity: true,
           outcome: true,
           finalizedAt: true,
+          finalQualityBatchId: true,
+        },
+        orderBy: { batchNumber: 'asc' },
+      },
+      finalQualityBatches: {
+        include: {
+          allocations: true,
+          executions: {
+            select: {
+              id: true,
+              attemptNumber: true,
+              status: true,
+              inspectedQuantity: true,
+              outcome: true,
+              finalizedAt: true,
+            },
+          },
+          release: { include: { lines: true } },
         },
         orderBy: { batchNumber: 'asc' },
       },
@@ -437,7 +536,10 @@ function eligible(
     (x) => x.processFlowVersionStageId === activity.associatedProductionActivityId,
   );
   if (activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE')
-    return associated?.status === 'IN_PROGRESS';
+    return (
+      associated?.status === 'IN_PROGRESS' ||
+      (activity.executionMultiplicity === 'BATCHED' && associated?.status === 'COMPLETED')
+    );
   if (activity.qualityAvailabilityPolicy === 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES')
     return associated?.status === 'COMPLETED';
   if (
@@ -477,6 +579,128 @@ function eligible(
   return false;
 }
 
+function allocationKey(
+  allocations: Array<{ jobOrderLineSizeId: string; quantity: number }>,
+): string {
+  return [...allocations]
+    .sort((left, right) => left.jobOrderLineSizeId.localeCompare(right.jobOrderLineSizeId))
+    .map((allocation) => `${allocation.jobOrderLineSizeId}:${allocation.quantity}`)
+    .join('|');
+}
+
+async function startFinalPhysicalBatch(
+  user: CurrentUser,
+  jobOrder: Awaited<ReturnType<typeof loadJobOrder>>,
+  processFlowActivityId: string,
+  activityName: string,
+  qualityFormVersionId: string,
+  allocations: Array<{ jobOrderLineSizeId: string; quantity: number }>,
+) {
+  const requestedKey = allocationKey(allocations);
+  const executionId = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${jobOrder.id}`}))`;
+    const currentJob = await tx.jobOrder.findUniqueOrThrow({
+      where: { id: jobOrder.id },
+      include: {
+        lines: { include: { sizes: true } },
+        finalQualityBatches: { include: { allocations: true } },
+        qualityExecutions: {
+          where: { processFlowActivityId, status: 'DRAFT' },
+          include: { finalQualityBatch: { include: { allocations: true } } },
+        },
+      },
+    });
+    const activeDraft = currentJob.qualityExecutions.find(
+      (execution) => execution.finalQualityBatch !== null,
+    );
+    if (activeDraft) {
+      const existingKey = allocationKey(activeDraft.finalQualityBatch!.allocations);
+      if (existingKey !== requestedKey)
+        throw HttpError.conflict('A Final inspection attempt is already in progress');
+      return activeDraft.id;
+    }
+    const sizeById = new Map(
+      currentJob.lines.flatMap((line) => line.sizes.map((size) => [size.id, size])),
+    );
+    const reservedBySize = new Map<string, number>();
+    for (const allocation of currentJob.finalQualityBatches
+      .filter((batch) => batch.disposition !== 'CANCELLED')
+      .flatMap((batch) => batch.allocations)) {
+      reservedBySize.set(
+        allocation.jobOrderLineSizeId,
+        (reservedBySize.get(allocation.jobOrderLineSizeId) ?? 0) + allocation.quantity,
+      );
+    }
+    for (const allocation of allocations) {
+      const size = sizeById.get(allocation.jobOrderLineSizeId);
+      if (!size)
+        throw HttpError.badRequest('Final batch size allocation does not belong to this Job Order');
+      const available = size.preparedQuantity - (reservedBySize.get(size.id) ?? 0);
+      if (allocation.quantity > available)
+        throw HttpError.conflict(
+          `Final batch allocation for size ${size.id} exceeds available prepared quantity ${Math.max(0, available)}`,
+        );
+    }
+    const physicalQuantity = allocations.reduce((sum, allocation) => sum + allocation.quantity, 0);
+    const batchNumber =
+      Math.max(0, ...currentJob.finalQualityBatches.map((batch) => batch.batchNumber)) + 1;
+    const batchId = createId();
+    const newExecutionId = createId();
+    await tx.finalQualityBatch.create({
+      data: {
+        id: batchId,
+        jobOrderId: jobOrder.id,
+        processFlowActivityId,
+        batchNumber,
+        physicalQuantity,
+        createdById: user.id,
+        allocations: {
+          create: allocations.map((allocation) => ({ id: createId(), ...allocation })),
+        },
+      },
+    });
+    await tx.qualityActivityExecution.create({
+      data: {
+        id: newExecutionId,
+        jobOrderId: jobOrder.id,
+        processFlowActivityId,
+        qualityFormVersionId,
+        finalQualityBatchId: batchId,
+        attemptNumber: 1,
+        batchNumber,
+        inspectedQuantity: physicalQuantity,
+        startedById: user.id,
+      },
+    });
+    await recordAuditLog(
+      {
+        actorId: user.id,
+        action: 'FINAL_INSPECTION_BATCH_STARTED',
+        entityType: 'FinalQualityBatch',
+        entityId: batchId,
+        metadata: {
+          jobOrderId: jobOrder.id,
+          processFlowActivityId,
+          activityName,
+          qualityFormVersionId,
+          attemptNumber: 1,
+          batchNumber,
+          physicalQuantity,
+          allocations,
+          executionId: newExecutionId,
+        },
+      },
+      tx,
+    );
+    return newExecutionId;
+  });
+  const execution = await prisma.qualityActivityExecution.findUniqueOrThrow({
+    where: { id: executionId },
+    include: executionInclude,
+  });
+  return toView(execution, await loadJobOrder(jobOrder.id));
+}
+
 export async function start(
   user: CurrentUser,
   jobOrderId: string,
@@ -484,7 +708,7 @@ export async function start(
   input: {
     sampleJobOrderLineSizeId?: string;
     sampleQuantity?: number;
-    inspectedQuantity?: number;
+    allocations?: Array<{ jobOrderLineSizeId: string; quantity: number }>;
   } = {},
 ) {
   assertMutation(user);
@@ -507,10 +731,10 @@ export async function start(
     throw HttpError.badRequest('Select one Job Order size and a positive sample quantity');
   if (!ppSample && (input.sampleJobOrderLineSizeId || input.sampleQuantity))
     throw HttpError.badRequest('Sample context is only valid for a size-scoped sequential gate');
-  if (activity.executionMultiplicity === 'BATCHED' && !input.inspectedQuantity)
-    throw HttpError.badRequest('A positive inspected quantity is required for this batch');
-  if (activity.executionMultiplicity !== 'BATCHED' && input.inspectedQuantity)
-    throw HttpError.badRequest('Inspected quantity is only valid for batched Quality activities');
+  if (activity.executionMultiplicity === 'BATCHED' && !input.allocations?.length)
+    throw HttpError.badRequest('At least one positive size allocation is required for this batch');
+  if (activity.executionMultiplicity !== 'BATCHED' && input.allocations)
+    throw HttpError.badRequest('Size allocations are only valid for batched Final activities');
   const supported = new Set([
     'SYSTEM_CONTEXT',
     'AQL_RESULT',
@@ -565,27 +789,24 @@ export async function start(
           );
       }
   }
-  const existing = await prisma.qualityActivityExecution.findFirst({
-    where: { jobOrderId, processFlowActivityId },
-    include: executionInclude,
-    orderBy: { attemptNumber: 'desc' },
-  });
+  const existing =
+    activity.executionMultiplicity === 'BATCHED'
+      ? null
+      : await prisma.qualityActivityExecution.findFirst({
+          where: { jobOrderId, processFlowActivityId },
+          include: executionInclude,
+          orderBy: { attemptNumber: 'desc' },
+        });
   if (existing?.status === 'DRAFT') {
     if (
-      (ppSample &&
-        (existing.sampleJobOrderLineSizeId !== input.sampleJobOrderLineSizeId ||
-          existing.sampleQuantity !== input.sampleQuantity)) ||
-      (activity.executionMultiplicity === 'BATCHED' &&
-        existing.inspectedQuantity !== input.inspectedQuantity)
+      ppSample &&
+      (existing.sampleJobOrderLineSizeId !== input.sampleJobOrderLineSizeId ||
+        existing.sampleQuantity !== input.sampleQuantity)
     )
       throw HttpError.conflict('Inspection context is locked after the execution starts');
     return toView(existing, jobOrder);
   }
-  if (
-    existing &&
-    activity.executionMultiplicity !== 'BATCHED' &&
-    (!ppSample || existing.outcome === 'PASS')
-  )
+  if (existing && (!ppSample || existing.outcome === 'PASS'))
     throw HttpError.conflict(
       ppSample
         ? 'PP Sample gate is already satisfied by a finalized PASS cycle'
@@ -593,9 +814,19 @@ export async function start(
     );
   if (!eligible(jobOrder, activity))
     throw HttpError.conflict('Quality activity is not currently eligible to start');
+  if (activity.executionMultiplicity === 'BATCHED') {
+    return startFinalPhysicalBatch(
+      user,
+      jobOrder,
+      activity.id,
+      activity.name,
+      form.id,
+      input.allocations!,
+    );
+  }
   try {
     const created = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`quality:${jobOrderId}:${processFlowActivityId}`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${jobOrderId}`}))`;
       const currentExecutions = await tx.qualityActivityExecution.findMany({
         where: { jobOrderId, processFlowActivityId },
         orderBy: [{ attemptNumber: 'desc' }, { batchNumber: 'desc' }],
@@ -603,11 +834,9 @@ export async function start(
       const currentDraft = currentExecutions.find((candidate) => candidate.status === 'DRAFT');
       if (currentDraft) {
         if (
-          (ppSample &&
-            (currentDraft.sampleJobOrderLineSizeId !== input.sampleJobOrderLineSizeId ||
-              currentDraft.sampleQuantity !== input.sampleQuantity)) ||
-          (activity.executionMultiplicity === 'BATCHED' &&
-            currentDraft.inspectedQuantity !== input.inspectedQuantity)
+          ppSample &&
+          (currentDraft.sampleJobOrderLineSizeId !== input.sampleJobOrderLineSizeId ||
+            currentDraft.sampleQuantity !== input.sampleQuantity)
         )
           throw HttpError.conflict('Inspection context is locked after the execution starts');
         return tx.qualityActivityExecution.findFirstOrThrow({
@@ -615,7 +844,7 @@ export async function start(
           include: executionInclude,
         });
       }
-      if (activity.executionMultiplicity !== 'BATCHED' && currentExecutions.length && !ppSample)
+      if (currentExecutions.length && !ppSample)
         throw HttpError.conflict('This single Quality activity already has an execution');
       if (
         ppSample &&
@@ -624,19 +853,8 @@ export async function start(
         )
       )
         throw HttpError.conflict('PP Sample gate is already satisfied by a finalized PASS cycle');
-      if (activity.executionMultiplicity === 'BATCHED') {
-        const inspected = currentExecutions
-          .filter((candidate) => candidate.status === 'FINALIZED')
-          .reduce((sum, candidate) => sum + (candidate.inspectedQuantity ?? 0), 0);
-        if (jobOrder.preparedQuantityTotal > 0 && inspected >= jobOrder.preparedQuantityTotal)
-          throw HttpError.conflict('Final Inspection coverage is already complete');
-      }
       const attemptNumber = ppSample ? (currentExecutions[0]?.attemptNumber ?? 0) + 1 : 1;
-      const batchNumber =
-        activity.executionMultiplicity === 'BATCHED'
-          ? (currentExecutions.find((candidate) => candidate.attemptNumber === 1)?.batchNumber ??
-              0) + 1
-          : 1;
+      const batchNumber = 1;
       const result = await tx.qualityActivityExecution.create({
         data: {
           id: createId(),
@@ -645,7 +863,6 @@ export async function start(
           qualityFormVersionId: form.id,
           attemptNumber,
           batchNumber,
-          inspectedQuantity: input.inspectedQuantity,
           sampleJobOrderLineSizeId: input.sampleJobOrderLineSizeId,
           sampleQuantity: input.sampleQuantity,
           startedById: user.id,
@@ -701,11 +918,7 @@ export async function start(
       await recordAuditLog(
         {
           actorId: user.id,
-          action: ppSample
-            ? 'PP_SAMPLE_STARTED'
-            : activity.executionMultiplicity === 'BATCHED'
-              ? 'FINAL_INSPECTION_BATCH_STARTED'
-              : 'QUALITY_ACTIVITY_STARTED',
+          action: ppSample ? 'PP_SAMPLE_STARTED' : 'QUALITY_ACTIVITY_STARTED',
           entityType: 'QualityActivityExecution',
           entityId: result.id,
           metadata: {
@@ -715,7 +928,7 @@ export async function start(
             qualityFormVersionId: form.id,
             attemptNumber,
             batchNumber: result.batchNumber,
-            inspectedQuantity: input.inspectedQuantity ?? null,
+            inspectedQuantity: null,
             sampleJobOrderLineSizeId: input.sampleJobOrderLineSizeId ?? null,
             sampleQuantity: input.sampleQuantity ?? null,
           },
@@ -841,31 +1054,53 @@ async function persist(
   if (!finalize && canonical(input) === canonical(currentPayload(execution)))
     return toView(execution, await loadJobOrder(execution.jobOrderId));
   const saved = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`quality:${execution.jobOrderId}:${execution.processFlowActivityId}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${execution.jobOrderId}`}))`;
     if (finalize && execution.processFlowActivity.executionMultiplicity === 'BATCHED') {
-      const prepared = await tx.jobOrder.findUniqueOrThrow({
-        where: { id: execution.jobOrderId },
-        select: { preparedQuantityTotal: true },
-      });
-      if (prepared.preparedQuantityTotal <= 0)
-        throw HttpError.conflict(
-          'Prepared quantity is not yet authoritative; save this batch as a draft and finalize after preparation is recorded',
-        );
-      const finalized = await tx.qualityActivityExecution.aggregate({
-        where: {
-          jobOrderId: execution.jobOrderId,
-          processFlowActivityId: execution.processFlowActivityId,
-          attemptNumber: execution.attemptNumber,
-          status: 'FINALIZED',
+      const current = await tx.qualityActivityExecution.findUniqueOrThrow({
+        where: { id: execution.id },
+        include: {
+          finalQualityBatch: {
+            include: {
+              allocations: { include: { jobOrderLineSize: true } },
+              executions: { select: { id: true, attemptNumber: true, status: true } },
+              release: true,
+            },
+          },
         },
-        _sum: { inspectedQuantity: true },
       });
-      const resulting =
-        (finalized._sum.inspectedQuantity ?? 0) + (execution.inspectedQuantity ?? 0);
-      if (resulting > prepared.preparedQuantityTotal)
-        throw HttpError.badRequest(
-          `Finalizing this batch would inspect ${resulting}, exceeding prepared quantity ${prepared.preparedQuantityTotal}`,
+      const batch = current.finalQualityBatch;
+      if (!batch)
+        throw HttpError.conflict('Final execution is not linked to a physical Final batch');
+      if (batch.release || batch.disposition === 'RELEASED')
+        throw HttpError.conflict('This physical Final batch has already been QA released');
+      if (batch.disposition === 'PERMANENTLY_REJECTED' || batch.disposition === 'CANCELLED')
+        throw HttpError.conflict('This physical Final batch is already terminal');
+      const latestAttempt = Math.max(...batch.executions.map((attempt) => attempt.attemptNumber));
+      if (current.attemptNumber !== latestAttempt)
+        throw HttpError.conflict('Only the latest Final inspection attempt may be finalized');
+      if (
+        batch.allocations.reduce((sum, allocation) => sum + allocation.quantity, 0) !==
+        batch.physicalQuantity
+      )
+        throw HttpError.conflict('Final batch size allocations do not reconcile');
+      if (input.outcome?.value === 'PASS') {
+        const releasedBySize = new Map(
+          (
+            await tx.qaReleaseLine.groupBy({
+              by: ['jobOrderLineSizeId'],
+              where: { release: { jobOrderId: execution.jobOrderId } },
+              _sum: { quantity: true },
+            })
+          ).map((line) => [line.jobOrderLineSizeId, line._sum.quantity ?? 0]),
         );
+        for (const allocation of batch.allocations) {
+          const released = releasedBySize.get(allocation.jobOrderLineSizeId) ?? 0;
+          if (released + allocation.quantity > allocation.jobOrderLineSize.orderedQuantity)
+            throw HttpError.conflict(
+              `QA released quantity for Job Order size ${allocation.jobOrderLineSizeId} cannot exceed ${allocation.jobOrderLineSize.orderedQuantity}`,
+            );
+        }
+      }
     }
     const changed = await tx.qualityActivityExecution.updateMany({
       where: { id: execution.id, version: input.expectedVersion, status: 'DRAFT' },
@@ -975,6 +1210,79 @@ async function persist(
           recordedById: user.id,
         })),
       });
+    if (finalize && execution.processFlowActivity.executionMultiplicity === 'BATCHED') {
+      const batch = await tx.finalQualityBatch.findUniqueOrThrow({
+        where: { id: execution.finalQualityBatchId! },
+        include: {
+          allocations: { include: { jobOrderLineSize: true } },
+          release: true,
+        },
+      });
+      if (input.outcome?.value === 'PASS') {
+        const releaseId = createId();
+        await tx.qaRelease.create({
+          data: {
+            id: releaseId,
+            jobOrderId: execution.jobOrderId,
+            sourceQualityExecutionId: execution.id,
+            finalQualityBatchId: batch.id,
+            releasedById: user.id,
+            lines: {
+              create: batch.allocations.map((allocation) => ({
+                id: createId(),
+                jobOrderLineSizeId: allocation.jobOrderLineSizeId,
+                purchaseOrderLineSizeId: allocation.jobOrderLineSize.purchaseOrderLineSizeId,
+                quantity: allocation.quantity,
+              })),
+            },
+          },
+        });
+        for (const allocation of batch.allocations)
+          await tx.distributorPurchaseOrderLineSize.update({
+            where: { id: allocation.jobOrderLineSize.purchaseOrderLineSizeId },
+            data: { qaPassedQuantity: { increment: allocation.quantity } },
+          });
+        await tx.finalQualityBatch.update({
+          where: { id: batch.id },
+          data: {
+            disposition: 'RELEASED',
+            terminalById: user.id,
+            terminalAt: new Date(),
+            terminalReason: null,
+          },
+        });
+        await recordAuditLog(
+          {
+            actorId: user.id,
+            action: 'FINAL_INSPECTION_BATCH_RELEASED',
+            entityType: 'FinalQualityBatch',
+            entityId: batch.id,
+            metadata: {
+              jobOrderId: execution.jobOrderId,
+              executionId: execution.id,
+              releaseId,
+              batchNumber: batch.batchNumber,
+              physicalQuantity: batch.physicalQuantity,
+              allocations: batch.allocations.map((allocation) => ({
+                jobOrderLineSizeId: allocation.jobOrderLineSizeId,
+                quantity: allocation.quantity,
+              })),
+            },
+          },
+          tx,
+        );
+      } else {
+        await tx.finalQualityBatch.update({
+          where: { id: batch.id },
+          data: {
+            disposition: 'AWAITING_REINSPECTION',
+            terminalById: null,
+            terminalAt: null,
+            terminalReason: null,
+          },
+        });
+      }
+    }
     await recordAuditLog(
       {
         actorId: user.id,
@@ -1010,6 +1318,192 @@ export const saveDraft = (user: CurrentUser, id: string, input: QualityExecution
 export const finalize = (user: CurrentUser, id: string, input: QualityExecutionPayload) =>
   persist(user, id, input, true);
 
+export async function getFinalBatch(user: CurrentUser, batchId: string) {
+  if (
+    !user.roles.some((role) =>
+      ['ADMIN', 'QA_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(role),
+    )
+  )
+    throw HttpError.forbidden('You cannot view this Final Quality batch');
+  const batch = await prisma.finalQualityBatch.findUnique({
+    where: { id: batchId },
+    include: finalBatchInclude,
+  });
+  if (!batch) throw HttpError.notFound('Final Quality batch not found');
+  return toFinalBatchView(batch);
+}
+
+export async function startFinalBatchReinspection(user: CurrentUser, batchId: string) {
+  assertMutation(user);
+  const executionId = await prisma.$transaction(async (tx) => {
+    const identity = await tx.finalQualityBatch.findUnique({
+      where: { id: batchId },
+      select: { jobOrderId: true },
+    });
+    if (!identity) throw HttpError.notFound('Final Quality batch not found');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${identity.jobOrderId}`}))`;
+    const batch = await tx.finalQualityBatch.findUniqueOrThrow({
+      where: { id: batchId },
+      include: {
+        processFlowActivity: { select: { qualityFormVersionId: true } },
+        executions: { orderBy: { attemptNumber: 'asc' } },
+        release: true,
+      },
+    });
+    if (batch.disposition !== 'AWAITING_REINSPECTION' || batch.release)
+      throw HttpError.conflict('Only an unresolved failed physical batch can be reinspected');
+    if (batch.executions.some((attempt) => attempt.status === 'DRAFT'))
+      throw HttpError.conflict('A reinspection attempt is already in progress');
+    const latest = batch.executions.at(-1);
+    if (!latest || latest.status !== 'FINALIZED' || latest.outcome !== 'FAIL')
+      throw HttpError.conflict('The latest Final attempt must be a finalized FAIL');
+    if (!batch.processFlowActivity.qualityFormVersionId)
+      throw HttpError.conflict('Final activity has no Quality Form version');
+    const id = createId();
+    await tx.qualityActivityExecution.create({
+      data: {
+        id,
+        jobOrderId: batch.jobOrderId,
+        processFlowActivityId: batch.processFlowActivityId,
+        qualityFormVersionId: batch.processFlowActivity.qualityFormVersionId,
+        finalQualityBatchId: batch.id,
+        attemptNumber: latest.attemptNumber + 1,
+        batchNumber: batch.batchNumber,
+        inspectedQuantity: batch.physicalQuantity,
+        startedById: user.id,
+      },
+    });
+    await recordAuditLog(
+      {
+        actorId: user.id,
+        action: 'FINAL_INSPECTION_REINSPECTION_STARTED',
+        entityType: 'FinalQualityBatch',
+        entityId: batch.id,
+        metadata: {
+          jobOrderId: batch.jobOrderId,
+          executionId: id,
+          batchNumber: batch.batchNumber,
+          attemptNumber: latest.attemptNumber + 1,
+          physicalQuantity: batch.physicalQuantity,
+        },
+      },
+      tx,
+    );
+    return id;
+  });
+  const execution = await prisma.qualityActivityExecution.findUniqueOrThrow({
+    where: { id: executionId },
+    include: executionInclude,
+  });
+  return toView(execution, await loadJobOrder(execution.jobOrderId));
+}
+
+export async function cancelFinalBatch(
+  user: CurrentUser,
+  batchId: string,
+  input: { reason: string },
+) {
+  assertMutation(user);
+  await prisma.$transaction(async (tx) => {
+    const identity = await tx.finalQualityBatch.findUnique({
+      where: { id: batchId },
+      select: { jobOrderId: true },
+    });
+    if (!identity) throw HttpError.notFound('Final Quality batch not found');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${identity.jobOrderId}`}))`;
+    const batch = await tx.finalQualityBatch.findUniqueOrThrow({
+      where: { id: batchId },
+      include: { executions: true, release: true },
+    });
+    if (batch.disposition !== 'DRAFT' || batch.release)
+      throw HttpError.conflict('Only an unfinalized physical Final batch can be cancelled');
+    if (
+      batch.executions.length !== 1 ||
+      batch.executions[0]?.status !== 'DRAFT' ||
+      batch.executions[0]?.version !== 1
+    )
+      throw HttpError.conflict('This Final batch has inspection work and cannot be cancelled');
+    await tx.qualityActivityExecution.update({
+      where: { id: batch.executions[0].id },
+      data: { status: 'CANCELLED', version: { increment: 1 } },
+    });
+    await tx.finalQualityBatch.update({
+      where: { id: batch.id },
+      data: {
+        disposition: 'CANCELLED',
+        terminalById: user.id,
+        terminalAt: new Date(),
+        terminalReason: input.reason,
+      },
+    });
+    await recordAuditLog(
+      {
+        actorId: user.id,
+        action: 'FINAL_INSPECTION_BATCH_CANCELLED',
+        entityType: 'FinalQualityBatch',
+        entityId: batch.id,
+        metadata: { jobOrderId: batch.jobOrderId, reason: input.reason },
+      },
+      tx,
+    );
+  });
+  return getFinalBatch(user, batchId);
+}
+
+export async function permanentlyRejectFinalBatch(
+  user: CurrentUser,
+  batchId: string,
+  input: { reason: string },
+) {
+  assertMutation(user);
+  await prisma.$transaction(async (tx) => {
+    const identity = await tx.finalQualityBatch.findUnique({
+      where: { id: batchId },
+      select: { jobOrderId: true },
+    });
+    if (!identity) throw HttpError.notFound('Final Quality batch not found');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${identity.jobOrderId}`}))`;
+    const batch = await tx.finalQualityBatch.findUniqueOrThrow({
+      where: { id: batchId },
+      include: { executions: { orderBy: { attemptNumber: 'asc' } }, release: true },
+    });
+    const latest = batch.executions.at(-1);
+    if (
+      batch.disposition !== 'AWAITING_REINSPECTION' ||
+      batch.release ||
+      !latest ||
+      latest.status !== 'FINALIZED' ||
+      latest.outcome !== 'FAIL'
+    )
+      throw HttpError.conflict('Only an unresolved failed physical Final batch can be rejected');
+    await tx.finalQualityBatch.update({
+      where: { id: batch.id },
+      data: {
+        disposition: 'PERMANENTLY_REJECTED',
+        terminalById: user.id,
+        terminalAt: new Date(),
+        terminalReason: input.reason,
+      },
+    });
+    await recordAuditLog(
+      {
+        actorId: user.id,
+        action: 'FINAL_INSPECTION_BATCH_PERMANENTLY_REJECTED',
+        entityType: 'FinalQualityBatch',
+        entityId: batch.id,
+        metadata: {
+          jobOrderId: batch.jobOrderId,
+          batchNumber: batch.batchNumber,
+          physicalQuantity: batch.physicalQuantity,
+          reason: input.reason,
+        },
+      },
+      tx,
+    );
+  });
+  return getFinalBatch(user, batchId);
+}
+
 export async function get(user: CurrentUser, id: string) {
   if (
     !user.roles.some((x) => ['ADMIN', 'QA_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(x))
@@ -1024,10 +1518,40 @@ export async function get(user: CurrentUser, id: string) {
 }
 
 function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJobOrder>>) {
-  const total = planned(jobOrder);
   const runtimeByActivity = new Map(
     jobOrder.stageStatuses.map((x) => [x.processFlowVersionStageId, x]),
   );
+  const associatedProductionActivity = execution.processFlowActivity.associatedProductionActivity;
+  const productionContext = associatedProductionActivity
+    ? {
+        associatedActivity: {
+          id: associatedProductionActivity.id,
+          code: associatedProductionActivity.code,
+          name: associatedProductionActivity.name,
+        },
+        stages: jobOrder.processFlowVersion.stages
+          .filter((stage) => stage.activityType === 'PRODUCTION')
+          .sort((left, right) => left.sequence - right.sequence)
+          .flatMap((stage) => {
+            const runtime = runtimeByActivity.get(stage.id);
+            if (!runtime) return [];
+            return [
+              {
+                id: stage.id,
+                code: stage.code,
+                name: stage.name,
+                status: runtime.status,
+                relationship:
+                  stage.id === associatedProductionActivity.id
+                    ? ('ASSOCIATED' as const)
+                    : stage.sequence < associatedProductionActivity.sequence
+                      ? ('PREVIOUS' as const)
+                      : ('FOLLOWING' as const),
+              },
+            ];
+          }),
+      }
+    : null;
   const sections = execution.qualityFormVersion.sections.map((section) => ({
     ...section,
     components: section.components.map((item) => {
@@ -1038,21 +1562,6 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
           key: field.key,
           ...derivedSystemContext(jobOrder, String(field.sourceKey)),
         }));
-      if (item.type === 'PRODUCTION_PROGRESS')
-        systemValue = list(cfg.metrics).map((metric) => {
-          const definition = jobOrder.processFlowVersion.stages.find(
-            (x) => x.activityType === 'PRODUCTION' && x.code === metric.sourceActivityCode,
-          );
-          const runtime = definition ? runtimeByActivity.get(definition.id) : undefined;
-          return {
-            key: metric.key,
-            value:
-              runtime?.completedQuantity == null || total === 0
-                ? null
-                : Math.round((runtime.completedQuantity * 10000) / total) / 100,
-            available: Boolean(definition && runtime?.completedQuantity != null),
-          };
-        });
       if (item.type === 'QUANTITY_RECONCILIATION')
         systemValue = list(cfg.fields)
           .filter((field) => field.source === 'SYSTEM')
@@ -1079,6 +1588,7 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
   return {
     id: execution.id,
     jobOrderId: execution.jobOrderId,
+    jobOrderNumber: jobOrder.jobOrderNumber,
     processFlowActivityId: execution.processFlowActivityId,
     activityName: execution.processFlowActivity.name,
     qualityForm: {
@@ -1108,42 +1618,119 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
           decision: execution.outcome,
         }
       : null,
+    finalBatch: execution.finalQualityBatch
+      ? {
+          id: execution.finalQualityBatch.id,
+          batchNumber: execution.finalQualityBatch.batchNumber,
+          physicalQuantity: execution.finalQualityBatch.physicalQuantity,
+          disposition: execution.finalQualityBatch.disposition,
+          allocations: execution.finalQualityBatch.allocations.map((allocation) => ({
+            jobOrderLineSizeId: allocation.jobOrderLineSizeId,
+            sizeCode: allocation.jobOrderLineSize.size.code,
+            sizeLabel: allocation.jobOrderLineSize.size.label,
+            quantity: allocation.quantity,
+          })),
+          attempts: execution.finalQualityBatch.executions.map((attempt) => ({
+            id: attempt.id,
+            attemptNumber: attempt.attemptNumber,
+            status: attempt.status,
+            outcome: attempt.outcome,
+            startedAt: attempt.startedAt.toISOString(),
+            finalizedAt: attempt.finalizedAt?.toISOString() ?? null,
+          })),
+          release: execution.finalQualityBatch.release
+            ? {
+                id: execution.finalQualityBatch.release.id,
+                releasedAt: execution.finalQualityBatch.release.releasedAt.toISOString(),
+                quantity: execution.finalQualityBatch.release.lines.reduce(
+                  (sum, line) => sum + line.quantity,
+                  0,
+                ),
+              }
+            : null,
+        }
+      : null,
+    productionContext,
     coverage:
       execution.processFlowActivity.executionMultiplicity === 'BATCHED'
         ? (() => {
-            const batches = jobOrder.qualityExecutions.filter(
-              (candidate) =>
-                candidate.processFlowActivityId === execution.processFlowActivityId &&
-                candidate.attemptNumber === execution.attemptNumber,
+            const batches = jobOrder.finalQualityBatches.filter(
+              (batch) =>
+                batch.processFlowActivityId === execution.processFlowActivityId &&
+                batch.disposition !== 'CANCELLED',
             );
-            const inspected = batches
-              .filter((candidate) => candidate.status === 'FINALIZED')
-              .reduce((sum, candidate) => sum + (candidate.inspectedQuantity ?? 0), 0);
+            const attempts = batches.flatMap((batch) => batch.executions);
+            const inspectionActivityQuantity = attempts
+              .filter((attempt) => attempt.status === 'FINALIZED')
+              .reduce((sum, attempt) => sum + (attempt.inspectedQuantity ?? 0), 0);
+            const reservedForFinalQuantity = batches.reduce(
+              (sum, batch) => sum + batch.physicalQuantity,
+              0,
+            );
+            const inspectedPhysicalCoverage = batches
+              .filter((batch) => batch.executions.some((attempt) => attempt.status === 'FINALIZED'))
+              .reduce((sum, batch) => sum + batch.physicalQuantity, 0);
+            const resolvedPhysicalCoverage = batches
+              .filter((batch) => ['RELEASED', 'PERMANENTLY_REJECTED'].includes(batch.disposition))
+              .reduce((sum, batch) => sum + batch.physicalQuantity, 0);
+            const releasedQuantity = batches.reduce(
+              (sum, batch) =>
+                sum +
+                (batch.release?.lines.reduce((lineSum, line) => lineSum + line.quantity, 0) ?? 0),
+              0,
+            );
+            const permanentlyRejectedQuantity = batches
+              .filter((batch) => batch.disposition === 'PERMANENTLY_REJECTED')
+              .reduce((sum, batch) => sum + batch.physicalQuantity, 0);
+            const awaitingReinspectionQuantity = batches
+              .filter((batch) => batch.disposition === 'AWAITING_REINSPECTION')
+              .reduce((sum, batch) => sum + batch.physicalQuantity, 0);
             const prepared = jobOrder.preparedQuantityTotal;
             const preparedQuantityAuthoritative = prepared > 0;
-            const finalizedBatches = batches.filter(
-              (candidate) => candidate.status === 'FINALIZED',
-            );
-            const passedBatches = finalizedBatches.filter(
-              (candidate) => candidate.outcome === 'PASS',
+            const passedBatches = batches.filter(
+              (batch) => batch.disposition === 'RELEASED',
             ).length;
-            const failedBatches = finalizedBatches.filter(
-              (candidate) => candidate.outcome === 'FAIL',
+            const failedBatches = batches.filter((batch) =>
+              batch.executions.some(
+                (attempt) => attempt.status === 'FINALIZED' && attempt.outcome === 'FAIL',
+              ),
             ).length;
-            const reconciliationConflict = preparedQuantityAuthoritative && inspected > prepared;
-            const complete = preparedQuantityAuthoritative && inspected === prepared;
+            const reconciliationConflict =
+              preparedQuantityAuthoritative && reservedForFinalQuantity > prepared;
+            const coverageCompleteSoFar =
+              preparedQuantityAuthoritative && resolvedPhysicalCoverage === prepared;
+            const finalQaComplete =
+              jobOrder.productionCompletedAt !== null &&
+              coverageCompleteSoFar &&
+              awaitingReinspectionQuantity === 0 &&
+              batches.every((batch) =>
+                ['RELEASED', 'PERMANENTLY_REJECTED'].includes(batch.disposition),
+              );
             return {
               preparedQuantityAuthoritative,
               preparedQuantity: preparedQuantityAuthoritative ? prepared : null,
-              inspectedQuantity: inspected,
+              inspectedQuantity: inspectionActivityQuantity,
+              inspectionActivityQuantity,
+              reservedForFinalQuantity,
+              inspectedPhysicalCoverage,
+              resolvedPhysicalCoverage,
+              physicalFinalCoverage: inspectedPhysicalCoverage,
+              releasedQuantity,
+              permanentlyRejectedQuantity,
+              awaitingReinspectionQuantity,
               remainingQuantity: preparedQuantityAuthoritative
-                ? Math.max(0, prepared - inspected)
+                ? Math.max(0, prepared - resolvedPhysicalCoverage)
                 : null,
-              complete,
+              availableForNewFinalBatch: preparedQuantityAuthoritative
+                ? Math.max(0, prepared - reservedForFinalQuantity)
+                : null,
+              complete: coverageCompleteSoFar,
+              coverageCompleteSoFar,
+              finalQaComplete,
               reconciliationConflict,
               state: reconciliationConflict
                 ? ('CONFLICT' as const)
-                : complete
+                : coverageCompleteSoFar
                   ? ('COMPLETE' as const)
                   : preparedQuantityAuthoritative
                     ? ('IN_PROGRESS' as const)
@@ -1151,13 +1738,34 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
               passedBatches,
               failedBatches,
               hasFailedBatches: failedBatches > 0,
-              batches: batches.map((candidate) => ({
-                id: candidate.id,
-                batchNumber: candidate.batchNumber,
-                inspectedQuantity: candidate.inspectedQuantity,
-                status: candidate.status,
-                outcome: candidate.outcome,
-                finalizedAt: candidate.finalizedAt?.toISOString() ?? null,
+              batches: batches.map((batch) => ({
+                id: batch.id,
+                batchNumber: batch.batchNumber,
+                physicalQuantity: batch.physicalQuantity,
+                inspectedQuantity: batch.executions.some(
+                  (attempt) => attempt.status === 'FINALIZED',
+                )
+                  ? batch.physicalQuantity
+                  : 0,
+                disposition: batch.disposition,
+                status: batch.executions.some((attempt) => attempt.status === 'DRAFT')
+                  ? ('DRAFT' as const)
+                  : ('FINALIZED' as const),
+                outcome:
+                  batch.executions
+                    .filter((attempt) => attempt.status === 'FINALIZED')
+                    .sort((left, right) => right.attemptNumber - left.attemptNumber)[0]?.outcome ??
+                  null,
+                finalizedAt:
+                  batch.executions
+                    .filter((attempt) => attempt.status === 'FINALIZED')
+                    .sort((left, right) => right.attemptNumber - left.attemptNumber)[0]
+                    ?.finalizedAt?.toISOString() ?? null,
+                allocations: batch.allocations.map((allocation) => ({
+                  jobOrderLineSizeId: allocation.jobOrderLineSizeId,
+                  quantity: allocation.quantity,
+                })),
+                attemptCount: batch.executions.length,
               })),
             };
           })()

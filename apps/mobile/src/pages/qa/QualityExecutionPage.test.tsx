@@ -23,6 +23,7 @@ afterEach(() => {
 const view: QualityExecutionView = {
   id: 'e1',
   jobOrderId: 'j1',
+  jobOrderNumber: 'JO-2026-000001',
   processFlowActivityId: 'a1',
   activityName: 'Final Inspection',
   qualityForm: {
@@ -33,10 +34,40 @@ const view: QualityExecutionView = {
     versionNumber: 1,
   },
   attemptNumber: 1,
-  batchNumber: 1,
-  inspectedQuantity: null,
+  batchNumber: 2,
+  inspectedQuantity: 25,
   ppSample: null,
-  coverage: null,
+  productionContext: null,
+  coverage: {
+    preparedQuantityAuthoritative: true,
+    preparedQuantity: 60,
+    inspectedQuantity: 20,
+    remainingQuantity: 40,
+    complete: false,
+    reconciliationConflict: false,
+    state: 'IN_PROGRESS',
+    passedBatches: 1,
+    failedBatches: 0,
+    hasFailedBatches: false,
+    batches: [
+      {
+        id: 'batch-1',
+        batchNumber: 1,
+        inspectedQuantity: 20,
+        status: 'FINALIZED',
+        outcome: 'PASS',
+        finalizedAt: '2026-08-20T10:00:00.000Z',
+      },
+      {
+        id: 'e1',
+        batchNumber: 2,
+        inspectedQuantity: 25,
+        status: 'DRAFT',
+        outcome: null,
+        finalizedAt: null,
+      },
+    ],
+  },
   status: 'DRAFT',
   version: 3,
   startedAt: '',
@@ -53,6 +84,24 @@ const view: QualityExecutionView = {
           type: 'ATTACHMENTS',
           title: 'Attachments',
           config: { requirements: [{ key: 'photo', label: 'Inspection photo' }] },
+        },
+        {
+          id: 'quantities',
+          sequence: 2,
+          type: 'QUANTITY_RECONCILIATION',
+          title: 'Inspection and shipment sampling',
+          config: {
+            fields: [
+              {
+                key: 'quantityInspected',
+                label: 'Quantity Inspected',
+                dataType: 'NUMBER',
+                source: 'SYSTEM',
+              },
+              { key: 'openCartons', label: 'Open Cartons', dataType: 'NUMBER' },
+            ],
+          },
+          systemValue: [{ key: 'quantityInspected', value: 25, available: true }],
         },
       ],
     },
@@ -72,7 +121,17 @@ const view: QualityExecutionView = {
     signoffs: [],
     outcome: null,
   },
-  attachments: [],
+  attachments: [
+    {
+      id: 'attachment-1',
+      componentId: 'files',
+      requirementKey: 'photo',
+      fileName: 'final-evidence.jpg',
+      contentType: 'image/jpeg',
+      sizeBytes: 2048,
+      createdAt: '2026-08-20T10:00:00.000Z',
+    },
+  ],
 };
 
 describe('mobile Quality execution workflow', () => {
@@ -95,6 +154,17 @@ describe('mobile Quality execution workflow', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    const back = container.querySelector('a[aria-label="Back to Job Order JO-2026-000001"]');
+    expect(back?.textContent).toContain('Job Order JO-2026-000001');
+    expect(back?.getAttribute('href')).toBe('/job-orders/j1');
+    expect(container.textContent).toContain(
+      'Prepared 60 · Previously inspected 20 · This inspection 25 · Remaining after this batch 15',
+    );
+    expect(container.textContent).toContain('final-evidence.jpg');
+    expect(container.textContent).toContain('15 units remain after this batch.');
+    expect(container.querySelector('[data-quality-field-grid="true"]')?.className).toContain(
+      'grid-cols-1',
+    );
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['image'], 'inspection.png', { type: 'image/png' });
     await act(async () => {

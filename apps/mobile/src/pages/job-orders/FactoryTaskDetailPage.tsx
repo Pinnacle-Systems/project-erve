@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -6,13 +6,14 @@ import type {
   ApiErrorResponse,
   ApiSuccessResponse,
   JobOrderDetail,
+  QualityCoverageView,
   UpdatePreparedQuantityInput,
   QaReworkTaskView,
   QualityExecutionView,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import { getJobOrderOperationalPresentation } from '@erve/app-components';
+import { FinalBatchAllocationForm, getJobOrderOperationalPresentation } from '@erve/app-components';
 
 interface MutationVariables {
   body: object;
@@ -32,6 +33,13 @@ function mutationMessage(error: unknown): string {
   if (!error.response)
     return 'The result is unknown because the connection was interrupted. Retry is safe.';
   return error.response.data.error.message;
+}
+
+function finalBatchStartError(error: unknown): string {
+  if (!isAxiosError<ApiErrorResponse>(error))
+    return 'Unable to create the Final batch. Review its size allocation and try again.';
+  const response = error.response?.data.error;
+  return response?.message ?? 'Unable to create the Final batch. Review its size allocation.';
 }
 
 function useTaskMutation(id: string, path: string) {
@@ -61,6 +69,11 @@ export function FactoryTaskDetailPage() {
   const [qualityStartContexts, setQualityStartContexts] = useState<
     Record<string, { sizeId: string; quantity: string }>
   >({});
+  const [qualityBatchAllocations, setQualityBatchAllocations] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const [qualityBatchErrors, setQualityBatchErrors] = useState<Record<string, string>>({});
+  const qualityStartBatchPendingRef = useRef(false);
   const task = useQuery({
     queryKey: ['factory-task', id],
     queryFn: async () =>
@@ -78,7 +91,65 @@ export function FactoryTaskDetailPage() {
       navigate(
         execution.ppSample ? `/qa/${execution.jobOrderId}` : `/quality-executions/${execution.id}`,
       ),
+    onError: (error, variables) => {
+      if (!Object.prototype.hasOwnProperty.call(variables.body ?? {}, 'allocations')) return;
+      qualityStartBatchPendingRef.current = false;
+      setQualityBatchErrors((current) => ({
+        ...current,
+        [variables.activityId]: finalBatchStartError(error),
+      }));
+    },
   });
+
+  const updateFinalBatchAllocation = (activityId: string, sizeId: string, quantity: string) => {
+    setQualityBatchAllocations((current) => ({
+      ...current,
+      [activityId]: { ...current[activityId], [sizeId]: quantity },
+    }));
+    setQualityBatchErrors((current) => {
+      if (!current[activityId]) return current;
+      const next = { ...current };
+      delete next[activityId];
+      return next;
+    });
+  };
+
+  const startQualityBatch = (activityId: string, coverage: QualityCoverageView | null) => {
+    if (qualityStartBatchPendingRef.current || startQuality.isPending) return;
+    const values = qualityBatchAllocations[activityId] ?? {};
+    const allocations = (coverage?.availableBySize ?? []).flatMap((size) => {
+      const quantity = Number(values[size.jobOrderLineSizeId] || 0);
+      return quantity > 0 ? [{ jobOrderLineSizeId: size.jobOrderLineSizeId, quantity }] : [];
+    });
+    const invalid = allocations.some((allocation) => {
+      const capacity = coverage?.availableBySize?.find(
+        (size) => size.jobOrderLineSizeId === allocation.jobOrderLineSizeId,
+      )?.availableQuantity;
+      return (
+        !Number.isInteger(allocation.quantity) || capacity == null || allocation.quantity > capacity
+      );
+    });
+    if (!allocations.length || invalid) {
+      setQualityBatchErrors((current) => ({
+        ...current,
+        [activityId]: !allocations.length
+          ? 'Allocate at least one prepared unit to this Final batch.'
+          : 'Each batch allocation must be a whole number within the available size quantity.',
+      }));
+      return;
+    }
+    setQualityBatchErrors((current) => {
+      if (!current[activityId]) return current;
+      const next = { ...current };
+      delete next[activityId];
+      return next;
+    });
+    qualityStartBatchPendingRef.current = true;
+    startQuality.mutate({
+      activityId,
+      body: { allocations },
+    });
+  };
 
   const confirm = useTaskMutation(id, `/job-orders/${id}/actions/confirm`);
   const completeStage = useTaskMutation(id, `/job-orders/${id}/actions/complete-stage`);
@@ -435,7 +506,10 @@ export function FactoryTaskDetailPage() {
                     {activity.coverage.preparedQuantityAuthoritative
                       ? activity.coverage.preparedQuantity
                       : 'Not yet recorded'}{' '}
-                    · Inspected {activity.coverage.inspectedQuantity} · Remaining{' '}
+                    · Inspected{' '}
+                    {activity.coverage.inspectedPhysicalCoverage ??
+                      activity.coverage.inspectedQuantity}{' '}
+                    · Unresolved{' '}
                     {activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
                   </p>
                   <p>
@@ -538,39 +612,28 @@ export function FactoryTaskDetailPage() {
                   {activity.executionMultiplicity === 'BATCHED' &&
                     activity.execution.status === 'FINALIZED' &&
                     !activity.coverage?.complete && (
-                      <div className="mt-2">
-                        <input
-                          aria-label="Next batch inspected quantity"
-                          type="number"
-                          min="1"
-                          value={
-                            qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''
+                      <div className="mt-2 space-y-3">
+                        <FinalBatchAllocationForm
+                          coverage={activity.coverage!}
+                          values={qualityBatchAllocations[activity.processFlowVersionStageId] ?? {}}
+                          onChange={(sizeId, value) =>
+                            updateFinalBatchAllocation(
+                              activity.processFlowVersionStageId,
+                              sizeId,
+                              value,
+                            )
                           }
-                          onChange={(event) =>
-                            setQualityStartContexts((current) => ({
-                              ...current,
-                              [activity.processFlowVersionStageId]: {
-                                sizeId: '',
-                                quantity: event.target.value,
-                              },
-                            }))
-                          }
+                          error={qualityBatchErrors[activity.processFlowVersionStageId]}
+                          disabled={startQuality.isPending}
                         />
                         <button
                           className="min-h-11 rounded bg-primary px-4 text-primary-foreground"
+                          disabled={startQuality.isPending}
                           onClick={() =>
-                            startQuality.mutate({
-                              activityId: activity.processFlowVersionStageId,
-                              body: {
-                                inspectedQuantity: Number(
-                                  qualityStartContexts[activity.processFlowVersionStageId]
-                                    ?.quantity,
-                                ),
-                              },
-                            })
+                            startQualityBatch(activity.processFlowVersionStageId, activity.coverage)
                           }
                         >
-                          Start Next Batch
+                          {startQuality.isPending ? 'Startingâ€¦' : 'Start Next Batch'}
                         </button>
                       </div>
                     )}
@@ -607,12 +670,9 @@ export function FactoryTaskDetailPage() {
                       </label>
                     </>
                   )}
-                  {(activity.qualityForm.executionScope === 'SIZE' ||
-                    activity.executionMultiplicity === 'BATCHED') && (
+                  {activity.qualityForm.executionScope === 'SIZE' && (
                     <label className="block">
-                      {activity.qualityForm.executionScope === 'SIZE'
-                        ? 'Sample Quantity'
-                        : 'Inspected Quantity'}
+                      Sample Quantity
                       <input
                         type="number"
                         min="1"
@@ -631,11 +691,30 @@ export function FactoryTaskDetailPage() {
                       />
                     </label>
                   )}
+                  {activity.executionMultiplicity === 'BATCHED' && (
+                    <FinalBatchAllocationForm
+                      coverage={activity.coverage!}
+                      values={qualityBatchAllocations[activity.processFlowVersionStageId] ?? {}}
+                      onChange={(sizeId, value) =>
+                        updateFinalBatchAllocation(
+                          activity.processFlowVersionStageId,
+                          sizeId,
+                          value,
+                        )
+                      }
+                      error={qualityBatchErrors[activity.processFlowVersionStageId]}
+                      disabled={startQuality.isPending}
+                    />
+                  )}
                   <button
                     className="min-h-11 rounded bg-primary px-4 text-primary-foreground"
                     disabled={startQuality.isPending}
                     onClick={() => {
                       const context = qualityStartContexts[activity.processFlowVersionStageId];
+                      if (activity.executionMultiplicity === 'BATCHED') {
+                        startQualityBatch(activity.processFlowVersionStageId, activity.coverage);
+                        return;
+                      }
                       startQuality.mutate({
                         activityId: activity.processFlowVersionStageId,
                         body:
@@ -644,13 +723,11 @@ export function FactoryTaskDetailPage() {
                                 sampleJobOrderLineSizeId: context?.sizeId,
                                 sampleQuantity: Number(context?.quantity),
                               }
-                            : activity.executionMultiplicity === 'BATCHED'
-                              ? { inspectedQuantity: Number(context?.quantity) }
-                              : {},
+                            : {},
                       });
                     }}
                   >
-                    Start Inspection
+                    {startQuality.isPending ? 'Startingâ€¦' : 'Start Inspection'}
                   </button>
                 </div>
               ) : null}
@@ -662,8 +739,8 @@ export function FactoryTaskDetailPage() {
       <section className="rounded-xl border border-border bg-surface p-4">
         <h2 className="font-semibold">Final quantities ready for QA</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Enter the finished quantity for each garment size after every production stage is
-          complete. These are not per-stage throughput quantities.
+          Enter the cumulative quantity currently ready for Final QA. You can increase it as more
+          goods become ready at the configured production activity.
         </p>
         <div className="mt-3 space-y-3">
           {sizes.map((size) => (
@@ -682,7 +759,10 @@ export function FactoryTaskDetailPage() {
                 aria-label={`Final quantity ready for QA, ${size.style}, garment size ${size.sizeLabel}`}
                 type="number"
                 min={0}
-                disabled={job.status !== 'PRODUCTION_COMPLETE'}
+                max={size.orderedQuantity}
+                disabled={
+                  !(job.preparedQuantityEntry?.available ?? job.status === 'PRODUCTION_COMPLETE')
+                }
                 value={prepared[size.id] ?? String(size.preparedQuantity)}
                 onFocus={(event) => event.currentTarget.select()}
                 onChange={(event) =>
@@ -695,7 +775,7 @@ export function FactoryTaskDetailPage() {
             </label>
           ))}
         </div>
-        {job.status === 'PRODUCTION_COMPLETE' && (
+        {(job.preparedQuantityEntry?.available ?? job.status === 'PRODUCTION_COMPLETE') && (
           <button
             className="mt-4 min-h-12 w-full rounded-lg bg-primary px-5 text-primary-foreground"
             disabled={savePrepared.isPending}

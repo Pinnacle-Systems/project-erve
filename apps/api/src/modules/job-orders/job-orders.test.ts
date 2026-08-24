@@ -69,6 +69,26 @@ async function createSeedGraph() {
       { id: createId(), styleId: style.id, sizeId: sizeB.id },
     ],
   });
+  const finalForm = await prisma.qualityForm.create({
+    data: {
+      id: createId(),
+      code: `FINAL_${createId()}`,
+      name: 'Final Inspection',
+      versions: {
+        create: {
+          id: createId(),
+          versionNumber: 1,
+          activityType: 'INSPECTION',
+          executionScope: 'JOB_ORDER',
+          status: 'PUBLISHED',
+          publishedAt: new Date(),
+        },
+      },
+    },
+    include: { versions: true },
+  });
+  const cuttingId = createId();
+  const finishingId = createId();
   const processFlow = await prisma.processFlow.create({
     data: {
       id: createId(),
@@ -81,8 +101,21 @@ async function createSeedGraph() {
           status: 'ACTIVE',
           stages: {
             create: [
-              { id: createId(), sequence: 1, name: 'Cutting' },
-              { id: createId(), sequence: 2, name: 'Sewing' },
+              { id: cuttingId, sequence: 1, name: 'Cutting', code: 'CUTTING' },
+              { id: finishingId, sequence: 2, name: 'Finishing', code: 'FINISHING' },
+              {
+                id: createId(),
+                sequence: 99,
+                name: 'Final Inspection',
+                code: 'FINAL',
+                activityType: 'QUALITY',
+                qualityFormVersionId: finalForm.versions[0]!.id,
+                qualityExecutionMode: 'IN_PROCESS',
+                associatedProductionActivityId: finishingId,
+                qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
+                executionMultiplicity: 'BATCHED',
+                coverageTarget: 'PREPARED_QUANTITY',
+              },
             ],
           },
         },
@@ -545,8 +578,12 @@ describe('job orders API', () => {
 
     const response = await createJobOrder(graph.admin.token, graph);
     expect(response.status).toBe(201);
-    expect(response.body.data.qualityActivities).toHaveLength(1);
-    expect(response.body.data.qualityActivities[0].status).toBe('NOT_AVAILABLE');
+    expect(response.body.data.qualityActivities).toHaveLength(2);
+    expect(
+      response.body.data.qualityActivities.find(
+        (activity: { name: string }) => activity.name === 'Pre-Production Report',
+      ).status,
+    ).toBe('NOT_AVAILABLE');
     expect(
       await prisma.qualityActivityExecution.count({ where: { jobOrderId: response.body.data.id } }),
     ).toBe(0);
@@ -705,7 +742,11 @@ describe('job orders API', () => {
       .expect(200);
 
     expect(historicalVersion.status).toBe('RETIRED');
-    expect(historicalVersion.stages.map((stage) => stage.name)).toEqual(['Cutting', 'Sewing']);
+    expect(historicalVersion.stages.map((stage) => stage.name)).toEqual([
+      'Cutting',
+      'Finishing',
+      'Final Inspection',
+    ]);
     expect(jobOrder.body.data.processFlowVersion.id).toBe(graph.processFlowVersionId);
   });
 
@@ -1021,7 +1062,7 @@ describe('job orders API', () => {
             { jobOrderLineSizeId: createRes.body.data.lines[0].sizes[0].id, preparedQuantity: 3 },
           ],
         }),
-    ).resolves.toMatchObject({ status: 400 });
+    ).resolves.toMatchObject({ status: 409 });
 
     const finalStageStarted = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/start-stage`)

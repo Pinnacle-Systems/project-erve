@@ -4,14 +4,41 @@ const componentId = z.string().trim().min(1);
 const key = z.string().trim().min(1).max(80);
 const optionalRemarks = z.string().max(5000).optional().nullable();
 
-export const startQualityExecutionSchema = z.object({
-  sampleJobOrderLineSizeId: z.string().trim().min(1).optional(),
-  sampleQuantity: z.number().int().positive().max(2_147_483_647).optional(),
-  inspectedQuantity: z.number().int().positive().max(2_147_483_647).optional(),
-}).superRefine((input, context) => {
-  if (Boolean(input.sampleJobOrderLineSizeId) !== Boolean(input.sampleQuantity)) {
-    context.addIssue({ code: 'custom', message: 'PP Sample size and quantity must be supplied together' });
-  }
+export const startQualityExecutionSchema = z
+  .object({
+    sampleJobOrderLineSizeId: z.string().trim().min(1).optional(),
+    sampleQuantity: z.number().int().positive().max(2_147_483_647).optional(),
+    allocations: z
+      .array(
+        z.object({
+          jobOrderLineSizeId: z.string().trim().min(1),
+          quantity: z.number().int().positive().max(2_147_483_647),
+        }),
+      )
+      .min(1)
+      .optional(),
+  })
+  .superRefine((input, context) => {
+    if (Boolean(input.sampleJobOrderLineSizeId) !== Boolean(input.sampleQuantity)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'PP Sample size and quantity must be supplied together',
+      });
+    }
+    if (input.allocations) {
+      const ids = input.allocations.map((allocation) => allocation.jobOrderLineSizeId);
+      if (new Set(ids).size !== ids.length) {
+        context.addIssue({
+          code: 'custom',
+          path: ['allocations'],
+          message: 'Duplicate Final batch size allocations are not allowed',
+        });
+      }
+    }
+  });
+
+export const finalBatchActionSchema = z.object({
+  reason: z.string().trim().min(1).max(2000),
 });
 
 export const qualityExecutionPayloadSchema = z
@@ -73,10 +100,17 @@ export const qualityExecutionPayloadSchema = z
       .array(z.object({ componentId, fieldKey: key, value: z.string().max(5000) }))
       .default([]),
     attendees: z
-      .array(z.object({ componentId, roleKey: key, attendeeName: z.string().trim().min(1).max(160) }))
+      .array(
+        z.object({ componentId, roleKey: key, attendeeName: z.string().trim().min(1).max(160) }),
+      )
       .default([]),
     actions: z
-      .array(z.object({ componentId, values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])) }))
+      .array(
+        z.object({
+          componentId,
+          values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+        }),
+      )
       .default([]),
     signoffs: z
       .array(
@@ -117,8 +151,14 @@ export const qualityExecutionPayloadSchema = z
       input.comments.map((x) => x.componentId),
       'comments',
     );
-    unique(input.fieldResponses.map((x) => `${x.componentId}:${x.fieldKey}`), 'fieldResponses');
-    unique(input.attendees.map((x) => `${x.componentId}:${x.roleKey}:${x.attendeeName}`), 'attendees');
+    unique(
+      input.fieldResponses.map((x) => `${x.componentId}:${x.fieldKey}`),
+      'fieldResponses',
+    );
+    unique(
+      input.attendees.map((x) => `${x.componentId}:${x.roleKey}:${x.attendeeName}`),
+      'attendees',
+    );
     unique(
       input.signoffs.map((x) => `${x.componentId}:${x.roleKey}`),
       'signoffs',
