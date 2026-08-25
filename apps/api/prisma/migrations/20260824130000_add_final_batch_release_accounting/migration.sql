@@ -1,8 +1,8 @@
 CREATE TYPE "FinalQualityBatchDisposition" AS ENUM ('DRAFT', 'AWAITING_REINSPECTION', 'RELEASED', 'PERMANENTLY_REJECTED', 'CANCELLED');
 ALTER TABLE "quality_activity_executions" DROP CONSTRAINT "quality_execution_finalize_consistent";
 ALTER TABLE "quality_activity_executions" ADD CONSTRAINT "quality_execution_finalize_consistent" CHECK (
-  ("status" IN ('DRAFT', 'CANCELLED') AND "finalized_at" IS NULL AND "finalized_by_id" IS NULL) OR
-  ("status" = 'FINALIZED' AND "finalized_at" IS NOT NULL AND "finalized_by_id" IS NOT NULL)
+  (("status"::text IN ('DRAFT', 'CANCELLED')) AND "finalized_at" IS NULL AND "finalized_by_id" IS NULL) OR
+  (("status"::text = 'FINALIZED') AND "finalized_at" IS NOT NULL AND "finalized_by_id" IS NOT NULL)
 );
 
 ALTER TABLE "job_order_line_sizes"
