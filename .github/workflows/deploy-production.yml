@@ -320,6 +320,45 @@ jobs:
 
           echo "Roles-bootstrap CLI smoke test passed: guard enforced, all 7 roles ensured, idempotent — all through the packaged artifact"
 
+      # Standalone counterpart to the two checks above: proves
+      # quality-bootstrap.js — the Quality Form / Process Flow installer —
+      # is actually present in and runnable from the packaged artifact, not
+      # only bundled by esbuild. Independent of admin-bootstrap/roles-bootstrap
+      # (Quality Forms and Process Flows have no FK relationship to Role or
+      # User), so it can run in either order.
+      - name: Smoke-test the packaged quality-bootstrap CLI against the disposable database
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/verify-extract/api
+
+          export NODE_ENV=production
+          export DATABASE_URL="${{ env.TEST_DATABASE_URL }}"
+          export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
+          export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          export FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads"
+
+          echo "--- without --confirm-production: must refuse ---"
+          if node quality-bootstrap.js; then
+            echo "Expected quality-bootstrap.js to fail without --confirm-production"; exit 1
+          fi
+
+          echo "--- run 1: expect all four Quality Forms and the Process Flow created ---"
+          FIRST_OUTPUT="$(node quality-bootstrap.js --confirm-production)"
+          echo "$FIRST_OUTPUT"
+          echo "$FIRST_OUTPUT" | grep -q '^Bootstrap completed successfully$' || { echo "Expected success on first run"; exit 1; }
+          for code in SAMPLE PPM INLINE FINAL ERVE_PRODUCTION_QUALITY; do
+            echo "$FIRST_OUTPUT" | grep -qF "$code" || { echo "Missing $code in first run output"; exit 1; }
+          done
+
+          echo "--- run 2: idempotent, no changes ---"
+          SECOND_OUTPUT="$(node quality-bootstrap.js --confirm-production)"
+          echo "$SECOND_OUTPUT"
+          [ "$(echo "$SECOND_OUTPUT" | grep -c '  No change')" -eq 5 ] || {
+            echo "Expected all 4 Quality Forms and the Process Flow to report 'No change' on the second run"; exit 1;
+          }
+
+          echo "Quality-bootstrap CLI smoke test passed: guard enforced, canonical configuration created, idempotent — all through the packaged artifact"
+
       - name: Compute artifact name
         id: artifact-name
         run: echo "value=erve-release-${{ github.sha }}" >> "$GITHUB_OUTPUT"
