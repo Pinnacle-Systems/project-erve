@@ -637,6 +637,79 @@ Local development (from the monorepo, not the packaged artifact):
 pnpm --filter @erve/api roles:bootstrap
 ```
 
+### 12.4 Quality configuration bootstrap (Quality Forms + Process Flow)
+
+Installs or upgrades the canonical Quality Forms (`SAMPLE`, `PPM`, `INLINE`, `FINAL`) and the `ERVE_PRODUCTION_QUALITY` Process Flow. Like `roles-bootstrap.js`, this has **no ordering dependency** on §12.2/§12.3 — Quality Forms and Process Flows have no foreign-key relationship to `Role` or `User` — so it can be run before, after, or interleaved with the admin/roles bootstrap.
+
+Resolution is semantic, not version-number-based: for each Quality Form code and for the Process Flow code, the command compares the canonical definition against every existing version (any status — `DRAFT`, `PUBLISHED`/`ACTIVE`, or `RETIRED`) and reuses the first matching one instead of creating a duplicate, even if that match isn't the numerically latest version. A version is only ever created when no existing version's content already matches. Existing historical versions are never rewritten — a changed definition always becomes a new, separately-numbered version, and the previously current version is retired (never deleted). Existing Job Orders and Quality Activity Executions keep referencing whatever specific Process Flow/Quality Form version they were created against; activating a new Process Flow version has no effect on them.
+
+Runs the same way as admin-bootstrap/roles-bootstrap — through the `current` symlink from the release's `api/` directory, as `SITE_USER` — and shares the same production-confirmation guard (`NODE_ENV=production` requires `--confirm-production`, printing only the target database host/name first, before any query). Takes no other input.
+
+```bash
+cd "$DEPLOY_ROOT/current/api"
+node quality-bootstrap.js --confirm-production
+```
+
+#### Flags
+
+```text
+--confirm-production   required whenever NODE_ENV=production
+--dry-run              runs the full comparison/validation inside a real transaction, then rolls
+                        back instead of committing — reports exactly what would change without
+                        writing anything
+```
+
+`--dry-run` and `--confirm-production` can be combined to preview a production run before committing to it.
+
+#### Expected output
+
+```text
+Quality configuration bootstrap
+
+SAMPLE
+  Current canonical definition found: v1
+  No change
+
+...
+
+ERVE_PRODUCTION_QUALITY
+  Existing ACTIVE definition matches the canonical definition: v3
+  No change
+
+  INLINE -> SEWING
+  FINAL -> FINISHING
+  FINAL multiplicity -> BATCHED
+  FINAL coverage -> PREPARED_QUANTITY
+
+Production percentage completion configuration: NONE
+Inline PRODUCTION_PROGRESS component: NONE in canonical definition
+Inline association: SEWING
+Final association: FINISHING
+Final multiplicity: BATCHED
+Final coverage: PREPARED_QUANTITY
+
+Bootstrap completed successfully
+```
+
+Exit code `0` on success (including "no change"), non-zero on the production guard, a canonical-definition validation failure, an incompatibility with the runtime's supported Process Flow shapes, or a database/transaction error — any failure leaves the previously active configuration untouched (the entire run is one transaction; nothing is retired before its replacement is fully built and validated).
+
+#### Idempotency
+
+Safe to run repeatedly. An already-current database makes zero writes on a second run. Two concurrent runs cannot create competing "next version" numbers for the same Quality Form or the Process Flow — each is guarded by its own Postgres advisory lock for the duration of the transaction, with the underlying unique constraints (`(quality_form_id, version_number)`, `(process_flow_id, version_number)`) as a final backstop.
+
+#### Do not
+
+- Do not run `pnpm --filter @erve/api prisma:seed` against production to get Quality Forms/Process Flow configured — it inserts unrelated demo/master data (admin user, factories, styles, a default process flow) alongside them.
+- Do not hand-edit `quality_form_versions`/`process_flow_version_stages` with `psql`/SQL — this command exists specifically so version numbering, publish/retire transitions, and runtime-shape compatibility are never reasoned about by hand.
+
+#### Local development
+
+From the monorepo (not the packaged artifact):
+
+```bash
+pnpm --filter @erve/api quality:bootstrap
+```
+
 ---
 
 ## 13. Troubleshooting

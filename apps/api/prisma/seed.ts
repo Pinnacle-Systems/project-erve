@@ -1,8 +1,13 @@
 import { createId } from '@erve/shared';
-import { QA_CHECKLIST_ITEMS } from '@erve/types';
 import { prisma, type RoleName } from '../src/db/prisma.js';
 import { hashPassword } from '../src/auth/password.js';
 import { qualityFormDefinitionSchema } from '../src/modules/quality-forms/quality-forms.validation.js';
+import {
+  CANONICAL_QUALITY_FORMS,
+  type CanonicalQualityFormDefinition,
+  type SeedComponent,
+  type SeedSection,
+} from '../src/cli/quality-bootstrap-definitions.js';
 
 // Transporter delivery access is handled later via tokenized public
 // delivery links, not a normal logged-in role — do not add it here.
@@ -274,476 +279,49 @@ async function seedDefaultProcessFlow(): Promise<void> {
   }
 }
 
-type SeedComponent = {
-  type:
-    | 'SYSTEM_CONTEXT'
-    | 'FIELD_GROUP'
-    | 'ATTENDEE_LIST'
-    | 'ACTION_LIST'
-    | 'CHECKLIST'
-    | 'AQL_RESULT'
-    | 'PRODUCTION_PROGRESS'
-    | 'DEFECT_LIST'
-    | 'CORRECTIVE_ACTIONS'
-    | 'TEST_RESULTS'
-    | 'COMMENTS'
-    | 'ATTACHMENTS'
-    | 'SIGNATURES'
-    | 'QUANTITY_RECONCILIATION'
-    | 'INSPECTION_OUTCOME';
-  title: string;
-  config: object;
-};
-type SeedSection = { title: string; components: SeedComponent[] };
-const definitionKey = (label: string) =>
-  label
-    .replace(/&/g, ' and ')
-    .replace(/[^A-Za-z0-9]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .map((part, index) =>
-      index === 0
-        ? part.toLowerCase()
-        : `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`,
-    )
-    .join('');
-const CONTEXT_SOURCES: Record<string, string> = {
-  Supplier: 'SUPPLIER_NAME',
-  'Supplier Name': 'SUPPLIER_NAME',
-  'Factory Name': 'FACTORY_NAME',
-  Style: 'STYLE_NUMBER',
-  Customer: 'CUSTOMER_NAME',
-  'Purchase Order': 'PURCHASE_ORDER_NUMBER',
-  'Order Number': 'PURCHASE_ORDER_NUMBER',
-  'Order Qty': 'ORDER_QUANTITY',
-  Quantity: 'ORDER_QUANTITY',
-  'Report Date': 'REPORT_DATE',
-  'Meeting Date': 'REPORT_DATE',
-  ETD: 'ETD',
-  'Delivery Date': 'ETD',
-  Color: 'COLOUR',
-  'Ship Qty': 'SHIP_QUANTITY',
-  Merchandiser: 'MERCHANDISER_NAME',
-  'Cutting Planning Date': 'CUTTING_PLANNING_DATE',
-  'Sewing Planning Date': 'SEWING_PLANNING_DATE',
-  'Meeting Conducted By': 'MEETING_CONDUCTED_BY',
-};
-const context = (fields: string[]): SeedComponent => ({
-  type: 'SYSTEM_CONTEXT',
-  title: 'System context',
+// Current Quality Form content (SAMPLE/PPM/INLINE/FINAL) lives in
+// quality-bootstrap-definitions.ts and is shared with the production
+// quality-bootstrap CLI so dev/test seeding and production installs never
+// drift. Only the legacy, percentage-based Inline shape stays local here: it
+// is a historical fixture kept solely so a dev/test database can reproduce
+// an old, immutable Quality Form version, not part of the canonical set.
+type SeededQualityFormVersion = CanonicalQualityFormDefinition & { versionNumber?: number };
+
+const canonicalInline = CANONICAL_QUALITY_FORMS.find((definition) => definition.code === 'INLINE');
+if (!canonicalInline) throw new Error('Canonical Inline Quality Form definition is required');
+
+const legacyInlineProductionProgress: SeedComponent = {
+  type: 'PRODUCTION_PROGRESS',
+  title: 'Production status',
   config: {
-    fields: fields.map((label) => ({
-      key: definitionKey(label),
-      label,
-      dataType: label.includes('Date')
-        ? 'DATE'
-        : label.includes('Quantity') || label.includes('Qty')
-          ? 'NUMBER'
-          : label === 'ETD'
-            ? 'DATE'
-            : 'TEXT',
-      source: 'SYSTEM',
-      sourceKey: CONTEXT_SOURCES[label],
-    })),
-  },
-});
-const signatures = (roles: string[]): SeedComponent => ({
-  type: 'SIGNATURES',
-  title: 'Sign-off',
-  config: {
-    roles: roles.map((label) => ({
-      key: definitionKey(label),
-      label,
-      required: true,
-    })),
-  },
-});
-const aql: SeedComponent = {
-  type: 'AQL_RESULT',
-  title: 'AQL defect summary',
-  config: {
-    inspectionLevel: 'General Inspection Level II',
-    criteria: [
-      { severity: 'CRITICAL', aql: 0 },
-      { severity: 'MAJOR', aql: 2.5 },
-      { severity: 'MINOR', aql: 4 },
+    metrics: [
+      { key: 'cutPercentage', label: '% Cut', source: 'SYSTEM', sourceActivityCode: 'CUTTING' },
+      { key: 'sewnPercentage', label: '% Sewn', source: 'SYSTEM', sourceActivityCode: 'SEWING' },
+      {
+        key: 'finishPercentage',
+        label: '% Finish',
+        source: 'SYSTEM',
+        sourceActivityCode: 'FINISHING',
+      },
     ],
   },
-};
-const defects: SeedComponent = {
-  type: 'DEFECT_LIST',
-  title: 'Workmanship defects',
-  config: { severities: ['CRITICAL', 'MAJOR', 'MINOR'], captureQuantity: true },
 };
 
-const DEFAULT_QUALITY_FORMS: Array<{
-  code: string;
-  name: string;
-  activityType: 'MEETING' | 'INSPECTION';
-  executionScope: 'JOB_ORDER' | 'SIZE';
-  versionNumber?: number;
-  sections: SeedSection[];
-}> = [
-  {
-    code: 'PPM',
-    name: 'Pre-Production Meeting Report',
-    activityType: 'MEETING',
-    executionScope: 'JOB_ORDER',
-    sections: [
-      {
-        title: 'Meeting context',
-        components: [
-          context([
-            'Supplier Name',
-            'Factory Name',
-            'Style',
-            'Customer',
-            'Order Number',
-            'Quantity',
-          ]),
-          {
-            type: 'FIELD_GROUP',
-            title: 'Meeting details',
-            config: {
-              fields: [
-                {
-                  key: 'meetingDate',
-                  label: 'Meeting Date',
-                  dataType: 'DATE',
-                  source: 'USER',
-                  required: true,
-                },
-                {
-                  key: 'meetingConductedBy',
-                  label: 'Meeting Conducted By',
-                  dataType: 'TEXT',
-                  source: 'USER',
-                  required: true,
-                },
-                { key: 'deliveryDate', label: 'Delivery Date', dataType: 'DATE', source: 'USER' },
-                {
-                  key: 'cuttingPlanningDate',
-                  label: 'Cutting Planning Date',
-                  dataType: 'DATE',
-                  source: 'USER',
-                },
-                {
-                  key: 'sewingPlanningDate',
-                  label: 'Sewing Planning Date',
-                  dataType: 'DATE',
-                  source: 'USER',
-                },
-              ],
-            },
-          },
-        ],
-      },
-      {
-        title: 'People and follow-up',
-        components: [
-          {
-            type: 'ATTENDEE_LIST',
-            title: 'Attendees',
-            config: {
-              roles: [
-                'Merchandiser',
-                'Sample Man',
-                'Fabric',
-                'Cutting',
-                'Molding',
-                'Sewing',
-                'Outward Processing',
-                'Finishing',
-                'QA',
-                'Mechanic',
-                'Washing',
-                'Others',
-              ],
-              allowOther: true,
-            },
-          },
-          {
-            type: 'ACTION_LIST',
-            title: 'Follow-up actions',
-            config: {
-              columns: [
-                { key: 'action', label: 'Comments / action', dataType: 'TEXT', required: true },
-                {
-                  key: 'followUpPerson',
-                  label: 'Follow-up person',
-                  dataType: 'TEXT',
-                  required: true,
-                },
-                { key: 'settleDate', label: 'Settle date', dataType: 'DATE' },
-              ],
-            },
-          },
-        ],
-      },
-      { title: 'Approval', components: [signatures(['Inspector', 'QA Manager', 'Supplier'])] },
-    ],
-  },
-  {
-    code: 'SAMPLE',
-    name: 'QA Sample Checklist',
-    activityType: 'INSPECTION',
-    executionScope: 'SIZE',
-    sections: [
-      {
-        title: 'Existing QA checklist',
-        components: [
-          {
-            type: 'CHECKLIST',
-            title: 'Sample checklist',
-            config: {
-              items: QA_CHECKLIST_ITEMS.map(({ code, label }) => ({
-                key: definitionKey(code),
-                label,
-              })),
-              responseOptions: ['YES', 'NO'],
-            },
-          },
-          defects,
-          { type: 'COMMENTS', title: 'Inspection remarks', config: { maxLength: 5000 } },
-          {
-            type: 'ATTACHMENTS',
-            title: 'Evidence',
-            config: { requirements: [{ key: 'inspectionEvidence', label: 'Inspection evidence' }] },
-          },
-        ],
-      },
-    ],
-  },
-  {
-    code: 'INLINE',
-    name: 'Inline Inspection Report',
-    activityType: 'INSPECTION',
-    executionScope: 'JOB_ORDER',
-    sections: [
-      {
-        title: 'Inspection context',
-        components: [
-          context(['Supplier', 'Style', 'Purchase Order', 'Customer', 'Report Date', 'ETD']),
-        ],
-      },
-      {
-        title: 'Inspection results',
-        components: [
-          aql,
-          {
-            type: 'PRODUCTION_PROGRESS',
-            title: 'Production status',
-            config: {
-              metrics: [
-                {
-                  key: 'cutPercentage',
-                  label: '% Cut',
-                  source: 'SYSTEM',
-                  sourceActivityCode: 'CUTTING',
-                },
-                {
-                  key: 'sewnPercentage',
-                  label: '% Sewn',
-                  source: 'SYSTEM',
-                  sourceActivityCode: 'SEWING',
-                },
-                {
-                  key: 'finishPercentage',
-                  label: '% Finish',
-                  source: 'SYSTEM',
-                  sourceActivityCode: 'FINISHING',
-                },
-              ],
-            },
-          },
-          defects,
-        ],
-      },
-      {
-        title: 'Packing and corrective action',
-        components: [
-          {
-            type: 'CHECKLIST',
-            title: 'Pre-packing check',
-            config: {
-              items: [{ key: 'packing', label: 'Packing and carton information is correct' }],
-              responseOptions: ['YES', 'NO', 'N/A'],
-            },
-          },
-          {
-            type: 'CORRECTIVE_ACTIONS',
-            title: 'Corrective actions',
-            config: {
-              columns: [
-                {
-                  key: 'defectSpecification',
-                  label: 'Defect specifications',
-                  dataType: 'TEXT',
-                  required: true,
-                },
-                { key: 'action', label: 'Actions to be taken', dataType: 'TEXT', required: true },
-              ],
-            },
-          },
-          { type: 'COMMENTS', title: 'Conclusion and remarks', config: { maxLength: 5000 } },
-          {
-            type: 'INSPECTION_OUTCOME',
-            title: 'Inspection conclusion',
-            config: { allowedOutcomes: ['PASS', 'FAIL'], remarksRequiredWhen: 'FAIL' },
-          },
-          signatures(['Quality Controller', 'Supplier']),
-        ],
-      },
-    ],
-  },
-  {
-    code: 'FINAL',
-    name: 'Final Inspection Report',
-    activityType: 'INSPECTION',
-    executionScope: 'JOB_ORDER',
-    sections: [
-      {
-        title: 'Inspection context',
-        components: [
-          context([
-            'Supplier',
-            'Style',
-            'Customer',
-            'Purchase Order',
-            'Color',
-            'Order Qty',
-            'Ship Qty',
-            'Merchandiser',
-            'Report Date',
-          ]),
-        ],
-      },
-      {
-        title: 'Evidence and sampling',
-        components: [
-          {
-            type: 'ATTACHMENTS',
-            title: 'Required evidence',
-            config: {
-              requirements: [
-                { key: 'measurementSheet', label: 'Measurement Sheet', required: true },
-                { key: 'washingReport', label: 'Washing Report', required: true },
-                {
-                  key: 'failedPartEvidence',
-                  label: 'Failed Part Evidence',
-                  requiredWhen: 'INSPECTION_FAILED',
-                },
-              ],
-            },
-          },
-          {
-            type: 'QUANTITY_RECONCILIATION',
-            title: 'Inspection and shipment sampling',
-            config: {
-              fields: [
-                {
-                  key: 'totalOrderQuantity',
-                  label: 'Total Order Quantity',
-                  dataType: 'NUMBER',
-                  source: 'SYSTEM',
-                  sourceKey: 'ORDER_QUANTITY',
-                  required: true,
-                },
-                {
-                  key: 'quantityInspected',
-                  label: 'Quantity Inspected',
-                  dataType: 'NUMBER',
-                  source: 'SYSTEM',
-                  sourceKey: 'BATCH_INSPECTED_QUANTITY',
-                  required: true,
-                },
-                { key: 'numberOfBoxes', label: 'Number of Boxes', dataType: 'NUMBER' },
-                { key: 'openCartons', label: 'Open Cartons', dataType: 'NUMBER' },
-              ],
-            },
-          },
-          aql,
-        ],
-      },
-      {
-        title: 'Checks and tests',
-        components: [
-          {
-            type: 'CHECKLIST',
-            title: 'Summary inspection checklist',
-            config: {
-              items: [
-                'Conformity as per reference sample',
-                'Workmanship',
-                'Measurements',
-                'GSM',
-                'EAN Code',
-                'Packing & Labelling',
-                'Assortment',
-                'Test Results',
-                'Safety Requirements',
-              ].map((label) => ({
-                key: definitionKey(label),
-                label,
-              })),
-              responseOptions: ['PASSED', 'FAILED', 'N/A'],
-            },
-          },
-          {
-            type: 'CHECKLIST',
-            title: 'Packing and labelling',
-            config: {
-              items: [
-                { key: 'packingAndLabelling', label: 'Packing and labelling requirements are met' },
-              ],
-              responseOptions: ['YES', 'NO', 'N/A'],
-            },
-          },
-          defects,
-          {
-            type: 'TEST_RESULTS',
-            title: 'On-site tests',
-            config: {
-              tests: ['GSM', 'Metal Detection', 'Needle Policy', 'Pull Test'].map((label) => ({
-                key: definitionKey(label),
-                label,
-                responseOptions: ['PASSED', 'FAILED', 'N/A'],
-              })),
-            },
-          },
-        ],
-      },
-      {
-        title: 'Conclusion',
-        components: [
-          { type: 'COMMENTS', title: 'Comments', config: { maxLength: 5000 } },
-          {
-            type: 'INSPECTION_OUTCOME',
-            title: 'Inspection conclusion',
-            config: { allowedOutcomes: ['PASS', 'FAIL'] },
-          },
-          signatures(['Quality Controller', 'Supplier']),
-        ],
-      },
-    ],
-  },
-];
+// Historical-only dev/test fixture: the original Inline Inspection Report
+// (version 1) carried this percentage-based PRODUCTION_PROGRESS component,
+// inserted between the AQL and defect-list components. That workflow is no
+// longer current — see quality-bootstrap-definitions.ts — but historical
+// Quality Form versions must remain reproducible for local dev/test seeding.
+const legacyInlineV1Sections: SeedSection[] = canonicalInline.sections.map((section) =>
+  section.title === 'Inspection results'
+    ? { ...section, components: [section.components[0]!, legacyInlineProductionProgress, section.components[1]!] }
+    : section,
+);
 
-const inlineV1 = DEFAULT_QUALITY_FORMS.find((definition) => definition.code === 'INLINE');
-if (!inlineV1) throw new Error('Seeded Inline Quality Form definition is required');
-
-const SEEDED_QUALITY_FORM_VERSIONS = [
-  ...DEFAULT_QUALITY_FORMS,
-  {
-    ...inlineV1,
-    versionNumber: 2,
-    sections: inlineV1.sections.map((section) => ({
-      ...section,
-      components: section.components.filter(
-        (component) => component.type !== 'PRODUCTION_PROGRESS',
-      ),
-    })),
-  },
+const SEEDED_QUALITY_FORM_VERSIONS: SeededQualityFormVersion[] = [
+  ...CANONICAL_QUALITY_FORMS.filter((definition) => definition.code !== 'INLINE'),
+  { ...canonicalInline, versionNumber: 1, sections: legacyInlineV1Sections },
+  { ...canonicalInline, versionNumber: 2 },
 ];
 
 async function seedQualityForms(): Promise<void> {

@@ -31,6 +31,7 @@ await build({
     // the admin bootstrap command (see DEPLOYMENT.md).
     { in: path.join(__dirname, 'src/cli/admin-bootstrap.cli.ts'), out: 'admin-bootstrap' },
     { in: path.join(__dirname, 'src/cli/roles-bootstrap.cli.ts'), out: 'roles-bootstrap' },
+    { in: path.join(__dirname, 'src/cli/quality-bootstrap.cli.ts'), out: 'quality-bootstrap' },
   ],
   outdir: path.join(__dirname, 'dist-bundle'),
   bundle: true,

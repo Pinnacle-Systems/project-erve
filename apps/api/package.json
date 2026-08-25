@@ -18,7 +18,8 @@
     "prisma:seed": "prisma db seed",
     "prisma:studio": "prisma studio",
     "admin:bootstrap": "tsx src/cli/admin-bootstrap.cli.ts",
-    "roles:bootstrap": "tsx src/cli/roles-bootstrap.cli.ts"
+    "roles:bootstrap": "tsx src/cli/roles-bootstrap.cli.ts",
+    "quality:bootstrap": "tsx src/cli/quality-bootstrap.cli.ts"
   },
   "dependencies": {
     "@erve/shared": "workspace:*",

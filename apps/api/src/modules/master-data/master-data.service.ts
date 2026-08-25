@@ -1026,7 +1026,11 @@ async function createVersionActivities(
   if (quality.length > 0) await tx.processFlowVersionStage.createMany({ data: quality });
 }
 
-function canonicalActivityConfiguration(
+// Exported so the production quality-bootstrap CLI can reuse the exact same
+// semantic-equality shape this module uses for its own draft-replacement
+// no-op detection (see replaceProcessFlowVersionStages below), instead of a
+// hand-duplicated copy that could silently drift from it.
+export function canonicalActivityConfiguration(
   stages: Array<{
     id: string;
     sequence: number;
