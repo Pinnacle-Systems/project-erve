@@ -140,7 +140,7 @@ export function PurchaseOrderListPage() {
             >
               <SelectItem value="ALL">All modes</SelectItem>
               <SelectItem value="OUTRIGHT">Outright</SelectItem>
-              <SelectItem value="SALE_RETURN">Sale Return</SelectItem>
+              <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
             </SelectField>
           </>
         }
@@ -170,7 +170,7 @@ export function PurchaseOrderListPage() {
           {
             key: 'purchaseMode',
             header: 'Mode',
-            render: (po) => (po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale Return'),
+            render: (po) => (po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale or Return'),
           },
           {
             key: 'status',

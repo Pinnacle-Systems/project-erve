@@ -135,7 +135,7 @@ export function PurchaseOrderDetailPage() {
         <DescriptionList columns={4}>
           <DescriptionList.Item label="PO Date" value={formatDate(po.poDate)} />
           <DescriptionList.Item label="Required Delivery" value={po.requiredDeliveryDate ? formatDate(po.requiredDeliveryDate) : null} />
-          <DescriptionList.Item label="Purchase Mode" value={po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale Return'} />
+          <DescriptionList.Item label="Purchase Mode" value={po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale or Return'} />
           <DescriptionList.Item label="Total Qty" value={po.totalOrderedQuantity.toLocaleString()} />
           <DescriptionList.Item label="Merchandiser" value={po.merchandiser?.name} />
           <DescriptionList.Item label="Created By" value={po.creator.name} />

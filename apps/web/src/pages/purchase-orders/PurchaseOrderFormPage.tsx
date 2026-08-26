@@ -217,7 +217,7 @@ export function PurchaseOrderFormPage() {
                 width="sm"
               >
                 <SelectItem value="OUTRIGHT">Outright</SelectItem>
-                <SelectItem value="SALE_RETURN">Sale Return</SelectItem>
+                <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
               </SelectField>
 
               <DatePicker
