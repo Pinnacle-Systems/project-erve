@@ -121,7 +121,7 @@ tar -xzf "$ARTIFACT_PATH" -C "$RELEASE_DIR" --strip-components=1
 write_release_state extracted
 
 erve_log "Validating extracted release structure"
-for required in api/server.js api/admin-bootstrap.js api/roles-bootstrap.js api/quality-bootstrap.js api/package.json api/prisma.config.ts api/prisma/schema.prisma api/ecosystem.config.cjs web/index.html deployment-metadata.json; do
+for required in api/server.js api/admin-bootstrap.js api/roles-bootstrap.js api/quality-bootstrap.js api/financial-year-bootstrap.js api/package.json api/prisma.config.ts api/prisma/schema.prisma api/ecosystem.config.cjs web/index.html deployment-metadata.json; do
   if [ ! -e "$RELEASE_DIR/$required" ]; then
     erve_die "Extracted release is missing required path: $required — a partially extracted release must never become active"
   fi

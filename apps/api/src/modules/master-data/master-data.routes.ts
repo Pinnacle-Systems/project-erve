@@ -11,6 +11,7 @@ import {
   createSizeSchema,
   createSeasonSchema,
   createStyleSchema,
+  listSeasonsQuerySchema,
   listStatusQuerySchema,
   listStylesQuerySchema,
   replaceProcessFlowVersionStagesSchema,
@@ -65,7 +66,7 @@ seasonsRouter.get(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     res.json(
-      successResponse(await masterDataService.listSeasons(listStatusQuerySchema.parse(req.query))),
+      successResponse(await masterDataService.listSeasons(listSeasonsQuerySchema.parse(req.query))),
     );
   }),
 );

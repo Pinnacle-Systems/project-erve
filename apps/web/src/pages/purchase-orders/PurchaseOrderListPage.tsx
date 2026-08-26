@@ -6,6 +6,7 @@ import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { FinancialYearSelect, toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { Distributor, PurchaseMode, PurchaseOrder, PurchaseOrderStatus } from './types.js';
 
@@ -47,6 +48,7 @@ export function PurchaseOrderListPage() {
   const [status, setStatus] = useState<PurchaseOrderStatus | ''>('');
   const [distributorId, setDistributorId] = useState('');
   const [purchaseMode, setPurchaseMode] = useState<PurchaseMode | ''>('');
+  const [financialYearId, setFinancialYearId] = useState('');
 
   const params = useMemo(
     () => ({
@@ -54,8 +56,12 @@ export function PurchaseOrderListPage() {
       status: status || undefined,
       distributorId: distributorId || undefined,
       purchaseMode: purchaseMode || undefined,
+      // Filters by each PO's own Financial Year (derived from its poDate).
+      // Optional, defaulting to "All" — this list shows everything today
+      // with no date filter, and this preserves that.
+      financialYearId: financialYearId || undefined,
     }),
-    [search, status, distributorId, purchaseMode],
+    [search, status, distributorId, purchaseMode, financialYearId],
   );
 
   const ordersQuery = useQuery({
@@ -106,15 +112,22 @@ export function PurchaseOrderListPage() {
             value: s,
           })),
         ]}
-        hasActiveFilters={Boolean(search || status || distributorId || purchaseMode)}
+        hasActiveFilters={Boolean(search || status || distributorId || purchaseMode || financialYearId)}
         onClearFilters={() => {
           setSearch('');
           setStatus('');
           setDistributorId('');
           setPurchaseMode('');
+          setFinancialYearId('');
         }}
         actions={
           <>
+            <FinancialYearSelect
+              aria-label="Financial Year"
+              value={financialYearId}
+              onValueChange={setFinancialYearId}
+              allLabel="All Financial Years"
+            />
             <SelectField
               aria-label="Distributor"
               value={distributorId || 'ALL'}
@@ -162,6 +175,11 @@ export function PurchaseOrderListPage() {
           },
           { key: 'distributor', header: 'Distributor', render: (po) => po.distributor.name },
           { key: 'poDate', header: 'PO Date', render: (po) => formatDate(po.poDate) },
+          {
+            key: 'financialYear',
+            header: 'FY',
+            render: (po) => toCompactFinancialYearCode(po.financialYear.code),
+          },
           {
             key: 'requiredDeliveryDate',
             header: 'Delivery Date',

@@ -1,8 +1,25 @@
 import { createId } from '@erve/shared';
 import type { Role } from '@erve/types';
-import { prisma, type UserStatus } from '../db/prisma.js';
+import { prisma, type UserStatus, type DocumentType } from '../db/prisma.js';
 import { hashPassword } from '../auth/password.js';
 import { signAccessToken } from '../auth/jwt.js';
+import { ensureFinancialYear } from '../modules/master-data/financial-year.service.js';
+import { allocateDocumentSerial } from '../modules/master-data/document-sequence.service.js';
+
+// Test fixtures use the real ensureFinancialYear/allocateDocumentSerial
+// production logic rather than fabricating financialYearId/serial values, so
+// fixtures stay correct under the same invariants (idempotent-by-code,
+// collision-free per FY) production code relies on.
+export async function createTestFinancialYear(date: Date = new Date()) {
+  return ensureFinancialYear(prisma, date);
+}
+
+export async function allocateTestDocumentSerial(
+  documentType: DocumentType,
+  financialYearId: string,
+): Promise<number> {
+  return prisma.$transaction((tx) => allocateDocumentSerial(tx, documentType, financialYearId));
+}
 
 // Test users/roles live on top of the seeded reference data (roles), so
 // only the per-test rows need clearing between tests.
@@ -57,6 +74,15 @@ export async function resetDatabase(): Promise<void> {
   await prisma.file.deleteMany();
   await prisma.style.deleteMany();
   await prisma.season.deleteMany();
+  // PO/JO/Season above all FK-reference financialYearId with onDelete:
+  // Restrict, so document_sequences and financial_years can only be cleared
+  // once those are gone. Full isolation between tests/runs — without this,
+  // a fixed test date (e.g. "2034-06-01") resolves to the same FinancialYear
+  // row and DocumentSequence state across every test and every prior run
+  // against this persistent database, since FY rows are otherwise meant to
+  // be stable, never-deleted reference data.
+  await prisma.documentSequence.deleteMany();
+  await prisma.financialYear.deleteMany();
   await prisma.size.deleteMany();
   await prisma.refreshSession.deleteMany();
   await prisma.userRole.deleteMany();

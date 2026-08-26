@@ -359,6 +359,41 @@ jobs:
 
           echo "Quality-bootstrap CLI smoke test passed: guard enforced, canonical configuration created, idempotent — all through the packaged artifact"
 
+      # Standalone counterpart to the three checks above: proves
+      # financial-year-bootstrap.js — the Financial Year reference-data
+      # installer — is actually present in and runnable from the packaged
+      # artifact. No ordering dependency on admin-bootstrap/roles-bootstrap/
+      # quality-bootstrap (FinancialYear has no FK relationship to Role,
+      # User, QualityForm, or ProcessFlow).
+      - name: Smoke-test the packaged financial-year-bootstrap CLI against the disposable database
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/verify-extract/api
+
+          export NODE_ENV=production
+          export DATABASE_URL="${{ env.TEST_DATABASE_URL }}"
+          export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
+          export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          export FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads"
+
+          echo "--- without --confirm-production: must refuse ---"
+          if node financial-year-bootstrap.js; then
+            echo "Expected financial-year-bootstrap.js to fail without --confirm-production"; exit 1
+          fi
+
+          echo "--- run 1: expect a 9-year rolling window ensured ---"
+          FIRST_OUTPUT="$(node financial-year-bootstrap.js --confirm-production)"
+          echo "$FIRST_OUTPUT"
+          FIRST_COUNT=$(echo "$FIRST_OUTPUT" | grep -oE '[0-9]{4}-[0-9]{2}' | wc -l)
+          [ "$FIRST_COUNT" -eq 9 ] || { echo "Expected 9 Financial Years, got $FIRST_COUNT"; exit 1; }
+
+          echo "--- run 2: idempotent, same window reported ---"
+          SECOND_OUTPUT="$(node financial-year-bootstrap.js --confirm-production)"
+          echo "$SECOND_OUTPUT"
+          [ "$FIRST_OUTPUT" = "$SECOND_OUTPUT" ] || { echo "Expected the same Financial Year window on the second run"; exit 1; }
+
+          echo "Financial-year-bootstrap CLI smoke test passed: guard enforced, 9-year window ensured, idempotent — all through the packaged artifact"
+
       - name: Compute artifact name
         id: artifact-name
         run: echo "value=erve-release-${{ github.sha }}" >> "$GITHUB_OUTPUT"

@@ -13,9 +13,14 @@ import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 import { deriveJobOrderOperationalState } from './job-order-operational-state.js';
+import { ensureFinancialYear } from '../master-data/financial-year.service.js';
+import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
+import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
+import { toBusinessCalendarDate } from '../master-data/financial-year.util.js';
 
 const jobOrderInclude = {
   seasonSnapshots: { orderBy: [{ financialYear: 'asc' as const }, { name: 'asc' as const }] },
+  financialYear: { select: { id: true, code: true } },
   purchaseOrder: {
     select: {
       id: true,
@@ -561,6 +566,7 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
   return {
     id: jobOrder.id,
     jobOrderNumber: jobOrder.jobOrderNumber,
+    financialYear: jobOrder.financialYear,
     purchaseOrder: jobOrder.purchaseOrder,
     factory: jobOrder.factory,
     processFlowVersion: {
@@ -671,17 +677,18 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
   };
 }
 
-async function generateJobOrderNumber(client: Tx): Promise<string> {
-  const year = new Date().getFullYear();
-  const prefix = `JO-${year}-`;
-  await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-number-${year}`}))`;
-  const last = await client.jobOrder.findFirst({
-    where: { jobOrderNumber: { startsWith: prefix } },
-    orderBy: { jobOrderNumber: 'desc' },
-    select: { jobOrderNumber: true },
-  });
-  const lastSeq = last ? parseInt(last.jobOrderNumber.slice(prefix.length), 10) : 0;
-  return `${prefix}${String(lastSeq + 1).padStart(6, '0')}`;
+// The JO's Financial Year is derived from its own createdAt (it has no
+// separate document-date field) — never inherited from its parent Purchase
+// Order. Serial comes from the FY-scoped DocumentSequence high-water mark.
+async function generateJobOrderNumber(
+  client: Tx,
+  financialYear: { id: string; code: string },
+): Promise<{ jobOrderNumber: string; jobOrderSerial: number }> {
+  const jobOrderSerial = await allocateDocumentSerial(client, 'JOB_ORDER', financialYear.id);
+  return {
+    jobOrderNumber: formatDocumentNumber(DOCUMENT_PREFIXES.JOB_ORDER, financialYear.code, jobOrderSerial),
+    jobOrderSerial,
+  };
 }
 
 function requestHash(value: unknown): string {
@@ -768,6 +775,7 @@ export async function getJobOrderList(
     search?: string;
     status?: JobOrderStatus;
     factoryId?: string;
+    financialYearId?: string;
     cursor?: string;
     limit: number;
   },
@@ -782,6 +790,8 @@ export async function getJobOrderList(
       canViewAllJobOrders(user) || canPerformQaOperation(user)
         ? filters.factoryId
         : { in: user.factoryIds },
+    // This JO's own Financial Year — never the parent Purchase Order's.
+    financialYearId: filters.financialYearId,
     OR: filters.search
       ? [
           { jobOrderNumber: { contains: filters.search, mode: 'insensitive' } },
@@ -1014,7 +1024,14 @@ export async function createJobOrderFromPO(
   let jobOrderNumber = '';
 
   await prisma.$transaction(async (tx) => {
-    jobOrderNumber = await generateJobOrderNumber(tx);
+    // Job Order has no separate business/document date — capture one
+    // timestamp and use that exact value for both the persisted createdAt
+    // and Financial Year resolution, so the two can never disagree. The JO
+    // never inherits the parent Purchase Order's Financial Year.
+    const createdAt = new Date();
+    const financialYear = await ensureFinancialYear(tx, toBusinessCalendarDate(createdAt));
+    const generated = await generateJobOrderNumber(tx, financialYear);
+    jobOrderNumber = generated.jobOrderNumber;
     await tx.jobOrder.create({
       data: {
         id: jobOrderId,
@@ -1026,6 +1043,9 @@ export async function createJobOrderFromPO(
         disclaimerText: input.disclaimerText || null,
         disclaimerRevision: input.disclaimerText ? 1 : 0,
         createdBy: actor.id,
+        createdAt,
+        financialYearId: financialYear.id,
+        jobOrderSerial: generated.jobOrderSerial,
         seasonSnapshots: {
           create: [
             ...new Map(

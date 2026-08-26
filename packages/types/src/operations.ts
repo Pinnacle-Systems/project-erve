@@ -83,6 +83,9 @@ export interface PurchaseOrderSummary extends VersionedResource {
   id: string;
   poNumber: string;
   distributor: { id: string; code: string; name: string };
+  // The Financial Year of this PO's own poDate — never inherited from a
+  // downstream document or a parent relationship.
+  financialYear: { id: string; code: string };
   poDate: string;
   requiredDeliveryDate: string | null;
   purchaseMode: PurchaseMode;
@@ -453,6 +456,9 @@ export interface FinalQualityBatchView {
 export interface JobOrderSummary extends VersionedResource {
   id: string;
   jobOrderNumber: string;
+  // The Financial Year of this JO's own effective date (its createdAt) —
+  // never inherited from the parent Purchase Order.
+  financialYear: { id: string; code: string };
   purchaseOrder: { id: string; poNumber: string; status: PurchaseOrderStatus };
   factory: { id: string; code: string; name: string };
   unitPrice: number;

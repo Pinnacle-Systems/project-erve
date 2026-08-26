@@ -19,6 +19,7 @@ import {
   seasonsRouter,
   stylesRouter,
 } from './modules/master-data/master-data.routes.js';
+import { financialYearsRouter } from './modules/master-data/financial-year.routes.js';
 import { priceListsRouter } from './modules/price-lists/price-lists.routes.js';
 import { purchaseOrdersRouter } from './modules/purchase-orders/purchase-orders.routes.js';
 import { jobOrdersRouter } from './modules/job-orders/job-orders.routes.js';
@@ -95,6 +96,7 @@ export function createApp() {
   app.use('/styles', stylesRouter);
   app.use('/sizes', sizesRouter);
   app.use('/seasons', seasonsRouter);
+  app.use('/financial-years', financialYearsRouter);
   app.use('/factories', factoriesRouter);
   app.use('/distributors', distributorsRouter);
   app.use('/process-flows', processFlowsRouter);

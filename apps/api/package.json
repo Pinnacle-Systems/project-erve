@@ -19,7 +19,9 @@
     "prisma:studio": "prisma studio",
     "admin:bootstrap": "tsx src/cli/admin-bootstrap.cli.ts",
     "roles:bootstrap": "tsx src/cli/roles-bootstrap.cli.ts",
-    "quality:bootstrap": "tsx src/cli/quality-bootstrap.cli.ts"
+    "quality:bootstrap": "tsx src/cli/quality-bootstrap.cli.ts",
+    "financial-year:bootstrap": "tsx src/cli/financial-year-bootstrap.cli.ts",
+    "document-sequence:set-baseline": "tsx src/cli/document-sequence-baseline.cli.ts"
   },
   "dependencies": {
     "@erve/shared": "workspace:*",

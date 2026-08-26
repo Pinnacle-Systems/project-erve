@@ -55,30 +55,22 @@ const seasonFieldsSchema = z.object({
     )
     .transform((value) => value.toUpperCase()),
   name: z.string().trim().min(1, 'Season name is required').max(80),
-  financialYear: z
-    .string()
-    .trim()
-    .regex(/^\d{2}-\d{2}$/, 'Financial year must use YY-YY format'),
+  // References the shared Financial Year master — not arbitrary free text.
+  // Existence is validated server-side against the FinancialYear table.
+  financialYearId: z.string().trim().min(1, 'Financial Year is required'),
   status: seasonStatusSchema.optional(),
 });
-const hasConsecutiveFinancialYear = (financialYear: string) => {
-  const [start = Number.NaN, end = Number.NaN] = financialYear.split('-').map(Number);
-  return (start + 1) % 100 === end;
-};
-export const createSeasonSchema = seasonFieldsSchema.refine(
-  ({ financialYear }) => hasConsecutiveFinancialYear(financialYear),
-  { message: 'Financial year must contain consecutive years', path: ['financialYear'] },
-);
+export const createSeasonSchema = seasonFieldsSchema;
 export const updateSeasonSchema = seasonFieldsSchema
   .omit({ status: true })
   .partial()
-  .refine((value) => Object.keys(value).length > 0, { message: 'At least one field is required' })
-  .refine(
-    (value) =>
-      value.financialYear === undefined || hasConsecutiveFinancialYear(value.financialYear),
-    { message: 'Financial year must contain consecutive years', path: ['financialYear'] },
-  );
+  .refine((value) => Object.keys(value).length > 0, { message: 'At least one field is required' });
 export const updateSeasonStatusSchema = z.object({ status: seasonStatusSchema });
+export const listSeasonsQuerySchema = z.object({
+  status: z.string().trim().optional(),
+  search: z.string().trim().optional(),
+  financialYearId: z.string().trim().optional(),
+});
 
 export const styleSizeSchema = z.object({
   sizeId: z.string().trim().min(1),

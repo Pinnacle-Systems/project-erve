@@ -6,6 +6,10 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
+import { ensureFinancialYear } from '../master-data/financial-year.service.js';
+import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
+import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
+import { toCompactFinancialYearCode } from '../master-data/financial-year.util.js';
 
 // ---------------------------------------------------------------------------
 // PO number generation
@@ -13,20 +17,17 @@ import { HttpError } from '../../errors/http-error.js';
 
 type Tx = Prisma.TransactionClient;
 
-async function generatePoNumber(client: Tx): Promise<string> {
-  const year = new Date().getFullYear();
-  const prefix = `PO-${year}-`;
-
-  await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`purchase-order-number-${year}`}))`;
-  const last = await client.distributorPurchaseOrder.findFirst({
-    where: { poNumber: { startsWith: prefix } },
-    orderBy: { poNumber: 'desc' },
-    select: { poNumber: true },
-  });
-
-  const lastSeq = last ? parseInt(last.poNumber.slice(prefix.length), 10) : 0;
-  const next = String(lastSeq + 1).padStart(6, '0');
-  return `${prefix}${next}`;
+// The PO's Financial Year is derived from its own poDate — never inherited
+// from any other document — and its serial comes from the FY-scoped
+// DocumentSequence high-water mark, not from the max poSerial currently
+// attached to a document (see document-sequence.service.ts for why that
+// distinction matters once a DRAFT PO's date can move it to another FY).
+async function generatePoNumber(
+  client: Tx,
+  financialYear: { id: string; code: string },
+): Promise<{ poNumber: string; poSerial: number }> {
+  const poSerial = await allocateDocumentSerial(client, 'PURCHASE_ORDER', financialYear.id);
+  return { poNumber: formatDocumentNumber(DOCUMENT_PREFIXES.PURCHASE_ORDER, financialYear.code, poSerial), poSerial };
 }
 
 // ---------------------------------------------------------------------------
@@ -37,6 +38,7 @@ const poInclude = {
   distributor: { select: { id: true, code: true, name: true } },
   merchandiser: { select: { id: true, name: true, email: true } },
   creator: { select: { id: true, name: true, email: true } },
+  financialYear: { select: { id: true, code: true } },
   lines: {
     include: {
       style: { select: { id: true, styleNumber: true, styleName: true } },
@@ -98,6 +100,7 @@ function toPOView(po: PORecord): PurchaseOrderDetail {
     distributor: po.distributor,
     merchandiser: po.merchandiser,
     creator: po.creator,
+    financialYear: po.financialYear,
     poDate: po.poDate.toISOString(),
     requiredDeliveryDate: po.requiredDeliveryDate?.toISOString() ?? null,
     purchaseMode: po.purchaseMode,
@@ -136,6 +139,7 @@ export async function getPurchaseOrderList(
     status?: PurchaseOrderStatus;
     distributorId?: string;
     purchaseMode?: PurchaseMode;
+    financialYearId?: string;
     cursor?: string;
     limit: number;
   },
@@ -148,6 +152,9 @@ export async function getPurchaseOrderList(
     distributorId: distributorIdFilter ?? undefined,
     status: filters.status,
     purchaseMode: filters.purchaseMode,
+    // This PO's own Financial Year (derived from its poDate) — never a
+    // downstream document's Financial Year.
+    financialYearId: filters.financialYearId,
     OR: filters.search
       ? [{ poNumber: { contains: filters.search, mode: 'insensitive' } }]
       : undefined,
@@ -212,7 +219,7 @@ export async function createPurchaseOrder(
   await validateLines(input.lines);
   const styles = await prisma.style.findMany({
     where: { id: { in: input.lines.map((line) => line.styleId) } },
-    include: { styleSeasons: { include: { season: true } } },
+    include: { styleSeasons: { include: { season: { include: { financialYear: true } } } } },
   });
   const seasonsByStyle = new Map(
     styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]),
@@ -222,7 +229,10 @@ export async function createPurchaseOrder(
 
   const poId = createId();
   await prisma.$transaction(async (tx) => {
-    const poNumber = await generatePoNumber(tx);
+    // The PO's Financial Year is derived from its own poDate, server-side —
+    // the client never supplies financialYearId directly.
+    const financialYear = await ensureFinancialYear(tx, new Date(input.poDate));
+    const { poNumber, poSerial } = await generatePoNumber(tx, financialYear);
     await tx.distributorPurchaseOrder.create({
       data: {
         id: poId,
@@ -237,6 +247,8 @@ export async function createPurchaseOrder(
         status: 'DRAFT',
         remarks: input.remarks ?? null,
         createdBy: actor.id,
+        financialYearId: financialYear.id,
+        poSerial,
         lines: {
           create: input.lines.map((line) => ({
             id: createId(),
@@ -248,8 +260,8 @@ export async function createPurchaseOrder(
                 seasonId: season.id,
                 code: season.code,
                 name: season.name,
-                financialYear: season.financialYear,
-                displayName: `${season.code} ${season.financialYear}`,
+                financialYear: toCompactFinancialYearCode(season.financialYear.code),
+                displayName: `${season.code} ${toCompactFinancialYearCode(season.financialYear.code)}`,
               })),
             },
             sizes: {
@@ -305,6 +317,20 @@ export async function updatePurchaseOrderDraft(
   }
 
   await prisma.$transaction(async (tx) => {
+    // Recompute the Financial Year only when poDate is actually changing. If
+    // it resolves to a different FY, allocate a fresh serial/number from that
+    // FY's sequence — the old FY's high-water mark is left untouched, so its
+    // vacated serial is never reissued. Same FY: leave financialYearId/
+    // poSerial/poNumber alone, no unnecessary renumbering.
+    let renumber: { financialYearId: string; poSerial: number; poNumber: string } | undefined;
+    if (input.poDate) {
+      const financialYear = await ensureFinancialYear(tx, new Date(input.poDate));
+      if (financialYear.id !== po.financialYearId) {
+        const { poNumber, poSerial } = await generatePoNumber(tx, financialYear);
+        renumber = { financialYearId: financialYear.id, poSerial, poNumber };
+      }
+    }
+
     await tx.distributorPurchaseOrder.update({
       where: { id },
       data: {
@@ -318,6 +344,9 @@ export async function updatePurchaseOrderDraft(
             : undefined,
         purchaseMode: input.purchaseMode,
         remarks: input.remarks !== undefined ? input.remarks : undefined,
+        financialYearId: renumber?.financialYearId,
+        poSerial: renumber?.poSerial,
+        poNumber: renumber?.poNumber,
         version: { increment: 1 },
       },
     });
@@ -325,7 +354,7 @@ export async function updatePurchaseOrderDraft(
     if (input.lines) {
       const styles = await tx.style.findMany({
         where: { id: { in: input.lines.map((line) => line.styleId) } },
-        include: { styleSeasons: { include: { season: true } } },
+        include: { styleSeasons: { include: { season: { include: { financialYear: true } } } } },
       });
       const seasonsByStyle = new Map(
         styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]),
@@ -348,8 +377,8 @@ export async function updatePurchaseOrderDraft(
                 seasonId: season.id,
                 code: season.code,
                 name: season.name,
-                financialYear: season.financialYear,
-                displayName: `${season.code} ${season.financialYear}`,
+                financialYear: toCompactFinancialYearCode(season.financialYear.code),
+                displayName: `${season.code} ${toCompactFinancialYearCode(season.financialYear.code)}`,
               })),
             },
             sizes: {

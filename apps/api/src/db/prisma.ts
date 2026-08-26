@@ -7,6 +7,7 @@ import { env } from '../config/env.js';
 export { Prisma };
 export type {
   DistributorStatus,
+  DocumentType,
   FactoryConfirmationStatus,
   FactoryStatus,
   JobOrderStatus,

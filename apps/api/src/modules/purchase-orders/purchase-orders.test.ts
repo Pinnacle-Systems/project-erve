@@ -5,9 +5,11 @@ import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
   createTestDistributor,
+  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
+import { DOCUMENT_PREFIXES } from '../master-data/document-number.util.js';
 
 const app = createApp();
 
@@ -31,6 +33,11 @@ async function createSize(code: string, sortOrder: number) {
 
 async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED' }) {
   const seasonId = createId();
+  // Fixed date, not "now" — keeps this deterministic regardless of when the
+  // suite runs, and matches createPO's default poDate's Financial Year
+  // (2026-06-30 -> FY 2026-27) so fixtures stay intuitive, even though no
+  // PO<->Season FY-consistency rule actually requires this to match.
+  const financialYear = await createTestFinancialYear(new Date('2026-06-30'));
   return prisma.style.create({
     data: {
       id: createId(),
@@ -45,7 +52,7 @@ async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCO
               id: seasonId,
               code: `T-${seasonId.slice(-6)}`,
               name: 'Test Season',
-              financialYear: '26-27',
+              financialYearId: financialYear.id,
             },
           },
         },
@@ -102,7 +109,11 @@ describe('purchase orders API', () => {
 
       expect(res.status).toBe(201);
       expect(res.body.data.status).toBe('DRAFT');
-      expect(res.body.data.poNumber).toMatch(/^PO-\d{4}-\d{6}$/);
+      // \d{4,}, not \d{4} — DOCUMENT_SERIAL_MIN_WIDTH is a floor, not a cap.
+      expect(res.body.data.poNumber).toMatch(
+        new RegExp(`^${DOCUMENT_PREFIXES.PURCHASE_ORDER}\\/\\d{2}-\\d{2}\\/\\d{4,}$`),
+      );
+      expect(res.body.data.financialYear.code).toBe('2026-27');
       expect(res.body.data.lines).toHaveLength(1);
       expect(res.body.data.totalOrderedQuantity).toBe(168);
       expect(res.body.data.lines[0].seasonSnapshots).toHaveLength(1);
@@ -682,6 +693,80 @@ describe('purchase orders API', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.remarks).toBe('Updated remark');
       expect(res.body.data.purchaseMode).toBe('SALE_RETURN');
+    });
+
+    it('does not renumber a DRAFT PO when the date edit stays within the same Financial Year', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const createRes = await createPO(token, {
+        distributorId: dist.id,
+        poDate: '2026-06-30', // FY 2026-27
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 50 }] }],
+      });
+      const poId = createRes.body.data.id;
+      const originalNumber = createRes.body.data.poNumber;
+      const originalFinancialYearId = createRes.body.data.financialYear.id;
+
+      const res = await request(app)
+        .patch(`/purchase-orders/${poId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ poDate: '2026-08-15' }); // still FY 2026-27
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.poNumber).toBe(originalNumber);
+      expect(res.body.data.financialYear.id).toBe(originalFinancialYearId);
+    });
+
+    it('renumbers a DRAFT PO into the new Financial Year sequence when the date edit crosses the FY boundary, never reusing the vacated serial', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const firstRes = await createPO(token, {
+        distributorId: dist.id,
+        poDate: '2027-03-31', // FY 2026-27
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+      const firstPoId = firstRes.body.data.id;
+      expect(firstRes.body.data.financialYear.code).toBe('2026-27');
+
+      const crossed = await request(app)
+        .patch(`/purchase-orders/${firstPoId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ poDate: '2027-04-01' }); // now FY 2027-28
+
+      expect(crossed.status).toBe(200);
+      expect(crossed.body.data.financialYear.code).toBe('2027-28');
+      expect(crossed.body.data.poNumber).not.toBe(firstRes.body.data.poNumber);
+
+      // A new PO dated back in FY 2026-27 must not reuse the serial the
+      // first PO vacated when it moved to FY 2027-28 — DocumentSequence's
+      // high-water mark, not MAX(poSerial), drives allocation. These two
+      // creates are consecutive within this test, so the serial increment
+      // is deterministic regardless of sequence state left by other tests.
+      const secondRes = await createPO(token, {
+        distributorId: dist.id,
+        poDate: '2026-05-01', // FY 2026-27
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+      const serialOf = (poNumber: string) => parseInt(poNumber.split('/').pop()!, 10);
+      expect(secondRes.body.data.financialYear.code).toBe('2026-27');
+      expect(secondRes.body.data.poNumber).not.toBe(firstRes.body.data.poNumber);
+      expect(serialOf(secondRes.body.data.poNumber)).toBe(serialOf(firstRes.body.data.poNumber) + 1);
     });
 
     it('rejects editing a SUBMITTED PO', async () => {

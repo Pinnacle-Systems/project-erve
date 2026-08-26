@@ -1,9 +1,15 @@
 export type Status = 'ACTIVE' | 'INACTIVE';
+export interface FinancialYear {
+  id: string;
+  code: string;
+  startDate: string;
+  endDate: string;
+}
 export interface Season {
   id: string;
   code: string;
   name: string;
-  financialYear: string;
+  financialYear: { id: string; code: string };
   displayName: string;
   status: Status;
 }

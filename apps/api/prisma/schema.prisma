@@ -419,6 +419,58 @@ model UserFactory {
 }
 
 // ---------------------------------------------------------------------------
+// Financial Year
+// ---------------------------------------------------------------------------
+
+// Financial Year is the sole authority for the 1-Apr–31-Mar fiscal boundary.
+// Rows are historical reference data: once created, startDate/endDate must
+// never change (see financial-year.service.ts's create-or-validate
+// ensureFinancialYear). Every applicable business document and Season
+// resolves to exactly one row via its own effective date — never inherited
+// through a parent/lineage relationship. Overlap is prevented at the database
+// level (see the migration's exclusion constraint), mirroring the
+// PriceList non-overlapping-active-period precedent.
+model FinancialYear {
+  id        String   @id
+  code      String   @unique // "2026-27"
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  seasons           Season[]
+  purchaseOrders    DistributorPurchaseOrder[]
+  jobOrders         JobOrder[]
+  documentSequences DocumentSequence[]
+
+  @@map("financial_years")
+}
+
+enum DocumentType {
+  PURCHASE_ORDER
+  JOB_ORDER
+}
+
+// Append-only high-water mark for (documentType, financialYearId) serial
+// allocation. A MAX(existing serial) generator is unsafe here because a DRAFT
+// Purchase Order's Financial Year can change (its poDate is editable pre-
+// submission) — this table is what guarantees a vacated serial from such a
+// move is never reissued.
+model DocumentSequence {
+  id                  String       @id
+  documentType        DocumentType @map("document_type")
+  financialYearId     String       @map("financial_year_id")
+  lastAllocatedSerial Int          @default(0) @map("last_allocated_serial")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  financialYear FinancialYear @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+
+  @@unique([documentType, financialYearId])
+  @@map("document_sequences")
+}
+
+// ---------------------------------------------------------------------------
 // Master Data
 // ---------------------------------------------------------------------------
 
@@ -453,18 +505,21 @@ model Style {
   @@map("styles")
 }
 
-// Season names are administrator-managed master data.  Financial years use
-// the established compact two-year display form (for example, 26-27).
+// Season names are administrator-managed master data. Season belongs to
+// exactly one Financial Year (a real relation, not free text) — the compact
+// two-year display form (e.g. 26-27) is derived from FinancialYear.code for
+// display, never duplicated in storage.
 model Season {
-  id            String   @id
-  code          String
-  name          String
-  financialYear String   @map("financial_year")
-  status        String   @default("ACTIVE")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id              String   @id
+  code            String
+  name            String
+  financialYearId String   @map("financial_year_id")
+  status          String   @default("ACTIVE")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  styleSeasons StyleSeason[]
+  financialYear FinancialYear @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  styleSeasons  StyleSeason[]
 
   @@index([status])
   @@map("seasons")
@@ -773,13 +828,20 @@ model DistributorPurchaseOrder {
   createdAt            DateTime            @default(now()) @map("created_at")
   updatedAt            DateTime            @updatedAt @map("updated_at")
   version              Int                 @default(1)
+  // Financial Year of this PO's own poDate — never inherited by downstream
+  // documents. poSerial is scoped to (financialYearId) via the composite
+  // unique below; the actual next-serial source of truth is DocumentSequence.
+  financialYearId      String              @map("financial_year_id")
+  poSerial             Int                 @map("po_serial")
 
-  distributor  Distributor                    @relation(fields: [distributorId], references: [id], onDelete: Restrict)
-  merchandiser User?                          @relation("POMerchandiser", fields: [merchandiserId], references: [id], onDelete: SetNull)
-  creator      User                           @relation("POCreator", fields: [createdBy], references: [id], onDelete: Restrict)
-  lines        DistributorPurchaseOrderLine[]
-  jobOrders    JobOrder[]
+  distributor   Distributor                    @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  merchandiser  User?                          @relation("POMerchandiser", fields: [merchandiserId], references: [id], onDelete: SetNull)
+  creator       User                           @relation("POCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  financialYear FinancialYear                  @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  lines         DistributorPurchaseOrderLine[]
+  jobOrders     JobOrder[]
 
+  @@unique([financialYearId, poSerial])
   @@index([distributorId])
   @@index([status])
   @@index([poDate])
@@ -875,12 +937,18 @@ model JobOrder {
   createdAt                 DateTime                  @default(now()) @map("created_at")
   updatedAt                 DateTime                  @updatedAt @map("updated_at")
   version                   Int                       @default(1)
+  // JobOrder has no separate business/document date field — its effective
+  // date for Financial Year purposes is this same createdAt, never the
+  // parent Purchase Order's Financial Year.
+  financialYearId           String                    @map("financial_year_id")
+  jobOrderSerial            Int                       @map("job_order_serial")
 
   purchaseOrder       DistributorPurchaseOrder    @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
   factory             Factory                     @relation(fields: [factoryId], references: [id], onDelete: Restrict)
   processFlowVersion  ProcessFlowVersion          @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
   confirmer           User?                       @relation("JobOrderConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
   creator             User                        @relation("JobOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  financialYear       FinancialYear               @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
   lines               JobOrderLine[]
   stageStatuses       JobOrderStageStatus[]
   idempotencyRecords  JobOrderIdempotencyRecord[]
@@ -892,6 +960,7 @@ model JobOrder {
   finalQualityBatches FinalQualityBatch[]
   qaReleases          QaRelease[]
 
+  @@unique([financialYearId, jobOrderSerial])
   @@index([purchaseOrderId])
   @@index([factoryId])
   @@index([processFlowVersionId])

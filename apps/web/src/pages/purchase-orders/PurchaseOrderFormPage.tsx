@@ -6,6 +6,7 @@ import { PageHeader } from '@erve/app-components';
 import { Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel, Stack } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
+import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import type { Distributor, PurchaseMode, PurchaseOrder, StyleOption } from './types.js';
 
 interface SizeRow {
@@ -41,6 +42,19 @@ export function PurchaseOrderFormPage() {
     enabled: isEdit,
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<PurchaseOrder>>(`/purchase-orders/${id}`);
+      return res.data.data;
+    },
+  });
+
+  // Read-only preview only — the server derives the authoritative Financial
+  // Year from poDate itself on submit; the client never supplies it.
+  const financialYearPreviewQuery = useQuery({
+    queryKey: ['financial-years', 'resolve', poDate],
+    enabled: Boolean(poDate),
+    queryFn: async () => {
+      const res = await apiClient.get<ApiSuccessResponse<{ code: string }>>('/financial-years/resolve', {
+        params: { date: poDate },
+      });
       return res.data.data;
     },
   });
@@ -232,6 +246,16 @@ export function PurchaseOrderFormPage() {
                 value={requiredDeliveryDate}
                 onValueChange={(value) => setRequiredDeliveryDate(value ?? '')}
                 displayFormat="dd/mm/yyyy"
+                width="sm"
+              />
+              <TextField
+                label="Financial Year"
+                value={
+                  financialYearPreviewQuery.data
+                    ? toCompactFinancialYearCode(financialYearPreviewQuery.data.code)
+                    : ''
+                }
+                disabled
                 width="sm"
               />
             </FormGrid>

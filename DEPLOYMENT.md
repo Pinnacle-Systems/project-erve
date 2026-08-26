@@ -710,6 +710,44 @@ From the monorepo (not the packaged artifact):
 pnpm --filter @erve/api quality:bootstrap
 ```
 
+### 12.5 Financial Year bootstrap
+
+Ensures a rolling window of `FinancialYear` rows exist: 3 years back through 5 years ahead of today's business date (Asia/Kolkata), 9 rows total. Like `roles-bootstrap.js`/`quality-bootstrap.js`, this has **no ordering dependency** on §12.2–§12.4 — `FinancialYear` has no foreign-key relationship to `Role`, `User`, `QualityForm`, or `ProcessFlow` — so it can be run before, after, or interleaved with them.
+
+Without this, a freshly deployed production database has an **empty `financial_years` table** until the first real Purchase Order or Job Order is created (the only other path that writes a `FinancialYear` row, lazily, inside its own creation transaction). Until then, `GET /financial-years/current` returns a 500 and Season creation has no Financial Year to offer or default to — this is not just a Season problem, since PO/JO creation and Season creation are otherwise independent of each other.
+
+Runs the same way as admin-bootstrap/roles-bootstrap/quality-bootstrap — through the `current` symlink from the release's `api/` directory, as `SITE_USER` — and shares the same production-confirmation guard (`NODE_ENV=production` requires `--confirm-production`, printing only the target database host/name first, before any query). Takes no other input.
+
+```bash
+cd "$DEPLOY_ROOT/current/api"
+node financial-year-bootstrap.js --confirm-production
+```
+
+#### Expected output
+
+```text
+financial years ensured: 2023-24, 2024-25, 2025-26, 2026-27, 2027-28, 2028-29, 2029-30, 2030-31, 2031-32
+```
+
+Exit code `0` on success, non-zero on the production guard or a database error. Safe to run repeatedly — each Financial Year is create-or-validated (never silently overwritten) via the same `ensureFinancialYear` Purchase Order/Job Order creation itself uses, keyed on the unique `code` column; an already-seeded year's `startDate`/`endDate` are left exactly as originally created.
+
+#### Idempotency
+
+Safe to run repeatedly, including on a schedule (e.g. once a year, to roll the window forward) — an already-seeded year is left untouched, and a second run with no new years to add reports the same 9-year window with zero writes. Two concurrent runs racing to create the same not-yet-seeded year cannot produce duplicate/conflicting rows — `ensureFinancialYear`'s `INSERT ... ON CONFLICT (code) DO NOTHING` followed by a read-back handles that safely.
+
+#### Do not
+
+- Do not run `pnpm --filter @erve/api prisma:seed` against production to get Financial Years seeded — it inserts unrelated demo/master data (admin user, factories, styles, a default process flow) alongside them.
+- Do not hand-insert `financial_years` rows with `psql`/SQL — the 1-April–31-March boundary computation lives in one place (`financial-year.util.ts`) specifically so it's never reasoned about by hand, and a hand-inserted row with the wrong boundary would fail `ensureFinancialYear`'s integrity check the next time this command (or a real PO/JO) runs against that same code.
+
+#### Local development
+
+From the monorepo (not the packaged artifact):
+
+```bash
+pnpm --filter @erve/api financial-year:bootstrap
+```
+
 ---
 
 ## 13. Troubleshooting
@@ -741,3 +779,4 @@ pnpm --filter @erve/api quality:bootstrap
 | Rollback fails                                                                    | `rollback-release.sh` auto-restores the previously active release and refuses to leave the box on a failed target — check `pm2 logs` for the target release's own startup errors                                                                                                                                                                                                                                                                                                                                                          |
 | `cleanup-releases.sh` "refuses unsafe deletion"                                   | Working as intended — it only deletes directories directly under `releases/` named as a full Git SHA, and never the currently active one; if you need to remove something else, do it manually with `realpath` sanity checks of your own                                                                                                                                                                                                                                                                                                  |
 | Cannot log in to a freshly deployed environment / login always 401s               | Expected on a brand-new production database — the general seed (which creates the bootstrap admin) is deliberately never run against production, so `roles`/`users` start empty. Run §12's `admin-bootstrap` once                                                                                                                                                                                                                                                                                                                         |
+| `GET /financial-years/current` 500s / Season form shows "Unable to load"          | Expected on a brand-new production database — `financial_years` starts empty (the general seed is deliberately never run against production, and the only other path that creates a row is a real Purchase Order/Job Order being created first). Run §12.5's `financial-year-bootstrap` once; safe to also schedule yearly to keep the rolling window current                                                                                                                                                                             |

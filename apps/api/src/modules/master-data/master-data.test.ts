@@ -6,10 +6,12 @@ import { prisma } from '../../db/prisma.js';
 import {
   createTestDistributor,
   createTestFactory,
+  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
 import { assertProcessFlowVersionMutable } from './master-data.service.js';
+import { toCompactFinancialYearCode } from './financial-year.util.js';
 
 const app = createApp();
 
@@ -28,15 +30,16 @@ async function createSize(code = 'AGE_3') {
 }
 
 async function createActiveSeason(
-  overrides?: Partial<{ code: string; name: string; financialYear: string }>,
+  overrides?: Partial<{ code: string; name: string; financialYearId: string }>,
 ) {
   const suffix = createId().slice(-6);
+  const financialYear = await createTestFinancialYear();
   return prisma.season.create({
     data: {
       id: createId(),
       code: `T-${suffix}`,
       name: `Test Season ${suffix}`,
-      financialYear: '26-27',
+      financialYearId: financialYear.id,
       ...overrides,
     },
   });
@@ -174,16 +177,17 @@ describe('seasons API', () => {
       password: 'password',
       roles: ['ADMIN'],
     });
+    const financialYear = await createTestFinancialYear();
     const created = await request(app)
       .post('/seasons')
       .set('Authorization', `Bearer ${token}`)
-      .send({ code: ' aw-core ', name: ' Autumn/Winter ', financialYear: '26-27' });
+      .send({ code: ' aw-core ', name: ' Autumn/Winter ', financialYearId: financialYear.id });
     expect(created.status).toBe(201);
     expect(created.body.data).toMatchObject({
       code: 'AW-CORE',
       name: 'Autumn/Winter',
-      financialYear: '26-27',
-      displayName: 'AW-CORE 26-27',
+      financialYear: { id: financialYear.id, code: financialYear.code },
+      displayName: `AW-CORE ${toCompactFinancialYearCode(financialYear.code)}`,
     });
     const read = await request(app)
       .get(`/seasons/${created.body.data.id}`)
@@ -212,7 +216,8 @@ describe('seasons API', () => {
       password: 'password',
       roles: ['FACTORY_USER'],
     });
-    const payload = { code: 'custom-1', name: 'Shared descriptive name', financialYear: '26-27' };
+    const financialYear = await createTestFinancialYear();
+    const payload = { code: 'custom-1', name: 'Shared descriptive name', financialYearId: financialYear.id };
     expect(
       (
         await request(app)
@@ -237,6 +242,22 @@ describe('seasons API', () => {
           .send({ ...payload, code: 'custom-1' })
       ).status,
     ).toBe(409);
+
+    // The same code is valid again in a *different* Financial Year — this
+    // is a code+FY composite identity, not a global code uniqueness rule.
+    const otherFinancialYear = await createTestFinancialYear(new Date('2030-06-01'));
+    const otherFyRes = await request(app)
+      .post('/seasons')
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ ...payload, code: 'custom-1', financialYearId: otherFinancialYear.id });
+    expect(otherFyRes.status).toBe(201);
+
+    const unknownFyRes = await request(app)
+      .post('/seasons')
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ ...payload, code: 'custom-3', financialYearId: 'not-a-real-financial-year-id' });
+    expect(unknownFyRes.status).toBe(400);
+
     expect(
       (
         await request(app)

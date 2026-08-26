@@ -1,7 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createId } from '@erve/shared';
 import { prisma } from '../../db/prisma.js';
-import { createTestDistributor, createTestFactory, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import {
+  allocateTestDocumentSerial,
+  createTestDistributor,
+  createTestFactory,
+  createTestFinancialYear,
+  createTestUserAndToken,
+  resetDatabase,
+} from '../../test/helpers.js';
 
 beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
@@ -15,11 +22,14 @@ async function fixture(): Promise<Fixture> {
   const style = await prisma.style.create({ data: { id: createId(), styleNumber: `QA-DB-${createId()}`, styleName: 'QA DB', finalMrp: 100 } });
   const flow = await prisma.processFlow.create({ data: { id: createId(), code: `QA-DB-${createId()}`, name: 'QA DB', versions: { create: { id: createId(), versionNumber: 1, status: 'ACTIVE' } } }, include: { versions: true } });
   const size = await prisma.size.create({ data: { id: createId(), code: `QA-DB-${createId()}`, label: 'QA DB', sizeType: 'ALPHA', sortOrder: 1 } });
+  const financialYear = await createTestFinancialYear();
 
   async function job(): Promise<{ jobId: string; allocationId: string }> {
     const poId = createId(), poLineId = createId(), poSizeId = createId(), jobId = createId(), jobLineId = createId(), allocationId = createId();
-    await prisma.distributorPurchaseOrder.create({ data: { id: poId, poNumber: `PO-${createId()}`, distributorId: distributor.id, poDate: new Date(), purchaseMode: 'OUTRIGHT', status: 'FULLY_JOB_ORDERED', createdBy: user.userId, lines: { create: { id: poLineId, styleId: style.id, sizes: { create: { id: poSizeId, sizeId: size.id, orderedQuantity: 10, jobOrderedQuantity: 10 } } } } } });
-    await prisma.jobOrder.create({ data: { id: jobId, jobOrderNumber: `JO-${createId()}`, purchaseOrderId: poId, factoryId: factory.id, processFlowVersionId: flow.versions[0]!.id, unitPrice: '1', status: 'READY_FOR_QA', preparedQuantityTotal: 10, createdBy: user.userId, lines: { create: { id: jobLineId, purchaseOrderLineId: poLineId, styleId: style.id, orderedQuantityTotal: 10, preparedQuantityTotal: 10, status: 'READY_FOR_QA', sizes: { create: { id: allocationId, purchaseOrderLineSizeId: poSizeId, sizeId: size.id, orderedQuantity: 10, preparedQuantity: 10 } } } } } });
+    const poSerial = await allocateTestDocumentSerial('PURCHASE_ORDER', financialYear.id);
+    await prisma.distributorPurchaseOrder.create({ data: { id: poId, poNumber: `PO-${createId()}`, distributorId: distributor.id, poDate: new Date(), purchaseMode: 'OUTRIGHT', status: 'FULLY_JOB_ORDERED', createdBy: user.userId, financialYearId: financialYear.id, poSerial, lines: { create: { id: poLineId, styleId: style.id, sizes: { create: { id: poSizeId, sizeId: size.id, orderedQuantity: 10, jobOrderedQuantity: 10 } } } } } });
+    const jobOrderSerial = await allocateTestDocumentSerial('JOB_ORDER', financialYear.id);
+    await prisma.jobOrder.create({ data: { id: jobId, jobOrderNumber: `JO-${createId()}`, purchaseOrderId: poId, factoryId: factory.id, processFlowVersionId: flow.versions[0]!.id, unitPrice: '1', status: 'READY_FOR_QA', preparedQuantityTotal: 10, createdBy: user.userId, financialYearId: financialYear.id, jobOrderSerial, lines: { create: { id: jobLineId, purchaseOrderLineId: poLineId, styleId: style.id, orderedQuantityTotal: 10, preparedQuantityTotal: 10, status: 'READY_FOR_QA', sizes: { create: { id: allocationId, purchaseOrderLineSizeId: poSizeId, sizeId: size.id, orderedQuantity: 10, preparedQuantity: 10 } } } } } });
     return { jobId, allocationId };
   }
   const a = await job(); const b = await job();

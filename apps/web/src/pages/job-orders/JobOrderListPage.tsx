@@ -6,6 +6,7 @@ import { FilterBar, getQaStatusPresentation, PageHeader, StatusBadge } from '@er
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { FinancialYearSelect, toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import type { Factory } from '../master-data/types.js';
 import type { JobOrder, JobOrderStatus } from './types.js';
 import {
@@ -29,6 +30,7 @@ export function JobOrderListPage() {
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<JobOrderStatus | ''>('');
+  const [financialYearId, setFinancialYearId] = useState('');
 
   const rawFactoryId = searchParams.get('factoryId');
   const effectiveFactoryId = mayFilterByFactory ? (rawFactoryId ?? undefined) : undefined;
@@ -56,8 +58,11 @@ export function JobOrderListPage() {
       search: search || undefined,
       status: status || undefined,
       factoryId: effectiveFactoryId,
+      // Filters by each JO's own Financial Year (derived from its
+      // createdAt), never the parent PO's. Optional, defaulting to "All".
+      financialYearId: financialYearId || undefined,
     }),
-    [search, status, effectiveFactoryId],
+    [search, status, effectiveFactoryId, financialYearId],
   );
 
   const jobOrdersQuery = useQuery({
@@ -110,29 +115,38 @@ export function JobOrderListPage() {
             value: s,
           })),
         ]}
-        hasActiveFilters={Boolean(search || status || effectiveFactoryId)}
+        hasActiveFilters={Boolean(search || status || effectiveFactoryId || financialYearId)}
         onClearFilters={() => {
           setSearch('');
           setStatus('');
+          setFinancialYearId('');
           handleFactoryChange('');
         }}
         actions={
-          mayFilterByFactory ? (
-            <SelectField
-              aria-label="Factory"
-              value={effectiveFactoryId || 'ALL'}
-              onValueChange={handleFactoryChange}
-              density="compact"
-              width="md"
-            >
-              <SelectItem value="ALL">All factories</SelectItem>
-              {(factoriesQuery.data ?? []).map((factory) => (
-                <SelectItem key={factory.id} value={factory.id}>
-                  {factory.name}
-                </SelectItem>
-              ))}
-            </SelectField>
-          ) : undefined
+          <>
+            <FinancialYearSelect
+              aria-label="Financial Year"
+              value={financialYearId}
+              onValueChange={setFinancialYearId}
+              allLabel="All Financial Years"
+            />
+            {mayFilterByFactory ? (
+              <SelectField
+                aria-label="Factory"
+                value={effectiveFactoryId || 'ALL'}
+                onValueChange={handleFactoryChange}
+                density="compact"
+                width="md"
+              >
+                <SelectItem value="ALL">All factories</SelectItem>
+                {(factoriesQuery.data ?? []).map((factory) => (
+                  <SelectItem key={factory.id} value={factory.id}>
+                    {factory.name}
+                  </SelectItem>
+                ))}
+              </SelectField>
+            ) : undefined}
+          </>
         }
       />
 
@@ -154,6 +168,11 @@ export function JobOrderListPage() {
             key: 'purchaseOrderNumber',
             header: 'PO Number',
             render: (jobOrder) => jobOrder.purchaseOrder.poNumber,
+          },
+          {
+            key: 'financialYear',
+            header: 'FY',
+            render: (jobOrder) => toCompactFinancialYearCode(jobOrder.financialYear.code),
           },
           { key: 'factory', header: 'Factory', render: (jobOrder) => jobOrder.factory.name },
           {

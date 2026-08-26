@@ -81,4 +81,26 @@ export class HttpError extends Error {
   static internal(message = 'Something went wrong', details?: unknown): HttpError {
     return new HttpError(500, 'INTERNAL_SERVER_ERROR', message, details);
   }
+
+  static financialYearIntegrityMismatch(
+    code: string,
+    stored: { startDate: Date; endDate: Date },
+    computed: { startDate: Date; endDate: Date },
+  ): HttpError {
+    return new HttpError(
+      500,
+      'FINANCIAL_YEAR_INTEGRITY_MISMATCH',
+      `Financial Year ${code} data integrity mismatch: the stored window does not match the computed window`,
+      { code, stored, computed },
+    );
+  }
+
+  static financialYearNotSeeded(code: string): HttpError {
+    return new HttpError(
+      500,
+      'FINANCIAL_YEAR_NOT_SEEDED',
+      `Financial Year ${code} is expected to already exist but was not found — check seeding`,
+      { code },
+    );
+  }
 }

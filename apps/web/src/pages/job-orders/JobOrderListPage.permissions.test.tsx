@@ -23,6 +23,9 @@ beforeEach(() => {
     if (url.includes('/factories')) {
       return { data: { data: [] } };
     }
+    if (url.includes('/financial-years')) {
+      return { data: { data: [{ id: 'fy-1', code: '2026-27', startDate: '2026-04-01', endDate: '2027-03-31' }] } };
+    }
     return {
       data: {
         data: {
@@ -101,6 +104,7 @@ describe('JobOrderListPage Permissions', () => {
       {
         id: 'job-1',
         jobOrderNumber: 'JO-001',
+        financialYear: { id: 'fy-1', code: '2026-27' },
         purchaseOrder: { poNumber: 'PO-001' },
         factory: { name: 'Factory One' },
         processFlowVersion: { versionNumber: 1, processFlow: { name: 'Erve Flow' } },
@@ -133,6 +137,7 @@ describe('JobOrderListPage Permissions', () => {
       {
         id: 'job-1',
         jobOrderNumber: 'JO-001',
+        financialYear: { id: 'fy-1', code: '2026-27' },
         purchaseOrder: { poNumber: 'PO-001' },
         factory: { name: 'Factory One' },
         processFlowVersion: { versionNumber: 1, processFlow: { name: 'Erve Flow' } },
@@ -192,6 +197,7 @@ describe('JobOrderListPage Permissions', () => {
       {
         id: 'job-1',
         jobOrderNumber: 'JO-001',
+        financialYear: { id: 'fy-1', code: '2026-27' },
         purchaseOrder: { poNumber: 'PO-001' },
         factory: { name: 'Factory One' },
         processFlowVersion: { versionNumber: 1, processFlow: { name: 'Erve Flow' } },

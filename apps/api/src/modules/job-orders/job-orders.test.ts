@@ -1,15 +1,18 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { Prisma, prisma } from '../../db/prisma.js';
+import { signAccessToken } from '../../auth/jwt.js';
 import { isProgressThresholdMet } from './job-orders.service.js';
 import {
   createTestDistributor,
   createTestFactory,
+  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
+import { DOCUMENT_PREFIXES } from '../master-data/document-number.util.js';
 
 const app = createApp();
 
@@ -46,12 +49,15 @@ async function createSeedGraph() {
   const sizeB = await prisma.size.create({
     data: { id: createId(), code: 'AGE_4', label: '4', sizeType: 'AGE', sortOrder: 4 },
   });
+  // Fixed date, not "now" — keeps the compact-code assertions below
+  // deterministic regardless of when the suite runs.
+  const financialYear = await createTestFinancialYear(new Date('2026-06-30'));
   const season = await prisma.season.create({
     data: {
       id: createId(),
       code: 'JO-TEST',
       name: 'Job Order Test Season',
-      financialYear: '26-27',
+      financialYearId: financialYear.id,
     },
   });
   const style = await prisma.style.create({
@@ -653,6 +659,29 @@ describe('job orders API', () => {
     expect(first.body.data.jobOrderNumber).not.toBe(second.body.data.jobOrderNumber);
   });
 
+  it('resolves its own Financial Year from its creation date, independent of the parent Purchase Order — a JO created 01-Apr just after a 2026-06-30-dated (FY 2026-27) PO lands in FY 2027-28', async () => {
+    const graph = await createSeedGraph();
+    const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+      where: { id: graph.poId },
+      include: { financialYear: true },
+    });
+    expect(po.financialYear.code).toBe('2026-27');
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2027-04-01T10:00:00.000Z'));
+    try {
+      // The original token was minted at the real "now" and would read as
+      // expired once the clock jumps forward ~8 months — mint a fresh one
+      // under the faked clock instead of reusing graph.admin.token.
+      const freshToken = signAccessToken({ sub: graph.admin.userId, roles: ['ADMIN'], authVersion: 1 });
+      const res = await createJobOrder(freshToken, graph, 1);
+      expect(res.status).toBe(201);
+      expect(res.body.data.financialYear.code).toBe('2027-28');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('returns a stable stale-version conflict before mutating', async () => {
     const graph = await createSeedGraph();
     const created = await createJobOrder(graph.admin.token, graph, 1);
@@ -757,7 +786,10 @@ describe('job orders API', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.data.status).toBe('DRAFT');
-    expect(res.body.data.jobOrderNumber).toMatch(/^JO-\d{4}-\d{6}$/);
+    // \d{4,}, not \d{4} — DOCUMENT_SERIAL_MIN_WIDTH is a floor, not a cap.
+    expect(res.body.data.jobOrderNumber).toMatch(
+      new RegExp(`^${DOCUMENT_PREFIXES.JOB_ORDER}\\/\\d{2}-\\d{2}\\/\\d{4,}$`),
+    );
     expect(res.body.data.orderedQuantityTotal).toBe(4);
     expect(res.body.data.unitPrice).toBe(199.5);
     expect(res.body.data.seasonSnapshots).toEqual([

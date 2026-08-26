@@ -4,8 +4,10 @@ import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
+  allocateTestDocumentSerial,
   createTestDistributor,
   createTestFactory,
+  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -36,6 +38,8 @@ async function fixture(preparedQuantity = 840) {
   const secondSize = await prisma.size.create({
     data: { id: createId(), code: `L-${createId()}`, label: 'L', sizeType: 'ALPHA', sortOrder: 2 },
   });
+  const financialYear = await createTestFinancialYear();
+  const poSerial = await allocateTestDocumentSerial('PURCHASE_ORDER', financialYear.id);
   const po = await prisma.distributorPurchaseOrder.create({
     data: {
       id: createId(),
@@ -45,6 +49,8 @@ async function fixture(preparedQuantity = 840) {
       purchaseMode: 'OUTRIGHT',
       status: 'SUBMITTED',
       createdBy: qa.userId,
+      financialYearId: financialYear.id,
+      poSerial,
       lines: {
         create: {
           id: createId(),
@@ -128,6 +134,7 @@ async function fixture(preparedQuantity = 840) {
       coverageTarget: 'PREPARED_QUANTITY',
     },
   });
+  const jobOrderSerial = await allocateTestDocumentSerial('JOB_ORDER', financialYear.id);
   const job = await prisma.jobOrder.create({
     data: {
       id: createId(),
@@ -140,6 +147,8 @@ async function fixture(preparedQuantity = 840) {
       factoryConfirmationStatus: 'CONFIRMED',
       preparedQuantityTotal: preparedQuantity,
       createdBy: qa.userId,
+      financialYearId: financialYear.id,
+      jobOrderSerial,
       lines: {
         create: {
           id: createId(),

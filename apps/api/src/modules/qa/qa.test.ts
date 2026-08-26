@@ -5,8 +5,10 @@ import { QA_CHECKLIST_ITEMS } from '@erve/types';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
+  allocateTestDocumentSerial,
   createTestDistributor,
   createTestFactory,
+  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -56,6 +58,8 @@ async function fixture() {
     formSizeId = createId(),
     jobOrderId = createId(),
     jobLineId = createId();
+  const financialYear = await createTestFinancialYear();
+  const poSerial = await allocateTestDocumentSerial('PURCHASE_ORDER', financialYear.id);
   await prisma.distributorPurchaseOrder.create({
     data: {
       id: poId,
@@ -65,6 +69,8 @@ async function fixture() {
       purchaseMode: 'OUTRIGHT',
       status: 'FULLY_JOB_ORDERED',
       createdBy: qa.userId,
+      financialYearId: financialYear.id,
+      poSerial,
       lines: {
         create: {
           id: poLineId,
@@ -76,6 +82,7 @@ async function fixture() {
       },
     },
   });
+  const jobOrderSerial = await allocateTestDocumentSerial('JOB_ORDER', financialYear.id);
   await prisma.jobOrder.create({
     data: {
       id: jobOrderId,
@@ -87,6 +94,8 @@ async function fixture() {
       status: 'READY_FOR_QA',
       preparedQuantityTotal: 30,
       createdBy: qa.userId,
+      financialYearId: financialYear.id,
+      jobOrderSerial,
       lines: {
         create: {
           id: jobLineId,

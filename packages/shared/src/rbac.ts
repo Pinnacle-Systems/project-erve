@@ -29,3 +29,23 @@ export const QA_OPERATION_ROLES = ['ADMIN', 'QA_USER'] as const satisfies readon
 export function canPerformQaOperation(user: RoleHolder): boolean {
   return hasAnyRole(user, QA_OPERATION_ROLES);
 }
+
+/**
+ * Financial Year reference data (a code + two dates) is low-sensitivity and
+ * needed by every role that touches a dated document or Season — not just
+ * master-data managers — so it's a dedicated, deliberately broad capability
+ * rather than reusing `canManageMasterData`.
+ */
+export const FINANCIAL_YEAR_READ_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'FACTORY_USER',
+  'QA_USER',
+  'ACCOUNTANT',
+  'DISTRIBUTOR',
+  'SENIOR_MANAGEMENT',
+] as const satisfies readonly Role[];
+
+export function canReadFinancialYears(user: RoleHolder): boolean {
+  return hasAnyRole(user, FINANCIAL_YEAR_READ_ROLES);
+}

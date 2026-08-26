@@ -2,6 +2,7 @@ import { createId } from '@erve/shared';
 import { prisma, type RoleName } from '../src/db/prisma.js';
 import { hashPassword } from '../src/auth/password.js';
 import { qualityFormDefinitionSchema } from '../src/modules/quality-forms/quality-forms.validation.js';
+import { ensureFinancialYearWindow } from '../src/modules/master-data/financial-year.service.js';
 import {
   CANONICAL_QUALITY_FORMS,
   type CanonicalQualityFormDefinition,
@@ -542,9 +543,21 @@ async function seedErveProductionQualityFlow(): Promise<void> {
   ]);
 }
 
+// Idempotent, rerun-safe on every deploy: guarantees near-future Financial
+// Years exist for Season planning before any real document needs them, and
+// guarantees getCurrentFinancialYear() always finds a row. Delegates to the
+// same ensureFinancialYearWindow the production financial-year-bootstrap
+// CLI uses, so dev/test seeding and a real production install never drift
+// onto different windows, and an already-seeded year's boundaries can never
+// be silently touched by a reseed.
+async function seedFinancialYears(): Promise<void> {
+  await ensureFinancialYearWindow(prisma, new Date());
+}
+
 async function main(): Promise<void> {
   await seedRoles();
   await seedDefaultAdminUser();
+  await seedFinancialYears();
   await seedSizes();
   await seedFactories();
   await seedDefaultProcessFlow();

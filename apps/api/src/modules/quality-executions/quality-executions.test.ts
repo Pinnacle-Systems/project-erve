@@ -4,8 +4,10 @@ import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
+  allocateTestDocumentSerial,
   createTestDistributor,
   createTestFactory,
+  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -40,6 +42,8 @@ async function fixture(
   const size = await prisma.size.create({
     data: { id: createId(), code: `S-${createId()}`, label: 'S', sizeType: 'ALPHA', sortOrder: 1 },
   });
+  const financialYear = await createTestFinancialYear();
+  const poSerial = await allocateTestDocumentSerial('PURCHASE_ORDER', financialYear.id);
   const po = await prisma.distributorPurchaseOrder.create({
     data: {
       id: createId(),
@@ -49,6 +53,8 @@ async function fixture(
       purchaseMode: 'OUTRIGHT',
       status: 'SUBMITTED',
       createdBy: qa.userId,
+      financialYearId: financialYear.id,
+      poSerial,
       lines: {
         create: {
           id: createId(),
@@ -194,6 +200,7 @@ async function fixture(
       progressThresholdPercent: policy === 'PROGRESS_PERCENTAGE' ? threshold : null,
     },
   });
+  const jobOrderSerial = await allocateTestDocumentSerial('JOB_ORDER', financialYear.id);
   const jobOrder = await prisma.jobOrder.create({
     data: {
       id: createId(),
@@ -204,6 +211,8 @@ async function fixture(
       unitPrice: 10,
       status: 'IN_PRODUCTION',
       createdBy: qa.userId,
+      financialYearId: financialYear.id,
+      jobOrderSerial,
       lines: {
         create: {
           id: createId(),

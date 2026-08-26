@@ -4,8 +4,10 @@ import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
+  allocateTestDocumentSerial,
   createTestDistributor,
   createTestFactory,
+  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -69,6 +71,8 @@ async function workflow() {
       }),
     ),
   );
+  const financialYear = await createTestFinancialYear();
+  const poSerial = await allocateTestDocumentSerial('PURCHASE_ORDER', financialYear.id);
   const po = await prisma.distributorPurchaseOrder.create({
     data: {
       id: createId(),
@@ -78,6 +82,8 @@ async function workflow() {
       purchaseMode: 'OUTRIGHT',
       status: 'SUBMITTED',
       createdBy: qa.userId,
+      financialYearId: financialYear.id,
+      poSerial,
       lines: {
         create: {
           id: createId(),
@@ -348,6 +354,7 @@ async function workflow() {
     },
   });
   const lineId = createId();
+  const jobOrderSerial = await allocateTestDocumentSerial('JOB_ORDER', financialYear.id);
   const job = await prisma.jobOrder.create({
     data: {
       id: createId(),
@@ -360,6 +367,8 @@ async function workflow() {
       disclaimerText: 'Terms',
       disclaimerRevision: 1,
       createdBy: qa.userId,
+      financialYearId: financialYear.id,
+      jobOrderSerial,
       lines: {
         create: {
           id: lineId,
