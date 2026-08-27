@@ -667,6 +667,62 @@ describe('purchase orders API', () => {
     });
   });
 
+  describe('GET /purchase-orders — search by poNumber', () => {
+    it('matches poNumber as a case-insensitive substring, e.g. EIPO/26-27/0001', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const distA = await createTestDistributor();
+      const distB = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const poA = await createPO(token, {
+        distributorId: distA.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+      const poB = await createPO(token, {
+        distributorId: distB.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+      const poNumberA: string = poA.body.data.poNumber;
+      const poNumberB: string = poB.body.data.poNumber;
+      expect(poNumberA).toMatch(/^EIPO\/\d{2}-\d{2}\/\d{4}$/);
+      expect(poNumberA).not.toBe(poNumberB);
+
+      const exactRes = await request(app)
+        .get('/purchase-orders')
+        .query({ search: poNumberA })
+        .set('Authorization', `Bearer ${token}`);
+      expect(exactRes.status).toBe(200);
+      expect(exactRes.body.data.items.map((po: { poNumber: string }) => po.poNumber)).toEqual([
+        poNumberA,
+      ]);
+
+      const lowerCaseRes = await request(app)
+        .get('/purchase-orders')
+        .query({ search: poNumberA.toLowerCase() })
+        .set('Authorization', `Bearer ${token}`);
+      expect(lowerCaseRes.status).toBe(200);
+      expect(lowerCaseRes.body.data.items.map((po: { poNumber: string }) => po.poNumber)).toEqual([
+        poNumberA,
+      ]);
+
+      const substringRes = await request(app)
+        .get('/purchase-orders')
+        .query({ search: 'EIPO' })
+        .set('Authorization', `Bearer ${token}`);
+      expect(substringRes.status).toBe(200);
+      const matchedNumbers = substringRes.body.data.items.map(
+        (po: { poNumber: string }) => po.poNumber,
+      );
+      expect(matchedNumbers).toEqual(expect.arrayContaining([poNumberA, poNumberB]));
+    });
+  });
+
   describe('PATCH /purchase-orders/:id — draft update', () => {
     it('updates a DRAFT PO', async () => {
       const { token } = await createTestUserAndToken({

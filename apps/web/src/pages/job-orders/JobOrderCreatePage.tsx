@@ -8,6 +8,7 @@ import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { Factory, ProcessFlow } from '../master-data/types.js';
+import { PurchaseOrderLookupField, type PurchaseOrderLookupValue } from './PurchaseOrderLookupField.js';
 import type { JobOrder, JobOrderBalance } from './types.js';
 
 type QuantityRow = {
@@ -24,7 +25,13 @@ type QuantityRow = {
 export function JobOrderCreatePage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [purchaseOrderId, setPurchaseOrderId] = useState(searchParams.get('purchaseOrderId') ?? '');
+  const [selectedPurchaseOrder, setSelectedPurchaseOrder] = useState<PurchaseOrderLookupValue | null>(
+    () => {
+      const paramId = searchParams.get('purchaseOrderId');
+      return paramId ? { id: paramId, poNumber: '' } : null;
+    },
+  );
+  const purchaseOrderId = selectedPurchaseOrder?.id ?? '';
   const [factoryId, setFactoryId] = useState('');
   const [processFlowVersionId, setProcessFlowVersionId] = useState('');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -44,6 +51,33 @@ export function JobOrderCreatePage() {
       return res.data.data;
     },
   });
+
+  // For the deep-link ?purchaseOrderId= entry path only the internal id is
+  // known up front; the balance endpoint's response (already fetched above)
+  // resolves the human-readable poNumber for display without a second
+  // PO-by-id fetch.
+  const displayedPurchaseOrder = selectedPurchaseOrder
+    ? { id: selectedPurchaseOrder.id, poNumber: selectedPurchaseOrder.poNumber || balanceQuery.data?.poNumber || '' }
+    : null;
+
+  function resetPurchaseOrderDerivedState() {
+    setSelectedStyleId('');
+    setQuantities({});
+    setPriceEdited(false);
+    setUnitPrice('');
+  }
+
+  function handleSelectPurchaseOrder(po: PurchaseOrderLookupValue) {
+    resetPurchaseOrderDerivedState();
+    setSelectedPurchaseOrder(po);
+    setSearchParams({ purchaseOrderId: po.id });
+  }
+
+  function handleClearPurchaseOrder() {
+    resetPurchaseOrderDerivedState();
+    setSelectedPurchaseOrder(null);
+    setSearchParams({});
+  }
 
   const factoriesQuery = useQuery({
     queryKey: ['factories', 'active'],
@@ -183,15 +217,10 @@ export function JobOrderCreatePage() {
 
       <Panel title="Source and Assignment">
         <FormGrid columns={3}>
-          <TextField
-            label="Purchase Order ID"
-            value={purchaseOrderId}
-            onChange={(event) => {
-              const value = event.target.value;
-              setPurchaseOrderId(value);
-              setSearchParams(value ? { purchaseOrderId: value } : {});
-            }}
-            width="fill"
+          <PurchaseOrderLookupField
+            selected={displayedPurchaseOrder}
+            onSelect={handleSelectPurchaseOrder}
+            onClear={handleClearPurchaseOrder}
           />
           <SelectField
             label="Factory"
@@ -284,7 +313,7 @@ export function JobOrderCreatePage() {
       {!purchaseOrderId && (
         <EmptyState
           title="Select a purchase order"
-          description="Open a submitted PO and use Create Job Order, or paste the PO id here."
+          description="Open a submitted PO and use Create Job Order, or search for one above."
         />
       )}
 
