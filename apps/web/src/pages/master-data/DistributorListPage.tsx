@@ -6,6 +6,7 @@ import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageDistributorMaster } from '../../auth/permissions.js';
 import type { DistributorSummary, Status } from './types.js';
@@ -14,10 +15,11 @@ export function DistributorListPage() {
   const { user } = useAuth();
   const canManage = canManageDistributorMaster(user);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [status, setStatus] = useState<Status | ''>('');
   const params = useMemo(
-    () => ({ search: search || undefined, status: status || undefined }),
-    [search, status],
+    () => ({ search: debouncedSearch || undefined, status: status || undefined }),
+    [debouncedSearch, status],
   );
 
   const distributorsQuery = useQuery({

@@ -7,6 +7,7 @@ import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { FinancialYearSelect, toCompactFinancialYearCode } from '../../lib/financial-years.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import type { Factory } from '../master-data/types.js';
 import type { JobOrder, JobOrderStatus } from './types.js';
 import {
@@ -29,6 +30,7 @@ export function JobOrderListPage() {
   const showQaWork = user?.roles.includes('QA_USER') ?? false;
 
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [status, setStatus] = useState<JobOrderStatus | ''>('');
   const [financialYearId, setFinancialYearId] = useState('');
 
@@ -55,14 +57,14 @@ export function JobOrderListPage() {
 
   const params = useMemo(
     () => ({
-      search: search || undefined,
+      search: debouncedSearch || undefined,
       status: status || undefined,
       factoryId: effectiveFactoryId,
       // Filters by each JO's own Financial Year (derived from its
       // createdAt), never the parent PO's. Optional, defaulting to "All".
       financialYearId: financialYearId || undefined,
     }),
-    [search, status, effectiveFactoryId, financialYearId],
+    [debouncedSearch, status, effectiveFactoryId, financialYearId],
   );
 
   const jobOrdersQuery = useQuery({

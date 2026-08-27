@@ -6,6 +6,7 @@ import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { PriceListDistributor, PriceListStatus, PriceListSummary } from './types.js';
 import {
@@ -18,16 +19,17 @@ export function PriceListListPage() {
   const { user } = useAuth();
   const canManage = user?.roles.some((role) => ['ADMIN', 'MERCHANDISER'].includes(role)) ?? false;
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [status, setStatus] = useState<PriceListStatus | ''>('');
   const [distributorId, setDistributorId] = useState('');
 
   const params = useMemo(
     () => ({
-      search: search || undefined,
+      search: debouncedSearch || undefined,
       status: status || undefined,
       distributorId: distributorId || undefined,
     }),
-    [search, status, distributorId],
+    [debouncedSearch, status, distributorId],
   );
 
   const priceListsQuery = useQuery({

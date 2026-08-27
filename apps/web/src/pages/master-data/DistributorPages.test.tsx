@@ -63,7 +63,17 @@ afterEach(() => {
   sessionStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
+
+// React's controlled inputs track the native value setter, so a plain
+// `input.value = x` followed by dispatching "input" is not observed —
+// the native property setter must be invoked directly (see UserPages.test.tsx).
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
 
 async function renderPage(path: string, adapter: AxiosAdapter) {
   const user: AuthUser = {
@@ -133,5 +143,39 @@ describe('distributor management pages', () => {
     expect(editLink?.textContent).toContain('Edit');
     expect(container.textContent).toContain('Deactivate');
     expect(container.textContent).not.toContain('Mapped Users');
+  });
+
+  it('debounces the distributor list search so rapid typing issues only the final request', async () => {
+    const requestedSearches: Array<string | undefined> = [];
+    await renderPage('/master-data/distributors', async (config) => {
+      if (config.url === '/distributors') {
+        requestedSearches.push((config.params as { search?: string } | undefined)?.search);
+        return ok(config, { success: true, data: [distributor] });
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    const requestsBeforeTyping = requestedSearches.length;
+    const input = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Search distributors"]',
+    )!;
+
+    vi.useFakeTimers();
+    for (const value of ['A', 'Ac', 'Acm', 'Acme']) {
+      act(() => setInputValue(input, value));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    }
+    expect(requestedSearches.length).toBe(requestsBeforeTyping);
+    expect(input.value).toBe('Acme');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    vi.useRealTimers();
+
+    expect(requestedSearches.length).toBe(requestsBeforeTyping + 1);
+    expect(requestedSearches.at(-1)).toBe('Acme');
   });
 });

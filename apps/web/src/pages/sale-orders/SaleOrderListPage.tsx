@@ -7,6 +7,7 @@ import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageSaleOrdersAsDistributor, canApproveSaleOrders } from '../../auth/permissions.js';
 import type { Distributor, SaleOrder, SaleOrderStatus } from './types.js';
@@ -38,16 +39,17 @@ export function SaleOrderListPage() {
   const canCreate = canManageSaleOrdersAsDistributor(user);
   const showDistributorFilter = canApproveSaleOrders(user);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [status, setStatus] = useState<SaleOrderStatus | ''>('');
   const [distributorId, setDistributorId] = useState('');
 
   const params = useMemo(
     () => ({
-      search: search || undefined,
+      search: debouncedSearch || undefined,
       status: status || undefined,
       distributorId: distributorId || undefined,
     }),
-    [search, status, distributorId],
+    [debouncedSearch, status, distributorId],
   );
 
   const ordersQuery = useQuery({

@@ -7,6 +7,7 @@ import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { FinancialYearSelect, toCompactFinancialYearCode } from '../../lib/financial-years.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { Distributor, PurchaseMode, PurchaseOrder, PurchaseOrderStatus } from './types.js';
 
@@ -45,6 +46,7 @@ export function PurchaseOrderListPage() {
   const canManagePurchaseOrders =
     user?.roles.some((role) => ['ADMIN', 'MERCHANDISER', 'DISTRIBUTOR'].includes(role)) ?? false;
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [status, setStatus] = useState<PurchaseOrderStatus | ''>('');
   const [distributorId, setDistributorId] = useState('');
   const [purchaseMode, setPurchaseMode] = useState<PurchaseMode | ''>('');
@@ -52,7 +54,7 @@ export function PurchaseOrderListPage() {
 
   const params = useMemo(
     () => ({
-      search: search || undefined,
+      search: debouncedSearch || undefined,
       status: status || undefined,
       distributorId: distributorId || undefined,
       purchaseMode: purchaseMode || undefined,
@@ -61,7 +63,7 @@ export function PurchaseOrderListPage() {
       // with no date filter, and this preserves that.
       financialYearId: financialYearId || undefined,
     }),
-    [search, status, distributorId, purchaseMode, financialYearId],
+    [debouncedSearch, status, distributorId, purchaseMode, financialYearId],
   );
 
   const ordersQuery = useQuery({

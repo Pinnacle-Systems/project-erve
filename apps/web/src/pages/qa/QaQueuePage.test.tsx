@@ -22,6 +22,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// React's controlled inputs track the native value setter, so a plain
+// `input.value = x` followed by dispatching "input" is not observed —
+// the native property setter must be invoked directly (see UserPages.test.tsx).
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 describe('QA work list', () => {
   it('shows configured Quality activities without loading a separate prepared-quantity queue', async () => {
     const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
@@ -84,5 +93,73 @@ describe('QA work list', () => {
     expect(container.textContent).not.toContain('Prepared quantity QA work');
     expect(get).toHaveBeenCalledTimes(1);
     expect(get).toHaveBeenCalledWith('/job-orders/quality-work');
+  });
+
+  it('filters the queue immediately client-side and never issues a second request while typing', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/job-orders/quality-work') {
+        return {
+          data: {
+            data: [
+              {
+                jobOrderId: 'job-1',
+                jobOrderNumber: 'JO-001',
+                purchaseOrderNumber: 'PO-001',
+                factory: { id: 'factory-1', code: 'FAC', name: 'Factory One' },
+                activity: {
+                  processFlowVersionStageId: 'quality-1',
+                  sequence: 1,
+                  name: 'Inline Inspection',
+                  status: 'IN_PROGRESS',
+                },
+              },
+              {
+                jobOrderId: 'job-2',
+                jobOrderNumber: 'JO-002',
+                purchaseOrderNumber: 'PO-002',
+                factory: { id: 'factory-2', code: 'FAC2', name: 'Factory Two' },
+                activity: {
+                  processFlowVersionStageId: 'quality-2',
+                  sequence: 1,
+                  name: 'Final Inspection',
+                  status: 'AVAILABLE',
+                },
+              },
+            ],
+          },
+        };
+      }
+
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <MemoryRouter>
+            <QaQueuePage />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(container.textContent).toContain('JO-001');
+    expect(container.textContent).toContain('JO-002');
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Search job order, PO, activity or factory"]',
+    )!;
+    act(() => setInputValue(input, 'JO-002'));
+
+    // Client-side filtering must apply on the same synchronous render pass —
+    // no timer/debounce wait is needed or expected here.
+    expect(container.textContent).not.toContain('JO-001');
+    expect(container.textContent).toContain('JO-002');
+    expect(get).toHaveBeenCalledTimes(1); // no additional request triggered by typing
   });
 });

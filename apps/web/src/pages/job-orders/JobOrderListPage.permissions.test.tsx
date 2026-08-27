@@ -43,10 +43,27 @@ afterEach(() => {
   });
   container.remove();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+// React's controlled inputs track the native value setter, so a plain
+// `input.value = x` followed by dispatching "input" is not observed —
+// the native property setter must be invoked directly (see UserPages.test.tsx).
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function jobOrderSearchCalls(): Array<string | undefined> {
+  return vi
+    .mocked(apiClient.get)
+    .mock.calls.filter((call) => call[0] === '/job-orders')
+    .map((call) => (call[1] as { params?: { search?: string } } | undefined)?.params?.search);
 }
 
 const renderJobOrderListPage = async (role: Role, initialUrl = '/job-orders') => {
@@ -254,5 +271,33 @@ describe('JobOrderListPage Permissions', () => {
         }),
       }),
     );
+  });
+
+  it('debounces the job order search so rapid typing issues only the final request', async () => {
+    await renderJobOrderListPage('ADMIN');
+
+    const requestsBeforeTyping = jobOrderSearchCalls().length;
+    const input = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Search job order or PO"]',
+    )!;
+
+    vi.useFakeTimers();
+    for (const value of ['J', 'JO', 'JO-', 'JO-001']) {
+      act(() => setInputValue(input, value));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    }
+    expect(jobOrderSearchCalls().length).toBe(requestsBeforeTyping);
+    expect(input.value).toBe('JO-001');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    vi.useRealTimers();
+
+    const searches = jobOrderSearchCalls();
+    expect(searches.length).toBe(requestsBeforeTyping + 1);
+    expect(searches.at(-1)).toBe('JO-001');
   });
 });

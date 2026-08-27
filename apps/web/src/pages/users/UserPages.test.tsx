@@ -64,6 +64,7 @@ afterEach(() => {
   sessionStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 async function renderPage(
@@ -174,6 +175,82 @@ describe('user list page', () => {
       throw new Error(`Unexpected request: ${config.url}`);
     });
     expect(container.textContent).toContain('Unable to load users');
+  });
+
+  it('debounces the search query so rapid typing issues only the final request', async () => {
+    const requestedSearches: Array<string | undefined> = [];
+    await renderPage('/master-data/users', ['ADMIN'], async (config) => {
+      if (config.url === '/users') {
+        requestedSearches.push((config.params as { search?: string } | undefined)?.search);
+        return ok(config, { success: true, data: [] });
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    const requestsBeforeTyping = requestedSearches.length;
+    const input = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Search by name or email"]',
+    )!;
+
+    vi.useFakeTimers();
+    for (const value of ['J', 'Ja', 'Jan', 'Jane']) {
+      act(() => setInputValue(input, value));
+      // Stay well inside the 300ms debounce window between keystrokes.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    }
+    // No additional request yet — the debounce hasn't settled.
+    expect(requestedSearches.length).toBe(requestsBeforeTyping);
+    expect(input.value).toBe('Jane'); // the visible field never lags behind typing
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    vi.useRealTimers();
+
+    expect(requestedSearches.length).toBe(requestsBeforeTyping + 1);
+    expect(requestedSearches.at(-1)).toBe('Jane');
+    expect(requestedSearches).not.toContain('J');
+    expect(requestedSearches).not.toContain('Ja');
+    expect(requestedSearches).not.toContain('Jan');
+  });
+
+  it('debounces clearing the search field the same way as typing it', async () => {
+    const requestedSearches: Array<string | undefined> = [];
+    await renderPage('/master-data/users', ['ADMIN'], async (config) => {
+      if (config.url === '/users') {
+        requestedSearches.push((config.params as { search?: string } | undefined)?.search);
+        return ok(config, { success: true, data: [] });
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Search by name or email"]',
+    )!;
+
+    vi.useFakeTimers();
+    act(() => setInputValue(input, 'Jane'));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    const requestsAfterSearch = requestedSearches.length;
+    expect(requestedSearches.at(-1)).toBe('Jane');
+
+    act(() => setInputValue(input, ''));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(299);
+    });
+    expect(requestedSearches.length).toBe(requestsAfterSearch); // not yet
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    vi.useRealTimers();
+
+    expect(requestedSearches.length).toBe(requestsAfterSearch + 1);
+    expect(requestedSearches.at(-1)).toBeUndefined(); // restores the unfiltered list
   });
 });
 

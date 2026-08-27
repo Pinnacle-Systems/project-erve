@@ -7,17 +7,23 @@ import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import type { AdminUserSummary } from '../master-data/types.js';
 
 type UserStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
 
 export function UserListPage() {
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [status, setStatus] = useState<UserStatus | ''>('');
   const [role, setRole] = useState<(typeof ROLES)[number] | ''>('');
   const params = useMemo(
-    () => ({ search: search || undefined, status: status || undefined, role: role || undefined }),
-    [search, status, role],
+    () => ({
+      search: debouncedSearch || undefined,
+      status: status || undefined,
+      role: role || undefined,
+    }),
+    [debouncedSearch, status, role],
   );
 
   const usersQuery = useQuery({

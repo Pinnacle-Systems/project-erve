@@ -6,12 +6,17 @@ import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import type { Status, Style } from './types.js';
 
 export function StyleListPage() {
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [status, setStatus] = useState<Status | ''>('');
-  const params = useMemo(() => ({ search: search || undefined, status: status || undefined }), [search, status]);
+  const params = useMemo(
+    () => ({ search: debouncedSearch || undefined, status: status || undefined }),
+    [debouncedSearch, status],
+  );
 
   const stylesQuery = useQuery({
     queryKey: ['styles', params],
