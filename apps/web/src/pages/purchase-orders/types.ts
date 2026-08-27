@@ -21,10 +21,19 @@ export interface StyleSize {
   mappingStatus: 'ACTIVE' | 'INACTIVE';
 }
 
+export interface StyleSeason {
+  id: string;
+  code: string;
+  name: string;
+  displayName: string;
+  status: 'ACTIVE' | 'INACTIVE';
+}
+
 export interface StyleOption {
   id: string;
   styleNumber: string;
   styleName: string;
   status: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
   sizes: StyleSize[];
+  seasons: StyleSeason[];
 }

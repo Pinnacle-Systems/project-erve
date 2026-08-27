@@ -6,8 +6,13 @@ import { PageHeader } from '@erve/app-components';
 import { Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel, Stack } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
+import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import type { Distributor, PurchaseMode, PurchaseOrder, StyleOption } from './types.js';
+
+const SEASONS_VALIDATION_MESSAGE = 'Every purchase-order Style must have Seasons assigned';
+const SEASONS_WARNING_MESSAGE =
+  'One or more selected Styles do not have any Seasons assigned. Assign at least one Season to each Style before saving the Purchase Order.';
 
 interface SizeRow {
   sizeId: string;
@@ -36,6 +41,7 @@ export function PurchaseOrderFormPage() {
   const [remarks, setRemarks] = useState('');
   const [lines, setLines] = useState<LineRow[]>([emptyLine()]);
   const [error, setError] = useState('');
+  const [styleLinesError, setStyleLinesError] = useState('');
 
   const poQuery = useQuery({
     queryKey: ['purchase-order', id],
@@ -109,6 +115,13 @@ export function PurchaseOrderFormPage() {
     return (style?.sizes ?? []).filter((sz) => sz.status === 'ACTIVE' && sz.mappingStatus === 'ACTIVE');
   }
 
+  // Returns null when the style hasn't loaded yet (or isn't selected), so callers
+  // can distinguish "unknown" from "known to have zero Seasons assigned".
+  function getStyleSeasons(styleId: string): StyleOption['seasons'] | null {
+    if (!styleId) return null;
+    return stylesQuery.data?.find((s) => s.id === styleId)?.seasons ?? null;
+  }
+
   function handleStyleChange(lineIndex: number, styleId: string) {
     const sizes = getStyleSizes(styleId);
     setLines((current) =>
@@ -145,6 +158,7 @@ export function PurchaseOrderFormPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
+      setStyleLinesError('');
       if (!distributorId) throw new Error('Distributor is required');
       if (!poDate) throw new Error('PO date is required');
       const selectedStyleIds = lines.map((l) => l.styleId).filter(Boolean);
@@ -183,11 +197,19 @@ export function PurchaseOrderFormPage() {
       }
     },
     onSuccess: (po) => navigate(`/purchase-orders/${po.id}`),
-    onError: (caught) => setError(caught instanceof Error ? caught.message : 'Unable to save purchase order'),
+    onError: (caught) => {
+      const message = getApiErrorMessage(caught, 'Unable to save the Purchase Order. Please try again.');
+      if (message === SEASONS_VALIDATION_MESSAGE) {
+        setStyleLinesError(SEASONS_WARNING_MESSAGE);
+      } else {
+        setError(message);
+      }
+    },
   });
 
   const usedStyleIds = new Set(lines.map((l) => l.styleId).filter(Boolean));
   const availableStyles = stylesQuery.data?.filter((s) => s.status === 'ACTIVE') ?? [];
+  const hasStyleWithoutSeasons = lines.some((l) => (getStyleSeasons(l.styleId)?.length ?? 1) === 0);
 
   return (
     <div className="space-y-5">
@@ -206,6 +228,10 @@ export function PurchaseOrderFormPage() {
           className="space-y-6"
           onSubmit={(e) => {
             e.preventDefault();
+            if (hasStyleWithoutSeasons) {
+              setStyleLinesError(SEASONS_WARNING_MESSAGE);
+              return;
+            }
             mutation.mutate();
           }}
         >
@@ -276,12 +302,15 @@ export function PurchaseOrderFormPage() {
               </Button>
             }
           >
+            {styleLinesError ? <ValidationMessage tone="error">{styleLinesError}</ValidationMessage> : null}
             <Stack gap="md">
               {lines.map((line, lineIndex) => {
                 const sizesForStyle = getStyleSizes(line.styleId);
                 const availableForLine = availableStyles.filter(
                   (s) => !usedStyleIds.has(s.id) || s.id === line.styleId,
                 );
+                const seasons = getStyleSeasons(line.styleId);
+                const lineHasNoSeasons = seasons !== null && seasons.length === 0;
 
                 return (
                   <Panel key={lineIndex} variant="bordered" padding="sm" className="space-y-4">
@@ -319,6 +348,13 @@ export function PurchaseOrderFormPage() {
                       Remove
                     </Button>
                   </div>
+
+                  {lineHasNoSeasons && (
+                    <ValidationMessage tone="warning">
+                      This Style has no Seasons assigned. Assign at least one Season to the Style before it can be
+                      used on a Purchase Order.
+                    </ValidationMessage>
+                  )}
 
                   {line.styleId && sizesForStyle.length > 0 && (
                     <div>
@@ -359,7 +395,7 @@ export function PurchaseOrderFormPage() {
             <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
               Cancel
             </Button>
-            <Button type="submit" loading={mutation.isPending}>
+            <Button type="submit" loading={mutation.isPending} disabled={hasStyleWithoutSeasons}>
               Save Draft
             </Button>
           </div>
