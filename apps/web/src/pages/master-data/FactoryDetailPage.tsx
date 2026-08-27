@@ -17,10 +17,17 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+// A factory user always has exactly one factory, so "assigning" a user here
+// who is already mapped elsewhere reassigns them atomically (the backend
+// replaces their prior mapping, never leaving them briefly unmapped) —
+// unlike DistributorDetailPage's eligible-user list, this one does NOT
+// exclude users already mapped to a different factory. There is no "remove"
+// action here either: revoking factory access is done from the user's own
+// detail page by removing the FACTORY_USER role, which the backend takes
+// the mapping down with atomically.
 function MappedUsers({ factory }: { factory: Factory }) {
   const client = useQueryClient();
   const [selected, setSelected] = useState('');
-  const [remove, setRemove] = useState<FactoryUser | null>(null);
   const [error, setError] = useState('');
   const mapped = useQuery({
     queryKey: ['factory-users', factory.id],
@@ -58,17 +65,6 @@ function MappedUsers({ factory }: { factory: Factory }) {
     },
     onError: (caught) => setError(errorMessage(caught, 'Unable to assign user')),
   });
-  const removeMutation = useMutation({
-    mutationFn: (userId: string) => apiClient.delete(`/users/${userId}/factories/${factory.id}`),
-    onSuccess: async () => {
-      setRemove(null);
-      await refresh();
-    },
-    onError: (caught) => {
-      setRemove(null);
-      setError(errorMessage(caught, 'Unable to remove mapping'));
-    },
-  });
   return (
     <Panel title="Mapped Factory Users">
       <div className="space-y-4">
@@ -104,7 +100,18 @@ function MappedUsers({ factory }: { factory: Factory }) {
         {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
         <DataTable
           columns={[
-            { key: 'name', header: 'Name', accessor: 'name' },
+            {
+              key: 'name',
+              header: 'Name',
+              render: (user) => (
+                <Link
+                  className="font-medium text-[var(--erp-text-link)]"
+                  to={`/master-data/users/${user.id}`}
+                >
+                  {user.name}
+                </Link>
+              ),
+            },
             { key: 'email', header: 'Email', accessor: 'email' },
             {
               key: 'status',
@@ -114,16 +121,6 @@ function MappedUsers({ factory }: { factory: Factory }) {
                   label={user.status}
                   tone={user.status === 'ACTIVE' ? 'success' : 'muted'}
                 />
-              ),
-            },
-            {
-              key: 'actions',
-              header: '',
-              align: 'right',
-              render: (user) => (
-                <Button density="compact" variant="destructive" onClick={() => setRemove(user)}>
-                  Remove
-                </Button>
               ),
             },
           ]}
@@ -143,22 +140,6 @@ function MappedUsers({ factory }: { factory: Factory }) {
           }
         />
       </div>
-      <ConfirmDialog
-        open={remove !== null}
-        onOpenChange={(open) => {
-          if (!open) setRemove(null);
-        }}
-        title="Remove factory-user mapping"
-        description={
-          remove ? `${remove.name} will lose operational access to ${factory.name}.` : undefined
-        }
-        confirmLabel="Remove"
-        destructive
-        loading={removeMutation.isPending}
-        onConfirm={() => {
-          if (remove) removeMutation.mutate(remove.id);
-        }}
-      />
     </Panel>
   );
 }

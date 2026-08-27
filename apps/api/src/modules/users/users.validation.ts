@@ -6,13 +6,19 @@ import { normalizeEmail } from '../../utils/email.js';
 // whitespace or casing never causes a spurious "invalid email" rejection.
 const normalizedEmail = z.string().transform(normalizeEmail).pipe(z.email());
 
-export const createUserSchema = z.object({
-  name: z.string().min(1),
-  email: normalizedEmail,
-  mobile: z.string().min(1).optional(),
-  password: z.string().min(8),
-  roles: z.array(z.enum(ROLES)).min(1, 'At least one role is required'),
-});
+export const createUserSchema = z
+  .object({
+    name: z.string().min(1),
+    email: normalizedEmail,
+    mobile: z.string().min(1).optional(),
+    password: z.string().min(8),
+    roles: z.array(z.enum(ROLES)).min(1, 'At least one role is required'),
+    factoryId: z.string().min(1).optional(),
+  })
+  .refine((value) => !value.roles.includes('FACTORY_USER') || Boolean(value.factoryId), {
+    message: 'A Factory is required for the FACTORY_USER role',
+    path: ['factoryId'],
+  });
 
 export const updateUserSchema = z
   .object({
@@ -33,9 +39,15 @@ export const updateStatusSchema = z.object({
 
 export const roleNameSchema = z.enum(ROLES);
 
-export const assignRoleSchema = z.object({
-  roleName: roleNameSchema,
-});
+export const assignRoleSchema = z
+  .object({
+    roleName: roleNameSchema,
+    factoryId: z.string().min(1).optional(),
+  })
+  .refine((value) => value.roleName !== 'FACTORY_USER' || Boolean(value.factoryId), {
+    message: 'A Factory is required to assign the FACTORY_USER role',
+    path: ['factoryId'],
+  });
 
 export const distributorMappingSchema = z.object({
   distributorId: z.string().min(1),

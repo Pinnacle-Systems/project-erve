@@ -9,7 +9,7 @@ import type {
   StyleStatus,
 } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
-import { getSoleDistributorId } from '../../auth/access.js';
+import { getSoleDistributorId, getSoleFactoryId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { toStyleImageView } from './style-images.service.js';
@@ -737,7 +737,7 @@ export async function getFactoryById(actor: CurrentUser, id: string) {
   if (
     actor.roles.includes('FACTORY_USER') &&
     !actor.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER') &&
-    !actor.factoryIds.includes(id)
+    getSoleFactoryId(actor) !== id
   ) {
     throw HttpError.forbidden();
   }

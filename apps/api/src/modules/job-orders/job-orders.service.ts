@@ -9,6 +9,7 @@ import { Prisma, prisma } from '../../db/prisma.js';
 import type { JobOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
+import { getSoleFactoryId } from '../../auth/access.js';
 import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
@@ -178,12 +179,6 @@ function canFactoryManage(user: CurrentUser, factoryId: string): boolean {
     user.factoryIds.length === 1 &&
     user.factoryIds[0] === factoryId
   );
-}
-
-function assertSoleFactoryMapping(user: CurrentUser): string {
-  if (user.factoryIds.length === 0) throw HttpError.factoryMappingRequired();
-  if (user.factoryIds.length > 1) throw HttpError.factoryMappingAmbiguous();
-  return user.factoryIds[0]!;
 }
 
 function assertJobOrderViewAccess(
@@ -820,7 +815,7 @@ export async function getAssignedFactoryTasks(
   user: CurrentUser,
   filters: { search?: string; status?: JobOrderStatus; cursor?: string; limit: number },
 ): Promise<PaginatedResponse<AssignedFactoryTaskSummary>> {
-  const factoryId = assertSoleFactoryMapping(user);
+  const factoryId = getSoleFactoryId(user);
   const operationalStatuses: JobOrderStatus[] = [
     'SENT_TO_FACTORY',
     'CONFIRMED_BY_FACTORY',

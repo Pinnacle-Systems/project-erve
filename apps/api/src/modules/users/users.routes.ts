@@ -76,8 +76,13 @@ usersRouter.post(
 usersRouter.post(
   '/:id/roles',
   asyncHandler(async (req, res) => {
-    const { roleName } = assignRoleSchema.parse(req.body);
-    const user = await usersService.assignRole(req.user!, req.params.id! as string, roleName);
+    const { roleName, factoryId } = assignRoleSchema.parse(req.body);
+    const user = await usersService.assignRole(
+      req.user!,
+      req.params.id! as string,
+      roleName,
+      factoryId,
+    );
     res.status(200).json(successResponse(user));
   }),
 );

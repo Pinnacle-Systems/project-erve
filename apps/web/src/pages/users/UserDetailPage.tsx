@@ -17,7 +17,7 @@ import {
   ValidationMessage,
 } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
+import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { AdminUserSummary, DistributorSummary, Factory } from '../master-data/types.js';
@@ -40,8 +40,22 @@ function RolesPanel({
 }) {
   const queryClient = useQueryClient();
   const [selectedRole, setSelectedRole] = useState<Role | ''>('');
+  const [factoryId, setFactoryId] = useState('');
   const [removeTarget, setRemoveTarget] = useState<Role | null>(null);
   const [error, setError] = useState('');
+
+  const needsFactory = selectedRole === 'FACTORY_USER';
+
+  const factoriesQuery = useQuery({
+    queryKey: ['factories', { status: 'ACTIVE' }],
+    enabled: needsFactory,
+    queryFn: async () => {
+      const response = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
+        params: { status: 'ACTIVE' },
+      });
+      return response.data.data;
+    },
+  });
 
   const invalidate = () =>
     Promise.all([
@@ -53,10 +67,15 @@ function RolesPanel({
     mutationFn: async () => {
       setError('');
       if (!selectedRole) throw new Error('Select a role to assign');
-      await apiClient.post(`/users/${user.id}/roles`, { roleName: selectedRole });
+      if (needsFactory && !factoryId) throw new Error('Select a factory for the Factory User role');
+      await apiClient.post(`/users/${user.id}/roles`, {
+        roleName: selectedRole,
+        factoryId: needsFactory ? factoryId : undefined,
+      });
     },
     onSuccess: async () => {
       setSelectedRole('');
+      setFactoryId('');
       await invalidate();
     },
     onError: (caught) => setError(toErrorMessage(caught, 'Unable to assign role')),
@@ -117,7 +136,10 @@ function RolesPanel({
             <SelectField
               label="Assign role"
               value={selectedRole || 'NONE'}
-              onValueChange={(value) => setSelectedRole(value === 'NONE' ? '' : (value as Role))}
+              onValueChange={(value) => {
+                setSelectedRole(value === 'NONE' ? '' : (value as Role));
+                setFactoryId('');
+              }}
             >
               <SelectItem value="NONE">Select a role</SelectItem>
               {assignableRoles.map((role) => (
@@ -126,6 +148,20 @@ function RolesPanel({
                 </SelectItem>
               ))}
             </SelectField>
+            {needsFactory ? (
+              <SelectField
+                label="Factory"
+                value={factoryId || 'NONE'}
+                onValueChange={(value) => setFactoryId(value === 'NONE' ? '' : value)}
+              >
+                <SelectItem value="NONE">Select an active factory</SelectItem>
+                {(factoriesQuery.data ?? []).map((factory) => (
+                  <SelectItem key={factory.id} value={factory.id}>
+                    {factory.name} ({factory.code})
+                  </SelectItem>
+                ))}
+              </SelectField>
+            ) : null}
             <Button type="submit" loading={assignMutation.isPending}>
               Assign
             </Button>
@@ -281,11 +317,17 @@ function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
   );
 }
 
-function FactoryMappingsPanel({ user }: { user: AdminUserSummary }) {
+// A Factory User must always have exactly one factory — there is no valid
+// "remove" affordance here: swapping the selection reassigns atomically
+// (old mapping out, new one in, in a single backend call), and dropping to
+// zero mappings is only possible by removing the FACTORY_USER role itself
+// (see RolesPanel), which takes the mapping with it.
+function FactoryMappingPanel({ user }: { user: AdminUserSummary }) {
   const queryClient = useQueryClient();
   const [selectedFactoryId, setSelectedFactoryId] = useState('');
-  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState('');
+
+  const mapped = user.factories[0];
 
   const factoriesQuery = useQuery({
     queryKey: ['factories', { status: 'ACTIVE' }],
@@ -297,11 +339,6 @@ function FactoryMappingsPanel({ user }: { user: AdminUserSummary }) {
     },
   });
 
-  const mappedIds = new Set(user.factories.map((factory) => factory.id));
-  const availableFactories = (factoriesQuery.data ?? []).filter(
-    (factory) => !mappedIds.has(factory.id),
-  );
-
   const invalidate = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['admin-user', user.id] }),
@@ -311,33 +348,21 @@ function FactoryMappingsPanel({ user }: { user: AdminUserSummary }) {
   const assignMutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!selectedFactoryId) throw new Error('Select a factory to add');
+      if (!selectedFactoryId) throw new Error('Select a factory to assign');
       await apiClient.post(`/users/${user.id}/factories`, { factoryId: selectedFactoryId });
     },
     onSuccess: async () => {
       setSelectedFactoryId('');
       await invalidate();
     },
-    onError: (caught) => setError(toErrorMessage(caught, 'Unable to add factory mapping')),
+    onError: (caught) => setError(toErrorMessage(caught, 'Unable to assign factory')),
   });
 
-  const removeMutation = useMutation({
-    mutationFn: async (factoryId: string) => {
-      setError('');
-      await apiClient.delete(`/users/${user.id}/factories/${factoryId}`);
-    },
-    onSuccess: async () => {
-      setRemoveTarget(null);
-      await invalidate();
-    },
-    onError: (caught) => {
-      setRemoveTarget(null);
-      setError(toErrorMessage(caught, 'Unable to remove factory mapping'));
-    },
-  });
+  const currentSelection = selectedFactoryId || mapped?.id || 'NONE';
+  const unchanged = Boolean(mapped) && currentSelection === mapped?.id;
 
   return (
-    <Panel title="Factory Mappings">
+    <Panel title="Factory Mapping">
       <div className="space-y-4">
         <form
           className="flex flex-wrap items-end gap-3"
@@ -347,67 +372,29 @@ function FactoryMappingsPanel({ user }: { user: AdminUserSummary }) {
           }}
         >
           <SelectField
-            label="Add factory"
-            value={selectedFactoryId || 'NONE'}
+            label={mapped ? 'Reassign factory' : 'Assign factory'}
+            value={currentSelection}
             onValueChange={(value) => setSelectedFactoryId(value === 'NONE' ? '' : value)}
           >
-            <SelectItem value="NONE">Select an active factory</SelectItem>
-            {availableFactories.map((factory) => (
+            {mapped ? null : <SelectItem value="NONE">Select an active factory</SelectItem>}
+            {(factoriesQuery.data ?? []).map((factory) => (
               <SelectItem key={factory.id} value={factory.id}>
                 {factory.name} ({factory.code})
               </SelectItem>
             ))}
           </SelectField>
-          <Button type="submit" loading={assignMutation.isPending}>
-            Add
+          <Button type="submit" loading={assignMutation.isPending} disabled={unchanged}>
+            {mapped ? 'Reassign' : 'Assign'}
           </Button>
         </form>
+        {mapped ? (
+          <p className="text-xs text-muted-foreground">
+            To revoke factory access entirely, remove the FACTORY_USER role above instead.
+          </p>
+        ) : null}
 
         {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
-
-        <DataTable
-          columns={[
-            { key: 'code', header: 'Code', accessor: 'code' },
-            { key: 'name', header: 'Name', accessor: 'name' },
-            {
-              key: 'actions',
-              header: '',
-              align: 'right',
-              render: (factory) => (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  density="compact"
-                  onClick={() => setRemoveTarget(factory)}
-                >
-                  Remove
-                </Button>
-              ),
-            },
-          ]}
-          data={user.factories}
-          emptyState={
-            <EmptyState title="No factories mapped" description="Add a factory to grant access." />
-          }
-        />
       </div>
-
-      <ConfirmDialog
-        open={removeTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setRemoveTarget(null);
-        }}
-        title="Remove factory mapping"
-        description={
-          removeTarget ? `${user.name} will lose access to ${removeTarget.name}.` : undefined
-        }
-        confirmLabel="Remove"
-        destructive
-        loading={removeMutation.isPending}
-        onConfirm={() => {
-          if (removeTarget) removeMutation.mutate(removeTarget.id);
-        }}
-      />
     </Panel>
   );
 }
@@ -620,7 +607,7 @@ export function UserDetailPage() {
       <RolesPanel user={user} currentUserId={currentUser?.id} />
 
       {user.roles.includes('DISTRIBUTOR') ? <DistributorMappingPanel user={user} /> : null}
-      {user.roles.includes('FACTORY_USER') ? <FactoryMappingsPanel user={user} /> : null}
+      {user.roles.includes('FACTORY_USER') ? <FactoryMappingPanel user={user} /> : null}
 
       <ConfirmDialog
         open={statusDialogOpen}

@@ -119,9 +119,9 @@ export function UserListPage() {
             render: (user) => user.distributors[0]?.name ?? '—',
           },
           {
-            key: 'factories',
-            header: 'Factories',
-            render: (user) => (user.factories.length > 0 ? `${user.factories.length} mapped` : '—'),
+            key: 'factory',
+            header: 'Factory',
+            render: (user) => user.factories[0]?.name ?? '—',
           },
           {
             key: 'createdAt',

@@ -731,14 +731,14 @@ describe('job orders API', () => {
     });
     expect(assigned.body.data.items[0].lines).toBeUndefined();
 
-    await prisma.userFactory.create({
-      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.otherFactory.id },
-    });
-    const ambiguous = await request(app)
-      .get('/job-orders/assigned-tasks')
-      .set('Authorization', `Bearer ${factoryUser.token}`);
-    expect(ambiguous.status).toBe(403);
-    expect(ambiguous.body.error.code).toBe('FACTORY_MAPPING_AMBIGUOUS');
+    // A factory user can never actually reach a multi-mapping state: the
+    // database enforces one factory per user (see the "factory mapping"
+    // suite in users.test.ts), so a second mapping row is rejected outright.
+    await expect(
+      prisma.userFactory.create({
+        data: { id: createId(), userId: factoryUser.userId, factoryId: graph.otherFactory.id },
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
   });
 
   it('retains its assigned historical process-flow version when a newer version is activated', async () => {

@@ -30,12 +30,28 @@ export function requireDistributorAccess(user: CurrentUser, distributorId: strin
   }
 }
 
+// A factory-scoped user must be mapped to exactly one factory. Zero mappings
+// means the account is not provisioned yet; more than one is invalid data
+// (the system enforces one factory per factory user), so access fails closed
+// instead of letting mapping order decide what the user can see. These
+// dedicated error codes are relied on by the mobile factory task list to
+// show an actionable message instead of a generic "forbidden".
+export function getSoleFactoryId(user: CurrentUser): string {
+  if (user.factoryIds.length === 0) {
+    throw HttpError.factoryMappingRequired();
+  }
+  if (user.factoryIds.length > 1) {
+    throw HttpError.factoryMappingAmbiguous();
+  }
+  return user.factoryIds[0]!;
+}
+
 export function requireFactoryAccess(user: CurrentUser, factoryId: string): void {
   if (hasRole(user, 'ADMIN')) {
     return;
   }
 
-  if (!user.factoryIds.includes(factoryId)) {
+  if (getSoleFactoryId(user) !== factoryId) {
     throw HttpError.forbidden('You do not have access to this factory');
   }
 }

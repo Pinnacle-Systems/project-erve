@@ -299,19 +299,19 @@ describe('user detail page', () => {
     updatedAt: '2026-01-02T00:00:00.000Z',
   };
 
-  it('shows the distributor mapping panel for a DISTRIBUTOR-role user but not factory mappings', async () => {
+  it('shows the distributor mapping panel for a DISTRIBUTOR-role user but not factory mapping', async () => {
     await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
       if (config.url === '/distributors') return ok(config, { success: true, data: [] });
       throw new Error(`Unexpected request: ${config.url}`);
     });
     expect(container.textContent).toContain('Distributor Mapping');
-    expect(container.textContent).not.toContain('Factory Mappings');
+    expect(container.textContent).not.toContain('Factory Mapping');
     expect(container.textContent).toContain('Reset Password');
     expect(container.textContent).toContain('Deactivate');
   });
 
-  it('shows the factory mappings panel for a FACTORY_USER-role user but not distributor mapping', async () => {
+  it('shows the factory mapping panel for a FACTORY_USER-role user but not distributor mapping', async () => {
     await renderPage('/master-data/users/user-2', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-2')
         return ok(config, {
@@ -321,7 +321,7 @@ describe('user detail page', () => {
       if (config.url === '/factories') return ok(config, { success: true, data: [] });
       throw new Error(`Unexpected request: ${config.url}`);
     });
-    expect(container.textContent).toContain('Factory Mappings');
+    expect(container.textContent).toContain('Factory Mapping');
     expect(container.textContent).not.toContain('Distributor Mapping');
   });
 

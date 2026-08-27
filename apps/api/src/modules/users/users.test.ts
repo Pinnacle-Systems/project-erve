@@ -91,6 +91,83 @@ describe('POST /users', () => {
     expect(edited.body.data.factories).toEqual([]);
   });
 
+  it('rejects creating a FACTORY_USER without a factory', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+
+    const res = await request(app)
+      .post('/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Unmapped Factory User',
+        email: 'unmapped-factory@test.local',
+        password: 'password123',
+        roles: ['FACTORY_USER'],
+      });
+
+    expect(res.status).toBe(400);
+    expect(await prisma.user.findUnique({ where: { email: 'unmapped-factory@test.local' } })).toBeNull();
+  });
+
+  it('rejects creating a FACTORY_USER mapped to an unknown factory', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+
+    const res = await request(app)
+      .post('/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Bogus Factory User',
+        email: 'bogus-factory@test.local',
+        password: 'password123',
+        roles: ['FACTORY_USER'],
+        factoryId: 'does-not-exist',
+      });
+
+    expect(res.status).toBe(400);
+    expect(await prisma.user.findUnique({ where: { email: 'bogus-factory@test.local' } })).toBeNull();
+  });
+
+  it('creates a FACTORY_USER with exactly one factory atomically', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const factory = await createTestFactory({ code: 'F-001', name: 'Acme Factory' });
+
+    const res = await request(app)
+      .post('/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Mapped Factory User',
+        email: 'mapped-factory@test.local',
+        password: 'password123',
+        roles: ['FACTORY_USER'],
+        factoryId: factory.id,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.factories).toEqual([
+      { id: factory.id, code: factory.code, name: factory.name },
+    ]);
+    expect(await prisma.userFactory.count({ where: { userId: res.body.data.id } })).toBe(1);
+
+    const actions = await prisma.auditLog.findMany({
+      where: { entityId: res.body.data.id },
+      select: { action: true },
+    });
+    expect(actions.map(({ action }) => action)).toEqual(
+      expect.arrayContaining(['USER_CREATED', 'FACTORY_MAPPING_ADDED']),
+    );
+  });
+
   it('rejects a non-ADMIN caller', async () => {
     const { token } = await createTestUserAndToken({
       email: 'merchandiser@test.local',
@@ -192,6 +269,53 @@ describe('POST /users/:id/roles', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.roles.sort()).toEqual(['ACCOUNTANT', 'MERCHANDISER', 'QA_USER'].sort());
+  });
+
+  it('rejects assigning the FACTORY_USER role without a factory', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { userId: targetId } = await createTestUserAndToken({
+      email: 'target@test.local',
+      password: 'target-password',
+      roles: ['MERCHANDISER'],
+    });
+
+    const res = await request(app)
+      .post(`/users/${targetId}/roles`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ roleName: 'FACTORY_USER' });
+
+    expect(res.status).toBe(400);
+    expect(await prisma.userRole.count({ where: { userId: targetId } })).toBe(1);
+  });
+
+  it('assigns the FACTORY_USER role and its factory mapping atomically', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { userId: targetId } = await createTestUserAndToken({
+      email: 'target@test.local',
+      password: 'target-password',
+      roles: ['MERCHANDISER'],
+    });
+    const factory = await createTestFactory({ code: 'F-001', name: 'Acme Factory' });
+
+    const res = await request(app)
+      .post(`/users/${targetId}/roles`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ roleName: 'FACTORY_USER', factoryId: factory.id });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.roles.sort()).toEqual(['FACTORY_USER', 'MERCHANDISER'].sort());
+    expect(res.body.data.factories).toEqual([
+      { id: factory.id, code: factory.code, name: factory.name },
+    ]);
+    expect(await prisma.userFactory.count({ where: { userId: targetId } })).toBe(1);
   });
 });
 
@@ -469,7 +593,7 @@ describe('POST /users/:id/factories', () => {
     expect(JSON.stringify(res.body)).not.toContain('passwordHash');
   });
 
-  it('enforces role, active account, active factory, duplicates, removal, and audit rows', async () => {
+  it('enforces role, active account, active factory, duplicates, and blocks bare removal while the role is held', async () => {
     const { token } = await createTestUserAndToken({
       email: 'admin@test.local',
       password: 'admin-password',
@@ -492,30 +616,175 @@ describe('POST /users/:id/factories', () => {
     });
     await prisma.user.update({ where: { id: inactiveId }, data: { status: 'INACTIVE' } });
     const factory = await createTestFactory({ code: 'F-001', name: 'Acme Factory' });
-    const post = (targetId: string) =>
+    const inactiveFactory = await createTestFactory({ code: 'F-002', name: 'Dormant Factory' });
+    await prisma.factory.update({ where: { id: inactiveFactory.id }, data: { status: 'INACTIVE' } });
+    const post = (targetId: string, targetFactoryId: string) =>
       request(app)
         .post(`/users/${targetId}/factories`)
         .set('Authorization', `Bearer ${token}`)
-        .send({ factoryId: factory.id });
+        .send({ factoryId: targetFactoryId });
 
-    await post(wrongRoleId).expect(400);
-    await post(inactiveId).expect(400);
-    await post(userId).expect(200);
-    await post(userId).expect(409);
-    const removed = await request(app)
+    await post(wrongRoleId, factory.id).expect(400);
+    await post(inactiveId, factory.id).expect(400);
+    await post(userId, inactiveFactory.id).expect(400);
+    await post(userId, factory.id).expect(200);
+    await post(userId, factory.id).expect(409);
+
+    // A FACTORY_USER may never be left unmapped, so a bare removal is
+    // rejected while the role is still held (see removeRole/addFactoryMapping).
+    const blockedRemoval = await request(app)
       .delete(`/users/${userId}/factories/${factory.id}`)
       .set('Authorization', `Bearer ${token}`);
-    expect(removed.status).toBe(200);
+    expect(blockedRemoval.status).toBe(400);
+    expect(await prisma.userFactory.count({ where: { userId } })).toBe(1);
 
-    await prisma.factory.update({ where: { id: factory.id }, data: { status: 'INACTIVE' } });
-    await post(userId).expect(400);
     const actions = await prisma.auditLog.findMany({
       where: { entityId: userId },
       select: { action: true },
     });
-    expect(actions.map(({ action }) => action)).toEqual(
-      expect.arrayContaining(['FACTORY_MAPPING_ADDED', 'FACTORY_MAPPING_REMOVED']),
+    expect(actions.map(({ action }) => action)).toEqual(['FACTORY_MAPPING_ADDED']);
+  });
+
+  it('reassigns a factory user from Factory A to Factory B atomically in one call, leaving exactly one mapping', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { userId: targetId } = await createTestUserAndToken({
+      email: 'factory-user@test.local',
+      password: 'target-password',
+      roles: ['FACTORY_USER'],
+    });
+    const first = await createTestFactory({ code: 'F-001', name: 'First Factory' });
+    const second = await createTestFactory({ code: 'F-002', name: 'Second Factory' });
+
+    await request(app)
+      .post(`/users/${targetId}/factories`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ factoryId: first.id })
+      .expect(200);
+
+    // A single call reassigns directly — there is no intermediate
+    // remove-then-add step and no window where the user has zero mappings.
+    const reassigned = await request(app)
+      .post(`/users/${targetId}/factories`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ factoryId: second.id });
+
+    expect(reassigned.status).toBe(200);
+    expect(reassigned.body.data.factories).toEqual([
+      { id: second.id, code: 'F-002', name: 'Second Factory' },
+    ]);
+    expect(await prisma.userFactory.count({ where: { userId: targetId } })).toBe(1);
+    expect(
+      await prisma.userFactory.findFirst({ where: { userId: targetId, factoryId: first.id } }),
+    ).toBeNull();
+
+    const actions = await prisma.auditLog.findMany({
+      where: { entityId: targetId },
+      orderBy: { createdAt: 'asc' },
+      select: { action: true, metadata: true },
+    });
+    expect(actions).toEqual([
+      { action: 'FACTORY_MAPPING_ADDED', metadata: { factoryId: first.id } },
+      { action: 'FACTORY_MAPPING_REMOVED', metadata: { factoryId: first.id } },
+      { action: 'FACTORY_MAPPING_ADDED', metadata: { factoryId: second.id } },
+    ]);
+  });
+
+  it('never yields more than one mapping under concurrent first-time assignment attempts', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { userId: targetId } = await createTestUserAndToken({
+      email: 'factory-user@test.local',
+      password: 'target-password',
+      roles: ['FACTORY_USER'],
+    });
+    const factory = await createTestFactory({ code: 'F-001', name: 'Acme Factory' });
+
+    const responses = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        request(app)
+          .post(`/users/${targetId}/factories`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ factoryId: factory.id }),
+      ),
     );
+
+    const succeeded = responses.filter((res) => res.status === 200);
+    const conflicted = responses.filter((res) => res.status === 409);
+    expect(succeeded).toHaveLength(1);
+    expect(conflicted).toHaveLength(3);
+
+    expect(await prisma.userFactory.count({ where: { userId: targetId } })).toBe(1);
+    const addedLogs = await prisma.auditLog.count({
+      where: { action: 'FACTORY_MAPPING_ADDED', entityId: targetId },
+    });
+    expect(addedLogs).toBe(1);
+  });
+
+  it('never yields zero or more than one mapping under concurrent reassignment attempts', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { userId: targetId } = await createTestUserAndToken({
+      email: 'factory-user@test.local',
+      password: 'target-password',
+      roles: ['FACTORY_USER'],
+    });
+    const initial = await createTestFactory({ code: 'F-000', name: 'Initial Factory' });
+    await request(app)
+      .post(`/users/${targetId}/factories`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ factoryId: initial.id })
+      .expect(200);
+
+    const factories = await Promise.all(
+      [1, 2, 3, 4].map((n) => createTestFactory({ code: `F-00${n}`, name: `Factory ${n}` })),
+    );
+
+    // Each racing request targets a distinct factory, so every one is a
+    // valid reassignment (not a duplicate) — the per-user advisory lock
+    // must still serialize them so exactly one mapping survives, never zero
+    // (a naive delete-then-create outside a lock/transaction could
+    // momentarily drop to zero, or leave two if racing creates both won).
+    const responses = await Promise.all(
+      factories.map((factory) =>
+        request(app)
+          .post(`/users/${targetId}/factories`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ factoryId: factory.id }),
+      ),
+    );
+
+    expect(responses.every((res) => res.status === 200)).toBe(true);
+    expect(await prisma.userFactory.count({ where: { userId: targetId } })).toBe(1);
+  });
+
+  it('is backed by a database constraint that rejects a second mapping row inserted directly', async () => {
+    const { userId: targetId } = await createTestUserAndToken({
+      email: 'factory-user@test.local',
+      password: 'target-password',
+      roles: ['FACTORY_USER'],
+    });
+    const first = await createTestFactory({ code: 'F-001', name: 'First Factory' });
+    const second = await createTestFactory({ code: 'F-002', name: 'Second Factory' });
+
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: targetId, factoryId: first.id },
+    });
+
+    await expect(
+      prisma.userFactory.create({
+        data: { id: createId(), userId: targetId, factoryId: second.id },
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
   });
 });
 
@@ -1164,7 +1433,7 @@ describe('self-lockout and last-admin protections', () => {
     expect(allowed.status).toBe(200);
   });
 
-  it('blocks removing FACTORY_USER role while a factory mapping exists', async () => {
+  it('removing the FACTORY_USER role atomically removes its factory mapping too', async () => {
     const { token } = await createTestUserAndToken({
       email: 'admin@test.local',
       password: 'admin-password',
@@ -1183,9 +1452,52 @@ describe('self-lockout and last-admin protections', () => {
       .send({ factoryId: factory.id })
       .expect(200);
 
-    const blocked = await request(app)
+    // No separate "unmap, then remove the role" step exists — removing the
+    // role is what takes the mapping with it, in the same transaction, so a
+    // caller can never stop partway through with role=FACTORY_USER and no
+    // mapping (see removeFactoryMapping, which now refuses a bare removal).
+    const removed = await request(app)
       .delete(`/users/${targetId}/roles/FACTORY_USER`)
       .set('Authorization', `Bearer ${token}`);
-    expect(blocked.status).toBe(400);
+    expect(removed.status).toBe(200);
+    expect(removed.body.data.roles).toEqual(['MERCHANDISER']);
+    expect(removed.body.data.factories).toEqual([]);
+    expect(await prisma.userFactory.count({ where: { userId: targetId } })).toBe(0);
+
+    const actions = await prisma.auditLog.findMany({
+      where: { entityId: targetId },
+      orderBy: { createdAt: 'asc' },
+      select: { action: true, metadata: true },
+    });
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        { action: 'FACTORY_MAPPING_ADDED', metadata: { factoryId: factory.id } },
+        { action: 'ROLE_REMOVED', metadata: { role: 'FACTORY_USER' } },
+        { action: 'FACTORY_MAPPING_REMOVED', metadata: { factoryId: factory.id } },
+      ]),
+    );
+  });
+
+  it('removing the FACTORY_USER role from a user with no mapping succeeds without a spurious removal log', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const { userId: targetId } = await createTestUserAndToken({
+      email: 'target@test.local',
+      password: 'p',
+      roles: ['FACTORY_USER', 'MERCHANDISER'],
+    });
+
+    const removed = await request(app)
+      .delete(`/users/${targetId}/roles/FACTORY_USER`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(removed.status).toBe(200);
+
+    const removalLogs = await prisma.auditLog.count({
+      where: { action: 'FACTORY_MAPPING_REMOVED', entityId: targetId },
+    });
+    expect(removalLogs).toBe(0);
   });
 });

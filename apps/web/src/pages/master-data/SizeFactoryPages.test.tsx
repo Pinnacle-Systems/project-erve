@@ -144,7 +144,6 @@ describe('size and factory management pages', () => {
     });
     expect(container.textContent).toContain('Mapped Factory Users');
     expect(container.textContent).toContain('operator@test.local');
-    expect(container.textContent).toContain('Remove');
   });
 
   it('keeps factory detail read-only for FACTORY_USER', async () => {

@@ -9,6 +9,7 @@ import type {
 } from '@erve/types';
 import { QA_INSPECTION_START_STATUSES, QA_QUEUE_STATUSES } from '@erve/types';
 import type { CurrentUser } from '../../auth/current-user.js';
+import { getSoleFactoryId } from '../../auth/access.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { HttpError } from '../../errors/http-error.js';
 import { Prisma, prisma } from '../../db/prisma.js';
@@ -1096,15 +1097,7 @@ export async function updateRework(
 }
 
 export async function getFactoryReworkQueue(user: CurrentUser) {
-  const factoryId = user.roles.includes('FACTORY_USER')
-    ? user.factoryIds.length === 1
-      ? user.factoryIds[0]!
-      : (() => {
-          throw user.factoryIds.length
-            ? HttpError.factoryMappingAmbiguous()
-            : HttpError.factoryMappingRequired();
-        })()
-    : null;
+  const factoryId = user.roles.includes('FACTORY_USER') ? getSoleFactoryId(user) : null;
   if (!factoryId && !isSupervisor(user))
     throw HttpError.forbidden('You cannot view factory rework');
   const jobs = await prisma.jobOrder.findMany({

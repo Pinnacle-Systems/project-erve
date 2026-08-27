@@ -5,11 +5,18 @@ import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse } from '@erve/types';
 import { ROLES, type Role } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
-import { Button, Checkbox, TextField, ValidationMessage } from '@erve/primitives';
+import {
+  Button,
+  Checkbox,
+  SelectField,
+  SelectItem,
+  TextField,
+  ValidationMessage,
+} from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import type { AdminUserSummary } from '../master-data/types.js';
+import type { AdminUserSummary, Factory } from '../master-data/types.js';
 import { PasswordField } from './PasswordField.js';
 
 function toErrorMessage(caught: unknown, fallback: string): string {
@@ -31,13 +38,27 @@ export function UserFormPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [roles, setRoles] = useState<Role[]>([]);
+  const [factoryId, setFactoryId] = useState('');
   const [error, setError] = useState('');
+
+  const needsFactory = !isEdit && roles.includes('FACTORY_USER');
 
   const userQuery = useQuery({
     queryKey: ['admin-user', id],
     enabled: isEdit,
     queryFn: async () => {
       const response = await apiClient.get<ApiSuccessResponse<AdminUserSummary>>(`/users/${id}`);
+      return response.data.data;
+    },
+  });
+
+  const factoriesQuery = useQuery({
+    queryKey: ['factories', { status: 'ACTIVE' }],
+    enabled: needsFactory,
+    queryFn: async () => {
+      const response = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
+        params: { status: 'ACTIVE' },
+      });
       return response.data.data;
     },
   });
@@ -77,11 +98,15 @@ export function UserFormPage() {
       if (password !== confirmPassword) {
         throw new Error('Passwords do not match');
       }
+      if (needsFactory && !factoryId) {
+        throw new Error('Select a factory for the Factory User role');
+      }
       const response = await apiClient.post<ApiSuccessResponse<AdminUserSummary>>('/users', {
         name: name.trim(),
         email: email.trim(),
         password,
         roles,
+        factoryId: needsFactory ? factoryId : undefined,
       });
       return response.data.data;
     },
@@ -180,6 +205,29 @@ export function UserFormPage() {
                   ))}
                 </div>
               </FormSection>
+
+              {needsFactory ? (
+                <FormSection
+                  title="Factory"
+                  description="A Factory User must be mapped to exactly one factory."
+                >
+                  <FormGrid columns={2}>
+                    <SelectField
+                      label="Factory"
+                      value={factoryId || 'NONE'}
+                      onValueChange={(value) => setFactoryId(value === 'NONE' ? '' : value)}
+                      errorMessage={error && !factoryId ? 'Required' : undefined}
+                    >
+                      <SelectItem value="NONE">Select an active factory</SelectItem>
+                      {(factoriesQuery.data ?? []).map((factory) => (
+                        <SelectItem key={factory.id} value={factory.id}>
+                          {factory.name} ({factory.code})
+                        </SelectItem>
+                      ))}
+                    </SelectField>
+                  </FormGrid>
+                </FormSection>
+              ) : null}
             </>
           ) : null}
 

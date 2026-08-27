@@ -408,17 +408,19 @@ model UserDistributor {
   @@map("user_distributors")
 }
 
+// A factory user belongs to exactly one factory: factory isolation (Job
+// Order visibility, production/QA scoping) is scoped to that single mapping,
+// so the unique constraint on user_id is load-bearing — mirrors
+// UserDistributor above.
 model UserFactory {
   id        String   @id
-  userId    String   @map("user_id")
+  userId    String   @unique @map("user_id")
   factoryId String   @map("factory_id")
   createdAt DateTime @default(now()) @map("created_at")
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   factory Factory @relation(fields: [factoryId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, factoryId])
-  @@index([userId])
   @@index([factoryId])
   @@map("user_factories")
 }

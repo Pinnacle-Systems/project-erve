@@ -73,6 +73,23 @@ export interface CreateUserInput {
   mobile?: string;
   password: string;
   roles: Role[];
+  // Required when roles includes FACTORY_USER — a factory user must be
+  // provisioned with its factory mapping atomically, never created and
+  // mapped as two separate steps (see validateFactoryForAssignment).
+  factoryId?: string;
+}
+
+// Shared by createUser and assignRole: a FACTORY_USER's factory must exist
+// and be active — same business-validation messages addFactoryMapping uses.
+async function validateFactoryForAssignment(factoryId: string) {
+  const factory = await prisma.factory.findUnique({ where: { id: factoryId } });
+  if (!factory) {
+    throw HttpError.badRequest('Unknown factory');
+  }
+  if (factory.status !== 'ACTIVE') {
+    throw HttpError.badRequest('Cannot map a user to an inactive factory');
+  }
+  return factory;
 }
 
 export async function createUser(actor: CurrentUser, input: CreateUserInput): Promise<UserView> {
@@ -85,7 +102,19 @@ export async function createUser(actor: CurrentUser, input: CreateUserInput): Pr
     throw HttpError.badRequest('One or more roles are invalid');
   }
 
+  const needsFactory = input.roles.includes('FACTORY_USER');
+  if (needsFactory && !input.factoryId) {
+    throw HttpError.badRequest('A Factory is required for the FACTORY_USER role');
+  }
+  if (needsFactory) {
+    await validateFactoryForAssignment(input.factoryId!);
+  }
+
   try {
+    // A single nested create runs as one atomic write — the user, its
+    // roles, and (when applicable) its sole factory mapping either all land
+    // together or none do. No separate "create user, then add mapping"
+    // step exists for this to fail in between.
     await prisma.user.create({
       data: {
         id: userId,
@@ -94,6 +123,9 @@ export async function createUser(actor: CurrentUser, input: CreateUserInput): Pr
         mobile: input.mobile,
         passwordHash,
         userRoles: { create: roles.map((role) => ({ id: createId(), roleId: role.id })) },
+        userFactories: needsFactory
+          ? { create: { id: createId(), factoryId: input.factoryId! } }
+          : undefined,
       },
     });
   } catch (error) {
@@ -109,6 +141,15 @@ export async function createUser(actor: CurrentUser, input: CreateUserInput): Pr
     entityType: 'User',
     entityId: userId,
   });
+  if (needsFactory) {
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'FACTORY_MAPPING_ADDED',
+      entityType: 'User',
+      entityId: userId,
+      metadata: { factoryId: input.factoryId },
+    });
+  }
 
   return getUserById(userId);
 }
@@ -307,6 +348,7 @@ export async function assignRole(
   actor: CurrentUser,
   userId: string,
   roleName: Role,
+  factoryId?: string,
 ): Promise<UserView> {
   const [user, role] = await Promise.all([
     prisma.user.findUnique({
@@ -323,8 +365,31 @@ export async function assignRole(
     throw HttpError.badRequest('Unknown role');
   }
 
+  const needsFactory = roleName === 'FACTORY_USER';
+  if (needsFactory && !factoryId) {
+    throw HttpError.badRequest('A Factory is required to assign the FACTORY_USER role');
+  }
+  if (needsFactory) {
+    await validateFactoryForAssignment(factoryId!);
+  }
+
   try {
-    await prisma.userRole.create({ data: { id: createId(), userId, roleId: role.id } });
+    // Gaining the FACTORY_USER role and gaining its factory mapping happen
+    // in one transaction — the same per-user lock addFactoryMapping uses,
+    // since a concurrent factory-mapping call could otherwise race this.
+    await prisma.$transaction(async (tx) => {
+      if (needsFactory) {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('user_factory:' || ${userId}, 0))::text`;
+        const existingMapping = await tx.userFactory.findFirst({ where: { userId } });
+        if (existingMapping) {
+          throw HttpError.conflict('User already has a factory mapping');
+        }
+      }
+      await tx.userRole.create({ data: { id: createId(), userId, roleId: role.id } });
+      if (needsFactory) {
+        await tx.userFactory.create({ data: { id: createId(), userId, factoryId: factoryId! } });
+      }
+    });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('User already has this role');
@@ -339,6 +404,15 @@ export async function assignRole(
     entityId: userId,
     metadata: { role: roleName },
   });
+  if (needsFactory) {
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'FACTORY_MAPPING_ADDED',
+      entityType: 'User',
+      entityId: userId,
+      metadata: { factoryId },
+    });
+  }
 
   return getUserById(userId);
 }
@@ -352,6 +426,8 @@ export async function removeRole(
   if (!role) {
     throw HttpError.badRequest('Unknown role');
   }
+
+  let removedFactoryId: string | undefined;
 
   await prisma.$transaction(async (tx) => {
     // Serializes concurrent role changes for this user (e.g. two admins
@@ -383,11 +459,18 @@ export async function removeRole(
       }
     }
     if (roleName === 'FACTORY_USER') {
-      const mappingCount = await tx.userFactory.count({ where: { userId } });
-      if (mappingCount > 0) {
-        throw HttpError.badRequest(
-          'Remove all factory mappings before removing the FACTORY_USER role',
-        );
+      // A factory mapping only ever exists alongside the FACTORY_USER role
+      // (see addFactoryMapping/assignRole), so losing the role atomically
+      // takes the mapping with it in this same transaction — there is no
+      // standalone "unmap, then remove the role" step for a caller to stop
+      // partway through. Same per-user lock addFactoryMapping/
+      // removeFactoryMapping use, to serialize against a concurrent
+      // mapping change.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('user_factory:' || ${userId}, 0))::text`;
+      const mapping = await tx.userFactory.findFirst({ where: { userId } });
+      if (mapping) {
+        await tx.userFactory.delete({ where: { id: mapping.id } });
+        removedFactoryId = mapping.factoryId;
       }
     }
 
@@ -410,6 +493,15 @@ export async function removeRole(
     entityId: userId,
     metadata: { role: roleName },
   });
+  if (removedFactoryId) {
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'FACTORY_MAPPING_REMOVED',
+      entityType: 'User',
+      entityId: userId,
+      metadata: { factoryId: removedFactoryId },
+    });
+  }
 
   return getUserById(userId);
 }
@@ -521,15 +613,39 @@ export async function addFactoryMapping(
     throw HttpError.badRequest('Cannot map a user to an inactive factory');
   }
 
-  try {
-    await prisma.userFactory.create({ data: { id: createId(), userId, factoryId } });
-  } catch (error) {
-    if (isUniqueConstraintError(error)) {
-      throw HttpError.conflict('User is already mapped to this factory');
-    }
-    throw error;
-  }
+  // A factory user belongs to exactly one factory — user_factories.user_id
+  // is unique at the database level. A FACTORY_USER's mapping must never be
+  // bare-removed (see removeFactoryMapping), so this is also the sole path
+  // for reassignment: when the user already has a *different* factory
+  // mapped, the old row is replaced by the new one inside the same
+  // transaction, atomically — there is no interim state where the user has
+  // zero mappings. The per-user advisory lock serializes concurrent
+  // assignment attempts (mirrors addDistributorMapping).
+  let previousFactoryId: string | undefined;
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('user_factory:' || ${userId}, 0))::text`;
 
+    const existing = await tx.userFactory.findFirst({ where: { userId } });
+    if (existing) {
+      if (existing.factoryId === factoryId) {
+        throw HttpError.conflict('User is already mapped to this factory');
+      }
+      await tx.userFactory.delete({ where: { id: existing.id } });
+      previousFactoryId = existing.factoryId;
+    }
+
+    await tx.userFactory.create({ data: { id: createId(), userId, factoryId } });
+  });
+
+  if (previousFactoryId) {
+    await recordAuditLog({
+      actorId: actor.id,
+      action: 'FACTORY_MAPPING_REMOVED',
+      entityType: 'User',
+      entityId: userId,
+      metadata: { factoryId: previousFactoryId },
+    });
+  }
   await recordAuditLog({
     actorId: actor.id,
     action: 'FACTORY_MAPPING_ADDED',
@@ -546,6 +662,25 @@ export async function removeFactoryMapping(
   userId: string,
   factoryId: string,
 ): Promise<UserView> {
+  // A FACTORY_USER may never be left with zero factory mappings, so a bare
+  // removal is only valid once the role itself is gone — removeRole already
+  // takes the mapping with it atomically when the role is removed, and
+  // addFactoryMapping is the path for reassigning to a different factory
+  // without an interim unmapped state. This endpoint remains for cleanup of
+  // a mapping that outlives the role (e.g. legacy data).
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { userRoles: { select: { role: { select: { name: true } } } } },
+  });
+  if (!user) {
+    throw HttpError.notFound('User not found');
+  }
+  if (user.userRoles.some(({ role }) => role.name === 'FACTORY_USER')) {
+    throw HttpError.badRequest(
+      'Remove the FACTORY_USER role, or assign a different factory, instead of removing the sole factory mapping',
+    );
+  }
+
   const deleted = await prisma.userFactory.deleteMany({ where: { userId, factoryId } });
   if (deleted.count === 0) {
     throw HttpError.notFound('User is not mapped to this factory');
