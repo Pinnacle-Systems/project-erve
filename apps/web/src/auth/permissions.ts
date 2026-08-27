@@ -104,6 +104,20 @@ export const QA_VIEW_ROLES = [
   'QA_USER',
 ] as const satisfies readonly Role[];
 
+export const SALE_ORDER_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'DISTRIBUTOR',
+] as const satisfies readonly Role[];
+
+export const SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES = [
+  'ADMIN',
+  'DISTRIBUTOR',
+] as const satisfies readonly Role[];
+
+export const SALE_ORDER_APPROVE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
+
 function hasRole(user: AuthUser | null | undefined, roles: readonly Role[]): boolean {
   if (!user) return false;
   return roles.some((role) => user.roles.includes(role));
@@ -167,3 +181,14 @@ export const canFilterJobOrdersByFactory = (user: AuthUser | null | undefined) =
   hasRole(user, JOB_ORDER_FACTORY_FILTER_ROLES);
 
 export const canViewQa = (user: AuthUser | null | undefined) => hasRole(user, QA_VIEW_ROLES);
+
+export const canViewSaleOrders = (user: AuthUser | null | undefined) =>
+  hasRole(user, SALE_ORDER_VIEW_ROLES);
+
+export const canManageSaleOrdersAsDistributor = (user: AuthUser | null | undefined) =>
+  hasRole(user, SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES);
+
+export const canApproveSaleOrders = (user: AuthUser | null | undefined) =>
+  hasRole(user, SALE_ORDER_APPROVE_ROLES);
+
+export const canViewSaleOrderInventory = canApproveSaleOrders;

@@ -49,3 +49,32 @@ export const FINANCIAL_YEAR_READ_ROLES = [
 export function canReadFinancialYears(user: RoleHolder): boolean {
   return hasAnyRole(user, FINANCIAL_YEAR_READ_ROLES);
 }
+
+/** Roles that may view Sale Orders (row-level distributor scoping still applies). */
+export const SALE_ORDER_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'DISTRIBUTOR',
+] as const satisfies readonly Role[];
+
+export function canViewSaleOrders(user: RoleHolder): boolean {
+  return hasAnyRole(user, SALE_ORDER_VIEW_ROLES);
+}
+
+/** Roles that may create/edit/submit a Sale Order as the requesting distributor. */
+export const SALE_ORDER_DISTRIBUTOR_MUTATION_ROLES = [
+  'ADMIN',
+  'DISTRIBUTOR',
+] as const satisfies readonly Role[];
+
+export function canMutateSaleOrderAsDistributor(user: RoleHolder): boolean {
+  return hasAnyRole(user, SALE_ORDER_DISTRIBUTOR_MUTATION_ROLES);
+}
+
+/** Roles that may review/approve/reject a submitted Sale Order and see global inventory. */
+export const SALE_ORDER_REVIEW_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
+
+export function canReviewSaleOrders(user: RoleHolder): boolean {
+  return hasAnyRole(user, SALE_ORDER_REVIEW_ROLES);
+}

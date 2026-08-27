@@ -36,6 +36,9 @@ import { PurchaseOrderDetailPage } from '../pages/purchase-orders/PurchaseOrderD
 import { JobOrderCreatePage } from '../pages/job-orders/JobOrderCreatePage.js';
 import { JobOrderDetailPage } from '../pages/job-orders/JobOrderDetailPage.js';
 import { JobOrderListPage } from '../pages/job-orders/JobOrderListPage.js';
+import { SaleOrderListPage } from '../pages/sale-orders/SaleOrderListPage.js';
+import { SaleOrderFormPage } from '../pages/sale-orders/SaleOrderFormPage.js';
+import { SaleOrderDetailPage } from '../pages/sale-orders/SaleOrderDetailPage.js';
 import { AppLayout } from '../pages/AppLayout.js';
 import { RoleRoute } from './RoleRoute.js';
 import { QaDetailPage } from '../pages/qa/QaDetailPage.js';
@@ -55,6 +58,8 @@ import {
   PURCHASE_ORDER_MANAGE_ROLES,
   PURCHASE_ORDER_VIEW_ROLES,
   QA_VIEW_ROLES,
+  SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES,
+  SALE_ORDER_VIEW_ROLES,
   SIZE_MANAGE_ROLES,
   SEASON_MANAGE_ROLES,
   STYLE_MANAGE_ROLES,
@@ -369,6 +374,48 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={PURCHASE_ORDER_MANAGE_ROLES}>
               <PurchaseOrderFormPage />
+            </RoleRoute>
+          }
+        />
+      </Route>
+
+      <Route
+        path="/sale-orders"
+        element={
+          <RoleRoute allowed={SALE_ORDER_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route
+          index
+          element={
+            <RoleRoute allowed={SALE_ORDER_VIEW_ROLES}>
+              <SaleOrderListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="new"
+          element={
+            <RoleRoute allowed={SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES}>
+              <SaleOrderFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path=":id"
+          element={
+            <RoleRoute allowed={SALE_ORDER_VIEW_ROLES}>
+              <SaleOrderDetailPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path=":id/edit"
+          element={
+            <RoleRoute allowed={SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES}>
+              <SaleOrderFormPage />
             </RoleRoute>
           }
         />

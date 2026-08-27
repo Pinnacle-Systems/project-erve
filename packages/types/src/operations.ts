@@ -156,6 +156,120 @@ export interface PurchaseOrderBalance {
   }>;
 }
 
+// ---------------------------------------------------------------------------
+// Sale Orders
+// ---------------------------------------------------------------------------
+
+export type SaleOrderStatus =
+  | 'DRAFT'
+  | 'SUBMITTED'
+  | 'UNDER_REVIEW'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+export type StockAllocationStatus = 'ACTIVE' | 'RELEASED';
+export type StockAllocationSource =
+  | 'DISTRIBUTOR_REQUEST'
+  | 'MERCHANDISER_ADJUSTMENT'
+  | 'MERCHANDISER_REASSIGNMENT';
+
+export interface StockAllocationSourceDetail {
+  qaReleaseLineId: string;
+  distributor: { id: string; code: string; name: string };
+  purchaseOrder: { id: string; poNumber: string };
+  jobOrder: { id: string; jobOrderNumber: string };
+  factory: { id: string; code: string; name: string };
+  releasedAt: string;
+}
+
+export interface SaleOrderAllocationView {
+  id: string;
+  quantity: number;
+  status: StockAllocationStatus;
+  allocationSource: StockAllocationSource;
+  reason: string | null;
+  createdAt: string;
+  // Null when redacted for a viewer who is not permitted to see cross-
+  // distributor provenance (a DISTRIBUTOR viewer on a MERCHANDISER_REASSIGNMENT
+  // allocation) — see requirement 4/10 in the Sale Order spec.
+  source: StockAllocationSourceDetail | null;
+}
+
+export interface SaleOrderLineView {
+  id: string;
+  purchaseOrderLineSizeId: string;
+  purchaseOrderId: string;
+  poNumber: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  orderedQuantity: number;
+  qaPassedQuantity: number;
+  requestedQuantity: number;
+  approvedQuantity: number | null;
+  remarks: string | null;
+  allocations: SaleOrderAllocationView[];
+}
+
+export interface SaleOrderSummary extends VersionedResource {
+  id: string;
+  saleOrderNumber: string;
+  distributor: { id: string; code: string; name: string };
+  financialYear: { id: string; code: string };
+  soDate: string;
+  status: SaleOrderStatus;
+  totalRequestedQuantity: number;
+  totalApprovedQuantity: number;
+  createdAt: string;
+}
+
+export interface SaleOrderDetail extends SaleOrderSummary {
+  creator: { id: string; name: string; email: string };
+  reviewedBy: { id: string; name: string; email: string } | null;
+  remarks: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  decisionReason: string | null;
+  lines: SaleOrderLineView[];
+}
+
+export interface EligibleStockLine {
+  purchaseOrderLineSizeId: string;
+  purchaseOrderId: string;
+  poNumber: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  releasedQuantity: number;
+  committedQuantity: number;
+  availableQuantity: number;
+}
+
+export interface GlobalInventoryLine {
+  qaReleaseLineId: string;
+  distributor: { id: string; code: string; name: string };
+  purchaseOrder: { id: string; poNumber: string };
+  jobOrder: { id: string; jobOrderNumber: string };
+  factory: { id: string; code: string; name: string };
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  releasedQuantity: number;
+  committedQuantity: number;
+  availableQuantity: number;
+  releasedAt: string;
+}
+
 export interface JobOrderLineSize {
   id: string;
   purchaseOrderLineSizeId: string;

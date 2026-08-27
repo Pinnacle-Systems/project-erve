@@ -1,12 +1,11 @@
 import { toCompactFinancialYearCode } from './financial-year.util.js';
 
 // Business-confirmed prefixes — "EI" + document abbreviation, matching the
-// confirmed Sale Order convention (EISO/25-26/0103; Sale Order itself doesn't
-// exist in this repo). Centralized here so a future document type's prefix
-// is a one-line addition, not a numbering-logic change.
+// confirmed Sale Order convention (EISO/25-26/0103).
 export const DOCUMENT_PREFIXES = {
   PURCHASE_ORDER: 'EIPO',
   JOB_ORDER: 'EIJO',
+  SALE_ORDER: 'EISO',
 } as const;
 
 // MINIMUM width — pads short serials up to 4 digits but never truncates

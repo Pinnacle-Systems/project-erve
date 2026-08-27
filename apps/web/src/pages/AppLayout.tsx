@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Ruler,
   Shirt,
+  ShoppingCart,
   Tags,
   Users,
   Workflow,
@@ -26,6 +27,7 @@ import {
   canNavigateToJobOrders,
   canViewPriceLists,
   canViewPurchaseOrders,
+  canViewSaleOrders,
   canViewStyles,
 } from '../auth/permissions.js';
 
@@ -76,6 +78,9 @@ export function AppLayout() {
           : []),
         ...(canNavigateToJobOrders(user)
           ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }]
+          : []),
+        ...(canViewSaleOrders(user)
+          ? [{ to: '/sale-orders', label: 'Sale Orders', icon: ShoppingCart }]
           : []),
       ],
     },

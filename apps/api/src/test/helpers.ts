@@ -42,6 +42,12 @@ export async function resetDatabase(): Promise<void> {
     });
   }
   await prisma.auditLog.deleteMany();
+  // Sale Order rows must go before the QA-release/PO truncation below —
+  // StockAllocation.qaReleaseLineId and SaleOrderLine.purchaseOrderLineSizeId
+  // are onDelete: Restrict, so they'd otherwise block those deletes.
+  await prisma.stockAllocation.deleteMany();
+  await prisma.saleOrderLine.deleteMany();
+  await prisma.saleOrder.deleteMany();
   // Repeated rework intentionally forms a historical chain where a reinspection
   // form points to cycle N and cycle N+1 points back to that form. PostgreSQL
   // cannot DELETE either side first, so the disposable test database clears the
@@ -166,4 +172,260 @@ export async function createTestFactory(overrides?: {
   const name = overrides?.name ?? 'Test Factory';
   await prisma.factory.create({ data: { id, code, name } });
   return { id, code, name };
+}
+
+export interface CreateReleasedQaStockOptions {
+  distributorId?: string;
+  factoryId?: string;
+  styleId?: string;
+  sizeId?: string;
+  quantity: number;
+  releasedAt?: Date;
+}
+
+export interface ReleasedQaStock {
+  distributorId: string;
+  factoryId: string;
+  styleId: string;
+  sizeId: string;
+  purchaseOrderId: string;
+  poNumber: string;
+  purchaseOrderLineSizeId: string;
+  jobOrderId: string;
+  jobOrderLineSizeId: string;
+  qaReleaseId: string;
+  qaReleaseLineId: string;
+  quantity: number;
+}
+
+// Seeds a full, minimal PO -> JobOrder -> Final QA release chain directly via
+// Prisma (bypassing the real quality-executions API), the same shortcut
+// final-batching.test.ts uses for its own fixture chain. Every Sale Order
+// approval/allocation test builds its inventory from 1-3 calls to this.
+export async function createReleasedQaStock(
+  options: CreateReleasedQaStockOptions,
+): Promise<ReleasedQaStock> {
+  const quantity = options.quantity;
+  const distributor = options.distributorId
+    ? { id: options.distributorId }
+    : await createTestDistributor();
+  const factory = options.factoryId ? { id: options.factoryId } : await createTestFactory();
+  const actorId = await createTestUser({
+    email: `qa-stock-${createId()}@test.local`,
+    password: 'pass',
+    roles: ['ADMIN'],
+  });
+
+  const style = options.styleId
+    ? { id: options.styleId }
+    : await prisma.style.create({
+        data: {
+          id: createId(),
+          styleNumber: `SO-${createId()}`,
+          styleName: 'Sale order fixture style',
+          finalMrp: 100,
+        },
+      });
+  const size = options.sizeId
+    ? { id: options.sizeId }
+    : await prisma.size.create({
+        data: { id: createId(), code: `SZ-${createId()}`, label: 'M', sizeType: 'ALPHA', sortOrder: 1 },
+      });
+
+  const financialYear = await createTestFinancialYear();
+  const poSerial = await allocateTestDocumentSerial('PURCHASE_ORDER', financialYear.id);
+  const poNumber = `PO-${createId()}`;
+  const po = await prisma.distributorPurchaseOrder.create({
+    data: {
+      id: createId(),
+      poNumber,
+      distributorId: distributor.id,
+      poDate: new Date(),
+      purchaseMode: 'OUTRIGHT',
+      status: 'SUBMITTED',
+      createdBy: actorId,
+      financialYearId: financialYear.id,
+      poSerial,
+      lines: {
+        create: {
+          id: createId(),
+          styleId: style.id,
+          sizes: { create: [{ id: createId(), sizeId: size.id, orderedQuantity: quantity * 4 + 100 }] },
+        },
+      },
+    },
+    include: { lines: { include: { sizes: true } } },
+  });
+  const purchaseOrderLineSizeId = po.lines[0]!.sizes[0]!.id;
+
+  const form = await prisma.qualityForm.create({
+    data: {
+      id: createId(),
+      code: `SO_FINAL_${createId()}`,
+      name: 'Sale order fixture Final Inspection',
+      versions: {
+        create: {
+          id: createId(),
+          versionNumber: 1,
+          activityType: 'INSPECTION',
+          executionScope: 'JOB_ORDER',
+          status: 'PUBLISHED',
+          publishedAt: new Date(),
+        },
+      },
+    },
+    include: { versions: true },
+  });
+  const flow = await prisma.processFlow.create({
+    data: {
+      id: createId(),
+      code: `SO-FLOW-${createId()}`,
+      name: 'Sale order fixture flow',
+      versions: { create: { id: createId(), versionNumber: 1, status: 'ACTIVE' } },
+    },
+    include: { versions: true },
+  });
+  const finishingStage = await prisma.processFlowVersionStage.create({
+    data: {
+      id: createId(),
+      processFlowVersionId: flow.versions[0]!.id,
+      sequence: 1,
+      name: 'Finishing',
+      code: 'FINISHING',
+    },
+  });
+  const finalStage = await prisma.processFlowVersionStage.create({
+    data: {
+      id: createId(),
+      processFlowVersionId: flow.versions[0]!.id,
+      sequence: 2,
+      name: 'Final Inspection',
+      code: 'FINAL',
+      activityType: 'QUALITY',
+      qualityFormVersionId: form.versions[0]!.id,
+      qualityExecutionMode: 'IN_PROCESS',
+      associatedProductionActivityId: finishingStage.id,
+      qualityAvailabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE',
+      executionMultiplicity: 'BATCHED',
+      coverageTarget: 'PREPARED_QUANTITY',
+    },
+  });
+
+  const jobOrderSerial = await allocateTestDocumentSerial('JOB_ORDER', financialYear.id);
+  const job = await prisma.jobOrder.create({
+    data: {
+      id: createId(),
+      jobOrderNumber: `JO-${createId()}`,
+      purchaseOrderId: po.id,
+      factoryId: factory.id,
+      processFlowVersionId: flow.versions[0]!.id,
+      unitPrice: 10,
+      status: 'IN_PRODUCTION',
+      factoryConfirmationStatus: 'CONFIRMED',
+      preparedQuantityTotal: quantity,
+      createdBy: actorId,
+      financialYearId: financialYear.id,
+      jobOrderSerial,
+      lines: {
+        create: {
+          id: createId(),
+          purchaseOrderLineId: po.lines[0]!.id,
+          styleId: style.id,
+          orderedQuantityTotal: quantity,
+          preparedQuantityTotal: quantity,
+          sizes: {
+            create: [
+              {
+                id: createId(),
+                purchaseOrderLineSizeId,
+                sizeId: size.id,
+                orderedQuantity: quantity,
+                preparedQuantity: quantity,
+              },
+            ],
+          },
+        },
+      },
+    },
+    include: { lines: { include: { sizes: true } } },
+  });
+  const jobOrderLineSizeId = job.lines[0]!.sizes[0]!.id;
+
+  // The batch's disposition can only flip to RELEASED once a QaRelease row
+  // referencing it exists — enforced by a DEFERRED constraint trigger
+  // (final_quality_batch_release_guard) that checks at transaction commit.
+  // A bare, unwrapped prisma call is its own single-statement transaction,
+  // so creating the batch as RELEASED directly (or updating it outside a
+  // transaction that also inserts the QaRelease) fails that check. All of
+  // batch -> execution -> release -> released-disposition must therefore
+  // commit together, exactly like quality-executions.service.ts does it.
+  const qaReleaseId = createId();
+  const qaReleaseLineId = createId();
+  const batchId = createId();
+  const executionId = createId();
+  await prisma.$transaction(async (tx) => {
+    await tx.finalQualityBatch.create({
+      data: {
+        id: batchId,
+        jobOrderId: job.id,
+        processFlowActivityId: finalStage.id,
+        batchNumber: 1,
+        physicalQuantity: quantity,
+        disposition: 'DRAFT',
+        createdById: actorId,
+        allocations: { create: { id: createId(), jobOrderLineSizeId, quantity } },
+      },
+    });
+    await tx.qualityActivityExecution.create({
+      data: {
+        id: executionId,
+        jobOrderId: job.id,
+        processFlowActivityId: finalStage.id,
+        qualityFormVersionId: form.versions[0]!.id,
+        inspectedQuantity: quantity,
+        finalQualityBatchId: batchId,
+        status: 'FINALIZED',
+        startedById: actorId,
+        finalizedById: actorId,
+        finalizedAt: new Date(),
+        outcome: 'PASS',
+      },
+    });
+    await tx.qaRelease.create({
+      data: {
+        id: qaReleaseId,
+        jobOrderId: job.id,
+        sourceQualityExecutionId: executionId,
+        finalQualityBatchId: batchId,
+        releasedById: actorId,
+        releasedAt: options.releasedAt ?? new Date(),
+        lines: {
+          create: { id: qaReleaseLineId, jobOrderLineSizeId, purchaseOrderLineSizeId, quantity },
+        },
+      },
+    });
+    await tx.finalQualityBatch.update({
+      where: { id: batchId },
+      data: { disposition: 'RELEASED', terminalById: actorId, terminalAt: new Date() },
+    });
+    await tx.distributorPurchaseOrderLineSize.update({
+      where: { id: purchaseOrderLineSizeId },
+      data: { qaPassedQuantity: { increment: quantity } },
+    });
+  });
+
+  return {
+    distributorId: distributor.id,
+    factoryId: factory.id,
+    styleId: style.id,
+    sizeId: size.id,
+    purchaseOrderId: po.id,
+    poNumber,
+    purchaseOrderLineSizeId,
+    jobOrderId: job.id,
+    jobOrderLineSizeId,
+    qaReleaseId,
+    qaReleaseLineId,
+    quantity,
+  };
 }

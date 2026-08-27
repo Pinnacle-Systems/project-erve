@@ -24,8 +24,11 @@ export type {
   PurchaseOrderLineStatus,
   PurchaseOrderStatus,
   RoleName,
+  SaleOrderStatus,
   SizeStatus,
   SizeType,
+  StockAllocationSource,
+  StockAllocationStatus,
   StyleStatus,
   UserStatus,
 } from '../generated/prisma/client.js';

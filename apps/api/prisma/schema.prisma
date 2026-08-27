@@ -285,6 +285,10 @@ model User {
   createdFinalQualityBatches  FinalQualityBatch[]        @relation("FinalQualityBatchCreator")
   terminalFinalQualityBatches FinalQualityBatch[]        @relation("FinalQualityBatchTerminalActor")
   qaReleases                  QaRelease[]                @relation("QaReleaseActor")
+  createdSaleOrders           SaleOrder[]                @relation("SaleOrderCreator")
+  reviewedSaleOrders          SaleOrder[]                @relation("SaleOrderReviewer")
+  allocatedStockAllocations   StockAllocation[]          @relation("StockAllocationAllocator")
+  releasedStockAllocations    StockAllocation[]          @relation("StockAllocationReleaser")
 
   @@index([status])
   @@map("users")
@@ -357,6 +361,7 @@ model Distributor {
   userDistributors UserDistributor[]
   priceLists       PriceList[]
   purchaseOrders   DistributorPurchaseOrder[]
+  saleOrders       SaleOrder[]
 
   @@index([status])
   @@map("distributors")
@@ -441,6 +446,7 @@ model FinancialYear {
   seasons           Season[]
   purchaseOrders    DistributorPurchaseOrder[]
   jobOrders         JobOrder[]
+  saleOrders        SaleOrder[]
   documentSequences DocumentSequence[]
 
   @@map("financial_years")
@@ -449,6 +455,7 @@ model FinancialYear {
 enum DocumentType {
   PURCHASE_ORDER
   JOB_ORDER
+  SALE_ORDER
 }
 
 // Append-only high-water mark for (documentType, financialYearId) serial
@@ -906,6 +913,7 @@ model DistributorPurchaseOrderLineSize {
   size              Size                         @relation(fields: [sizeId], references: [id], onDelete: Restrict)
   jobOrderLineSizes JobOrderLineSize[]
   qaReleaseLines    QaReleaseLine[]
+  saleOrderLines    SaleOrderLine[]
 
   @@unique([purchaseOrderLineId, sizeId])
   @@index([purchaseOrderLineId])
@@ -1093,10 +1101,156 @@ model QaReleaseLine {
   release               QaRelease                        @relation(fields: [qaReleaseId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   jobOrderLineSize      JobOrderLineSize                 @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   purchaseOrderLineSize DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocations           StockAllocation[]
 
   @@unique([qaReleaseId, jobOrderLineSizeId], map: "qa_release_line_size_key")
   @@index([purchaseOrderLineSizeId], map: "qa_release_line_po_size_idx")
   @@map("qa_release_lines")
+}
+
+// ---------------------------------------------------------------------------
+// Sale Orders — a distributor's request against their own QA-released stock,
+// reviewed/approved by a merchandiser. QaRelease/QaReleaseLine above remain
+// the immutable authoritative record of released stock; this feature never
+// mutates them. Inventory reservation/reassignment is expressed entirely
+// through StockAllocation rows layered on top.
+// ---------------------------------------------------------------------------
+
+enum SaleOrderStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum StockAllocationStatus {
+  ACTIVE
+  RELEASED
+}
+
+// DISTRIBUTOR_REQUEST: created at submit time from the requesting
+// distributor's own released stock. MERCHANDISER_ADJUSTMENT: merchandiser
+// sources an increase from the same distributor's other Job Orders/POs.
+// MERCHANDISER_REASSIGNMENT: merchandiser sources an increase from a
+// different distributor's released stock (requires `reason`).
+enum StockAllocationSource {
+  DISTRIBUTOR_REQUEST
+  MERCHANDISER_ADJUSTMENT
+  MERCHANDISER_REASSIGNMENT
+}
+
+model SaleOrder {
+  id              String          @id
+  saleOrderNumber String          @unique @map("sale_order_number")
+  distributorId   String          @map("distributor_id")
+  createdBy       String          @map("created_by")
+  soDate          DateTime        @map("so_date") @db.Date
+  status          SaleOrderStatus @default(DRAFT)
+  remarks         String?
+  submittedAt     DateTime?       @map("submitted_at")
+  reviewedById    String?         @map("reviewed_by_id")
+  reviewedAt      DateTime?       @map("reviewed_at")
+  decisionReason  String?         @map("decision_reason")
+  // The Sale Order's own Financial Year, derived from its own soDate — never
+  // inherited from the referenced Purchase Order(s), matching the
+  // DistributorPurchaseOrder/JobOrder convention.
+  financialYearId String          @map("financial_year_id")
+  soSerial        Int             @map("so_serial")
+  version         Int             @default(1)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  distributor        Distributor                   @relation(fields: [distributorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  creator             User                          @relation("SaleOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reviewedBy          User?                         @relation("SaleOrderReviewer", fields: [reviewedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  financialYear       FinancialYear                 @relation(fields: [financialYearId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  lines               SaleOrderLine[]
+  idempotencyRecords  SaleOrderIdempotencyRecord[]
+
+  @@unique([financialYearId, soSerial])
+  @@index([distributorId])
+  @@index([status])
+  @@map("sale_orders")
+}
+
+model SaleOrderLine {
+  id                      String   @id
+  saleOrderId             String   @map("sale_order_id")
+  // The distributor's own PO line/size — the same granularity
+  // qaPassedQuantity is already exposed at. Resolution to specific
+  // QaReleaseLine(s) happens at submit/approve time via StockAllocation, not
+  // at line-creation time.
+  purchaseOrderLineSizeId String   @map("purchase_order_line_size_id")
+  // Immutable once the Sale Order is submitted — enforced in the service
+  // layer, never overwritten by a merchandiser's decision.
+  requestedQuantity       Int      @map("requested_quantity")
+  approvedQuantity        Int?     @map("approved_quantity")
+  remarks                 String?
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  saleOrder             SaleOrder                        @relation(fields: [saleOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  purchaseOrderLineSize DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocations           StockAllocation[]
+
+  @@unique([saleOrderId, purchaseOrderLineSizeId], map: "sale_order_line_size_key")
+  @@index([saleOrderId])
+  @@index([purchaseOrderLineSizeId])
+  @@map("sale_order_lines")
+}
+
+// One ledger row per (Sale Order line, source QA release line) — makes
+// "available quantity" for a QaReleaseLine a trivial GROUP BY, and makes the
+// invariant "sum(active allocations) == approvedQuantity" straightforward to
+// check. `quantity` is mutated in place as approvals reduce/increase it
+// (matching this codebase's convention of mutating operational counters and
+// keeping full history in AuditLog) — this does NOT apply to QaReleaseLine,
+// which stays immutable.
+model StockAllocation {
+  id               String                 @id
+  saleOrderLineId  String                 @map("sale_order_line_id")
+  qaReleaseLineId  String                 @map("qa_release_line_id")
+  quantity         Int
+  status           StockAllocationStatus  @default(ACTIVE)
+  allocationSource StockAllocationSource  @map("allocation_source")
+  // Required (service-enforced) when allocationSource = MERCHANDISER_REASSIGNMENT.
+  reason           String?
+  allocatedById    String                 @map("allocated_by_id")
+  releasedById     String?                @map("released_by_id")
+  releasedAt       DateTime?              @map("released_at")
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+
+  saleOrderLine SaleOrderLine @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  qaReleaseLine QaReleaseLine @relation(fields: [qaReleaseLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocatedBy   User          @relation("StockAllocationAllocator", fields: [allocatedById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  releasedBy    User?         @relation("StockAllocationReleaser", fields: [releasedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([saleOrderLineId, qaReleaseLineId], map: "stock_allocation_line_release_key")
+  @@index([qaReleaseLineId, status], map: "stock_allocation_release_status_idx")
+  @@index([saleOrderLineId, status])
+  @@map("stock_allocations")
+}
+
+// Mirrors JobOrderIdempotencyRecord exactly for the same Idempotency-Key
+// replay-safety guarantee on Sale Order actions (submit/approve/reject/cancel).
+model SaleOrderIdempotencyRecord {
+  id             String   @id
+  actorId        String   @map("actor_id")
+  saleOrderId    String   @map("sale_order_id")
+  operation      String
+  idempotencyKey String   @map("idempotency_key")
+  requestHash    String   @map("request_hash")
+  resultVersion  Int      @map("result_version")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  saleOrder SaleOrder @relation(fields: [saleOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([actorId, operation, idempotencyKey], map: "sale_order_idempotency_records_actor_op_key")
+  @@index([saleOrderId])
+  @@map("sale_order_idempotency_records")
 }
 
 model QualityFieldResponse {

@@ -23,6 +23,7 @@ import { financialYearsRouter } from './modules/master-data/financial-year.route
 import { priceListsRouter } from './modules/price-lists/price-lists.routes.js';
 import { purchaseOrdersRouter } from './modules/purchase-orders/purchase-orders.routes.js';
 import { jobOrdersRouter } from './modules/job-orders/job-orders.routes.js';
+import { saleOrdersRouter } from './modules/sale-orders/sale-orders.routes.js';
 import { qaRouter } from './modules/qa/qa.routes.js';
 import {
   qualityFormsRouter,
@@ -107,6 +108,7 @@ export function createApp() {
   app.use('/price-lists', priceListsRouter);
   app.use('/purchase-orders', purchaseOrdersRouter);
   app.use('/job-orders', jobOrdersRouter);
+  app.use('/sale-orders', saleOrdersRouter);
   app.use('/qa', qaRouter);
 
   app.use(notFoundHandler);
