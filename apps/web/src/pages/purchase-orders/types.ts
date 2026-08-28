@@ -1,5 +1,5 @@
 import type { PurchaseOrderDetail, PurchaseOrderLine, PurchaseOrderLineSize } from '@erve/types';
-export type { PurchaseMode, PurchaseOrderStatus } from '@erve/types';
+export type { PurchaseMode, PurchaseOrderStatus, PurchaseOrderBalance } from '@erve/types';
 export type PurchaseOrder = PurchaseOrderDetail;
 export type POLine = PurchaseOrderLine;
 export type POLineSize = PurchaseOrderLineSize;

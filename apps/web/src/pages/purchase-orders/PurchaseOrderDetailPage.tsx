@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge, TotalsPanel } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import type { PurchaseOrder, PurchaseOrderStatus } from './types.js';
+import { useAuth } from '../../auth/AuthContext.js';
+import { canCreateJobOrders } from '../../auth/permissions.js';
+import type { PurchaseOrder, PurchaseOrderBalance, PurchaseOrderStatus } from './types.js';
 
 const STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
   DRAFT: 'Draft',
@@ -39,6 +41,7 @@ export function PurchaseOrderDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
 
   const poQuery = useQuery({
@@ -48,6 +51,34 @@ export function PurchaseOrderDetailPage() {
       return res.data.data;
     },
   });
+
+  // Reuses the same canonical Job Order balance read model that Job Order
+  // creation reads from, rather than re-deriving ordered/job-ordered/balance
+  // from the PO's own line data.
+  const balanceQuery = useQuery({
+    queryKey: ['purchase-order-job-order-balance', id],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiSuccessResponse<PurchaseOrderBalance>>(
+        `/purchase-orders/${id}/job-order-balance`,
+      );
+      return res.data.data;
+    },
+  });
+
+  const balanceTotals = useMemo(() => {
+    const lines = balanceQuery.data?.lines ?? [];
+    return lines.reduce(
+      (totals, line) => {
+        for (const size of line.sizes) {
+          totals.ordered += size.orderedQuantity;
+          totals.jobOrdered += size.jobOrderedQuantity;
+          totals.remaining += size.balanceQuantity;
+        }
+        return totals;
+      },
+      { ordered: 0, jobOrdered: 0, remaining: 0 },
+    );
+  }, [balanceQuery.data]);
 
   const submitMutation = useMutation({
     mutationFn: async () => {
@@ -76,7 +107,15 @@ export function PurchaseOrderDetailPage() {
 
   const isDraft = po.status === 'DRAFT';
   const canCancel = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW'].includes(po.status);
-  const canCreateJobOrder = !['DRAFT', 'CANCELLED', 'CLOSED'].includes(po.status);
+  // Remaining balance from the canonical Job Order balance read model is the
+  // authoritative signal for whether another Job Order can claim quantity;
+  // the status exclusion below is only a consistency check that mirrors the
+  // backend's own status gate (see job-orders.service.ts), not a substitute.
+  const hasRemainingJobOrderBalance = balanceQuery.data !== undefined && balanceTotals.remaining > 0;
+  const canCreateJobOrder =
+    canCreateJobOrders(user) &&
+    !['DRAFT', 'CANCELLED', 'CLOSED'].includes(po.status) &&
+    hasRemainingJobOrderBalance;
 
   return (
     <div className="space-y-6">
@@ -174,12 +213,36 @@ export function PurchaseOrderDetailPage() {
       </Panel>
 
       <Panel title="Job Order Balance">
-        <TotalsPanel
-          items={[
-            { label: 'Ordered', value: po.totalOrderedQuantity.toLocaleString() },
-            { label: 'Job ordered', value: 'Pending job order module', emphasis: 'muted' },
-          ]}
-        />
+        {balanceQuery.isLoading && <LoadingState label="Loading job order balance" density="compact" />}
+        {balanceQuery.isError && (
+          <ErrorState
+            title="Unable to load job order balance"
+            description={
+              balanceQuery.error instanceof Error ? balanceQuery.error.message : undefined
+            }
+          />
+        )}
+        {balanceQuery.data && (
+          <TotalsPanel
+            items={[
+              { label: 'Total ordered', value: balanceTotals.ordered.toLocaleString() },
+              { label: 'Job ordered', value: balanceTotals.jobOrdered.toLocaleString() },
+              {
+                label: 'Remaining balance',
+                value: balanceTotals.remaining.toLocaleString(),
+                emphasis: 'strong',
+                tone: balanceTotals.remaining === 0 ? 'success' : 'default',
+                description:
+                  balanceTotals.jobOrdered === 0
+                    ? 'No Job Orders created yet'
+                    : balanceTotals.remaining === 0
+                      ? 'Fully allocated across Job Orders'
+                      : 'Partially allocated across Job Orders',
+                dividerBefore: true,
+              },
+            ]}
+          />
+        )}
       </Panel>
 
       <Panel title="Fulfilment Summary">
