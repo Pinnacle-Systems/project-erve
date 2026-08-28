@@ -7,6 +7,7 @@ import { Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessa
 import { FormGrid, FormSection, Panel, Stack } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { getLocalDateString } from '../../lib/dates.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import type { Distributor, PurchaseMode, PurchaseOrder, StyleOption } from './types.js';
 
@@ -35,7 +36,7 @@ export function PurchaseOrderFormPage() {
   const isEdit = Boolean(id);
 
   const [distributorId, setDistributorId] = useState('');
-  const [poDate, setPoDate] = useState(new Date().toISOString().slice(0, 10));
+  const [poDate, setPoDate] = useState(getLocalDateString());
   const [requiredDeliveryDate, setRequiredDeliveryDate] = useState('');
   const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>('OUTRIGHT');
   const [remarks, setRemarks] = useState('');

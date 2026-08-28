@@ -190,7 +190,6 @@ export async function createPurchaseOrder(
   actor: CurrentUser,
   input: {
     distributorId: string;
-    merchandiserId?: string | null;
     poDate: string;
     requiredDeliveryDate?: string | null;
     purchaseMode: PurchaseMode;
@@ -238,7 +237,10 @@ export async function createPurchaseOrder(
         id: poId,
         poNumber,
         distributorId: input.distributorId,
-        merchandiserId: input.merchandiserId ?? null,
+        // The responsible Merchandiser is derived from the authenticated
+        // actor, never client-supplied — a PO created by anyone else (ADMIN,
+        // DISTRIBUTOR) has no Merchandiser owner until one acts on it.
+        merchandiserId: actor.roles.includes('MERCHANDISER') ? actor.id : null,
         poDate: new Date(input.poDate),
         requiredDeliveryDate: input.requiredDeliveryDate
           ? new Date(input.requiredDeliveryDate)
@@ -294,7 +296,6 @@ export async function updatePurchaseOrderDraft(
   actor: CurrentUser,
   id: string,
   input: {
-    merchandiserId?: string | null;
     poDate?: string;
     requiredDeliveryDate?: string | null;
     purchaseMode?: PurchaseMode;
@@ -334,7 +335,6 @@ export async function updatePurchaseOrderDraft(
     await tx.distributorPurchaseOrder.update({
       where: { id },
       data: {
-        merchandiserId: input.merchandiserId !== undefined ? input.merchandiserId : undefined,
         poDate: input.poDate ? new Date(input.poDate) : undefined,
         requiredDeliveryDate:
           input.requiredDeliveryDate !== undefined

@@ -26,7 +26,6 @@ const lineSchema = z.object({
 
 export const createPurchaseOrderSchema = z.object({
   distributorId: z.string().trim().min(1),
-  merchandiserId: z.string().trim().optional().nullable(),
   poDate: z.string().trim().min(1),
   requiredDeliveryDate: z.string().trim().optional().nullable(),
   purchaseMode: purchaseModeSchema,
@@ -36,7 +35,6 @@ export const createPurchaseOrderSchema = z.object({
 
 export const updatePurchaseOrderSchema = z
   .object({
-    merchandiserId: z.string().trim().optional().nullable(),
     poDate: z.string().trim().optional(),
     requiredDeliveryDate: z.string().trim().optional().nullable(),
     purchaseMode: purchaseModeSchema.optional(),

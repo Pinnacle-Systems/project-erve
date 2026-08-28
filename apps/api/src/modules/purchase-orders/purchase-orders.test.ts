@@ -165,6 +165,87 @@ describe('purchase orders API', () => {
       expect(res.status).toBe(201);
     });
 
+    it('sets merchandiserId to the authenticated Merchandiser who created the PO', async () => {
+      const { userId: merchId, token } = await createTestUserAndToken({
+        email: 'merch@test.local',
+        password: 'pass',
+        roles: ['MERCHANDISER'],
+      });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const res = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.merchandiser).toMatchObject({ id: merchId, email: 'merch@test.local' });
+
+      // The read path resolves the same Merchandiser back from the DB, not
+      // just an echo of the create response.
+      const detail = await request(app)
+        .get(`/purchase-orders/${res.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(detail.body.data.merchandiser).toMatchObject({ id: merchId });
+    });
+
+    it('leaves merchandiserId unset when an ADMIN creates the PO', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const res = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.merchandiser).toBeNull();
+    });
+
+    it('ignores a client-supplied merchandiserId, preventing an inappropriate role from spoofing the Merchandiser', async () => {
+      const { userId: distUserId, token: distToken } = await createTestUserAndToken({
+        email: 'dist@test.local',
+        password: 'pass',
+        roles: ['DISTRIBUTOR'],
+      });
+      const { userId: otherMerchId } = await createTestUserAndToken({
+        email: 'other-merch@test.local',
+        password: 'pass',
+        roles: ['MERCHANDISER'],
+      });
+      const dist = await createTestDistributor();
+      await prisma.userDistributor.create({
+        data: { id: createId(), userId: distUserId, distributorId: dist.id },
+      });
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const res = await request(app)
+        .post('/purchase-orders')
+        .set('Authorization', `Bearer ${distToken}`)
+        .send({
+          distributorId: dist.id,
+          merchandiserId: otherMerchId,
+          poDate: '2026-06-30',
+          purchaseMode: 'OUTRIGHT',
+          lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.merchandiser).toBeNull();
+    });
+
     it('rejects PO without distributorId', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
@@ -823,6 +904,39 @@ describe('purchase orders API', () => {
       expect(secondRes.body.data.financialYear.code).toBe('2026-27');
       expect(secondRes.body.data.poNumber).not.toBe(firstRes.body.data.poNumber);
       expect(serialOf(secondRes.body.data.poNumber)).toBe(serialOf(firstRes.body.data.poNumber) + 1);
+    });
+
+    it('ignores a client-supplied merchandiserId on update', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const { userId: otherMerchId } = await createTestUserAndToken({
+        email: 'merch@test.local',
+        password: 'pass',
+        roles: ['MERCHANDISER'],
+      });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const createRes = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 50 }] }],
+      });
+      const poId = createRes.body.data.id;
+      expect(createRes.body.data.merchandiser).toBeNull();
+
+      const res = await request(app)
+        .patch(`/purchase-orders/${poId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ merchandiserId: otherMerchId, remarks: 'Updated remark' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.merchandiser).toBeNull();
+      expect(res.body.data.remarks).toBe('Updated remark');
     });
 
     it('rejects editing a SUBMITTED PO', async () => {
