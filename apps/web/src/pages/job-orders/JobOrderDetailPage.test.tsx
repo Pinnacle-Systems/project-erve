@@ -639,6 +639,72 @@ describe('JobOrderDetailPage workflow rendering', () => {
   });
 });
 
+describe('JobOrderDetailPage factory acknowledgement evidence', () => {
+  it('shows pending copy for a current Job Order sent to the factory but not yet acknowledged', async () => {
+    await renderPage('SENT_TO_FACTORY', standardStages, [], {
+      confirmedAt: null,
+      confirmedBy: null,
+      acknowledgement: null,
+    });
+    expect(content()).toContain('Factory acknowledgement is pending');
+    expect(content()).not.toContain('predates the factory acknowledgement workflow');
+  });
+
+  it('shows acknowledgement evidence once the factory has acknowledged the Job Order', async () => {
+    await renderPage('CONFIRMED_BY_FACTORY', standardStages, [], {
+      confirmedAt: '2026-08-10T09:00:00Z',
+      confirmedBy: { id: 'factory-user-1', name: 'Factory Owner', email: 'factory@test.local' },
+      acknowledgement: {
+        id: 'ack-1',
+        jobOrderVersion: 1,
+        disclaimerRevision: 1,
+        disclaimerTextSnapshot: 'Standard factory terms apply.',
+        disclaimerSha256: 'abc123',
+        factoryIdSnapshot: 'factory-1',
+        acknowledgedBy: { id: 'factory-user-1', name: 'Factory Owner', email: 'factory@test.local' },
+        acknowledgedByRole: 'FACTORY_USER',
+        acknowledgedAt: '2026-08-10T09:00:00Z',
+        invalidatedAt: null,
+        invalidatedByUserId: null,
+        invalidationReason: null,
+        invalidationMetadata: null,
+      },
+    });
+    expect(content()).toContain('Acknowledged by');
+    expect(content()).toContain('Factory Owner');
+    expect(content()).toContain('SHA-256: abc123');
+    expect(content()).not.toContain('Factory acknowledgement is pending');
+    expect(content()).not.toContain('predates the factory acknowledgement workflow');
+  });
+
+  it('does not classify a normal confirmed Job Order awaiting acknowledgement data as legacy', async () => {
+    await renderPage('CONFIRMED_BY_FACTORY', standardStages, [], {
+      confirmedAt: null,
+      confirmedBy: null,
+      acknowledgement: null,
+    });
+    expect(content()).toContain('Factory acknowledgement is pending');
+    expect(content()).not.toContain('predates the factory acknowledgement workflow');
+  });
+
+  it('shows legacy copy only when a Job Order was confirmed with no acknowledgement on record', async () => {
+    await renderPage('IN_PRODUCTION', standardStages, [], {
+      confirmedAt: '2026-08-01T09:00:00Z',
+      confirmedBy: { id: 'factory-user-1', name: 'Factory Owner', email: 'factory@test.local' },
+      acknowledgement: null,
+    });
+    expect(content()).toContain('predates the factory acknowledgement workflow');
+    expect(content()).not.toContain('Factory acknowledgement is pending');
+  });
+
+  it('requires no acknowledgement while the Job Order is still a draft', async () => {
+    await renderPage('DRAFT');
+    expect(content()).toContain('No acknowledgement is required while this Job Order is a draft');
+    expect(content()).not.toContain('Factory acknowledgement is pending');
+    expect(content()).not.toContain('predates the factory acknowledgement workflow');
+  });
+});
+
 describe('JobOrderDetailPage audit history', () => {
   const audit = (id: string, metadata: unknown, action = 'JOB_ORDER_STAGE_COMPLETED'): Audit => ({
     id,

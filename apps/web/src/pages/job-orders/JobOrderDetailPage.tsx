@@ -1354,14 +1354,19 @@ export function JobOrderDetailPage() {
               {jobOrder.acknowledgement.disclaimerTextSnapshot}
             </pre>
           </div>
-        ) : jobOrder.status !== 'DRAFT' ? (
+        ) : jobOrder.status === 'DRAFT' ? (
           <p className="text-sm text-muted-foreground">
-            No recorded disclaimer acknowledgement. This Job Order predates the acknowledgement
-            workflow.
+            No acknowledgement is required while this Job Order is a draft.
+          </p>
+        ) : jobOrder.confirmedAt ? (
+          <p className="text-sm text-muted-foreground">
+            No recorded disclaimer acknowledgement. This Job Order predates the factory
+            acknowledgement workflow.
           </p>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No acknowledgement is required while this Job Order is a draft.
+            Factory acknowledgement is pending. Waiting for the factory to acknowledge this Job
+            Order.
           </p>
         )}
       </Panel>
