@@ -371,7 +371,8 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
       const missed =
         executions.length === 0 &&
         activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' &&
-        associated?.status === 'COMPLETED';
+        associated?.status === 'COMPLETED' &&
+        !isProcessFlowFinalActivity(activity);
       const formVersion = activity.qualityFormVersion!;
       return {
         processFlowVersionStageId: activity.id,

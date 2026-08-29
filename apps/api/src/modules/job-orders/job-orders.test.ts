@@ -1142,6 +1142,102 @@ describe('job orders API', () => {
     await expect(prisma.auditLog.count({ where: { entityType: 'JobOrder' } })).resolves.toBe(9);
   });
 
+  it('keeps the Final Inspection activity Available (not Missed) once Finishing completes with no Final execution yet', async () => {
+    const graph = await createSeedGraph();
+    const finalActivityDefinition = await prisma.processFlowVersionStage.findFirstOrThrow({
+      where: { processFlowVersionId: graph.processFlowVersionId, code: 'FINAL' },
+    });
+    const factoryUser = await createTestUserAndToken({
+      email: 'final-available-factory@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+    });
+    const createRes = await createJobOrder(graph.admin.token, graph, 4);
+    const jobOrderId = createRes.body.data.id;
+
+    const sendRes = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'final-available-send')
+      .send({ expectedVersion: createRes.body.data.version })
+      .expect(200);
+    const confirmRes = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'final-available-confirm')
+      .send({
+        expectedVersion: sendRes.body.data.version,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
+      .expect(200);
+    const [cutting, finishing] = confirmRes.body.data.stages;
+
+    const cuttingStarted = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'final-available-cutting-start')
+      .send({ expectedVersion: confirmRes.body.data.version, stageStatusId: cutting.id })
+      .expect(200);
+    const cuttingDone = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'final-available-cutting-done')
+      .send({ expectedVersion: cuttingStarted.body.data.version, stageStatusId: cutting.id })
+      .expect(200);
+
+    const finishingStarted = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'final-available-finishing-start')
+      .send({ expectedVersion: cuttingDone.body.data.version, stageStatusId: finishing.id })
+      .expect(200);
+    expect(
+      finishingStarted.body.data.qualityActivities.find(
+        (item: { processFlowVersionStageId: string }) =>
+          item.processFlowVersionStageId === finalActivityDefinition.id,
+      ),
+    ).toMatchObject({ status: 'AVAILABLE', eligible: true });
+
+    const finishingDone = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'final-available-finishing-done')
+      .send({ expectedVersion: finishingStarted.body.data.version, stageStatusId: finishing.id })
+      .expect(200);
+    const finalAfterFinishing = finishingDone.body.data.qualityActivities.find(
+      (item: { processFlowVersionStageId: string }) =>
+        item.processFlowVersionStageId === finalActivityDefinition.id,
+    );
+    expect(finalAfterFinishing).toMatchObject({ status: 'AVAILABLE', eligible: true });
+    expect(finalAfterFinishing.status).not.toBe('MISSED');
+    expect(finalAfterFinishing.coverage.preparedQuantityAuthoritative).toBe(false);
+    expect(finalAfterFinishing.coverage.preparedQuantity).toBeNull();
+    expect(finalAfterFinishing.coverage.availableForNewFinalBatch).toBeNull();
+
+    const sizeId = finishingDone.body.data.lines[0].sizes[0].id;
+    const preparedRes = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'final-available-prepared')
+      .send({
+        expectedVersion: finishingDone.body.data.version,
+        sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 4 }],
+      })
+      .expect(200);
+    const finalWithPreparedQuantity = preparedRes.body.data.qualityActivities.find(
+      (item: { processFlowVersionStageId: string }) =>
+        item.processFlowVersionStageId === finalActivityDefinition.id,
+    );
+    expect(finalWithPreparedQuantity).toMatchObject({ status: 'AVAILABLE', eligible: true });
+    expect(finalWithPreparedQuantity.coverage.preparedQuantityAuthoritative).toBe(true);
+    expect(finalWithPreparedQuantity.coverage.preparedQuantity).toBe(4);
+    expect(finalWithPreparedQuantity.coverage.availableForNewFinalBatch).toBe(4);
+  });
+
   it('blocks sending to a deactivated factory while keeping the existing job order readable', async () => {
     const graph = await createSeedGraph();
     const createRes = await createJobOrder(graph.admin.token, graph, 4);
