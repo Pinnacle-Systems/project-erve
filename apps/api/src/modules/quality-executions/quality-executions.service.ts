@@ -18,6 +18,35 @@ type DefinitionComponent = {
   sequence: number;
   config: unknown;
 };
+type FinalQualityBatchReworkStatus = 'REQUIRED' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED';
+const finalBatchReworkInclude = {
+  acknowledgedBy: { select: { id: true, name: true, email: true } },
+  startedBy: { select: { id: true, name: true, email: true } },
+  completedBy: { select: { id: true, name: true, email: true } },
+  failedQualityExecution: { select: { id: true, attemptNumber: true } },
+} satisfies Prisma.FinalQualityBatchReworkInclude;
+type FinalBatchRework = Prisma.FinalQualityBatchReworkGetPayload<{
+  include: typeof finalBatchReworkInclude;
+}>;
+function mapReworks(reworks: FinalBatchRework[]) {
+  return reworks.map((rework) => ({
+    id: rework.id,
+    cycleNumber: rework.cycleNumber,
+    status: rework.status,
+    failedQualityExecutionId: rework.failedQualityExecutionId,
+    failedAttemptNumber: rework.failedQualityExecution.attemptNumber,
+    notes: rework.notes,
+    acknowledgedBy: rework.acknowledgedBy,
+    acknowledgedAt: rework.acknowledgedAt?.toISOString() ?? null,
+    startedBy: rework.startedBy,
+    startedAt: rework.startedAt?.toISOString() ?? null,
+    completedBy: rework.completedBy,
+    completedAt: rework.completedAt?.toISOString() ?? null,
+    version: rework.version,
+    createdAt: rework.createdAt.toISOString(),
+    updatedAt: rework.updatedAt.toISOString(),
+  }));
+}
 const executionInclude = {
   startedBy: { select: { id: true, name: true, email: true } },
   finalizedBy: { select: { id: true, name: true, email: true } },
@@ -63,6 +92,7 @@ const executionInclude = {
         orderBy: { attemptNumber: 'asc' as const },
       },
       release: { include: { lines: true } },
+      reworks: { orderBy: { cycleNumber: 'asc' as const }, include: finalBatchReworkInclude },
     },
   },
 } satisfies Prisma.QualityActivityExecutionInclude;
@@ -70,6 +100,7 @@ type Execution = Prisma.QualityActivityExecutionGetPayload<{ include: typeof exe
 const finalBatchInclude = {
   createdBy: { select: { id: true, name: true, email: true } },
   terminalBy: { select: { id: true, name: true, email: true } },
+  jobOrder: { select: { factoryId: true } },
   allocations: {
     include: { jobOrderLineSize: { include: { size: true } } },
     orderBy: { jobOrderLineSize: { size: { sortOrder: 'asc' as const } } },
@@ -82,6 +113,7 @@ const finalBatchInclude = {
     orderBy: { attemptNumber: 'asc' as const },
   },
   release: { include: { lines: true } },
+  reworks: { orderBy: { cycleNumber: 'asc' as const }, include: finalBatchReworkInclude },
 } satisfies Prisma.FinalQualityBatchInclude;
 type FinalBatch = Prisma.FinalQualityBatchGetPayload<{ include: typeof finalBatchInclude }>;
 
@@ -114,6 +146,7 @@ function toFinalBatchView(batch: FinalBatch) {
       finalizedBy: attempt.finalizedBy,
       finalizedAt: attempt.finalizedAt?.toISOString() ?? null,
     })),
+    reworks: mapReworks(batch.reworks),
     release: batch.release
       ? {
           id: batch.release.id,
@@ -127,6 +160,33 @@ function toFinalBatchView(batch: FinalBatch) {
 function assertMutation(user: CurrentUser) {
   if (!canPerformQaOperation(user))
     throw HttpError.forbidden('Only QA operations users may execute quality activities');
+}
+function isFactoryUserOf(user: CurrentUser, factoryId: string): boolean {
+  return (
+    user.roles.includes('FACTORY_USER') &&
+    user.factoryIds.length === 1 &&
+    user.factoryIds[0] === factoryId
+  );
+}
+function assertFinalBatchView(user: CurrentUser, factoryId: string) {
+  if (
+    user.roles.some((role) =>
+      ['ADMIN', 'QA_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(role),
+    )
+  )
+    return;
+  if (isFactoryUserOf(user, factoryId)) return;
+  throw HttpError.forbidden('You cannot view this Final Quality batch');
+}
+// Deliberately narrower than the QaReworkTask precedent (qa.service.ts's
+// assertFactoryMutation, which lets QA/Merchandiser act as a supervisor
+// override): Factory corrective work on a failed Final batch is a Factory
+// responsibility only. QA/Merchandiser may view (assertFinalBatchView) but
+// must not acknowledge/start/complete it on Factory's behalf.
+function assertFinalBatchReworkMutation(user: CurrentUser, factoryId: string) {
+  if (user.roles.includes('ADMIN')) return;
+  if (isFactoryUserOf(user, factoryId)) return;
+  throw HttpError.forbidden('You cannot update rework for this Final Quality batch');
 }
 function config(component: DefinitionComponent): Config {
   return component.config as Config;
@@ -505,6 +565,7 @@ async function loadJobOrder(jobOrderId: string) {
             },
           },
           release: { include: { lines: true } },
+          reworks: { orderBy: { cycleNumber: 'asc' as const }, include: finalBatchReworkInclude },
         },
         orderBy: { batchNumber: 'asc' },
       },
@@ -1281,6 +1342,37 @@ async function persist(
             terminalReason: null,
           },
         });
+        // Every FAIL opens the next Factory rework cycle. This is
+        // append-only: a repeat FAIL creates cycle N+1 rather than touching
+        // any prior (already-COMPLETED) cycle, so the corrective-action
+        // history for this physical batch stays intact across retries.
+        const priorCycles = await tx.finalQualityBatchRework.count({
+          where: { finalQualityBatchId: batch.id },
+        });
+        const reworkId = createId();
+        await tx.finalQualityBatchRework.create({
+          data: {
+            id: reworkId,
+            finalQualityBatchId: batch.id,
+            failedQualityExecutionId: executionId,
+            cycleNumber: priorCycles + 1,
+          },
+        });
+        await recordAuditLog(
+          {
+            actorId: user.id,
+            action: 'FINAL_BATCH_REWORK_REQUIRED',
+            entityType: 'FinalQualityBatch',
+            entityId: batch.id,
+            metadata: {
+              jobOrderId: execution.jobOrderId,
+              executionId,
+              reworkId,
+              cycleNumber: priorCycles + 1,
+            },
+          },
+          tx,
+        );
       }
     }
     await recordAuditLog(
@@ -1319,17 +1411,12 @@ export const finalize = (user: CurrentUser, id: string, input: QualityExecutionP
   persist(user, id, input, true);
 
 export async function getFinalBatch(user: CurrentUser, batchId: string) {
-  if (
-    !user.roles.some((role) =>
-      ['ADMIN', 'QA_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(role),
-    )
-  )
-    throw HttpError.forbidden('You cannot view this Final Quality batch');
   const batch = await prisma.finalQualityBatch.findUnique({
     where: { id: batchId },
     include: finalBatchInclude,
   });
   if (!batch) throw HttpError.notFound('Final Quality batch not found');
+  assertFinalBatchView(user, batch.jobOrder.factoryId);
   return toFinalBatchView(batch);
 }
 
@@ -1357,6 +1444,14 @@ export async function startFinalBatchReinspection(user: CurrentUser, batchId: st
     const latest = batch.executions.at(-1);
     if (!latest || latest.status !== 'FINALIZED' || latest.outcome !== 'FAIL')
       throw HttpError.conflict('The latest Final attempt must be a finalized FAIL');
+    const latestRework = await tx.finalQualityBatchRework.findFirst({
+      where: { finalQualityBatchId: batchId },
+      orderBy: { cycleNumber: 'desc' },
+    });
+    if (!latestRework || latestRework.status !== 'COMPLETED')
+      throw HttpError.conflict(
+        'Factory rework must be completed before this batch can be reinspected',
+      );
     if (!batch.processFlowActivity.qualityFormVersionId)
       throw HttpError.conflict('Final activity has no Quality Form version');
     const id = createId();
@@ -1504,6 +1599,116 @@ export async function permanentlyRejectFinalBatch(
   return getFinalBatch(user, batchId);
 }
 
+const REWORK_TRANSITIONS: Record<
+  'ACKNOWLEDGE' | 'START' | 'COMPLETE',
+  { from: FinalQualityBatchReworkStatus; to: FinalQualityBatchReworkStatus; auditAction: string }
+> = {
+  ACKNOWLEDGE: { from: 'REQUIRED', to: 'ACKNOWLEDGED', auditAction: 'FINAL_BATCH_REWORK_ACKNOWLEDGED' },
+  START: { from: 'ACKNOWLEDGED', to: 'IN_PROGRESS', auditAction: 'FINAL_BATCH_REWORK_STARTED' },
+  COMPLETE: { from: 'IN_PROGRESS', to: 'COMPLETED', auditAction: 'FINAL_BATCH_REWORK_COMPLETED' },
+};
+
+async function transitionFinalBatchRework(
+  user: CurrentUser,
+  batchId: string,
+  action: 'ACKNOWLEDGE' | 'START' | 'COMPLETE',
+  input: { expectedVersion: number; notes?: string | null },
+) {
+  const transition = REWORK_TRANSITIONS[action];
+  if (action === 'COMPLETE' && !input.notes?.trim())
+    throw HttpError.badRequest('Corrective-action notes are required to complete rework');
+  await prisma.$transaction(async (tx) => {
+    const identity = await tx.finalQualityBatch.findUnique({
+      where: { id: batchId },
+      select: { jobOrderId: true, jobOrder: { select: { factoryId: true, factory: true } } },
+    });
+    if (!identity) throw HttpError.notFound('Final Quality batch not found');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${identity.jobOrderId}`}))`;
+    assertFinalBatchReworkMutation(user, identity.jobOrder.factoryId);
+    if (identity.jobOrder.factory.status !== 'ACTIVE')
+      throw HttpError.conflict('This factory is inactive and cannot perform rework actions');
+    const rework = await tx.finalQualityBatchRework.findFirst({
+      where: { finalQualityBatchId: batchId },
+      orderBy: { cycleNumber: 'desc' },
+    });
+    if (!rework) throw HttpError.conflict('This batch has no rework cycle to act on');
+    if (rework.version !== input.expectedVersion) throw HttpError.staleVersion(rework.version);
+    if (rework.status !== transition.from)
+      throw HttpError.conflict(
+        `Rework cannot be moved to ${transition.to} from its current status`,
+      );
+    const data =
+      action === 'ACKNOWLEDGE'
+        ? {
+            status: transition.to,
+            acknowledgedById: user.id,
+            acknowledgedAt: new Date(),
+            notes: input.notes ?? rework.notes,
+            version: { increment: 1 },
+          }
+        : action === 'START'
+          ? {
+              status: transition.to,
+              startedById: user.id,
+              startedAt: new Date(),
+              notes: input.notes ?? rework.notes,
+              version: { increment: 1 },
+            }
+          : {
+              status: transition.to,
+              completedById: user.id,
+              completedAt: new Date(),
+              notes: input.notes ?? null,
+              version: { increment: 1 },
+            };
+    const changed = await tx.finalQualityBatchRework.updateMany({
+      where: { id: rework.id, version: input.expectedVersion },
+      data,
+    });
+    if (changed.count !== 1) {
+      const now = await tx.finalQualityBatchRework.findUnique({
+        where: { id: rework.id },
+        select: { version: true },
+      });
+      throw HttpError.staleVersion(now?.version ?? input.expectedVersion);
+    }
+    await recordAuditLog(
+      {
+        actorId: user.id,
+        action: transition.auditAction,
+        entityType: 'FinalQualityBatch',
+        entityId: batchId,
+        metadata: {
+          jobOrderId: identity.jobOrderId,
+          reworkId: rework.id,
+          cycleNumber: rework.cycleNumber,
+          notes: input.notes ?? null,
+        },
+      },
+      tx,
+    );
+  });
+  return getFinalBatch(user, batchId);
+}
+
+export const acknowledgeFinalBatchRework = (
+  user: CurrentUser,
+  batchId: string,
+  input: { expectedVersion: number; notes?: string | null },
+) => transitionFinalBatchRework(user, batchId, 'ACKNOWLEDGE', input);
+
+export const startFinalBatchRework = (
+  user: CurrentUser,
+  batchId: string,
+  input: { expectedVersion: number; notes?: string | null },
+) => transitionFinalBatchRework(user, batchId, 'START', input);
+
+export const completeFinalBatchRework = (
+  user: CurrentUser,
+  batchId: string,
+  input: { expectedVersion: number; notes: string },
+) => transitionFinalBatchRework(user, batchId, 'COMPLETE', input);
+
 export async function get(user: CurrentUser, id: string) {
   if (
     !user.roles.some((x) => ['ADMIN', 'QA_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(x))
@@ -1648,6 +1853,7 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
                 ),
               }
             : null,
+          reworks: mapReworks(execution.finalQualityBatch.reworks),
         }
       : null,
     productionContext,
@@ -1766,6 +1972,7 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
                   quantity: allocation.quantity,
                 })),
                 attemptCount: batch.executions.length,
+                reworks: mapReworks(batch.reworks),
               })),
             };
           })()

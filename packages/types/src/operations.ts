@@ -533,7 +533,75 @@ export interface QualityCoverageView {
     finalizedAt: string | null;
     allocations?: Array<{ jobOrderLineSizeId: string; quantity: number }>;
     attemptCount?: number;
+    reworks?: FinalQualityBatchReworkCycleView[];
   }>;
+}
+
+export type FinalQualityBatchReworkStatus = 'REQUIRED' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED';
+
+/** One Factory corrective-action cycle spawned by a single Final FAIL. */
+export interface FinalQualityBatchReworkCycleView {
+  id: string;
+  cycleNumber: number;
+  status: FinalQualityBatchReworkStatus;
+  failedQualityExecutionId: string;
+  failedAttemptNumber: number;
+  notes: string | null;
+  acknowledgedBy: { id: string; name: string; email: string } | null;
+  acknowledgedAt: string | null;
+  startedBy: { id: string; name: string; email: string } | null;
+  startedAt: string | null;
+  completedBy: { id: string; name: string; email: string } | null;
+  completedAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A Factory-facing actionable item for the current rework cycle of one
+ * unresolved (AWAITING_REINSPECTION) Final Quality batch. `previousCycles`
+ * carries the full corrective-action history for prior failed attempts on
+ * the same physical batch.
+ */
+export interface FinalQualityBatchReworkTaskView {
+  /** Id of the current (latest) rework cycle. */
+  id: string;
+  finalQualityBatchId: string;
+  jobOrderId: string;
+  jobOrderNumber: string;
+  processFlowActivityId: string;
+  activityName: string;
+  batchNumber: number;
+  physicalQuantity: number;
+  allocations: Array<{
+    jobOrderLineSizeId: string;
+    sizeCode: string;
+    sizeLabel: string;
+    quantity: number;
+  }>;
+  cycleNumber: number;
+  status: FinalQualityBatchReworkStatus;
+  failedAttemptNumber: number;
+  failedAt: string | null;
+  qaRemarks: string | null;
+  notes: string | null;
+  acknowledgedBy: { id: string; name: string; email: string } | null;
+  acknowledgedAt: string | null;
+  startedBy: { id: string; name: string; email: string } | null;
+  startedAt: string | null;
+  completedBy: { id: string; name: string; email: string } | null;
+  completedAt: string | null;
+  previousCycles: FinalQualityBatchReworkCycleView[];
+  version: number;
+  updatedAt: string;
+}
+
+export interface FinalQualityBatchReworkActionInput extends VersionedMutationInput {
+  notes?: string | null;
+}
+export interface FinalQualityBatchReworkCompleteInput extends VersionedMutationInput {
+  notes: string;
 }
 
 export interface FinalQualityBatchView {
@@ -566,6 +634,7 @@ export interface FinalQualityBatchView {
     finalizedAt: string | null;
   }>;
   release: { id: string; releasedAt: string; quantity: number } | null;
+  reworks?: FinalQualityBatchReworkCycleView[];
 }
 export interface JobOrderSummary extends VersionedResource {
   id: string;
@@ -615,6 +684,7 @@ export interface JobOrderDetail extends JobOrderSummary {
   stages: JobOrderStage[];
   qualityActivities: JobOrderQualityActivity[];
   reworkTasks: QaReworkTaskView[];
+  finalBatchReworks: FinalQualityBatchReworkTaskView[];
 }
 
 export interface JobOrderAuditEntry {
@@ -638,6 +708,7 @@ export interface AssignedFactoryTaskSummary extends VersionedResource {
   preparedQuantityTotal: number;
   requiredDeliveryDate: string | null;
   actionRequired: boolean;
+  finalBatchReworkRequired: boolean;
 }
 
 export interface CreateJobOrderInput {

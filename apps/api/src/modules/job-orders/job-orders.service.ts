@@ -117,7 +117,7 @@ const jobOrderInclude = {
   },
   finalQualityBatches: {
     include: {
-      allocations: true,
+      allocations: { include: { jobOrderLineSize: { include: { size: true } } } },
       executions: {
         select: {
           id: true,
@@ -125,11 +125,21 @@ const jobOrderInclude = {
           inspectedQuantity: true,
           status: true,
           outcome: true,
+          outcomeRemarks: true,
           finalizedAt: true,
         },
         orderBy: { attemptNumber: 'asc' as const },
       },
       release: { include: { lines: true } },
+      reworks: {
+        orderBy: { cycleNumber: 'asc' as const },
+        include: {
+          acknowledgedBy: { select: { id: true, name: true, email: true } },
+          startedBy: { select: { id: true, name: true, email: true } },
+          completedBy: { select: { id: true, name: true, email: true } },
+          failedQualityExecution: { select: { id: true, attemptNumber: true } },
+        },
+      },
     },
     orderBy: { batchNumber: 'asc' as const },
   },
@@ -256,6 +266,26 @@ export function isProgressThresholdMet(
   return (
     BigInt(completedQuantity) * 10_000n >= BigInt(plannedQuantity) * decimalHundredths(threshold)
   );
+}
+
+function mapFinalBatchReworks(reworks: JobOrderRecord['finalQualityBatches'][number]['reworks']) {
+  return reworks.map((rework) => ({
+    id: rework.id,
+    cycleNumber: rework.cycleNumber,
+    status: rework.status,
+    failedQualityExecutionId: rework.failedQualityExecutionId,
+    failedAttemptNumber: rework.failedQualityExecution.attemptNumber,
+    notes: rework.notes,
+    acknowledgedBy: rework.acknowledgedBy,
+    acknowledgedAt: rework.acknowledgedAt?.toISOString() ?? null,
+    startedBy: rework.startedBy,
+    startedAt: rework.startedAt?.toISOString() ?? null,
+    completedBy: rework.completedBy,
+    completedAt: rework.completedAt?.toISOString() ?? null,
+    version: rework.version,
+    createdAt: rework.createdAt.toISOString(),
+    updatedAt: rework.updatedAt.toISOString(),
+  }));
 }
 
 function toQualityActivityViews(jobOrder: JobOrderRecord) {
@@ -483,6 +513,7 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
                     quantity: allocation.quantity,
                   })),
                   attemptCount: batch.executions.length,
+                  reworks: mapFinalBatchReworks(batch.reworks),
                 })),
               }
             : null,
@@ -667,6 +698,49 @@ function toJobOrderView(jobOrder: JobOrderRecord): JobOrderDetail {
         updatedAt: task.updatedAt.toISOString(),
       };
     }),
+    finalBatchReworks: jobOrder.finalQualityBatches
+      .filter((batch) => batch.disposition === 'AWAITING_REINSPECTION' && batch.reworks.length > 0)
+      .map((batch) => {
+        const cycles = mapFinalBatchReworks(batch.reworks);
+        const current = cycles[cycles.length - 1]!;
+        const failedAttempt = batch.executions
+          .filter((attempt) => attempt.status === 'FINALIZED')
+          .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
+        const activity = jobOrder.processFlowVersion.stages.find(
+          (stage) => stage.id === batch.processFlowActivityId,
+        );
+        return {
+          id: current.id,
+          finalQualityBatchId: batch.id,
+          jobOrderId: jobOrder.id,
+          jobOrderNumber: jobOrder.jobOrderNumber,
+          processFlowActivityId: batch.processFlowActivityId,
+          activityName: activity?.name ?? '',
+          batchNumber: batch.batchNumber,
+          physicalQuantity: batch.physicalQuantity,
+          allocations: batch.allocations.map((allocation) => ({
+            jobOrderLineSizeId: allocation.jobOrderLineSizeId,
+            sizeCode: allocation.jobOrderLineSize.size.code,
+            sizeLabel: allocation.jobOrderLineSize.size.label,
+            quantity: allocation.quantity,
+          })),
+          cycleNumber: current.cycleNumber,
+          status: current.status,
+          failedAttemptNumber: current.failedAttemptNumber,
+          failedAt: failedAttempt?.finalizedAt?.toISOString() ?? null,
+          qaRemarks: failedAttempt?.outcomeRemarks ?? null,
+          notes: current.notes,
+          acknowledgedBy: current.acknowledgedBy,
+          acknowledgedAt: current.acknowledgedAt,
+          startedBy: current.startedBy,
+          startedAt: current.startedAt,
+          completedBy: current.completedBy,
+          completedAt: current.completedAt,
+          previousCycles: cycles.slice(0, -1),
+          version: current.version,
+          updatedAt: current.updatedAt,
+        };
+      }),
     createdAt: jobOrder.createdAt.toISOString(),
     updatedAt: jobOrder.updatedAt.toISOString(),
     version: jobOrder.version,
@@ -886,6 +960,9 @@ export async function getAssignedFactoryTasks(
           'IN_PRODUCTION',
           'PRODUCTION_COMPLETE',
         ].includes(record.status),
+        finalBatchReworkRequired: view.finalBatchReworks.some(
+          (item) => item.status !== 'COMPLETED',
+        ),
       };
     }),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },

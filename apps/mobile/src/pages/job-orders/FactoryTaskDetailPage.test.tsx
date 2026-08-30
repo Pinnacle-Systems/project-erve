@@ -101,6 +101,7 @@ function job(overrides: Partial<JobOrderDetail> = {}): JobOrderDetail {
     stages,
     qualityActivities: [],
     reworkTasks: [],
+    finalBatchReworks: [],
     createdAt: '2026-08-19T10:00:00Z',
     updatedAt: '2026-08-20T10:00:00Z',
     ...overrides,
@@ -293,5 +294,91 @@ describe('FactoryTaskDetailPage production stages', () => {
     expect(container.textContent).toContain('Production locked pending pre-production QA');
     expect(container.textContent).not.toContain('30 / 60 completed');
     expect(container.textContent).not.toContain('50%');
+  });
+});
+
+const finalBatchRework = (
+  status: 'REQUIRED' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED' = 'REQUIRED',
+) => ({
+  id: 'rework-1',
+  finalQualityBatchId: 'batch-1',
+  jobOrderId: 'job-1',
+  jobOrderNumber: 'JO-001',
+  processFlowActivityId: 'final-quality',
+  activityName: 'Final Inspection',
+  batchNumber: 1,
+  physicalQuantity: 30,
+  allocations: [{ jobOrderLineSizeId: 'line-size-m', sizeCode: 'M', sizeLabel: 'M', quantity: 30 }],
+  cycleNumber: 1,
+  status,
+  failedAttemptNumber: 1,
+  failedAt: '2026-08-20T10:00:00Z',
+  qaRemarks: 'Loose stitching on the collar',
+  notes: null,
+  acknowledgedBy: null,
+  acknowledgedAt: null,
+  startedBy: null,
+  startedAt: null,
+  completedBy: null,
+  completedAt: null,
+  previousCycles: [],
+  version: 1,
+  updatedAt: '2026-08-20T10:00:00Z',
+});
+
+describe('FactoryTaskDetailPage Final batch rework', () => {
+  it('shows the required action for the current rework status and posts the matching transition', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { data: {} } });
+    await renderTask(job({ finalBatchReworks: [finalBatchRework('REQUIRED')] }));
+
+    expect(container.textContent).toContain('Final batches needing rework');
+    expect(container.textContent).toContain('Loose stitching on the collar');
+    const acknowledge = [...container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === 'Acknowledge rework',
+    ) as HTMLButtonElement;
+    expect(acknowledge).toBeTruthy();
+    expect(container.textContent).not.toContain('Start rework');
+    expect(container.textContent).not.toContain('Complete rework');
+
+    await act(async () => acknowledge.click());
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/quality-executions/final-batches/batch-1/rework/acknowledge',
+      { expectedVersion: 1, notes: undefined },
+    );
+  });
+
+  it('requires notes before Complete rework is enabled and sends them on click', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { data: {} } });
+    await renderTask(job({ finalBatchReworks: [finalBatchRework('IN_PROGRESS')] }));
+
+    const complete = [...container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === 'Complete rework',
+    ) as HTMLButtonElement;
+    expect(complete.disabled).toBe(true);
+
+    const notes = container.querySelector('textarea') as HTMLTextAreaElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value',
+      )!.set!;
+      setter.call(notes, 'Fixed the seam');
+      notes.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(complete.disabled).toBe(false);
+
+    await act(async () => complete.click());
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/quality-executions/final-batches/batch-1/rework/complete',
+      { expectedVersion: 1, notes: 'Fixed the seam' },
+    );
+  });
+
+  it('does not offer Factory rework actions to non-Factory roles', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderTask(job({ finalBatchReworks: [finalBatchRework('REQUIRED')] }));
+
+    expect(container.textContent).toContain('Final batches needing rework');
+    expect(container.textContent).not.toContain('Acknowledge rework');
   });
 });

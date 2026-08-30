@@ -1116,4 +1116,82 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
     expect(container.textContent).not.toContain('Remove item');
     expect(container.textContent).not.toContain('Save draft');
   });
+
+  it('blocks Start reinspection until the current Factory rework cycle is COMPLETED', async () => {
+    const item = finalExecution('FINALIZED');
+    item.finalBatch = {
+      id: 'batch-2',
+      batchNumber: 2,
+      physicalQuantity: 25,
+      disposition: 'AWAITING_REINSPECTION',
+      allocations: [{ jobOrderLineSizeId: 'size-1', sizeCode: 'M', sizeLabel: 'M', quantity: 25 }],
+      attempts: [],
+      release: null,
+      reworks: [
+        {
+          id: 'rework-1',
+          cycleNumber: 1,
+          status: 'IN_PROGRESS',
+          failedQualityExecutionId: 'execution-1',
+          failedAttemptNumber: 1,
+          notes: 'Reinforcing the collar seam',
+          acknowledgedBy: { id: 'u1', name: 'Factory User', email: 'f@test.local' },
+          acknowledgedAt: '2026-08-20T10:00:00.000Z',
+          startedBy: { id: 'u1', name: 'Factory User', email: 'f@test.local' },
+          startedAt: '2026-08-20T11:00:00.000Z',
+          completedBy: null,
+          completedAt: null,
+          version: 3,
+          createdAt: '2026-08-20T09:00:00.000Z',
+          updatedAt: '2026-08-20T11:00:00.000Z',
+        },
+      ],
+    };
+    const onStartReinspection = vi.fn().mockResolvedValue(undefined);
+    act(() =>
+      root.render(
+        <QualityExecutionForm
+          execution={item}
+          onSave={vi.fn()}
+          onFinalize={vi.fn()}
+          onStartReinspection={onStartReinspection}
+          onPermanentlyReject={vi.fn()}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain('Factory rework in progress');
+    expect(container.textContent).toContain('Reinforcing the collar seam');
+    const blockedButton = button('Start reinspection (factory rework must complete first)');
+    expect(blockedButton.disabled).toBe(true);
+    await act(async () => blockedButton.click());
+    expect(onStartReinspection).not.toHaveBeenCalled();
+
+    item.finalBatch = {
+      ...item.finalBatch,
+      reworks: [
+        {
+          ...item.finalBatch.reworks![0]!,
+          status: 'COMPLETED',
+          completedBy: { id: 'u1', name: 'Factory User', email: 'f@test.local' },
+          completedAt: '2026-08-20T12:00:00.000Z',
+        },
+      ],
+    };
+    act(() =>
+      root.render(
+        <QualityExecutionForm
+          execution={item}
+          onSave={vi.fn()}
+          onFinalize={vi.fn()}
+          onStartReinspection={onStartReinspection}
+          onPermanentlyReject={vi.fn()}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain('Ready for reinspection');
+    const readyButton = button('Start reinspection');
+    expect(readyButton.disabled).toBe(false);
+    await act(async () => readyButton.click());
+    expect(onStartReinspection).toHaveBeenCalledTimes(1);
+  });
 });

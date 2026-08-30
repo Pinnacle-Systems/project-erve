@@ -10,6 +10,7 @@ import type {
   UpdatePreparedQuantityInput,
   QaReworkTaskView,
   QualityExecutionView,
+  FinalQualityBatchReworkTaskView,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
@@ -66,6 +67,7 @@ export function FactoryTaskDetailPage() {
   const [prepared, setPrepared] = useState<Record<string, string>>({});
   const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
   const [reworkNotes, setReworkNotes] = useState<Record<string, string>>({});
+  const [finalReworkNotes, setFinalReworkNotes] = useState<Record<string, string>>({});
   const [qualityStartContexts, setQualityStartContexts] = useState<
     Record<string, { sizeId: string; quantity: string }>
   >({});
@@ -177,6 +179,24 @@ export function FactoryTaskDetailPage() {
       void task.refetch();
       void queryClient.invalidateQueries({ queryKey: ['factory-rework'] });
     },
+  });
+  const finalBatchRework = useMutation({
+    mutationFn: async ({
+      item,
+      action,
+      notes,
+    }: {
+      item: FinalQualityBatchReworkTaskView;
+      action: 'acknowledge' | 'start' | 'complete';
+      notes: string;
+    }) =>
+      apiClient.post(
+        `/quality-executions/final-batches/${item.finalQualityBatchId}/rework/${action}`,
+        action === 'complete'
+          ? { expectedVersion: item.version, notes: notes.trim() }
+          : { expectedVersion: item.version, notes: notes.trim() || undefined },
+      ),
+    onSuccess: () => void task.refetch(),
   });
   const job = task.data;
   const nextStage = job?.stages.find((stage) => stage.status !== 'COMPLETED');
@@ -344,6 +364,111 @@ export function FactoryTaskDetailPage() {
                           Mark complete quantity ready for reinspection
                         </button>
                       )}
+                    </>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {job.finalBatchReworks.length > 0 && (
+        <section className="rounded-xl border border-border bg-surface p-4">
+          <h2 className="font-semibold">Final batches needing rework</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            QA failed Final inspection on these physical batches. Complete corrective action here
+            before QA can reinspect the same batch — no new prepared quantity is used.
+          </p>
+          <div className="mt-3 space-y-4">
+            {job.finalBatchReworks.map((item) => {
+              const notes = finalReworkNotes[item.id] ?? item.notes ?? '';
+              const pendingThis =
+                finalBatchRework.isPending && finalBatchRework.variables?.item.id === item.id;
+              return (
+                <article key={item.id} className="rounded-lg border border-border p-3">
+                  <p className="font-medium">
+                    {item.activityName} · Batch #{item.batchNumber}
+                  </p>
+                  <p className="mt-1 text-sm">
+                    Quantity {item.physicalQuantity} · rework cycle {item.cycleNumber} ·{' '}
+                    {item.status.replaceAll('_', ' ')}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {item.allocations
+                      .map((allocation) => `${allocation.sizeLabel} ${allocation.quantity}`)
+                      .join(', ')}
+                  </p>
+                  <p className="mt-1 text-sm">
+                    Failed attempt {item.failedAttemptNumber}
+                    {item.failedAt ? ` · ${new Date(item.failedAt).toLocaleDateString()}` : ''}
+                  </p>
+                  <p className="mt-1 text-sm">QA remarks: {item.qaRemarks ?? 'Not recorded'}</p>
+                  {item.previousCycles.length > 0 && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {item.previousCycles.length} prior rework cycle
+                      {item.previousCycles.length === 1 ? '' : 's'} on this same physical batch.
+                    </p>
+                  )}
+                  {canFactoryAcknowledge && (
+                    <>
+                      <label className="mt-3 block text-sm font-medium">
+                        Corrective-action notes{item.status === 'IN_PROGRESS' ? ' (required)' : ''}
+                        <textarea
+                          className="mt-1 min-h-24 w-full rounded-md border border-border bg-background p-3 font-normal"
+                          maxLength={2000}
+                          value={notes}
+                          onChange={(event) =>
+                            setFinalReworkNotes((current) => ({
+                              ...current,
+                              [item.id]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      {item.status === 'REQUIRED' && (
+                        <button
+                          className="mt-2 min-h-12 w-full rounded-lg bg-primary px-4 text-primary-foreground"
+                          disabled={finalBatchRework.isPending}
+                          onClick={() =>
+                            finalBatchRework.mutate({ item, action: 'acknowledge', notes })
+                          }
+                        >
+                          Acknowledge rework
+                        </button>
+                      )}
+                      {item.status === 'ACKNOWLEDGED' && (
+                        <button
+                          className="mt-2 min-h-12 w-full rounded-lg bg-primary px-4 text-primary-foreground"
+                          disabled={finalBatchRework.isPending}
+                          onClick={() => finalBatchRework.mutate({ item, action: 'start', notes })}
+                        >
+                          Start rework
+                        </button>
+                      )}
+                      {item.status === 'IN_PROGRESS' && (
+                        <button
+                          className="mt-2 min-h-12 w-full rounded-lg bg-primary px-4 text-primary-foreground disabled:opacity-50"
+                          disabled={finalBatchRework.isPending || !notes.trim()}
+                          onClick={() =>
+                            finalBatchRework.mutate({ item, action: 'complete', notes })
+                          }
+                        >
+                          Complete rework
+                        </button>
+                      )}
+                      {item.status === 'COMPLETED' && (
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          Waiting for QA reinspection.
+                        </p>
+                      )}
+                      {pendingThis === false &&
+                        finalBatchRework.isError &&
+                        finalBatchRework.variables?.item.id === item.id && (
+                          <p className="mt-2 text-sm text-danger" role="alert">
+                            {mutationMessage(finalBatchRework.error)}
+                          </p>
+                        )}
                     </>
                   )}
                 </article>

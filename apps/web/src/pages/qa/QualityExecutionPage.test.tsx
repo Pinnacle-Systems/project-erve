@@ -190,6 +190,25 @@ describe('web Quality execution workflow', () => {
           },
         ],
         release: null,
+        reworks: [
+          {
+            id: 'rework-1',
+            cycleNumber: 1,
+            status: 'COMPLETED',
+            failedQualityExecutionId: 'e1',
+            failedAttemptNumber: 1,
+            notes: 'Reworked the stitching',
+            acknowledgedBy: { id: 'u1', name: 'Factory User', email: 'f@test.local' },
+            acknowledgedAt: '2026-08-24T02:00:00.000Z',
+            startedBy: { id: 'u1', name: 'Factory User', email: 'f@test.local' },
+            startedAt: '2026-08-24T03:00:00.000Z',
+            completedBy: { id: 'u1', name: 'Factory User', email: 'f@test.local' },
+            completedAt: '2026-08-24T04:00:00.000Z',
+            version: 4,
+            createdAt: '2026-08-24T01:30:00.000Z',
+            updatedAt: '2026-08-24T04:00:00.000Z',
+          },
+        ],
       },
     };
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: failed } });
@@ -212,6 +231,8 @@ describe('web Quality execution workflow', () => {
     await vi.waitFor(() => expect(container.textContent).toContain('Physical Final batch 3'));
     expect(container.textContent).toContain('S · Small5');
     expect(container.textContent).toContain('Attempt 1FAIL');
+    expect(container.textContent).toContain('Ready for reinspection');
+    expect(container.textContent).toContain('Reworked the stitching');
     expect(container.querySelector('input[aria-label^="Final batch quantity"]')).toBeNull();
     await act(async () => {
       [...container.querySelectorAll('button')]
@@ -221,6 +242,83 @@ describe('web Quality execution workflow', () => {
     });
     expect(post).toHaveBeenCalledWith(
       '/quality-executions/final-batches/batch-3/reinspect',
+      undefined,
+    );
+  });
+
+  it('disables Start reinspection while Factory rework on the batch is not yet completed', async () => {
+    const failed: QualityExecutionView = {
+      ...view,
+      status: 'FINALIZED',
+      inspectedQuantity: 15,
+      responses: { ...view.responses, outcome: { componentId: 'outcome', value: 'FAIL' } },
+      finalBatch: {
+        id: 'batch-4',
+        batchNumber: 4,
+        physicalQuantity: 15,
+        disposition: 'AWAITING_REINSPECTION',
+        allocations: [
+          { jobOrderLineSizeId: 'size-s', sizeCode: 'S', sizeLabel: 'Small', quantity: 15 },
+        ],
+        attempts: [
+          {
+            id: 'e1',
+            attemptNumber: 1,
+            status: 'FINALIZED',
+            outcome: 'FAIL',
+            startedAt: '2026-08-24T00:00:00.000Z',
+            finalizedAt: '2026-08-24T01:00:00.000Z',
+          },
+        ],
+        release: null,
+        reworks: [
+          {
+            id: 'rework-2',
+            cycleNumber: 1,
+            status: 'IN_PROGRESS',
+            failedQualityExecutionId: 'e1',
+            failedAttemptNumber: 1,
+            notes: null,
+            acknowledgedBy: { id: 'u1', name: 'Factory User', email: 'f@test.local' },
+            acknowledgedAt: '2026-08-24T02:00:00.000Z',
+            startedBy: { id: 'u1', name: 'Factory User', email: 'f@test.local' },
+            startedAt: '2026-08-24T03:00:00.000Z',
+            completedBy: null,
+            completedAt: null,
+            version: 3,
+            createdAt: '2026-08-24T01:30:00.000Z',
+            updatedAt: '2026-08-24T03:00:00.000Z',
+          },
+        ],
+      },
+    };
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: failed } });
+    const post = vi.spyOn(apiClient, 'post');
+    await act(async () => {
+      root.render(
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <MemoryRouter initialEntries={['/quality-executions/e1']}>
+            <Routes>
+              <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(container.textContent).toContain('Physical Final batch 4'));
+    expect(container.textContent).toContain('Factory rework in progress');
+    const reinspectButton = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.startsWith('Start reinspection'),
+    ) as HTMLButtonElement;
+    expect(reinspectButton.disabled).toBe(true);
+    await act(async () => {
+      reinspectButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(post).not.toHaveBeenCalledWith(
+      '/quality-executions/final-batches/batch-4/reinspect',
       undefined,
     );
   });

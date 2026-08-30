@@ -41,6 +41,16 @@ export const finalBatchActionSchema = z.object({
   reason: z.string().trim().min(1).max(2000),
 });
 
+export const finalBatchReworkActionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  notes: z.string().trim().min(1).max(2000).optional(),
+});
+
+export const finalBatchReworkCompleteSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  notes: z.string().trim().min(1).max(2000),
+});
+
 export const qualityExecutionPayloadSchema = z
   .object({
     expectedVersion: z.number().int().positive(),

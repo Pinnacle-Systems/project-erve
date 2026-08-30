@@ -208,6 +208,17 @@ enum FinalQualityBatchDisposition {
   CANCELLED
 }
 
+// Factory corrective-action lifecycle for one failed Final inspection cycle
+// on a physical FinalQualityBatch. Each FAIL creates the next cycle; the
+// batch itself stays AWAITING_REINSPECTION throughout — this enum tracks who
+// is responsible for the next action, not a duplicate of batch disposition.
+enum FinalQualityBatchReworkStatus {
+  REQUIRED
+  ACKNOWLEDGED
+  IN_PROGRESS
+  COMPLETED
+}
+
 enum QualityDefectSeverity {
   CRITICAL
   MAJOR
@@ -262,33 +273,36 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  userRoles                   UserRole[]
-  userDistributors            UserDistributor[]
-  userFactories               UserFactory[]
-  uploadedFiles               File[]                     @relation("FileUploadedBy")
-  auditLogs                   AuditLog[]                 @relation("AuditLogActor")
-  refreshSessions             RefreshSession[]
-  createdPurchaseOrders       DistributorPurchaseOrder[] @relation("POCreator")
-  merchandisedPurchaseOrders  DistributorPurchaseOrder[] @relation("POMerchandiser")
-  createdJobOrders            JobOrder[]                 @relation("JobOrderCreator")
-  confirmedJobOrders          JobOrder[]                 @relation("JobOrderConfirmer")
-  jobOrderAcknowledgements    JobOrderAcknowledgement[]  @relation("JobOrderAcknowledgedBy")
-  completedJobOrderStages     JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
-  qaInspections               QaInspectionSession[]      @relation("QaInspector")
-  reopenedQaInspections       QaInspectionSession[]      @relation("QaReopenedBy")
-  reopenedQaSizeForms         QaSizeInspectionForm[]     @relation("QaSizeFormReopenedBy")
-  acknowledgedQaReworks       QaReworkTask[]             @relation("QaReworkAcknowledgedBy")
-  readiedQaReworks            QaReworkTask[]             @relation("QaReworkReadiedBy")
-  startedQualityExecutions    QualityActivityExecution[] @relation("QualityExecutionStarter")
-  finalizedQualityExecutions  QualityActivityExecution[] @relation("QualityExecutionFinalizer")
-  qualitySignoffs             QualitySignoff[]           @relation("QualitySignoffRecorder")
-  createdFinalQualityBatches  FinalQualityBatch[]        @relation("FinalQualityBatchCreator")
-  terminalFinalQualityBatches FinalQualityBatch[]        @relation("FinalQualityBatchTerminalActor")
-  qaReleases                  QaRelease[]                @relation("QaReleaseActor")
-  createdSaleOrders           SaleOrder[]                @relation("SaleOrderCreator")
-  reviewedSaleOrders          SaleOrder[]                @relation("SaleOrderReviewer")
-  allocatedStockAllocations   StockAllocation[]          @relation("StockAllocationAllocator")
-  releasedStockAllocations    StockAllocation[]          @relation("StockAllocationReleaser")
+  userRoles                     UserRole[]
+  userDistributors              UserDistributor[]
+  userFactories                 UserFactory[]
+  uploadedFiles                 File[]                     @relation("FileUploadedBy")
+  auditLogs                     AuditLog[]                 @relation("AuditLogActor")
+  refreshSessions               RefreshSession[]
+  createdPurchaseOrders         DistributorPurchaseOrder[] @relation("POCreator")
+  merchandisedPurchaseOrders    DistributorPurchaseOrder[] @relation("POMerchandiser")
+  createdJobOrders              JobOrder[]                 @relation("JobOrderCreator")
+  confirmedJobOrders            JobOrder[]                 @relation("JobOrderConfirmer")
+  jobOrderAcknowledgements      JobOrderAcknowledgement[]  @relation("JobOrderAcknowledgedBy")
+  completedJobOrderStages       JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
+  qaInspections                 QaInspectionSession[]      @relation("QaInspector")
+  reopenedQaInspections         QaInspectionSession[]      @relation("QaReopenedBy")
+  reopenedQaSizeForms           QaSizeInspectionForm[]     @relation("QaSizeFormReopenedBy")
+  acknowledgedQaReworks         QaReworkTask[]             @relation("QaReworkAcknowledgedBy")
+  readiedQaReworks              QaReworkTask[]             @relation("QaReworkReadiedBy")
+  startedQualityExecutions      QualityActivityExecution[] @relation("QualityExecutionStarter")
+  finalizedQualityExecutions    QualityActivityExecution[] @relation("QualityExecutionFinalizer")
+  qualitySignoffs               QualitySignoff[]           @relation("QualitySignoffRecorder")
+  createdFinalQualityBatches    FinalQualityBatch[]        @relation("FinalQualityBatchCreator")
+  terminalFinalQualityBatches   FinalQualityBatch[]        @relation("FinalQualityBatchTerminalActor")
+  acknowledgedFinalBatchReworks FinalQualityBatchRework[]  @relation("FinalBatchReworkAcknowledgedBy")
+  startedFinalBatchReworks      FinalQualityBatchRework[]  @relation("FinalBatchReworkStartedBy")
+  completedFinalBatchReworks    FinalQualityBatchRework[]  @relation("FinalBatchReworkCompletedBy")
+  qaReleases                    QaRelease[]                @relation("QaReleaseActor")
+  createdSaleOrders             SaleOrder[]                @relation("SaleOrderCreator")
+  reviewedSaleOrders            SaleOrder[]                @relation("SaleOrderReviewer")
+  allocatedStockAllocations     StockAllocation[]          @relation("StockAllocationAllocator")
+  releasedStockAllocations      StockAllocation[]          @relation("StockAllocationReleaser")
 
   @@index([status])
   @@map("users")
@@ -1025,6 +1039,7 @@ model QualityActivityExecution {
   sampleJobOrderLineSize JobOrderLineSize?          @relation("QualityExecutionSampleSize", fields: [sampleJobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_sample_size_id_fkey")
   finalQualityBatch      FinalQualityBatch?         @relation(fields: [finalQualityBatchId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_final_quality_batch_id_fkey")
   qaRelease              QaRelease?
+  spawnedRework          FinalQualityBatchRework?
 
   @@unique([jobOrderId, processFlowActivityId, attemptNumber, batchNumber], map: "quality_execution_attempt_batch_key")
   @@index([jobOrderId, processFlowActivityId, status], map: "quality_execution_status_idx")
@@ -1054,10 +1069,42 @@ model FinalQualityBatch {
   allocations         FinalQualityBatchAllocation[]
   executions          QualityActivityExecution[]
   release             QaRelease?
+  reworks             FinalQualityBatchRework[]
 
   @@unique([jobOrderId, processFlowActivityId, batchNumber], map: "final_quality_batch_number_key")
   @@index([jobOrderId, processFlowActivityId, disposition], map: "final_quality_batch_state_idx")
   @@map("final_quality_batches")
+}
+
+// One Factory corrective-action cycle spawned by a Final FAIL. Append-only:
+// a repeat FAIL creates the next cycle rather than mutating a prior one, so
+// the full rework history for a physical batch is always reconstructable.
+model FinalQualityBatchRework {
+  id                       String                        @id
+  finalQualityBatchId      String                        @map("final_quality_batch_id")
+  failedQualityExecutionId String                        @unique @map("failed_quality_execution_id")
+  cycleNumber              Int                           @map("cycle_number")
+  status                   FinalQualityBatchReworkStatus @default(REQUIRED)
+  acknowledgedById         String?                       @map("acknowledged_by_id")
+  acknowledgedAt           DateTime?                     @map("acknowledged_at")
+  startedById              String?                       @map("started_by_id")
+  startedAt                DateTime?                     @map("started_at")
+  completedById            String?                       @map("completed_by_id")
+  completedAt              DateTime?                     @map("completed_at")
+  notes                    String?
+  version                  Int                           @default(1)
+  createdAt                DateTime                      @default(now()) @map("created_at")
+  updatedAt                DateTime                      @updatedAt @map("updated_at")
+
+  finalQualityBatch      FinalQualityBatch        @relation(fields: [finalQualityBatchId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  failedQualityExecution QualityActivityExecution @relation(fields: [failedQualityExecutionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  acknowledgedBy         User?                    @relation("FinalBatchReworkAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  startedBy              User?                    @relation("FinalBatchReworkStartedBy", fields: [startedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  completedBy            User?                    @relation("FinalBatchReworkCompletedBy", fields: [completedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([finalQualityBatchId, cycleNumber], map: "final_quality_batch_rework_cycle_key")
+  @@index([finalQualityBatchId, status], map: "final_quality_batch_rework_state_idx")
+  @@map("final_quality_batch_reworks")
 }
 
 model FinalQualityBatchAllocation {
@@ -1164,12 +1211,12 @@ model SaleOrder {
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  distributor        Distributor                   @relation(fields: [distributorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  creator             User                          @relation("SaleOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  reviewedBy          User?                         @relation("SaleOrderReviewer", fields: [reviewedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  financialYear       FinancialYear                 @relation(fields: [financialYearId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  lines               SaleOrderLine[]
-  idempotencyRecords  SaleOrderIdempotencyRecord[]
+  distributor        Distributor                  @relation(fields: [distributorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  creator            User                         @relation("SaleOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reviewedBy         User?                        @relation("SaleOrderReviewer", fields: [reviewedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  financialYear      FinancialYear                @relation(fields: [financialYearId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  lines              SaleOrderLine[]
+  idempotencyRecords SaleOrderIdempotencyRecord[]
 
   @@unique([financialYearId, soSerial])
   @@index([distributorId])
@@ -1211,19 +1258,19 @@ model SaleOrderLine {
 // keeping full history in AuditLog) — this does NOT apply to QaReleaseLine,
 // which stays immutable.
 model StockAllocation {
-  id               String                 @id
-  saleOrderLineId  String                 @map("sale_order_line_id")
-  qaReleaseLineId  String                 @map("qa_release_line_id")
+  id               String                @id
+  saleOrderLineId  String                @map("sale_order_line_id")
+  qaReleaseLineId  String                @map("qa_release_line_id")
   quantity         Int
-  status           StockAllocationStatus  @default(ACTIVE)
-  allocationSource StockAllocationSource  @map("allocation_source")
+  status           StockAllocationStatus @default(ACTIVE)
+  allocationSource StockAllocationSource @map("allocation_source")
   // Required (service-enforced) when allocationSource = MERCHANDISER_REASSIGNMENT.
   reason           String?
-  allocatedById    String                 @map("allocated_by_id")
-  releasedById     String?                @map("released_by_id")
-  releasedAt       DateTime?              @map("released_at")
-  createdAt        DateTime               @default(now()) @map("created_at")
-  updatedAt        DateTime               @updatedAt @map("updated_at")
+  allocatedById    String                @map("allocated_by_id")
+  releasedById     String?               @map("released_by_id")
+  releasedAt       DateTime?             @map("released_at")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
 
   saleOrderLine SaleOrderLine @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   qaReleaseLine QaReleaseLine @relation(fields: [qaReleaseLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
