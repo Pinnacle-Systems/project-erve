@@ -17,17 +17,14 @@ export const priceListsRouter = Router();
 priceListsRouter.use(requireAuth);
 
 // Mutations follow the seeded role charter ("MERCHANDISER: manages styles,
-// price lists, and process flows") plus ADMIN. Reads are limited to roles
-// that genuinely need distributor pricing; DISTRIBUTOR users are further
-// scoped to their own distributor's ACTIVE lists in the service layer.
-const canManagePriceLists = requireRoles('ADMIN', 'MERCHANDISER');
-const canViewPriceLists = requireRoles(
-  'ADMIN',
-  'MERCHANDISER',
-  'SENIOR_MANAGEMENT',
-  'ACCOUNTANT',
-  'DISTRIBUTOR',
-);
+// price lists, and process flows") plus ADMIN, plus ACCOUNTANT as an explicit
+// business exception (finance may need to correct commercial pricing).
+// Reads are limited to the same roles: master-data owners, oversight, and
+// Accountant. DISTRIBUTOR has no access to this master module — a
+// distributor's own commercial price, if ever shown, must come from an
+// embedded field on an authorized transaction, not from browsing Price Lists.
+const canManagePriceLists = requireRoles('ADMIN', 'MERCHANDISER', 'ACCOUNTANT');
+const canViewPriceLists = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT');
 
 priceListsRouter.get(
   '/',

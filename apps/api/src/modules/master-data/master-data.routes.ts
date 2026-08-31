@@ -35,7 +35,12 @@ import { HttpError } from '../../errors/http-error.js';
 
 const canManageMasterData = requireRoles('ADMIN', 'MERCHANDISER');
 const canViewStyles = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT');
-const canViewFactories = requireRoles('ADMIN', 'MERCHANDISER', 'FACTORY_USER');
+// FACTORY_USER consumes their own factory's name/details through assigned Job
+// Orders (already embedded there), not by browsing the Factory master module.
+const canViewFactories = requireRoles('ADMIN', 'MERCHANDISER');
+// DISTRIBUTOR is intentionally included: the service layer scopes list/detail
+// to the caller's own mapped distributor only (see isDistributorScopedUser),
+// so this is a self-lookup used by PO/SO forms, not general master browsing.
 const canViewDistributors = requireRoles(
   'ADMIN',
   'MERCHANDISER',

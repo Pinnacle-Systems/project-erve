@@ -196,10 +196,23 @@ describe('price lists API', () => {
       expect(res.status).toBe(400);
     });
 
+    it('allows ACCOUNTANT to create price lists (finance exception)', async () => {
+      const dist = await createTestDistributor();
+      const { token } = await createTestUserAndToken({
+        email: `accountant-${createId().slice(-6)}@test.local`,
+        password: 'pass',
+        roles: ['ACCOUNTANT'],
+      });
+
+      const res = await createDraft(token, { distributorId: dist.id });
+
+      expect(res.status).toBe(201);
+    });
+
     it('rejects creation by roles without price-list management access', async () => {
       const dist = await createTestDistributor();
 
-      for (const role of ['SENIOR_MANAGEMENT', 'ACCOUNTANT', 'FACTORY_USER', 'QA_USER'] as const) {
+      for (const role of ['SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER'] as const) {
         const { token } = await createTestUserAndToken({
           email: `${role.toLowerCase()}-${createId().slice(-6)}@test.local`,
           password: 'pass',
@@ -794,72 +807,38 @@ describe('price lists API', () => {
   });
 
   describe('distributor-user isolation', () => {
-    it('scopes list, detail, history and lookup to the mapped distributor and ACTIVE lists', async () => {
+    // DISTRIBUTOR has no access to the Price List master module at all —
+    // not even scoped to their own distributor. A distributor's own
+    // commercial price, if ever shown, must come from an embedded field on
+    // an authorized transaction, not from browsing Price Lists. This
+    // replaces the module's former scoped-self-view design, which the
+    // master-data authorization audit found conflicted with that policy.
+    it('blocks a DISTRIBUTOR user from list, detail, history and lookup — even for their own distributor', async () => {
       const admin = await adminToken();
       const own = await createTestDistributor();
       const other = await createTestDistributor();
 
       const ownActive = await createDraftWithLine(admin, own.id, { unitPrice: 111 });
       await activate(admin, ownActive.priceListId);
-      const ownDraft = await createDraft(admin, { distributorId: own.id, name: 'Own draft' });
       const otherActive = await createDraftWithLine(admin, other.id);
       await activate(admin, otherActive.priceListId);
 
       const token = await distributorUserToken(own.id);
+      const auth = { Authorization: `Bearer ${token}` };
 
-      // List: only own ACTIVE list, even when asking for another distributor
-      const list = await request(app).get('/price-lists').set('Authorization', `Bearer ${token}`);
-      expect(list.status).toBe(200);
-      expect(list.body.data).toHaveLength(1);
-      expect(list.body.data[0].id).toBe(ownActive.priceListId);
-
-      const listOther = await request(app)
-        .get('/price-lists')
-        .query({ distributorId: other.id, status: 'DRAFT' })
-        .set('Authorization', `Bearer ${token}`);
-      expect(listOther.body.data).toHaveLength(1);
-      expect(listOther.body.data[0].id).toBe(ownActive.priceListId);
-
-      // Detail: own ACTIVE readable; own DRAFT and other distributor's list are not
+      expect((await request(app).get('/price-lists').set(auth)).status).toBe(403);
       expect(
-        (await request(app).get(`/price-lists/${ownActive.priceListId}`).set('Authorization', `Bearer ${token}`)).status,
-      ).toBe(200);
-      expect(
-        (await request(app).get(`/price-lists/${ownDraft.body.data.id}`).set('Authorization', `Bearer ${token}`)).status,
+        (await request(app).get(`/price-lists/${ownActive.priceListId}`).set(auth)).status,
       ).toBe(403);
       expect(
-        (await request(app).get(`/price-lists/${otherActive.priceListId}`).set('Authorization', `Bearer ${token}`)).status,
+        (await request(app).get(`/price-lists/distributors/${own.id}/history`).set(auth)).status,
       ).toBe(403);
-
-      // History: own returns only ACTIVE; other distributor is forbidden
-      const history = await request(app)
-        .get(`/price-lists/distributors/${own.id}/history`)
-        .set('Authorization', `Bearer ${token}`);
-      expect(history.status).toBe(200);
-      expect(history.body.data).toHaveLength(1);
-      expect(history.body.data[0].id).toBe(ownActive.priceListId);
-      expect(
-        (
-          await request(app)
-            .get(`/price-lists/distributors/${other.id}/history`)
-            .set('Authorization', `Bearer ${token}`)
-        ).status,
-      ).toBe(403);
-
-      // Lookup: own works, other distributor is forbidden
-      const ownLookup = await request(app)
-        .get('/price-lists/lookup')
-        .query({ distributorId: own.id, styleId: ownActive.styleId, date: '2026-03-01' })
-        .set('Authorization', `Bearer ${token}`);
-      expect(ownLookup.status).toBe(200);
-      expect(ownLookup.body.data.unitPrice).toBe(111);
-
       expect(
         (
           await request(app)
             .get('/price-lists/lookup')
-            .query({ distributorId: other.id, styleId: otherActive.styleId, date: '2026-03-01' })
-            .set('Authorization', `Bearer ${token}`)
+            .query({ distributorId: own.id, styleId: ownActive.styleId, date: '2026-03-01' })
+            .set(auth)
         ).status,
       ).toBe(403);
     });
@@ -884,7 +863,34 @@ describe('price lists API', () => {
       expect((await request(app).post(`/price-lists/${priceListId}/actions/retire`).set(auth)).status).toBe(403);
     });
 
-    it('allows read-only roles to view but not mutate', async () => {
+    it('allows a read-only role (SENIOR_MANAGEMENT) to view but not mutate', async () => {
+      const admin = await adminToken();
+      const dist = await createTestDistributor();
+      const { priceListId } = await createDraftWithLine(admin, dist.id);
+
+      const { token } = await createTestUserAndToken({
+        email: 'senior-mgmt@test.local',
+        password: 'pass',
+        roles: ['SENIOR_MANAGEMENT'],
+      });
+
+      const list = await request(app).get('/price-lists').set('Authorization', `Bearer ${token}`);
+      expect(list.status).toBe(200);
+      expect(list.body.data).toHaveLength(1);
+
+      const detail = await request(app)
+        .get(`/price-lists/${priceListId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(detail.status).toBe(200);
+
+      const mutate = await request(app)
+        .patch(`/price-lists/${priceListId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'X' });
+      expect(mutate.status).toBe(403);
+    });
+
+    it('allows ACCOUNTANT to both view and mutate (finance exception)', async () => {
       const admin = await adminToken();
       const dist = await createTestDistributor();
       const { priceListId } = await createDraftWithLine(admin, dist.id);
@@ -908,7 +914,8 @@ describe('price lists API', () => {
         .patch(`/price-lists/${priceListId}`)
         .set('Authorization', `Bearer ${token}`)
         .send({ name: 'X' });
-      expect(mutate.status).toBe(403);
+      expect(mutate.status).toBe(200);
+      expect(mutate.body.data.name).toBe('X');
     });
   });
 });

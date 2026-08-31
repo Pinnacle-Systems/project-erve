@@ -99,9 +99,7 @@ function toPriceListSummaryView(priceList: PriceListSummaryRecord) {
 // Access helpers
 // ---------------------------------------------------------------------------
 
-// Roles whose reads span every distributor. A DISTRIBUTOR-only user is
-// scoped to their sole mapped distributor and to ACTIVE lists — drafts and
-// retired history are internal commercial data.
+// Roles whose reads span every distributor.
 function canViewAllPriceLists(user: CurrentUser): boolean {
   return user.roles.some(
     (role) =>
@@ -109,6 +107,14 @@ function canViewAllPriceLists(user: CurrentUser): boolean {
   );
 }
 
+// DISTRIBUTOR is blocked from every Price List route at the middleware layer
+// (canViewPriceLists in price-lists.routes.ts) — a distributor's own
+// commercial price, if ever shown, must come from an embedded field on an
+// authorized transaction, not from this master module. The distributor
+// branch below is an inert defense-in-depth backstop: if this function is
+// ever reached directly by a DISTRIBUTOR user (e.g. a future internal
+// caller), it still fails closed to their own ACTIVE list rather than
+// silently granting broader access.
 function assertPriceListViewAccess(
   user: CurrentUser,
   priceList: { distributorId: string; status: PriceListStatus },

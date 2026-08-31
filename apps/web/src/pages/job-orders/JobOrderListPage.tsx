@@ -80,6 +80,7 @@ export function JobOrderListPage() {
 
   const factoriesQuery = useQuery({
     queryKey: ['factories', 'active'],
+    enabled: mayFilterByFactory,
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
         params: { status: 'ACTIVE' },

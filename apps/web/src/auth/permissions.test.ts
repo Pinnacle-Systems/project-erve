@@ -20,6 +20,16 @@ import {
   canViewStyles,
 } from './permissions.js';
 
+const ALL_ROLES: Role[] = [
+  'ADMIN',
+  'MERCHANDISER',
+  'FACTORY_USER',
+  'QA_USER',
+  'ACCOUNTANT',
+  'DISTRIBUTOR',
+  'SENIOR_MANAGEMENT',
+];
+
 const mockUser = (role: Role): AuthUser => ({
   id: 'test-user',
   name: 'Test',
@@ -30,7 +40,7 @@ const mockUser = (role: Role): AuthUser => ({
 
 describe('permissions', () => {
   describe.each([
-    ['FACTORY_USER', false, false, true, false, false, true, false],
+    ['FACTORY_USER', false, false, false, false, false, true, false],
     ['ADMIN', true, true, true, true, true, true, true],
     ['MERCHANDISER', true, true, true, true, true, true, true],
   ] as const)(
@@ -101,5 +111,42 @@ describe('permissions', () => {
 
     expect(canViewJobOrders(qaUser)).toBe(true);
     expect(canManageJobOrderProduction(qaUser)).toBe(false);
+  });
+
+  describe('master-data authorization matrix', () => {
+    it('grants Distributor master (view) only to ADMIN, MERCHANDISER, SENIOR_MANAGEMENT', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'];
+      for (const role of ALL_ROLES) {
+        expect(canViewDistributorMaster(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
+
+    it('grants Distributor master (manage) only to ADMIN, MERCHANDISER', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER'];
+      for (const role of ALL_ROLES) {
+        expect(canManageDistributorMaster(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
+
+    it('grants Factory master (view) only to ADMIN, MERCHANDISER — not FACTORY_USER', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER'];
+      for (const role of ALL_ROLES) {
+        expect(canViewFactories(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
+
+    it('grants Price List view to ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, ACCOUNTANT — not DISTRIBUTOR', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT'];
+      for (const role of ALL_ROLES) {
+        expect(canViewPriceLists(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
+
+    it('grants Price List manage to ADMIN, MERCHANDISER, ACCOUNTANT (finance exception)', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'ACCOUNTANT'];
+      for (const role of ALL_ROLES) {
+        expect(canManagePriceLists(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
   });
 });

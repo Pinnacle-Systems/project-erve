@@ -18,17 +18,18 @@ export const STYLE_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies r
 export const SIZE_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 export const SEASON_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
-export const FACTORY_VIEW_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-  'FACTORY_USER',
-] as const satisfies readonly Role[];
+// FACTORY_USER sees their own factory's name/details through assigned Job
+// Orders (already embedded there), not by browsing the Factory master module.
+export const FACTORY_VIEW_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
+// The Distributor master detail API scopes a DISTRIBUTOR caller to their own
+// mapped distributor only, so backend read access stays intentionally
+// unaffected by this list — but the master browsing/maintenance screen
+// itself (this module's nav + route gate) is not exposed to that role.
 export const DISTRIBUTOR_VIEW_ROLES = [
   'ADMIN',
   'MERCHANDISER',
   'SENIOR_MANAGEMENT',
-  'DISTRIBUTOR',
 ] as const satisfies readonly Role[];
 
 export const DISTRIBUTOR_MANAGE_ROLES = [
@@ -49,15 +50,23 @@ export const QUALITY_FORM_MANAGE_ROLES = [
 
 export const USER_MANAGE_ROLES = ['ADMIN'] as const satisfies readonly Role[];
 
+// DISTRIBUTOR has no access to the Price List master module — a
+// distributor's own commercial price, if ever shown, must come from an
+// embedded field on an authorized transaction, not from browsing Price Lists.
 export const PRICE_LIST_VIEW_ROLES = [
   'ADMIN',
   'MERCHANDISER',
   'SENIOR_MANAGEMENT',
   'ACCOUNTANT',
-  'DISTRIBUTOR',
 ] as const satisfies readonly Role[];
 
-export const PRICE_LIST_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
+// ACCOUNTANT is an explicit business exception: finance may need to
+// cross-check, validate, or correct agreed commercial pricing.
+export const PRICE_LIST_MANAGE_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'ACCOUNTANT',
+] as const satisfies readonly Role[];
 
 export const PURCHASE_ORDER_VIEW_ROLES = [
   'ADMIN',

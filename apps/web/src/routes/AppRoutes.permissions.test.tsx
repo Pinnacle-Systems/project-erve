@@ -47,6 +47,9 @@ vi.mock('../pages/qa/QaDetailPage.js', () => ({ QaDetailPage: () => <div>QaDetai
 vi.mock('../pages/master-data/QualityFormListPage.js', () => ({
   QualityFormListPage: () => <div>QualityFormListPage</div>,
 }));
+vi.mock('../pages/price-lists/PriceListListPage.js', () => ({
+  PriceListListPage: () => <div>PriceListListPage</div>,
+}));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -133,11 +136,11 @@ describe('AppRoutes Permissions', () => {
   });
 
   describe('FACTORY_USER', () => {
-    it("can access the factory list, where the API applies the user's factory scope", async () => {
+    it('is denied access to the Factory master — factory info comes from assigned Job Orders', async () => {
       await renderRoutes('FACTORY_USER', '/master-data/factories');
       const content = getPageContent();
-      expect(content).toContain('FactoryListPage');
-      expect(content).not.toContain('ForbiddenPage');
+      expect(content).not.toContain('FactoryListPage');
+      expect(content).toContain('ForbiddenPage');
     });
 
     it('is denied access to /purchase-orders', async () => {
@@ -159,6 +162,44 @@ describe('AppRoutes Permissions', () => {
       const content = getPageContent();
       expect(content).toContain('JobOrderListPage');
       expect(content).not.toContain('ForbiddenPage');
+    });
+  });
+
+  describe('DISTRIBUTOR', () => {
+    it('is denied direct-URL access to the Distributor master list and detail', async () => {
+      await renderRoutes('DISTRIBUTOR', '/master-data/distributors');
+      expect(getPageContent()).toContain('ForbiddenPage');
+
+      await renderRoutes('DISTRIBUTOR', '/master-data/distributors/dist-1');
+      expect(getPageContent()).toContain('ForbiddenPage');
+    });
+
+    it('is denied direct-URL access to the Price List master list and detail', async () => {
+      await renderRoutes('DISTRIBUTOR', '/price-lists');
+      expect(getPageContent()).toContain('ForbiddenPage');
+      expect(getPageContent()).not.toContain('PriceListListPage');
+
+      await renderRoutes('DISTRIBUTOR', '/price-lists/pl-1');
+      expect(getPageContent()).toContain('ForbiddenPage');
+    });
+
+    it('is denied direct-URL access to the Factory master', async () => {
+      await renderRoutes('DISTRIBUTOR', '/master-data/factories');
+      expect(getPageContent()).toContain('ForbiddenPage');
+    });
+  });
+
+  describe('ACCOUNTANT', () => {
+    it('is allowed direct-URL access to Price Lists but not other masters', async () => {
+      await renderRoutes('ACCOUNTANT', '/price-lists');
+      expect(getPageContent()).toContain('PriceListListPage');
+      expect(getPageContent()).not.toContain('ForbiddenPage');
+
+      await renderRoutes('ACCOUNTANT', '/master-data/distributors');
+      expect(getPageContent()).toContain('ForbiddenPage');
+
+      await renderRoutes('ACCOUNTANT', '/master-data/factories');
+      expect(getPageContent()).toContain('ForbiddenPage');
     });
   });
 

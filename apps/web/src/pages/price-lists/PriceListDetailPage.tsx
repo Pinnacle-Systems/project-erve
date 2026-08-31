@@ -8,6 +8,7 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { canManagePriceLists } from '../../auth/permissions.js';
 import type { PriceList, PriceListLine, StyleOption } from './types.js';
 import {
   PRICE_LIST_STATUS_LABELS,
@@ -26,7 +27,7 @@ export function PriceListDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const canManage = user?.roles.some((role) => ['ADMIN', 'MERCHANDISER'].includes(role)) ?? false;
+  const canManage = canManagePriceLists(user);
 
   const [activateDialogOpen, setActivateDialogOpen] = useState(false);
   const [retireDialogOpen, setRetireDialogOpen] = useState(false);

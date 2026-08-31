@@ -490,6 +490,52 @@ describe('factories API', () => {
       expect.arrayContaining(['FACTORY_UPDATED', 'FACTORY_STATUS_CHANGED']),
     );
   });
+
+  it.each([
+    ['ADMIN', 200],
+    ['MERCHANDISER', 200],
+    ['FACTORY_USER', 403],
+    ['QA_USER', 403],
+    ['DISTRIBUTOR', 403],
+    ['ACCOUNTANT', 403],
+    ['SENIOR_MANAGEMENT', 403],
+  ] as const)(
+    'applies the Factory master read authorization matrix for %s',
+    async (role, expectedStatus) => {
+      const { token } = await createTestUserAndToken({
+        email: `${role.toLowerCase()}-factory-read@test.local`,
+        password: 'test-password',
+        roles: [role],
+      });
+      const factory = await createTestFactory();
+
+      const list = await request(app).get('/factories').set('Authorization', `Bearer ${token}`);
+      const detail = await request(app)
+        .get(`/factories/${factory.id}`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(list.status).toBe(expectedStatus);
+      expect(detail.status).toBe(expectedStatus);
+    },
+  );
+
+  it('FACTORY_USER cannot browse the Factory master even when assigned to that factory', async () => {
+    const factory = await createTestFactory();
+    const { userId, token } = await createTestUserAndToken({
+      email: 'assigned-factory-user@test.local',
+      password: 'test-password',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({ data: { id: createId(), userId, factoryId: factory.id } });
+
+    const list = await request(app).get('/factories').set('Authorization', `Bearer ${token}`);
+    const detail = await request(app)
+      .get(`/factories/${factory.id}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(list.status).toBe(403);
+    expect(detail.status).toBe(403);
+  });
 });
 
 describe('process flow API', () => {
