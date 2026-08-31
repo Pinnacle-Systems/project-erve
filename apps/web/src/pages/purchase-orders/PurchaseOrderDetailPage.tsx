@@ -247,8 +247,6 @@ export function PurchaseOrderDetailPage() {
                 { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
                 { key: 'orderedQuantity', header: 'Ordered', accessor: 'orderedQuantity', align: 'right' },
                 { key: 'jobOrderedQuantity', header: 'Job Ordered', accessor: 'jobOrderedQuantity', align: 'right' },
-                { key: 'dispatchedQuantity', header: 'Dispatched', accessor: 'dispatchedQuantity', align: 'right' },
-                { key: 'deliveredQuantity', header: 'Delivered', accessor: 'deliveredQuantity', align: 'right' },
               ]}
               data={line.sizes}
               rowKey="id"

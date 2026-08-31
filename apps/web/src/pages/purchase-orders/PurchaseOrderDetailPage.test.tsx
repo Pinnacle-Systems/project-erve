@@ -293,6 +293,36 @@ async function renderPageForVisibility(options: {
   await vi.waitFor(() => expect(content()).not.toContain('Loading job order balance'));
 }
 
+describe('PurchaseOrderDetailPage Style and Size-wise Quantities', () => {
+  const defaultBalance = buildBalance([
+    { ordered: 100, jobOrdered: 0 },
+    { ordered: 150, jobOrdered: 0 },
+    { ordered: 100, jobOrdered: 0 },
+  ]);
+
+  it('does not present the dead Dispatched/Delivered columns as lifecycle information', async () => {
+    await renderPage(defaultBalance);
+    const headers = Array.from(container.querySelectorAll('th')).map((th) => th.textContent);
+    expect(headers).not.toContain('Dispatched');
+    expect(headers).not.toContain('Delivered');
+    expect(content()).not.toContain('Dispatched');
+    expect(content()).not.toContain('Delivered');
+  });
+
+  it('still renders size rows with real Ordered and Job Ordered quantities', async () => {
+    await renderPage(defaultBalance);
+    const headers = Array.from(container.querySelectorAll('th')).map((th) => th.textContent);
+    expect(headers).toContain('Size');
+    expect(headers).toContain('Ordered');
+    expect(headers).toContain('Job Ordered');
+    expect(content()).toContain('ST-101');
+    expect(content()).toContain('Oxford Shirt');
+    expect(content()).toContain('S');
+    expect(content()).toContain('M');
+    expect(content()).toContain('L');
+  });
+});
+
 describe('PurchaseOrderDetailPage Job Order Balance', () => {
   it('never renders the retired "Pending job order module" placeholder', async () => {
     await renderPage(buildBalance([{ ordered: 100, jobOrdered: 0 }, { ordered: 150, jobOrdered: 0 }, { ordered: 100, jobOrdered: 0 }]));
