@@ -8,7 +8,7 @@ import type { AuthUser, Role } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import * as AuthContext from '../../auth/AuthContext.js';
 import { SaleOrderDetailPage } from './SaleOrderDetailPage.js';
-import type { SaleOrder, SaleOrderStatus } from './types.js';
+import type { SaleOrder, SaleOrderAuditEntry, SaleOrderStatus } from './types.js';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -119,10 +119,21 @@ async function waitForLoaded(): Promise<void> {
   throw new Error('Timed out waiting for sale order detail to load');
 }
 
-async function renderPage(order: SaleOrder) {
+async function waitForAuditLoaded(): Promise<void> {
+  for (let i = 0; i < 50; i++) {
+    if (!container.textContent?.includes('Loading history')) return;
+    await act(async () => {
+      await flushMicrotasks();
+    });
+  }
+  throw new Error('Timed out waiting for audit history to load');
+}
+
+async function renderPage(order: SaleOrder, auditEntries: SaleOrderAuditEntry[] = []) {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === `/sale-orders/${order.id}`) return { data: { data: order } };
     if (url === '/sale-orders/inventory') return { data: { data: [] } };
+    if (url === `/sale-orders/${order.id}/audit`) return { data: { data: auditEntries } };
     throw new Error(`Unexpected GET: ${url}`);
   });
 
@@ -202,5 +213,170 @@ describe('SaleOrderDetailPage — APPROVED cancellation visibility', () => {
       `/sale-orders/${order.id}/actions/cancel`,
       expect.objectContaining({ expectedVersion: order.version }),
     );
+  });
+});
+
+const PLACEHOLDER_COPY = 'Audit history for this sale order will be available in a future update.';
+
+function buildAuditEntries(): SaleOrderAuditEntry[] {
+  return [
+    {
+      id: 'audit-1',
+      action: 'SALE_ORDER_CREATED',
+      title: 'Sale Order Created',
+      detail: null,
+      actor: { id: 'dist-user-1', name: 'Distributor User', email: 'distributor@test.local' },
+      createdAt: '2026-06-30T08:00:00.000Z',
+    },
+    {
+      id: 'audit-2',
+      action: 'SALE_ORDER_SUBMITTED',
+      title: 'Submitted',
+      detail: '70 unit(s) reserved from available stock',
+      actor: { id: 'dist-user-1', name: 'Distributor User', email: 'distributor@test.local' },
+      createdAt: '2026-06-30T09:00:00.000Z',
+    },
+    {
+      id: 'audit-3',
+      action: 'SALE_ORDER_APPROVED',
+      title: 'Approved',
+      detail: 'Reason: Partial stock available',
+      actor: { id: 'merch-1', name: 'Merchandiser', email: 'merch@test.local' },
+      createdAt: '2026-06-30T10:00:00.000Z',
+    },
+    {
+      id: 'audit-4',
+      action: 'SALE_ORDER_CANCELLED',
+      title: 'Cancelled',
+      detail: 'Cancelled from Approved; committed allocations released.',
+      actor: { id: 'merch-1', name: 'Merchandiser', email: 'merch@test.local' },
+      createdAt: '2026-06-30T11:00:00.000Z',
+    },
+  ];
+}
+
+describe('SaleOrderDetailPage — Audit Trail', () => {
+  it('fetches and renders real audit history, replacing the old placeholder', async () => {
+    setAuthUser(['ADMIN']);
+    await renderPage(buildSaleOrder('CANCELLED'), buildAuditEntries());
+    await waitForAuditLoaded();
+
+    expect(document.body.textContent).not.toContain(PLACEHOLDER_COPY);
+    expect(document.body.textContent).toContain('Sale Order Created');
+    expect(document.body.textContent).toContain('Submitted');
+    expect(document.body.textContent).toContain('70 unit(s) reserved from available stock');
+    expect(document.body.textContent).toContain('Distributor User');
+    expect(document.body.textContent).toContain('Merchandiser');
+  });
+
+  it('renders the approval event with its requested/approved detail', async () => {
+    setAuthUser(['ADMIN']);
+    await renderPage(buildSaleOrder('APPROVED'), buildAuditEntries());
+    await waitForAuditLoaded();
+
+    expect(document.body.textContent).toContain('Approved');
+    expect(document.body.textContent).toContain('Reason: Partial stock available');
+  });
+
+  it('renders the cancellation event distinguishing an APPROVED cancellation', async () => {
+    setAuthUser(['ADMIN']);
+    await renderPage(buildSaleOrder('CANCELLED'), buildAuditEntries());
+    await waitForAuditLoaded();
+
+    expect(document.body.textContent).toContain('Cancelled from Approved; committed allocations released.');
+  });
+
+  it('shows a loading state while audit history is being fetched', async () => {
+    setAuthUser(['ADMIN']);
+    const order = buildSaleOrder('DRAFT');
+    let resolveAudit!: (value: { data: { data: SaleOrderAuditEntry[] } }) => void;
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === `/sale-orders/${order.id}`) return { data: { data: order } };
+      if (url === '/sale-orders/inventory') return { data: { data: [] } };
+      if (url === `/sale-orders/${order.id}/audit`) {
+        return new Promise((resolve) => {
+          resolveAudit = resolve;
+        });
+      }
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={[`/sale-orders/${order.id}`]}>
+            <Routes>
+              <Route path="/sale-orders/:id" element={<SaleOrderDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await waitForLoaded();
+
+    expect(container.textContent).toContain('Loading history');
+
+    await act(async () => {
+      resolveAudit({ data: { data: [] } });
+    });
+    await waitForAuditLoaded();
+    expect(container.textContent).not.toContain('Loading history');
+  });
+
+  it('shows an error state when the audit request fails', async () => {
+    setAuthUser(['ADMIN']);
+    const order = buildSaleOrder('DRAFT');
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === `/sale-orders/${order.id}`) return { data: { data: order } };
+      if (url === '/sale-orders/inventory') return { data: { data: [] } };
+      if (url === `/sale-orders/${order.id}/audit`) throw new Error('network error');
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={[`/sale-orders/${order.id}`]}>
+            <Routes>
+              <Route path="/sale-orders/:id" element={<SaleOrderDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await waitForLoaded();
+    await waitForAuditLoaded();
+
+    expect(container.textContent).toContain('Unable to load audit history.');
+  });
+
+  it('shows a genuine empty state when there is no audit history, without the old placeholder', async () => {
+    setAuthUser(['ADMIN']);
+    await renderPage(buildSaleOrder('DRAFT'), []);
+    await waitForAuditLoaded();
+
+    expect(container.textContent).toContain('No audit history available.');
+    expect(document.body.textContent).not.toContain(PLACEHOLDER_COPY);
+  });
+
+  it('renders a Distributor-safe audit response without cross-distributor provenance', async () => {
+    setAuthUser(['DISTRIBUTOR']);
+    const safeEntries: SaleOrderAuditEntry[] = [
+      ...buildAuditEntries().slice(0, 3),
+      {
+        id: 'audit-3b',
+        action: 'SALE_ORDER_LINE_APPROVED',
+        title: 'Line Approved',
+        detail: 'ST-1 / Medium: Requested 70 → Approved 55; +15 additional stock allocated by Merchandiser',
+        actor: { id: 'merch-1', name: 'Merchandiser', email: 'merch@test.local' },
+        createdAt: '2026-06-30T10:05:00.000Z',
+      },
+    ];
+    await renderPage(buildSaleOrder('APPROVED'), safeEntries);
+    await waitForAuditLoaded();
+
+    expect(document.body.textContent).toContain('additional stock allocated by Merchandiser');
+    expect(document.body.textContent).not.toContain('Secret Distributor');
+    expect(document.body.textContent).not.toContain('sourced from');
   });
 });

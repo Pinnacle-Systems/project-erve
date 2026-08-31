@@ -85,6 +85,15 @@ saleOrdersRouter.get(
   }),
 );
 
+saleOrdersRouter.get(
+  '/:id/audit',
+  canView,
+  asyncHandler(async (req, res) => {
+    const history = await saleOrdersService.getSaleOrderAuditHistory(req.user!, req.params.id! as string);
+    res.status(200).json(successResponse(history));
+  }),
+);
+
 saleOrdersRouter.patch(
   '/:id',
   canManageAsDistributor,

@@ -10,7 +10,8 @@ import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorCode, getApiErrorMessage } from '../../lib/api-errors.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canApproveSaleOrders, canManageSaleOrdersAsDistributor } from '../../auth/permissions.js';
-import type { GlobalInventoryLine, SaleOrder, SaleOrderLine, SaleOrderStatus } from './types.js';
+import { formatDateTime } from '../job-orders/job-order-ui.js';
+import type { GlobalInventoryLine, SaleOrder, SaleOrderAuditEntry, SaleOrderLine, SaleOrderStatus } from './types.js';
 
 const STATUS_LABELS: Record<SaleOrderStatus, string> = {
   DRAFT: 'Draft',
@@ -78,6 +79,15 @@ export function SaleOrderDetailPage() {
     enabled: canReview && isUnderReview,
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<GlobalInventoryLine[]>>('/sale-orders/inventory');
+      return res.data.data;
+    },
+  });
+
+  const auditQuery = useQuery({
+    queryKey: ['sale-order-audit', id],
+    enabled: !!so,
+    queryFn: async () => {
+      const res = await apiClient.get<ApiSuccessResponse<SaleOrderAuditEntry[]>>(`/sale-orders/${id}/audit`);
       return res.data.data;
     },
   });
@@ -481,7 +491,22 @@ export function SaleOrderDetailPage() {
       </Panel>
 
       <Panel title="Audit Log">
-        <AuditTrail items={[]} emptyState="Audit history for this sale order will be available in a future update." />
+        <AuditTrail
+          items={(auditQuery.data ?? []).map((entry) => ({
+            id: entry.id,
+            title: entry.title,
+            description: entry.detail,
+            actor: entry.actor?.name ?? 'System',
+            timestamp: formatDateTime(entry.createdAt),
+          }))}
+          emptyState={
+            auditQuery.isLoading
+              ? 'Loading history…'
+              : auditQuery.isError
+                ? 'Unable to load audit history.'
+                : 'No audit history available.'
+          }
+        />
       </Panel>
 
       {(canDecide || canCancel) && (

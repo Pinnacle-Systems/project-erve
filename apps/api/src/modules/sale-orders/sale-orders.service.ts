@@ -351,6 +351,258 @@ export async function getSaleOrderDetail(user: CurrentUser, id: string) {
   return toSaleOrderView(order, user);
 }
 
+// ---------------------------------------------------------------------------
+// Audit history
+// ---------------------------------------------------------------------------
+
+const SALE_ORDER_AUDIT_TITLES: Record<string, string> = {
+  SALE_ORDER_CREATED: 'Sale Order Created',
+  SALE_ORDER_UPDATED: 'Draft Updated',
+  SALE_ORDER_SUBMITTED: 'Submitted',
+  SALE_ORDER_REVIEW_STARTED: 'Review Started',
+  SALE_ORDER_APPROVED: 'Approved',
+  SALE_ORDER_LINE_APPROVED: 'Line Approved',
+  SALE_ORDER_REJECTED: 'Rejected',
+  SALE_ORDER_CANCELLED: 'Cancelled',
+};
+
+function sentenceCaseAction(action: string): string {
+  const words = action.trim().replaceAll('_', ' ').toLowerCase().trim();
+  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : 'Unknown event';
+}
+
+function auditMetadataObject(metadata: unknown): Record<string, unknown> {
+  return metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)
+    : {};
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+interface StoredAllocationAuditEntry {
+  qaReleaseLineId: string;
+  quantity: number;
+  allocationSource?: string;
+  reason?: string | null;
+}
+
+function asAllocationEntries(value: unknown): StoredAllocationAuditEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is StoredAllocationAuditEntry =>
+      !!entry &&
+      typeof entry === 'object' &&
+      typeof (entry as Record<string, unknown>).qaReleaseLineId === 'string' &&
+      typeof (entry as Record<string, unknown>).quantity === 'number',
+  );
+}
+
+interface ReassignmentSource {
+  distributorName: string;
+  poNumber: string;
+  jobOrderNumber: string;
+  factoryName: string;
+}
+
+// Resolves the CURRENT owning distributor/PO/Job Order/factory of a QA
+// release line — a release line's source is fixed at creation and never
+// moves, so this is an accurate historical fact, not a guess, even though
+// it is not itself stored on the audit row (only the qaReleaseLineId is).
+async function resolveReassignmentSources(releaseLineIds: string[]): Promise<Map<string, ReassignmentSource>> {
+  if (releaseLineIds.length === 0) return new Map();
+  const rows = await prisma.qaReleaseLine.findMany({
+    where: { id: { in: releaseLineIds } },
+    select: {
+      id: true,
+      release: {
+        select: { jobOrder: { select: { jobOrderNumber: true, factory: { select: { name: true } } } } },
+      },
+      purchaseOrderLineSize: {
+        select: {
+          purchaseOrderLine: {
+            select: { purchaseOrder: { select: { poNumber: true, distributor: { select: { name: true } } } } },
+          },
+        },
+      },
+    },
+  });
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        distributorName: row.purchaseOrderLineSize.purchaseOrderLine.purchaseOrder.distributor.name,
+        poNumber: row.purchaseOrderLineSize.purchaseOrderLine.purchaseOrder.poNumber,
+        jobOrderNumber: row.release.jobOrder.jobOrderNumber,
+        factoryName: row.release.jobOrder.factory.name,
+      },
+    ]),
+  );
+}
+
+// A DISTRIBUTOR viewer (even the owning one) must never learn another
+// distributor's identity/PO/Job Order/factory from a MERCHANDISER_REASSIGNMENT
+// allocation — the Sale Order detail view already masks this (toAllocationView
+// above); the audit trail must mask it identically.
+function describeAddedAllocation(
+  entry: StoredAllocationAuditEntry,
+  includeFullProvenance: boolean,
+  sources: Map<string, ReassignmentSource>,
+): string {
+  if (entry.allocationSource === 'MERCHANDISER_REASSIGNMENT') {
+    if (includeFullProvenance) {
+      const source = sources.get(entry.qaReleaseLineId);
+      return source
+        ? `+${entry.quantity} sourced from ${source.distributorName}'s stock (PO ${source.poNumber}, Job Order ${source.jobOrderNumber})`
+        : `+${entry.quantity} sourced from another distributor's stock`;
+    }
+    return `+${entry.quantity} additional stock allocated by Merchandiser`;
+  }
+  if (entry.allocationSource === 'MERCHANDISER_ADJUSTMENT') {
+    return `+${entry.quantity} allocated from this distributor's other released stock`;
+  }
+  return `+${entry.quantity} allocated`;
+}
+
+function describeLineApproval(
+  metadata: Record<string, unknown>,
+  lineContext: { styleNumber: string; sizeLabel: string } | undefined,
+  includeFullProvenance: boolean,
+  sources: Map<string, ReassignmentSource>,
+): string {
+  const requested = typeof metadata.requestedQuantity === 'number' ? metadata.requestedQuantity : undefined;
+  const approved = typeof metadata.approvedQuantity === 'number' ? metadata.approvedQuantity : undefined;
+  const label = lineContext ? `${lineContext.styleNumber} / ${lineContext.sizeLabel}` : 'Line';
+  const parts: string[] =
+    requested !== undefined && approved !== undefined
+      ? [`${label}: Requested ${requested} → Approved ${approved}`]
+      : [label];
+  for (const entry of asAllocationEntries(metadata.allocationsAdded)) {
+    parts.push(describeAddedAllocation(entry, includeFullProvenance, sources));
+  }
+  return parts.join('; ');
+}
+
+function describeCancellation(metadata: Record<string, unknown>): string {
+  const previousStatus = nonEmptyString(metadata.previousStatus);
+  const releasedAllocationCount =
+    typeof metadata.releasedAllocationCount === 'number' ? metadata.releasedAllocationCount : 0;
+  const reason = nonEmptyString(metadata.reason);
+  const base =
+    previousStatus === 'APPROVED'
+      ? `Cancelled from Approved${releasedAllocationCount > 0 ? '; committed allocations released' : ''}`
+      : previousStatus
+        ? `Cancelled from ${sentenceCaseAction(previousStatus)}`
+        : 'Cancelled';
+  return reason ? `${base}. Reason: ${reason}` : `${base}.`;
+}
+
+export async function getSaleOrderAuditHistory(user: CurrentUser, id: string) {
+  const order = await prisma.saleOrder.findUnique({ where: { id }, select: { id: true, distributorId: true } });
+  if (!order) throw HttpError.notFound('Sale order not found');
+  assertSaleOrderViewAccess(user, order);
+
+  const includeFullProvenance = canViewAllSaleOrders(user);
+
+  const lines = await prisma.saleOrderLine.findMany({
+    where: { saleOrderId: id },
+    select: {
+      id: true,
+      purchaseOrderLineSize: {
+        select: {
+          size: { select: { label: true } },
+          purchaseOrderLine: { select: { style: { select: { styleNumber: true } } } },
+        },
+      },
+    },
+  });
+  const lineContextById = new Map(
+    lines.map((line) => [
+      line.id,
+      {
+        styleNumber: line.purchaseOrderLineSize.purchaseOrderLine.style.styleNumber,
+        sizeLabel: line.purchaseOrderLineSize.size.label,
+      },
+    ]),
+  );
+
+  const rows = await prisma.auditLog.findMany({
+    where: {
+      OR: [
+        { entityType: 'SaleOrder', entityId: id },
+        { entityType: 'SaleOrderLine', entityId: { in: [...lineContextById.keys()] } },
+      ],
+    },
+    select: {
+      id: true,
+      action: true,
+      entityId: true,
+      createdAt: true,
+      metadata: true,
+      actor: { select: { id: true, name: true, email: true } },
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
+
+  const reassignmentReleaseLineIds = new Set<string>();
+  if (includeFullProvenance) {
+    for (const row of rows) {
+      if (row.action !== 'SALE_ORDER_LINE_APPROVED') continue;
+      const metadata = auditMetadataObject(row.metadata);
+      for (const entry of asAllocationEntries(metadata.allocationsAdded)) {
+        if (entry.allocationSource === 'MERCHANDISER_REASSIGNMENT') {
+          reassignmentReleaseLineIds.add(entry.qaReleaseLineId);
+        }
+      }
+    }
+  }
+  const sources = await resolveReassignmentSources([...reassignmentReleaseLineIds]);
+
+  return rows.map((row) => {
+    const metadata = auditMetadataObject(row.metadata);
+    let detail: string | null;
+
+    switch (row.action) {
+      case 'SALE_ORDER_SUBMITTED': {
+        const total = asAllocationEntries(metadata.allocations).reduce((sum, entry) => sum + entry.quantity, 0);
+        detail = total > 0 ? `${total} unit(s) reserved from available stock` : null;
+        break;
+      }
+      case 'SALE_ORDER_APPROVED': {
+        const reason = nonEmptyString(metadata.reason);
+        detail = reason ? `Reason: ${reason}` : null;
+        break;
+      }
+      case 'SALE_ORDER_LINE_APPROVED': {
+        const lineId = nonEmptyString(metadata.saleOrderLineId) ?? row.entityId;
+        detail = describeLineApproval(metadata, lineContextById.get(lineId), includeFullProvenance, sources);
+        break;
+      }
+      case 'SALE_ORDER_REJECTED': {
+        const reason = nonEmptyString(metadata.reason);
+        detail = reason ? `Reason: ${reason}` : null;
+        break;
+      }
+      case 'SALE_ORDER_CANCELLED': {
+        detail = describeCancellation(metadata);
+        break;
+      }
+      default:
+        detail = null;
+    }
+
+    return {
+      id: row.id,
+      action: row.action,
+      title: SALE_ORDER_AUDIT_TITLES[row.action] ?? sentenceCaseAction(row.action),
+      detail,
+      actor: row.actor,
+      createdAt: row.createdAt.toISOString(),
+    };
+  });
+}
+
 export async function createSaleOrder(
   actor: CurrentUser,
   input: {

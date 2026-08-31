@@ -269,6 +269,20 @@ export interface SaleOrderDetail extends SaleOrderSummary {
   lines: SaleOrderLineView[];
 }
 
+export interface SaleOrderAuditEntry {
+  id: string;
+  action: string;
+  title: string;
+  // Pre-formatted, viewer-sanitized business detail — cross-distributor
+  // provenance (source distributor/PO/Job Order/factory) is only ever
+  // included here for a viewer permitted to see it; a DISTRIBUTOR viewer
+  // gets a generic phrase instead. The API is authoritative for this, not
+  // the frontend — see requirement 6/14 in the Sale Order audit spec.
+  detail: string | null;
+  actor: { id: string; name: string; email: string } | null;
+  createdAt: string;
+}
+
 export interface EligibleStockLine {
   purchaseOrderLineSizeId: string;
   purchaseOrderId: string;
