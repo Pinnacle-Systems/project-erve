@@ -247,7 +247,11 @@ export function SaleOrderDetailPage() {
   const isDraft = so.status === 'DRAFT';
   const canEdit = isDraft && canManageAsDistributor;
   const canSubmit = isDraft && canManageAsDistributor;
-  const canCancel = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW'].includes(so.status);
+  // APPROVED can only be cancelled by ADMIN/MERCHANDISER (canReview) — an
+  // owning distributor loses cancellation rights once merchandiser approval
+  // has committed allocations that may span other distributors' stock.
+  const canCancel =
+    ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW'].includes(so.status) || (so.status === 'APPROVED' && canReview);
   const canStartReview = so.status === 'SUBMITTED' && canReview;
   const canDecide = isUnderReview && canReview;
   const hasAnyLineError = lineValidation.size > 0;
@@ -539,7 +543,11 @@ export function SaleOrderDetailPage() {
         open={cancelDialogOpen}
         onOpenChange={setCancelDialogOpen}
         title="Cancel sale order?"
-        description="This will release any reserved stock back to availability."
+        description={
+          so.status === 'APPROVED'
+            ? 'Cancel this approved sale order? Its committed stock will be released back to available QA-released inventory.'
+            : 'This will release any reserved stock back to availability.'
+        }
         confirmLabel="Cancel Sale Order"
         destructive
         loading={cancelMutation.isPending}

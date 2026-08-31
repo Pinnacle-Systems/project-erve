@@ -264,11 +264,12 @@ async function finishIdempotentOperation(
   });
 }
 
-async function releaseAllActiveAllocations(tx: Tx, saleOrderId: string, actorId: string): Promise<void> {
-  await tx.stockAllocation.updateMany({
+async function releaseAllActiveAllocations(tx: Tx, saleOrderId: string, actorId: string): Promise<number> {
+  const result = await tx.stockAllocation.updateMany({
     where: { status: 'ACTIVE', saleOrderLine: { saleOrderId } },
     data: { status: 'RELEASED', releasedById: actorId, releasedAt: new Date() },
   });
+  return result.count;
 }
 
 // ---------------------------------------------------------------------------
@@ -673,8 +674,14 @@ export async function cancelSaleOrder(
   // Distributors (and ADMIN) may withdraw their own DRAFT/SUBMITTED/
   // UNDER_REVIEW order; a merchandiser may only decline a submitted one —
   // not reach into a distributor's private draft.
-  const cancellableStatuses: SaleOrderStatus[] =
+  const preApprovalStatuses: SaleOrderStatus[] =
     isAdmin || isOwningDistributor ? ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW'] : ACTIVE_REVIEW_STATUSES;
+  // Unwinding an APPROVED order releases stock that may already have been
+  // sourced across distributors by the merchandiser — only ADMIN/MERCHANDISER
+  // may authorize that, never the (possibly unrelated-to-the-source)
+  // owning distributor.
+  const cancellableStatuses: SaleOrderStatus[] =
+    isAdmin || isMerchandiser ? [...preApprovalStatuses, 'APPROVED'] : preApprovalStatuses;
   if (!cancellableStatuses.includes(preCheck.status)) {
     throw HttpError.badRequest(`Sale order in status ${preCheck.status} cannot be cancelled`);
   }
@@ -688,7 +695,7 @@ export async function cancelSaleOrder(
     if (!cancellableStatuses.includes(order.status))
       throw HttpError.badRequest(`Sale order in status ${order.status} cannot be cancelled`);
 
-    await releaseAllActiveAllocations(tx, id, actor.id);
+    const releasedAllocationCount = await releaseAllActiveAllocations(tx, id, actor.id);
     const updated = await tx.saleOrder.updateMany({
       where: { id, version: input.expectedVersion },
       data: { status: 'CANCELLED', decisionReason: input.reason ?? null, version: { increment: 1 } },
@@ -701,7 +708,7 @@ export async function cancelSaleOrder(
         action: 'SALE_ORDER_CANCELLED',
         entityType: 'SaleOrder',
         entityId: id,
-        metadata: { reason: input.reason ?? null },
+        metadata: { reason: input.reason ?? null, previousStatus: order.status, releasedAllocationCount },
       },
       tx,
     );
