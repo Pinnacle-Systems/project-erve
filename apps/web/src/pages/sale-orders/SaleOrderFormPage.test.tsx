@@ -200,8 +200,8 @@ describe('SaleOrderFormPage edit hydration', () => {
     await renderEditPage(
       editAdapter({
         patch: async (config) => {
-          patchedQuantity = (JSON.parse(config.data as string).lines as { requestedQuantity: number }[])[0]
-            .requestedQuantity;
+          const lines = JSON.parse(config.data as string).lines as { requestedQuantity: number }[];
+          patchedQuantity = lines[0]?.requestedQuantity;
           return ok(config, { success: true, data: { ...draftSaleOrder, totalRequestedQuantity: 22 } });
         },
       }),
