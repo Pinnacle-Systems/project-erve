@@ -10,6 +10,7 @@ import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { toCompactFinancialYearCode } from '../master-data/financial-year.util.js';
+import { getAvailableQuantities } from '../sale-orders/inventory.service.js';
 
 // ---------------------------------------------------------------------------
 // PO number generation
@@ -508,6 +509,27 @@ export async function getJobOrderBalance(user: CurrentUser, id: string, factoryI
   return { poId: id, poNumber: po.poNumber, version: po.version, lines, styleFactoryPrices };
 }
 
+const fulfilmentTotalsZero = {
+  orderedQuantity: 0,
+  jobOrderedQuantity: 0,
+  preparedQuantity: 0,
+  qaReleasedQuantity: 0,
+  saleOrderAllocatedQuantity: 0,
+  remainingToJobOrderQuantity: 0,
+  notPreparedQuantity: 0,
+  preparedNotReleasedQuantity: 0,
+  releasedUnallocatedQuantity: 0,
+};
+
+// Read-only lifecycle reconciliation: Ordered -> Job Ordered -> Prepared ->
+// QA Released -> Sale Order Allocated. Stops at Sale Order allocation
+// deliberately — packing/dispatch/invoicing don't exist in the product yet,
+// so this must not label anything "Dispatched"/"Delivered". Every quantity
+// is read from the same authoritative sources their own owning modules
+// already write (job-orders.service.ts for jobOrdered/prepared,
+// quality-executions.service.ts for qaReleased, the StockAllocation ledger
+// via getAvailableQuantities for saleOrderAllocated) — nothing here is a
+// second, competing calculation of any of those numbers.
 export async function getFulfilmentSummary(user: CurrentUser, id: string) {
   const po = await prisma.distributorPurchaseOrder.findUnique({
     where: { id },
@@ -526,61 +548,82 @@ export async function getFulfilmentSummary(user: CurrentUser, id: string) {
   if (!po) throw HttpError.notFound('Purchase order not found');
   assertPOViewAccess(user, po);
 
-  const lines = po.lines.map((line) => {
-    const totals = line.sizes.reduce(
-      (acc, s) => ({
-        ordered: acc.ordered + s.orderedQuantity,
-        released: acc.released + s.qaPassedQuantity,
-        orderRemaining: acc.orderRemaining + Math.max(0, s.orderedQuantity - s.dispatchedQuantity),
-        pendingDispatch:
-          acc.pendingDispatch + Math.max(0, s.orderedQuantity - s.dispatchedQuantity),
-        qaReleasedPendingDispatch:
-          acc.qaReleasedPendingDispatch + Math.max(0, s.qaPassedQuantity - s.dispatchedQuantity),
-        releaseDispatchDeficit:
-          acc.releaseDispatchDeficit + Math.max(0, s.dispatchedQuantity - s.qaPassedQuantity),
-        releaseDispatchIntegrityConflict:
-          acc.releaseDispatchIntegrityConflict || s.dispatchedQuantity > s.qaPassedQuantity,
-        dispatched: acc.dispatched + s.dispatchedQuantity,
-        delivered: acc.delivered + s.deliveredQuantity,
-        sold: acc.sold + s.actualSoldQuantity,
-        returned: acc.returned + s.returnedQuantity,
-      }),
-      {
-        ordered: 0,
-        released: 0,
-        orderRemaining: 0,
-        pendingDispatch: 0,
-        qaReleasedPendingDispatch: 0,
-        releaseDispatchDeficit: 0,
-        releaseDispatchIntegrityConflict: false,
-        dispatched: 0,
-        delivered: 0,
-        sold: 0,
-        returned: 0,
-      },
+  const allSizeIds = po.lines.flatMap((line) => line.sizes.map((s) => s.id));
+
+  // Prepared is size-scoped on JobOrderLineSize, not on the PO line size
+  // itself, and a PO can be split across multiple Job Orders — sum across
+  // every non-cancelled Job Order's line size for this PO size.
+  const preparedBySize = await prisma.jobOrderLineSize.groupBy({
+    by: ['purchaseOrderLineSizeId'],
+    where: {
+      purchaseOrderLineSizeId: { in: allSizeIds },
+      jobOrderLine: { jobOrder: { status: { not: 'CANCELLED' } } },
+    },
+    _sum: { preparedQuantity: true },
+  });
+  const preparedById = new Map(
+    preparedBySize.map((row) => [row.purchaseOrderLineSizeId, row._sum.preparedQuantity ?? 0]),
+  );
+
+  // Sale Order allocation is committed against a QaReleaseLine, not against
+  // this PO's Distributor, so it must be summed via the release lines this
+  // PO's sizes actually produced — this is what makes reallocation to a
+  // different distributor's Sale Order still count correctly against this PO.
+  const releaseLines = await prisma.qaReleaseLine.findMany({
+    where: { purchaseOrderLineSizeId: { in: allSizeIds } },
+    select: { id: true, purchaseOrderLineSizeId: true },
+  });
+  const availability = await getAvailableQuantities(
+    prisma,
+    releaseLines.map((line) => line.id),
+  );
+  const allocatedById = new Map<string, number>();
+  for (const releaseLine of releaseLines) {
+    const committed = availability.get(releaseLine.id)?.committed ?? 0;
+    allocatedById.set(
+      releaseLine.purchaseOrderLineSizeId,
+      (allocatedById.get(releaseLine.purchaseOrderLineSizeId) ?? 0) + committed,
     );
+  }
+
+  const lines = po.lines.map((line) => {
+    const sizes = line.sizes.map((s) => {
+      const orderedQuantity = s.orderedQuantity;
+      const jobOrderedQuantity = s.jobOrderedQuantity;
+      const preparedQuantity = preparedById.get(s.id) ?? 0;
+      const qaReleasedQuantity = s.qaPassedQuantity;
+      const saleOrderAllocatedQuantity = allocatedById.get(s.id) ?? 0;
+
+      return {
+        sizeId: s.sizeId,
+        sizeCode: s.size.code,
+        sizeLabel: s.size.label,
+        orderedQuantity,
+        jobOrderedQuantity,
+        preparedQuantity,
+        qaReleasedQuantity,
+        saleOrderAllocatedQuantity,
+        remainingToJobOrderQuantity: Math.max(0, orderedQuantity - jobOrderedQuantity),
+        notPreparedQuantity: Math.max(0, jobOrderedQuantity - preparedQuantity),
+        preparedNotReleasedQuantity: Math.max(0, preparedQuantity - qaReleasedQuantity),
+        releasedUnallocatedQuantity: Math.max(0, qaReleasedQuantity - saleOrderAllocatedQuantity),
+      };
+    });
+
+    const totals = sizes.reduce((acc, s) => {
+      const next = { ...acc };
+      for (const key of Object.keys(fulfilmentTotalsZero) as Array<keyof typeof fulfilmentTotalsZero>) {
+        next[key] = acc[key] + s[key];
+      }
+      return next;
+    }, fulfilmentTotalsZero);
 
     return {
       lineId: line.id,
       styleId: line.style.id,
       styleNumber: line.style.styleNumber,
       styleName: line.style.styleName,
-      sizes: line.sizes.map((s) => ({
-        sizeId: s.sizeId,
-        sizeCode: s.size.code,
-        sizeLabel: s.size.label,
-        orderedQuantity: s.orderedQuantity,
-        downstreamReleasedQuantity: s.qaPassedQuantity,
-        dispatchedQuantity: s.dispatchedQuantity,
-        deliveredQuantity: s.deliveredQuantity,
-        actualSoldQuantity: s.actualSoldQuantity,
-        returnedQuantity: s.returnedQuantity,
-        pendingDispatchQuantity: Math.max(0, s.orderedQuantity - s.dispatchedQuantity),
-        orderRemainingQuantity: Math.max(0, s.orderedQuantity - s.dispatchedQuantity),
-        qaReleasedPendingDispatchQuantity: Math.max(0, s.qaPassedQuantity - s.dispatchedQuantity),
-        releaseDispatchDeficitQuantity: Math.max(0, s.dispatchedQuantity - s.qaPassedQuantity),
-        releaseDispatchIntegrityConflict: s.dispatchedQuantity > s.qaPassedQuantity,
-      })),
+      sizes,
       totals,
     };
   });

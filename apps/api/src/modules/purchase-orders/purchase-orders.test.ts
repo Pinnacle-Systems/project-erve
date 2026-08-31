@@ -4,7 +4,9 @@ import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
+  createReleasedQaStock,
   createTestDistributor,
+  createTestFactory,
   createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
@@ -1063,7 +1065,7 @@ describe('purchase orders API', () => {
   });
 
   describe('GET /purchase-orders/:id/fulfilment-summary', () => {
-    it('returns fulfilment summary with zero quantities initially', async () => {
+    it('returns zero downstream quantities for a PO with no Job Order yet', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -1085,35 +1087,415 @@ describe('purchase orders API', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.lines[0].totals.ordered).toBe(50);
-      expect(res.body.data.lines[0].totals.orderRemaining).toBe(50);
-      expect(res.body.data.lines[0].totals.qaReleasedPendingDispatch).toBe(0);
-      expect(res.body.data.lines[0].totals.releaseDispatchIntegrityConflict).toBe(false);
-      expect(res.body.data.lines[0].sizes[0]).toMatchObject({
-        pendingDispatchQuantity: 50,
-        orderRemainingQuantity: 50,
-        qaReleasedPendingDispatchQuantity: 0,
+      expect(res.body.data.lines[0].totals).toMatchObject({
+        orderedQuantity: 50,
+        jobOrderedQuantity: 0,
+        preparedQuantity: 0,
+        qaReleasedQuantity: 0,
+        saleOrderAllocatedQuantity: 0,
+        remainingToJobOrderQuantity: 50,
+        notPreparedQuantity: 0,
+        preparedNotReleasedQuantity: 0,
+        releasedUnallocatedQuantity: 0,
       });
-      expect(res.body.data.lines[0].totals.dispatched).toBe(0);
+    });
 
-      await prisma.distributorPurchaseOrderLineSize.update({
-        where: { id: createRes.body.data.lines[0].sizes[0].id },
-        data: { dispatchedQuantity: 10 },
+    it('reflects a single Job Order through Prepared and QA Released', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin-single@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
       });
-      const inconsistent = await request(app)
-        .get(`/purchase-orders/${poId}/fulfilment-summary`)
+      const stock = await createReleasedQaStock({ quantity: 100 });
+      // createReleasedQaStock bypasses real Job Order creation, so it never
+      // touches jobOrderedQuantity — set it the way the real service would
+      // once a Job Order claims this exact quantity from the PO size.
+      await prisma.distributorPurchaseOrderLineSize.update({
+        where: { id: stock.purchaseOrderLineSizeId },
+        data: { jobOrderedQuantity: 100 },
+      });
+
+      const res = await request(app)
+        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
-      expect(inconsistent.body.data.lines[0].sizes[0]).toMatchObject({
-        orderRemainingQuantity: 40,
-        qaReleasedPendingDispatchQuantity: 0,
-        releaseDispatchDeficitQuantity: 10,
-        releaseDispatchIntegrityConflict: true,
+
+      const orderedTotal = 100 * 4 + 100; // createReleasedQaStock's own ordered-quantity formula
+      expect(res.body.data.lines[0].totals).toMatchObject({
+        orderedQuantity: orderedTotal,
+        jobOrderedQuantity: 100,
+        preparedQuantity: 100,
+        qaReleasedQuantity: 100,
+        saleOrderAllocatedQuantity: 0,
+        remainingToJobOrderQuantity: orderedTotal - 100,
+        notPreparedQuantity: 0,
+        preparedNotReleasedQuantity: 0,
+        releasedUnallocatedQuantity: 100,
       });
-      expect(inconsistent.body.data.lines[0].totals).toMatchObject({
-        releaseDispatchDeficit: 10,
-        releaseDispatchIntegrityConflict: true,
+    });
+
+    it('aggregates Job Ordered and Prepared quantity across multiple Job Orders against the same PO size, without double-counting', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin-multi@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
       });
+      const dist = await createTestDistributor();
+      const factory = await createTestFactory();
+      const style = await createStyle();
+      const size = await createSize('AGE_5', 5);
+      await linkStyleSize(style.id, size.id);
+      const flow = await prisma.processFlow.create({
+        data: {
+          id: createId(),
+          code: `FLOW-${createId()}`,
+          name: 'Fulfilment test flow',
+          versions: { create: { id: createId(), versionNumber: 1, status: 'ACTIVE' } },
+        },
+        include: { versions: true },
+      });
+
+      const poRes = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 350 }] }],
+      });
+      await request(app)
+        .post(`/purchase-orders/${poRes.body.data.id}/actions/submit`)
+        .set('Authorization', `Bearer ${token}`);
+      const poLineId = poRes.body.data.lines[0].id;
+      const poSizeId = poRes.body.data.lines[0].sizes[0].id;
+
+      async function createJobOrder(quantity: number) {
+        return request(app)
+          .post('/job-orders')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            purchaseOrderId: poRes.body.data.id,
+            factoryId: factory.id,
+            processFlowVersionId: flow.versions[0]!.id,
+            unitPrice: '100.00',
+            disclaimerText: 'Terms apply.',
+            lines: [{ purchaseOrderLineId: poLineId, sizes: [{ purchaseOrderLineSizeId: poSizeId, quantity }] }],
+          })
+          .expect(201);
+      }
+
+      const jo1 = await createJobOrder(200);
+      const jo2 = await createJobOrder(100);
+
+      // Prepared is entered per Job Order, independently — set them to
+      // different values to prove the aggregation sums every Job Order's
+      // line size, not just the first one created.
+      await prisma.jobOrderLineSize.update({
+        where: { id: jo1.body.data.lines[0].sizes[0].id },
+        data: { preparedQuantity: 150 },
+      });
+      await prisma.jobOrderLineSize.update({
+        where: { id: jo2.body.data.lines[0].sizes[0].id },
+        data: { preparedQuantity: 20 },
+      });
+
+      const res = await request(app)
+        .get(`/purchase-orders/${poRes.body.data.id}/fulfilment-summary`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(res.body.data.lines[0].totals).toMatchObject({
+        orderedQuantity: 350,
+        jobOrderedQuantity: 300,
+        preparedQuantity: 170,
+        qaReleasedQuantity: 0,
+        remainingToJobOrderQuantity: 50,
+        notPreparedQuantity: 130,
+        preparedNotReleasedQuantity: 170,
+      });
+    });
+
+    it('does not count a cancelled Final Quality Batch as QA Released', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin-cancelled-batch@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const stock = await createReleasedQaStock({ quantity: 70 });
+      await prisma.distributorPurchaseOrderLineSize.update({
+        where: { id: stock.purchaseOrderLineSizeId },
+        data: { jobOrderedQuantity: 100 },
+      });
+      const actorId = await createTestUserAndToken({
+        email: 'qa-actor@test.local',
+        password: 'pass',
+        roles: ['QA_USER'],
+      }).then((r) => r.userId);
+      const job = await prisma.jobOrder.findUniqueOrThrow({ where: { id: stock.jobOrderId } });
+      const finalStage = await prisma.processFlowVersionStage.findFirstOrThrow({
+        where: { processFlowVersionId: job.processFlowVersionId, code: 'FINAL' },
+      });
+      await prisma.finalQualityBatch.create({
+        data: {
+          id: createId(),
+          jobOrderId: stock.jobOrderId,
+          processFlowActivityId: finalStage!.id,
+          batchNumber: 2,
+          physicalQuantity: 30,
+          disposition: 'CANCELLED',
+          createdById: actorId,
+          terminalById: actorId,
+          terminalAt: new Date(),
+          allocations: { create: { id: createId(), jobOrderLineSizeId: stock.jobOrderLineSizeId, quantity: 30 } },
+        },
+      });
+
+      const res = await request(app)
+        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(res.body.data.lines[0].totals.qaReleasedQuantity).toBe(70);
+    });
+
+    it('accumulates QA Released quantity across multiple releases on the same Job Order', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin-multi-release@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const stock = await createReleasedQaStock({ quantity: 40 });
+      const actorId = await createTestUserAndToken({
+        email: 'qa-actor-2@test.local',
+        password: 'pass',
+        roles: ['QA_USER'],
+      }).then((r) => r.userId);
+      const job = await prisma.jobOrder.findUniqueOrThrow({ where: { id: stock.jobOrderId } });
+      const finalStage = await prisma.processFlowVersionStage.findFirstOrThrow({
+        where: { processFlowVersionId: job.processFlowVersionId, code: 'FINAL' },
+      });
+      const formVersion = await prisma.qualityFormVersion.findUniqueOrThrow({
+        where: { id: finalStage.qualityFormVersionId! },
+      });
+
+      const batchId = createId();
+      const executionId = createId();
+      const releaseId = createId();
+      await prisma.$transaction(async (tx) => {
+        await tx.finalQualityBatch.create({
+          data: {
+            id: batchId,
+            jobOrderId: stock.jobOrderId,
+            processFlowActivityId: finalStage!.id,
+            batchNumber: 2,
+            physicalQuantity: 30,
+            disposition: 'DRAFT',
+            createdById: actorId,
+            allocations: { create: { id: createId(), jobOrderLineSizeId: stock.jobOrderLineSizeId, quantity: 30 } },
+          },
+        });
+        await tx.qualityActivityExecution.create({
+          data: {
+            id: executionId,
+            jobOrderId: stock.jobOrderId,
+            processFlowActivityId: finalStage!.id,
+            qualityFormVersionId: formVersion.id,
+            batchNumber: 2,
+            inspectedQuantity: 30,
+            finalQualityBatchId: batchId,
+            status: 'FINALIZED',
+            startedById: actorId,
+            finalizedById: actorId,
+            finalizedAt: new Date(),
+            outcome: 'PASS',
+          },
+        });
+        await tx.qaRelease.create({
+          data: {
+            id: releaseId,
+            jobOrderId: stock.jobOrderId,
+            sourceQualityExecutionId: executionId,
+            finalQualityBatchId: batchId,
+            releasedById: actorId,
+            lines: {
+              create: {
+                id: createId(),
+                jobOrderLineSizeId: stock.jobOrderLineSizeId,
+                purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId,
+                quantity: 30,
+              },
+            },
+          },
+        });
+        await tx.finalQualityBatch.update({
+          where: { id: batchId },
+          data: { disposition: 'RELEASED', terminalById: actorId, terminalAt: new Date() },
+        });
+        await tx.distributorPurchaseOrderLineSize.update({
+          where: { id: stock.purchaseOrderLineSizeId },
+          data: { qaPassedQuantity: { increment: 30 } },
+        });
+      });
+
+      const res = await request(app)
+        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(res.body.data.lines[0].totals.qaReleasedQuantity).toBe(70); // 40 (first release) + 30 (this one)
+    });
+
+    it('reconciles Sale Order Allocated with a genuine reduced approval: requested 70, approved 40', async () => {
+      const stock = await createReleasedQaStock({ quantity: 110 });
+      const { userId: distUserId, token: distToken } = await createTestUserAndToken({
+        email: 'dist-fulfilment@test.local',
+        password: 'pass',
+        roles: ['DISTRIBUTOR'],
+      });
+      await prisma.userDistributor.create({
+        data: { id: createId(), userId: distUserId, distributorId: stock.distributorId },
+      });
+      const { token: merchToken } = await createTestUserAndToken({
+        email: 'merch-fulfilment@test.local',
+        password: 'pass',
+        roles: ['MERCHANDISER'],
+      });
+      const { token: adminToken } = await createTestUserAndToken({
+        email: 'admin-so@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+
+      const created = await request(app)
+        .post('/sale-orders')
+        .set('Authorization', `Bearer ${distToken}`)
+        .send({
+          distributorId: stock.distributorId,
+          soDate: '2026-06-30',
+          lines: [{ purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: 70 }],
+        })
+        .expect(201);
+      const submitted = await request(app)
+        .post(`/sale-orders/${created.body.data.id}/actions/submit`)
+        .set('Authorization', `Bearer ${distToken}`)
+        .set('Idempotency-Key', createId())
+        .send({ expectedVersion: created.body.data.version })
+        .expect(200);
+      await request(app)
+        .post(`/sale-orders/${submitted.body.data.id}/actions/approve`)
+        .set('Authorization', `Bearer ${merchToken}`)
+        .set('Idempotency-Key', createId())
+        .send({
+          expectedVersion: submitted.body.data.version,
+          lines: [{ saleOrderLineId: submitted.body.data.lines[0].id, approvedQuantity: 40 }],
+        })
+        .expect(200);
+
+      const res = await request(app)
+        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(res.body.data.lines[0].totals).toMatchObject({
+        qaReleasedQuantity: 110,
+        saleOrderAllocatedQuantity: 40,
+        releasedUnallocatedQuantity: 70,
+      });
+    });
+
+    it('excludes a cancelled Sale Order from Sale Order Allocated', async () => {
+      const stock = await createReleasedQaStock({ quantity: 50 });
+      const { userId: distUserId, token: distToken } = await createTestUserAndToken({
+        email: 'dist-cancel@test.local',
+        password: 'pass',
+        roles: ['DISTRIBUTOR'],
+      });
+      await prisma.userDistributor.create({
+        data: { id: createId(), userId: distUserId, distributorId: stock.distributorId },
+      });
+      const { token: adminToken } = await createTestUserAndToken({
+        email: 'admin-so-cancel@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+
+      const created = await request(app)
+        .post('/sale-orders')
+        .set('Authorization', `Bearer ${distToken}`)
+        .send({
+          distributorId: stock.distributorId,
+          soDate: '2026-06-30',
+          lines: [{ purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: 50 }],
+        })
+        .expect(201);
+      const submitted = await request(app)
+        .post(`/sale-orders/${created.body.data.id}/actions/submit`)
+        .set('Authorization', `Bearer ${distToken}`)
+        .set('Idempotency-Key', createId())
+        .send({ expectedVersion: created.body.data.version })
+        .expect(200);
+
+      const midway = await request(app)
+        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(midway.body.data.lines[0].totals.saleOrderAllocatedQuantity).toBe(50);
+
+      await request(app)
+        .post(`/sale-orders/${submitted.body.data.id}/actions/cancel`)
+        .set('Authorization', `Bearer ${distToken}`)
+        .send({ expectedVersion: submitted.body.data.version })
+        .expect(200);
+
+      const res = await request(app)
+        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(res.body.data.lines[0].totals.saleOrderAllocatedQuantity).toBe(0);
+      expect(res.body.data.lines[0].totals.releasedUnallocatedQuantity).toBe(50);
+    });
+
+    it('reconciles size-level totals with the sum of their size lines', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin-size@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const sizeS = await createSize('AGE_1', 1);
+      const sizeM = await createSize('AGE_2', 2);
+      await linkStyleSize(style.id, sizeS.id);
+      await linkStyleSize(style.id, sizeM.id);
+
+      const createRes = await createPO(token, {
+        distributorId: dist.id,
+        lines: [
+          {
+            styleId: style.id,
+            sizes: [
+              { sizeId: sizeS.id, orderedQuantity: 100 },
+              { sizeId: sizeM.id, orderedQuantity: 150 },
+            ],
+          },
+        ],
+      });
+      const sizeSRow = createRes.body.data.lines[0].sizes.find((s: { sizeId: string }) => s.sizeId === sizeS.id);
+      await prisma.distributorPurchaseOrderLineSize.update({
+        where: { id: sizeSRow.id },
+        data: { jobOrderedQuantity: 80, qaPassedQuantity: 30 },
+      });
+
+      const res = await request(app)
+        .get(`/purchase-orders/${createRes.body.data.id}/fulfilment-summary`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const { sizes, totals } = res.body.data.lines[0];
+      for (const key of Object.keys(totals) as string[]) {
+        expect(totals[key]).toBe(
+          sizes.reduce((sum: number, s: Record<string, number>) => sum + s[key]!, 0),
+        );
+      }
+      expect(totals.orderedQuantity).toBe(250);
+      expect(totals.jobOrderedQuantity).toBe(80);
+      expect(totals.qaReleasedQuantity).toBe(30);
     });
   });
 });

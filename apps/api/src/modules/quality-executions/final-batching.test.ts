@@ -719,8 +719,7 @@ describe('Final Inspection batching and prepared coverage', () => {
       .expect(200);
     expect(
       fulfilment.body.data.lines[0].sizes.reduce(
-        (sum: number, size: { qaReleasedPendingDispatchQuantity: number }) =>
-          sum + size.qaReleasedPendingDispatchQuantity,
+        (sum: number, size: { qaReleasedQuantity: number }) => sum + size.qaReleasedQuantity,
         0,
       ),
     ).toBe(600);

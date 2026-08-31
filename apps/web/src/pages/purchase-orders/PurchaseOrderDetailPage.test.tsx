@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthUser, PurchaseOrderBalance, Role } from '@erve/types';
+import type { AuthUser, PurchaseOrderBalance, PurchaseOrderFulfilmentSummary, Role } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import * as AuthContext from '../../auth/AuthContext.js';
 import { PurchaseOrderDetailPage } from './PurchaseOrderDetailPage.js';
@@ -157,11 +157,82 @@ function buildBalance(
   };
 }
 
-async function renderPage(balance: PurchaseOrderBalance | (() => Promise<PurchaseOrderBalance>)) {
+function zeroTotals(): PurchaseOrderFulfilmentSummary['lines'][number]['totals'] {
+  return {
+    orderedQuantity: 0,
+    jobOrderedQuantity: 0,
+    preparedQuantity: 0,
+    qaReleasedQuantity: 0,
+    saleOrderAllocatedQuantity: 0,
+    remainingToJobOrderQuantity: 0,
+    notPreparedQuantity: 0,
+    preparedNotReleasedQuantity: 0,
+    releasedUnallocatedQuantity: 0,
+  };
+}
+
+function buildFulfilmentSummary(
+  sizes: Array<Partial<PurchaseOrderFulfilmentSummary['lines'][number]['sizes'][number]>> = [],
+): PurchaseOrderFulfilmentSummary {
+  const codes = ['S', 'M', 'L'];
+  const sizeRows = sizes.map((size, index) => {
+    const ordered = size.orderedQuantity ?? 0;
+    const jobOrdered = size.jobOrderedQuantity ?? 0;
+    const prepared = size.preparedQuantity ?? 0;
+    const qaReleased = size.qaReleasedQuantity ?? 0;
+    const allocated = size.saleOrderAllocatedQuantity ?? 0;
+    return {
+      sizeId: `sz-${codes[index]!.toLowerCase()}`,
+      sizeCode: codes[index]!,
+      sizeLabel: codes[index]!,
+      orderedQuantity: ordered,
+      jobOrderedQuantity: jobOrdered,
+      preparedQuantity: prepared,
+      qaReleasedQuantity: qaReleased,
+      saleOrderAllocatedQuantity: allocated,
+      remainingToJobOrderQuantity: Math.max(0, ordered - jobOrdered),
+      notPreparedQuantity: Math.max(0, jobOrdered - prepared),
+      preparedNotReleasedQuantity: Math.max(0, prepared - qaReleased),
+      releasedUnallocatedQuantity: Math.max(0, qaReleased - allocated),
+    };
+  });
+  const totals = sizeRows.reduce((acc, size) => {
+    const next = { ...acc };
+    for (const key of Object.keys(acc) as Array<keyof typeof acc>) {
+      next[key] = acc[key] + size[key];
+    }
+    return next;
+  }, zeroTotals());
+
+  return {
+    poId: 'po-1',
+    poNumber: 'EIPO/25-26/0001',
+    status: 'PARTIALLY_JOB_ORDERED',
+    lines: [
+      {
+        lineId: 'line-1',
+        styleId: 'style-1',
+        styleNumber: 'ST-101',
+        styleName: 'Oxford Shirt',
+        sizes: sizeRows,
+        totals,
+      },
+    ],
+  };
+}
+
+async function renderPage(
+  balance: PurchaseOrderBalance | (() => Promise<PurchaseOrderBalance>),
+  fulfilment: PurchaseOrderFulfilmentSummary | (() => Promise<PurchaseOrderFulfilmentSummary>) = buildFulfilmentSummary(),
+) {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/purchase-orders/po-1') return { data: { data: buildPO() } };
     if (url === '/purchase-orders/po-1/job-order-balance') {
       const data = typeof balance === 'function' ? await balance() : balance;
+      return { data: { data } };
+    }
+    if (url === '/purchase-orders/po-1/fulfilment-summary') {
+      const data = typeof fulfilment === 'function' ? await fulfilment() : fulfilment;
       return { data: { data } };
     }
     throw new Error(`Unexpected request: ${url}`);
@@ -195,11 +266,15 @@ async function renderPageForVisibility(options: {
   role?: Role;
   poOverrides?: Partial<PurchaseOrder>;
   balance: PurchaseOrderBalance;
+  fulfilment?: PurchaseOrderFulfilmentSummary;
 }) {
   mockAuth(options.role ?? 'ADMIN');
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/purchase-orders/po-1') return { data: { data: buildPO(options.poOverrides) } };
     if (url === '/purchase-orders/po-1/job-order-balance') return { data: { data: options.balance } };
+    if (url === '/purchase-orders/po-1/fulfilment-summary') {
+      return { data: { data: options.fulfilment ?? buildFulfilmentSummary() } };
+    }
     throw new Error(`Unexpected request: ${url}`);
   });
 
@@ -393,5 +468,97 @@ describe('PurchaseOrderDetailPage Create Job Order visibility', () => {
       ]),
     });
     expect(createJobOrderLink()).not.toBeNull();
+  });
+});
+
+describe('PurchaseOrderDetailPage Fulfilment Summary', () => {
+  const defaultBalance = buildBalance([
+    { ordered: 100, jobOrdered: 0 },
+    { ordered: 150, jobOrdered: 0 },
+    { ordered: 100, jobOrdered: 0 },
+  ]);
+
+  it('never renders the retired hardcoded dispatch/delivery placeholder', async () => {
+    await renderPage(
+      defaultBalance,
+      buildFulfilmentSummary([
+        { orderedQuantity: 100, jobOrderedQuantity: 100, preparedQuantity: 70, qaReleasedQuantity: 40, saleOrderAllocatedQuantity: 15 },
+      ]),
+    );
+    expect(content()).not.toContain('Pending dispatch records');
+    expect(content()).not.toContain('Pending delivery records');
+  });
+
+  it('renders real API-derived quantities, distinguishing Prepared, QA Released, and Allocated', async () => {
+    await renderPage(
+      defaultBalance,
+      buildFulfilmentSummary([
+        { orderedQuantity: 350, jobOrderedQuantity: 350, preparedQuantity: 170, qaReleasedQuantity: 110, saleOrderAllocatedQuantity: 40 },
+      ]),
+    );
+    expect(content()).toContain('PO Ordered');
+    expect(content()).toContain('350');
+    expect(content()).toContain('Job Ordered');
+    expect(content()).toContain('Prepared');
+    expect(content()).toContain('170');
+    expect(content()).toContain('QA Released');
+    expect(content()).toContain('110');
+    expect(content()).toContain('Allocated to Sale Orders');
+    expect(content()).toContain('40');
+    // Derived remaining-stage figures per the canonical reconciliation.
+    expect(content()).toContain('Not yet prepared');
+    expect(content()).toContain('180');
+    expect(content()).toContain('Prepared, awaiting Final QA');
+    expect(content()).toContain('60');
+    expect(content()).toContain('QA released, not yet allocated');
+    expect(content()).toContain('70');
+  });
+
+  it('shows partial-progress figures correctly for an in-flight PO', async () => {
+    await renderPage(
+      defaultBalance,
+      buildFulfilmentSummary([
+        { orderedQuantity: 100, jobOrderedQuantity: 60, preparedQuantity: 20, qaReleasedQuantity: 5, saleOrderAllocatedQuantity: 2 },
+      ]),
+    );
+    expect(content()).toContain('60'); // Job Ordered
+    expect(content()).toContain('20'); // Prepared
+    expect(content()).toContain('5'); // QA Released
+    expect(content()).toContain('2'); // Allocated
+  });
+
+  it('shows a loading state before the fulfilment summary resolves', async () => {
+    let resolveFulfilment!: (value: PurchaseOrderFulfilmentSummary) => void;
+    const pending = new Promise<PurchaseOrderFulfilmentSummary>((resolve) => {
+      resolveFulfilment = resolve;
+    });
+    await renderPage(defaultBalance, () => pending);
+
+    expect(content()).toContain('Loading fulfilment summary');
+    expect(content()).not.toContain('PO Ordered');
+
+    await act(async () => {
+      resolveFulfilment(
+        buildFulfilmentSummary([{ orderedQuantity: 100, jobOrderedQuantity: 40 }]),
+      );
+      await flush();
+    });
+    expect(content()).toContain('PO Ordered');
+  });
+
+  it('shows an error state when the fulfilment summary request fails', async () => {
+    await renderPage(defaultBalance, () => {
+      throw new Error('Fulfilment service unavailable');
+    });
+
+    await vi.waitFor(() => expect(content()).toContain('Unable to load fulfilment summary'));
+    expect(content()).toContain('Fulfilment service unavailable');
+  });
+
+  it('shows a zero-state when the PO has no ordered quantity to summarise', async () => {
+    await renderPage(defaultBalance, buildFulfilmentSummary([]));
+
+    await vi.waitFor(() => expect(content()).toContain('No quantities ordered yet'));
+    expect(content()).not.toContain('PO Ordered');
   });
 });

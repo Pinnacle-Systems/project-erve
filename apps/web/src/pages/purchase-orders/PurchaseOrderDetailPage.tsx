@@ -9,7 +9,12 @@ import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-disp
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canCreateJobOrders } from '../../auth/permissions.js';
-import type { PurchaseOrder, PurchaseOrderBalance, PurchaseOrderStatus } from './types.js';
+import type {
+  PurchaseOrder,
+  PurchaseOrderBalance,
+  PurchaseOrderFulfilmentSummary,
+  PurchaseOrderStatus,
+} from './types.js';
 
 const STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
   DRAFT: 'Draft',
@@ -79,6 +84,47 @@ export function PurchaseOrderDetailPage() {
       { ordered: 0, jobOrdered: 0, remaining: 0 },
     );
   }, [balanceQuery.data]);
+
+  // Reuses the same canonical Ordered -> Job Ordered -> Prepared -> QA
+  // Released -> Sale Order Allocated reconciliation the backend already
+  // computes from Job Order, Final QA, and Stock Allocation records, rather
+  // than re-deriving any of those figures on the client.
+  const fulfilmentQuery = useQuery({
+    queryKey: ['purchase-order-fulfilment-summary', id],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiSuccessResponse<PurchaseOrderFulfilmentSummary>>(
+        `/purchase-orders/${id}/fulfilment-summary`,
+      );
+      return res.data.data;
+    },
+  });
+
+  const fulfilmentTotals = useMemo(() => {
+    const lines = fulfilmentQuery.data?.lines ?? [];
+    return lines.reduce(
+      (totals, line) => {
+        totals.ordered += line.totals.orderedQuantity;
+        totals.jobOrdered += line.totals.jobOrderedQuantity;
+        totals.prepared += line.totals.preparedQuantity;
+        totals.qaReleased += line.totals.qaReleasedQuantity;
+        totals.saleOrderAllocated += line.totals.saleOrderAllocatedQuantity;
+        totals.notPrepared += line.totals.notPreparedQuantity;
+        totals.preparedNotReleased += line.totals.preparedNotReleasedQuantity;
+        totals.releasedUnallocated += line.totals.releasedUnallocatedQuantity;
+        return totals;
+      },
+      {
+        ordered: 0,
+        jobOrdered: 0,
+        prepared: 0,
+        qaReleased: 0,
+        saleOrderAllocated: 0,
+        notPrepared: 0,
+        preparedNotReleased: 0,
+        releasedUnallocated: 0,
+      },
+    );
+  }, [fulfilmentQuery.data]);
 
   const submitMutation = useMutation({
     mutationFn: async () => {
@@ -246,12 +292,54 @@ export function PurchaseOrderDetailPage() {
       </Panel>
 
       <Panel title="Fulfilment Summary">
-        <TotalsPanel
-          items={[
-            { label: 'Dispatched', value: 'Pending dispatch records', emphasis: 'muted' },
-            { label: 'Delivered', value: 'Pending delivery records', emphasis: 'muted' },
-          ]}
-        />
+        {fulfilmentQuery.isLoading && <LoadingState label="Loading fulfilment summary" density="compact" />}
+        {fulfilmentQuery.isError && (
+          <ErrorState
+            title="Unable to load fulfilment summary"
+            description={
+              fulfilmentQuery.error instanceof Error ? fulfilmentQuery.error.message : undefined
+            }
+          />
+        )}
+        {fulfilmentQuery.data && fulfilmentTotals.ordered === 0 && (
+          <EmptyState
+            title="No quantities ordered yet"
+            description="This purchase order has no size lines to summarise."
+          />
+        )}
+        {fulfilmentQuery.data && fulfilmentTotals.ordered > 0 && (
+          <TotalsPanel
+            items={[
+              { label: 'PO Ordered', value: fulfilmentTotals.ordered.toLocaleString() },
+              { label: 'Job Ordered', value: fulfilmentTotals.jobOrdered.toLocaleString() },
+              {
+                label: 'Prepared',
+                value: fulfilmentTotals.prepared.toLocaleString(),
+                description: 'Production completed, awaiting Final QA',
+              },
+              {
+                label: 'QA Released',
+                value: fulfilmentTotals.qaReleased.toLocaleString(),
+                description: 'Passed Final QA, available for allocation',
+              },
+              {
+                label: 'Allocated to Sale Orders',
+                value: fulfilmentTotals.saleOrderAllocated.toLocaleString(),
+                emphasis: 'strong',
+                tone: fulfilmentTotals.saleOrderAllocated > 0 ? 'success' : 'default',
+              },
+              { label: 'Not yet prepared', value: fulfilmentTotals.notPrepared.toLocaleString(), dividerBefore: true },
+              {
+                label: 'Prepared, awaiting Final QA',
+                value: fulfilmentTotals.preparedNotReleased.toLocaleString(),
+              },
+              {
+                label: 'QA released, not yet allocated',
+                value: fulfilmentTotals.releasedUnallocated.toLocaleString(),
+              },
+            ]}
+          />
+        )}
       </Panel>
 
       <Panel title="Audit Log">

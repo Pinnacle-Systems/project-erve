@@ -156,6 +156,38 @@ export interface PurchaseOrderBalance {
   }>;
 }
 
+export interface PurchaseOrderFulfilmentSummary {
+  poId: string;
+  poNumber: string;
+  status: PurchaseOrderStatus;
+  lines: Array<{
+    lineId: string;
+    styleId: string;
+    styleNumber: string;
+    styleName: string;
+    sizes: PurchaseOrderFulfilmentSizeSummary[];
+    totals: PurchaseOrderFulfilmentTotals;
+  }>;
+}
+
+export interface PurchaseOrderFulfilmentSizeSummary extends PurchaseOrderFulfilmentTotals {
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+}
+
+export interface PurchaseOrderFulfilmentTotals {
+  orderedQuantity: number;
+  jobOrderedQuantity: number;
+  preparedQuantity: number;
+  qaReleasedQuantity: number;
+  saleOrderAllocatedQuantity: number;
+  remainingToJobOrderQuantity: number;
+  notPreparedQuantity: number;
+  preparedNotReleasedQuantity: number;
+  releasedUnallocatedQuantity: number;
+}
+
 // ---------------------------------------------------------------------------
 // Sale Orders
 // ---------------------------------------------------------------------------
