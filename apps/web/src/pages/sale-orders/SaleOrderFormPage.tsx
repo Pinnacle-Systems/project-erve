@@ -16,6 +16,7 @@ export function SaleOrderFormPage() {
   const isEdit = Boolean(id);
 
   const [distributorId, setDistributorId] = useState('');
+  const [distributorName, setDistributorName] = useState('');
   const [soDate, setSoDate] = useState(new Date().toISOString().slice(0, 10));
   const [remarks, setRemarks] = useState('');
   const [quantities, setQuantities] = useState<Record<string, string>>({});
@@ -30,8 +31,11 @@ export function SaleOrderFormPage() {
     },
   });
 
+  // Distributor cannot change on edit (see the mutation below), so the
+  // selectable-distributor list is only ever needed for Create.
   const distributorsQuery = useQuery({
     queryKey: ['distributors', 'active'],
+    enabled: !isEdit,
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<Distributor[]>>('/distributors', {
         params: { status: 'ACTIVE' },
@@ -60,6 +64,7 @@ export function SaleOrderFormPage() {
     // without an effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDistributorId(so.distributor.id);
+    setDistributorName(so.distributor.name);
     setSoDate(so.soDate.slice(0, 10));
     setRemarks(so.remarks ?? '');
     setQuantities(
@@ -138,19 +143,17 @@ export function SaleOrderFormPage() {
         >
           <FormSection title="Sale Order Header">
             <FormGrid layout="content">
-              <SelectField
-                label="Distributor"
-                value={distributorId}
-                onValueChange={setDistributorId}
-                disabled={isEdit}
-                required
-              >
-                {(distributorsQuery.data ?? []).map((d) => (
-                  <SelectItem key={d.id} value={d.id}>
-                    {d.name}
-                  </SelectItem>
-                ))}
-              </SelectField>
+              {isEdit ? (
+                <TextField label="Distributor" value={distributorName} disabled readOnly />
+              ) : (
+                <SelectField label="Distributor" value={distributorId} onValueChange={setDistributorId} required>
+                  {(distributorsQuery.data ?? []).map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.name}
+                    </SelectItem>
+                  ))}
+                </SelectField>
+              )}
               <DatePicker
                 label="Sale Order Date"
                 value={soDate}
