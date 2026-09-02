@@ -200,12 +200,26 @@ function toSaleOrderView(order: SORecord, viewer: CurrentUser) {
 // Access helpers
 // ---------------------------------------------------------------------------
 
+// Grants full cross-distributor allocation/provenance detail (see
+// toAllocationView/describeAddedAllocation) and global inventory access —
+// deliberately excludes ACCOUNTANT, which is read-only and must not learn
+// another distributor's PO/Job Order/factory identity just by viewing a
+// Sale Order (see canListAllSaleOrders below for the broader "sees every
+// order" grant that ACCOUNTANT does get).
 function canViewAllSaleOrders(user: CurrentUser): boolean {
   return user.roles.some((r) => r === 'ADMIN' || r === 'MERCHANDISER' || r === 'SENIOR_MANAGEMENT');
 }
 
+// Sees every distributor's Sale Orders (list scoping + row-level view
+// access), but — unlike canViewAllSaleOrders — does not itself unlock full
+// cross-distributor provenance or global inventory. Used by ACCOUNTANT for
+// its read-only financial-review access.
+function canListAllSaleOrders(user: CurrentUser): boolean {
+  return canViewAllSaleOrders(user) || user.roles.includes('ACCOUNTANT');
+}
+
 function assertSaleOrderViewAccess(user: CurrentUser, order: { distributorId: string }): void {
-  if (canViewAllSaleOrders(user)) return;
+  if (canListAllSaleOrders(user)) return;
   if (user.roles.includes('DISTRIBUTOR') && getSoleDistributorId(user) === order.distributorId) return;
   throw HttpError.forbidden('You do not have access to this sale order');
 }
@@ -317,7 +331,7 @@ export async function getSaleOrderList(
     limit: number;
   },
 ) {
-  const distributorIdFilter = canViewAllSaleOrders(user) ? filters.distributorId : getSoleDistributorId(user);
+  const distributorIdFilter = canListAllSaleOrders(user) ? filters.distributorId : getSoleDistributorId(user);
 
   const where: Prisma.SaleOrderWhereInput = {
     distributorId: distributorIdFilter ?? undefined,

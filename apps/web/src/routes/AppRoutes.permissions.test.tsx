@@ -50,6 +50,15 @@ vi.mock('../pages/master-data/QualityFormListPage.js', () => ({
 vi.mock('../pages/price-lists/PriceListListPage.js', () => ({
   PriceListListPage: () => <div>PriceListListPage</div>,
 }));
+vi.mock('../pages/sale-orders/SaleOrderListPage.js', () => ({
+  SaleOrderListPage: () => <div>SaleOrderListPage</div>,
+}));
+vi.mock('../pages/sale-orders/SaleOrderDetailPage.js', () => ({
+  SaleOrderDetailPage: () => <div>SaleOrderDetailPage</div>,
+}));
+vi.mock('../pages/sale-orders/SaleOrderFormPage.js', () => ({
+  SaleOrderFormPage: () => <div>SaleOrderFormPage</div>,
+}));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -200,6 +209,24 @@ describe('AppRoutes Permissions', () => {
 
       await renderRoutes('ACCOUNTANT', '/master-data/factories');
       expect(getPageContent()).toContain('ForbiddenPage');
+    });
+
+    it('is allowed direct-URL access to the Sale Order list and detail, but not Create/Edit', async () => {
+      await renderRoutes('ACCOUNTANT', '/sale-orders');
+      expect(getPageContent()).toContain('SaleOrderListPage');
+      expect(getPageContent()).not.toContain('ForbiddenPage');
+
+      await renderRoutes('ACCOUNTANT', '/sale-orders/so-1');
+      expect(getPageContent()).toContain('SaleOrderDetailPage');
+      expect(getPageContent()).not.toContain('ForbiddenPage');
+
+      await renderRoutes('ACCOUNTANT', '/sale-orders/new');
+      expect(getPageContent()).toContain('ForbiddenPage');
+      expect(getPageContent()).not.toContain('SaleOrderFormPage');
+
+      await renderRoutes('ACCOUNTANT', '/sale-orders/so-1/edit');
+      expect(getPageContent()).toContain('ForbiddenPage');
+      expect(getPageContent()).not.toContain('SaleOrderFormPage');
     });
   });
 

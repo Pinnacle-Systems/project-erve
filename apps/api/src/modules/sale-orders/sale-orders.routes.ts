@@ -19,7 +19,7 @@ export const saleOrdersRouter = Router();
 saleOrdersRouter.use(requireAuth);
 
 const canManageAsDistributor = requireRoles('ADMIN', 'DISTRIBUTOR');
-const canView = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR');
+const canView = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR', 'ACCOUNTANT');
 const canReview = requireRoles('ADMIN', 'MERCHANDISER');
 const canCancel = requireRoles('ADMIN', 'DISTRIBUTOR', 'MERCHANDISER');
 const canViewGlobalInventory = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT');

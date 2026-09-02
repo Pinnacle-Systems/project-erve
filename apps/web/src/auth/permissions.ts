@@ -113,11 +113,16 @@ export const QA_VIEW_ROLES = [
   'QA_USER',
 ] as const satisfies readonly Role[];
 
+// ACCOUNTANT is a read-only financial-review addition: it can see the Sale
+// Order list/detail/audit trail (this list) but is deliberately absent from
+// SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES and SALE_ORDER_APPROVE_ROLES below, so
+// it never gets Create/Edit/Submit/Review/Approve/Reject/Cancel/sourcing.
 export const SALE_ORDER_VIEW_ROLES = [
   'ADMIN',
   'MERCHANDISER',
   'SENIOR_MANAGEMENT',
   'DISTRIBUTOR',
+  'ACCOUNTANT',
 ] as const satisfies readonly Role[];
 
 export const SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES = [

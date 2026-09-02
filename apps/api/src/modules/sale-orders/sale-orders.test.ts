@@ -35,6 +35,15 @@ async function createMerchandiserToken() {
   return token;
 }
 
+async function createAccountantToken() {
+  const { token } = await createTestUserAndToken({
+    email: `accountant-${createId()}@test.local`,
+    password: 'pass',
+    roles: ['ACCOUNTANT'],
+  });
+  return token;
+}
+
 function createDraftSaleOrder(
   token: string,
   distributorId: string,
@@ -194,6 +203,96 @@ describe('Sale Orders — create, submit, visibility, authorization', () => {
       await createDraftSaleOrder(tokenA, distributorB.id, [
         { purchaseOrderLineSizeId: stockForB.purchaseOrderLineSizeId, requestedQuantity: 5 },
       ]).expect(403);
+    });
+
+    it('lets ACCOUNTANT list and view sale orders across every distributor, read-only', async () => {
+      const stockA = await createReleasedQaStock({ quantity: 20 });
+      const tokenA = await createDistributorUser(stockA.distributorId);
+      const orderA = await createDraftSaleOrder(tokenA, stockA.distributorId, [
+        { purchaseOrderLineSizeId: stockA.purchaseOrderLineSizeId, requestedQuantity: 5 },
+      ]).expect(201);
+
+      const stockB = await createReleasedQaStock({ quantity: 20 });
+      const tokenB = await createDistributorUser(stockB.distributorId);
+      const orderB = await createDraftSaleOrder(tokenB, stockB.distributorId, [
+        { purchaseOrderLineSizeId: stockB.purchaseOrderLineSizeId, requestedQuantity: 5 },
+      ]).expect(201);
+
+      const accountantToken = await createAccountantToken();
+
+      // Sees every distributor's orders in one unscoped list — not limited
+      // to a single distributor's own orders the way a DISTRIBUTOR is.
+      const list = await request(app)
+        .get('/sale-orders')
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200);
+      const listedIds = new Set((list.body.data.items as Array<{ id: string }>).map((item) => item.id));
+      expect(listedIds.has(orderA.body.data.id)).toBe(true);
+      expect(listedIds.has(orderB.body.data.id)).toBe(true);
+
+      await request(app)
+        .get(`/sale-orders/${orderA.body.data.id}`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200);
+    });
+
+    it('forbids ACCOUNTANT from every Sale Order mutation and from global inventory', async () => {
+      const stock = await createReleasedQaStock({ quantity: 20 });
+      const distributorToken = await createDistributorUser(stock.distributorId);
+      const created = await createDraftSaleOrder(distributorToken, stock.distributorId, [
+        { purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: 5 },
+      ]).expect(201);
+      const submitted = await submitSaleOrder(
+        distributorToken,
+        created.body.data.id,
+        created.body.data.version,
+      ).expect(200);
+
+      const accountantToken = await createAccountantToken();
+
+      await createDraftSaleOrder(accountantToken, stock.distributorId, [
+        { purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: 1 },
+      ]).expect(403);
+
+      await request(app)
+        .patch(`/sale-orders/${created.body.data.id}`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ remarks: 'edited by accountant' })
+        .expect(403);
+
+      await request(app)
+        .post(`/sale-orders/${created.body.data.id}/actions/submit`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .set('Idempotency-Key', createId())
+        .send({ expectedVersion: created.body.data.version })
+        .expect(403);
+
+      await request(app)
+        .post(`/sale-orders/${submitted.body.data.id}/actions/start-review`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ expectedVersion: submitted.body.data.version })
+        .expect(403);
+
+      await request(app)
+        .post(`/sale-orders/${submitted.body.data.id}/actions/reject`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ expectedVersion: submitted.body.data.version })
+        .expect(403);
+
+      await request(app)
+        .post(`/sale-orders/${submitted.body.data.id}/actions/approve`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .set('Idempotency-Key', createId())
+        .send({ expectedVersion: submitted.body.data.version, lines: [] })
+        .expect(403);
+
+      await request(app)
+        .post(`/sale-orders/${submitted.body.data.id}/actions/cancel`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ expectedVersion: submitted.body.data.version })
+        .expect(403);
+
+      await request(app).get('/sale-orders/inventory').set('Authorization', `Bearer ${accountantToken}`).expect(403);
     });
   });
 });

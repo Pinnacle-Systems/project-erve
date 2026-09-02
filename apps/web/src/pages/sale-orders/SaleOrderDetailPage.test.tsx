@@ -176,6 +176,15 @@ describe('SaleOrderDetailPage — APPROVED cancellation visibility', () => {
     expect(findButtonByText('Cancel')).toBeNull();
   });
 
+  it('hides the Cancel action for a read-only role (SENIOR_MANAGEMENT) on a DRAFT sale order too', async () => {
+    // Regression guard: canCancel must be gated by role on every status, not
+    // only APPROVED — a read-only viewer must never see Cancel at all, even
+    // though the backend's cancel route guard would also reject the call.
+    setAuthUser(['SENIOR_MANAGEMENT']);
+    await renderPage(buildSaleOrder('DRAFT'));
+    expect(findButtonByText('Cancel')).toBeNull();
+  });
+
   it('still shows the Cancel action for DISTRIBUTOR on a DRAFT sale order (pre-approval cancellation unchanged)', async () => {
     setAuthUser(['DISTRIBUTOR']);
     await renderPage(buildSaleOrder('DRAFT'));
@@ -378,5 +387,44 @@ describe('SaleOrderDetailPage — Audit Trail', () => {
     expect(document.body.textContent).toContain('additional stock allocated by Merchandiser');
     expect(document.body.textContent).not.toContain('Secret Distributor');
     expect(document.body.textContent).not.toContain('sourced from');
+  });
+});
+
+describe('SaleOrderDetailPage — ACCOUNTANT read-only access', () => {
+  it('shows quantities/status and the Audit Trail, but no mutation controls, on a DRAFT sale order', async () => {
+    setAuthUser(['ACCOUNTANT']);
+    await renderPage(buildSaleOrder('DRAFT'), buildAuditEntries());
+    await waitForAuditLoaded();
+
+    expect(document.body.textContent).toContain('EISO/26-27/0099');
+    expect(document.body.textContent).toContain('70');
+    expect(document.body.textContent).toContain('40');
+    expect(document.body.textContent).toContain('Sale Order Created');
+
+    expect(findButtonByText('Edit')).toBeNull();
+    expect(findButtonByText('Submit')).toBeNull();
+    expect(findButtonByText('Start Review')).toBeNull();
+    expect(findButtonByText('Cancel')).toBeNull();
+  });
+
+  it('hides Start Review/Approve/Reject on a SUBMITTED sale order', async () => {
+    setAuthUser(['ACCOUNTANT']);
+    await renderPage(buildSaleOrder('SUBMITTED'));
+    expect(findButtonByText('Start Review')).toBeNull();
+    expect(findButtonByText('Cancel')).toBeNull();
+  });
+
+  it('hides Approve/Reject on an UNDER_REVIEW sale order', async () => {
+    setAuthUser(['ACCOUNTANT']);
+    await renderPage(buildSaleOrder('UNDER_REVIEW'));
+    expect(findButtonByText('Approve')).toBeNull();
+    expect(findButtonByText('Reject')).toBeNull();
+    expect(findButtonByText('Cancel')).toBeNull();
+  });
+
+  it('hides Cancel on an APPROVED sale order', async () => {
+    setAuthUser(['ACCOUNTANT']);
+    await renderPage(buildSaleOrder('APPROVED'));
+    expect(findButtonByText('Cancel')).toBeNull();
   });
 });

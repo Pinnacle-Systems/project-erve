@@ -259,9 +259,13 @@ export function SaleOrderDetailPage() {
   const canSubmit = isDraft && canManageAsDistributor;
   // APPROVED can only be cancelled by ADMIN/MERCHANDISER (canReview) — an
   // owning distributor loses cancellation rights once merchandiser approval
-  // has committed allocations that may span other distributors' stock.
+  // has committed allocations that may span other distributors' stock. The
+  // leading (canManageAsDistributor || canReview) gate keeps this button
+  // hidden from every read-only viewer (SENIOR_MANAGEMENT, ACCOUNTANT) on
+  // every status, matching the backend's cancel route guard exactly.
   const canCancel =
-    ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW'].includes(so.status) || (so.status === 'APPROVED' && canReview);
+    (canManageAsDistributor || canReview) &&
+    (['DRAFT', 'SUBMITTED', 'UNDER_REVIEW'].includes(so.status) || (so.status === 'APPROVED' && canReview));
   const canStartReview = so.status === 'SUBMITTED' && canReview;
   const canDecide = isUnderReview && canReview;
   const hasAnyLineError = lineValidation.size > 0;

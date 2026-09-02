@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AuthUser, Role } from '@erve/types';
 import {
+  canApproveSaleOrders,
   canCreateJobOrders,
   canFilterJobOrdersByFactory,
   canManagePriceLists,
@@ -8,6 +9,7 @@ import {
   canManageDistributorMaster,
   canManageProcessFlows,
   canManagePurchaseOrders,
+  canManageSaleOrdersAsDistributor,
   canManageSizes,
   canManageUsers,
   canViewDistributorMaster,
@@ -17,6 +19,7 @@ import {
   canViewPriceLists,
   canViewPurchaseOrders,
   canViewQa,
+  canViewSaleOrders,
   canViewStyles,
 } from './permissions.js';
 
@@ -146,6 +149,29 @@ describe('permissions', () => {
       const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'ACCOUNTANT'];
       for (const role of ALL_ROLES) {
         expect(canManagePriceLists(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
+  });
+
+  describe('sale-order authorization matrix', () => {
+    it('grants Sale Order view to ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, DISTRIBUTOR, ACCOUNTANT', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR', 'ACCOUNTANT'];
+      for (const role of ALL_ROLES) {
+        expect(canViewSaleOrders(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
+
+    it('grants Sale Order distributor-manage (create/edit/submit) only to ADMIN, DISTRIBUTOR — not ACCOUNTANT', () => {
+      const allowed: Role[] = ['ADMIN', 'DISTRIBUTOR'];
+      for (const role of ALL_ROLES) {
+        expect(canManageSaleOrdersAsDistributor(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
+
+    it('grants Sale Order review/approve only to ADMIN, MERCHANDISER — not ACCOUNTANT or SENIOR_MANAGEMENT', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER'];
+      for (const role of ALL_ROLES) {
+        expect(canApproveSaleOrders(mockUser(role))).toBe(allowed.includes(role));
       }
     });
   });

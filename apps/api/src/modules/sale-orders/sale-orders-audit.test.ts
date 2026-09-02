@@ -149,9 +149,9 @@ describe('Sale Order audit trail — read path', () => {
 });
 
 describe('Sale Order audit trail — authorization', () => {
-  it('allows ADMIN, MERCHANDISER, and SENIOR_MANAGEMENT', async () => {
+  it('allows ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, and ACCOUNTANT (read-only)', async () => {
     const { saleOrder } = await createSubmittedSaleOrder(10);
-    for (const role of ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'] satisfies Role[]) {
+    for (const role of ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT'] satisfies Role[]) {
       const { token } = await createRoleToken(role);
       await getAudit(token, saleOrder.id).expect(200);
     }
@@ -169,7 +169,13 @@ describe('Sale Order audit trail — authorization', () => {
     await getAudit(otherUser.token, saleOrder.id).expect(403);
   });
 
-  it.each(['ACCOUNTANT', 'QA_USER', 'FACTORY_USER'] satisfies Role[])('denies %s', async (role) => {
+  it('lets ACCOUNTANT see any distributor’s sale order audit history, not only their own', async () => {
+    const { saleOrder } = await createSubmittedSaleOrder(10);
+    const { token } = await createRoleToken('ACCOUNTANT');
+    await getAudit(token, saleOrder.id).expect(200);
+  });
+
+  it.each(['QA_USER', 'FACTORY_USER'] satisfies Role[])('denies %s', async (role) => {
     const { saleOrder } = await createSubmittedSaleOrder(10);
     const { token } = await createRoleToken(role);
     const res = await getAudit(token, saleOrder.id);
@@ -236,5 +242,19 @@ describe('Sale Order audit trail — cross-distributor privacy (mandatory)', () 
     expect(distributorPayload).not.toContain(sourceStock.qaReleaseLineId);
     expect(distributorPayload).not.toContain(sourceStock.jobOrderId);
     expect(distributorPayload).toContain('additional stock allocated by Merchandiser');
+
+    // ACCOUNTANT is a read-only financial-review role, not a privileged
+    // reviewer — it must see the same sanitized detail as the owning
+    // DISTRIBUTOR, never another distributor's identity/PO/factory, even
+    // though it (unlike DISTRIBUTOR) can view every sale order.
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    const asAccountant = await getAudit(accountantToken, approved.body.data.id).expect(200);
+    const accountantPayload = JSON.stringify(asAccountant.body);
+    expect(accountantPayload).not.toContain('Secret Source Distributor');
+    expect(accountantPayload).not.toContain(sourceStock.poNumber);
+    expect(accountantPayload).not.toContain('Secret Source Factory');
+    expect(accountantPayload).not.toContain(sourceStock.qaReleaseLineId);
+    expect(accountantPayload).not.toContain(sourceStock.jobOrderId);
+    expect(accountantPayload).toContain('additional stock allocated by Merchandiser');
   });
 });

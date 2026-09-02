@@ -192,6 +192,24 @@ describe('Sale Order approval', () => {
       (a: { allocationSource: string }) => a.allocationSource === 'MERCHANDISER_REASSIGNMENT',
     );
     expect(fullAllocation.source.distributor.id).not.toBe(stock.distributorId);
+
+    // ACCOUNTANT can view any distributor's sale order (unlike DISTRIBUTOR),
+    // but is still read-only, not a privileged reviewer — it must get the
+    // same sanitized (source: null) reassignment view as the owning
+    // DISTRIBUTOR, never the other distributor's identity.
+    const { token: accountantToken } = await createTestUserAndToken({
+      email: `accountant-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['ACCOUNTANT'],
+    });
+    const accountantView = await request(app)
+      .get(`/sale-orders/${saleOrder.id}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    const accountantAllocation = accountantView.body.data.lines[0].allocations.find(
+      (a: { allocationSource: string }) => a.allocationSource === 'MERCHANDISER_REASSIGNMENT',
+    );
+    expect(accountantAllocation.source).toBeNull();
   });
 
   it('rejects an increase that exceeds available stock across sources and leaves no partial allocation', async () => {

@@ -186,7 +186,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(headings).not.toContain('Master Data');
   });
 
-  it('ACCOUNTANT sees Price Lists but no other Master Data links', async () => {
+  it('ACCOUNTANT sees Price Lists and Sale Orders but no other Master Data links', async () => {
     await renderAppLayout(['ACCOUNTANT']);
     const labels = sidebarLinkLabels();
 
@@ -196,6 +196,9 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).toContain('Price Lists');
+    expect(labels).not.toContain('Purchase Orders');
+    expect(labels).not.toContain('Job Orders');
+    expect(labels).toContain('Sale Orders');
   });
 
   it('DISTRIBUTOR sees Purchase Orders only — no master-data browsing', async () => {
