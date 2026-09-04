@@ -3,6 +3,17 @@ import { z } from 'zod';
 const optionalText = z.string().trim().optional().nullable();
 const positiveMoney = z.coerce.number().positive();
 const nonNegativeMoney = z.coerce.number().nonnegative();
+// A Style's HSN is optional, but when entered must be exactly 8 numeric
+// digits — kept as a string (never coerced to a number) so leading zeroes
+// survive.
+const hsnCodeSchema = z
+  .string()
+  .trim()
+  .optional()
+  .nullable()
+  .refine((value) => !value || /^\d{8}$/.test(value), {
+    message: 'HSN Code must be exactly 8 digits',
+  });
 
 export const styleStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const sizeStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
@@ -28,7 +39,7 @@ export const createStyleSchema = z.object({
   licensor: optionalText,
   colour: optionalText,
   lmixNumber: optionalText,
-  hsnCode: optionalText,
+  hsnCode: hsnCodeSchema,
   hsnDescription: optionalText,
   finalMrp: positiveMoney,
   royaltyPercentage: z.coerce.number().min(0).max(100).optional().nullable(),

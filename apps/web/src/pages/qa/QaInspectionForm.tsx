@@ -27,6 +27,7 @@ import {
 } from '@erve/primitives';
 import {
   AttachmentList,
+  ConfirmDialog,
   QualityChecklist,
   QualityChecklistRemark,
   QualityChecklistResult,
@@ -52,6 +53,14 @@ type Draft = {
   checks: Record<string, { status: QaChecklistStatus | ''; remarks: string }>;
 };
 type Errors = Record<string, string>;
+type SaveMutationVariables = {
+  path: string;
+  method: 'post' | 'put';
+  body: object;
+  finalizePath?: string;
+  formId?: string;
+  finalizeBody?: object;
+};
 const categories: QaDefectCategory[] = [
   'STITCHING',
   'FABRIC',
@@ -144,7 +153,9 @@ function validate(
     if ((rework || rejected) && !draft.category) errors.category = 'Choose a defect category.';
     if (draft.category === 'OTHER' && !draft.other.trim())
       errors.other = 'Describe the other defect.';
-    if (rejected > 0 && evidence === 0)
+    if (ppSample && evidence === 0)
+      errors.evidence = 'Evidence is required before a PP Sample can be finalized.';
+    else if (rejected > 0 && evidence === 0)
       errors.evidence =
         'Evidence for this size is required before permanent rejection can be finalized.';
   }
@@ -178,6 +189,7 @@ export function QaInspectionForm({
   const [reopenOpen, setReopenOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
   const [ppSampleDecision, setPpSampleDecision] = useState<'PASS' | 'FAIL' | ''>('');
+  const [pendingFinalize, setPendingFinalize] = useState<SaveMutationVariables | null>(null);
   const evidenceInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!notice) return;
@@ -228,14 +240,7 @@ export function QaInspectionForm({
       finalizePath,
       formId,
       finalizeBody,
-    }: {
-      path: string;
-      method: 'post' | 'put';
-      body: object;
-      finalizePath?: string;
-      formId?: string;
-      finalizeBody?: object;
-    }) => {
+    }: SaveMutationVariables) => {
       const saved = (
         await apiClient.request<ApiSuccessResponse<QaInspectionDetail>>({
           url: path,
@@ -272,9 +277,11 @@ export function QaInspectionForm({
       );
       setReopenOpen(false);
       setReopenReason('');
+      setPendingFinalize(null);
       onUpdated(updated);
     },
     onError: (error) => {
+      setPendingFinalize(null);
       const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined;
       if (api?.code === 'STALE_VERSION' || api?.code === 'CONFLICT') setStale(true);
       const issues =
@@ -405,7 +412,7 @@ export function QaInspectionForm({
       otherDefectDetails: draft.category === 'OTHER' ? draft.other.trim() : null,
       defectNotes: draft.category === 'OTHER' ? null : draft.notes.trim() || null,
     };
-    mutation.mutate({
+    const variables: SaveMutationVariables = {
       path: `/qa/inspections/${session.id}/forms/${selected.id}`,
       method: 'put',
       body,
@@ -414,7 +421,12 @@ export function QaInspectionForm({
         : undefined,
       formId: finalizing ? selected.id : undefined,
       finalizeBody: finalizing && ppSample ? { ppSampleDecision } : undefined,
-    });
+    };
+    if (finalizing && ppSample) {
+      setPendingFinalize(variables);
+      return;
+    }
+    mutation.mutate(variables);
   };
   const reload = async () => {
     if (
@@ -757,6 +769,9 @@ export function QaInspectionForm({
                 </Button>
               </>
             )}
+            {ppSample && !errors.evidence && (
+              <p>PP Sample finalization requires evidence attached to this exact size.</p>
+            )}
             {!ppSample && Number(draft.rejected || 0) > 0 && !errors.evidence && (
               <p>Permanent rejection requires evidence attached to this exact size.</p>
             )}
@@ -814,6 +829,18 @@ export function QaInspectionForm({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={pendingFinalize !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingFinalize(null);
+        }}
+        title={`Finalize this inspection as ${ppSampleDecision}?`}
+        confirmLabel="Yes, finalize"
+        loading={mutation.isPending}
+        onConfirm={() => {
+          if (pendingFinalize) mutation.mutate(pendingFinalize);
+        }}
+      />
     </>
   );
 }

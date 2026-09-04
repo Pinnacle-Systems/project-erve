@@ -1194,4 +1194,76 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
     await act(async () => readyButton.click());
     expect(onStartReinspection).toHaveBeenCalledTimes(1);
   });
+
+  it('requires explicit PASS/FAIL confirmation before finalizing an inspection with an outcome', async () => {
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={execution()} onSave={vi.fn()} onFinalize={finalize} />,
+      ),
+    );
+    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    await act(async () =>
+      (group.querySelector('input[value="PASS"]') as HTMLInputElement).click(),
+    );
+
+    await act(async () => button('Finalize').click());
+    expect(finalize).not.toHaveBeenCalled();
+    expect(
+      Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
+        dialog.textContent?.includes('Finalize this inspection as PASS?'),
+      ),
+    ).toBe(true);
+
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Yes, finalize',
+    ) as HTMLButtonElement;
+    await act(async () => confirm.click());
+    expect(finalize).toHaveBeenCalledOnce();
+  });
+
+  it('shows the FAIL confirmation wording and leaves the form unchanged when cancelled', async () => {
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={execution()} onSave={vi.fn()} onFinalize={finalize} />,
+      ),
+    );
+    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    await act(async () =>
+      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+    );
+
+    await act(async () => button('Finalize').click());
+    expect(
+      Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
+        dialog.textContent?.includes('Finalize this inspection as FAIL?'),
+      ),
+    ).toBe(true);
+
+    const cancel = Array.from(document.body.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Cancel',
+    ) as HTMLButtonElement;
+    await act(async () => cancel.click());
+
+    expect(finalize).not.toHaveBeenCalled();
+    expect(
+      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('finalizes a PPM directly without a confirmation dialog, since it has no PASS/FAIL outcome', async () => {
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={ppmExecution()} onSave={vi.fn()} onFinalize={finalize} />,
+      ),
+    );
+    act(() => setInputValue(container.querySelector('#quality-signatures-qaManager')!, 'Priya'));
+    act(() => setInputValue(container.querySelector('#quality-signatures-supplier')!, 'Clifton'));
+    await act(async () => button('Finalize').click());
+    expect(finalize).toHaveBeenCalledOnce();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
 });

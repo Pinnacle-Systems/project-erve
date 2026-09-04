@@ -368,6 +368,16 @@ describe('QaInspectionForm', () => {
       status: 'YES',
       remarks: null,
     }));
+    source.sessions[0]!.evidence = [
+      {
+        id: 'evidence-m',
+        inspectionLineId: form.id,
+        fileName: 'proof.png',
+        contentType: 'image/png',
+        sizeBytes: 1,
+        createdAt: '2026-08-06T11:00:00Z',
+      },
+    ];
     const requestCall = vi
       .spyOn(apiClient, 'request')
       .mockResolvedValue({ data: { data: source } } as never);
@@ -399,6 +409,16 @@ describe('QaInspectionForm', () => {
       (container.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
     );
     await act(async () => button('Finalize size M').click());
+    expect(requestCall).not.toHaveBeenCalled();
+    expect(
+      Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
+        dialog.textContent?.includes('Finalize this inspection as FAIL?'),
+      ),
+    ).toBe(true);
+    const confirmFinalize = Array.from(document.body.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Yes, finalize',
+    ) as HTMLButtonElement;
+    await act(async () => confirmFinalize.click());
     const savedPayload = requestCall.mock.calls[0]![0].data as Record<string, unknown>;
     expect(savedPayload).not.toHaveProperty('inspectedQuantity');
     expect(savedPayload).not.toHaveProperty('acceptedQuantity');
@@ -409,6 +429,62 @@ describe('QaInspectionForm', () => {
         url: '/qa/inspections/inspection-1/forms/form-1/finalize',
         data: { expectedVersion: 1, ppSampleDecision: 'FAIL' },
       }),
+    );
+  }, 15_000);
+
+  it('shows the PASS confirmation wording and leaves the form unchanged when cancelled', async () => {
+    const source = detail();
+    const form = source.sessions[0]!.forms[0]!;
+    source.sessions[0]!.forms = [form];
+    source.sessions[0]!.processFlowPpSample = {
+      executionId: 'execution-1',
+      processFlowActivityId: 'activity-1',
+      qualityFormVersionId: 'sample-v1',
+      sampleQuantity: 5,
+      decision: null,
+    };
+    form.sampleQuantity = 5;
+    form.inspectedQuantity = 0;
+    form.acceptedQuantity = 0;
+    form.checklist = QA_CHECKLIST_ITEMS.map(({ code }) => ({
+      itemCode: code,
+      status: 'YES',
+      remarks: null,
+    }));
+    source.sessions[0]!.evidence = [
+      {
+        id: 'evidence-m',
+        inspectionLineId: form.id,
+        fileName: 'proof.png',
+        contentType: 'image/png',
+        sizeBytes: 1,
+        createdAt: '2026-08-06T11:00:00Z',
+      },
+    ];
+    const requestCall = vi
+      .spyOn(apiClient, 'request')
+      .mockResolvedValue({ data: { data: source } } as never);
+    await renderHarness(source);
+
+    await act(async () =>
+      (container.querySelector('input[value="PASS"]') as HTMLInputElement).click(),
+    );
+    await act(async () => button('Finalize size M').click());
+    expect(
+      Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
+        dialog.textContent?.includes('Finalize this inspection as PASS?'),
+      ),
+    ).toBe(true);
+
+    const cancel = Array.from(document.body.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Cancel',
+    ) as HTMLButtonElement;
+    await act(async () => cancel.click());
+
+    expect(requestCall).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect((container.querySelector('input[value="PASS"]') as HTMLInputElement).checked).toBe(
+      true,
     );
   }, 15_000);
 

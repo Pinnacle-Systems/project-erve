@@ -5,6 +5,7 @@ import type {
   QualityExecutionValidationError,
   QualityExecutionView,
 } from '@erve/types';
+import { ConfirmDialog } from './confirm-dialog.js';
 import { displayActivityName } from '../job-order-operational-presentation.js';
 import {
   QualityChecklist,
@@ -88,6 +89,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
   );
   const [visibleErrors, setVisibleErrors] = useState(props.validationErrors ?? []);
   const [batchReason, setBatchReason] = useState('');
+  const [confirmFinalizeOpen, setConfirmFinalizeOpen] = useState(false);
   useEffect(() => {
     const next = props.validationErrors ?? [];
     // The local list intentionally resets when the server returns a new validation result.
@@ -126,6 +128,18 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
     value: QualityExecutionPayload[K],
   ) => setDraft((current) => ({ ...current, [key]: value }));
   const disabled = execution.status !== 'DRAFT' || busy;
+  const hasOutcomeComponent = execution.sections.some((section) =>
+    section.components.some((component) => component.type === 'INSPECTION_OUTCOME'),
+  );
+  const outcomeValue = draft.outcome?.value;
+  const finalize = () => void props.onFinalize({ ...draft, expectedVersion: execution.version });
+  const requestFinalize = () => {
+    if (hasOutcomeComponent && outcomeValue) {
+      setConfirmFinalizeOpen(true);
+      return;
+    }
+    finalize();
+  };
   const priorInspectedQuantity =
     execution.coverage?.batches
       .filter((batch) => batch.status === 'FINALIZED' && batch.batchNumber < execution.batchNumber)
@@ -1727,14 +1741,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
             >
               Save draft
             </Button>
-            <Button
-              type="button"
-              variant="default"
-              disabled={busy}
-              onClick={() =>
-                void props.onFinalize({ ...draft, expectedVersion: execution.version })
-              }
-            >
+            <Button type="button" variant="default" disabled={busy} onClick={requestFinalize}>
               Finalize
             </Button>
             {execution.finalBatch && props.onCancelBatch ? (
@@ -1818,6 +1825,17 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
           })()}
         </div>
       ) : null}
+      <ConfirmDialog
+        open={confirmFinalizeOpen}
+        onOpenChange={setConfirmFinalizeOpen}
+        title={`Finalize this inspection as ${outcomeValue}?`}
+        confirmLabel="Yes, finalize"
+        loading={busy}
+        onConfirm={() => {
+          setConfirmFinalizeOpen(false);
+          finalize();
+        }}
+      />
     </form>
   );
 }

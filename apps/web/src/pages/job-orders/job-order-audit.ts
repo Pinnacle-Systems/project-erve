@@ -1,4 +1,4 @@
-export function getCompletedStageName(metadata: unknown): string | undefined {
+export function getStageName(metadata: unknown): string | undefined {
   if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) {
     return undefined;
   }
@@ -77,8 +77,12 @@ function attachmentActivityTitle(metadata: Record<string, unknown>): string {
 
 export function formatJobOrderAuditTitle(action: string, metadata: unknown): string {
   if (action === 'JOB_ORDER_STAGE_COMPLETED') {
-    const stageName = getCompletedStageName(metadata);
+    const stageName = getStageName(metadata);
     return stageName ? `Production stage completed — ${stageName}` : 'Job order stage completed';
+  }
+  if (action === 'JOB_ORDER_STAGE_STARTED') {
+    const stageName = getStageName(metadata);
+    return stageName ? `Production stage started — ${stageName}` : 'Job order stage started';
   }
 
   const details = auditMetadata(metadata);

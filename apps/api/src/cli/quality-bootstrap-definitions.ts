@@ -344,12 +344,7 @@ const FINAL: CanonicalQualityFormDefinition = {
           config: {
             requirements: [
               { key: 'measurementSheet', label: 'Measurement Sheet', required: true },
-              { key: 'washingReport', label: 'Washing Report', required: true },
-              {
-                key: 'failedPartEvidence',
-                label: 'Failed Part Evidence',
-                requiredWhen: 'INSPECTION_FAILED',
-              },
+              { key: 'washingReport', label: 'Washing Report' },
             ],
           },
         },
@@ -394,6 +389,9 @@ const FINAL: CanonicalQualityFormDefinition = {
               'Workmanship',
               'Measurements',
               'GSM',
+              // Displayed as "Bar Code" (Final Inspection terminology only);
+              // the key stays derived from the original label so it remains
+              // stable for already-published form versions and responses.
               'EAN Code',
               'Packing & Labelling',
               'Assortment',
@@ -401,7 +399,7 @@ const FINAL: CanonicalQualityFormDefinition = {
               'Safety Requirements',
             ].map((label) => ({
               key: definitionKey(label),
-              label,
+              label: label === 'EAN Code' ? 'Bar Code' : label,
             })),
             responseOptions: ['PASSED', 'FAILED', 'N/A'],
           },

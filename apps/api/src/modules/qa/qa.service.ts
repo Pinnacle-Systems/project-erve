@@ -781,6 +781,13 @@ export async function finalizeSizeInspectionForm(
       if (!evidence)
         throw HttpError.badRequest('Photo evidence is required for permanent rejection');
     }
+    if (ppExecution) {
+      const evidence = await tx.qaEvidence.count({
+        where: { inspectionSessionId: sessionId, inspectionLineId: formId },
+      });
+      if (!evidence)
+        throw HttpError.badRequest('Photo evidence is required before a PP Sample can be finalized');
+    }
     if (form.reworkQuantity > 0 && !ppExecution) {
       const attempt =
         (await tx.qaReworkTask.count({ where: { jobOrderLineSizeId: form.jobOrderLineSizeId } })) +

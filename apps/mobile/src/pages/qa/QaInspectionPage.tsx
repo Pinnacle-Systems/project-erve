@@ -17,6 +17,7 @@ import {
   QA_CHECKLIST_ITEMS,
 } from '@erve/types';
 import {
+  ConfirmDialog,
   QualityChecklist,
   QualityChecklistRemark,
   QualityChecklistResult,
@@ -46,6 +47,7 @@ export type QaFormDraft = {
   checklist: Record<string, ChecklistEntry>;
 };
 type Errors = Record<string, string>;
+type SubmitMutationVariables = { url: string; method: 'post' | 'put'; body: object; key: string };
 const categories: QaDefectCategory[] = [
   'STITCHING',
   'FABRIC',
@@ -131,7 +133,9 @@ export function validateDraft(
       errors.checklist = 'Complete all 15 checklist responses before finalizing.';
     if (!ppSample && total === 0)
       errors.quantities ??= 'Record an inspection outcome before finalizing.';
-    if (!ppSample && Number(draft.rejected || 0) > 0 && evidenceCount === 0)
+    if (ppSample && evidenceCount === 0)
+      errors.evidence = 'Evidence is required before a PP Sample can be finalized.';
+    else if (!ppSample && Number(draft.rejected || 0) > 0 && evidenceCount === 0)
       errors.evidence = 'Permanent rejection requires evidence for this size.';
   }
   return errors;
@@ -183,6 +187,7 @@ export function QaInspectionPage() {
   const [serverIssues, setServerIssues] = useState<string[]>([]);
   const [stale, setStale] = useState(false);
   const [ppSampleDecision, setPpSampleDecision] = useState<'PASS' | 'FAIL' | ''>('');
+  const [pendingFinalize, setPendingFinalize] = useState<SubmitMutationVariables | null>(null);
   const query = useQuery({
     queryKey: ['qa-detail', id],
     queryFn: async () =>
@@ -212,17 +217,7 @@ export function QaInspectionPage() {
     setStale(false);
   };
   const mutate = useMutation({
-    mutationFn: async ({
-      url,
-      method,
-      body,
-      key,
-    }: {
-      url: string;
-      method: 'post' | 'put';
-      body: object;
-      key: string;
-    }) =>
+    mutationFn: async ({ url, method, body, key }: SubmitMutationVariables) =>
       (
         await apiClient.request<ApiSuccessResponse<QaInspectionDetail>>({
           url,
@@ -231,9 +226,12 @@ export function QaInspectionPage() {
           headers: { 'Idempotency-Key': key },
         })
       ).data.data,
-    onSuccess: (data, variables) =>
-      updateDetail(data, variables.url.split('/forms/')[1]?.split('/')[0]),
+    onSuccess: (data, variables) => {
+      setPendingFinalize(null);
+      updateDetail(data, variables.url.split('/forms/')[1]?.split('/')[0]);
+    },
     onError: (error) => {
+      setPendingFinalize(null);
       const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined;
       setStale(api?.code === 'STALE_VERSION' || api?.code === 'CONFLICT');
       const issues =
@@ -331,14 +329,19 @@ export function QaInspectionPage() {
     setErrors(next);
     setServerIssues([]);
     if (Object.keys(next).length) return;
-    mutate.mutate({
+    const variables: SubmitMutationVariables = {
       url: `/qa/inspections/${editableSession.id}/forms/${selected.id}${finalizing ? '/finalize' : ''}`,
       method: finalizing ? 'post' : 'put',
       body: finalizing
         ? { expectedVersion: selected.version, ...(ppSample ? { ppSampleDecision } : {}) }
         : formPayload(draft, selected.version, Boolean(ppSample)),
       key: requestKey(finalizing ? 'finalize' : 'save', selected.version),
-    });
+    };
+    if (finalizing && ppSample) {
+      setPendingFinalize(variables);
+      return;
+    }
+    mutate.mutate(variables);
   };
   const canReopen = Boolean(
     user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'),
@@ -701,6 +704,18 @@ export function QaInspectionPage() {
           </article>
         ))}
       </QualityExecutionSection>
+      <ConfirmDialog
+        open={pendingFinalize !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingFinalize(null);
+        }}
+        title={`Finalize this inspection as ${ppSampleDecision}?`}
+        confirmLabel="Yes, finalize"
+        loading={mutate.isPending}
+        onConfirm={() => {
+          if (pendingFinalize) mutate.mutate(pendingFinalize);
+        }}
+      />
     </div>
   );
   return ppSample ? (

@@ -113,6 +113,34 @@ describe('styles API', () => {
     expect(badRoyalty.status).toBe(400);
   });
 
+  it('rejects a non-8-digit HSN and accepts a valid 8-digit HSN, preserving leading zeroes', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+
+    const tooShort = await createStyle(token, { styleNumber: 'ST-HSN-1', hsnCode: '6109100' });
+    const tooLong = await createStyle(token, { styleNumber: 'ST-HSN-2', hsnCode: '610910001' });
+    const nonNumeric = await createStyle(token, { styleNumber: 'ST-HSN-3', hsnCode: '6109100A' });
+    const leadingZero = await createStyle(token, {
+      styleNumber: 'ST-HSN-4',
+      hsnCode: '06091000',
+    });
+
+    expect(tooShort.status).toBe(400);
+    expect(tooLong.status).toBe(400);
+    expect(nonNumeric.status).toBe(400);
+    expect(leadingZero.status).toBe(201);
+    expect(leadingZero.body.data.hsnCode).toBe('06091000');
+
+    const updated = await request(app)
+      .patch(`/styles/${leadingZero.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ hsnCode: '1234567' });
+    expect(updated.status).toBe(400);
+  });
+
   it('adds and removes style sizes without allowing duplicates', async () => {
     const { token } = await createTestUserAndToken({
       email: 'admin@test.local',

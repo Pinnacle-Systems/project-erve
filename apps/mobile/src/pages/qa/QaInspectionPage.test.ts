@@ -238,7 +238,19 @@ afterEach(() => {
 
 describe('rendered mobile QA form workflow', () => {
   it('renders one locked PP Sample form and requires an explicit QA decision', async () => {
-    const data = detail([form('form-m', 'M')]);
+    const data = detail(
+      [form('form-m', 'M')],
+      [
+        {
+          id: 'evidence-m',
+          inspectionLineId: 'form-m',
+          fileName: 'proof.png',
+          contentType: 'image/png',
+          sizeBytes: 1,
+          createdAt: '2026-01-01',
+        },
+      ],
+    );
     const selected = data.sessions[0].forms[0]!;
     selected.sampleQuantity = 5;
     selected.inspectedQuantity = 0;
@@ -296,12 +308,70 @@ describe('rendered mobile QA form workflow', () => {
       ).click(),
     );
     await click('Finalize size M');
+    expect(vi.mocked(apiClient.request)).not.toHaveBeenCalled();
+    expect(
+      Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
+        dialog.textContent?.includes('Finalize this inspection as PASS?'),
+      ),
+    ).toBe(true);
+    const confirmFinalize = Array.from(document.body.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Yes, finalize',
+    ) as HTMLButtonElement;
+    await act(async () => confirmFinalize.click());
     expect(vi.mocked(apiClient.request)).toHaveBeenCalledWith(
       expect.objectContaining({
         url: '/qa/inspections/session-1/forms/form-m/finalize',
         data: { expectedVersion: 1, ppSampleDecision: 'PASS' },
       }),
     );
+  });
+
+  it('shows the FAIL confirmation wording and leaves the form unchanged when cancelled', async () => {
+    const data = detail(
+      [form('form-m', 'M')],
+      [
+        {
+          id: 'evidence-m',
+          inspectionLineId: 'form-m',
+          fileName: 'proof.png',
+          contentType: 'image/png',
+          sizeBytes: 1,
+          createdAt: '2026-01-01',
+        },
+      ],
+    );
+    const selected = data.sessions[0].forms[0]!;
+    selected.sampleQuantity = 5;
+    selected.inspectedQuantity = 0;
+    selected.acceptedQuantity = 0;
+    selected.reworkQuantity = 0;
+    data.sessions[0].processFlowPpSample = {
+      executionId: 'execution-1',
+      processFlowActivityId: 'activity-1',
+      qualityFormVersionId: 'sample-v1',
+      sampleQuantity: 5,
+      decision: null,
+    };
+    successfulUpdate(() => {});
+    await renderPage(data);
+
+    const decisions = container.querySelectorAll('input[name="pp-decision"][type="radio"]');
+    await act(async () => (decisions[1] as HTMLInputElement).click());
+    await click('Finalize size M');
+    expect(
+      Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
+        dialog.textContent?.includes('Finalize this inspection as FAIL?'),
+      ),
+    ).toBe(true);
+
+    const cancel = Array.from(document.body.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Cancel',
+    ) as HTMLButtonElement;
+    await act(async () => cancel.click());
+
+    expect(vi.mocked(apiClient.request)).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect((decisions[1] as HTMLInputElement).checked).toBe(true);
   });
 
   it('navigates three rendered sizes without leaking their values', async () => {

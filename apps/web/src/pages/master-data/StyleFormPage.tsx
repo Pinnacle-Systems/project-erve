@@ -73,6 +73,9 @@ const styleFieldLayout = [
   { key: 'description', width: 'lg' },
 ] as const;
 
+const HSN_CODE_PATTERN = /^\d{8}$/;
+const isValidHsnCode = (value: string) => !value || HSN_CODE_PATTERN.test(value);
+
 function cleanPayload(form: typeof emptyForm, seasonIds: string[]) {
   return {
     ...form,
@@ -188,6 +191,9 @@ export function StyleFormPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
+      if (!isValidHsnCode(form.hsnCode)) {
+        throw new Error('HSN Code must be exactly 8 digits.');
+      }
       if (!form.styleNumber || !form.styleName || Number(form.finalMrp) <= 0 || selectedSeasonIds.length === 0) {
         throw new Error('Style number, style name, final MRP, and at least one Season are required');
       }
@@ -322,12 +328,15 @@ export function StyleFormPage() {
                     type={key.includes('Mrp') || key.includes('Percentage') ? 'number' : 'text'}
                     value={form[key as keyof typeof emptyForm]}
                     width={width}
+                    maxLength={key === 'hsnCode' ? 8 : undefined}
                     errorMessage={
-                      error &&
-                      ((key === 'styleNumber' && !form.styleNumber) ||
-                        (key === 'styleName' && !form.styleName))
-                        ? 'Required'
-                        : undefined
+                      error && key === 'hsnCode' && !isValidHsnCode(form.hsnCode)
+                        ? 'HSN Code must be exactly 8 digits'
+                        : error &&
+                            ((key === 'styleNumber' && !form.styleNumber) ||
+                              (key === 'styleName' && !form.styleName))
+                          ? 'Required'
+                          : undefined
                     }
                     onChange={(event) =>
                       setForm((current) => ({ ...current, [key]: event.target.value }))

@@ -438,6 +438,33 @@ async function completePp(f: Awaited<ReturnType<typeof workflow>>, decision: 'PA
   return execution;
 }
 
+async function attachPpEvidence(
+  f: Awaited<ReturnType<typeof workflow>>,
+  sessionId: string,
+  formId: string,
+) {
+  const fileId = createId();
+  await prisma.file.create({
+    data: {
+      id: fileId,
+      fileName: 'pp-evidence.png',
+      mimeType: 'image/png',
+      sizeBytes: 1,
+      storageKey: `test/${fileId}`,
+      uploadedById: f.qa.userId,
+    },
+  });
+  await prisma.qaEvidence.create({
+    data: {
+      id: createId(),
+      inspectionSessionId: sessionId,
+      inspectionLineId: formId,
+      fileId,
+      checksumSha256: createId(),
+    },
+  });
+}
+
 async function finalizeStartedPp(
   f: Awaited<ReturnType<typeof workflow>>,
   executionId: string,
@@ -464,6 +491,7 @@ async function finalizeStartedPp(
     })
     .expect(200);
   const savedForm = await prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } });
+  await attachPpEvidence(f, session.id, form.id);
   await request(app)
     .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
     .set('Authorization', `Bearer ${f.qa.token}`)
@@ -591,6 +619,16 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         .set('Idempotency-Key', createId())
         .send({ expectedVersion: form.version, ppSampleDecision: decision })
         .expect(403);
+      const missingEvidence = await request(app)
+        .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
+        .set('Authorization', `Bearer ${f.qa.token}`)
+        .set('Idempotency-Key', createId())
+        .send({ expectedVersion: form.version, ppSampleDecision: decision })
+        .expect(400);
+      expect(missingEvidence.body.error.message).toBe(
+        'Photo evidence is required before a PP Sample can be finalized',
+      );
+      await attachPpEvidence(f, session.id, form.id);
       await request(app)
         .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
         .set('Authorization', `Bearer ${f.qa.token}`)
@@ -658,6 +696,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       },
     });
 
+    await attachPpEvidence(f, session.id, form.id);
     await request(app)
       .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
@@ -668,7 +707,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     await expect(prisma.qaReworkTask.count({ where: { jobOrderId: f.job.id } })).resolves.toBe(0);
     await expect(
       prisma.qaEvidence.count({ where: { inspectionSessionId: session.id } }),
-    ).resolves.toBe(0);
+    ).resolves.toBe(1);
     await expect(
       prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } }),
     ).resolves.toMatchObject({

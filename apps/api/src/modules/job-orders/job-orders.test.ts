@@ -1057,6 +1057,15 @@ describe('job orders API', () => {
     expect(stageAudit.body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          action: 'JOB_ORDER_STAGE_STARTED',
+          metadata: {
+            stageStatusId: stages[0].id,
+            processFlowVersionStageId: stages[0].processFlowVersionStageId,
+            stageSequence: 1,
+            stageName: 'Cutting',
+          },
+        }),
+        expect.objectContaining({
           action: 'JOB_ORDER_STAGE_COMPLETED',
           metadata: {
             stageStatusId: stages[0].id,
