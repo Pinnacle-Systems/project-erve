@@ -35,7 +35,8 @@ function idempotencyKey(req: { get(name: string): string | undefined }): string 
 const eligibleStockQuerySchema = z.object({ distributorId: z.string().trim().optional() });
 
 // Static routes must be registered before the `/:id` route below — Express
-// would otherwise match "eligible-stock"/"inventory" as an `:id` value.
+// would otherwise match "eligible-stock"/"inventory"/"requestable-catalog" as
+// an `:id` value.
 saleOrdersRouter.get(
   '/eligible-stock',
   canManageAsDistributor,
@@ -43,6 +44,16 @@ saleOrdersRouter.get(
     const query = eligibleStockQuerySchema.parse(req.query);
     const stock = await saleOrdersService.getEligibleStock(req.user!, query.distributorId);
     res.status(200).json(successResponse(stock));
+  }),
+);
+
+saleOrdersRouter.get(
+  '/requestable-catalog',
+  canManageAsDistributor,
+  asyncHandler(async (req, res) => {
+    const query = eligibleStockQuerySchema.parse(req.query);
+    const catalog = await saleOrdersService.getRequestableCatalog(req.user!, query.distributorId);
+    res.status(200).json(successResponse(catalog));
   }),
 );
 
@@ -163,3 +174,8 @@ saleOrdersRouter.post(
     res.status(200).json(successResponse(order));
   }),
 );
+
+// The manual "/actions/fulfill" endpoint has been retired — see the comment
+// above sale-orders.service.ts's removed fulfillSaleOrder. New Sale Orders
+// become FULFILLED automatically from POST /erve-dispatches (see
+// erve-dispatch.service.ts recordErveDispatch); there is no manual trigger.

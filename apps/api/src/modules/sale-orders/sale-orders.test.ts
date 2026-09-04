@@ -4,6 +4,7 @@ import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
+  createPurchaseOrderLineSize,
   createReleasedQaStock,
   createTestDistributor,
   createTestUserAndToken,
@@ -89,24 +90,58 @@ describe('Sale Orders — create, submit, visibility, authorization', () => {
     expect(allocations[0]!.quantity).toBe(20);
   });
 
-  it('rejects submission that would exceed the requesting distributor’s own available stock', async () => {
+  it('allows submission above the requesting distributor’s own available stock — a Sale Order is a demand request, not a reservation', async () => {
     const stock = await createReleasedQaStock({ quantity: 5 });
     const token = await createDistributorUser(stock.distributorId);
     const created = await createDraftSaleOrder(token, stock.distributorId, [
       { purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: 10 },
     ]).expect(201);
 
-    await submitSaleOrder(token, created.body.data.id, created.body.data.version).expect(409);
+    const submitted = await submitSaleOrder(token, created.body.data.id, created.body.data.version).expect(200);
+    expect(submitted.body.data.status).toBe('SUBMITTED');
+    // requestedQuantity is stored exactly as requested, unconstrained by
+    // stock; only the 5 units that actually exist get an opportunistic
+    // DISTRIBUTOR_REQUEST allocation, the remaining 5 stay unallocated
+    // pending Merchandiser review.
+    expect(submitted.body.data.lines[0]).toMatchObject({ requestedQuantity: 10, approvedQuantity: null });
+    const allocations = await prisma.stockAllocation.findMany({ where: { saleOrderLineId: submitted.body.data.lines[0].id } });
+    expect(allocations).toHaveLength(1);
+    expect(allocations[0]).toMatchObject({ quantity: 5, status: 'ACTIVE', allocationSource: 'DISTRIBUTOR_REQUEST' });
+  });
+
+  it('submits successfully with zero allocations when the distributor has no released stock at all for the line', async () => {
+    const lineSize = await createPurchaseOrderLineSize();
+    const token = await createDistributorUser(lineSize.distributorId);
+    const created = await createDraftSaleOrder(token, lineSize.distributorId, [
+      { purchaseOrderLineSizeId: lineSize.purchaseOrderLineSizeId, requestedQuantity: 50 },
+    ]).expect(201);
+
+    const submitted = await submitSaleOrder(token, created.body.data.id, created.body.data.version).expect(200);
+    expect(submitted.body.data.status).toBe('SUBMITTED');
+    expect(submitted.body.data.lines[0]).toMatchObject({ requestedQuantity: 50, approvedQuantity: null });
+    expect(submitted.body.data.lines[0].allocations).toHaveLength(0);
+  });
+
+  it('submits successfully when zero compatible QA-released stock exists anywhere system-wide', async () => {
+    // No createReleasedQaStock call at all in this test — no QaReleaseLine
+    // exists anywhere for this style/size, or for any style/size.
+    const lineSize = await createPurchaseOrderLineSize();
+    const token = await createDistributorUser(lineSize.distributorId);
+    const created = await createDraftSaleOrder(token, lineSize.distributorId, [
+      { purchaseOrderLineSizeId: lineSize.purchaseOrderLineSizeId, requestedQuantity: 100 },
+    ]).expect(201);
+
+    const submitted = await submitSaleOrder(token, created.body.data.id, created.body.data.version).expect(200);
+    expect(submitted.body.data.lines[0]).toMatchObject({ requestedQuantity: 100 });
     expect(await prisma.stockAllocation.count()).toBe(0);
-    const reloaded = await prisma.saleOrder.findUniqueOrThrow({ where: { id: created.body.data.id } });
-    expect(reloaded.status).toBe('DRAFT');
   });
 
   it('never lets a distributor’s submit silently draw on another distributor’s available stock', async () => {
     const shortStock = await createReleasedQaStock({ quantity: 5 });
     // Plenty of stock exists globally (for a different distributor, different
     // PO line/size) — but submit must only ever look at release lines tied
-    // to this distributor's own purchaseOrderLineSizeId.
+    // to this distributor's own purchaseOrderLineSizeId, and must never
+    // auto-create a MERCHANDISER_REASSIGNMENT to reach it.
     await createReleasedQaStock({ quantity: 1000 });
 
     const token = await createDistributorUser(shortStock.distributorId);
@@ -114,10 +149,17 @@ describe('Sale Orders — create, submit, visibility, authorization', () => {
       { purchaseOrderLineSizeId: shortStock.purchaseOrderLineSizeId, requestedQuantity: 10 },
     ]).expect(201);
 
-    await submitSaleOrder(token, created.body.data.id, created.body.data.version).expect(409);
+    const submitted = await submitSaleOrder(token, created.body.data.id, created.body.data.version).expect(200);
+    expect(submitted.body.data.lines[0].requestedQuantity).toBe(10);
+    const allocations = await prisma.stockAllocation.findMany({
+      where: { saleOrderLineId: submitted.body.data.lines[0].id },
+    });
+    expect(allocations).toHaveLength(1);
+    expect(allocations[0]).toMatchObject({ quantity: 5, allocationSource: 'DISTRIBUTOR_REQUEST' });
+    expect(await prisma.stockAllocation.count({ where: { allocationSource: 'MERCHANDISER_REASSIGNMENT' } })).toBe(0);
   });
 
-  it('excludes stock already committed to another submitted sale order from availability', async () => {
+  it('excludes stock already committed to another submitted sale order from availability, but still allows submission with zero allocation', async () => {
     const stock = await createReleasedQaStock({ quantity: 20 });
     const tokenA = await createDistributorUser(stock.distributorId);
 
@@ -129,9 +171,35 @@ describe('Sale Orders — create, submit, visibility, authorization', () => {
     const orderB = await createDraftSaleOrder(tokenA, stock.distributorId, [
       { purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: 1 },
     ]).expect(201);
-    await submitSaleOrder(tokenA, orderB.body.data.id, orderB.body.data.version).expect(409);
+    const submittedB = await submitSaleOrder(tokenA, orderB.body.data.id, orderB.body.data.version).expect(200);
+    expect(submittedB.body.data.lines[0]).toMatchObject({ requestedQuantity: 1 });
+    expect(submittedB.body.data.lines[0].allocations).toHaveLength(0);
 
+    // Only order A's original allocation is active — order B's demand is
+    // recorded but backs onto no stock.
     expect(await prisma.stockAllocation.count({ where: { status: 'ACTIVE' } })).toBe(1);
+  });
+
+  it('immutably preserves requestedQuantity through submission regardless of how much stock backs it', async () => {
+    const lineSize = await createPurchaseOrderLineSize();
+    const token = await createDistributorUser(lineSize.distributorId);
+    const created = await createDraftSaleOrder(token, lineSize.distributorId, [
+      { purchaseOrderLineSizeId: lineSize.purchaseOrderLineSizeId, requestedQuantity: 30 },
+    ]).expect(201);
+
+    const submitted = await submitSaleOrder(token, created.body.data.id, created.body.data.version).expect(200);
+    const dbLine = await prisma.saleOrderLine.findUniqueOrThrow({ where: { id: submitted.body.data.lines[0].id } });
+    expect(dbLine.requestedQuantity).toBe(30);
+
+    // Attempting to change requestedQuantity post-submission is rejected —
+    // PATCH is only permitted while still DRAFT.
+    await request(app)
+      .patch(`/sale-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ lines: [{ purchaseOrderLineSizeId: lineSize.purchaseOrderLineSizeId, requestedQuantity: 999 }] })
+      .expect(400);
+    const reloaded = await prisma.saleOrderLine.findUniqueOrThrow({ where: { id: submitted.body.data.lines[0].id } });
+    expect(reloaded.requestedQuantity).toBe(30);
   });
 
   it('a distributor cannot view another distributor’s sale order', async () => {
@@ -294,5 +362,73 @@ describe('Sale Orders — create, submit, visibility, authorization', () => {
 
       await request(app).get('/sale-orders/inventory').set('Authorization', `Bearer ${accountantToken}`).expect(403);
     });
+  });
+});
+
+describe('Sale Orders — requestable catalog (demand-request style/size selector)', () => {
+  it('lists a distributor’s own PO line/sizes even with zero QA-released stock, and never leaks another distributor’s catalog', async () => {
+    const ownLineSize = await createPurchaseOrderLineSize();
+    const otherDistributorLineSize = await createPurchaseOrderLineSize();
+    const token = await createDistributorUser(ownLineSize.distributorId);
+
+    const res = await request(app)
+      .get('/sale-orders/requestable-catalog')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ distributorId: ownLineSize.distributorId })
+      .expect(200);
+
+    const ids = new Set((res.body.data as Array<{ purchaseOrderLineSizeId: string }>).map((l) => l.purchaseOrderLineSizeId));
+    expect(ids.has(ownLineSize.purchaseOrderLineSizeId)).toBe(true);
+    expect(ids.has(otherDistributorLineSize.purchaseOrderLineSizeId)).toBe(false);
+  });
+
+  it('includes a distributor’s own PO line/size even when released QA stock already exists for it (catalog is stock-independent)', async () => {
+    const stock = await createReleasedQaStock({ quantity: 50 });
+    const token = await createDistributorUser(stock.distributorId);
+
+    const res = await request(app)
+      .get('/sale-orders/requestable-catalog')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ distributorId: stock.distributorId })
+      .expect(200);
+
+    const line = (res.body.data as Array<Record<string, unknown>>).find(
+      (l) => l.purchaseOrderLineSizeId === stock.purchaseOrderLineSizeId,
+    );
+    expect(line).toBeTruthy();
+  });
+
+  it('never exposes a stock/availability quantity of any kind on the requestable catalog', async () => {
+    const stock = await createReleasedQaStock({ quantity: 50 });
+    const token = await createDistributorUser(stock.distributorId);
+
+    const res = await request(app)
+      .get('/sale-orders/requestable-catalog')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ distributorId: stock.distributorId })
+      .expect(200);
+
+    for (const line of res.body.data as Array<Record<string, unknown>>) {
+      expect(line).not.toHaveProperty('releasedQuantity');
+      expect(line).not.toHaveProperty('committedQuantity');
+      expect(line).not.toHaveProperty('availableQuantity');
+    }
+  });
+
+  it('forbids a distributor from requesting another distributor’s catalog', async () => {
+    const distributorA = await createTestDistributor();
+    const distributorB = await createPurchaseOrderLineSize();
+    const tokenA = await createDistributorUser(distributorA.id);
+
+    const res = await request(app)
+      .get('/sale-orders/requestable-catalog')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .query({ distributorId: distributorB.distributorId })
+      .expect(200);
+
+    // A DISTRIBUTOR's own distributorId is always used server-side — the
+    // query param is ignored for a non-ADMIN caller (matching /eligible-stock).
+    const ids = new Set((res.body.data as Array<{ purchaseOrderLineSizeId: string }>).map((l) => l.purchaseOrderLineSizeId));
+    expect(ids.has(distributorB.purchaseOrderLineSizeId)).toBe(false);
   });
 });

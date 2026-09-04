@@ -8,7 +8,7 @@ import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
-import type { Distributor, EligibleStockLine, SaleOrder } from './types.js';
+import type { Distributor, RequestableCatalogLine, SaleOrder } from './types.js';
 
 export function SaleOrderFormPage() {
   const navigate = useNavigate();
@@ -44,12 +44,12 @@ export function SaleOrderFormPage() {
     },
   });
 
-  const eligibleStockQuery = useQuery({
-    queryKey: ['sale-orders', 'eligible-stock', distributorId],
+  const requestableCatalogQuery = useQuery({
+    queryKey: ['sale-orders', 'requestable-catalog', distributorId],
     enabled: Boolean(distributorId),
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<EligibleStockLine[]>>(
-        '/sale-orders/eligible-stock',
+      const res = await apiClient.get<ApiSuccessResponse<RequestableCatalogLine[]>>(
+        '/sale-orders/requestable-catalog',
         { params: { distributorId } },
       );
       return res.data.data;
@@ -115,7 +115,7 @@ export function SaleOrderFormPage() {
     );
   }
 
-  const stockLines = eligibleStockQuery.data ?? [];
+  const catalogLines = requestableCatalogQuery.data ?? [];
 
   return (
     <div className="space-y-5">
@@ -124,7 +124,7 @@ export function SaleOrderFormPage() {
         subtitle={
           isEdit
             ? 'Update requested quantities while this sale order is still a draft'
-            : 'Request QA-released stock against your own purchase orders'
+            : 'Request the styles/sizes you need against your own purchase orders'
         }
         secondaryActions={
           <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
@@ -168,15 +168,15 @@ export function SaleOrderFormPage() {
             </FormGrid>
           </FormSection>
 
-          <FormSection title="Requested Stock">
+          <FormSection title="Requested Demand">
             {!distributorId ? (
-              <EmptyState title="Select a distributor" description="Choose a distributor to see their QA-released stock." />
-            ) : eligibleStockQuery.isLoading ? (
-              <LoadingState variant="rows" label="Loading available stock" />
-            ) : stockLines.length === 0 ? (
+              <EmptyState title="Select a distributor" description="Choose a distributor to see their orderable styles/sizes." />
+            ) : requestableCatalogQuery.isLoading ? (
+              <LoadingState variant="rows" label="Loading orderable styles/sizes" />
+            ) : catalogLines.length === 0 ? (
               <EmptyState
-                title="No QA-released stock available"
-                description="This distributor has no QA-released stock to request yet."
+                title="No orderable styles/sizes found"
+                description="This distributor has no active purchase order lines to request against."
               />
             ) : (
               <DataTable
@@ -185,24 +185,6 @@ export function SaleOrderFormPage() {
                   { key: 'poNumber', header: 'PO Number', accessor: 'poNumber' },
                   { key: 'styleNumber', header: 'Style', render: (l) => `${l.styleNumber} — ${l.styleName}` },
                   { key: 'sizeLabel', header: 'Size', accessor: 'sizeLabel' },
-                  {
-                    key: 'releasedQuantity',
-                    header: 'QA Released',
-                    align: 'right',
-                    render: (l) => l.releasedQuantity.toLocaleString(),
-                  },
-                  {
-                    key: 'committedQuantity',
-                    header: 'Committed',
-                    align: 'right',
-                    render: (l) => l.committedQuantity.toLocaleString(),
-                  },
-                  {
-                    key: 'availableQuantity',
-                    header: 'Available',
-                    align: 'right',
-                    render: (l) => l.availableQuantity.toLocaleString(),
-                  },
                   {
                     key: 'requestedQuantity',
                     header: 'Requested Qty',
@@ -225,7 +207,7 @@ export function SaleOrderFormPage() {
                     ),
                   },
                 ]}
-                data={stockLines}
+                data={catalogLines}
               />
             )}
           </FormSection>

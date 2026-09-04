@@ -1,6 +1,7 @@
 import type {
   EligibleStockLine,
   GlobalInventoryLine,
+  RequestableCatalogLine,
   SaleOrderAllocationView,
   SaleOrderAuditEntry,
   SaleOrderDetail,
@@ -10,7 +11,7 @@ export type { SaleOrderStatus, StockAllocationSource } from '@erve/types';
 export type SaleOrder = SaleOrderDetail;
 export type SaleOrderLine = SaleOrderLineView;
 export type SaleOrderAllocation = SaleOrderAllocationView;
-export type { EligibleStockLine, GlobalInventoryLine, SaleOrderAuditEntry };
+export type { EligibleStockLine, GlobalInventoryLine, RequestableCatalogLine, SaleOrderAuditEntry };
 
 export interface Distributor {
   id: string;

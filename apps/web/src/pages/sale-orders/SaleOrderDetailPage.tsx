@@ -9,9 +9,24 @@ import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorCode, getApiErrorMessage } from '../../lib/api-errors.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import { canApproveSaleOrders, canManageSaleOrdersAsDistributor } from '../../auth/permissions.js';
+import {
+  canApproveSaleOrders,
+  canManageSaleOrdersAsDistributor,
+  canViewErveDispatches,
+  canViewFactoryDispatches,
+} from '../../auth/permissions.js';
 import { formatDateTime } from '../job-orders/job-order-ui.js';
+import type { ErveDispatchView, FactoryDispatchSummary, PaginatedResult } from '../fulfillment/types.js';
 import type { GlobalInventoryLine, SaleOrder, SaleOrderAuditEntry, SaleOrderLine, SaleOrderStatus } from './types.js';
+
+const FULFILLMENT_STAGE_LABELS: Record<string, string> = {
+  NOT_APPLICABLE: 'Not applicable',
+  AWAITING_FACTORY_PACKING: 'Awaiting Factory packing',
+  PARTIALLY_FACTORY_PACKED: 'Partially Factory packed',
+  READY_FOR_ERVE_PACKING: 'Ready for Erve consolidation',
+  PARTIALLY_DISPATCHED: 'Partially dispatched',
+  DISPATCHED_IN_FULL: 'Dispatched in full',
+};
 
 const STATUS_LABELS: Record<SaleOrderStatus, string> = {
   DRAFT: 'Draft',
@@ -20,6 +35,7 @@ const STATUS_LABELS: Record<SaleOrderStatus, string> = {
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
   CANCELLED: 'Cancelled',
+  FULFILLED: 'Fulfilled',
 };
 
 function statusTone(status: SaleOrderStatus) {
@@ -28,6 +44,7 @@ function statusTone(status: SaleOrderStatus) {
   if (status === 'UNDER_REVIEW') return 'pending';
   if (status === 'APPROVED') return 'approved';
   if (status === 'REJECTED') return 'rejected';
+  if (status === 'FULFILLED') return 'approved';
   return 'cancelled';
 }
 
@@ -63,6 +80,8 @@ export function SaleOrderDetailPage() {
 
   const canReview = canApproveSaleOrders(user);
   const canManageAsDistributor = canManageSaleOrdersAsDistributor(user);
+  const canSeeFactoryDispatches = canViewFactoryDispatches(user);
+  const canSeeErveDispatches = canViewErveDispatches(user);
 
   const soQuery = useQuery({
     queryKey: ['sale-order', id],
@@ -89,6 +108,30 @@ export function SaleOrderDetailPage() {
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<SaleOrderAuditEntry[]>>(`/sale-orders/${id}/audit`);
       return res.data.data;
+    },
+  });
+
+  const showFulfillmentRecords = !!so && so.fulfillment.stage !== 'NOT_APPLICABLE';
+
+  const factoryDispatchesQuery = useQuery({
+    queryKey: ['factory-dispatches', 'for-sale-order', id],
+    enabled: canSeeFactoryDispatches && showFulfillmentRecords,
+    queryFn: async () => {
+      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<FactoryDispatchSummary>>>('/factory-dispatches', {
+        params: { saleOrderId: id, limit: 50 },
+      });
+      return res.data.data.items;
+    },
+  });
+
+  const erveDispatchesQuery = useQuery({
+    queryKey: ['erve-dispatches', 'for-sale-order', id],
+    enabled: canSeeErveDispatches && showFulfillmentRecords,
+    queryFn: async () => {
+      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<ErveDispatchView>>>('/erve-dispatches', {
+        params: { saleOrderId: id, limit: 50 },
+      });
+      return res.data.data.items;
     },
   });
 
@@ -330,6 +373,15 @@ export function SaleOrderDetailPage() {
           <DescriptionList.Item label="Reviewed By" value={so.reviewedBy?.name} />
           <DescriptionList.Item label="Remarks" value={so.remarks} span={2} />
           {so.decisionReason && <DescriptionList.Item label="Decision Reason" value={so.decisionReason} span={2} />}
+          {so.fulfilledAt && (
+            <>
+              <DescriptionList.Item label="Fulfilled By" value={so.fulfilledBy?.name} />
+              <DescriptionList.Item label="Fulfilled At" value={formatDateTime(so.fulfilledAt)} />
+              {so.fulfillmentReference && (
+                <DescriptionList.Item label="Fulfillment Reference" value={so.fulfillmentReference} span={2} />
+              )}
+            </>
+          )}
         </DescriptionList>
       </Panel>
 
@@ -345,6 +397,87 @@ export function SaleOrderDetailPage() {
           ]}
         />
       </Panel>
+
+      {so.fulfillment.stage !== 'NOT_APPLICABLE' && (
+        <Panel
+          title="Fulfillment Progress"
+          actions={
+            <StatusBadge
+              label={FULFILLMENT_STAGE_LABELS[so.fulfillment.stage] ?? so.fulfillment.stage}
+              tone={so.fulfillment.stage === 'DISPATCHED_IN_FULL' ? 'approved' : 'pending'}
+            />
+          }
+        >
+          {so.fulfillment.isLegacyFulfilled ? (
+            <ValidationMessage tone="info">
+              This order was marked Fulfilled under the previous manual process, before physical packing/dispatch
+              tracking existed — no Factory or Erve dispatch history is available for it.
+            </ValidationMessage>
+          ) : (
+            <TotalsPanel
+              items={[
+                { label: 'Approved', value: so.fulfillment.totalApprovedQuantity.toLocaleString() },
+                { label: 'Factory Packed', value: so.fulfillment.totalFactoryPackedQuantity.toLocaleString() },
+                { label: 'Dispatched', value: so.fulfillment.totalDispatchedQuantity.toLocaleString() },
+                {
+                  label: 'Remaining to Dispatch',
+                  value: (so.fulfillment.totalApprovedQuantity - so.fulfillment.totalDispatchedQuantity).toLocaleString(),
+                  tone: so.fulfillment.totalDispatchedQuantity < so.fulfillment.totalApprovedQuantity ? 'warning' : 'default',
+                },
+              ]}
+            />
+          )}
+        </Panel>
+      )}
+
+      {(canSeeFactoryDispatches || canSeeErveDispatches) && so.fulfillment.stage !== 'NOT_APPLICABLE' && (
+        <Panel title="Factory Packing & Dispatch Records">
+          <div className="space-y-4">
+            {canSeeFactoryDispatches && (
+              <div>
+                <div className="mb-2 text-sm font-medium text-muted-foreground">Factory Dispatches</div>
+                {(factoryDispatchesQuery.data ?? []).length === 0 ? (
+                  <div className="text-sm text-muted-foreground">None yet.</div>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {factoryDispatchesQuery.data!.map((fd) => (
+                      <li key={fd.id}>
+                        <Link className="text-link hover:underline" to={`/fulfillment/factory-dispatches/${fd.id}`}>
+                          {fd.factoryDispatchNumber}
+                        </Link>{' '}
+                        — {fd.factory.name} — {fd.totalPackedQuantity} unit(s) —{' '}
+                        {fd.status === 'READY_FOR_ERVE' ? 'Ready for Erve' : 'Draft'}
+                        {fd.consolidated ? ' (consolidated)' : ''}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            {canSeeErveDispatches && (
+              <div>
+                <div className="mb-2 text-sm font-medium text-muted-foreground">Erve Dispatches</div>
+                {(erveDispatchesQuery.data ?? []).length === 0 ? (
+                  <div className="text-sm text-muted-foreground">None yet.</div>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {erveDispatchesQuery.data!.map((ed) => (
+                      <li key={ed.id}>
+                        <Link className="text-link hover:underline" to={`/fulfillment/erve-dispatches/${ed.id}`}>
+                          {ed.erveDispatchNumber}
+                        </Link>{' '}
+                        — {new Date(ed.dispatchDate).toLocaleDateString()} — {ed.totalQuantity} unit(s)
+                        {ed.transporter ? ` — ${ed.transporter}` : ''}
+                        {ed.lrNumber ? ` — LR ${ed.lrNumber}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        </Panel>
+      )}
 
       <Panel title="Lines" padding="none">
         <div className="divide-y divide-border-subtle">

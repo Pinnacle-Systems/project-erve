@@ -7,6 +7,7 @@ export const saleOrderStatusSchema = z.enum([
   'APPROVED',
   'REJECTED',
   'CANCELLED',
+  'FULFILLED',
 ]);
 
 const createLineSchema = z.object({

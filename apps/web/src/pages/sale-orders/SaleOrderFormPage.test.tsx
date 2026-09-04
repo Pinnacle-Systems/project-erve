@@ -62,7 +62,7 @@ const draftSaleOrder = {
   version: 1,
 };
 
-const eligibleStockLine = {
+const requestableCatalogLine = {
   purchaseOrderLineSizeId: 'pols-1',
   purchaseOrderId: 'po-1',
   poNumber: 'EIPO/26-27/0001',
@@ -72,9 +72,6 @@ const eligibleStockLine = {
   sizeId: 'size-1',
   sizeCode: 'M',
   sizeLabel: 'M',
-  releasedQuantity: 50,
-  committedQuantity: 15,
-  availableQuantity: 35,
 };
 
 let container: HTMLDivElement;
@@ -91,6 +88,10 @@ beforeEach(() => {
     },
   );
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -121,8 +122,8 @@ function editAdapter(overrides: AdapterOverrides = {}): AxiosAdapter {
     if (config.url === '/sale-orders/so-1' && config.method === 'get') {
       return ok(config, { success: true, data: draftSaleOrder });
     }
-    if (config.url === '/sale-orders/eligible-stock' && config.method === 'get') {
-      return ok(config, { success: true, data: [eligibleStockLine] });
+    if (config.url === '/sale-orders/requestable-catalog' && config.method === 'get') {
+      return ok(config, { success: true, data: [requestableCatalogLine] });
     }
     if (config.url === '/distributors' && config.method === 'get') {
       overrides.distributorsCalls?.push(1);
@@ -179,7 +180,7 @@ describe('SaleOrderFormPage edit hydration', () => {
     );
     expect(distributorInput).toBeTruthy();
     expect(container.textContent).not.toContain('Select a distributor');
-    expect(container.textContent).not.toContain('No QA-released stock available');
+    expect(container.textContent).not.toContain('No orderable styles/sizes found');
     expect(qtyInput().value).toBe('15');
 
     const remarksInput = Array.from(container.querySelectorAll('input')).find(
@@ -212,6 +213,116 @@ describe('SaleOrderFormPage edit hydration', () => {
     await flush();
 
     expect(patchedQuantity).toBe(22);
+    expect(container.textContent).toContain('Sale Order Detail Page');
+  });
+});
+
+function createAdapter(overrides: { post?: AxiosAdapter } = {}): AxiosAdapter {
+  return (async (config: InternalAxiosRequestConfig) => {
+    if (config.url === '/distributors' && config.method === 'get') {
+      return ok(config, { success: true, data: [distributor] });
+    }
+    if (config.url === '/sale-orders/requestable-catalog' && config.method === 'get') {
+      return ok(config, { success: true, data: [requestableCatalogLine] });
+    }
+    if (config.url === '/sale-orders' && config.method === 'post') {
+      return overrides.post
+        ? overrides.post(config)
+        : ok(config, { success: true, data: { ...draftSaleOrder, id: 'so-2' } });
+    }
+    throw new Error(`Unexpected request: ${config.method} ${config.url}`);
+  }) as AxiosAdapter;
+}
+
+async function renderCreatePage(adapter: AxiosAdapter): Promise<void> {
+  apiClient.defaults.adapter = adapter;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  await act(async () => {
+    root.render(
+      <MemoryRouter initialEntries={['/sale-orders/new']}>
+        <QueryClientProvider client={queryClient}>
+          <Routes>
+            <Route path="/sale-orders/new" element={<SaleOrderFormPage />} />
+            <Route path="/sale-orders/:id" element={<div>Sale Order Detail Page</div>} />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  });
+  await flush();
+  await flush();
+}
+
+function triggerByLabel(labelText: string): HTMLButtonElement {
+  const label = Array.from(container.querySelectorAll('label')).find((el) => el.textContent === labelText);
+  if (!label) throw new Error(`Label "${labelText}" not found`);
+  const id = label.getAttribute('for');
+  const el = id ? (document.getElementById(id) as HTMLButtonElement | null) : null;
+  if (!el) throw new Error(`Trigger for "${labelText}" not found`);
+  return el;
+}
+
+// Radix Select renders its option list in a body-level portal, not inside
+// `container` — query document.body, not container, for [role="option"].
+async function selectOption(labelText: string, optionText: string): Promise<void> {
+  await act(async () => triggerByLabel(labelText).click());
+  const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (item) => item.textContent?.trim() === optionText,
+  );
+  if (!option) throw new Error(`Option "${optionText}" not found for "${labelText}"`);
+  await act(async () => option.click());
+}
+
+function createSubmitButton(): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Create Sale Order');
+  if (!button) throw new Error('Create Sale Order button not found');
+  return button;
+}
+
+// The distributor demand-request enhancement: a Distributor with zero (or
+// insufficient) own QA-released stock must still be able to open the create
+// form, see their orderable styles/sizes (sourced from their own PO
+// line/sizes via the requestable-catalog endpoint, never from
+// QaReleaseLine/eligible-stock), and submit a quantity with no
+// stock-availability number shown anywhere on the page.
+describe('SaleOrderFormPage create — demand request without stock', () => {
+  it('shows the requestable catalog once a distributor is selected, with no stock/availability quantity anywhere', async () => {
+    await renderCreatePage(createAdapter());
+    await selectOption('Distributor', 'Acme Distribution');
+    await flush();
+
+    expect(container.textContent).toContain('ST-001');
+    expect(container.textContent).toContain('Classic Tee');
+    // No own-stock or central-stock figure is shown — the catalog carries no
+    // quantity field at all, matching the demand-oriented UX (Style/Size/
+    // Requested quantity only).
+    expect(container.textContent).not.toContain('QA Released');
+    expect(container.textContent).not.toContain('Committed');
+    expect(container.textContent).not.toContain('Available');
+    expect(container.textContent).not.toContain('No orderable styles/sizes found');
+  });
+
+  it('lets a distributor enter and submit a requested quantity with no stock backing it', async () => {
+    let posted: { distributorId?: string; lines?: { requestedQuantity: number }[] } | undefined;
+    await renderCreatePage(
+      createAdapter({
+        post: async (config) => {
+          posted = JSON.parse(config.data as string);
+          return ok(config, { success: true, data: { ...draftSaleOrder, id: 'so-2' } });
+        },
+      }),
+    );
+    await selectOption('Distributor', 'Acme Distribution');
+    await flush();
+
+    setInputValue(qtyInput(), '999');
+    await act(async () => createSubmitButton().click());
+    await flush();
+
+    expect(posted?.distributorId).toBe(distributor.id);
+    expect(posted?.lines?.[0]).toMatchObject({ requestedQuantity: 999 });
     expect(container.textContent).toContain('Sale Order Detail Page');
   });
 });

@@ -1,5 +1,6 @@
-import type { EligibleStockLine, GlobalInventoryLine } from '@erve/types';
+import type { EligibleStockLine, GlobalInventoryLine, RequestableCatalogLine } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
+import { PURCHASE_ORDER_STATUSES_INELIGIBLE_FOR_DOWNSTREAM_DEMAND } from '../purchase-orders/purchase-order-eligibility.js';
 
 type Client = Prisma.TransactionClient | typeof prisma;
 
@@ -47,6 +48,65 @@ export async function getAvailableQuantities(
     });
   }
   return result;
+}
+
+// The requestable catalog for a Sale Order create/edit form: every ACTIVE
+// PO line/size owned by this distributor, whose parent Purchase Order is
+// itself eligible for downstream demand (see purchase-order-eligibility.ts —
+// excludes DRAFT/CANCELLED/CLOSED parents), independent of whether any
+// QA-released stock exists for it yet. A Sale Order is a demand request
+// (see SaleOrderLine.requestedQuantity), not a reservation against existing
+// inventory — so, unlike getEligibleStockForDistributor below, this is
+// sourced from DistributorPurchaseOrderLineSize directly (the same
+// authoritative master data SaleOrderLine.purchaseOrderLineSizeId already
+// references) and deliberately carries no stock/quantity field. This
+// eligibility rule must stay identical to validateSaleOrderLines in
+// sale-orders.service.ts — both share the same isPurchaseOrderEligibleForDownstreamDemand
+// predicate/constant so a client can never bypass the catalog by supplying a
+// line/size id directly.
+export async function getRequestableCatalogForDistributor(
+  distributorId: string,
+): Promise<RequestableCatalogLine[]> {
+  const sizes = await prisma.distributorPurchaseOrderLineSize.findMany({
+    where: {
+      purchaseOrderLine: {
+        lineStatus: 'ACTIVE',
+        purchaseOrder: {
+          distributorId,
+          status: { notIn: [...PURCHASE_ORDER_STATUSES_INELIGIBLE_FOR_DOWNSTREAM_DEMAND] },
+        },
+      },
+    },
+    select: {
+      id: true,
+      sizeId: true,
+      size: { select: { code: true, label: true } },
+      purchaseOrderLine: {
+        select: {
+          purchaseOrderId: true,
+          styleId: true,
+          style: { select: { styleNumber: true, styleName: true } },
+          purchaseOrder: { select: { poNumber: true } },
+        },
+      },
+    },
+    orderBy: [{ purchaseOrderLine: { purchaseOrder: { poNumber: 'asc' } } }, { size: { sortOrder: 'asc' } }],
+  });
+
+  return sizes.map((pols) => {
+    const pol = pols.purchaseOrderLine;
+    return {
+      purchaseOrderLineSizeId: pols.id,
+      purchaseOrderId: pol.purchaseOrderId,
+      poNumber: pol.purchaseOrder.poNumber,
+      styleId: pol.styleId,
+      styleNumber: pol.style.styleNumber,
+      styleName: pol.style.styleName,
+      sizeId: pols.sizeId,
+      sizeCode: pols.size.code,
+      sizeLabel: pols.size.label,
+    };
+  });
 }
 
 // A distributor's own available-to-request stock, aggregated to the PO

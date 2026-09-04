@@ -9,12 +9,16 @@ import { HttpError } from '../../errors/http-error.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
+import { isPurchaseOrderEligibleForDownstreamDemand } from '../purchase-orders/purchase-order-eligibility.js';
 import {
   getAvailableQuantities,
   getEligibleStockForDistributor,
   getGlobalInventory,
   getReleaseLineDistributorIds,
+  getRequestableCatalogForDistributor,
 } from './inventory.service.js';
+import { computeSaleOrderFulfillmentProgress } from '../fulfillment/fulfillment-progress.js';
+import { hardDeleteFactoryDispatches } from '../fulfillment/factory-dispatch.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -54,6 +58,7 @@ const soInclude = {
   distributor: { select: { id: true, code: true, name: true } },
   creator: { select: { id: true, name: true, email: true } },
   reviewedBy: { select: { id: true, name: true, email: true } },
+  fulfilledBy: { select: { id: true, name: true, email: true } },
   financialYear: { select: { id: true, code: true } },
   lines: {
     include: {
@@ -171,9 +176,15 @@ function toLineView(line: SOLineRecord, includeFullProvenance: boolean) {
   };
 }
 
-function toSaleOrderView(order: SORecord, viewer: CurrentUser) {
+async function toSaleOrderView(order: SORecord, viewer: CurrentUser) {
   const includeFullProvenance = canViewAllSaleOrders(viewer);
   const lines = order.lines.map((line) => toLineView(line, includeFullProvenance));
+  const fulfillment = await computeSaleOrderFulfillmentProgress(
+    prisma,
+    order.id,
+    { status: order.status },
+    order.lines.map((line) => ({ id: line.id, approvedQuantity: line.approvedQuantity })),
+  );
   return {
     id: order.id,
     saleOrderNumber: order.saleOrderNumber,
@@ -183,9 +194,12 @@ function toSaleOrderView(order: SORecord, viewer: CurrentUser) {
     status: order.status,
     creator: order.creator,
     reviewedBy: order.reviewedBy,
+    fulfilledBy: order.fulfilledBy,
     remarks: order.remarks,
     submittedAt: order.submittedAt?.toISOString() ?? null,
     reviewedAt: order.reviewedAt?.toISOString() ?? null,
+    fulfilledAt: order.fulfilledAt?.toISOString() ?? null,
+    fulfillmentReference: order.fulfillmentReference,
     decisionReason: order.decisionReason,
     lines,
     totalRequestedQuantity: lines.reduce((sum, line) => sum + line.requestedQuantity, 0),
@@ -193,6 +207,7 @@ function toSaleOrderView(order: SORecord, viewer: CurrentUser) {
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
     version: order.version,
+    fulfillment,
   };
 }
 
@@ -301,7 +316,9 @@ async function validateSaleOrderLines(
 
   const sizes = await prisma.distributorPurchaseOrderLineSize.findMany({
     where: { id: { in: ids } },
-    include: { purchaseOrderLine: { include: { purchaseOrder: { select: { distributorId: true } } } } },
+    include: {
+      purchaseOrderLine: { include: { purchaseOrder: { select: { distributorId: true, status: true } } } },
+    },
   });
   const foundIds = new Set(sizes.map((size) => size.id));
   for (const id of ids) {
@@ -312,6 +329,18 @@ async function validateSaleOrderLines(
       throw HttpError.badRequest(
         `Purchase order line/size ${size.id} does not belong to this distributor's purchase orders`,
       );
+    }
+    // Mirrors getRequestableCatalogForDistributor's filtering exactly — a
+    // client must never be able to bypass the requestable-catalog UI by
+    // supplying a line/size id directly whose lineStatus is CANCELLED or
+    // whose parent PO is DRAFT/CANCELLED/CLOSED (see
+    // purchase-order-eligibility.ts). Deliberately a single generic message:
+    // it must not reveal to the caller which of the two reasons applied.
+    if (
+      size.purchaseOrderLine.lineStatus !== 'ACTIVE' ||
+      !isPurchaseOrderEligibleForDownstreamDemand(size.purchaseOrderLine.purchaseOrder.status)
+    ) {
+      throw HttpError.badRequest(`Purchase order line/size ${size.id} is not available for Sale Order requests`);
     }
   }
 }
@@ -353,7 +382,7 @@ export async function getSaleOrderList(
   const hasMore = orders.length > filters.limit;
   const page = hasMore ? orders.slice(0, filters.limit) : orders;
   return {
-    items: page.map((order) => toSaleOrderView(order, user)),
+    items: await Promise.all(page.map((order) => toSaleOrderView(order, user))),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }
@@ -378,6 +407,7 @@ const SALE_ORDER_AUDIT_TITLES: Record<string, string> = {
   SALE_ORDER_LINE_APPROVED: 'Line Approved',
   SALE_ORDER_REJECTED: 'Rejected',
   SALE_ORDER_CANCELLED: 'Cancelled',
+  SALE_ORDER_FULFILLED: 'Fulfilled',
 };
 
 function sentenceCaseAction(action: string): string {
@@ -602,6 +632,11 @@ export async function getSaleOrderAuditHistory(user: CurrentUser, id: string) {
         detail = describeCancellation(metadata);
         break;
       }
+      case 'SALE_ORDER_FULFILLED': {
+        const reference = nonEmptyString(metadata.fulfillmentReference);
+        detail = reference ? `Reference: ${reference}` : null;
+        break;
+      }
       default:
         detail = null;
     }
@@ -768,6 +803,39 @@ export async function submitSaleOrder(
     if (order.lines.length === 0)
       throw HttpError.badRequest('A sale order must have at least one line to submit');
 
+    // Re-validate parent Purchase Order eligibility — validateSaleOrderLines
+    // already enforced this when each line was created/edited, but the PO
+    // could have been cancelled since (or, without this lock, concurrently
+    // with this very submission). The purchase-order-{id} advisory lock
+    // acquired below is the exact key cancelPurchaseOrder acquires (see
+    // purchase-orders.service.ts), so the two transactions serialize against
+    // each other and can never race to leave PO=CANCELLED + SO=SUBMITTED —
+    // whichever gets there first commits, and the other then sees the
+    // now-consistent state and fails its own check.
+    const lineSizes = await tx.distributorPurchaseOrderLineSize.findMany({
+      where: { id: { in: order.lines.map((line) => line.purchaseOrderLineSizeId) } },
+      select: { id: true, purchaseOrderLine: { select: { lineStatus: true, purchaseOrderId: true } } },
+    });
+    const purchaseOrderIds = [...new Set(lineSizes.map((ls) => ls.purchaseOrderLine.purchaseOrderId))].sort();
+    for (const purchaseOrderId of purchaseOrderIds) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`purchase-order-${purchaseOrderId}`}))`;
+    }
+    const purchaseOrders = await tx.distributorPurchaseOrder.findMany({
+      where: { id: { in: purchaseOrderIds } },
+      select: { id: true, status: true },
+    });
+    const purchaseOrderStatusById = new Map(purchaseOrders.map((po) => [po.id, po.status]));
+    for (const lineSize of lineSizes) {
+      const poStatus = purchaseOrderStatusById.get(lineSize.purchaseOrderLine.purchaseOrderId);
+      if (
+        lineSize.purchaseOrderLine.lineStatus !== 'ACTIVE' ||
+        !poStatus ||
+        !isPurchaseOrderEligibleForDownstreamDemand(poStatus)
+      ) {
+        throw HttpError.badRequest(`Purchase order line/size ${lineSize.id} is not available for Sale Order requests`);
+      }
+    }
+
     // Candidates are restricted to THIS distributor's own released stock —
     // a QaReleaseLine's purchaseOrderLineSizeId already belongs to a PO
     // owned by this distributor by construction (validated at line-creation
@@ -791,6 +859,16 @@ export async function submitSaleOrder(
     }
     const availability = await getAvailableQuantities(tx, releaseLineIds);
 
+    // A Sale Order line is a demand request, not a reservation — submission
+    // must never fail for lack of stock (Distributors may legitimately have
+    // zero, or less than requested, own released stock at request time; the
+    // Merchandiser is the authoritative fulfilment decision-maker, see
+    // approveSaleOrder below). So this best-effort opportunistically reserves
+    // whatever of the distributor's OWN released stock happens to already be
+    // available — a courtesy head start on approval, nothing more — and
+    // simply leaves any shortfall unallocated rather than rejecting the
+    // submission. A line may therefore end up SUBMITTED with allocations
+    // totalling anywhere from 0 up to requestedQuantity.
     const plannedAllocations: Array<{ saleOrderLineId: string; qaReleaseLineId: string; quantity: number }> = [];
     for (const line of order.lines) {
       let remaining = line.requestedQuantity;
@@ -802,14 +880,6 @@ export async function submitSaleOrder(
         availabilityRow.available -= consume;
         remaining -= consume;
         plannedAllocations.push({ saleOrderLineId: line.id, qaReleaseLineId: releaseLineId, quantity: consume });
-      }
-      // All-or-nothing across every line — a SUBMITTED order's
-      // DISTRIBUTOR_REQUEST allocations always sum to exactly
-      // requestedQuantity, which simplifies the approve reduction logic.
-      if (remaining > 0) {
-        throw HttpError.conflict(
-          `Insufficient QA-released stock available for line ${line.id} — short by ${remaining} unit(s)`,
-        );
       }
     }
 
@@ -961,6 +1031,34 @@ export async function cancelSaleOrder(
     if (!cancellableStatuses.includes(order.status))
       throw HttpError.badRequest(`Sale order in status ${order.status} cannot be cancelled`);
 
+    // Physical fulfillment guard (see the fulfillment schema module doc): once
+    // any quantity has actually left Erve India for the Distributor, this is
+    // no longer a reversible commercial decision — reversal is future
+    // returns/reverse-logistics scope, not a cancellation. A finalized
+    // (READY_FOR_ERVE) Factory Dispatch is treated as the same kind of
+    // material handoff and is likewise never silently deleted; only
+    // still-editable DRAFT Factory Dispatches (abandoned below) don't block.
+    if (order.status === 'APPROVED') {
+      const erveDispatchCount = await tx.erveDispatch.count({ where: { saleOrderId: id } });
+      if (erveDispatchCount > 0) {
+        throw HttpError.badRequest(
+          'Sale order cannot be cancelled: goods have already been dispatched to the distributor',
+        );
+      }
+      const finalizedFactoryDispatchCount = await tx.factoryDispatch.count({
+        where: { saleOrderId: id, status: 'READY_FOR_ERVE' },
+      });
+      if (finalizedFactoryDispatchCount > 0) {
+        throw HttpError.badRequest(
+          'Sale order cannot be cancelled: finalized Factory packing already exists for this order',
+        );
+      }
+    }
+    const draftFactoryDispatchIds = (
+      await tx.factoryDispatch.findMany({ where: { saleOrderId: id, status: 'DRAFT' }, select: { id: true } })
+    ).map((d) => d.id);
+    const abandonedFactoryDispatchCount = await hardDeleteFactoryDispatches(tx, draftFactoryDispatchIds);
+
     const releasedAllocationCount = await releaseAllActiveAllocations(tx, id, actor.id);
     const updated = await tx.saleOrder.updateMany({
       where: { id, version: input.expectedVersion },
@@ -974,7 +1072,12 @@ export async function cancelSaleOrder(
         action: 'SALE_ORDER_CANCELLED',
         entityType: 'SaleOrder',
         entityId: id,
-        metadata: { reason: input.reason ?? null, previousStatus: order.status, releasedAllocationCount },
+        metadata: {
+          reason: input.reason ?? null,
+          previousStatus: order.status,
+          releasedAllocationCount,
+          abandonedFactoryDispatchCount,
+        },
       },
       tx,
     );
@@ -1022,6 +1125,25 @@ export async function approveSaleOrder(
     if (order.version !== input.expectedVersion) throw HttpError.staleVersion(order.version);
     if (!ACTIVE_REVIEW_STATUSES.includes(order.status))
       throw HttpError.badRequest(`Sale order in status ${order.status} cannot be approved`);
+
+    // Defense in depth: cancelPurchaseOrder now refuses to cancel a PO while
+    // this Sale Order is SUBMITTED/UNDER_REVIEW/APPROVED, and submitSaleOrder
+    // re-checks eligibility at submission — so this should be unreachable in
+    // practice. It still guards approval, the authoritative stock-commitment
+    // point, against legacy records, manual data edits, or a future
+    // lifecycle change that might otherwise let it slip through.
+    const linePurchaseOrders = await tx.distributorPurchaseOrderLineSize.findMany({
+      where: { id: { in: order.lines.map((line) => line.purchaseOrderLineSizeId) } },
+      select: { purchaseOrderLine: { select: { purchaseOrder: { select: { status: true } } } } },
+    });
+    const hasIneligiblePurchaseOrder = linePurchaseOrders.some(
+      (lineSize) => !isPurchaseOrderEligibleForDownstreamDemand(lineSize.purchaseOrderLine.purchaseOrder.status),
+    );
+    if (hasIneligiblePurchaseOrder) {
+      throw HttpError.badRequest(
+        'Sale order cannot be approved because one or more referenced purchase orders are no longer valid',
+      );
+    }
 
     const linesById = new Map(order.lines.map((line) => [line.id, line]));
     for (const decision of input.lines) {
@@ -1220,6 +1342,17 @@ export async function approveSaleOrder(
   return getSaleOrderDetail(actor, id);
 }
 
+// The old manual "Mark Fulfilled" action (arbitrary free-text reference, no
+// quantity/line tracking) has been retired for the physical Factory Packing
+// -> Erve Consolidation -> Dispatch workflow — see erve-dispatch.service.ts
+// recordErveDispatch, which is now the only path that sets status FULFILLED,
+// automatically, once every approved line's cumulative dispatched quantity
+// equals its approved quantity. Sale Orders already FULFILLED via the old
+// action before this milestone remain readable as legacy records (see
+// SaleOrderFulfillmentSummary.isLegacyFulfilled) — their fulfilledBy/At/
+// fulfillmentReference fields are preserved as-is and never backfilled with
+// fabricated Dispatch history.
+
 // ---------------------------------------------------------------------------
 // Inventory views
 // ---------------------------------------------------------------------------
@@ -1230,6 +1363,19 @@ export async function getEligibleStock(user: CurrentUser, distributorId?: string
     : getSoleDistributorId(user);
   if (!targetDistributorId) throw HttpError.badRequest('distributorId is required');
   return getEligibleStockForDistributor(targetDistributorId);
+}
+
+// Powers the Sale Order create/edit form's style/size selector. Unlike
+// getEligibleStock above, this is intentionally not stock-derived — a
+// distributor may request a style/size before any QA-released stock exists
+// for it, so the selector must be driven by their own PO line/size master
+// data, not by QaReleaseLine rows.
+export async function getRequestableCatalog(user: CurrentUser, distributorId?: string) {
+  const targetDistributorId = user.roles.includes('ADMIN')
+    ? (distributorId ?? (user.distributorIds.length === 1 ? user.distributorIds[0]! : undefined))
+    : getSoleDistributorId(user);
+  if (!targetDistributorId) throw HttpError.badRequest('distributorId is required');
+  return getRequestableCatalogForDistributor(targetDistributorId);
 }
 
 export async function getGlobalInventoryView(

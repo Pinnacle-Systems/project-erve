@@ -19,6 +19,7 @@ const STATUS_LABELS: Record<SaleOrderStatus, string> = {
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
   CANCELLED: 'Cancelled',
+  FULFILLED: 'Fulfilled',
 };
 
 function formatDate(iso: string) {
@@ -31,6 +32,7 @@ function statusTone(status: SaleOrderStatus) {
   if (status === 'UNDER_REVIEW') return 'pending';
   if (status === 'APPROVED') return 'approved';
   if (status === 'REJECTED') return 'rejected';
+  if (status === 'FULFILLED') return 'approved';
   return 'cancelled';
 }
 

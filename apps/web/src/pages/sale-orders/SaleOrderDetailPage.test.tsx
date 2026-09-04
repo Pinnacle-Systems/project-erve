@@ -43,10 +43,31 @@ function buildSaleOrder(status: SaleOrderStatus): SaleOrder {
     version: 3,
     creator: { id: 'dist-user-1', name: 'Distributor User', email: 'distributor@test.local' },
     reviewedBy: { id: 'merch-1', name: 'Merchandiser', email: 'merch@test.local' },
+    fulfilledBy: null,
     remarks: null,
     submittedAt: '2026-06-30T00:00:00.000Z',
     reviewedAt: '2026-06-30T00:00:00.000Z',
+    fulfilledAt: null,
+    fulfillmentReference: null,
     decisionReason: null,
+    fulfillment:
+      status === 'APPROVED' || status === 'FULFILLED'
+        ? {
+            stage: status === 'FULFILLED' ? 'DISPATCHED_IN_FULL' : 'AWAITING_FACTORY_PACKING',
+            totalApprovedQuantity: 40,
+            totalFactoryPackedQuantity: 0,
+            totalDispatchedQuantity: status === 'FULFILLED' ? 40 : 0,
+            lines: [],
+            isLegacyFulfilled: false,
+          }
+        : {
+            stage: 'NOT_APPLICABLE',
+            totalApprovedQuantity: 0,
+            totalFactoryPackedQuantity: 0,
+            totalDispatchedQuantity: 0,
+            lines: [],
+            isLegacyFulfilled: false,
+          },
     lines: [
       {
         id: 'line-1',
@@ -134,6 +155,8 @@ async function renderPage(order: SaleOrder, auditEntries: SaleOrderAuditEntry[] 
     if (url === `/sale-orders/${order.id}`) return { data: { data: order } };
     if (url === '/sale-orders/inventory') return { data: { data: [] } };
     if (url === `/sale-orders/${order.id}/audit`) return { data: { data: auditEntries } };
+    if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 50, hasMore: false, nextCursor: null } } } };
+    if (url === '/erve-dispatches') return { data: { data: { items: [], pageInfo: { limit: 50, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected GET: ${url}`);
   });
 

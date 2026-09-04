@@ -3,7 +3,12 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { createReleasedQaStock, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import {
+  createPurchaseOrderLineSize,
+  createReleasedQaStock,
+  createTestUserAndToken,
+  resetDatabase,
+} from '../../test/helpers.js';
 
 const app = createApp();
 beforeEach(resetDatabase);
@@ -51,6 +56,30 @@ async function createSubmittedSaleOrder(requestedQuantity: number, releasedQuant
   return { stock, distributorToken, saleOrder: submitted.body.data };
 }
 
+// Builds a SUBMITTED sale order for a distributor with NO QA-released stock
+// behind the line at all — the demand-request scenario: requestedQuantity >
+// 0, allocations = 0, entering review purely on the Merchandiser's decision.
+async function createSubmittedSaleOrderWithNoStock(requestedQuantity: number) {
+  const lineSize = await createPurchaseOrderLineSize();
+  const distributorToken = await createDistributorUser(lineSize.distributorId);
+  const created = await request(app)
+    .post('/sale-orders')
+    .set('Authorization', `Bearer ${distributorToken}`)
+    .send({
+      distributorId: lineSize.distributorId,
+      soDate: '2026-06-30',
+      lines: [{ purchaseOrderLineSizeId: lineSize.purchaseOrderLineSizeId, requestedQuantity }],
+    })
+    .expect(201);
+  const submitted = await request(app)
+    .post(`/sale-orders/${created.body.data.id}/actions/submit`)
+    .set('Authorization', `Bearer ${distributorToken}`)
+    .set('Idempotency-Key', createId())
+    .send({ expectedVersion: created.body.data.version })
+    .expect(200);
+  return { lineSize, distributorToken, saleOrder: submitted.body.data };
+}
+
 function approve(token: string, id: string, body: object, key = createId()) {
   return request(app)
     .post(`/sale-orders/${id}/actions/approve`)
@@ -78,6 +107,56 @@ describe('Sale Order approval', () => {
 
     const auditActions = await prisma.auditLog.findMany({ where: { entityId: line.id } });
     expect(auditActions.some((a) => a.action === 'SALE_ORDER_LINE_APPROVED')).toBe(true);
+  });
+
+  it('reviews and approves a submitted line that has zero allocations, sourcing the full amount fresh at approval time', async () => {
+    const { lineSize, saleOrder } = await createSubmittedSaleOrderWithNoStock(40);
+    const line = saleOrder.lines[0];
+    expect(line.allocations).toHaveLength(0);
+
+    // Stock only shows up after submission — the Merchandiser is the one who
+    // discovers/allocates it, never the distributor at submit time.
+    const stock = await createReleasedQaStock({
+      quantity: 40,
+      distributorId: lineSize.distributorId,
+      styleId: lineSize.styleId,
+      sizeId: lineSize.sizeId,
+    });
+    const merchToken = await createMerchandiserToken();
+
+    const res = await approve(merchToken, saleOrder.id, {
+      expectedVersion: saleOrder.version,
+      lines: [
+        {
+          saleOrderLineId: line.id,
+          approvedQuantity: 40,
+          sourcing: [{ qaReleaseLineId: stock.qaReleaseLineId, quantity: 40 }],
+        },
+      ],
+    }).expect(200);
+
+    expect(res.body.data.lines[0]).toMatchObject({ requestedQuantity: 40, approvedQuantity: 40 });
+    const allocations = await prisma.stockAllocation.findMany({ where: { saleOrderLineId: line.id } });
+    expect(allocations).toHaveLength(1);
+    expect(allocations[0]).toMatchObject({
+      quantity: 40,
+      status: 'ACTIVE',
+      allocationSource: 'MERCHANDISER_ADJUSTMENT',
+    });
+  });
+
+  it('lets a Merchandiser reduce/reject a zero-allocation line exactly as an already-backed one', async () => {
+    const { saleOrder } = await createSubmittedSaleOrderWithNoStock(40);
+    const line = saleOrder.lines[0];
+    const merchToken = await createMerchandiserToken();
+
+    const res = await approve(merchToken, saleOrder.id, {
+      expectedVersion: saleOrder.version,
+      lines: [{ saleOrderLineId: line.id, approvedQuantity: 0 }],
+    }).expect(200);
+
+    expect(res.body.data.lines[0]).toMatchObject({ requestedQuantity: 40, approvedQuantity: 0 });
+    expect(await prisma.stockAllocation.count({ where: { saleOrderLineId: line.id, status: 'ACTIVE' } })).toBe(0);
   });
 
   it('releases the excess back to availability on a reduced approval, keeping requestedQuantity untouched', async () => {
@@ -320,5 +399,156 @@ describe('Sale Order approval', () => {
       lines: [{ saleOrderLineId: line.id, approvedQuantity: 10 }],
     }).expect(409);
     expect(res.body.error.code).toBe('STALE_VERSION');
+  });
+});
+
+// cancelPurchaseOrder now refuses to cancel a PO while a SUBMITTED/
+// UNDER_REVIEW/APPROVED Sale Order references it (see
+// purchase-order-cancellation-guard.test.ts), so this inconsistent state
+// ("PO CANCELLED" + "SO still active") can no longer arise through the
+// normal API. Every test below therefore manufactures it directly via
+// Prisma — simulating legacy data, a manual DB edit, or a future lifecycle
+// change — to exercise the defense-in-depth check inside approveSaleOrder.
+describe('Sale Order approval — defends against a referenced Purchase Order that is no longer eligible', () => {
+  it('refuses to approve when the sale order’s (only) referenced PO has since become CANCELLED', async () => {
+    const { stock, saleOrder } = await createSubmittedSaleOrder(10);
+    await prisma.distributorPurchaseOrder.update({
+      where: { id: stock.purchaseOrderId },
+      data: { status: 'CANCELLED' },
+    });
+    const merchToken = await createMerchandiserToken();
+
+    const res = await approve(merchToken, saleOrder.id, {
+      expectedVersion: saleOrder.version,
+      lines: [{ saleOrderLineId: saleOrder.lines[0].id, approvedQuantity: 0 }],
+    }).expect(400);
+    expect(res.body.error.message).toMatch(/no longer valid/i);
+
+    // Nothing was committed — no allocation change, no status change.
+    const reloaded = await prisma.saleOrder.findUniqueOrThrow({ where: { id: saleOrder.id } });
+    expect(reloaded.status).toBe('SUBMITTED');
+    expect(reloaded.version).toBe(saleOrder.version);
+  });
+
+  it('refuses to approve when only one of several lines references a now-ineligible PO', async () => {
+    const validLineSize = await createPurchaseOrderLineSize({ poStatus: 'SUBMITTED' });
+    const ineligibleLineSize = await createPurchaseOrderLineSize({
+      poStatus: 'SUBMITTED',
+      distributorId: validLineSize.distributorId,
+    });
+    const { userId, token: distributorToken } = await createTestUserAndToken({
+      email: `dist-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['DISTRIBUTOR'],
+    });
+    await prisma.userDistributor.create({
+      data: { id: createId(), userId, distributorId: validLineSize.distributorId },
+    });
+
+    const created = await request(app)
+      .post('/sale-orders')
+      .set('Authorization', `Bearer ${distributorToken}`)
+      .send({
+        distributorId: validLineSize.distributorId,
+        soDate: '2026-06-30',
+        lines: [
+          { purchaseOrderLineSizeId: validLineSize.purchaseOrderLineSizeId, requestedQuantity: 5 },
+          { purchaseOrderLineSizeId: ineligibleLineSize.purchaseOrderLineSizeId, requestedQuantity: 5 },
+        ],
+      })
+      .expect(201);
+    const submitted = await request(app)
+      .post(`/sale-orders/${created.body.data.id}/actions/submit`)
+      .set('Authorization', `Bearer ${distributorToken}`)
+      .set('Idempotency-Key', createId())
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+
+    // Simulate the second line's parent PO becoming CANCELLED afterward.
+    await prisma.distributorPurchaseOrder.update({
+      where: { id: ineligibleLineSize.purchaseOrderId },
+      data: { status: 'CANCELLED' },
+    });
+    const merchToken = await createMerchandiserToken();
+
+    await approve(merchToken, submitted.body.data.id, {
+      expectedVersion: submitted.body.data.version,
+      lines: submitted.body.data.lines.map((line: { id: string }) => ({
+        saleOrderLineId: line.id,
+        approvedQuantity: 0,
+      })),
+    }).expect(400);
+
+    const reloaded = await prisma.saleOrder.findUniqueOrThrow({ where: { id: submitted.body.data.id } });
+    expect(reloaded.status).toBe('SUBMITTED');
+  });
+
+  it('still approves normally when the referenced PO remains eligible', async () => {
+    const { saleOrder } = await createSubmittedSaleOrder(40);
+    const merchToken = await createMerchandiserToken();
+
+    const res = await approve(merchToken, saleOrder.id, {
+      expectedVersion: saleOrder.version,
+      lines: [{ saleOrderLineId: saleOrder.lines[0].id, approvedQuantity: 40 }],
+    }).expect(200);
+    expect(res.body.data.status).toBe('APPROVED');
+  });
+
+  it('still allows a zero-allocation demand-request line to reach approval when the PO is eligible', async () => {
+    const lineSize = await createPurchaseOrderLineSize({ poStatus: 'SUBMITTED' });
+    const { userId, token: distributorToken } = await createTestUserAndToken({
+      email: `dist-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['DISTRIBUTOR'],
+    });
+    await prisma.userDistributor.create({ data: { id: createId(), userId, distributorId: lineSize.distributorId } });
+
+    const created = await request(app)
+      .post('/sale-orders')
+      .set('Authorization', `Bearer ${distributorToken}`)
+      .send({
+        distributorId: lineSize.distributorId,
+        soDate: '2026-06-30',
+        lines: [{ purchaseOrderLineSizeId: lineSize.purchaseOrderLineSizeId, requestedQuantity: 40 }],
+      })
+      .expect(201);
+    const submitted = await request(app)
+      .post(`/sale-orders/${created.body.data.id}/actions/submit`)
+      .set('Authorization', `Bearer ${distributorToken}`)
+      .set('Idempotency-Key', createId())
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    expect(submitted.body.data.lines[0].allocations).toHaveLength(0);
+
+    const merchToken = await createMerchandiserToken();
+    const res = await approve(merchToken, submitted.body.data.id, {
+      expectedVersion: submitted.body.data.version,
+      lines: [{ saleOrderLineId: submitted.body.data.lines[0].id, approvedQuantity: 0 }],
+    }).expect(200);
+    expect(res.body.data.status).toBe('APPROVED');
+  });
+
+  it('still sources a cross-distributor MERCHANDISER_REASSIGNMENT normally when the PO is eligible', async () => {
+    const { stock, saleOrder } = await createSubmittedSaleOrder(20);
+    const otherStock = await createReleasedQaStock({ quantity: 15 });
+    void stock;
+    const merchToken = await createMerchandiserToken();
+
+    const res = await approve(merchToken, saleOrder.id, {
+      expectedVersion: saleOrder.version,
+      lines: [
+        {
+          saleOrderLineId: saleOrder.lines[0].id,
+          approvedQuantity: 35,
+          sourcing: [{ qaReleaseLineId: otherStock.qaReleaseLineId, quantity: 15, reason: 'cross-source' }],
+        },
+      ],
+    }).expect(200);
+
+    const allocation = await prisma.stockAllocation.findFirstOrThrow({
+      where: { saleOrderLineId: saleOrder.lines[0].id, qaReleaseLineId: otherStock.qaReleaseLineId },
+    });
+    expect(allocation).toMatchObject({ allocationSource: 'MERCHANDISER_REASSIGNMENT', quantity: 15 });
+    expect(res.body.data.status).toBe('APPROVED');
   });
 });
