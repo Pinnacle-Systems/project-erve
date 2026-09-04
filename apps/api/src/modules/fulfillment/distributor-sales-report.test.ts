@@ -309,7 +309,12 @@ describe('Distributor Sales Reporting — authorization', () => {
   it("forbids a Distributor from reporting sales against another Distributor's dispatch", async () => {
     const { fixture, dispatch } = await saleReturnDispatchFixture(100);
     const otherDistributor = await prisma.distributor.create({
-      data: { id: createId(), code: `OTH-${createId().slice(0, 6)}`, name: 'Other Distributor' },
+      data: {
+        id: createId(),
+        code: `OTH-${createId().slice(0, 6)}`,
+        name: 'Other Distributor',
+        gstin: '27AAAAA0000A1Z5',
+      },
     });
     const otherToken = await createDistributorToken(otherDistributor.id);
     await request(app)

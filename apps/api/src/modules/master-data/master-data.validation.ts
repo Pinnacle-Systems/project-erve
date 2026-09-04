@@ -123,9 +123,19 @@ export const updateFactoryStatusSchema = z.object({ status: factoryStatusSchema 
 
 export const distributorStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 
+// Standard 15-character Indian GSTIN: 2-digit state code, 10-character PAN,
+// 1-digit entity number, literal 'Z', 1 alphanumeric checksum.
+export const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const gstinSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(GSTIN_REGEX, 'Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
+
 export const createDistributorSchema = z.object({
   code: z.string().trim().min(1),
   name: z.string().trim().min(1),
+  gstin: gstinSchema,
   contactName: optionalText,
   contactEmail: z.string().trim().pipe(z.email()).optional().nullable(),
   contactPhone: optionalText,

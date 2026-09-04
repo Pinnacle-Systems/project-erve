@@ -240,7 +240,12 @@ describe('Distributor Return — eligibility', () => {
   it("forbids returning another Distributor's dispatched goods", async () => {
     const { fixture, dispatch } = await deliveredSaleReturnFixture(50);
     const otherDistributor = await prisma.distributor.create({
-      data: { id: createId(), code: `OTH-${createId().slice(0, 6)}`, name: 'Other Distributor' },
+      data: {
+        id: createId(),
+        code: `OTH-${createId().slice(0, 6)}`,
+        name: 'Other Distributor',
+        gstin: '27AAAAA0000A1Z5',
+      },
     });
     const otherToken = await createDistributorToken(otherDistributor.id);
     await submitReturn(otherToken, otherDistributor.id, dispatch.id, fixture.saleOrderLineId, 5).expect(403);
@@ -579,7 +584,12 @@ describe('Distributor Return — authorization', () => {
     await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
 
     const otherDistributor = await prisma.distributor.create({
-      data: { id: createId(), code: `OTH-${createId().slice(0, 6)}`, name: 'Other Distributor' },
+      data: {
+        id: createId(),
+        code: `OTH-${createId().slice(0, 6)}`,
+        name: 'Other Distributor',
+        gstin: '27AAAAA0000A1Z5',
+      },
     });
     const otherToken = await createDistributorToken(otherDistributor.id);
     const list = await request(app).get('/distributor-returns').set('Authorization', `Bearer ${otherToken}`).expect(200);

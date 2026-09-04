@@ -21,6 +21,7 @@ const distributor = {
   id: 'dist-1',
   code: 'DIST-1',
   name: 'Acme Distribution',
+  gstin: '27AAAAA0000A1Z5',
   contactName: null,
   contactEmail: null,
   contactPhone: null,
@@ -143,6 +144,7 @@ describe('distributor management pages', () => {
     expect(editLink?.textContent).toContain('Edit');
     expect(container.textContent).toContain('Deactivate');
     expect(container.textContent).not.toContain('Mapped Users');
+    expect(container.textContent).toContain('27AAAAA0000A1Z5');
   });
 
   it('debounces the distributor list search so rapid typing issues only the final request', async () => {

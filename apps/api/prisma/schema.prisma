@@ -373,6 +373,7 @@ model Distributor {
   id           String            @id
   code         String            @unique
   name         String
+  gstin        String
   contactName  String?           @map("contact_name")
   contactEmail String?           @map("contact_email")
   contactPhone String?           @map("contact_phone")

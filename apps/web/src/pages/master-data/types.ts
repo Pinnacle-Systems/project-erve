@@ -63,6 +63,7 @@ export interface DistributorSummary {
 }
 
 export interface Distributor extends DistributorSummary {
+  gstin: string;
   contactEmail: string | null;
   contactPhone: string | null;
   addressLine1: string | null;

@@ -470,7 +470,12 @@ describe('Invoice Handoff — view privacy', () => {
   it("forbids a Distributor from viewing another Distributor's invoice handoff", async () => {
     const { handoffId } = await dispatchFixture(20);
     const otherDistributor = await prisma.distributor.create({
-      data: { id: createId(), code: `OTH-${createId().slice(0, 6)}`, name: 'Other Distributor' },
+      data: {
+        id: createId(),
+        code: `OTH-${createId().slice(0, 6)}`,
+        name: 'Other Distributor',
+        gstin: '27AAAAA0000A1Z5',
+      },
     });
     const otherToken = await createDistributorToken(otherDistributor.id);
     await request(app)

@@ -264,6 +264,7 @@ export function DistributorDetailPage() {
   const fields = [
     ['Code', distributor.code],
     ['Name', distributor.name],
+    ['GSTIN', distributor.gstin],
     ['Contact Name', distributor.contactName ?? '—'],
     ['Contact Email', distributor.contactEmail ?? '—'],
     ['Contact Phone', distributor.contactPhone ?? '—'],

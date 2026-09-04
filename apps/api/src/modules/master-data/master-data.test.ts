@@ -1081,6 +1081,7 @@ describe('distributors API', () => {
       .send({
         code: 'DIST-001',
         name: 'Acme Distribution',
+        gstin: '27AAAAA0000A1Z5',
         contactName: 'Asha Nair',
         contactEmail: 'asha@acme.test',
         city: 'Kochi',
@@ -1096,6 +1097,7 @@ describe('distributors API', () => {
     expect(res.status).toBe(201);
     expect(res.body.data.code).toBe('DIST-001');
     expect(res.body.data.status).toBe('ACTIVE');
+    expect(res.body.data.gstin).toBe('27AAAAA0000A1Z5');
 
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'DISTRIBUTOR_CREATED', entityId: res.body.data.id },
@@ -1151,6 +1153,24 @@ describe('distributors API', () => {
     expect(duplicateName.status).toBe(409);
   });
 
+  it('rejects creating a distributor without a valid GSTIN', async () => {
+    const { token } = await createAdmin();
+
+    const missingGstin = await createDistributorViaApi(token, {
+      code: 'DIST-010',
+      name: 'No GSTIN Distribution',
+      gstin: undefined,
+    });
+    const malformedGstin = await createDistributorViaApi(token, {
+      code: 'DIST-011',
+      name: 'Bad GSTIN Distribution',
+      gstin: 'not-a-gstin',
+    });
+
+    expect(missingGstin.status).toBe(400);
+    expect(malformedGstin.status).toBe(400);
+  });
+
   it('updates a distributor, records an audit log, and rejects unknown ids', async () => {
     const { userId, token } = await createAdmin();
     const distributor = await createTestDistributor({
@@ -1161,7 +1181,7 @@ describe('distributors API', () => {
     const updated = await request(app)
       .patch(`/distributors/${distributor.id}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Acme Distribution South', city: 'Chennai' });
+      .send({ name: 'Acme Distribution South', city: 'Chennai', gstin: '29BBBBB1111B1Z6' });
     const unknown = await request(app)
       .patch('/distributors/does-not-exist')
       .set('Authorization', `Bearer ${token}`)
@@ -1170,12 +1190,25 @@ describe('distributors API', () => {
     expect(updated.status).toBe(200);
     expect(updated.body.data.name).toBe('Acme Distribution South');
     expect(updated.body.data.city).toBe('Chennai');
+    expect(updated.body.data.gstin).toBe('29BBBBB1111B1Z6');
     expect(unknown.status).toBe(404);
 
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'DISTRIBUTOR_UPDATED', entityId: distributor.id },
     });
     expect(audit?.actorId).toBe(userId);
+  });
+
+  it('rejects updating a distributor with a malformed GSTIN', async () => {
+    const { token } = await createAdmin();
+    const distributor = await createTestDistributor();
+
+    const res = await request(app)
+      .patch(`/distributors/${distributor.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ gstin: 'not-a-gstin' });
+
+    expect(res.status).toBe(400);
   });
 
   it('rejects renaming a distributor to an existing name', async () => {

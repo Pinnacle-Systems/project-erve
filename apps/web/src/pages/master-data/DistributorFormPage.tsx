@@ -10,9 +10,12 @@ import { LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { Distributor, Status } from './types.js';
 
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
 const emptyForm = {
   code: '',
   name: '',
+  gstin: '',
   contactName: '',
   contactEmail: '',
   contactPhone: '',
@@ -28,6 +31,7 @@ const emptyForm = {
 const fieldLabels: Record<keyof typeof emptyForm, string> = {
   code: 'Code',
   name: 'Name',
+  gstin: 'GSTIN',
   contactName: 'Contact Name',
   contactEmail: 'Contact Email',
   contactPhone: 'Contact Phone',
@@ -82,6 +86,7 @@ export function DistributorFormPage() {
     setForm({
       code: distributor.code,
       name: distributor.name,
+      gstin: distributor.gstin,
       contactName: distributor.contactName ?? '',
       contactEmail: distributor.contactEmail ?? '',
       contactPhone: distributor.contactPhone ?? '',
@@ -98,10 +103,20 @@ export function DistributorFormPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!form.code.trim() || !form.name.trim()) {
-        throw new Error('Code and name are required');
+      if (!form.code.trim() || !form.name.trim() || !form.gstin.trim()) {
+        throw new Error('Code, name, and GSTIN are required');
       }
-      const payload = { ...cleanPayload(form), code: form.code.trim(), name: form.name.trim(), status: form.status };
+      const gstin = form.gstin.trim().toUpperCase();
+      if (!GSTIN_PATTERN.test(gstin)) {
+        throw new Error('Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
+      }
+      const payload = {
+        ...cleanPayload(form),
+        code: form.code.trim(),
+        name: form.name.trim(),
+        gstin,
+        status: form.status,
+      };
       const response = isEdit
         ? await apiClient.patch<ApiSuccessResponse<Distributor>>(`/distributors/${id}`, payload)
         : await apiClient.post<ApiSuccessResponse<Distributor>>('/distributors', payload);
@@ -160,7 +175,10 @@ export function DistributorFormPage() {
                     type={key === 'contactEmail' ? 'email' : 'text'}
                     value={form[key as keyof typeof emptyForm]}
                     errorMessage={
-                      error && ((key === 'code' && !form.code) || (key === 'name' && !form.name))
+                      error &&
+                      ((key === 'code' && !form.code) ||
+                        (key === 'name' && !form.name) ||
+                        (key === 'gstin' && !form.gstin))
                         ? 'Required'
                         : undefined
                     }
