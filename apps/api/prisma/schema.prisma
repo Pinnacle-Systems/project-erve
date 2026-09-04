@@ -273,36 +273,50 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  userRoles                     UserRole[]
-  userDistributors              UserDistributor[]
-  userFactories                 UserFactory[]
-  uploadedFiles                 File[]                     @relation("FileUploadedBy")
-  auditLogs                     AuditLog[]                 @relation("AuditLogActor")
-  refreshSessions               RefreshSession[]
-  createdPurchaseOrders         DistributorPurchaseOrder[] @relation("POCreator")
-  merchandisedPurchaseOrders    DistributorPurchaseOrder[] @relation("POMerchandiser")
-  createdJobOrders              JobOrder[]                 @relation("JobOrderCreator")
-  confirmedJobOrders            JobOrder[]                 @relation("JobOrderConfirmer")
-  jobOrderAcknowledgements      JobOrderAcknowledgement[]  @relation("JobOrderAcknowledgedBy")
-  completedJobOrderStages       JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
-  qaInspections                 QaInspectionSession[]      @relation("QaInspector")
-  reopenedQaInspections         QaInspectionSession[]      @relation("QaReopenedBy")
-  reopenedQaSizeForms           QaSizeInspectionForm[]     @relation("QaSizeFormReopenedBy")
-  acknowledgedQaReworks         QaReworkTask[]             @relation("QaReworkAcknowledgedBy")
-  readiedQaReworks              QaReworkTask[]             @relation("QaReworkReadiedBy")
-  startedQualityExecutions      QualityActivityExecution[] @relation("QualityExecutionStarter")
-  finalizedQualityExecutions    QualityActivityExecution[] @relation("QualityExecutionFinalizer")
-  qualitySignoffs               QualitySignoff[]           @relation("QualitySignoffRecorder")
-  createdFinalQualityBatches    FinalQualityBatch[]        @relation("FinalQualityBatchCreator")
-  terminalFinalQualityBatches   FinalQualityBatch[]        @relation("FinalQualityBatchTerminalActor")
-  acknowledgedFinalBatchReworks FinalQualityBatchRework[]  @relation("FinalBatchReworkAcknowledgedBy")
-  startedFinalBatchReworks      FinalQualityBatchRework[]  @relation("FinalBatchReworkStartedBy")
-  completedFinalBatchReworks    FinalQualityBatchRework[]  @relation("FinalBatchReworkCompletedBy")
-  qaReleases                    QaRelease[]                @relation("QaReleaseActor")
-  createdSaleOrders             SaleOrder[]                @relation("SaleOrderCreator")
-  reviewedSaleOrders            SaleOrder[]                @relation("SaleOrderReviewer")
-  allocatedStockAllocations     StockAllocation[]          @relation("StockAllocationAllocator")
-  releasedStockAllocations      StockAllocation[]          @relation("StockAllocationReleaser")
+  userRoles                            UserRole[]
+  userDistributors                     UserDistributor[]
+  userFactories                        UserFactory[]
+  uploadedFiles                        File[]                     @relation("FileUploadedBy")
+  auditLogs                            AuditLog[]                 @relation("AuditLogActor")
+  refreshSessions                      RefreshSession[]
+  createdPurchaseOrders                DistributorPurchaseOrder[] @relation("POCreator")
+  merchandisedPurchaseOrders           DistributorPurchaseOrder[] @relation("POMerchandiser")
+  createdJobOrders                     JobOrder[]                 @relation("JobOrderCreator")
+  confirmedJobOrders                   JobOrder[]                 @relation("JobOrderConfirmer")
+  jobOrderAcknowledgements             JobOrderAcknowledgement[]  @relation("JobOrderAcknowledgedBy")
+  completedJobOrderStages              JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
+  qaInspections                        QaInspectionSession[]      @relation("QaInspector")
+  reopenedQaInspections                QaInspectionSession[]      @relation("QaReopenedBy")
+  reopenedQaSizeForms                  QaSizeInspectionForm[]     @relation("QaSizeFormReopenedBy")
+  acknowledgedQaReworks                QaReworkTask[]             @relation("QaReworkAcknowledgedBy")
+  readiedQaReworks                     QaReworkTask[]             @relation("QaReworkReadiedBy")
+  startedQualityExecutions             QualityActivityExecution[] @relation("QualityExecutionStarter")
+  finalizedQualityExecutions           QualityActivityExecution[] @relation("QualityExecutionFinalizer")
+  qualitySignoffs                      QualitySignoff[]           @relation("QualitySignoffRecorder")
+  createdFinalQualityBatches           FinalQualityBatch[]        @relation("FinalQualityBatchCreator")
+  terminalFinalQualityBatches          FinalQualityBatch[]        @relation("FinalQualityBatchTerminalActor")
+  acknowledgedFinalBatchReworks        FinalQualityBatchRework[]  @relation("FinalBatchReworkAcknowledgedBy")
+  startedFinalBatchReworks             FinalQualityBatchRework[]  @relation("FinalBatchReworkStartedBy")
+  completedFinalBatchReworks           FinalQualityBatchRework[]  @relation("FinalBatchReworkCompletedBy")
+  qaReleases                           QaRelease[]                @relation("QaReleaseActor")
+  createdSaleOrders                    SaleOrder[]                @relation("SaleOrderCreator")
+  reviewedSaleOrders                   SaleOrder[]                @relation("SaleOrderReviewer")
+  fulfilledSaleOrders                  SaleOrder[]                @relation("SaleOrderFulfiller")
+  allocatedStockAllocations            StockAllocation[]          @relation("StockAllocationAllocator")
+  releasedStockAllocations             StockAllocation[]          @relation("StockAllocationReleaser")
+  preparedFactoryDispatches            FactoryDispatch[]          @relation("FactoryDispatchPreparer")
+  finalizedFactoryDispatches           FactoryDispatch[]          @relation("FactoryDispatchFinalizer")
+  createdErvePackingLists              ErvePackingList[]          @relation("ErvePackingListCreator")
+  dispatchedErveDispatches             ErveDispatch[]             @relation("ErveDispatchDispatcher")
+  lrUpdatedErveDispatches              ErveDispatch[]             @relation("ErveDispatchLrUpdater")
+  deliveredErveDispatches              ErveDispatch[]             @relation("ErveDispatchDeliveryConfirmer")
+  recordedInvoiceHandoffs              InvoiceHandoff[]           @relation("InvoiceHandoffRecordedBy")
+  submittedDistributorSalesReports     DistributorSalesReport[]   @relation("DistributorSalesReportSubmitter")
+  submittedDistributorReturns          DistributorReturn[]        @relation("DistributorReturnSubmitter")
+  approvedDistributorReturns           DistributorReturn[]        @relation("DistributorReturnApprover")
+  receivedDistributorReturns           DistributorReturn[]        @relation("DistributorReturnReceiver")
+  cancelledDistributorReturns          DistributorReturn[]        @relation("DistributorReturnCanceller")
+  creditNoteRecordedDistributorReturns DistributorReturn[]        @relation("DistributorReturnCreditNoteRecorder")
 
   @@index([status])
   @@map("users")
@@ -372,10 +386,13 @@ model Distributor {
   createdAt    DateTime          @default(now()) @map("created_at")
   updatedAt    DateTime          @updatedAt @map("updated_at")
 
-  userDistributors UserDistributor[]
-  priceLists       PriceList[]
-  purchaseOrders   DistributorPurchaseOrder[]
-  saleOrders       SaleOrder[]
+  userDistributors   UserDistributor[]
+  priceLists         PriceList[]
+  purchaseOrders     DistributorPurchaseOrder[]
+  saleOrders         SaleOrder[]
+  erveDispatches     ErveDispatch[]
+  salesReports       DistributorSalesReport[]
+  distributorReturns DistributorReturn[]
 
   @@index([status])
   @@map("distributors")
@@ -401,6 +418,7 @@ model Factory {
   userFactories        UserFactory[]
   styleFactoryMappings StyleFactoryMapping[]
   jobOrders            JobOrder[]
+  factoryDispatches    FactoryDispatch[]
 
   @@index([status])
   @@map("factories")
@@ -459,11 +477,15 @@ model FinancialYear {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  seasons           Season[]
-  purchaseOrders    DistributorPurchaseOrder[]
-  jobOrders         JobOrder[]
-  saleOrders        SaleOrder[]
-  documentSequences DocumentSequence[]
+  seasons            Season[]
+  purchaseOrders     DistributorPurchaseOrder[]
+  jobOrders          JobOrder[]
+  saleOrders         SaleOrder[]
+  documentSequences  DocumentSequence[]
+  factoryDispatches  FactoryDispatch[]
+  ervePackingLists   ErvePackingList[]
+  erveDispatches     ErveDispatch[]
+  distributorReturns DistributorReturn[]
 
   @@map("financial_years")
 }
@@ -472,6 +494,10 @@ enum DocumentType {
   PURCHASE_ORDER
   JOB_ORDER
   SALE_ORDER
+  FACTORY_DISPATCH
+  ERVE_PACKING_LIST
+  ERVE_DISPATCH
+  DISTRIBUTOR_RETURN
 }
 
 // Append-only high-water mark for (documentType, financialYearId) serial
@@ -1172,6 +1198,7 @@ enum SaleOrderStatus {
   APPROVED
   REJECTED
   CANCELLED
+  FULFILLED
 }
 
 enum StockAllocationStatus {
@@ -1191,32 +1218,44 @@ enum StockAllocationSource {
 }
 
 model SaleOrder {
-  id              String          @id
-  saleOrderNumber String          @unique @map("sale_order_number")
-  distributorId   String          @map("distributor_id")
-  createdBy       String          @map("created_by")
-  soDate          DateTime        @map("so_date") @db.Date
-  status          SaleOrderStatus @default(DRAFT)
-  remarks         String?
-  submittedAt     DateTime?       @map("submitted_at")
-  reviewedById    String?         @map("reviewed_by_id")
-  reviewedAt      DateTime?       @map("reviewed_at")
-  decisionReason  String?         @map("decision_reason")
+  id                   String          @id
+  saleOrderNumber      String          @unique @map("sale_order_number")
+  distributorId        String          @map("distributor_id")
+  createdBy            String          @map("created_by")
+  soDate               DateTime        @map("so_date") @db.Date
+  status               SaleOrderStatus @default(DRAFT)
+  remarks              String?
+  submittedAt          DateTime?       @map("submitted_at")
+  reviewedById         String?         @map("reviewed_by_id")
+  reviewedAt           DateTime?       @map("reviewed_at")
+  decisionReason       String?         @map("decision_reason")
+  // Set only on the APPROVED -> FULFILLED transition (fulfillSaleOrder) — the
+  // minimal "stock was actually handed to the distributor" closing step.
+  // fulfillmentReference is a free-text business reference (e.g. a delivery
+  // challan/POD number) captured outside this system for now; no
+  // Dispatch/Shipment model exists yet, this is deliberately not one.
+  fulfilledById        String?         @map("fulfilled_by_id")
+  fulfilledAt          DateTime?       @map("fulfilled_at")
+  fulfillmentReference String?         @map("fulfillment_reference")
   // The Sale Order's own Financial Year, derived from its own soDate — never
   // inherited from the referenced Purchase Order(s), matching the
   // DistributorPurchaseOrder/JobOrder convention.
-  financialYearId String          @map("financial_year_id")
-  soSerial        Int             @map("so_serial")
-  version         Int             @default(1)
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
+  financialYearId      String          @map("financial_year_id")
+  soSerial             Int             @map("so_serial")
+  version              Int             @default(1)
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
 
   distributor        Distributor                  @relation(fields: [distributorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   creator            User                         @relation("SaleOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: NoAction)
   reviewedBy         User?                        @relation("SaleOrderReviewer", fields: [reviewedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  fulfilledBy        User?                        @relation("SaleOrderFulfiller", fields: [fulfilledById], references: [id], onDelete: SetNull, onUpdate: NoAction)
   financialYear      FinancialYear                @relation(fields: [financialYearId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   lines              SaleOrderLine[]
   idempotencyRecords SaleOrderIdempotencyRecord[]
+  factoryDispatches  FactoryDispatch[]
+  ervePackingLists   ErvePackingList[]
+  erveDispatches     ErveDispatch[]
 
   @@unique([financialYearId, soSerial])
   @@index([distributorId])
@@ -1240,9 +1279,15 @@ model SaleOrderLine {
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 
-  saleOrder             SaleOrder                        @relation(fields: [saleOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  purchaseOrderLineSize DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  allocations           StockAllocation[]
+  saleOrder                   SaleOrder                        @relation(fields: [saleOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  purchaseOrderLineSize       DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocations                 StockAllocation[]
+  factoryDispatchLines        FactoryDispatchLine[]
+  invoiceHandoffs             InvoiceHandoff[]
+  distributorSalesReportLines DistributorSalesReportLine[]
+  erveDispatchDeliveryLines   ErveDispatchDeliveryLine[]
+  distributorReturnLines      DistributorReturnLine[]
+  returnedStockLots           ReturnedStockLot[]
 
   @@unique([saleOrderId, purchaseOrderLineSizeId], map: "sale_order_line_size_key")
   @@index([saleOrderId])
@@ -1272,15 +1317,552 @@ model StockAllocation {
   createdAt        DateTime              @default(now()) @map("created_at")
   updatedAt        DateTime              @updatedAt @map("updated_at")
 
-  saleOrderLine SaleOrderLine @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  qaReleaseLine QaReleaseLine @relation(fields: [qaReleaseLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  allocatedBy   User          @relation("StockAllocationAllocator", fields: [allocatedById], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  releasedBy    User?         @relation("StockAllocationReleaser", fields: [releasedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  saleOrderLine        SaleOrderLine         @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  qaReleaseLine        QaReleaseLine         @relation(fields: [qaReleaseLineId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocatedBy          User                  @relation("StockAllocationAllocator", fields: [allocatedById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  releasedBy           User?                 @relation("StockAllocationReleaser", fields: [releasedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  factoryDispatchLines FactoryDispatchLine[]
 
   @@unique([saleOrderLineId, qaReleaseLineId], map: "stock_allocation_line_release_key")
   @@index([qaReleaseLineId, status], map: "stock_allocation_release_status_idx")
   @@index([saleOrderLineId, status])
   @@map("stock_allocations")
+}
+
+// ---------------------------------------------------------------------------
+// Fulfillment: Factory Packing -> Erve India Consolidation -> Distributor
+// Dispatch. Sits entirely downstream of StockAllocation, which this section
+// never mutates or releases (see FactoryDispatchLine.stockAllocationId) — the
+// authoritative allocation ledger stays exactly as approveSaleOrder left it,
+// through packing, consolidation and dispatch. SaleOrder.status remains
+// APPROVED through every stage here; only the final ErveDispatch transaction
+// that exhausts every approved line's cumulative dispatched quantity flips it
+// to FULFILLED (see erve-dispatch.service.ts recordErveDispatch). Invoice/
+// Tally integration is explicitly out of scope and sits downstream of this.
+// ---------------------------------------------------------------------------
+
+enum FactoryDispatchStatus {
+  DRAFT
+  READY_FOR_ERVE
+}
+
+// One batch of approved goods a single Factory prepares for handoff into
+// Erve India's consolidation flow. factoryId is resolved once at creation
+// from the (single, authoritative) Factory that owns every line's source
+// StockAllocation — see factory-source-resolution.ts — never inferred from
+// the Sale Order itself, which may be sourced from multiple Factories.
+model FactoryDispatch {
+  id                    String                @id
+  factoryDispatchNumber String                @unique @map("factory_dispatch_number")
+  factoryId             String                @map("factory_id")
+  saleOrderId           String                @map("sale_order_id")
+  status                FactoryDispatchStatus @default(DRAFT)
+  preparedById          String                @map("prepared_by_id")
+  preparedAt            DateTime              @default(now()) @map("prepared_at")
+  finalizedById         String?               @map("finalized_by_id")
+  finalizedAt           DateTime?             @map("finalized_at")
+  version               Int                   @default(1)
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+  financialYearId       String                @map("financial_year_id")
+  factoryDispatchSerial Int                   @map("factory_dispatch_serial")
+
+  factory           Factory                @relation(fields: [factoryId], references: [id], onDelete: Restrict)
+  saleOrder         SaleOrder              @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
+  preparedBy        User                   @relation("FactoryDispatchPreparer", fields: [preparedById], references: [id], onDelete: Restrict)
+  finalizedBy       User?                  @relation("FactoryDispatchFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict)
+  financialYear     FinancialYear          @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  lines             FactoryDispatchLine[]
+  cartons           FactoryPackingCarton[]
+  ervePackingSource ErvePackingListSource?
+
+  @@unique([financialYearId, factoryDispatchSerial])
+  @@index([factoryId, status])
+  @@index([saleOrderId])
+  @@map("factory_dispatches")
+}
+
+// One line = one packed quantity backed by exactly one authoritative
+// StockAllocation row — the proof that this Factory really owns these
+// physical units (see the module doc comment above and
+// factory-source-resolution.ts). Multiple lines against the SAME allocation
+// across DIFFERENT FactoryDispatch batches are expected (successive partial
+// packing cycles); the unique constraint below only prevents a duplicate
+// line within one batch.
+model FactoryDispatchLine {
+  id                String   @id
+  factoryDispatchId String   @map("factory_dispatch_id")
+  saleOrderLineId   String   @map("sale_order_line_id")
+  stockAllocationId String   @map("stock_allocation_id")
+  packedQuantity    Int      @map("packed_quantity")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  factoryDispatch FactoryDispatch            @relation(fields: [factoryDispatchId], references: [id], onDelete: Cascade)
+  saleOrderLine   SaleOrderLine              @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+  stockAllocation StockAllocation            @relation(fields: [stockAllocationId], references: [id], onDelete: Restrict)
+  cartonLines     FactoryPackingCartonLine[]
+
+  @@unique([factoryDispatchId, stockAllocationId], map: "factory_dispatch_line_allocation_key")
+  @@index([stockAllocationId])
+  @@index([saleOrderLineId])
+  @@map("factory_dispatch_lines")
+}
+
+// Minimal carton/package record per the original scope (carton number,
+// package details, weight only) — deliberately no barcode/dimensions/rates/
+// warehouse bin.
+model FactoryPackingCarton {
+  id                String   @id
+  factoryDispatchId String   @map("factory_dispatch_id")
+  cartonNumber      String   @map("carton_number")
+  packageDetails    String?  @map("package_details")
+  weight            Decimal? @db.Decimal(10, 3)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  factoryDispatch FactoryDispatch            @relation(fields: [factoryDispatchId], references: [id], onDelete: Cascade)
+  lines           FactoryPackingCartonLine[]
+
+  @@unique([factoryDispatchId, cartonNumber])
+  @@map("factory_packing_cartons")
+}
+
+// A carton's contents, by quantity, against one packed FactoryDispatchLine.
+// SUM(quantity) per factoryDispatchLineId must never exceed that line's
+// packedQuantity (service-enforced) — this is what prevents the same packed
+// units from being placed into multiple cartons.
+model FactoryPackingCartonLine {
+  id                    String   @id
+  cartonId              String   @map("carton_id")
+  factoryDispatchLineId String   @map("factory_dispatch_line_id")
+  quantity              Int
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  carton              FactoryPackingCarton @relation(fields: [cartonId], references: [id], onDelete: Cascade)
+  factoryDispatchLine FactoryDispatchLine  @relation(fields: [factoryDispatchLineId], references: [id], onDelete: Restrict)
+
+  @@unique([cartonId, factoryDispatchLineId])
+  @@index([factoryDispatchLineId])
+  @@map("factory_packing_carton_lines")
+}
+
+enum ErvePackingListStatus {
+  OPEN
+  DISPATCHED
+}
+
+// Erve India's consolidation of one or more finalized (READY_FOR_ERVE)
+// Factory Dispatch batches, scoped to a single Sale Order for MVP (see
+// module doc). Line-level contents are deliberately NOT duplicated here —
+// they are derived by joining ErvePackingListSource -> FactoryDispatch ->
+// FactoryDispatchLine, so there is exactly one packed-quantity ledger.
+model ErvePackingList {
+  id                    String                @id
+  ervePackingListNumber String                @unique @map("erve_packing_list_number")
+  saleOrderId           String                @map("sale_order_id")
+  status                ErvePackingListStatus @default(OPEN)
+  createdById           String                @map("created_by_id")
+  createdAt             DateTime              @default(now()) @map("created_at")
+  financialYearId       String                @map("financial_year_id")
+  ervePackingListSerial Int                   @map("erve_packing_list_serial")
+
+  saleOrder     SaleOrder               @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
+  createdBy     User                    @relation("ErvePackingListCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  financialYear FinancialYear           @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  sources       ErvePackingListSource[]
+  dispatch      ErveDispatch?
+
+  @@unique([financialYearId, ervePackingListSerial])
+  @@index([saleOrderId, status])
+  @@map("erve_packing_lists")
+}
+
+// Join of exactly which finalized Factory Dispatch batches were consolidated
+// into this Erve Packing List. factoryDispatchId is unique — a Factory
+// Dispatch may be consumed into at most one Erve Packing List, ever.
+model ErvePackingListSource {
+  id                String   @id
+  ervePackingListId String   @map("erve_packing_list_id")
+  factoryDispatchId String   @unique @map("factory_dispatch_id")
+  consolidatedAt    DateTime @default(now()) @map("consolidated_at")
+
+  ervePackingList ErvePackingList @relation(fields: [ervePackingListId], references: [id], onDelete: Restrict)
+  factoryDispatch FactoryDispatch @relation(fields: [factoryDispatchId], references: [id], onDelete: Restrict)
+
+  @@index([ervePackingListId])
+  @@map("erve_packing_list_sources")
+}
+
+enum ErveDispatchStatus {
+  DISPATCHED
+  DELIVERED
+}
+
+// Distinguishes a real merchandising-team delivery confirmation from the
+// one-time migration backfill applied to dispatches that predate this field
+// (see the backfill migration) — lets an auditor tell "confirmed 100
+// received" from "we don't actually know, we assumed full receipt when this
+// column was introduced." confirmErveDispatchDelivery always writes
+// USER_CONFIRMED; the backfill always writes LEGACY_ASSUMED_FULL_RECEIPT.
+enum DeliveryConfirmationSource {
+  USER_CONFIRMED
+  LEGACY_ASSUMED_FULL_RECEIPT
+}
+
+// Actual physical outward movement to the Distributor. 1:1 with
+// ErvePackingList (ervePackingListId unique) — a packing list is dispatched
+// exactly once. Deliberately no DRAFT stage (see module doc): the Erve
+// Packing List already represents "prepared", so creating this row IS the
+// single authoritative Record Dispatch action. lrNumber/transporter/
+// vehicleNumber may be filled in later via the LR-update fallback action
+// (lrUpdatedById/At) since the LR is often issued by the transporter only
+// after physical pickup.
+model ErveDispatch {
+  id                         String                      @id
+  erveDispatchNumber         String                      @unique @map("erve_dispatch_number")
+  ervePackingListId          String                      @unique @map("erve_packing_list_id")
+  saleOrderId                String                      @map("sale_order_id")
+  distributorId              String                      @map("distributor_id")
+  status                     ErveDispatchStatus          @default(DISPATCHED)
+  dispatchDate               DateTime                    @map("dispatch_date") @db.Date
+  transporter                String?
+  vehicleNumber              String?                     @map("vehicle_number")
+  lrNumber                   String?                     @map("lr_number")
+  remarks                    String?
+  dispatchedById             String                      @map("dispatched_by_id")
+  dispatchedAt               DateTime                    @default(now()) @map("dispatched_at")
+  lrUpdatedById              String?                     @map("lr_updated_by_id")
+  lrUpdatedAt                DateTime?                   @map("lr_updated_at")
+  // Delivery confirmation — the "received by distributor" fact that
+  // DistributorSalesReport and DistributorReturn key off, distinct from the
+  // dispatchedQuantity historical outward-movement fact above (see
+  // ErveDispatchDeliveryLine doc). deliveredById/deliveredAt are left null on
+  // legacy-backfilled rows — do not treat a null pair here as a bug, it means
+  // "assumed for compatibility, not actually confirmed by anyone."
+  deliveredById              String?                     @map("delivered_by_id")
+  deliveredAt                DateTime?                   @map("delivered_at")
+  deliveryRemarks            String?                     @map("delivery_remarks")
+  deliveryConfirmationSource DeliveryConfirmationSource? @map("delivery_confirmation_source")
+  version                    Int                         @default(1)
+  createdAt                  DateTime                    @default(now()) @map("created_at")
+  financialYearId            String                      @map("financial_year_id")
+  erveDispatchSerial         Int                         @map("erve_dispatch_serial")
+
+  ervePackingList             ErvePackingList              @relation(fields: [ervePackingListId], references: [id], onDelete: Restrict)
+  saleOrder                   SaleOrder                    @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
+  distributor                 Distributor                  @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  dispatchedBy                User                         @relation("ErveDispatchDispatcher", fields: [dispatchedById], references: [id], onDelete: Restrict)
+  lrUpdatedBy                 User?                        @relation("ErveDispatchLrUpdater", fields: [lrUpdatedById], references: [id], onDelete: Restrict)
+  deliveredBy                 User?                        @relation("ErveDispatchDeliveryConfirmer", fields: [deliveredById], references: [id], onDelete: Restrict)
+  financialYear               FinancialYear                @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  invoiceHandoffs             InvoiceHandoff[]
+  distributorSalesReportLines DistributorSalesReportLine[]
+  deliveryLines               ErveDispatchDeliveryLine[]
+  distributorReturnLines      DistributorReturnLine[]
+
+  @@unique([financialYearId, erveDispatchSerial])
+  @@index([saleOrderId])
+  @@index([distributorId])
+  @@map("erve_dispatches")
+}
+
+// One row per SaleOrderLine actually confirmed received for this Dispatch,
+// created once by the single DISPATCHED -> DELIVERED transition (not
+// append-only/repeatable like DistributorSalesReportLine — see
+// confirmErveDispatchDelivery). receivedQuantity may be less than the
+// dispatched quantity for that line to capture a shortage (shortage =
+// dispatched - received, derived on read, never stored) — see
+// ErveDispatch.deliveryRemarks for the accompanying note, required whenever
+// any line is short. This is the new authoritative "received by distributor"
+// fact that DistributorSalesReport and DistributorReturn key off, replacing
+// dispatchedQuantity as their ceiling basis.
+model ErveDispatchDeliveryLine {
+  id               String   @id
+  erveDispatchId   String   @map("erve_dispatch_id")
+  saleOrderLineId  String   @map("sale_order_line_id")
+  receivedQuantity Int      @map("received_quantity")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  erveDispatch  ErveDispatch  @relation(fields: [erveDispatchId], references: [id], onDelete: Restrict)
+  saleOrderLine SaleOrderLine @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+
+  @@unique([erveDispatchId, saleOrderLineId])
+  @@index([saleOrderLineId])
+  @@map("erve_dispatch_delivery_lines")
+}
+
+// ---------------------------------------------------------------------------
+// Physical Dispatch -> Invoice/Tally reference handoff ("Dispatch Sale").
+// Erve India remains the operational tracker; Tally remains the accounting
+// system of record and the sole generator of the actual sales invoice/
+// e-invoice/e-way bill.
+//
+// Financial granularity is deliberately the SALE ORDER LINE within one
+// ErveDispatch, never the whole Dispatch or Sale Order — a Sale Order (and
+// therefore one ErveDispatch consolidating it) can span multiple Purchase
+// Orders with DIFFERENT PurchaseMode values (nothing in this codebase
+// restricts a Sale Order to one PO — see sale-orders.service.ts submit,
+// which explicitly locks/validates a SET of purchaseOrderIds). So a single
+// physical Dispatch can legitimately contain both OUTRIGHT and SALE_RETURN
+// quantity.
+//
+// EVERY physically dispatched quantity — both PurchaseMode values — gets
+// exactly one InvoiceHandoff row per (erveDispatchId, saleOrderLineId), the
+// moment ErveDispatch is recorded (see erve-dispatch.service.ts
+// recordErveDispatch). This represents "Dispatch Sale": the invoice/Tally
+// linkage tied to the physical outward movement, which for GST/accounting
+// purposes happens for consignment (SALE_RETURN) stock too, not just
+// OUTRIGHT. PurchaseMode is NOT stored here — it is resolved on read through
+// the same commercial FK chain (SaleOrderLine -> purchaseOrderLineSize ->
+// purchaseOrderLine -> DistributorPurchaseOrder.purchaseMode) whenever a
+// mode breakdown is useful for reporting.
+//
+// "Dispatch Sale" is deliberately NOT the same fact as "Actual Sale": for
+// SALE_RETURN, a Distributor's later reported sell-through
+// (DistributorSalesReportLine, see below) is a separate commercial-
+// settlement/royalty-reporting fact and never creates a second
+// InvoiceHandoff — the physical-movement invoice already exists from
+// Dispatch. Do not reintroduce a report-sourced handoff branch here.
+//
+// PurchaseMode itself is never snapshotted: DistributorPurchaseOrder.
+// purchaseMode is only editable in DRAFT (updatePurchaseOrderDraft), and no
+// Sale Order line can exist against a PO before it has left DRAFT for good
+// (job-ordered POs never return to DRAFT) — so by the time a line is
+// financially relevant, its source PO's mode is already frozen and safe to
+// trace through the FK chain instead of duplicating.
+//
+// No amount/tax/GST fields exist here on purpose: Tally computes and owns
+// pricing/tax, this system only stores the resulting reference. Whether one
+// Tally invoice may cover multiple handoff rows (dispatch consolidation) is
+// an explicitly OPEN business question — tallyInvoiceNumber is therefore NOT
+// unique; recording the same number on several handoff rows is allowed. The
+// @@unique([erveDispatchId, saleOrderLineId]) below is a FACT-identity
+// constraint only (one Dispatch Sale fact per physically dispatched line,
+// preventing duplicate auto-creation) — it does not constrain Tally grouping.
+// ---------------------------------------------------------------------------
+
+enum InvoiceHandoffStatus {
+  PENDING_TALLY
+  INVOICED
+}
+
+model InvoiceHandoff {
+  id              String @id
+  erveDispatchId  String @map("erve_dispatch_id")
+  saleOrderLineId String @map("sale_order_line_id")
+
+  // The physically dispatched quantity this handoff represents — the summed
+  // packed quantity for this (erveDispatchId, saleOrderLineId) pair. Never
+  // re-derived from requestedQuantity/approvedQuantity/DistributorSalesReport
+  // — the physical Dispatch is the sole authoritative source.
+  quantity Int
+
+  status                InvoiceHandoffStatus @default(PENDING_TALLY)
+  tallyInvoiceNumber    String?              @map("tally_invoice_number")
+  tallyInvoiceDate      DateTime?            @map("tally_invoice_date") @db.Date
+  tallyVoucherReference String?              @map("tally_voucher_reference")
+  remarks               String?
+  recordedById          String?              @map("recorded_by_id")
+  recordedAt            DateTime?            @map("recorded_at")
+  version               Int                  @default(1)
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
+
+  erveDispatch  ErveDispatch  @relation(fields: [erveDispatchId], references: [id], onDelete: Restrict)
+  saleOrderLine SaleOrderLine @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+  recordedBy    User?         @relation("InvoiceHandoffRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@unique([erveDispatchId, saleOrderLineId])
+  @@index([status])
+  @@map("invoice_handoffs")
+}
+
+// ---------------------------------------------------------------------------
+// Distributor-reported ACTUAL SALE of previously-dispatched SALE_RETURN
+// stock (BRD 6.7/8.13 "Actual Sales Reported by Distributor"). This is a
+// commercial sell-through / royalty-reporting fact, distinct from the
+// Dispatch Sale invoice handoff above — recording one here NEVER creates or
+// mutates an InvoiceHandoff (that invoice already exists from the physical
+// Dispatch). Append-only per report — a Distributor submits repeated partial
+// reports over time rather than overwriting a cumulative total, matching
+// this codebase's append-only-fact convention (see FinalQualityBatchRework).
+// Only quantities against SALE_RETURN-sourced dispatched lines may be
+// reported (service-enforced); OUTRIGHT lines never go through this model —
+// for OUTRIGHT, physically dispatched quantity IS the commercially sold
+// quantity. This intentionally does NOT touch StockAllocation — once
+// physically dispatched, stock is no longer part of the central QA/
+// allocation availability model; SALE_RETURN consignment position
+// (dispatched/actual sold/remaining) is a separate downstream view derived
+// by summing FactoryDispatchLine.packedQuantity against
+// DistributorSalesReportLine.quantitySold for the same (erveDispatchId,
+// saleOrderLineId) pair (see distributor-sales-report.service.ts).
+//
+// Forward-compatibility note (future RESALE phase, not implemented here):
+// a future RESALE of returned stock is also royalty-reportable but must
+// never create an InvoiceHandoff either — invoicing and royalty-reporting
+// are kept as separate concerns on purpose so that distinction holds later
+// without a structural rework. Provenance back to the original ErveDispatch
+// line is preserved here precisely so a later Return/Resale model can trace
+// through this same (erveDispatchId, saleOrderLineId) pair.
+// ---------------------------------------------------------------------------
+
+model DistributorSalesReport {
+  id            String   @id
+  distributorId String   @map("distributor_id")
+  reportDate    DateTime @map("report_date") @db.Date
+  remarks       String?
+  submittedById String   @map("submitted_by_id")
+  submittedAt   DateTime @default(now()) @map("submitted_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  distributor Distributor                  @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  submittedBy User                         @relation("DistributorSalesReportSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
+  lines       DistributorSalesReportLine[]
+
+  @@index([distributorId])
+  @@map("distributor_sales_reports")
+}
+
+model DistributorSalesReportLine {
+  id                       String   @id
+  distributorSalesReportId String   @map("distributor_sales_report_id")
+  // The specific dispatched SALE_RETURN source line this reported quantity
+  // is being sold from — the authoritative cap for cumulative reporting is
+  // this line's dispatched quantity, never the Sale Order's requested/
+  // approved quantity (see the service's ceiling validation).
+  erveDispatchId           String   @map("erve_dispatch_id")
+  saleOrderLineId          String   @map("sale_order_line_id")
+  quantitySold             Int      @map("quantity_sold")
+  createdAt                DateTime @default(now()) @map("created_at")
+
+  report        DistributorSalesReport @relation(fields: [distributorSalesReportId], references: [id], onDelete: Cascade)
+  erveDispatch  ErveDispatch           @relation(fields: [erveDispatchId], references: [id], onDelete: Restrict)
+  saleOrderLine SaleOrderLine          @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+
+  @@index([distributorSalesReportId])
+  @@index([erveDispatchId, saleOrderLineId])
+  @@map("distributor_sales_report_lines")
+}
+
+// ---------------------------------------------------------------------------
+// Distributor Return — the second half of the SALE_RETURN model: unsold
+// stock physically coming back from a Distributor to Erve. Applies only to
+// SALE_RETURN-sourced dispatched lines (service-enforced). Deliberately does
+// NOT release/mutate the original StockAllocation, QaReleaseLine or
+// ErveDispatch — those remain the immutable historical fulfillment record.
+// Returned physical stock is represented instead by a new fact,
+// ReturnedStockLot, created only once physical receipt is confirmed.
+//
+// Lifecycle: SUBMITTED (Distributor request, reserves only against other
+// return requests) -> APPROVED (Accountant/Admin finance approval, sets
+// approvedQuantity, reserves against Actual Sale reporting too) -> RECEIVED
+// (Merchandiser/Admin physical receipt, sets receivedQuantity, creates
+// ReturnedStockLot) — or SUBMITTED -> REJECTED / (SUBMITTED|APPROVED) ->
+// CANCELLED. REJECTED/RECEIVED/CANCELLED are terminal. Once
+// creditNoteReference is recorded, CANCELLED is no longer reachable (a
+// credit note must not survive a cancelled business event), and physical
+// receipt must exactly match approvedQuantity (a lower receipt after the
+// credit note exists would leave it referencing goods Erve never got back —
+// no reversal workflow exists yet to reconcile that).
+//
+// See distributor-return.service.ts / sale-or-return-quantities.ts for the
+// full quantity model (receivedQuantity / actualSoldQuantity /
+// returnedQuantity / approvedAwaitingReceipt / pendingRequested).
+// ---------------------------------------------------------------------------
+
+enum DistributorReturnStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  RECEIVED
+  CANCELLED
+}
+
+model DistributorReturn {
+  id                     String                  @id
+  returnNumber           String                  @unique @map("return_number")
+  distributorId          String                  @map("distributor_id")
+  returnDate             DateTime                @map("return_date") @db.Date
+  status                 DistributorReturnStatus @default(SUBMITTED)
+  returnReason           String                  @map("return_reason")
+  remarks                String?
+  submittedById          String                  @map("submitted_by_id")
+  submittedAt            DateTime                @default(now()) @map("submitted_at")
+  approvedById           String?                 @map("approved_by_id")
+  approvedAt             DateTime?               @map("approved_at")
+  approvalRemarks        String?                 @map("approval_remarks")
+  rejectionReason        String?                 @map("rejection_reason")
+  receivedById           String?                 @map("received_by_id")
+  receivedAt             DateTime?               @map("received_at")
+  creditNoteReference    String?                 @map("credit_note_reference")
+  creditNoteDate         DateTime?               @map("credit_note_date") @db.Date
+  creditNoteRecordedById String?                 @map("credit_note_recorded_by_id")
+  cancelledById          String?                 @map("cancelled_by_id")
+  cancelledAt            DateTime?               @map("cancelled_at")
+  version                Int                     @default(1)
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+  financialYearId        String                  @map("financial_year_id")
+  returnSerial           Int                     @map("return_serial")
+
+  distributor          Distributor             @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  submittedBy          User                    @relation("DistributorReturnSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
+  approvedBy           User?                   @relation("DistributorReturnApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  receivedBy           User?                   @relation("DistributorReturnReceiver", fields: [receivedById], references: [id], onDelete: Restrict)
+  cancelledBy          User?                   @relation("DistributorReturnCanceller", fields: [cancelledById], references: [id], onDelete: Restrict)
+  creditNoteRecordedBy User?                   @relation("DistributorReturnCreditNoteRecorder", fields: [creditNoteRecordedById], references: [id], onDelete: Restrict)
+  financialYear        FinancialYear           @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  lines                DistributorReturnLine[]
+
+  @@unique([financialYearId, returnSerial])
+  @@index([distributorId])
+  @@index([status])
+  @@map("distributor_returns")
+}
+
+// One row per (erveDispatchId, saleOrderLineId) pair — same granularity as
+// DistributorSalesReportLine/ErveDispatchDeliveryLine, so all three share one
+// join shape against the sale-or-return position view (see
+// sale-or-return-quantities.ts).
+model DistributorReturnLine {
+  id                  String   @id
+  distributorReturnId String   @map("distributor_return_id")
+  erveDispatchId      String   @map("erve_dispatch_id")
+  saleOrderLineId     String   @map("sale_order_line_id")
+  requestedQuantity   Int      @map("requested_quantity")
+  approvedQuantity    Int?     @map("approved_quantity")
+  receivedQuantity    Int?     @map("received_quantity")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  distributorReturn DistributorReturn @relation(fields: [distributorReturnId], references: [id], onDelete: Cascade)
+  erveDispatch      ErveDispatch      @relation(fields: [erveDispatchId], references: [id], onDelete: Restrict)
+  saleOrderLine     SaleOrderLine     @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+  returnedStockLot  ReturnedStockLot?
+
+  @@unique([distributorReturnId, erveDispatchId, saleOrderLineId])
+  @@index([erveDispatchId, saleOrderLineId])
+  @@map("distributor_return_lines")
+}
+
+// Created exactly once per DistributorReturnLine, only when that line's
+// return is RECEIVED, quantity = receivedQuantity (immutable thereafter — no
+// update path exists). A new physical-inventory fact, NOT a QaReleaseLine —
+// does not touch/release the original StockAllocation/QaReleaseLine/
+// ErveDispatch. Deliberately not yet part of any generic "available stock"
+// consumption pool (no ReturnedStockAllocation / RESALE in this phase) — this
+// is physically-received returned-stock inventory with full provenance,
+// ready for a future RESALE consumption ledger to reference.
+model ReturnedStockLot {
+  id                      String   @id
+  distributorReturnLineId String   @unique @map("distributor_return_line_id")
+  saleOrderLineId         String   @map("sale_order_line_id")
+  quantity                Int
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  distributorReturnLine DistributorReturnLine @relation(fields: [distributorReturnLineId], references: [id], onDelete: Restrict)
+  saleOrderLine         SaleOrderLine         @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+
+  @@index([saleOrderLineId])
+  @@map("returned_stock_lots")
 }
 
 // Mirrors JobOrderIdempotencyRecord exactly for the same Idempotency-Key

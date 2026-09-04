@@ -1,6 +1,6 @@
 import { createId } from '@erve/shared';
 import type { Role } from '@erve/types';
-import { prisma, type UserStatus, type DocumentType } from '../db/prisma.js';
+import { prisma, type UserStatus, type DocumentType, type PurchaseOrderStatus } from '../db/prisma.js';
 import { hashPassword } from '../auth/password.js';
 import { signAccessToken } from '../auth/jwt.js';
 import { ensureFinancialYear } from '../modules/master-data/financial-year.service.js';
@@ -42,6 +42,42 @@ export async function resetDatabase(): Promise<void> {
     });
   }
   await prisma.auditLog.deleteMany();
+  // Invoice/Actual-Sale rows must go before ErveDispatch below — both
+  // InvoiceHandoff.erveDispatchId and DistributorSalesReportLine.erveDispatchId
+  // are onDelete: Restrict, and InvoiceHandoff.saleOrderLineId /
+  // DistributorSalesReportLine.saleOrderLineId are Restrict against
+  // SaleOrderLine (deleted further below), so both must clear first.
+  await prisma.invoiceHandoff.deleteMany();
+  await prisma.distributorSalesReportLine.deleteMany();
+  await prisma.distributorSalesReport.deleteMany();
+  // Distributor Return rows must go before ErveDispatch/SaleOrderLine below
+  // for the same reason — ReturnedStockLot restricts against
+  // DistributorReturnLine/SaleOrderLine, DistributorReturnLine restricts
+  // against DistributorReturn/ErveDispatch/SaleOrderLine, and
+  // ErveDispatchDeliveryLine restricts against ErveDispatch/SaleOrderLine.
+  await prisma.returnedStockLot.deleteMany();
+  await prisma.distributorReturnLine.deleteMany();
+  await prisma.distributorReturn.deleteMany();
+  await prisma.erveDispatchDeliveryLine.deleteMany();
+  // Fulfillment rows must go before Sale Order/StockAllocation/Factory
+  // below — every FK in this chain (ErveDispatch -> ErvePackingList ->
+  // FactoryDispatch -> StockAllocation/SaleOrder/Factory) is onDelete:
+  // Restrict, so they'd otherwise block those deletes. FactoryDispatch's own
+  // lines/cartons/cartonLines cascade automatically once it is deleted.
+  await prisma.erveDispatch.deleteMany();
+  await prisma.ervePackingListSource.deleteMany();
+  await prisma.ervePackingList.deleteMany();
+  // TRUNCATE (not deleteMany) because FactoryPackingCartonLine.factoryDispatchLineId
+  // is onDelete: Restrict against a SEPARATE cascade branch from
+  // FactoryDispatch (-> FactoryDispatchLine) than the one that reaches it
+  // (-> FactoryPackingCarton -> FactoryPackingCartonLine) — Postgres does not
+  // order those two branches against each other, so a row-by-row cascade
+  // delete of factory_dispatches can spuriously violate that Restrict
+  // whenever cartons exist. TRUNCATE ... CASCADE clears all four tables
+  // atomically without going through per-row FK cascade resolution at all.
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "factory_packing_carton_lines", "factory_packing_cartons", "factory_dispatch_lines", "factory_dispatches" CASCADE',
+  );
   // Sale Order rows must go before the QA-release/PO truncation below —
   // StockAllocation.qaReleaseLineId and SaleOrderLine.purchaseOrderLineSizeId
   // are onDelete: Restrict, so they'd otherwise block those deletes.
@@ -181,6 +217,7 @@ export interface CreateReleasedQaStockOptions {
   sizeId?: string;
   quantity: number;
   releasedAt?: Date;
+  purchaseMode?: 'OUTRIGHT' | 'SALE_RETURN';
 }
 
 export interface ReleasedQaStock {
@@ -196,6 +233,91 @@ export interface ReleasedQaStock {
   qaReleaseId: string;
   qaReleaseLineId: string;
   quantity: number;
+}
+
+export interface CreatePurchaseOrderLineSizeOptions {
+  distributorId?: string;
+  styleId?: string;
+  sizeId?: string;
+  orderedQuantity?: number;
+  lineStatus?: 'ACTIVE' | 'CANCELLED';
+  poStatus?: PurchaseOrderStatus;
+  purchaseMode?: 'OUTRIGHT' | 'SALE_RETURN';
+}
+
+export interface PurchaseOrderLineSizeFixture {
+  distributorId: string;
+  styleId: string;
+  sizeId: string;
+  purchaseOrderId: string;
+  poNumber: string;
+  purchaseOrderLineSizeId: string;
+}
+
+// A distributor's own PO line/size with NO QA release chain behind it at
+// all — for demand-request scenarios where a Sale Order line must be
+// createable/submittable against a style/size the distributor has ordered
+// but that has no released (or even in-production) stock yet.
+export async function createPurchaseOrderLineSize(
+  options: CreatePurchaseOrderLineSizeOptions = {},
+): Promise<PurchaseOrderLineSizeFixture> {
+  const distributor = options.distributorId ? { id: options.distributorId } : await createTestDistributor();
+  const actorId = await createTestUser({
+    email: `po-line-size-${createId()}@test.local`,
+    password: 'pass',
+    roles: ['ADMIN'],
+  });
+
+  const style = options.styleId
+    ? { id: options.styleId }
+    : await prisma.style.create({
+        data: {
+          id: createId(),
+          styleNumber: `SO-${createId()}`,
+          styleName: 'Sale order fixture style (no stock)',
+          finalMrp: 100,
+        },
+      });
+  const size = options.sizeId
+    ? { id: options.sizeId }
+    : await prisma.size.create({
+        data: { id: createId(), code: `SZ-${createId()}`, label: 'M', sizeType: 'ALPHA', sortOrder: 1 },
+      });
+
+  const financialYear = await createTestFinancialYear();
+  const poSerial = await allocateTestDocumentSerial('PURCHASE_ORDER', financialYear.id);
+  const poNumber = `PO-${createId()}`;
+  const po = await prisma.distributorPurchaseOrder.create({
+    data: {
+      id: createId(),
+      poNumber,
+      distributorId: distributor.id,
+      poDate: new Date(),
+      purchaseMode: options.purchaseMode ?? 'OUTRIGHT',
+      status: options.poStatus ?? 'SUBMITTED',
+      createdBy: actorId,
+      financialYearId: financialYear.id,
+      poSerial,
+      lines: {
+        create: {
+          id: createId(),
+          styleId: style.id,
+          lineStatus: options.lineStatus ?? 'ACTIVE',
+          sizes: { create: [{ id: createId(), sizeId: size.id, orderedQuantity: options.orderedQuantity ?? 100 }] },
+        },
+      },
+    },
+    include: { lines: { include: { sizes: true } } },
+  });
+
+  return {
+    distributorId: distributor.id,
+    styleId: style.id,
+    sizeId: size.id,
+    purchaseOrderId: po.id,
+    poNumber,
+    purchaseOrderLineSizeId: po.lines[0]!.sizes[0]!.id,
+  };
 }
 
 // Seeds a full, minimal PO -> JobOrder -> Final QA release chain directly via
@@ -241,7 +363,7 @@ export async function createReleasedQaStock(
       poNumber,
       distributorId: distributor.id,
       poDate: new Date(),
-      purchaseMode: 'OUTRIGHT',
+      purchaseMode: options.purchaseMode ?? 'OUTRIGHT',
       status: 'SUBMITTED',
       createdBy: actorId,
       financialYearId: financialYear.id,

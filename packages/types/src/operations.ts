@@ -198,7 +198,8 @@ export type SaleOrderStatus =
   | 'UNDER_REVIEW'
   | 'APPROVED'
   | 'REJECTED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'FULFILLED';
 
 export type StockAllocationStatus = 'ACTIVE' | 'RELEASED';
 export type StockAllocationSource =
@@ -262,11 +263,357 @@ export interface SaleOrderSummary extends VersionedResource {
 export interface SaleOrderDetail extends SaleOrderSummary {
   creator: { id: string; name: string; email: string };
   reviewedBy: { id: string; name: string; email: string } | null;
+  fulfilledBy: { id: string; name: string; email: string } | null;
   remarks: string | null;
   submittedAt: string | null;
   reviewedAt: string | null;
+  fulfilledAt: string | null;
+  fulfillmentReference: string | null;
   decisionReason: string | null;
   lines: SaleOrderLineView[];
+  fulfillment: SaleOrderFulfillmentSummary;
+}
+
+// ---------------------------------------------------------------------------
+// Fulfillment: Factory Packing -> Erve India Consolidation -> Distributor
+// Dispatch (see the schema module doc for the full design), followed by the
+// Dispatch -> Invoice/Tally reference handoff below. Tally remains the
+// accounting system of record and sole generator of the actual invoice/
+// e-invoice/e-way bill — these views only carry the reference Tally produces.
+// ---------------------------------------------------------------------------
+
+export type FactoryDispatchStatus = 'DRAFT' | 'READY_FOR_ERVE';
+export type ErvePackingListStatus = 'OPEN' | 'DISPATCHED';
+export type ErveDispatchStatus = 'DISPATCHED' | 'DELIVERED';
+export type DeliveryConfirmationSource = 'USER_CONFIRMED' | 'LEGACY_ASSUMED_FULL_RECEIPT';
+
+/** One approved-allocation row a FACTORY_USER may pack, scoped to their own mapped Factory only. */
+export interface FactoryPackingQueueLine {
+  saleOrderId: string;
+  saleOrderNumber: string;
+  distributor: { id: string; code: string; name: string };
+  saleOrderLineId: string;
+  stockAllocationId: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  allocatedQuantity: number;
+  packedQuantity: number;
+  remainingQuantity: number;
+}
+
+export interface FactoryDispatchLineView {
+  id: string;
+  saleOrderLineId: string;
+  stockAllocationId: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  packedQuantity: number;
+  cartonedQuantity: number;
+}
+
+export interface FactoryPackingCartonLineView {
+  factoryDispatchLineId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  quantity: number;
+}
+
+export interface FactoryPackingCartonView {
+  id: string;
+  cartonNumber: string;
+  packageDetails: string | null;
+  weight: string | null;
+  lines: FactoryPackingCartonLineView[];
+  createdAt: string;
+}
+
+export interface FactoryDispatchSummary extends VersionedResource {
+  id: string;
+  factoryDispatchNumber: string;
+  factory: { id: string; code: string; name: string };
+  saleOrder: { id: string; saleOrderNumber: string; distributor: { id: string; code: string; name: string } };
+  status: FactoryDispatchStatus;
+  preparedBy: { id: string; name: string; email: string };
+  preparedAt: string;
+  finalizedBy: { id: string; name: string; email: string } | null;
+  finalizedAt: string | null;
+  totalPackedQuantity: number;
+  consolidated: boolean;
+  createdAt: string;
+}
+
+export interface FactoryDispatchDetail extends FactoryDispatchSummary {
+  lines: FactoryDispatchLineView[];
+  cartons: FactoryPackingCartonView[];
+}
+
+export interface ErvePackingListSourceView {
+  factoryDispatchId: string;
+  factoryDispatchNumber: string;
+  factory: { id: string; code: string; name: string };
+  lines: FactoryDispatchLineView[];
+  cartons: FactoryPackingCartonView[];
+}
+
+export interface ErvePackingListSummary {
+  id: string;
+  ervePackingListNumber: string;
+  saleOrder: { id: string; saleOrderNumber: string; distributor: { id: string; code: string; name: string } };
+  status: ErvePackingListStatus;
+  createdBy: { id: string; name: string; email: string };
+  createdAt: string;
+  totalQuantity: number;
+}
+
+export interface ErvePackingListDetail extends ErvePackingListSummary {
+  sources: ErvePackingListSourceView[];
+}
+
+/**
+ * Per-SaleOrderLine invoice-handoff ("Dispatch Sale") status embedded on
+ * ErveDispatchView so a Dispatch shows its invoice state without a second
+ * fetch. EVERY physically dispatched line appears here, both Purchase
+ * Modes — see ErveDispatchSaleOrReturnLine below for the SALE_RETURN-only
+ * commercial sell-through position layered on top for those lines.
+ */
+export interface ErveDispatchInvoiceHandoffSummary {
+  invoiceHandoffId: string;
+  saleOrderLineId: string;
+  purchaseMode: PurchaseMode;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  quantity: number;
+  status: InvoiceHandoffStatus;
+  tallyInvoiceNumber: string | null;
+  tallyInvoiceDate: string | null;
+}
+
+/** A SALE_RETURN line's consignment/Actual-Sale/Return position within this one Dispatch — see SaleOrReturnPositionRow for the full cross-Dispatch derivation. Independent of the line's InvoiceHandoff above — the Dispatch Sale invoice already exists for the full dispatchedQuantity regardless of actualSoldQuantity. */
+export interface ErveDispatchSaleOrReturnLine {
+  saleOrderLineId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  dispatchedQuantity: number;
+  receivedQuantity: number;
+  actualSoldQuantity: number;
+  returnedQuantity: number;
+  approvedAwaitingReceiptQuantity: number;
+  pendingRequestedQuantity: number;
+  remainingWithDistributor: number;
+  returnableQuantity: number;
+}
+
+export interface ErveDispatchView extends VersionedResource {
+  id: string;
+  erveDispatchNumber: string;
+  ervePackingList: { id: string; ervePackingListNumber: string };
+  saleOrder: { id: string; saleOrderNumber: string };
+  distributor: { id: string; code: string; name: string };
+  status: ErveDispatchStatus;
+  dispatchDate: string;
+  transporter: string | null;
+  vehicleNumber: string | null;
+  lrNumber: string | null;
+  remarks: string | null;
+  dispatchedBy: { id: string; name: string; email: string };
+  dispatchedAt: string;
+  lrUpdatedBy: { id: string; name: string; email: string } | null;
+  lrUpdatedAt: string | null;
+  deliveredBy: { id: string; name: string; email: string } | null;
+  deliveredAt: string | null;
+  deliveryRemarks: string | null;
+  deliveryConfirmationSource: DeliveryConfirmationSource | null;
+  totalQuantity: number;
+  invoiceHandoffs: ErveDispatchInvoiceHandoffSummary[];
+  saleOrReturnLines: ErveDispatchSaleOrReturnLine[];
+}
+
+// ---------------------------------------------------------------------------
+// Physical Dispatch -> Invoice/Tally reference handoff ("Dispatch Sale").
+// Financial granularity is the SaleOrderLine, never the whole Dispatch or
+// Sale Order — see the schema module doc (invoice_handoffs) for why: a Sale
+// Order (and therefore one ErveDispatch consolidating it) can span multiple
+// Purchase Orders with different PurchaseMode, so a single physical Dispatch
+// can legitimately mix OUTRIGHT and SALE_RETURN quantity.
+//
+// EVERY physically dispatched line — both Purchase Modes — gets exactly one
+// InvoiceHandoff the moment ErveDispatch is recorded. This is deliberately
+// NOT the same fact as a SALE_RETURN Distributor's later-reported Actual
+// Sale (see DistributorSalesReportLineView) — recording an Actual Sale never
+// creates a second handoff; the invoice for the physical movement already
+// exists here. purchaseMode is exposed for business context/reporting only
+// and never affects eligibility.
+//
+// tallyVoucherReference/remarks/recordedBy are omitted (null) for a
+// DISTRIBUTOR caller — only the number/date are "safe" fields for that role.
+// tallyInvoiceNumber is intentionally NOT unique across handoffs: whether one
+// Tally invoice may cover several handoff rows (consolidation) is an open
+// business question this system does not yet constrain.
+// ---------------------------------------------------------------------------
+
+export type InvoiceHandoffStatus = 'PENDING_TALLY' | 'INVOICED';
+
+export interface InvoiceHandoffView extends VersionedResource {
+  id: string;
+  erveDispatch: { id: string; erveDispatchNumber: string; dispatchDate: string };
+  saleOrder: { id: string; saleOrderNumber: string };
+  distributor: { id: string; code: string; name: string };
+  purchaseMode: PurchaseMode;
+  saleOrderLineId: string;
+  style: { styleNumber: string; styleName: string };
+  size: { sizeCode: string; sizeLabel: string };
+  quantity: number;
+  status: InvoiceHandoffStatus;
+  tallyInvoiceNumber: string | null;
+  tallyInvoiceDate: string | null;
+  tallyVoucherReference: string | null;
+  remarks: string | null;
+  recordedBy: { id: string; name: string; email: string } | null;
+  recordedAt: string | null;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Sale-or-Return consignment position — derived (dispatched, minus Actual
+// Sale reported; returns are future scope, see the schema module doc), never
+// an independently mutable record, and entirely independent of the line's
+// InvoiceHandoff status (the Dispatch Sale invoice already exists for the
+// full dispatchedQuantity — see InvoiceHandoffView above). This is the
+// Distributor-facing "what can I report sales against" queue and the
+// Accountant/Merchandiser/Senior Management read of the same facts.
+// ---------------------------------------------------------------------------
+
+export interface SaleOrReturnPositionRow {
+  erveDispatchId: string;
+  erveDispatchNumber: string;
+  dispatchDate: string;
+  saleOrderId: string;
+  saleOrderNumber: string;
+  distributor: { id: string; code: string; name: string };
+  saleOrderLineId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  dispatchedQuantity: number;
+  receivedQuantity: number;
+  actualSoldQuantity: number;
+  returnedQuantity: number;
+  approvedAwaitingReceiptQuantity: number;
+  pendingRequestedQuantity: number;
+  remainingWithDistributor: number;
+  returnableQuantity: number;
+}
+
+// ---------------------------------------------------------------------------
+// Distributor Return — unsold SALE_RETURN stock physically coming back from
+// a Distributor to Erve. See apps/api's distributor-return.service.ts module
+// doc for the full lifecycle/quantity model this feeds
+// (SaleOrReturnPositionRow.returnableQuantity above is the eligibility
+// ceiling for a new submission).
+// ---------------------------------------------------------------------------
+
+export type DistributorReturnStatus = 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'RECEIVED' | 'CANCELLED';
+
+export interface DistributorReturnLineView {
+  id: string;
+  erveDispatch: { id: string; erveDispatchNumber: string };
+  saleOrderLineId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  requestedQuantity: number;
+  approvedQuantity: number | null;
+  receivedQuantity: number | null;
+  returnedStockLotId: string | null;
+}
+
+export interface DistributorReturnView extends VersionedResource {
+  id: string;
+  returnNumber: string;
+  distributor: { id: string; code: string; name: string };
+  returnDate: string;
+  status: DistributorReturnStatus;
+  returnReason: string;
+  remarks: string | null;
+  submittedBy: { id: string; name: string; email: string };
+  submittedAt: string;
+  approvedBy: { id: string; name: string; email: string } | null;
+  approvedAt: string | null;
+  approvalRemarks: string | null;
+  rejectionReason: string | null;
+  receivedBy: { id: string; name: string; email: string } | null;
+  receivedAt: string | null;
+  creditNoteReference: string | null;
+  creditNoteDate: string | null;
+  creditNoteRecordedBy: { id: string; name: string; email: string } | null;
+  cancelledBy: { id: string; name: string; email: string } | null;
+  cancelledAt: string | null;
+  lines: DistributorReturnLineView[];
+}
+
+export interface DistributorSalesReportLineView {
+  id: string;
+  erveDispatch: { id: string; erveDispatchNumber: string };
+  saleOrderLineId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  quantitySold: number;
+}
+
+export interface DistributorSalesReportView {
+  id: string;
+  distributor: { id: string; code: string; name: string };
+  reportDate: string;
+  remarks: string | null;
+  submittedBy: { id: string; name: string; email: string };
+  submittedAt: string;
+  lines: DistributorSalesReportLineView[];
+}
+
+export interface SaleOrderFulfillmentLineProgress {
+  saleOrderLineId: string;
+  approvedQuantity: number;
+  factoryPackedQuantity: number;
+  dispatchedQuantity: number;
+  remainingToPackQuantity: number;
+  remainingToDispatchQuantity: number;
+}
+
+/** View-model-only progress derived at read time — never persisted on SaleOrder.status (see spec). */
+export type SaleOrderFulfillmentStage =
+  | 'NOT_APPLICABLE'
+  | 'AWAITING_FACTORY_PACKING'
+  | 'PARTIALLY_FACTORY_PACKED'
+  | 'READY_FOR_ERVE_PACKING'
+  | 'PARTIALLY_DISPATCHED'
+  | 'DISPATCHED_IN_FULL';
+
+export interface SaleOrderFulfillmentSummary {
+  stage: SaleOrderFulfillmentStage;
+  totalApprovedQuantity: number;
+  totalFactoryPackedQuantity: number;
+  totalDispatchedQuantity: number;
+  lines: SaleOrderFulfillmentLineProgress[];
+  /** true when status is FULFILLED via the old manual action with no Erve Dispatch history behind it. */
+  isLegacyFulfilled: boolean;
 }
 
 export interface SaleOrderAuditEntry {
@@ -281,6 +628,23 @@ export interface SaleOrderAuditEntry {
   detail: string | null;
   actor: { id: string; name: string; email: string } | null;
   createdAt: string;
+}
+
+// The demand-side catalog a DISTRIBUTOR selects from when creating a Sale
+// Order line: identity fields only, from their own Purchase Order line/sizes
+// — deliberately carries no stock/availability quantity of any kind (own or
+// central), so it stays safe to show regardless of what QA-released stock
+// currently exists anywhere.
+export interface RequestableCatalogLine {
+  purchaseOrderLineSizeId: string;
+  purchaseOrderId: string;
+  poNumber: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
 }
 
 export interface EligibleStockLine {

@@ -3,13 +3,19 @@ import {
   ClipboardList,
   CalendarRange,
   Factory,
+  FileText,
   Hammer,
   Handshake,
   LayoutDashboard,
+  PackageCheck,
+  Receipt,
+  RotateCcw,
   Ruler,
   Shirt,
   ShoppingCart,
   Tags,
+  Truck,
+  Undo2,
   Users,
   Workflow,
   ClipboardCheck,
@@ -23,7 +29,13 @@ import {
   canManageSeasons,
   canManageUsers,
   canViewDistributorMaster,
+  canViewErveDispatches,
+  canViewErvePackingLists,
   canViewFactories,
+  canViewFactoryDispatches,
+  canViewInvoiceHandoffs,
+  canViewSaleOrReturnPositions,
+  canViewDistributorSalesReports,
   canNavigateToJobOrders,
   canViewPriceLists,
   canViewPurchaseOrders,
@@ -81,6 +93,32 @@ export function AppLayout() {
           : []),
         ...(canViewSaleOrders(user)
           ? [{ to: '/sale-orders', label: 'Sale Orders', icon: ShoppingCart }]
+          : []),
+      ],
+    },
+    {
+      heading: 'Fulfillment',
+      items: [
+        ...(canViewFactoryDispatches(user)
+          ? [{ to: '/fulfillment/factory-dispatches', label: 'Factory Packing', icon: PackageCheck }]
+          : []),
+        ...(canViewErvePackingLists(user)
+          ? [{ to: '/fulfillment/erve-packing-lists', label: 'Erve Packing Lists', icon: PackageCheck }]
+          : []),
+        ...(canViewErveDispatches(user)
+          ? [{ to: '/fulfillment/erve-dispatches', label: 'Dispatches', icon: Truck }]
+          : []),
+        ...(canViewInvoiceHandoffs(user)
+          ? [{ to: '/fulfillment/invoices', label: 'Invoices', icon: Receipt }]
+          : []),
+        ...(canViewSaleOrReturnPositions(user)
+          ? [{ to: '/fulfillment/sale-or-return', label: 'Sale-or-Return Stock', icon: RotateCcw }]
+          : []),
+        ...(canViewSaleOrReturnPositions(user)
+          ? [{ to: '/fulfillment/distributor-returns', label: 'Distributor Returns', icon: Undo2 }]
+          : []),
+        ...(canViewDistributorSalesReports(user)
+          ? [{ to: '/fulfillment/distributor-sales-reports', label: 'Sales Reports', icon: FileText }]
           : []),
       ],
     },

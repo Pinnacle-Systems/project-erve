@@ -24,6 +24,11 @@ import { priceListsRouter } from './modules/price-lists/price-lists.routes.js';
 import { purchaseOrdersRouter } from './modules/purchase-orders/purchase-orders.routes.js';
 import { jobOrdersRouter } from './modules/job-orders/job-orders.routes.js';
 import { saleOrdersRouter } from './modules/sale-orders/sale-orders.routes.js';
+import { factoryDispatchesRouter } from './modules/fulfillment/factory-dispatch.routes.js';
+import { ervePackingListsRouter, erveDispatchesRouter } from './modules/fulfillment/erve-dispatch.routes.js';
+import { invoiceHandoffsRouter } from './modules/fulfillment/invoice-handoff.routes.js';
+import { saleOrReturnPositionsRouter, distributorSalesReportsRouter } from './modules/fulfillment/distributor-sales-report.routes.js';
+import { distributorReturnsRouter } from './modules/fulfillment/distributor-return.routes.js';
 import { qaRouter } from './modules/qa/qa.routes.js';
 import {
   qualityFormsRouter,
@@ -109,6 +114,13 @@ export function createApp() {
   app.use('/purchase-orders', purchaseOrdersRouter);
   app.use('/job-orders', jobOrdersRouter);
   app.use('/sale-orders', saleOrdersRouter);
+  app.use('/factory-dispatches', factoryDispatchesRouter);
+  app.use('/erve-packing-lists', ervePackingListsRouter);
+  app.use('/erve-dispatches', erveDispatchesRouter);
+  app.use('/invoice-handoffs', invoiceHandoffsRouter);
+  app.use('/sale-or-return-positions', saleOrReturnPositionsRouter);
+  app.use('/distributor-sales-reports', distributorSalesReportsRouter);
+  app.use('/distributor-returns', distributorReturnsRouter);
   app.use('/qa', qaRouter);
 
   app.use(notFoundHandler);

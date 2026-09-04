@@ -1,6 +1,21 @@
 import type { AuthUser } from '@erve/types';
 import type { Role } from '@erve/types';
-import { canMutateJobOrderProduction } from '@erve/shared';
+import {
+  canMutateJobOrderProduction,
+  canMutateFactoryDispatch,
+  canViewFactoryDispatch,
+  canMutateErveDispatch,
+  canViewErveDispatch,
+  canViewErvePackingList,
+  canMutateInvoiceHandoff,
+  canViewInvoiceHandoff,
+  canViewSaleOrReturnPosition,
+  canViewDistributorSalesReport,
+  canSubmitDistributorSalesReport,
+  canSubmitDistributorReturn,
+  canApproveDistributorReturn,
+  canReceiveDistributorReturn,
+} from '@erve/shared';
 
 export const MASTER_DATA_DASHBOARD_SHORTCUT_ROLES = [
   'ADMIN',
@@ -206,3 +221,50 @@ export const canApproveSaleOrders = (user: AuthUser | null | undefined) =>
   hasRole(user, SALE_ORDER_APPROVE_ROLES);
 
 export const canViewSaleOrderInventory = canApproveSaleOrders;
+
+// ---------------------------------------------------------------------------
+// Fulfillment: Factory Packing -> Erve India Consolidation -> Distributor
+// Dispatch. Role lists live once in @erve/shared (shared with the API's
+// route guards) — these are thin AuthUser-typed wrappers for route/nav gating.
+// ---------------------------------------------------------------------------
+
+export const canViewFactoryDispatches = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewFactoryDispatch(user));
+
+export const canMutateFactoryDispatches = (user: AuthUser | null | undefined) =>
+  Boolean(user && canMutateFactoryDispatch(user));
+
+export const canViewErvePackingLists = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewErvePackingList(user));
+
+export const canMutateErveDispatches = (user: AuthUser | null | undefined) =>
+  Boolean(user && canMutateErveDispatch(user));
+
+export const canViewErveDispatches = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewErveDispatch(user));
+
+export const canViewInvoiceHandoffs = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewInvoiceHandoff(user));
+
+export const canMutateInvoiceHandoffs = (user: AuthUser | null | undefined) =>
+  Boolean(user && canMutateInvoiceHandoff(user));
+
+export const canViewSaleOrReturnPositions = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewSaleOrReturnPosition(user));
+
+export const canViewDistributorSalesReports = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewDistributorSalesReport(user));
+
+export const canSubmitDistributorSalesReports = (user: AuthUser | null | undefined) =>
+  Boolean(user && canSubmitDistributorSalesReport(user));
+
+// Distributor Returns share the Sale-or-Return position's view audience
+// (canViewSaleOrReturnPositions above) — no separate view wrapper needed.
+export const canSubmitDistributorReturns = (user: AuthUser | null | undefined) =>
+  Boolean(user && canSubmitDistributorReturn(user));
+
+export const canApproveDistributorReturns = (user: AuthUser | null | undefined) =>
+  Boolean(user && canApproveDistributorReturn(user));
+
+export const canReceiveDistributorReturns = (user: AuthUser | null | undefined) =>
+  Boolean(user && canReceiveDistributorReturn(user));

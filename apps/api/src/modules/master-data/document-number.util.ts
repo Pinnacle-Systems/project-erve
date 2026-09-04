@@ -6,6 +6,15 @@ export const DOCUMENT_PREFIXES = {
   PURCHASE_ORDER: 'EIPO',
   JOB_ORDER: 'EIJO',
   SALE_ORDER: 'EISO',
+  // No original-scope-specified prefix exists for these three (see the
+  // fulfillment audit) — chosen to follow the same "EI" + short document
+  // abbreviation convention as the three above.
+  FACTORY_DISPATCH: 'EIFD',
+  ERVE_PACKING_LIST: 'EIPL',
+  ERVE_DISPATCH: 'EIED',
+  // No original-scope-specified prefix for Distributor Return either — same
+  // "EI" + short document abbreviation convention as the three above.
+  DISTRIBUTOR_RETURN: 'EIDR',
 } as const;
 
 // MINIMUM width — pads short serials up to 4 digits but never truncates

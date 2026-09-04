@@ -39,6 +39,19 @@ import { JobOrderListPage } from '../pages/job-orders/JobOrderListPage.js';
 import { SaleOrderListPage } from '../pages/sale-orders/SaleOrderListPage.js';
 import { SaleOrderFormPage } from '../pages/sale-orders/SaleOrderFormPage.js';
 import { SaleOrderDetailPage } from '../pages/sale-orders/SaleOrderDetailPage.js';
+import { FactoryPackingQueuePage } from '../pages/fulfillment/FactoryPackingQueuePage.js';
+import { FactoryDispatchDetailPage } from '../pages/fulfillment/FactoryDispatchDetailPage.js';
+import { ErvePendingFactoryDispatchesPage } from '../pages/fulfillment/ErvePendingFactoryDispatchesPage.js';
+import { ErvePackingListDetailPage } from '../pages/fulfillment/ErvePackingListDetailPage.js';
+import { ErveDispatchListPage } from '../pages/fulfillment/ErveDispatchListPage.js';
+import { ErveDispatchDetailPage } from '../pages/fulfillment/ErveDispatchDetailPage.js';
+import { InvoiceHandoffListPage } from '../pages/fulfillment/InvoiceHandoffListPage.js';
+import { InvoiceHandoffDetailPage } from '../pages/fulfillment/InvoiceHandoffDetailPage.js';
+import { SaleOrReturnPositionListPage } from '../pages/fulfillment/SaleOrReturnPositionListPage.js';
+import { DistributorSalesReportListPage } from '../pages/fulfillment/DistributorSalesReportListPage.js';
+import { DistributorSalesReportDetailPage } from '../pages/fulfillment/DistributorSalesReportDetailPage.js';
+import { DistributorReturnListPage } from '../pages/fulfillment/DistributorReturnListPage.js';
+import { DistributorReturnDetailPage } from '../pages/fulfillment/DistributorReturnDetailPage.js';
 import { AppLayout } from '../pages/AppLayout.js';
 import { RoleRoute } from './RoleRoute.js';
 import { QaDetailPage } from '../pages/qa/QaDetailPage.js';
@@ -65,6 +78,15 @@ import {
   STYLE_MANAGE_ROLES,
   USER_MANAGE_ROLES,
 } from '../auth/permissions.js';
+import {
+  FACTORY_DISPATCH_MUTATION_ROLES,
+  FACTORY_DISPATCH_VIEW_ROLES,
+  ERVE_DISPATCH_VIEW_ROLES,
+  ERVE_PACKING_LIST_VIEW_ROLES,
+  INVOICE_HANDOFF_VIEW_ROLES,
+  SALE_OR_RETURN_POSITION_VIEW_ROLES,
+  DISTRIBUTOR_SALES_REPORT_VIEW_ROLES,
+} from '@erve/shared';
 
 const MASTER_DATA_ROUTE_ROLES = [
   'ADMIN',
@@ -419,6 +441,90 @@ export function AppRoutes() {
             </RoleRoute>
           }
         />
+      </Route>
+
+      <Route
+        path="/fulfillment/factory-dispatches"
+        element={
+          <RoleRoute allowed={FACTORY_DISPATCH_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route
+          index
+          element={
+            <RoleRoute allowed={FACTORY_DISPATCH_MUTATION_ROLES}>
+              <FactoryPackingQueuePage />
+            </RoleRoute>
+          }
+        />
+        <Route path=":id" element={<FactoryDispatchDetailPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/erve-packing-lists"
+        element={
+          <RoleRoute allowed={ERVE_PACKING_LIST_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<ErvePendingFactoryDispatchesPage />} />
+        <Route path=":id" element={<ErvePackingListDetailPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/erve-dispatches"
+        element={
+          <RoleRoute allowed={ERVE_DISPATCH_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<ErveDispatchListPage />} />
+        <Route path=":id" element={<ErveDispatchDetailPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/invoices"
+        element={
+          <RoleRoute allowed={INVOICE_HANDOFF_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<InvoiceHandoffListPage />} />
+        <Route path=":id" element={<InvoiceHandoffDetailPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/sale-or-return"
+        element={
+          <RoleRoute allowed={SALE_OR_RETURN_POSITION_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<SaleOrReturnPositionListPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/distributor-sales-reports"
+        element={
+          <RoleRoute allowed={DISTRIBUTOR_SALES_REPORT_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<DistributorSalesReportListPage />} />
+        <Route path=":id" element={<DistributorSalesReportDetailPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/distributor-returns"
+        element={
+          <RoleRoute allowed={SALE_OR_RETURN_POSITION_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<DistributorReturnListPage />} />
+        <Route path=":id" element={<DistributorReturnDetailPage />} />
       </Route>
 
       <Route
