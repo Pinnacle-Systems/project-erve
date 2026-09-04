@@ -7,6 +7,7 @@ import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canCreateJobOrders } from '../../auth/permissions.js';
 import type {
@@ -211,8 +212,10 @@ export function PurchaseOrderDetailPage() {
 
       {(submitMutation.isError || cancelMutation.isError) && (
         <p className="text-sm text-[var(--erp-form-field-error-text-color)]">
-          {submitMutation.error instanceof Error ? submitMutation.error.message : ''}
-          {cancelMutation.error instanceof Error ? cancelMutation.error.message : ''}
+          {submitMutation.isError &&
+            getApiErrorMessage(submitMutation.error, 'Unable to submit this purchase order. Please try again.')}
+          {cancelMutation.isError &&
+            getApiErrorMessage(cancelMutation.error, 'Unable to cancel this purchase order. Please try again.')}
         </p>
       )}
 
