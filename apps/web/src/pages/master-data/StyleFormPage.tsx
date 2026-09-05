@@ -356,7 +356,7 @@ export function StyleFormPage() {
                 </label>
               ))}
             </div>
-            {error && selectedSeasonIds.length === 0 ? <ValidationMessage>At least one Season is required.</ValidationMessage> : null}
+            {error && selectedSeasonIds.length === 0 ? <ValidationMessage tone="error">At least one season is required.</ValidationMessage> : null}
           </FormSection>
 
           <FormSection title="Valid Sizes">
