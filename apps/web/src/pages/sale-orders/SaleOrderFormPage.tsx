@@ -124,7 +124,7 @@ export function SaleOrderFormPage() {
         subtitle={
           isEdit
             ? 'Update requested quantities while this sale order is still a draft'
-            : 'Request the styles/sizes you need against your own purchase orders'
+            : 'Request the styles/sizes you need against your own Order Sheets'
         }
         secondaryActions={
           <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
@@ -176,13 +176,13 @@ export function SaleOrderFormPage() {
             ) : catalogLines.length === 0 ? (
               <EmptyState
                 title="No orderable styles/sizes found"
-                description="This distributor has no active purchase order lines to request against."
+                description="This distributor has no active Order Sheet lines to request against."
               />
             ) : (
               <DataTable
                 rowKey="purchaseOrderLineSizeId"
                 columns={[
-                  { key: 'poNumber', header: 'PO Number', accessor: 'poNumber' },
+                  { key: 'poNumber', header: 'Order Sheet Number', accessor: 'poNumber' },
                   { key: 'styleNumber', header: 'Style', render: (l) => `${l.styleNumber} — ${l.styleName}` },
                   { key: 'sizeLabel', header: 'Size', accessor: 'sizeLabel' },
                   {

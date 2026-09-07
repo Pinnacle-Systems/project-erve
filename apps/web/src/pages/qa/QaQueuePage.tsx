@@ -14,7 +14,6 @@ import {
 type QualityWorkItem = {
   jobOrderId: string;
   jobOrderNumber: string;
-  purchaseOrderNumber: string;
   factory: { id: string; code: string; name: string };
   activity: JobOrderQualityActivity;
 };
@@ -35,13 +34,9 @@ export function QaQueuePage() {
   const qualityWork = (query.data ?? []).filter((item) => {
     const matchesSearch =
       !normalizedSearch ||
-      [
-        item.jobOrderNumber,
-        item.purchaseOrderNumber,
-        item.factory.name,
-        item.factory.code,
-        item.activity.name,
-      ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
+      [item.jobOrderNumber, item.factory.name, item.factory.code, item.activity.name].some(
+        (value) => value.toLocaleLowerCase().includes(normalizedSearch),
+      );
     const matchesFilter =
       !filter ||
       (filter === 'RECONCILIATION_CONFLICT'
@@ -59,7 +54,7 @@ export function QaQueuePage() {
       <FilterBar
         searchValue={search}
         onSearchChange={setSearch}
-        searchPlaceholder="Search job order, PO, activity or factory"
+        searchPlaceholder="Search job order, activity or factory"
         statusValue={filter || 'ALL'}
         onStatusChange={(value) => setFilter(value === 'ALL' ? '' : (value as QualityWorkFilter))}
         statusOptions={[

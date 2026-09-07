@@ -31,7 +31,7 @@ export function DashboardPage() {
               )}
               {canViewPurchaseOrders(user) && (
                 <Button variant="secondary" onClick={() => navigate('/purchase-orders')}>
-                  Purchase Orders
+                  Order Sheets
                 </Button>
               )}
               {canNavigateToJobOrders(user) && (

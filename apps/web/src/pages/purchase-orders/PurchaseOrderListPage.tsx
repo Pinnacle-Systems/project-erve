@@ -9,17 +9,13 @@ import { apiClient } from '../../lib/api-client.js';
 import { FinancialYearSelect, toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import type { Distributor, PurchaseMode, PurchaseOrder, PurchaseOrderStatus } from './types.js';
+import { canManagePurchaseOrders as canManageOrderSheets } from '../../auth/permissions.js';
+import type { Distributor, OrderSheetPlanningState, PurchaseMode, PurchaseOrder } from './types.js';
+import { getOrderSheetPlanningState } from './types.js';
 
-const STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
-  DRAFT: 'Draft',
-  SUBMITTED: 'Submitted',
-  UNDER_REVIEW: 'Under Review',
-  PARTIALLY_JOB_ORDERED: 'Partially Job Ordered',
-  FULLY_JOB_ORDERED: 'Fully Job Ordered',
-  PARTIALLY_FULFILLED: 'Partially Fulfilled',
-  FULLY_FULFILLED: 'Fully Fulfilled',
-  CLOSED: 'Closed',
+const PLANNING_STATE_LABELS: Record<OrderSheetPlanningState, string> = {
+  AVAILABLE: 'Available for Job Order',
+  INCLUDED_IN_JOB_ORDER: 'Included in Job Order',
   CANCELLED: 'Cancelled',
 };
 
@@ -31,23 +27,18 @@ function formatDate(iso: string) {
   });
 }
 
-function statusTone(status: PurchaseOrderStatus) {
-  if (status === 'DRAFT') return 'draft';
-  if (status === 'SUBMITTED') return 'submitted';
-  if (status === 'CANCELLED') return 'cancelled';
-  if (status === 'CLOSED') return 'posted';
-  if (status.includes('FULFILLED')) return 'success';
-  if (status.includes('JOB_ORDERED')) return 'info';
+function planningStateTone(state: OrderSheetPlanningState) {
+  if (state === 'CANCELLED') return 'cancelled';
+  if (state === 'INCLUDED_IN_JOB_ORDER') return 'info';
   return 'pending';
 }
 
 export function PurchaseOrderListPage() {
   const { user } = useAuth();
-  const canManagePurchaseOrders =
-    user?.roles.some((role) => ['ADMIN', 'MERCHANDISER', 'DISTRIBUTOR'].includes(role)) ?? false;
+  const canManagePurchaseOrders = canManageOrderSheets(user);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
-  const [status, setStatus] = useState<PurchaseOrderStatus | ''>('');
+  const [planningState, setPlanningState] = useState<OrderSheetPlanningState | ''>('');
   const [distributorId, setDistributorId] = useState('');
   const [purchaseMode, setPurchaseMode] = useState<PurchaseMode | ''>('');
   const [financialYearId, setFinancialYearId] = useState('');
@@ -55,15 +46,15 @@ export function PurchaseOrderListPage() {
   const params = useMemo(
     () => ({
       search: debouncedSearch || undefined,
-      status: status || undefined,
+      planningState: planningState || undefined,
       distributorId: distributorId || undefined,
       purchaseMode: purchaseMode || undefined,
-      // Filters by each PO's own Financial Year (derived from its poDate).
-      // Optional, defaulting to "All" — this list shows everything today
-      // with no date filter, and this preserves that.
+      // Filters by each Order Sheet's own Financial Year (derived from its
+      // poDate). Optional, defaulting to "All" — this list shows everything
+      // today with no date filter, and this preserves that.
       financialYearId: financialYearId || undefined,
     }),
-    [debouncedSearch, status, distributorId, purchaseMode, financialYearId],
+    [debouncedSearch, planningState, distributorId, purchaseMode, financialYearId],
   );
 
   const ordersQuery = useQuery({
@@ -90,12 +81,12 @@ export function PurchaseOrderListPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Purchase Orders"
-        subtitle="Distributor demand orders"
+        title="Order Sheets"
+        subtitle="Distributor demand forecast"
         primaryAction={
           canManagePurchaseOrders ? (
             <Button asChild>
-              <Link to="/purchase-orders/new">Create Purchase Order</Link>
+              <Link to="/purchase-orders/new">Create Order Sheet</Link>
             </Button>
           ) : undefined
         }
@@ -104,20 +95,24 @@ export function PurchaseOrderListPage() {
       <FilterBar
         searchValue={search}
         onSearchChange={setSearch}
-        searchPlaceholder="Search PO number"
-        statusValue={status || 'ALL'}
-        onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as PurchaseOrderStatus))}
+        searchPlaceholder="Search Order Sheet number"
+        statusValue={planningState || 'ALL'}
+        onStatusChange={(value) =>
+          setPlanningState(value === 'ALL' ? '' : (value as OrderSheetPlanningState))
+        }
         statusOptions={[
-          { label: 'All statuses', value: 'ALL' },
-          ...(Object.keys(STATUS_LABELS) as PurchaseOrderStatus[]).map((s) => ({
-            label: STATUS_LABELS[s],
+          { label: 'All planning states', value: 'ALL' },
+          ...(Object.keys(PLANNING_STATE_LABELS) as OrderSheetPlanningState[]).map((s) => ({
+            label: PLANNING_STATE_LABELS[s],
             value: s,
           })),
         ]}
-        hasActiveFilters={Boolean(search || status || distributorId || purchaseMode || financialYearId)}
+        hasActiveFilters={Boolean(
+          search || planningState || distributorId || purchaseMode || financialYearId,
+        )}
         onClearFilters={() => {
           setSearch('');
-          setStatus('');
+          setPlanningState('');
           setDistributorId('');
           setPurchaseMode('');
           setFinancialYearId('');
@@ -165,7 +160,7 @@ export function PurchaseOrderListPage() {
         columns={[
           {
             key: 'poNumber',
-            header: 'PO Number',
+            header: 'Order Sheet Number',
             render: (po) => (
               <Link
                 className="font-medium text-[var(--erp-text-link)]"
@@ -176,7 +171,7 @@ export function PurchaseOrderListPage() {
             ),
           },
           { key: 'distributor', header: 'Distributor', render: (po) => po.distributor.name },
-          { key: 'poDate', header: 'PO Date', render: (po) => formatDate(po.poDate) },
+          { key: 'poDate', header: 'Order Sheet Date', render: (po) => formatDate(po.poDate) },
           {
             key: 'financialYear',
             header: 'FY',
@@ -193,11 +188,14 @@ export function PurchaseOrderListPage() {
             render: (po) => (po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale or Return'),
           },
           {
-            key: 'status',
-            header: 'Status',
-            render: (po) => (
-              <StatusBadge label={STATUS_LABELS[po.status]} tone={statusTone(po.status)} />
-            ),
+            key: 'planningState',
+            header: 'Planning State',
+            render: (po) => {
+              const state = getOrderSheetPlanningState(po);
+              return (
+                <StatusBadge label={PLANNING_STATE_LABELS[state]} tone={planningStateTone(state)} />
+              );
+            },
           },
           {
             key: 'totalOrderedQuantity',
@@ -209,19 +207,19 @@ export function PurchaseOrderListPage() {
         ]}
         data={ordersQuery.data?.items ?? []}
         loading={ordersQuery.isLoading}
-        loadingState={<LoadingState variant="rows" label="Loading purchase orders" />}
+        loadingState={<LoadingState variant="rows" label="Loading Order Sheets" />}
         emptyState={
           <EmptyState
-            title="No purchase orders found"
+            title="No Order Sheets found"
             description={
               canManagePurchaseOrders
-                ? 'Create a purchase order to start tracking distributor demand.'
-                : 'Purchase orders will appear here when they are available.'
+                ? 'Create an Order Sheet to start tracking distributor demand.'
+                : 'Order Sheets will appear here when they are available.'
             }
             action={
               canManagePurchaseOrders ? (
                 <Button asChild>
-                  <Link to="/purchase-orders/new">Create Purchase Order</Link>
+                  <Link to="/purchase-orders/new">Create Order Sheet</Link>
                 </Button>
               ) : undefined
             }
@@ -230,7 +228,7 @@ export function PurchaseOrderListPage() {
         error={
           ordersQuery.isError ? (
             <ErrorState
-              title="Unable to load purchase orders"
+              title="Unable to load Order Sheets"
               description={ordersQuery.error.message}
             />
           ) : undefined

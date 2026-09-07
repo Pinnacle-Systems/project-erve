@@ -153,6 +153,22 @@ describe('permissions', () => {
     });
   });
 
+  describe('Order Sheet (Purchase Order) authorization matrix', () => {
+    it('grants Order Sheet view to ADMIN, MERCHANDISER, SENIOR_MANAGEMENT — not DISTRIBUTOR', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'];
+      for (const role of ALL_ROLES) {
+        expect(canViewPurchaseOrders(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
+
+    it('grants Order Sheet manage to ADMIN, MERCHANDISER only — DISTRIBUTOR has no Order Sheet access at all', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER'];
+      for (const role of ALL_ROLES) {
+        expect(canManagePurchaseOrders(mockUser(role))).toBe(allowed.includes(role));
+      }
+    });
+  });
+
   describe('sale-order authorization matrix', () => {
     it('grants Sale Order view to ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, DISTRIBUTOR, ACCOUNTANT', () => {
       const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR', 'ACCOUNTANT'];

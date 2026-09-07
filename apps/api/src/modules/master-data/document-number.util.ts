@@ -3,7 +3,11 @@ import { toCompactFinancialYearCode } from './financial-year.util.js';
 // Business-confirmed prefixes — "EI" + document abbreviation, matching the
 // confirmed Sale Order convention (EISO/25-26/0103).
 export const DOCUMENT_PREFIXES = {
-  PURCHASE_ORDER: 'EIPO',
+  // "Order Sheet" business terminology (formerly "Purchase Order"); the
+  // DocumentType enum member/table names are unchanged (see the Order Sheet
+  // rename plan) — only this prefix string moved from EIPO to EIOS. Existing
+  // EIPO-numbered documents are untouched; no historical renumbering.
+  PURCHASE_ORDER: 'EIOS',
   JOB_ORDER: 'EIJO',
   SALE_ORDER: 'EISO',
   // No original-scope-specified prefix exists for these three (see the
@@ -23,7 +27,7 @@ export const DOCUMENT_PREFIXES = {
 // if the business later confirms that explicitly.
 export const DOCUMENT_SERIAL_MIN_WIDTH = 4;
 
-/** `formatDocumentNumber('EIPO', '2026-27', 1) === 'EIPO/26-27/0001'` */
+/** `formatDocumentNumber('EIOS', '2026-27', 1) === 'EIOS/26-27/0001'` */
 export function formatDocumentNumber(prefix: string, financialYearCode: string, serial: number): string {
   return `${prefix}/${toCompactFinancialYearCode(financialYearCode)}/${String(serial).padStart(
     DOCUMENT_SERIAL_MIN_WIDTH,

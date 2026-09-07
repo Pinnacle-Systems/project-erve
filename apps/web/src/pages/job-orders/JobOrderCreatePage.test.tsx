@@ -4,15 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { ThemeProvider } from '@erve/theme';
 import type { PurchaseOrderDetail } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { JobOrderCreatePage } from './JobOrderCreatePage.js';
-
-function ok<T>(config: InternalAxiosRequestConfig, data: T): AxiosResponse<T> {
-  return { data, status: 200, statusText: 'OK', headers: {}, config };
-}
 
 class ResizeObserverStub {
   observe(): void {}
@@ -22,7 +17,6 @@ class ResizeObserverStub {
 
 let container: HTMLDivElement;
 let root: Root;
-let originalAdapter: typeof apiClient.defaults.adapter;
 
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', ResizeObserverStub);
@@ -34,13 +28,11 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  originalAdapter = apiClient.defaults.adapter;
 });
 
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  apiClient.defaults.adapter = originalAdapter;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -50,127 +42,6 @@ async function flush() {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
 }
-
-describe('Job Order Process Flow assignment', () => {
-  it('selects supported Production and Quality versions and explains unsupported versions', async () => {
-    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
-      if (config.url === '/factories') return ok(config, { success: true, data: [] });
-      if (config.url === '/process-flows')
-        return ok(config, {
-          success: true,
-          data: [
-            {
-              id: 'flow-production',
-              code: 'PROD',
-              name: 'Production Only',
-              description: null,
-              status: 'ACTIVE',
-              versions: [
-                {
-                  id: 'version-production',
-                  versionNumber: 1,
-                  status: 'ACTIVE',
-                  hasQualityActivities: false,
-                  runtimeSupport: { supported: true, reasons: [] },
-                  effectiveFrom: null,
-                  createdAt: '2026-01-01T00:00:00.000Z',
-                },
-              ],
-              createdAt: '2026-01-01T00:00:00.000Z',
-              updatedAt: '2026-01-01T00:00:00.000Z',
-            },
-            {
-              id: 'flow-quality',
-              code: 'QUALITY',
-              name: 'Quality Flow',
-              description: null,
-              status: 'ACTIVE',
-              versions: [
-                {
-                  id: 'version-quality',
-                  versionNumber: 2,
-                  status: 'ACTIVE',
-                  hasQualityActivities: true,
-                  runtimeSupport: { supported: true, reasons: [] },
-                  effectiveFrom: null,
-                  createdAt: '2026-01-02T00:00:00.000Z',
-                },
-              ],
-              createdAt: '2026-01-01T00:00:00.000Z',
-              updatedAt: '2026-01-02T00:00:00.000Z',
-            },
-            {
-              id: 'flow-unsupported',
-              code: 'FUTURE',
-              name: 'External Audit Flow',
-              description: null,
-              status: 'ACTIVE',
-              versions: [
-                {
-                  id: 'version-unsupported',
-                  versionNumber: 1,
-                  status: 'ACTIVE',
-                  hasQualityActivities: true,
-                  runtimeSupport: {
-                    supported: false,
-                    reasons: [
-                      'Quality activity "External Audit" uses an unsupported runtime pattern.',
-                    ],
-                  },
-                  effectiveFrom: null,
-                  createdAt: '2026-01-03T00:00:00.000Z',
-                },
-              ],
-              createdAt: '2026-01-03T00:00:00.000Z',
-              updatedAt: '2026-01-03T00:00:00.000Z',
-            },
-          ],
-        });
-      throw new Error(`Unexpected request: ${config.method} ${config.url}`);
-    }) satisfies AxiosAdapter;
-
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    act(() => {
-      root.render(
-        <MemoryRouter>
-          <ThemeProvider theme="default" density="comfortable">
-            <QueryClientProvider client={queryClient}>
-              <JobOrderCreatePage />
-            </QueryClientProvider>
-          </ThemeProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flush();
-
-    expect(container.textContent).toContain(
-      'Unsupported versions remain configurable in Process Flow Master but cannot be assigned to new Job Orders.',
-    );
-    const trigger = container.querySelector<HTMLButtonElement>('#select-process-flow-version');
-    expect(trigger).not.toBeNull();
-    act(() => trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await flush();
-
-    const options = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'));
-    const productionOption = options.find((option) =>
-      option.textContent?.includes('Production Only v1'),
-    );
-    const qualityOption = options.find((option) => option.textContent?.includes('Quality Flow v2'));
-    const unsupportedOption = options.find((option) =>
-      option.textContent?.includes('External Audit Flow v1'),
-    );
-    expect(productionOption?.getAttribute('data-disabled')).toBeNull();
-    expect(qualityOption?.getAttribute('data-disabled')).toBeNull();
-    expect(unsupportedOption?.getAttribute('data-disabled')).not.toBeNull();
-    expect(unsupportedOption?.textContent).toContain('External Audit');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Purchase Order lookup (ERVE-003)
-// ---------------------------------------------------------------------------
 
 // React's controlled inputs track the native value setter, so a plain
 // `input.value = x` followed by dispatching "input" is not observed —
@@ -202,52 +73,57 @@ async function settle(totalMs: number, stepMs = 20): Promise<void> {
 function makePurchaseOrder(overrides: {
   id: string;
   poNumber: string;
-  status?: PurchaseOrderDetail['status'];
   distributorName?: string;
-  poDate?: string;
+  jobOrderId?: string | null;
+  orderedQuantity?: number;
+  requiredDeliveryDate?: string | null;
+  styleId?: string;
+  styleNumber?: string;
+  styleName?: string;
 }): PurchaseOrderDetail {
+  const orderedQuantity = overrides.orderedQuantity ?? 10;
   return {
     id: overrides.id,
     poNumber: overrides.poNumber,
     distributor: { id: 'dist-1', code: 'D1', name: overrides.distributorName ?? 'ABC Distributors' },
     financialYear: { id: 'fy-1', code: '2026-2027' },
-    poDate: overrides.poDate ?? '2026-08-18T00:00:00.000Z',
-    requiredDeliveryDate: null,
+    poDate: '2026-08-18T00:00:00.000Z',
+    requiredDeliveryDate: overrides.requiredDeliveryDate ?? null,
     purchaseMode: 'OUTRIGHT',
-    status: overrides.status ?? 'SUBMITTED',
-    totalOrderedQuantity: 10,
+    status: 'SUBMITTED',
+    jobOrderId: overrides.jobOrderId ?? null,
+    lockedByJobOrder: null,
+    totalOrderedQuantity: orderedQuantity,
     createdAt: '2026-08-01T00:00:00.000Z',
     version: 1,
     updatedAt: '2026-08-01T00:00:00.000Z',
     merchandiser: null,
     creator: { id: 'user-1', name: 'Admin', email: 'admin@test.local' },
     remarks: null,
-    lines: [],
-  };
-}
-
-function makeBalance(po: PurchaseOrderDetail) {
-  return {
-    poId: po.id,
-    poNumber: po.poNumber,
-    version: 1,
-    styleFactoryPrices: { 'style-1': 250 },
     lines: [
       {
-        lineId: 'line-1',
-        styleId: 'style-1',
-        styleNumber: 'ST-1',
-        styleName: 'Test Style',
-        colour: null,
+        id: 'line-1',
+        styleId: overrides.styleId ?? 'style-1',
+        styleNumber: overrides.styleNumber ?? 'ST-1',
+        styleName: overrides.styleName ?? 'Test Style',
+        lineStatus: 'ACTIVE',
+        remarks: null,
+        seasonSnapshots: [],
+        totalOrderedQuantity: orderedQuantity,
         sizes: [
           {
-            purchaseOrderLineSizeId: 'size-1',
+            id: 'size-1',
             sizeId: 'sz-1',
             sizeCode: 'S',
             sizeLabel: 'Small',
-            orderedQuantity: 10,
-            jobOrderedQuantity: 0,
-            balanceQuantity: 10,
+            orderedQuantity,
+            qaPassedQuantity: 0,
+            saleOrderedQuantity: 0,
+            dispatchedQuantity: 0,
+            deliveredQuantity: 0,
+            actualSoldQuantity: 0,
+            returnedQuantity: 0,
+            reassignedQuantity: 0,
           },
         ],
       },
@@ -280,37 +156,190 @@ function purchaseOrderSearchCalls(): Array<string | undefined> {
     .map((call) => (call[1] as { params?: { search?: string } } | undefined)?.params?.search);
 }
 
-function balanceCalls(): string[] {
+function purchaseOrderStyleFilters(): Array<string | undefined> {
+  return vi
+    .mocked(apiClient.get)
+    .mock.calls.filter((call) => call[0] === '/purchase-orders')
+    .map((call) => (call[1] as { params?: { styleId?: string } } | undefined)?.params?.styleId);
+}
+
+function orderSheetDetailCalls(): string[] {
   return vi
     .mocked(apiClient.get)
     .mock.calls.map((call) => call[0] as string)
-    .filter((url) => url.endsWith('/job-order-balance'));
+    .filter((url) => /^\/purchase-orders\/[^/]+$/.test(url));
 }
 
-describe('Purchase Order lookup', () => {
-  it('searches using the human-readable PO number, debounced, not per keystroke', async () => {
+function searchInput(): HTMLInputElement {
+  return container.querySelector<HTMLInputElement>(
+    'input[placeholder="Search by Order Sheet number..."]',
+  )!;
+}
+
+async function selectSearchResult(poNumber: string) {
+  const resultButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+    (button) => button.textContent?.includes(poNumber),
+  )!;
+  act(() => resultButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  await flush();
+}
+
+async function searchAndSelect(poNumber: string) {
+  act(() => setInputValue(searchInput(), poNumber));
+  await settle(600);
+  await selectSearchResult(poNumber);
+}
+
+// Common non-Order-Sheet endpoints most tests don't care about.
+const emptyFactories = { data: { data: [] } };
+const emptyProcessFlows = { data: { data: [] } };
+const benignStyleLookup = { data: { data: { id: 'style-1', factories: [] } } };
+
+describe('Job Order Process Flow assignment', () => {
+  it('selects supported Production and Quality versions and explains unsupported versions', async () => {
+    const po = makePurchaseOrder({ id: 'po-flow-1', poNumber: 'EIOS/26-27/0009' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return { data: { data: [] } };
-      if (url === '/process-flows') return { data: { data: [] } };
+      if (url === '/factories') return emptyFactories;
+      if (url === '/styles/style-1') return benignStyleLookup;
       if (url === '/purchase-orders') {
-        return { data: { data: { items: [], pageInfo: { limit: 8, hasMore: false, nextCursor: null } } } };
+        return { data: { data: { items: [po], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+      }
+      if (url === '/process-flows') {
+        return {
+          data: {
+            data: [
+              {
+                id: 'flow-production',
+                code: 'PROD',
+                name: 'Production Only',
+                description: null,
+                status: 'ACTIVE',
+                versions: [
+                  {
+                    id: 'version-production',
+                    versionNumber: 1,
+                    status: 'ACTIVE',
+                    hasQualityActivities: false,
+                    runtimeSupport: { supported: true, reasons: [] },
+                    effectiveFrom: null,
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                  },
+                ],
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-01T00:00:00.000Z',
+              },
+              {
+                id: 'flow-quality',
+                code: 'QUALITY',
+                name: 'Quality Flow',
+                description: null,
+                status: 'ACTIVE',
+                versions: [
+                  {
+                    id: 'version-quality',
+                    versionNumber: 2,
+                    status: 'ACTIVE',
+                    hasQualityActivities: true,
+                    runtimeSupport: { supported: true, reasons: [] },
+                    effectiveFrom: null,
+                    createdAt: '2026-01-02T00:00:00.000Z',
+                  },
+                ],
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-02T00:00:00.000Z',
+              },
+              {
+                id: 'flow-unsupported',
+                code: 'FUTURE',
+                name: 'External Audit Flow',
+                description: null,
+                status: 'ACTIVE',
+                versions: [
+                  {
+                    id: 'version-unsupported',
+                    versionNumber: 1,
+                    status: 'ACTIVE',
+                    hasQualityActivities: true,
+                    runtimeSupport: {
+                      supported: false,
+                      reasons: [
+                        'Quality activity "External Audit" uses an unsupported runtime pattern.',
+                      ],
+                    },
+                    effectiveFrom: null,
+                    createdAt: '2026-01-03T00:00:00.000Z',
+                  },
+                ],
+                createdAt: '2026-01-03T00:00:00.000Z',
+                updatedAt: '2026-01-03T00:00:00.000Z',
+              },
+            ],
+          },
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await renderJobOrderCreatePage();
+    // The Factory Assignment panel (and the Process Flow Version select in
+    // it) only renders once at least one Order Sheet has been selected.
+    await searchAndSelect('EIOS/26-27/0009');
+
+    expect(container.textContent).toContain(
+      'Unsupported versions remain configurable in Process Flow Master but cannot be assigned to new Job Orders.',
+    );
+    const trigger = container.querySelector<HTMLButtonElement>('#select-process-flow-version');
+    expect(trigger).not.toBeNull();
+    act(() => trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flush();
+
+    const options = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'));
+    const productionOption = options.find((option) =>
+      option.textContent?.includes('Production Only v1'),
+    );
+    const qualityOption = options.find((option) => option.textContent?.includes('Quality Flow v2'));
+    const unsupportedOption = options.find((option) =>
+      option.textContent?.includes('External Audit Flow v1'),
+    );
+    expect(productionOption?.getAttribute('data-disabled')).toBeNull();
+    expect(qualityOption?.getAttribute('data-disabled')).toBeNull();
+    expect(unsupportedOption?.getAttribute('data-disabled')).not.toBeNull();
+    expect(unsupportedOption?.textContent).toContain('External Audit');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Order Sheet multi-select (Order Sheet Phase 2, ERVE-003) — one Job Order
+// may now consolidate several Order Sheets sharing one Style, so the old
+// single-lookup-then-fetch-detail flow was replaced by
+// OrderSheetMultiSelectField: search results already carry the full Order
+// Sheet detail, selection just appends to a running list, and each source
+// gets its own per-size quantity table.
+// ---------------------------------------------------------------------------
+
+describe('Order Sheet multi-select', () => {
+  it('searches using the human-readable Order Sheet number, debounced, not per keystroke', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/factories') return emptyFactories;
+      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/purchase-orders') {
+        return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
       throw new Error(`Unexpected GET request: ${url}`);
     });
 
     await renderJobOrderCreatePage();
-    const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search by PO number..."]',
-    )!;
+    const input = searchInput();
+    const callsBeforeTyping = purchaseOrderSearchCalls().length;
 
     vi.useFakeTimers();
-    for (const value of ['E', 'EI', 'EIP', 'EIPO', 'EIPO/', 'EIPO/2', 'EIPO/26', 'EIPO/26-27/0001']) {
+    for (const value of ['E', 'EI', 'EIO', 'EIOS', 'EIOS/', 'EIOS/2', 'EIOS/26', 'EIOS/26-27/0001']) {
       act(() => setInputValue(input, value));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(50);
       });
     }
-    expect(purchaseOrderSearchCalls().length).toBe(0);
+    expect(purchaseOrderSearchCalls().length).toBe(callsBeforeTyping);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
@@ -318,76 +347,66 @@ describe('Purchase Order lookup', () => {
     vi.useRealTimers();
 
     const searches = purchaseOrderSearchCalls();
-    expect(searches).toEqual(['EIPO/26-27/0001']);
+    expect(searches.at(-1)).toBe('EIOS/26-27/0001');
   });
 
-  it('renders matching results by poNumber with distributor/date/status context, never a raw id', async () => {
-    const poA = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIPO/26-27/0001' });
+  it('renders matching results by poNumber with distributor/mode/date context, never a raw id', async () => {
+    const poA = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return { data: { data: [] } };
-      if (url === '/process-flows') return { data: { data: [] } };
+      if (url === '/factories') return emptyFactories;
+      if (url === '/process-flows') return emptyProcessFlows;
       if (url === '/purchase-orders') {
-        return { data: { data: { items: [poA], pageInfo: { limit: 8, hasMore: false, nextCursor: null } } } };
+        return { data: { data: { items: [poA], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
       throw new Error(`Unexpected GET request: ${url}`);
     });
 
     await renderJobOrderCreatePage();
-    const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search by PO number..."]',
-    )!;
-    act(() => setInputValue(input, 'EIPO/26-27/0001'));
+    act(() => setInputValue(searchInput(), 'EIOS/26-27/0001'));
     await settle(600);
 
-    expect(container.textContent).toContain('EIPO/26-27/0001');
+    expect(container.textContent).toContain('EIOS/26-27/0001');
     expect(container.textContent).toContain('ABC Distributors');
+    expect(container.textContent).toContain('Outright');
     expect(container.textContent).not.toContain('po-internal-123');
   });
 
-  it('selecting a result stores the internal id and drives the balance query, not the poNumber', async () => {
-    const poA = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIPO/26-27/0001' });
+  it('selecting a result adds it to the Source Order Sheets table and clears the search text', async () => {
+    const poA = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return { data: { data: [] } };
-      if (url === '/process-flows') return { data: { data: [] } };
+      if (url === '/factories') return emptyFactories;
+      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/styles/style-1') return benignStyleLookup;
       if (url === '/purchase-orders') {
-        return { data: { data: { items: [poA], pageInfo: { limit: 8, hasMore: false, nextCursor: null } } } };
-      }
-      if (url === `/purchase-orders/${poA.id}/job-order-balance`) {
-        return { data: { data: makeBalance(poA) } };
+        return { data: { data: { items: [poA], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
       throw new Error(`Unexpected GET request: ${url}`);
     });
 
     await renderJobOrderCreatePage();
-    const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search by PO number..."]',
-    )!;
-    act(() => setInputValue(input, 'EIPO/26-27/0001'));
-    await settle(600);
+    await searchAndSelect('EIOS/26-27/0001');
 
-    const resultButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.includes('EIPO/26-27/0001'),
-    )!;
-    act(() => resultButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await flush();
-
-    expect(balanceCalls()).toEqual([`/purchase-orders/${poA.id}/job-order-balance`]);
-    expect(balanceCalls().some((url) => url.includes('EIPO'))).toBe(false);
-    expect(container.textContent).toContain('EIPO/26-27/0001');
+    // Search results already carry the full Order Sheet detail — selecting
+    // one must never fetch it again by id.
+    expect(orderSheetDetailCalls()).toEqual([]);
+    expect(container.textContent).toContain('EIOS/26-27/0001');
     expect(container.textContent).not.toContain('po-internal-123');
-    expect(container.textContent).toContain('Change');
+    expect(searchInput().value).toBe('');
+    expect(
+      Array.from(container.querySelectorAll('button')).some((b) => b.textContent === 'Remove'),
+    ).toBe(true);
   });
 
   it('cannot submit from typed-but-unselected search text', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return { data: { data: [] } };
-      if (url === '/process-flows') return { data: { data: [] } };
+      if (url === '/factories') return emptyFactories;
+      if (url === '/process-flows') return emptyProcessFlows;
       if (url === '/purchase-orders') {
         return {
           data: {
             data: {
-              items: [makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIPO/26-27/0001' })],
-              pageInfo: { limit: 8, hasMore: false, nextCursor: null },
+              items: [makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001' })],
+              pageInfo: { limit: 10, hasMore: false, nextCursor: null },
             },
           },
         };
@@ -396,43 +415,37 @@ describe('Purchase Order lookup', () => {
     });
 
     await renderJobOrderCreatePage();
-    const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search by PO number..."]',
-    )!;
-    act(() => setInputValue(input, 'EIPO/26-27/0001'));
+    act(() => setInputValue(searchInput(), 'EIOS/26-27/0001'));
     await settle(600);
 
-    // No PO selected yet — the balance query (and therefore the "Create
-    // Draft" panel it gates) must never fire off typed search text alone.
-    expect(balanceCalls()).toEqual([]);
-    expect(container.textContent).toContain('Select a purchase order');
+    // No Order Sheet selected yet — the Factory Assignment / quantities
+    // panels (and therefore "Create Draft") must never appear from typed
+    // search text alone.
+    expect(container.textContent).toContain('Select at least one Order Sheet');
     expect(
       Array.from(container.querySelectorAll('button')).some((b) => b.textContent === 'Create Draft'),
     ).toBe(false);
   });
 
-  it('shows an empty state when no purchase orders match', async () => {
+  it('shows an empty state when no Order Sheets match', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return { data: { data: [] } };
-      if (url === '/process-flows') return { data: { data: [] } };
+      if (url === '/factories') return emptyFactories;
+      if (url === '/process-flows') return emptyProcessFlows;
       if (url === '/purchase-orders') {
-        return { data: { data: { items: [], pageInfo: { limit: 8, hasMore: false, nextCursor: null } } } };
+        return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
       throw new Error(`Unexpected GET request: ${url}`);
     });
 
     await renderJobOrderCreatePage();
-    const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search by PO number..."]',
-    )!;
-    act(() => setInputValue(input, 'ZZZZZ'));
+    act(() => setInputValue(searchInput(), 'ZZZZZ'));
     await settle(600);
 
-    expect(container.textContent).toContain('No matches');
-    expect(container.textContent).toContain('No purchase orders match "ZZZZZ"');
+    expect(container.textContent).toContain('No eligible Order Sheets');
+    expect(container.textContent).toContain('No available Order Sheets match this search.');
   });
 
-  it('shows a loading state while the purchase order search is in flight', async () => {
+  it('shows a loading state while the Order Sheet search is in flight', async () => {
     let resolveSearch!: (value: {
       items: PurchaseOrderDetail[];
       pageInfo: { limit: number; hasMore: boolean; nextCursor: null };
@@ -445,153 +458,118 @@ describe('Purchase Order lookup', () => {
     });
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return { data: { data: [] } };
-      if (url === '/process-flows') return { data: { data: [] } };
+      if (url === '/factories') return emptyFactories;
+      if (url === '/process-flows') return emptyProcessFlows;
       if (url === '/purchase-orders') return { data: { data: await pendingSearch } };
       throw new Error(`Unexpected GET request: ${url}`);
     });
 
     await renderJobOrderCreatePage();
-    const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search by PO number..."]',
-    )!;
-    act(() => setInputValue(input, 'EIPO/26-27/0001'));
+    act(() => setInputValue(searchInput(), 'EIOS/26-27/0001'));
     await settle(600);
 
-    expect(container.textContent).toContain('Searching purchase orders');
+    expect(container.textContent).toContain('Loading Order Sheets');
 
     resolveSearch({
-      items: [makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIPO/26-27/0001' })],
-      pageInfo: { limit: 8, hasMore: false, nextCursor: null },
+      items: [makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001' })],
+      pageInfo: { limit: 10, hasMore: false, nextCursor: null },
     });
     await settle(100);
-    expect(container.textContent).not.toContain('Searching purchase orders');
-    expect(container.textContent).toContain('EIPO/26-27/0001');
+    expect(container.textContent).not.toContain('Loading Order Sheets');
+    expect(container.textContent).toContain('EIOS/26-27/0001');
   });
 
   it('shows an error state when the search fails, without creating a selection', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return { data: { data: [] } };
-      if (url === '/process-flows') return { data: { data: [] } };
+      if (url === '/factories') return emptyFactories;
+      if (url === '/process-flows') return emptyProcessFlows;
       if (url === '/purchase-orders') throw new Error('Search backend unavailable');
       throw new Error(`Unexpected GET request: ${url}`);
     });
 
     await renderJobOrderCreatePage();
-    const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search by PO number..."]',
-    )!;
-    act(() => setInputValue(input, 'EIPO/26-27/0001'));
+    act(() => setInputValue(searchInput(), 'EIOS/26-27/0001'));
     await settle(600);
 
-    expect(container.textContent).toContain('Unable to search purchase orders');
-    expect(container.textContent).not.toContain('Change');
-    expect(balanceCalls()).toEqual([]);
+    expect(container.textContent).toContain('Unable to search Order Sheets');
+    expect(container.textContent).toContain('Search backend unavailable');
+    expect(
+      Array.from(container.querySelectorAll('button')).some((b) => b.textContent === 'Remove'),
+    ).toBe(false);
   });
 
-  it('resets downstream state when the PO is cleared, and can switch to a different PO', async () => {
-    const poA = makePurchaseOrder({ id: 'po-internal-a', poNumber: 'EIPO/26-27/0001' });
+  it('removes a selected Order Sheet, clears its quantities, and can select a different one', async () => {
+    const poA = makePurchaseOrder({ id: 'po-internal-a', poNumber: 'EIOS/26-27/0001' });
     const poB = makePurchaseOrder({
       id: 'po-internal-b',
-      poNumber: 'EIPO/26-27/0004',
+      poNumber: 'EIOS/26-27/0004',
       distributorName: 'XYZ Distributors',
     });
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string, config?: { params?: { search?: string } }) => {
-      if (url === '/factories') return { data: { data: [] } };
-      if (url === '/process-flows') return { data: { data: [] } };
-      if (url === '/purchase-orders') {
-        const search = config?.params?.search ?? '';
-        const items = [poA, poB].filter((po) => po.poNumber.includes(search));
-        return { data: { data: { items, pageInfo: { limit: 8, hasMore: false, nextCursor: null } } } };
-      }
-      if (url === `/purchase-orders/${poA.id}/job-order-balance`) {
-        return { data: { data: makeBalance(poA) } };
-      }
-      if (url === `/purchase-orders/${poB.id}/job-order-balance`) {
-        return { data: { data: makeBalance(poB) } };
-      }
-      throw new Error(`Unexpected GET request: ${url}`);
-    });
+    vi.spyOn(apiClient, 'get').mockImplementation(
+      async (url: string, config?: { params?: { search?: string } }) => {
+        if (url === '/factories') return emptyFactories;
+        if (url === '/process-flows') return emptyProcessFlows;
+        if (url === '/styles/style-1') return benignStyleLookup;
+        if (url === '/purchase-orders') {
+          const search = config?.params?.search ?? '';
+          const items = [poA, poB].filter((po) => po.poNumber.includes(search));
+          return { data: { data: { items, pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+        }
+        throw new Error(`Unexpected GET request: ${url}`);
+      },
+    );
 
     await renderJobOrderCreatePage();
+    await searchAndSelect('EIOS/26-27/0001');
+    expect(container.textContent).toContain('Combined Order Sheet Forecast vs Job Order Quantities');
 
-    async function searchAndSelect(text: string, expectedPoNumber: string) {
-      const input = container.querySelector<HTMLInputElement>(
-        'input[placeholder="Search by PO number..."]',
-      )!;
-      act(() => setInputValue(input, text));
-      await settle(600);
-      const resultButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-        (button) => button.textContent?.includes(expectedPoNumber),
-      )!;
-      act(() => resultButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-      await flush();
-    }
-
-    await searchAndSelect('EIPO/26-27/0001', 'EIPO/26-27/0001');
-    expect(balanceCalls()).toEqual([`/purchase-orders/${poA.id}/job-order-balance`]);
-
-    // Select a style so the "Remaining PO Balance" panel is visible, proving
-    // it disappears once the PO is cleared.
-    const styleTrigger = document.getElementById('select-style-(one-per-job-order)') as HTMLButtonElement;
-    act(() => styleTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await flush();
-    const styleOption = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
-      (option) => option.textContent?.includes('ST-1 Test Style'),
+    const removeButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Remove',
     )!;
-    act(() => styleOption.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await flush();
-    expect(container.textContent).toContain('Remaining PO Balance');
-
-    const changeButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent === 'Change',
-    )!;
-    act(() => changeButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    act(() => removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     await flush();
 
-    expect(container.textContent).not.toContain('Remaining PO Balance');
-    expect(container.textContent).toContain('Select a purchase order');
+    expect(container.textContent).not.toContain('Combined Order Sheet Forecast vs Job Order Quantities');
+    expect(container.textContent).toContain('Select at least one Order Sheet');
+    // The removed Order Sheet is no longer selected (no Remove action left
+    // for it) — it may still reappear in the always-live search results
+    // below, since removing it makes it available for planning again.
     expect(
-      container.querySelector<HTMLInputElement>('input[placeholder="Search by PO number..."]'),
-    ).not.toBeNull();
+      Array.from(container.querySelectorAll('button')).some((b) => b.textContent === 'Remove'),
+    ).toBe(false);
 
-    await searchAndSelect('EIPO/26-27/0004', 'EIPO/26-27/0004');
-    expect(balanceCalls()).toEqual([
-      `/purchase-orders/${poA.id}/job-order-balance`,
-      `/purchase-orders/${poB.id}/job-order-balance`,
-    ]);
-    expect(container.textContent).toContain('EIPO/26-27/0004');
-    expect(container.textContent).not.toContain('Remaining PO Balance');
+    await searchAndSelect('EIOS/26-27/0004');
+    expect(container.textContent).toContain('EIOS/26-27/0004');
+    expect(container.textContent).toContain('XYZ Distributors');
   });
 
-  it('resolves a ?purchaseOrderId= deep link to the internal id without requiring a search', async () => {
-    const deepLinkedPo = makePurchaseOrder({ id: 'po-deep-1', poNumber: 'EIPO/26-27/0007' });
+  it('resolves a ?purchaseOrderId= deep link to a pre-selected Order Sheet without requiring a search', async () => {
+    const deepLinkedPo = makePurchaseOrder({ id: 'po-deep-1', poNumber: 'EIOS/26-27/0007' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return { data: { data: [] } };
-      if (url === '/process-flows') return { data: { data: [] } };
-      if (url === `/purchase-orders/${deepLinkedPo.id}/job-order-balance`) {
-        return { data: { data: makeBalance(deepLinkedPo) } };
+      if (url === '/factories') return emptyFactories;
+      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/styles/style-1') return benignStyleLookup;
+      if (url === `/purchase-orders/${deepLinkedPo.id}`) {
+        return { data: { data: deepLinkedPo } };
       }
       if (url === '/purchase-orders') {
-        throw new Error('The deep-link flow must not need to search for the PO');
+        return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
       throw new Error(`Unexpected GET request: ${url}`);
     });
 
     await renderJobOrderCreatePage(['/job-orders/new?purchaseOrderId=po-deep-1']);
 
-    expect(balanceCalls()).toEqual([`/purchase-orders/${deepLinkedPo.id}/job-order-balance`]);
-    expect(purchaseOrderSearchCalls()).toEqual([]);
-    expect(container.textContent).toContain('EIPO/26-27/0007');
-    expect(container.textContent).toContain('Change');
+    expect(orderSheetDetailCalls()).toEqual([`/purchase-orders/${deepLinkedPo.id}`]);
+    expect(container.textContent).toContain('EIOS/26-27/0007');
     expect(container.textContent).not.toContain('po-deep-1');
-    expect(
-      container.querySelector<HTMLInputElement>('input[placeholder="Search by PO number..."]'),
-    ).toBeNull();
+    // The multi-select search stays available so further Order Sheets can
+    // still be added on top of the deep-linked pre-selection.
+    expect(searchInput()).not.toBeNull();
   });
 
-  it('submits the selected PO internal id, never the poNumber or typed search text', async () => {
-    const po = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIPO/26-27/0001' });
+  it('pre-fills Job Order quantity from the Order Sheet forecast, allows editing, and submits the new sources payload', async () => {
+    const po = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001', orderedQuantity: 10 });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/factories') {
         return {
@@ -626,11 +604,9 @@ describe('Purchase Order lookup', () => {
           },
         };
       }
+      if (url === '/styles/style-1') return benignStyleLookup;
       if (url === '/purchase-orders') {
-        return { data: { data: { items: [po], pageInfo: { limit: 8, hasMore: false, nextCursor: null } } } };
-      }
-      if (url === `/purchase-orders/${po.id}/job-order-balance`) {
-        return { data: { data: makeBalance(po) } };
+        return { data: { data: { items: [po], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
       throw new Error(`Unexpected GET request: ${url}`);
     });
@@ -639,6 +615,7 @@ describe('Purchase Order lookup', () => {
     } as never);
 
     await renderJobOrderCreatePage();
+    await searchAndSelect('EIOS/26-27/0001');
 
     const factoryTrigger = container.querySelector<HTMLButtonElement>('#select-factory')!;
     act(() => factoryTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
@@ -649,30 +626,19 @@ describe('Purchase Order lookup', () => {
     act(() => factoryOption.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     await flush();
 
-    const poInput = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search by PO number..."]',
-    )!;
-    act(() => setInputValue(poInput, 'EIPO/26-27/0001'));
-    await settle(600);
-    const poResultButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.includes('EIPO/26-27/0001'),
-    )!;
-    act(() => poResultButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await flush();
-
-    const styleTrigger = document.getElementById('select-style-(one-per-job-order)') as HTMLButtonElement;
-    act(() => styleTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await flush();
-    const styleOption = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
-      (option) => option.textContent?.includes('ST-1 Test Style'),
-    )!;
-    act(() => styleOption.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await flush();
-
     const quantityInput = container.querySelector<HTMLInputElement>(
-      '[aria-label="Quantity for ST-1 Test Style S"]',
+      `[aria-label="Quantity for ${po.poNumber} Small"]`,
     )!;
-    act(() => setInputValue(quantityInput, '5'));
+    // Pre-filled from the Order Sheet's forecast quantity (10), not empty.
+    expect(quantityInput.value).toBe('10');
+    // Freely editable beyond the forecast — no remaining-balance cap.
+    act(() => setInputValue(quantityInput, '15'));
+    await flush();
+
+    const unitPriceInput = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Enter factory unit price"]',
+    )!;
+    act(() => setInputValue(unitPriceInput, '250'));
     await flush();
 
     const processFlowTrigger = container.querySelector<HTMLButtonElement>(
@@ -695,8 +661,139 @@ describe('Purchase Order lookup', () => {
 
     expect(apiClient.post).toHaveBeenCalledTimes(1);
     const [, body] = vi.mocked(apiClient.post).mock.calls[0]!;
-    const payload = body as { purchaseOrderId: string };
-    expect(payload.purchaseOrderId).toBe('po-internal-123');
-    expect(payload.purchaseOrderId).not.toBe('EIPO/26-27/0001');
+    const payload = body as {
+      sources: Array<{ orderSheetId: string; sizes: Array<{ sizeId: string; quantity: number }> }>;
+      factoryId: string;
+      processFlowVersionId: string;
+      unitPrice: string;
+    };
+    expect(payload.sources).toHaveLength(1);
+    expect(payload.sources[0]!.orderSheetId).toBe('po-internal-123');
+    expect(payload.sources[0]!.orderSheetId).not.toBe('EIOS/26-27/0001');
+    expect(payload.sources[0]!.sizes[0]!.quantity).toBe(15);
+    expect(payload.factoryId).toBe('factory-1');
+    expect(payload.processFlowVersionId).toBe('pfv-1');
+    expect(payload.unitPrice).toBe('250');
+  });
+
+  it('supports selecting two Order Sheets of the same Style, enforced via the search filter, and submits both as combined sources', async () => {
+    const poA = makePurchaseOrder({ id: 'po-multi-a', poNumber: 'EIOS/26-27/0010', orderedQuantity: 10 });
+    const poB = makePurchaseOrder({
+      id: 'po-multi-b',
+      poNumber: 'EIOS/26-27/0011',
+      distributorName: 'XYZ Distributors',
+      orderedQuantity: 6,
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(
+      async (url: string, config?: { params?: { search?: string } }) => {
+        if (url === '/factories') {
+          return {
+            data: { data: [{ id: 'factory-1', code: 'F1', name: 'Factory One', status: 'ACTIVE' }] },
+          };
+        }
+        if (url === '/process-flows') {
+          return {
+            data: {
+              data: [
+                {
+                  id: 'flow-1',
+                  code: 'PF',
+                  name: 'Standard',
+                  description: null,
+                  status: 'ACTIVE',
+                  versions: [
+                    {
+                      id: 'pfv-1',
+                      versionNumber: 1,
+                      status: 'ACTIVE',
+                      hasQualityActivities: false,
+                      runtimeSupport: { supported: true, reasons: [] },
+                      effectiveFrom: null,
+                      createdAt: '2026-01-01T00:00:00.000Z',
+                    },
+                  ],
+                  createdAt: '2026-01-01T00:00:00.000Z',
+                  updatedAt: '2026-01-01T00:00:00.000Z',
+                },
+              ],
+            },
+          };
+        }
+        if (url === '/styles/style-1') return benignStyleLookup;
+        if (url === '/purchase-orders') {
+          const search = config?.params?.search ?? '';
+          const items = [poA, poB].filter((po) => po.poNumber.includes(search));
+          return { data: { data: { items, pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+        }
+        throw new Error(`Unexpected GET request: ${url}`);
+      },
+    );
+    vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: { id: 'job-order-created-2' } },
+    } as never);
+
+    await renderJobOrderCreatePage();
+    await searchAndSelect('EIOS/26-27/0010');
+    await searchAndSelect('EIOS/26-27/0011');
+
+    // Once one Order Sheet is selected, its Style filters every subsequent
+    // search — "one Job Order = one Style" is enforced through the request
+    // itself, not left for the user to notice.
+    expect(purchaseOrderStyleFilters().at(-1)).toBe('style-1');
+
+    expect(container.textContent).toContain('EIOS/26-27/0010');
+    expect(container.textContent).toContain('EIOS/26-27/0011');
+    expect(container.textContent).toContain('XYZ Distributors');
+
+    const factoryTrigger = container.querySelector<HTMLButtonElement>('#select-factory')!;
+    act(() => factoryTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flush();
+    const factoryOption = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (option) => option.textContent?.includes('Factory One'),
+    )!;
+    act(() => factoryOption.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flush();
+
+    const unitPriceInput = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Enter factory unit price"]',
+    )!;
+    act(() => setInputValue(unitPriceInput, '300'));
+    await flush();
+
+    const processFlowTrigger = container.querySelector<HTMLButtonElement>(
+      '#select-process-flow-version',
+    )!;
+    act(() => processFlowTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flush();
+    const processFlowOption = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="option"]'),
+    ).find((option) => option.textContent?.includes('Standard v1'))!;
+    act(() => processFlowOption.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flush();
+
+    // Combined forecast totals both sources' default quantities (10 + 6).
+    const combinedRow = Array.from(container.querySelectorAll('tr')).find((row) =>
+      row.textContent?.includes('Small'),
+    )!;
+    expect(combinedRow.textContent).toContain('16');
+
+    const submitButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Create Draft',
+    )!;
+    expect(submitButton.disabled).toBe(false);
+    act(() => submitButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flush();
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    const [, body] = vi.mocked(apiClient.post).mock.calls[0]!;
+    const payload = body as {
+      sources: Array<{ orderSheetId: string; sizes: Array<{ sizeId: string; quantity: number }> }>;
+    };
+    expect(payload.sources.map((source) => source.orderSheetId)).toEqual([
+      'po-multi-a',
+      'po-multi-b',
+    ]);
+    expect(payload.sources[0]!.sizes[0]!.quantity).toBe(10);
+    expect(payload.sources[1]!.sizes[0]!.quantity).toBe(6);
   });
 });

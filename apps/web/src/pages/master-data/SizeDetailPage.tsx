@@ -73,7 +73,7 @@ export function SizeDetailPage() {
         <DescriptionList columns={3}>
           <DescriptionList.Item label="Style mappings" value={String(usage.styleMappings)} />
           <DescriptionList.Item
-            label="Purchase-order lines"
+            label="Order Sheet lines"
             value={String(usage.purchaseOrderLines)}
           />
           <DescriptionList.Item label="Job-order lines" value={String(usage.jobOrderLines)} />
@@ -85,8 +85,8 @@ export function SizeDetailPage() {
         title={active ? 'Deactivate size' : 'Activate size'}
         description={
           active
-            ? `This size is mapped to ${usage.styleMappings} style(s) and used by ${usage.purchaseOrderLines + usage.jobOrderLines} transaction line(s). It will be blocked from new mappings and purchase orders; history remains unchanged.`
-            : 'This size will become available for new mappings and purchase orders.'
+            ? `This size is mapped to ${usage.styleMappings} style(s) and used by ${usage.purchaseOrderLines + usage.jobOrderLines} transaction line(s). It will be blocked from new mappings and Order Sheets; history remains unchanged.`
+            : 'This size will become available for new mappings and Order Sheets.'
         }
         confirmLabel={active ? 'Deactivate' : 'Activate'}
         destructive={active}

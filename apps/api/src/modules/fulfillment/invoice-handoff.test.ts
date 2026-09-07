@@ -475,6 +475,7 @@ describe('Invoice Handoff — view privacy', () => {
         code: `OTH-${createId().slice(0, 6)}`,
         name: 'Other Distributor',
         gstin: '27AAAAA0000A1Z5',
+        purchaseMode: 'OUTRIGHT',
       },
     });
     const otherToken = await createDistributorToken(otherDistributor.id);

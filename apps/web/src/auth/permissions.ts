@@ -83,17 +83,18 @@ export const PRICE_LIST_MANAGE_ROLES = [
   'ACCOUNTANT',
 ] as const satisfies readonly Role[];
 
+// Order Sheet planning belongs to Merchandising: DISTRIBUTOR has no access at
+// all (view or manage) — mirrors DISTRIBUTOR's existing full exclusion from
+// Job Orders (JOB_ORDER_VIEW_ROLES/JOB_ORDER_CREATE_ROLES below).
 export const PURCHASE_ORDER_VIEW_ROLES = [
   'ADMIN',
   'MERCHANDISER',
   'SENIOR_MANAGEMENT',
-  'DISTRIBUTOR',
 ] as const satisfies readonly Role[];
 
 export const PURCHASE_ORDER_MANAGE_ROLES = [
   'ADMIN',
   'MERCHANDISER',
-  'DISTRIBUTOR',
 ] as const satisfies readonly Role[];
 
 export const JOB_ORDER_VIEW_ROLES = [

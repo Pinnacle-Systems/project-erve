@@ -262,9 +262,7 @@ export function FactoryTaskDetailPage() {
         ← {user?.roles.includes('FACTORY_USER') ? 'My tasks' : 'Active job orders'}
       </Link>
       <section className="rounded-xl border border-border bg-surface p-4">
-        <p className="text-sm text-muted-foreground">
-          {job.purchaseOrder.poNumber} · {job.factory.name}
-        </p>
+        <p className="text-sm text-muted-foreground">{job.factory.name}</p>
         <h1 className="text-2xl font-semibold">{job.jobOrderNumber}</h1>
         <div className="mt-3 border-l-2 border-primary pl-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

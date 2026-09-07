@@ -193,7 +193,7 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
         title="Remove user mapping"
         description={
           removeTarget
-            ? `${removeTarget.name} will lose access to ${distributor.name}'s purchase orders.`
+            ? `${removeTarget.name} will lose access to ${distributor.name}'s Order Sheets.`
             : undefined
         }
         confirmLabel="Remove"
@@ -265,6 +265,7 @@ export function DistributorDetailPage() {
     ['Code', distributor.code],
     ['Name', distributor.name],
     ['GSTIN', distributor.gstin],
+    ['Purchase Mode', distributor.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale or Return'],
     ['Contact Name', distributor.contactName ?? '—'],
     ['Contact Email', distributor.contactEmail ?? '—'],
     ['Contact Phone', distributor.contactPhone ?? '—'],
@@ -321,8 +322,8 @@ export function DistributorDetailPage() {
         title={isActive ? 'Deactivate distributor' : 'Activate distributor'}
         description={
           isActive
-            ? `${distributor.name} will no longer be selectable on new purchase orders. Existing orders remain unchanged.`
-            : `${distributor.name} will become selectable on new purchase orders again.`
+            ? `${distributor.name} will no longer be selectable on new Order Sheets. Existing Order Sheets remain unchanged.`
+            : `${distributor.name} will become selectable on new Order Sheets again.`
         }
         confirmLabel={isActive ? 'Deactivate' : 'Activate'}
         destructive={isActive}

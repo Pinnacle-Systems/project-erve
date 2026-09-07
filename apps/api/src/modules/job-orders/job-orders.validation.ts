@@ -28,38 +28,63 @@ export const jobOrderStatusSchema = z.enum([
   'CANCELLED',
 ]);
 
-export const createJobOrderSchema = z.object({
-  purchaseOrderId: z.string().trim().min(1),
-  factoryId: z.string().trim().min(1),
-  processFlowVersionId: z.string().trim().min(1),
-  unitPrice: z
-    .union([z.string(), z.number()])
-    .superRefine((value, ctx) => {
-      const raw = String(value).trim();
-      if (!/^\d+(\.\d{1,2})?$/.test(raw) || Number(raw) <= 0 || !Number.isFinite(Number(raw))) {
-        ctx.addIssue({
-          code: 'custom',
-          message: 'Unit price must be a finite positive INR amount',
-        });
-      }
-    })
-    .transform(String),
-  disclaimerText: disclaimerTextSchema.optional(),
-  lines: z
+const unitPriceSchema = z
+  .union([z.string(), z.number()])
+  .superRefine((value, ctx) => {
+    const raw = String(value).trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(raw) || Number(raw) <= 0 || !Number.isFinite(Number(raw))) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Unit price must be a finite positive INR amount',
+      });
+    }
+  })
+  .transform(String);
+
+// One source Order Sheet + the production quantities entered against it,
+// keyed by sizeId (the Style's canonical size set). A sizeId the caller
+// omits is treated as 0 — see job-orders.service.ts createJobOrderLineForSource.
+const jobOrderSourceSchema = z.object({
+  orderSheetId: z.string().trim().min(1),
+  sizes: z
     .array(
       z.object({
-        purchaseOrderLineId: z.string().trim().min(1),
-        sizes: z
-          .array(
-            z.object({
-              purchaseOrderLineSizeId: z.string().trim().min(1),
-              quantity: z.number().int().positive(),
-            }),
-          )
-          .min(1),
+        sizeId: z.string().trim().min(1),
+        quantity: z.number().int().min(0),
       }),
     )
-    .min(1, 'At least one line is required'),
+    .min(1),
+});
+
+// One or more compatible Order Sheets (same Style; any Distributor/Purchase
+// Mode) consolidate into one Job Order — see the Order Sheet Phase 2 plan.
+export const createJobOrderSchema = z.object({
+  sources: z.array(jobOrderSourceSchema).min(1, 'At least one Order Sheet is required'),
+  factoryId: z.string().trim().min(1),
+  processFlowVersionId: z.string().trim().min(1),
+  unitPrice: unitPriceSchema,
+  disclaimerText: disclaimerTextSchema.optional(),
+  // Required only when the selected Order Sheets disagree on their own
+  // requiredDeliveryDate; otherwise their shared date is used.
+  requiredDeliveryDate: z.string().trim().min(1).optional().nullable(),
+});
+
+// DRAFT-only source Order Sheet mapping edit (§14) — add and/or remove
+// source Order Sheets in one call; at least one change is required, and the
+// service enforces "at least one source Order Sheet must remain."
+export const updateJobOrderSourcesSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    add: z.array(jobOrderSourceSchema).optional().default([]),
+    remove: z.array(z.string().trim().min(1)).optional().default([]),
+  })
+  .refine((value) => value.add.length > 0 || value.remove.length > 0, {
+    message: 'At least one Order Sheet addition or removal is required',
+  });
+
+export const updateJobOrderDeliveryDateSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  requiredDeliveryDate: z.string().trim().min(1).nullable(),
 });
 
 export const listJobOrdersQuerySchema = z.object({

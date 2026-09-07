@@ -18,13 +18,18 @@ an existing Style; unrelated edits preserve those mappings. Administrators and
 Merchandisers manage the Season master through `/master-data/seasons`; other
 roles receive Season data only through an authorized parent response.
 
-Historical data deliberately does not read this mapping. Each purchase-order
-line copies every current Style Season into `purchase_order_line_season_snapshots`
-(`season_id`, code, name, financial year, display label). Job Orders copy the union
-of their selected PO-line snapshots into `job_order_season_snapshots`. The
-snapshot fields are the display source, so later master edits or deactivation
-cannot rewrite documents. No backfill is performed because pre-production
-records must not receive invented Seasons.
+Historical data deliberately does not read this mapping. Each Order Sheet
+(business terminology for Purchase Order) line copies every current Style
+Season into `purchase_order_line_season_snapshots` (`season_id`, code, name,
+financial year, display label). An Order Sheet is exactly one Style/one line
+under the Order Sheet rename (see `AUTHORIZATION_MATRIX.md`), so this is now
+always a single line's snapshot set, not a union across multiple lines. Job
+Orders copy the union of their selected Order-Sheet-line snapshots into
+`job_order_season_snapshots` — in Phase 1 that's still one Order Sheet's
+lines, but the union framing already anticipates Phase 2's multi-Order-Sheet
+consolidation. The snapshot fields are the display source, so later master
+edits or deactivation cannot rewrite documents. No backfill is performed
+because pre-production records must not receive invented Seasons.
 
 The current repository contains QA workflow records but no stock, dispatch,
 packing, invoice, or reporting modules. QA reads its authoritative Job Order;

@@ -374,6 +374,10 @@ model Distributor {
   code         String            @unique
   name         String
   gstin        String
+  // Authoritative Order Sheet purchase mode for this distributor. Required at
+  // creation, immutable thereafter (see master-data.validation.ts) — if one
+  // real distributor needs both modes, the business creates two records.
+  purchaseMode PurchaseMode      @map("purchase_mode")
   contactName  String?           @map("contact_name")
   contactEmail String?           @map("contact_email")
   contactPhone String?           @map("contact_phone")
@@ -883,18 +887,26 @@ model DistributorPurchaseOrder {
   // unique below; the actual next-serial source of truth is DocumentSequence.
   financialYearId      String              @map("financial_year_id")
   poSerial             Int                 @map("po_serial")
+  // Order Sheet planning lock: null while open (editable/cancellable/
+  // eligible for Job Ordering); set exactly once, atomically, when a Job
+  // Order claims this Order Sheet. Deliberately NOT @unique — Job Order
+  // consolidation of multiple Order Sheets (Phase 2) needs many-to-one here;
+  // "one Order Sheet -> at most one Job Order" is already guaranteed by this
+  // being a scalar FK on the Order Sheet, not by a DB uniqueness constraint.
+  jobOrderId           String?             @map("job_order_id")
 
-  distributor   Distributor                    @relation(fields: [distributorId], references: [id], onDelete: Restrict)
-  merchandiser  User?                          @relation("POMerchandiser", fields: [merchandiserId], references: [id], onDelete: SetNull)
-  creator       User                           @relation("POCreator", fields: [createdBy], references: [id], onDelete: Restrict)
-  financialYear FinancialYear                  @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
-  lines         DistributorPurchaseOrderLine[]
-  jobOrders     JobOrder[]
+  distributor      Distributor                    @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  merchandiser     User?                          @relation("POMerchandiser", fields: [merchandiserId], references: [id], onDelete: SetNull)
+  creator          User                           @relation("POCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  financialYear    FinancialYear                  @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  lines            DistributorPurchaseOrderLine[]
+  lockedByJobOrder JobOrder?                      @relation("OrderSheetJobOrderLock", fields: [jobOrderId], references: [id], onDelete: SetNull)
 
   @@unique([financialYearId, poSerial])
   @@index([distributorId])
   @@index([status])
   @@index([poDate])
+  @@index([jobOrderId])
   @@map("distributor_purchase_orders")
 }
 
@@ -913,7 +925,9 @@ model DistributorPurchaseOrderLine {
   jobOrderLines   JobOrderLine[]
   seasonSnapshots PurchaseOrderLineSeasonSnapshot[]
 
-  @@unique([purchaseOrderId, styleId])
+  // Order Sheet enforcement: at most one line per Order Sheet (DB-level "at
+  // most one"; exactly-one is enforced in purchase-orders.validation.ts).
+  @@unique([purchaseOrderId])
   @@index([purchaseOrderId])
   @@index([styleId])
   @@map("distributor_purchase_order_lines")
@@ -941,7 +955,13 @@ model DistributorPurchaseOrderLineSize {
   purchaseOrderLineId String   @map("purchase_order_line_id")
   sizeId              String   @map("size_id")
   orderedQuantity     Int      @map("ordered_quantity")
-  jobOrderedQuantity  Int      @default(0) @map("job_ordered_quantity")
+  // jobOrderedQuantity removed (Order Sheet Phase 2): a Job Order can now
+  // consolidate multiple Order Sheets and its production plan is
+  // independent of any single source's forecast, so a per-Order-Sheet
+  // "quantity job ordered" counter no longer has a valid meaning. The
+  // Order Sheet -> Job Order relationship itself is now expressed solely by
+  // jobOrderId above (whole-sheet claim); per-size production quantities
+  // live on JobOrderLineSize.orderedQuantity, not here.
   qaPassedQuantity    Int      @default(0) @map("qa_passed_quantity")
   saleOrderedQuantity Int      @default(0) @map("sale_ordered_quantity")
   dispatchedQuantity  Int      @default(0) @map("dispatched_quantity")
@@ -971,7 +991,11 @@ model DistributorPurchaseOrderLineSize {
 model JobOrder {
   id                        String                    @id
   jobOrderNumber            String                    @unique @map("job_order_number")
-  purchaseOrderId           String                    @map("purchase_order_id")
+  // Order Sheet Phase 2: the old singular purchaseOrderId pointer is removed.
+  // A Job Order may now consolidate one or more source Order Sheets, so
+  // there is no correct singular value. `orderSheets` below (via
+  // DistributorPurchaseOrder.jobOrderId) is the sole authoritative Order
+  // Sheet <-> Job Order relationship.
   factoryId                 String                    @map("factory_id")
   processFlowVersionId      String                    @map("process_flow_version_id")
   unitPrice                 Decimal                   @map("unit_price") @db.Decimal(12, 2)
@@ -984,6 +1008,16 @@ model JobOrder {
   productionStartedAt       DateTime?                 @map("production_started_at")
   productionCompletedAt     DateTime?                 @map("production_completed_at")
   preparedQuantityTotal     Int                       @default(0) @map("prepared_quantity_total")
+  // The Job Order's own production/delivery target date (Order Sheet Phase
+  // 2). Replaces the old pass-through of a single source Order Sheet's
+  // requiredDeliveryDate, which stopped being meaningful once a Job Order
+  // can consolidate multiple Order Sheets with different dates. Editable by
+  // Merchandising until factory confirmation (factoryConfirmationStatus ==
+  // CONFIRMED), then locked — a separate lifecycle point from the source
+  // Order Sheet mapping freeze, which happens earlier at SENT_TO_FACTORY.
+  // Passing this date only flags delay in the view layer; it never blocks
+  // workflow.
+  requiredDeliveryDate      DateTime?                 @map("required_delivery_date") @db.Date
   createdBy                 String                    @map("created_by")
   createdAt                 DateTime                  @default(now()) @map("created_at")
   updatedAt                 DateTime                  @updatedAt @map("updated_at")
@@ -994,7 +1028,6 @@ model JobOrder {
   financialYearId           String                    @map("financial_year_id")
   jobOrderSerial            Int                       @map("job_order_serial")
 
-  purchaseOrder       DistributorPurchaseOrder    @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
   factory             Factory                     @relation(fields: [factoryId], references: [id], onDelete: Restrict)
   processFlowVersion  ProcessFlowVersion          @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
   confirmer           User?                       @relation("JobOrderConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
@@ -1010,9 +1043,16 @@ model JobOrder {
   qualityExecutions   QualityActivityExecution[]
   finalQualityBatches FinalQualityBatch[]
   qaReleases          QaRelease[]
+  // Order Sheets consolidated into this Job Order via
+  // DistributorPurchaseOrder.jobOrderId — the sole authoritative Order Sheet
+  // <-> Job Order relationship (Order Sheet Phase 2). One or more Order
+  // Sheets, always the same Style, optionally different Distributors/
+  // Purchase Modes; each maps to at most one JobOrderLine (see
+  // JobOrderLine.purchaseOrderLineId) carrying that source's own production
+  // quantities.
+  orderSheets         DistributorPurchaseOrder[]  @relation("OrderSheetJobOrderLock")
 
   @@unique([financialYearId, jobOrderSerial])
-  @@index([purchaseOrderId])
   @@index([factoryId])
   @@index([processFlowVersionId])
   @@index([status])

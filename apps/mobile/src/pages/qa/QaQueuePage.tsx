@@ -8,7 +8,6 @@ import { apiClient } from '../../lib/api-client.js';
 type QualityWorkItem = {
   jobOrderId: string;
   jobOrderNumber: string;
-  purchaseOrderNumber: string;
   factory: { id: string; code: string; name: string };
   activity: JobOrderQualityActivity;
 };
@@ -49,13 +48,9 @@ export function QaQueuePage() {
   const qualityWork = (query.data ?? []).filter((item) => {
     const matchesSearch =
       !normalizedSearch ||
-      [
-        item.jobOrderNumber,
-        item.purchaseOrderNumber,
-        item.factory.name,
-        item.factory.code,
-        item.activity.name,
-      ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
+      [item.jobOrderNumber, item.factory.name, item.factory.code, item.activity.name].some(
+        (value) => value.toLocaleLowerCase().includes(normalizedSearch),
+      );
     const matchesFilter =
       !filter ||
       (filter === 'RECONCILIATION_CONFLICT'
@@ -74,7 +69,7 @@ export function QaQueuePage() {
       </div>
       <input
         className="min-h-12 w-full rounded-md border border-border bg-surface px-4"
-        placeholder="Job order, PO, activity or factory"
+        placeholder="Job order, activity or factory"
         aria-label="Search QA work"
         value={search}
         onChange={(event) => setSearch(event.target.value)}
@@ -139,9 +134,7 @@ export function QaQueuePage() {
                   {conflict ? 'Reconciliation conflict' : item.activity.status.replaceAll('_', ' ')}
                 </span>
               </div>
-              <p className="mt-2 text-sm">
-                {item.factory.name} · PO {item.purchaseOrderNumber}
-              </p>
+              <p className="mt-2 text-sm">{item.factory.name}</p>
               {item.activity.status === 'FAILED' && <p className="mt-2 text-sm">Retry required</p>}
               {item.activity.status === 'MISSED' && (
                 <p className="mt-2 text-sm">Not performed during its Production activity</p>

@@ -110,7 +110,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Distributors');
     expect(labels).toContain('Process Flows');
     expect(labels).toContain('Price Lists');
-    expect(labels).toContain('Purchase Orders');
+    expect(labels).toContain('Order Sheets');
     expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
     expect(labels).toContain('Users');
@@ -139,7 +139,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).toContain('Price Lists');
-    expect(labels).toContain('Purchase Orders');
+    expect(labels).toContain('Order Sheets');
     expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
     expect(labels).not.toContain('Users');
@@ -155,7 +155,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).not.toContain('Price Lists');
-    expect(labels).not.toContain('Purchase Orders');
+    expect(labels).not.toContain('Order Sheets');
     expect(labels).not.toContain('+ New PO');
     // Factory User consumes their own factory's name via assigned Job
     // Orders (already embedded there), not by browsing the Factory master.
@@ -196,28 +196,31 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     expect(labels).toContain('Price Lists');
-    expect(labels).not.toContain('Purchase Orders');
+    expect(labels).not.toContain('Order Sheets');
     expect(labels).not.toContain('Job Orders');
     expect(labels).toContain('Sale Orders');
   });
 
-  it('DISTRIBUTOR sees Purchase Orders only — no master-data browsing', async () => {
+  it('DISTRIBUTOR sees Sale Orders only — no master-data browsing, no Order Sheet planning', async () => {
     await renderAppLayout(['DISTRIBUTOR']);
     const labels = sidebarLinkLabels();
 
     expect(labels).not.toContain('Styles');
     expect(labels).not.toContain('Sizes');
     expect(labels).not.toContain('Factories');
-    // A Distributor's own org name/PO/SO documents already carry their
+    // A Distributor's own org name/SO documents already carry their
     // details — they must not be able to browse the Distributor master.
     expect(labels).not.toContain('Distributors');
     expect(labels).not.toContain('Process Flows');
     // A distributor's own commercial price, if ever shown, must come from
     // an authorized transaction — not from browsing the Price List master.
     expect(labels).not.toContain('Price Lists');
-    expect(labels).toContain('Purchase Orders');
+    // Order Sheet planning belongs to Merchandising — DISTRIBUTOR has no
+    // Order Sheet access at all, mirroring its full exclusion from Job Orders.
+    expect(labels).not.toContain('Order Sheets');
     expect(labels).not.toContain('+ New PO');
     expect(labels).not.toContain('Job Orders');
+    expect(labels).toContain('Sale Orders');
   });
 
   it('does not render an empty Master Data section heading for DISTRIBUTOR', async () => {

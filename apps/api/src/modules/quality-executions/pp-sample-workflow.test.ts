@@ -359,7 +359,6 @@ async function workflow() {
     data: {
       id: createId(),
       jobOrderNumber: `JO-${createId()}`,
-      purchaseOrderId: po.id,
       factoryId: factory.id,
       processFlowVersionId: versionId,
       unitPrice: 10,
@@ -396,6 +395,12 @@ async function workflow() {
       },
     },
     include: { lines: { include: { sizes: true } }, stageStatuses: true },
+  });
+  // Order Sheet Phase 2: the Order Sheet <-> Job Order relationship is the
+  // Order Sheet's own jobOrderId claim, not a field on JobOrder.
+  await prisma.distributorPurchaseOrder.update({
+    where: { id: po.id },
+    data: { jobOrderId: job.id },
   });
   return {
     qa,

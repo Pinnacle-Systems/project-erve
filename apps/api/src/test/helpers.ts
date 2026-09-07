@@ -189,6 +189,7 @@ export async function createTestDistributor(overrides?: {
   code?: string;
   name?: string;
   gstin?: string;
+  purchaseMode?: 'OUTRIGHT' | 'SALE_RETURN';
   status?: 'ACTIVE' | 'INACTIVE';
 }): Promise<{ id: string; code: string; name: string }> {
   const id = createId();
@@ -196,7 +197,14 @@ export async function createTestDistributor(overrides?: {
   const name = overrides?.name ?? 'Test Distributor';
   const gstin = overrides?.gstin ?? '27AAAAA0000A1Z5';
   await prisma.distributor.create({
-    data: { id, code, name, gstin, status: overrides?.status ?? 'ACTIVE' },
+    data: {
+      id,
+      code,
+      name,
+      gstin,
+      purchaseMode: overrides?.purchaseMode ?? 'OUTRIGHT',
+      status: overrides?.status ?? 'ACTIVE',
+    },
   });
   return { id, code, name };
 }
@@ -210,6 +218,48 @@ export async function createTestFactory(overrides?: {
   const name = overrides?.name ?? 'Test Factory';
   await prisma.factory.create({ data: { id, code, name } });
   return { id, code, name };
+}
+
+// A minimal-but-real JobOrder row (real Factory/ProcessFlowVersion/Financial
+// Year/serial, satisfying every FK/CHECK constraint) for tests that only
+// need *some* Job Order to exist to simulate an Order Sheet's jobOrderId
+// lock — not a full createJobOrderFromPO flow through the API.
+export async function createTestJobOrderStub(options: {
+  purchaseOrderId: string;
+  createdBy: string;
+}): Promise<{ id: string }> {
+  const factory = await createTestFactory();
+  const processFlow = await prisma.processFlow.create({
+    data: {
+      id: createId(),
+      code: `STUB-FLOW-${createId()}`,
+      name: 'Stub flow',
+      versions: { create: { id: createId(), versionNumber: 1, status: 'ACTIVE' } },
+    },
+    include: { versions: true },
+  });
+  const financialYear = await createTestFinancialYear();
+  const jobOrderSerial = await allocateTestDocumentSerial('JOB_ORDER', financialYear.id);
+  const id = createId();
+  await prisma.jobOrder.create({
+    data: {
+      id,
+      jobOrderNumber: `STUB-JO-${id}`,
+      factoryId: factory.id,
+      processFlowVersionId: processFlow.versions[0]!.id,
+      unitPrice: 100,
+      createdBy: options.createdBy,
+      financialYearId: financialYear.id,
+      jobOrderSerial,
+    },
+  });
+  // Order Sheet Phase 2: the Order Sheet <-> Job Order relationship is the
+  // Order Sheet's own jobOrderId claim, not a field on JobOrder.
+  await prisma.distributorPurchaseOrder.update({
+    where: { id: options.purchaseOrderId },
+    data: { jobOrderId: id },
+  });
+  return { id };
 }
 
 export interface CreateReleasedQaStockOptions {
@@ -440,7 +490,6 @@ export async function createReleasedQaStock(
     data: {
       id: createId(),
       jobOrderNumber: `JO-${createId()}`,
-      purchaseOrderId: po.id,
       factoryId: factory.id,
       processFlowVersionId: flow.versions[0]!.id,
       unitPrice: 10,
@@ -472,6 +521,10 @@ export async function createReleasedQaStock(
       },
     },
     include: { lines: { include: { sizes: true } } },
+  });
+  await prisma.distributorPurchaseOrder.update({
+    where: { id: po.id },
+    data: { jobOrderId: job.id },
   });
   const jobOrderLineSizeId = job.lines[0]!.sizes[0]!.id;
 

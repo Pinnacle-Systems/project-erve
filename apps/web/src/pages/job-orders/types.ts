@@ -6,5 +6,4 @@ export type {
   JobOrderStage,
   JobOrderStatus,
   ProductionStageStatus,
-  PurchaseOrderBalance as JobOrderBalance,
 } from '@erve/types';

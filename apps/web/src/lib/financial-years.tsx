@@ -17,7 +17,7 @@ export function toCompactFinancialYearCode(code: string): string {
 }
 
 /**
- * Shared across Season, Purchase Order, and Job Order screens so ordering,
+ * Shared across Season, Order Sheet, and Job Order screens so ordering,
  * labels, and fetching aren't each reinvented per page.
  */
 export function useFinancialYearsQuery() {

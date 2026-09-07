@@ -494,19 +494,30 @@ function derivedSystemContext(
 ) {
   const styles = [...new Set(jobOrder.lines.map((line) => line.style.styleNumber))];
   const colours = [...new Set(jobOrder.lines.map((line) => line.style.colour).filter(Boolean))];
+  // Order Sheet Phase 2: a Job Order may now consolidate multiple source
+  // Order Sheets (possibly different Distributors/Merchandisers) — join
+  // their names rather than assuming a single one, matching the plain
+  // single-source case exactly when there's only one.
+  const customerNames = [...new Set(jobOrder.orderSheets.map((os) => os.distributor.name))];
+  const poNumbers = jobOrder.orderSheets.map((os) => os.poNumber);
+  const merchandiserNames = [
+    ...new Set(jobOrder.orderSheets.map((os) => os.merchandiser?.name).filter(Boolean)),
+  ];
   const value: Record<string, unknown> = {
     SUPPLIER_NAME: jobOrder.factory.name,
     FACTORY_NAME: jobOrder.factory.name,
     STYLE_NUMBER: styles.join(', '),
-    CUSTOMER_NAME: jobOrder.purchaseOrder.distributor.name,
-    PURCHASE_ORDER_NUMBER: jobOrder.purchaseOrder.poNumber,
+    CUSTOMER_NAME: customerNames.join(', ') || null,
+    PURCHASE_ORDER_NUMBER: poNumbers.join(', ') || null,
     JOB_ORDER_NUMBER: jobOrder.jobOrderNumber,
     ORDER_QUANTITY: jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0),
     REPORT_DATE: new Date().toISOString().slice(0, 10),
-    ETD: jobOrder.purchaseOrder.requiredDeliveryDate?.toISOString().slice(0, 10) ?? null,
+    // The Job Order's own delivery date (Order Sheet Phase 2) — no longer a
+    // pass-through of a single source Order Sheet's date.
+    ETD: jobOrder.requiredDeliveryDate?.toISOString().slice(0, 10) ?? null,
     COLOUR: colours.join(', ') || null,
     SHIP_QUANTITY: null,
-    MERCHANDISER_NAME: jobOrder.purchaseOrder.merchandiser?.name ?? null,
+    MERCHANDISER_NAME: merchandiserNames.join(', ') || null,
     CUTTING_PLANNING_DATE: null,
     SEWING_PLANNING_DATE: null,
     MEETING_CONDUCTED_BY: null,
@@ -528,7 +539,7 @@ async function loadJobOrder(jobOrderId: string) {
     where: { id: jobOrderId },
     include: {
       factory: true,
-      purchaseOrder: { include: { distributor: true, merchandiser: true } },
+      orderSheets: { include: { distributor: true, merchandiser: true } },
       lines: {
         include: {
           style: true,

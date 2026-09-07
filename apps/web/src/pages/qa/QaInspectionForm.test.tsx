@@ -34,9 +34,7 @@ function detail(): QaInspectionDetail {
   return {
     id: 'jo-1',
     jobOrderNumber: 'JO-001',
-    purchaseOrderNumber: 'PO-001',
     factory: { id: 'factory-1', code: 'F1', name: 'Factory' },
-    distributor: { id: 'dist-1', code: 'D1', name: 'Distributor' },
     seasons: [{ code: 'SUMMER', displayName: 'Summer 26' }],
     status: 'QA_IN_PROGRESS',
     version: 2,
@@ -326,9 +324,13 @@ describe('QaInspectionForm', () => {
     const back = container.querySelector('a[aria-label="Back to Job Order JO-001"]');
     expect(back?.textContent).toContain('Job Order JO-001');
     expect(back?.getAttribute('href')).toBe('/job-orders/jo-1');
+    // With Distributor/PO provenance removed from QA's view entirely, the
+    // shared execution shell's context line now identifies the Job Order by
+    // number + factory instead — legitimately repeating "JO-001" alongside
+    // the dedicated "Back to Job Order" link and Inspection context panel.
     expect(
       container.querySelector('[data-quality-execution-header="true"]')?.textContent,
-    ).not.toContain('JO-001');
+    ).toContain('JO-001 · Factory');
     expect(container.textContent).toContain('Job OrderJO-001');
     expect(container.textContent).not.toContain('Back');
   });

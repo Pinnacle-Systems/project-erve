@@ -30,7 +30,7 @@ export function OperationalJobOrderListPage() {
       <input
         className="min-h-12 w-full rounded-md border border-border bg-surface px-4"
         aria-label="Search active job orders"
-        placeholder="Search job order or PO"
+        placeholder="Search job order number"
         value={search}
         onChange={(event) => setSearch(event.target.value)}
       />
@@ -69,7 +69,8 @@ export function OperationalJobOrderListPage() {
               <div>
                 <p className="font-semibold text-foreground">{job.jobOrderNumber}</p>
                 <p className="text-sm text-muted-foreground">
-                  PO {job.purchaseOrder.poNumber} · {job.factory.name}
+                  {job.factory.name} · {job.sourceOrderSheetCount} Order Sheet
+                  {job.sourceOrderSheetCount === 1 ? '' : 's'}
                 </p>
               </div>
               <span className="max-w-[55%] break-words text-right text-xs">

@@ -4,16 +4,16 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
-import { FormGrid, FormSection, Panel, Stack } from '@erve/layout';
+import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
-import type { Distributor, PurchaseMode, PurchaseOrder, StyleOption } from './types.js';
+import type { Distributor, PurchaseOrder, StyleOption } from './types.js';
 
-const SEASONS_VALIDATION_MESSAGE = 'Every purchase-order Style must have Seasons assigned';
+const SEASONS_VALIDATION_MESSAGE = 'Every Order Sheet Style must have Seasons assigned';
 const SEASONS_WARNING_MESSAGE =
-  'One or more selected Styles do not have any Seasons assigned. Assign at least one Season to each Style before saving the Purchase Order.';
+  'The selected Style does not have any Seasons assigned. Assign at least one Season to the Style before saving the Order Sheet.';
 
 interface SizeRow {
   sizeId: string;
@@ -22,13 +22,13 @@ interface SizeRow {
   orderedQuantity: string;
 }
 
-interface LineRow {
+interface LineState {
   styleId: string;
   remarks: string;
   sizes: SizeRow[];
 }
 
-const emptyLine = (): LineRow => ({ styleId: '', remarks: '', sizes: [] });
+const emptyLine = (): LineState => ({ styleId: '', remarks: '', sizes: [] });
 
 export function PurchaseOrderFormPage() {
   const navigate = useNavigate();
@@ -38,11 +38,10 @@ export function PurchaseOrderFormPage() {
   const [distributorId, setDistributorId] = useState('');
   const [poDate, setPoDate] = useState(getLocalDateString());
   const [requiredDeliveryDate, setRequiredDeliveryDate] = useState('');
-  const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>('OUTRIGHT');
   const [remarks, setRemarks] = useState('');
-  const [lines, setLines] = useState<LineRow[]>([emptyLine()]);
+  const [line, setLine] = useState<LineState>(emptyLine());
   const [error, setError] = useState('');
-  const [styleLinesError, setStyleLinesError] = useState('');
+  const [styleLineError, setStyleLineError] = useState('');
 
   const poQuery = useQuery({
     queryKey: ['purchase-order', id],
@@ -89,25 +88,27 @@ export function PurchaseOrderFormPage() {
   useEffect(() => {
     if (!poQuery.data) return;
     const po = poQuery.data;
+    const firstLine = po.lines[0];
     // Hydrates the edit form from an async-loaded record; the data isn't available
     // for a lazy initial-state computation, so this can't be done without an effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDistributorId(po.distributor.id);
     setPoDate(po.poDate.slice(0, 10));
     setRequiredDeliveryDate(po.requiredDeliveryDate?.slice(0, 10) ?? '');
-    setPurchaseMode(po.purchaseMode);
     setRemarks(po.remarks ?? '');
-    setLines(
-      po.lines.map((line) => ({
-        styleId: line.styleId,
-        remarks: line.remarks ?? '',
-        sizes: line.sizes.map((sz) => ({
-          sizeId: sz.sizeId,
-          sizeCode: sz.sizeCode,
-          sizeLabel: sz.sizeLabel,
-          orderedQuantity: String(sz.orderedQuantity),
-        })),
-      })),
+    setLine(
+      firstLine
+        ? {
+            styleId: firstLine.styleId,
+            remarks: firstLine.remarks ?? '',
+            sizes: firstLine.sizes.map((sz) => ({
+              sizeId: sz.sizeId,
+              sizeCode: sz.sizeCode,
+              sizeLabel: sz.sizeLabel,
+              orderedQuantity: String(sz.orderedQuantity),
+            })),
+          }
+        : emptyLine(),
     );
   }, [poQuery.data]);
 
@@ -123,68 +124,49 @@ export function PurchaseOrderFormPage() {
     return stylesQuery.data?.find((s) => s.id === styleId)?.seasons ?? null;
   }
 
-  function handleStyleChange(lineIndex: number, styleId: string) {
+  function handleStyleChange(styleId: string) {
     const sizes = getStyleSizes(styleId);
-    setLines((current) =>
-      current.map((line, i) =>
-        i === lineIndex
-          ? {
-              ...line,
-              styleId,
-              sizes: sizes.map((sz) => ({ sizeId: sz.id, sizeCode: sz.code, sizeLabel: sz.label, orderedQuantity: '' })),
-            }
-          : line,
-      ),
-    );
+    setLine((current) => ({
+      ...current,
+      styleId,
+      sizes: sizes.map((sz) => ({ sizeId: sz.id, sizeCode: sz.code, sizeLabel: sz.label, orderedQuantity: '' })),
+    }));
   }
 
-  function handleQtyChange(lineIndex: number, sizeIndex: number, value: string) {
-    setLines((current) =>
-      current.map((line, i) =>
-        i === lineIndex
-          ? { ...line, sizes: line.sizes.map((sz, j) => (j === sizeIndex ? { ...sz, orderedQuantity: value } : sz)) }
-          : line,
-      ),
-    );
+  function handleQtyChange(sizeIndex: number, value: string) {
+    setLine((current) => ({
+      ...current,
+      sizes: current.sizes.map((sz, j) => (j === sizeIndex ? { ...sz, orderedQuantity: value } : sz)),
+    }));
   }
 
-  function addLine() {
-    setLines((current) => [...current, emptyLine()]);
-  }
-
-  function removeLine(index: number) {
-    setLines((current) => current.filter((_, i) => i !== index));
-  }
+  const selectedDistributor = distributorsQuery.data?.find((d) => d.id === distributorId);
 
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      setStyleLinesError('');
+      setStyleLineError('');
       if (!distributorId) throw new Error('Distributor is required');
-      if (!poDate) throw new Error('PO date is required');
-      const selectedStyleIds = lines.map((l) => l.styleId).filter(Boolean);
-      if (new Set(selectedStyleIds).size !== selectedStyleIds.length) {
-        throw new Error('Duplicate styles are not allowed');
-      }
+      if (!poDate) throw new Error('Order Sheet date is required');
+      if (!line.styleId) throw new Error('A Style is required');
 
       const payload = {
         distributorId,
         poDate,
         requiredDeliveryDate: requiredDeliveryDate || null,
-        purchaseMode,
         remarks: remarks || null,
-        lines: lines
-          .filter((l) => l.styleId)
-          .map((l) => ({
-            styleId: l.styleId,
-            remarks: l.remarks || null,
-            sizes: l.sizes
+        lines: [
+          {
+            styleId: line.styleId,
+            remarks: line.remarks || null,
+            sizes: line.sizes
               .filter((sz) => sz.orderedQuantity && Number(sz.orderedQuantity) > 0)
               .map((sz) => ({ sizeId: sz.sizeId, orderedQuantity: Number(sz.orderedQuantity) })),
-          })),
+          },
+        ],
       };
 
-      if (payload.lines.length === 0) throw new Error('At least one style line with sizes is required');
+      if (payload.lines[0]!.sizes.length === 0) throw new Error('At least one size quantity is required');
 
       if (isEdit) {
         const res = await apiClient.patch<ApiSuccessResponse<PurchaseOrder>>(`/purchase-orders/${id}`, {
@@ -199,24 +181,25 @@ export function PurchaseOrderFormPage() {
     },
     onSuccess: (po) => navigate(`/purchase-orders/${po.id}`),
     onError: (caught) => {
-      const message = getApiErrorMessage(caught, 'Unable to save the Purchase Order. Please try again.');
+      const message = getApiErrorMessage(caught, 'Unable to save the Order Sheet. Please try again.');
       if (message === SEASONS_VALIDATION_MESSAGE) {
-        setStyleLinesError(SEASONS_WARNING_MESSAGE);
+        setStyleLineError(SEASONS_WARNING_MESSAGE);
       } else {
         setError(message);
       }
     },
   });
 
-  const usedStyleIds = new Set(lines.map((l) => l.styleId).filter(Boolean));
   const availableStyles = stylesQuery.data?.filter((s) => s.status === 'ACTIVE') ?? [];
-  const hasStyleWithoutSeasons = lines.some((l) => (getStyleSeasons(l.styleId)?.length ?? 1) === 0);
+  const seasons = getStyleSeasons(line.styleId);
+  const lineHasNoSeasons = seasons !== null && seasons.length === 0;
+  const sizesForStyle = getStyleSizes(line.styleId);
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title={isEdit ? 'Edit Purchase Order' : 'Create Purchase Order'}
-        subtitle={isEdit ? 'Update draft quantities and dates' : 'Create distributor demand as a draft PO'}
+        title={isEdit ? 'Edit Order Sheet' : 'Create Order Sheet'}
+        subtitle={isEdit ? 'Update quantities and dates' : 'Create distributor demand as an Order Sheet'}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
             Cancel
@@ -229,14 +212,14 @@ export function PurchaseOrderFormPage() {
           className="space-y-6"
           onSubmit={(e) => {
             e.preventDefault();
-            if (hasStyleWithoutSeasons) {
-              setStyleLinesError(SEASONS_WARNING_MESSAGE);
+            if (lineHasNoSeasons) {
+              setStyleLineError(SEASONS_WARNING_MESSAGE);
               return;
             }
             mutation.mutate();
           }}
         >
-          <FormSection title="PO Header">
+          <FormSection title="Order Sheet Header">
             <FormGrid layout="content">
               <SelectField
                 label="Distributor *"
@@ -251,18 +234,21 @@ export function PurchaseOrderFormPage() {
                 ))}
               </SelectField>
 
-              <SelectField
-                label="Purchase Mode *"
-                value={purchaseMode}
-                onValueChange={(value) => setPurchaseMode(value as PurchaseMode)}
+              <TextField
+                label="Purchase Mode"
+                value={
+                  selectedDistributor
+                    ? selectedDistributor.purchaseMode === 'OUTRIGHT'
+                      ? 'Outright'
+                      : 'Sale or Return'
+                    : ''
+                }
+                disabled
                 width="sm"
-              >
-                <SelectItem value="OUTRIGHT">Outright</SelectItem>
-                <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
-              </SelectField>
+              />
 
               <DatePicker
-                label="PO Date *"
+                label="Order Sheet Date *"
                 value={poDate}
                 onValueChange={(value) => setPoDate(value ?? '')}
                 displayFormat="dd/mm/yyyy"
@@ -295,99 +281,66 @@ export function PurchaseOrderFormPage() {
             />
           </FormSection>
 
-          <FormSection
-            title="Style Lines"
-            actions={
-              <Button type="button" variant="secondary" onClick={addLine}>
-                Add Style
-              </Button>
-            }
-          >
-            {styleLinesError ? <ValidationMessage tone="error">{styleLinesError}</ValidationMessage> : null}
-            <Stack gap="md">
-              {lines.map((line, lineIndex) => {
-                const sizesForStyle = getStyleSizes(line.styleId);
-                const availableForLine = availableStyles.filter(
-                  (s) => !usedStyleIds.has(s.id) || s.id === line.styleId,
-                );
-                const seasons = getStyleSeasons(line.styleId);
-                const lineHasNoSeasons = seasons !== null && seasons.length === 0;
+          <FormSection title="Style">
+            {styleLineError ? <ValidationMessage tone="error">{styleLineError}</ValidationMessage> : null}
+            <Panel variant="bordered" padding="sm" className="space-y-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <SelectField
+                  label="Style *"
+                  value={line.styleId || 'NONE'}
+                  onValueChange={(value) => handleStyleChange(value === 'NONE' ? '' : value)}
+                  width="lg"
+                >
+                  <SelectItem value="NONE">Select style</SelectItem>
+                  {availableStyles.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.styleNumber} - {s.styleName}
+                    </SelectItem>
+                  ))}
+                </SelectField>
+                <TextField
+                  label="Remarks"
+                  value={line.remarks}
+                  width="lg"
+                  onChange={(e) => setLine((current) => ({ ...current, remarks: e.target.value }))}
+                />
+              </div>
 
-                return (
-                  <Panel key={lineIndex} variant="bordered" padding="sm" className="space-y-4">
-                  <div className="flex flex-wrap items-end gap-3">
-                    <SelectField
-                      label="Style *"
-                      value={line.styleId || 'NONE'}
-                      onValueChange={(value) => handleStyleChange(lineIndex, value === 'NONE' ? '' : value)}
-                      width="lg"
-                    >
-                      <SelectItem value="NONE">Select style</SelectItem>
-                      {availableForLine.map((s) => (
-                        <SelectItem key={s.id} value={s.id}>
-                          {s.styleNumber} - {s.styleName}
-                        </SelectItem>
-                      ))}
-                    </SelectField>
-                    <TextField
-                      label="Line Remarks"
-                      value={line.remarks}
-                      width="lg"
-                      onChange={(e) =>
-                        setLines((current) =>
-                          current.map((l, i) =>
-                            i === lineIndex ? { ...l, remarks: e.target.value } : l,
-                          ),
-                        )
-                      }
-                    />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => removeLine(lineIndex)}
-                    >
-                      Remove
-                    </Button>
+              {lineHasNoSeasons && (
+                <ValidationMessage tone="warning">
+                  This Style has no Seasons assigned. Assign at least one Season to the Style before it can be
+                  used on an Order Sheet.
+                </ValidationMessage>
+              )}
+
+              {line.styleId && sizesForStyle.length > 0 && (
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
+                    Size Quantities
                   </div>
-
-                  {lineHasNoSeasons && (
-                    <ValidationMessage tone="warning">
-                      This Style has no Seasons assigned. Assign at least one Season to the Style before it can be
-                      used on a Purchase Order.
-                    </ValidationMessage>
-                  )}
-
-                  {line.styleId && sizesForStyle.length > 0 && (
-                    <div>
-                      <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
-                        Size Quantities
-                      </div>
-                      <FormGrid layout="content" gap="sm">
-                        {(line.sizes.length > 0 ? line.sizes : sizesForStyle.map((sz) => ({
-                          sizeId: sz.id,
-                          sizeCode: sz.code,
-                          sizeLabel: sz.label,
-                          orderedQuantity: '',
-                        }))).map((sz, szIndex) => (
-                          <TextField
-                            key={sz.sizeId}
-                            label={sz.sizeCode}
-                            type="number"
-                            min="1"
-                            value={sz.orderedQuantity}
-                            onChange={(e) => handleQtyChange(lineIndex, szIndex, e.target.value)}
-                            placeholder="0"
-                            density="compact"
-                            width="xs"
-                          />
-                        ))}
-                      </FormGrid>
-                    </div>
-                  )}
-                  </Panel>
-                );
-              })}
-            </Stack>
+                  <FormGrid layout="content" gap="sm">
+                    {(line.sizes.length > 0 ? line.sizes : sizesForStyle.map((sz) => ({
+                      sizeId: sz.id,
+                      sizeCode: sz.code,
+                      sizeLabel: sz.label,
+                      orderedQuantity: '',
+                    }))).map((sz, szIndex) => (
+                      <TextField
+                        key={sz.sizeId}
+                        label={sz.sizeCode}
+                        type="number"
+                        min="1"
+                        value={sz.orderedQuantity}
+                        onChange={(e) => handleQtyChange(szIndex, e.target.value)}
+                        placeholder="0"
+                        density="compact"
+                        width="xs"
+                      />
+                    ))}
+                  </FormGrid>
+                </div>
+              )}
+            </Panel>
           </FormSection>
 
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
@@ -396,8 +349,8 @@ export function PurchaseOrderFormPage() {
             <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
               Cancel
             </Button>
-            <Button type="submit" loading={mutation.isPending} disabled={hasStyleWithoutSeasons}>
-              Save Draft
+            <Button type="submit" loading={mutation.isPending} disabled={lineHasNoSeasons}>
+              Save
             </Button>
           </div>
         </form>

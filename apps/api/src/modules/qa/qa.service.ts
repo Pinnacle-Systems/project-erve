@@ -100,9 +100,8 @@ async function deriveSessionStatus(tx: Tx, sessionId: string) {
 
 const detailInclude = {
   factory: { select: { id: true, code: true, name: true } },
-  purchaseOrder: {
-    select: { poNumber: true, distributor: { select: { id: true, code: true, name: true } } },
-  },
+  // No Order Sheet / Purchase Order / Distributor provenance here — QA
+  // identifies work through Job Order Number, Style and Factory only (§22).
   seasonSnapshots: { select: { code: true, displayName: true } },
   lines: {
     include: {
@@ -249,8 +248,6 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
   return {
     id: record.id,
     jobOrderNumber: record.jobOrderNumber,
-    purchaseOrderNumber: record.purchaseOrder.poNumber,
-    distributor: record.purchaseOrder.distributor,
     seasons: record.seasonSnapshots.map((season) => ({
       code: season.code,
       displayName: season.displayName,
@@ -386,11 +383,10 @@ export async function getQueue(
       factoryId: scopedFactory,
       status: { in: statuses as never[] },
       updatedAt: { gte: filters.dateFrom, lte: filters.dateTo },
+      // QA identifies work by Job Order Number only — no Order Sheet/
+      // Purchase Order provenance is exposed to this role (§22).
       OR: filters.search
-        ? [
-            { jobOrderNumber: { contains: filters.search, mode: 'insensitive' } },
-            { purchaseOrder: { poNumber: { contains: filters.search, mode: 'insensitive' } } },
-          ]
+        ? [{ jobOrderNumber: { contains: filters.search, mode: 'insensitive' } }]
         : undefined,
     },
     include: detailInclude,
@@ -407,7 +403,6 @@ export async function getQueue(
       return {
         id: d.id,
         jobOrderNumber: d.jobOrderNumber,
-        purchaseOrderNumber: d.purchaseOrderNumber,
         factory: d.factory,
         status: d.status,
         totals: d.totals,

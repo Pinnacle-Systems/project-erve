@@ -16,6 +16,9 @@ const emptyForm = {
   code: '',
   name: '',
   gstin: '',
+  // Required at creation, immutable thereafter — never included in the
+  // update payload (the backend rejects it there with a 400).
+  purchaseMode: 'OUTRIGHT' as 'OUTRIGHT' | 'SALE_RETURN',
   contactName: '',
   contactEmail: '',
   contactPhone: '',
@@ -32,6 +35,7 @@ const fieldLabels: Record<keyof typeof emptyForm, string> = {
   code: 'Code',
   name: 'Name',
   gstin: 'GSTIN',
+  purchaseMode: 'Purchase Mode',
   contactName: 'Contact Name',
   contactEmail: 'Contact Email',
   contactPhone: 'Contact Phone',
@@ -87,6 +91,7 @@ export function DistributorFormPage() {
       code: distributor.code,
       name: distributor.name,
       gstin: distributor.gstin,
+      purchaseMode: distributor.purchaseMode,
       contactName: distributor.contactName ?? '',
       contactEmail: distributor.contactEmail ?? '',
       contactPhone: distributor.contactPhone ?? '',
@@ -110,13 +115,16 @@ export function DistributorFormPage() {
       if (!GSTIN_PATTERN.test(gstin)) {
         throw new Error('Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
       }
-      const payload = {
+      const payload: Record<string, string | null> = {
         ...cleanPayload(form),
         code: form.code.trim(),
         name: form.name.trim(),
         gstin,
         status: form.status,
       };
+      // Purchase Mode is locked after creation — the update endpoint 400s if
+      // it's present at all, so it's only ever sent on create.
+      if (isEdit) delete payload.purchaseMode;
       const response = isEdit
         ? await apiClient.patch<ApiSuccessResponse<Distributor>>(`/distributors/${id}`, payload)
         : await apiClient.post<ApiSuccessResponse<Distributor>>('/distributors', payload);
@@ -167,6 +175,20 @@ export function DistributorFormPage() {
                   >
                     <SelectItem value="ACTIVE">Active</SelectItem>
                     <SelectItem value="INACTIVE">Inactive</SelectItem>
+                  </SelectField>
+                ) : key === 'purchaseMode' ? (
+                  <SelectField
+                    key={key}
+                    label="Purchase Mode *"
+                    value={form.purchaseMode}
+                    disabled={isEdit}
+                    onValueChange={(value) =>
+                      setForm((current) => ({ ...current, purchaseMode: value as 'OUTRIGHT' | 'SALE_RETURN' }))
+                    }
+                    width="fill"
+                  >
+                    <SelectItem value="OUTRIGHT">Outright</SelectItem>
+                    <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
                   </SelectField>
                 ) : (
                   <TextField

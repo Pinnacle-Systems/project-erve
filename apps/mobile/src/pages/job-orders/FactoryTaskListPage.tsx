@@ -49,7 +49,7 @@ export function FactoryTaskListPage() {
       <input
         className="min-h-12 w-full rounded-md border border-border bg-surface px-4"
         aria-label="Search tasks"
-        placeholder="Search job order or PO"
+        placeholder="Search job order number"
         value={search}
         onChange={(event) => setSearch(event.target.value)}
       />
@@ -85,9 +85,7 @@ export function FactoryTaskListPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="font-semibold">{task.jobOrderNumber}</p>
-                <p className="text-sm text-muted-foreground">
-                  PO {task.purchaseOrderNumber} · {task.distributor.name}
-                </p>
+                <p className="text-sm text-muted-foreground">{task.factory.name}</p>
               </div>
               {task.actionRequired && (
                 <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">

@@ -205,7 +205,6 @@ async function fixture(
     data: {
       id: createId(),
       jobOrderNumber: `JO-${createId()}`,
-      purchaseOrderId: po.id,
       factoryId: factory.id,
       processFlowVersionId: flow.versions[0]!.id,
       unitPrice: 10,
@@ -242,6 +241,12 @@ async function fixture(
       },
     },
     include: { stageStatuses: true },
+  });
+  // Order Sheet Phase 2: the Order Sheet <-> Job Order relationship is the
+  // Order Sheet's own jobOrderId claim, not a field on JobOrder.
+  await prisma.distributorPurchaseOrder.update({
+    where: { id: po.id },
+    data: { jobOrderId: jobOrder.id },
   });
   return { qa, jobOrder, sewing, activity, form, components };
 }

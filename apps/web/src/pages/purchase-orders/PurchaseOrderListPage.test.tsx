@@ -91,18 +91,18 @@ describe('PurchaseOrderListPage search debounce', () => {
 
     const requestsBeforeTyping = purchaseOrderSearchCalls().length;
     const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search PO number"]',
+      'input[placeholder="Search Order Sheet number"]',
     )!;
 
     vi.useFakeTimers();
-    for (const value of ['E', 'EI', 'EIP', 'EIPO', 'EIPO/', 'EIPO/2', 'EIPO/26']) {
+    for (const value of ['E', 'EI', 'EIO', 'EIOS', 'EIOS/', 'EIOS/2', 'EIOS/26']) {
       act(() => setInputValue(input, value));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(50);
       });
     }
     expect(purchaseOrderSearchCalls().length).toBe(requestsBeforeTyping);
-    expect(input.value).toBe('EIPO/26');
+    expect(input.value).toBe('EIOS/26');
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
@@ -111,6 +111,6 @@ describe('PurchaseOrderListPage search debounce', () => {
 
     const searches = purchaseOrderSearchCalls();
     expect(searches.length).toBe(requestsBeforeTyping + 1);
-    expect(searches.at(-1)).toBe('EIPO/26');
+    expect(searches.at(-1)).toBe('EIOS/26');
   });
 });

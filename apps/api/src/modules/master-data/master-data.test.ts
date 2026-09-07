@@ -1110,6 +1110,7 @@ describe('distributors API', () => {
         code: 'DIST-001',
         name: 'Acme Distribution',
         gstin: '27AAAAA0000A1Z5',
+        purchaseMode: 'OUTRIGHT',
         contactName: 'Asha Nair',
         contactEmail: 'asha@acme.test',
         city: 'Kochi',
@@ -1225,6 +1226,34 @@ describe('distributors API', () => {
       where: { action: 'DISTRIBUTOR_UPDATED', entityId: distributor.id },
     });
     expect(audit?.actorId).toBe(userId);
+  });
+
+  it('requires purchaseMode on create and rejects it entirely on update — immutable even for ADMIN', async () => {
+    const { token } = await createAdmin();
+
+    const missingMode = await createDistributorViaApi(token, {
+      code: 'DIST-PM-1',
+      name: 'No Mode Distribution',
+      purchaseMode: undefined,
+    });
+    expect(missingMode.status).toBe(400);
+
+    const created = await createDistributorViaApi(token, {
+      code: 'DIST-PM-2',
+      name: 'Sale Return Distribution',
+      purchaseMode: 'SALE_RETURN',
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.data.purchaseMode).toBe('SALE_RETURN');
+
+    const updateAttempt = await request(app)
+      .patch(`/distributors/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ purchaseMode: 'OUTRIGHT' });
+    expect(updateAttempt.status).toBe(400);
+
+    const reloaded = await prisma.distributor.findUniqueOrThrow({ where: { id: created.body.data.id } });
+    expect(reloaded.purchaseMode).toBe('SALE_RETURN');
   });
 
   it('rejects updating a distributor with a malformed GSTIN', async () => {

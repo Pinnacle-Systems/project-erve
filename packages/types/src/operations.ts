@@ -90,6 +90,12 @@ export interface PurchaseOrderSummary extends VersionedResource {
   requiredDeliveryDate: string | null;
   purchaseMode: PurchaseMode;
   status: PurchaseOrderStatus;
+  // Order Sheet planning lock: null while open (editable/cancellable/
+  // eligible for Job Ordering); set once a Job Order claims this Order
+  // Sheet, at which point it is locked permanently regardless of the Job
+  // Order's own later status (see lockedByJobOrder.status).
+  jobOrderId: string | null;
+  lockedByJobOrder: { id: string; jobOrderNumber: string; status: JobOrderStatus } | null;
   totalOrderedQuantity: number;
   createdAt: string;
 }
@@ -100,7 +106,6 @@ export interface PurchaseOrderLineSize {
   sizeCode: string;
   sizeLabel: string;
   orderedQuantity: number;
-  jobOrderedQuantity: number;
   qaPassedQuantity: number;
   saleOrderedQuantity: number;
   dispatchedQuantity: number;
@@ -133,60 +138,12 @@ export interface PurchaseOrderDetail extends PurchaseOrderSummary {
   lines: PurchaseOrderLine[];
 }
 
-export interface PurchaseOrderBalance {
-  poId: string;
-  poNumber: string;
-  version: number;
-  styleFactoryPrices?: Record<string, number | null>;
-  lines: Array<{
-    lineId: string;
-    styleId: string;
-    styleNumber: string;
-    styleName: string;
-    colour: string | null;
-    sizes: Array<{
-      purchaseOrderLineSizeId: string;
-      sizeId: string;
-      sizeCode: string;
-      sizeLabel: string;
-      orderedQuantity: number;
-      jobOrderedQuantity: number;
-      balanceQuantity: number;
-    }>;
-  }>;
-}
-
-export interface PurchaseOrderFulfilmentSummary {
-  poId: string;
-  poNumber: string;
-  status: PurchaseOrderStatus;
-  lines: Array<{
-    lineId: string;
-    styleId: string;
-    styleNumber: string;
-    styleName: string;
-    sizes: PurchaseOrderFulfilmentSizeSummary[];
-    totals: PurchaseOrderFulfilmentTotals;
-  }>;
-}
-
-export interface PurchaseOrderFulfilmentSizeSummary extends PurchaseOrderFulfilmentTotals {
-  sizeId: string;
-  sizeCode: string;
-  sizeLabel: string;
-}
-
-export interface PurchaseOrderFulfilmentTotals {
-  orderedQuantity: number;
-  jobOrderedQuantity: number;
-  preparedQuantity: number;
-  qaReleasedQuantity: number;
-  saleOrderAllocatedQuantity: number;
-  remainingToJobOrderQuantity: number;
-  notPreparedQuantity: number;
-  preparedNotReleasedQuantity: number;
-  releasedUnallocatedQuantity: number;
-}
+// PurchaseOrderBalance / PurchaseOrderFulfilmentSummary (retired): the Order
+// Sheet is no longer a remaining-balance/partial-fulfilment ledger — Job
+// Order creation claims an Order Sheet wholly and atomically, so
+// "remaining quantity"/"fulfilment progress" no longer applies at the Order
+// Sheet level. Their backing endpoints were removed from purchase-orders
+// service/routes in the same pass.
 
 // ---------------------------------------------------------------------------
 // Sale Orders
@@ -700,6 +657,30 @@ export interface JobOrderLine {
   preparedQuantityTotal: number;
   status: JobOrderStatus;
   sizes: JobOrderLineSize[];
+  // Which source Order Sheet this line's production quantities were entered
+  // against. Merchandising-planning-provenance only — undefined for Factory/
+  // QA viewers (see toJobOrderView's role-aware sanitization).
+  sourceOrderSheet?: {
+    id: string;
+    poNumber: string;
+    distributor: { id: string; code: string; name: string };
+    purchaseMode: PurchaseMode;
+  } | null;
+}
+
+// One consolidated source Order Sheet feeding a Job Order's planning
+// (Merchandising-only — see toJobOrderView). forecastBySize/forecastTotal
+// are that Order Sheet's own demand/forecast, informational only: the Job
+// Order's own production plan (JobOrderLine.sizes) is independently set.
+export interface JobOrderSourceOrderSheet {
+  id: string;
+  poNumber: string;
+  distributor: { id: string; code: string; name: string };
+  purchaseMode: PurchaseMode;
+  requiredDeliveryDate: string | null;
+  styleId: string;
+  forecastBySize: Array<{ sizeId: string; sizeCode: string; sizeLabel: string; orderedQuantity: number }>;
+  forecastTotal: number;
 }
 export interface JobOrderStage {
   id: string;
@@ -1050,16 +1031,26 @@ export interface JobOrderSummary extends VersionedResource {
   id: string;
   jobOrderNumber: string;
   // The Financial Year of this JO's own effective date (its createdAt) —
-  // never inherited from the parent Purchase Order.
+  // never inherited from any source Order Sheet.
   financialYear: { id: string; code: string };
-  purchaseOrder: { id: string; poNumber: string; status: PurchaseOrderStatus };
   factory: { id: string; code: string; name: string };
   unitPrice: number;
   status: JobOrderStatus;
   operationalState: JobOrderOperationalState;
   factoryConfirmationStatus: FactoryConfirmationStatus;
+  // This Job Order's own production/delivery target date — independent of
+  // any source Order Sheet's requiredDeliveryDate (Order Sheet Phase 2).
+  requiredDeliveryDate: string | null;
+  // Locked once factoryConfirmationStatus reaches CONFIRMED. Separate from
+  // source Order Sheet mapping freeze, which happens earlier at
+  // SENT_TO_FACTORY.
+  deliveryDateLocked: boolean;
   orderedQuantityTotal: number;
   preparedQuantityTotal: number;
+  // How many source Order Sheets are consolidated into this Job Order.
+  // Visible to every viewer (a bare count, no provenance); the itemized
+  // list (sourceOrderSheets on JobOrderDetail) is Merchandising-only.
+  sourceOrderSheetCount: number;
   createdAt: string;
 }
 export interface JobOrderDetail extends JobOrderSummary {
@@ -1095,6 +1086,19 @@ export interface JobOrderDetail extends JobOrderSummary {
   qualityActivities: JobOrderQualityActivity[];
   reworkTasks: QaReworkTaskView[];
   finalBatchReworks: FinalQualityBatchReworkTaskView[];
+  // Merchandising planning provenance only — undefined for Factory/QA
+  // viewers. Present (possibly empty only transiently) for ADMIN/
+  // MERCHANDISER/SENIOR_MANAGEMENT viewers.
+  sourceOrderSheets?: JobOrderSourceOrderSheet[];
+  // Combined per-size forecast summed across sourceOrderSheets, for the
+  // "Combined Forecast vs Job Order" planning display — Merchandising-only,
+  // informational (never enforced against the Job Order's own quantities).
+  combinedForecast?: Array<{
+    sizeId: string;
+    sizeCode: string;
+    sizeLabel: string;
+    forecastQuantity: number;
+  }>;
 }
 
 export interface JobOrderAuditEntry {
@@ -1108,8 +1112,6 @@ export interface JobOrderAuditEntry {
 export interface AssignedFactoryTaskSummary extends VersionedResource {
   id: string;
   jobOrderNumber: string;
-  purchaseOrderNumber: string;
-  distributor: { id: string; code: string; name: string };
   factory: { id: string; code: string; name: string };
   status: JobOrderStatus;
   operationalState: JobOrderOperationalState;
@@ -1121,22 +1123,39 @@ export interface AssignedFactoryTaskSummary extends VersionedResource {
   finalBatchReworkRequired: boolean;
 }
 
+// One selected source Order Sheet + the production quantities entered
+// against it, keyed by sizeId (the Style's canonical size set — all
+// selected Order Sheets share one Style). A missing sizeId means 0.
+export interface CreateJobOrderSourceInput {
+  orderSheetId: string;
+  sizes: Array<{ sizeId: string; quantity: number }>;
+}
 export interface CreateJobOrderInput {
-  purchaseOrderId: string;
+  sources: CreateJobOrderSourceInput[];
   factoryId: string;
   processFlowVersionId: string;
   unitPrice: string;
   disclaimerText?: string;
-  lines: Array<{
-    purchaseOrderLineId: string;
-    sizes: Array<{ purchaseOrderLineSizeId: string; quantity: number }>;
-  }>;
+  // Required only when the selected Order Sheets have differing
+  // requiredDeliveryDate values; otherwise defaults to their shared date.
+  requiredDeliveryDate?: string | null;
 }
 export interface VersionedMutationInput {
   expectedVersion: number;
 }
 export interface UpdateJobOrderDisclaimerInput extends VersionedMutationInput {
   disclaimerText?: string;
+}
+// DRAFT-only source Order Sheet mapping edit (Order Sheet Phase 2) — add
+// and/or remove source Order Sheets in one atomic call. At least one of
+// add/remove must be non-empty, and the Job Order must retain at least one
+// source Order Sheet afterward.
+export interface UpdateJobOrderSourcesInput extends VersionedMutationInput {
+  add: CreateJobOrderSourceInput[];
+  remove: string[];
+}
+export interface UpdateJobOrderDeliveryDateInput extends VersionedMutationInput {
+  requiredDeliveryDate: string | null;
 }
 export interface ConfirmJobOrderInput extends VersionedMutationInput {
   expectedDisclaimerRevision: number;
@@ -1268,7 +1287,6 @@ export interface QaQuantityTotals {
 export interface QaQueueSummary extends VersionedResource {
   id: string;
   jobOrderNumber: string;
-  purchaseOrderNumber: string;
   factory: { id: string; code: string; name: string };
   status: JobOrderStatus;
   totals: QaQuantityTotals;
@@ -1353,7 +1371,6 @@ export interface QaReworkTaskView extends VersionedResource {
   reinspectedAt: string | null;
 }
 export interface QaInspectionDetail extends QaQueueSummary {
-  distributor: { id: string; code: string; name: string } | null;
   seasons: Array<{ code: string; displayName: string }>;
   lines: Array<{
     jobOrderLineSizeId: string;

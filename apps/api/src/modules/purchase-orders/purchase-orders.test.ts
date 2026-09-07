@@ -4,10 +4,9 @@ import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
-  createReleasedQaStock,
   createTestDistributor,
-  createTestFactory,
   createTestFinancialYear,
+  createTestJobOrderStub,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -40,10 +39,15 @@ async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCO
   // (2026-06-30 -> FY 2026-27) so fixtures stay intuitive, even though no
   // PO<->Season FY-consistency rule actually requires this to match.
   const financialYear = await createTestFinancialYear(new Date('2026-06-30'));
+  const id = createId();
   return prisma.style.create({
     data: {
-      id: createId(),
-      styleNumber: `ST-${createId().slice(0, 6)}`,
+      id,
+      // Derived from this style's own (already-unique) id — a second,
+      // independently-generated createId() sliced to a short prefix can
+      // collide when called twice in quick succession, since ULIDs share a
+      // time-encoded prefix for IDs minted in the same millisecond.
+      styleNumber: `ST-${id.slice(-8)}`,
       styleName: 'Test Style',
       finalMrp: 500,
       status: overrides?.status ?? 'ACTIVE',
@@ -72,17 +76,17 @@ async function linkStyleSize(styleId: string, sizeId: string) {
 interface POPayload {
   distributorId: string;
   poDate?: string;
-  purchaseMode?: string;
   lines?: unknown[];
 }
 
+// Order Sheet creation never accepts purchaseMode — it is always derived
+// server-side from the selected Distributor.
 async function createPO(token: string, payload: POPayload) {
   return request(app)
     .post('/purchase-orders')
     .set('Authorization', `Bearer ${token}`)
     .send({
       poDate: '2026-06-30',
-      purchaseMode: 'OUTRIGHT',
       ...payload,
     });
 }
@@ -91,9 +95,9 @@ async function createPO(token: string, payload: POPayload) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('purchase orders API', () => {
+describe('Order Sheet (purchase orders) API', () => {
   describe('POST /purchase-orders — create', () => {
-    it('creates a DRAFT PO successfully', async () => {
+    it('creates an Order Sheet that is immediately plannable, with no Draft/Submit step', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -110,7 +114,10 @@ describe('purchase orders API', () => {
       });
 
       expect(res.status).toBe(201);
-      expect(res.body.data.status).toBe('DRAFT');
+      // No Draft->Submit workflow: an Order Sheet is immediately eligible
+      // for Job Order planning the moment it's created.
+      expect(res.body.data.status).toBe('SUBMITTED');
+      expect(res.body.data.jobOrderId).toBeNull();
       // \d{4,}, not \d{4} — DOCUMENT_SERIAL_MIN_WIDTH is a floor, not a cap.
       expect(res.body.data.poNumber).toMatch(
         new RegExp(`^${DOCUMENT_PREFIXES.PURCHASE_ORDER}\\/\\d{2}-\\d{2}\\/\\d{4,}$`),
@@ -125,6 +132,31 @@ describe('purchase orders API', () => {
         name: 'Test Season',
         financialYear: '26-27',
       });
+    });
+
+    it('derives purchaseMode from the Distributor and ignores any client-supplied value', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const dist = await createTestDistributor({ purchaseMode: 'SALE_RETURN' });
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const res = await request(app)
+        .post('/purchase-orders')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          distributorId: dist.id,
+          poDate: '2026-06-30',
+          purchaseMode: 'OUTRIGHT', // must be ignored — Distributor is SALE_RETURN
+          lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.purchaseMode).toBe('SALE_RETURN');
     });
 
     it('rejects an inactive size even when its historical style mapping remains active', async () => {
@@ -148,7 +180,7 @@ describe('purchase orders API', () => {
       expect(await prisma.styleSize.count({ where: { sizeId: size.id } })).toBe(1);
     });
 
-    it('allows MERCHANDISER to create POs', async () => {
+    it('allows MERCHANDISER to create Order Sheets', async () => {
       const { token } = await createTestUserAndToken({
         email: 'merch@test.local',
         password: 'pass',
@@ -167,7 +199,7 @@ describe('purchase orders API', () => {
       expect(res.status).toBe(201);
     });
 
-    it('sets merchandiserId to the authenticated Merchandiser who created the PO', async () => {
+    it('sets merchandiserId to the authenticated Merchandiser who created the Order Sheet', async () => {
       const { userId: merchId, token } = await createTestUserAndToken({
         email: 'merch@test.local',
         password: 'pass',
@@ -194,7 +226,7 @@ describe('purchase orders API', () => {
       expect(detail.body.data.merchandiser).toMatchObject({ id: merchId });
     });
 
-    it('leaves merchandiserId unset when an ADMIN creates the PO', async () => {
+    it('leaves merchandiserId unset when an ADMIN creates the Order Sheet', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -215,32 +247,28 @@ describe('purchase orders API', () => {
     });
 
     it('ignores a client-supplied merchandiserId, preventing an inappropriate role from spoofing the Merchandiser', async () => {
-      const { userId: distUserId, token: distToken } = await createTestUserAndToken({
-        email: 'dist@test.local',
-        password: 'pass',
-        roles: ['DISTRIBUTOR'],
-      });
       const { userId: otherMerchId } = await createTestUserAndToken({
         email: 'other-merch@test.local',
         password: 'pass',
         roles: ['MERCHANDISER'],
       });
-      const dist = await createTestDistributor();
-      await prisma.userDistributor.create({
-        data: { id: createId(), userId: distUserId, distributorId: dist.id },
+      const { token: adminToken } = await createTestUserAndToken({
+        email: 'admin2@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
       });
+      const dist = await createTestDistributor();
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
       await linkStyleSize(style.id, size.id);
 
       const res = await request(app)
         .post('/purchase-orders')
-        .set('Authorization', `Bearer ${distToken}`)
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({
           distributorId: dist.id,
           merchandiserId: otherMerchId,
           poDate: '2026-06-30',
-          purchaseMode: 'OUTRIGHT',
           lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
         });
 
@@ -248,7 +276,7 @@ describe('purchase orders API', () => {
       expect(res.body.data.merchandiser).toBeNull();
     });
 
-    it('rejects PO without distributorId', async () => {
+    it('rejects Order Sheet without distributorId', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -257,12 +285,12 @@ describe('purchase orders API', () => {
       const res = await request(app)
         .post('/purchase-orders')
         .set('Authorization', `Bearer ${token}`)
-        .send({ poDate: '2026-06-30', purchaseMode: 'OUTRIGHT', lines: [] });
+        .send({ poDate: '2026-06-30', lines: [] });
 
       expect(res.status).toBe(400);
     });
 
-    it('rejects PO without lines', async () => {
+    it('rejects Order Sheet without lines', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -275,18 +303,25 @@ describe('purchase orders API', () => {
       expect(res.status).toBe(400);
     });
 
-    it('rejects invalid purchaseMode', async () => {
+    it('rejects an Order Sheet with more than one Style line — exactly one Style is required', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
         roles: ['ADMIN'],
       });
       const dist = await createTestDistributor();
+      const styleA = await createStyle();
+      const styleB = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(styleA.id, size.id);
+      await linkStyleSize(styleB.id, size.id);
 
       const res = await createPO(token, {
         distributorId: dist.id,
-        purchaseMode: 'INVALID' as 'OUTRIGHT',
-        lines: [],
+        lines: [
+          { styleId: styleA.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] },
+          { styleId: styleB.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] },
+        ],
       });
 
       expect(res.status).toBe(400);
@@ -331,7 +366,7 @@ describe('purchase orders API', () => {
       expect(res.body.error.message).toBe('Distributor is not active');
     });
 
-    it('keeps existing purchase orders readable after their distributor is deactivated', async () => {
+    it('keeps existing Order Sheets readable after their distributor is deactivated', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -405,28 +440,6 @@ describe('purchase orders API', () => {
       expect(res.status).toBe(400);
     });
 
-    it('rejects duplicate styles in same PO', async () => {
-      const { token } = await createTestUserAndToken({
-        email: 'admin@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-      const dist = await createTestDistributor();
-      const style = await createStyle();
-      const size = await createSize('AGE_3', 3);
-      await linkStyleSize(style.id, size.id);
-
-      const res = await createPO(token, {
-        distributorId: dist.id,
-        lines: [
-          { styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] },
-          { styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] },
-        ],
-      });
-
-      expect(res.status).toBe(400);
-    });
-
     it('rejects duplicate sizes within a line', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
@@ -454,7 +467,7 @@ describe('purchase orders API', () => {
       expect(res.status).toBe(400);
     });
 
-    it('blocks FACTORY_USER from creating POs', async () => {
+    it('blocks FACTORY_USER from creating Order Sheets', async () => {
       const { token } = await createTestUserAndToken({
         email: 'factory@test.local',
         password: 'pass',
@@ -466,64 +479,23 @@ describe('purchase orders API', () => {
 
       expect(res.status).toBe(403);
     });
-  });
 
-  describe('POST /purchase-orders/:id/actions/submit', () => {
-    it('submits a DRAFT PO', async () => {
+    it('blocks DISTRIBUTOR from creating Order Sheets — planning belongs to Merchandising', async () => {
       const { token } = await createTestUserAndToken({
-        email: 'admin@test.local',
+        email: 'dist@test.local',
         password: 'pass',
-        roles: ['ADMIN'],
+        roles: ['DISTRIBUTOR'],
       });
       const dist = await createTestDistributor();
-      const style = await createStyle();
-      const size = await createSize('AGE_3', 3);
-      await linkStyleSize(style.id, size.id);
 
-      const createRes = await createPO(token, {
-        distributorId: dist.id,
-        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 50 }] }],
-      });
-      const poId = createRes.body.data.id;
+      const res = await createPO(token, { distributorId: dist.id });
 
-      const submitRes = await request(app)
-        .post(`/purchase-orders/${poId}/actions/submit`)
-        .set('Authorization', `Bearer ${token}`);
-
-      expect(submitRes.status).toBe(200);
-      expect(submitRes.body.data.status).toBe('SUBMITTED');
-    });
-
-    it('rejects submit from non-DRAFT status', async () => {
-      const { token } = await createTestUserAndToken({
-        email: 'admin@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-      const dist = await createTestDistributor();
-      const style = await createStyle();
-      const size = await createSize('AGE_3', 3);
-      await linkStyleSize(style.id, size.id);
-
-      const createRes = await createPO(token, {
-        distributorId: dist.id,
-        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 50 }] }],
-      });
-      const poId = createRes.body.data.id;
-
-      await request(app)
-        .post(`/purchase-orders/${poId}/actions/submit`)
-        .set('Authorization', `Bearer ${token}`);
-      const res = await request(app)
-        .post(`/purchase-orders/${poId}/actions/submit`)
-        .set('Authorization', `Bearer ${token}`);
-
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(403);
     });
   });
 
   describe('POST /purchase-orders/:id/actions/cancel', () => {
-    it('cancels a DRAFT PO with no job ordered quantities', async () => {
+    it('cancels an unlocked Order Sheet', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -548,7 +520,7 @@ describe('purchase orders API', () => {
       expect(res.body.data.status).toBe('CANCELLED');
     });
 
-    it('cancels a SUBMITTED PO if no job ordered quantities', async () => {
+    it('rejects cancelling an already-cancelled Order Sheet', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -565,19 +537,19 @@ describe('purchase orders API', () => {
       });
       const poId = createRes.body.data.id;
       await request(app)
-        .post(`/purchase-orders/${poId}/actions/submit`)
-        .set('Authorization', `Bearer ${token}`);
+        .post(`/purchase-orders/${poId}/actions/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
 
       const res = await request(app)
         .post(`/purchase-orders/${poId}/actions/cancel`)
         .set('Authorization', `Bearer ${token}`);
 
-      expect(res.status).toBe(200);
-      expect(res.body.data.status).toBe('CANCELLED');
+      expect(res.status).toBe(400);
     });
 
-    it('rejects cancel if any job_ordered_quantity > 0', async () => {
-      const { token } = await createTestUserAndToken({
+    it('rejects cancelling an Order Sheet already locked by a Job Order', async () => {
+      const { userId, token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
         roles: ['ADMIN'],
@@ -593,10 +565,11 @@ describe('purchase orders API', () => {
       });
       const poId = createRes.body.data.id;
 
-      // Manually set jobOrderedQuantity > 0
-      await prisma.distributorPurchaseOrderLineSize.updateMany({
-        where: { purchaseOrderLine: { purchaseOrderId: poId } },
-        data: { jobOrderedQuantity: 10 },
+      // Simulate a Job Order having claimed this Order Sheet.
+      const jobOrder = await createTestJobOrderStub({ purchaseOrderId: poId, createdBy: userId });
+      await prisma.distributorPurchaseOrder.update({
+        where: { id: poId },
+        data: { jobOrderId: jobOrder.id },
       });
 
       const res = await request(app)
@@ -608,7 +581,7 @@ describe('purchase orders API', () => {
   });
 
   describe('access control', () => {
-    it('DISTRIBUTOR user cannot access another distributor PO', async () => {
+    it('DISTRIBUTOR has no Order Sheet access at all — list, detail, or create', async () => {
       const { token: adminToken } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -620,46 +593,11 @@ describe('purchase orders API', () => {
         roles: ['DISTRIBUTOR'],
       });
 
-      const dist1 = await createTestDistributor({ code: 'D1', name: 'Dist 1' });
-      const dist2 = await createTestDistributor({ code: 'D2', name: 'Dist 2' });
-
-      // Link distUser to dist2 only
-      await prisma.userDistributor.create({
-        data: { id: createId(), userId: distUserId, distributorId: dist2.id },
-      });
-
-      const style = await createStyle();
-      const size = await createSize('AGE_3', 3);
-      await linkStyleSize(style.id, size.id);
-
-      // Admin creates PO for dist1
-      const createRes = await createPO(adminToken, {
-        distributorId: dist1.id,
-        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
-      });
-      const poId = createRes.body.data.id;
-
-      // distUser tries to access dist1's PO
-      const res = await request(app)
-        .get(`/purchase-orders/${poId}`)
-        .set('Authorization', `Bearer ${distToken}`);
-
-      expect(res.status).toBe(403);
-    });
-
-    it('fails closed for a DISTRIBUTOR user with no distributor mapping', async () => {
-      const { token: adminToken } = await createTestUserAndToken({
-        email: 'admin@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-      const { token: distToken } = await createTestUserAndToken({
-        email: 'dist@test.local',
-        password: 'pass',
-        roles: ['DISTRIBUTOR'],
-      });
-
       const dist = await createTestDistributor();
+      await prisma.userDistributor.create({
+        data: { id: createId(), userId: distUserId, distributorId: dist.id },
+      });
+
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
       await linkStyleSize(style.id, size.id);
@@ -668,13 +606,15 @@ describe('purchase orders API', () => {
         distributorId: dist.id,
         lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
       });
+      const poId = createRes.body.data.id;
 
-      // An unmapped distributor account must see nothing — not every PO.
+      // Even a DISTRIBUTOR mapped to the exact same distributor the Order
+      // Sheet belongs to has no access — planning is Merchandising-only.
       const listRes = await request(app)
         .get('/purchase-orders')
         .set('Authorization', `Bearer ${distToken}`);
       const detailRes = await request(app)
-        .get(`/purchase-orders/${createRes.body.data.id}`)
+        .get(`/purchase-orders/${poId}`)
         .set('Authorization', `Bearer ${distToken}`);
       const createAttempt = await createPO(distToken, {
         distributorId: dist.id,
@@ -682,12 +622,11 @@ describe('purchase orders API', () => {
       });
 
       expect(listRes.status).toBe(403);
-      expect(listRes.body.error.message).toBe('No distributor is mapped to your account');
       expect(detailRes.status).toBe(403);
       expect(createAttempt.status).toBe(403);
     });
 
-    it('ADMIN can view all POs', async () => {
+    it('ADMIN can view all Order Sheets', async () => {
       const { token: adminToken } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -710,7 +649,7 @@ describe('purchase orders API', () => {
       expect(res.body.data.items).toHaveLength(1);
     });
 
-    it('MERCHANDISER can view all POs', async () => {
+    it('MERCHANDISER can view all Order Sheets', async () => {
       const { token: adminToken } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -737,7 +676,7 @@ describe('purchase orders API', () => {
       expect(res.status).toBe(200);
     });
 
-    it('FACTORY_USER cannot access POs', async () => {
+    it('FACTORY_USER cannot access Order Sheets', async () => {
       const { token } = await createTestUserAndToken({
         email: 'factory@test.local',
         password: 'pass',
@@ -751,7 +690,7 @@ describe('purchase orders API', () => {
   });
 
   describe('GET /purchase-orders — search by poNumber', () => {
-    it('matches poNumber as a case-insensitive substring, e.g. EIPO/26-27/0001', async () => {
+    it('matches poNumber as a case-insensitive substring, e.g. EIOS/26-27/0001', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -773,7 +712,7 @@ describe('purchase orders API', () => {
       });
       const poNumberA: string = poA.body.data.poNumber;
       const poNumberB: string = poB.body.data.poNumber;
-      expect(poNumberA).toMatch(/^EIPO\/\d{2}-\d{2}\/\d{4}$/);
+      expect(poNumberA).toMatch(/^EIOS\/\d{2}-\d{2}\/\d{4}$/);
       expect(poNumberA).not.toBe(poNumberB);
 
       const exactRes = await request(app)
@@ -796,7 +735,7 @@ describe('purchase orders API', () => {
 
       const substringRes = await request(app)
         .get('/purchase-orders')
-        .query({ search: 'EIPO' })
+        .query({ search: 'EIOS' })
         .set('Authorization', `Bearer ${token}`);
       expect(substringRes.status).toBe(200);
       const matchedNumbers = substringRes.body.data.items.map(
@@ -806,8 +745,59 @@ describe('purchase orders API', () => {
     });
   });
 
-  describe('PATCH /purchase-orders/:id — draft update', () => {
-    it('updates a DRAFT PO', async () => {
+  describe('GET /purchase-orders — planningState filter', () => {
+    it('filters by AVAILABLE / INCLUDED_IN_JOB_ORDER / CANCELLED as real backend conditions', async () => {
+      const { userId, token } = await createTestUserAndToken({
+        email: 'admin-planning@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const available = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+      const cancelled = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+      await request(app)
+        .post(`/purchase-orders/${cancelled.body.data.id}/actions/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const included = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
+      });
+      const jobOrder = await createTestJobOrderStub({
+        purchaseOrderId: included.body.data.id,
+        createdBy: userId,
+      });
+      await prisma.distributorPurchaseOrder.update({
+        where: { id: included.body.data.id },
+        data: { jobOrderId: jobOrder.id },
+      });
+
+      async function idsFor(planningState: string) {
+        const res = await request(app)
+          .get('/purchase-orders')
+          .query({ planningState })
+          .set('Authorization', `Bearer ${token}`);
+        return res.body.data.items.map((po: { id: string }) => po.id);
+      }
+
+      expect(await idsFor('AVAILABLE')).toEqual([available.body.data.id]);
+      expect(await idsFor('CANCELLED')).toEqual([cancelled.body.data.id]);
+      expect(await idsFor('INCLUDED_IN_JOB_ORDER')).toEqual([included.body.data.id]);
+    });
+  });
+
+  describe('PATCH /purchase-orders/:id — update while unlocked', () => {
+    it('updates an unlocked Order Sheet', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -827,14 +817,40 @@ describe('purchase orders API', () => {
       const res = await request(app)
         .patch(`/purchase-orders/${poId}`)
         .set('Authorization', `Bearer ${token}`)
-        .send({ remarks: 'Updated remark', purchaseMode: 'SALE_RETURN' });
+        .send({ remarks: 'Updated remark' });
 
       expect(res.status).toBe(200);
       expect(res.body.data.remarks).toBe('Updated remark');
-      expect(res.body.data.purchaseMode).toBe('SALE_RETURN');
     });
 
-    it('does not renumber a DRAFT PO when the date edit stays within the same Financial Year', async () => {
+    it('ignores a client-supplied purchaseMode on update — it stays locked to the Distributor value', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const dist = await createTestDistributor({ purchaseMode: 'OUTRIGHT' });
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const createRes = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 50 }] }],
+      });
+      const poId = createRes.body.data.id;
+      expect(createRes.body.data.purchaseMode).toBe('OUTRIGHT');
+
+      const res = await request(app)
+        .patch(`/purchase-orders/${poId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ remarks: 'changed', purchaseMode: 'SALE_RETURN' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.purchaseMode).toBe('OUTRIGHT');
+    });
+
+    it('does not renumber an Order Sheet when the date edit stays within the same Financial Year', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -864,7 +880,7 @@ describe('purchase orders API', () => {
       expect(res.body.data.financialYear.id).toBe(originalFinancialYearId);
     });
 
-    it('renumbers a DRAFT PO into the new Financial Year sequence when the date edit crosses the FY boundary, never reusing the vacated serial', async () => {
+    it('renumbers an Order Sheet into the new Financial Year sequence when the date edit crosses the FY boundary, never reusing the vacated serial', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -892,8 +908,8 @@ describe('purchase orders API', () => {
       expect(crossed.body.data.financialYear.code).toBe('2027-28');
       expect(crossed.body.data.poNumber).not.toBe(firstRes.body.data.poNumber);
 
-      // A new PO dated back in FY 2026-27 must not reuse the serial the
-      // first PO vacated when it moved to FY 2027-28 — DocumentSequence's
+      // A new Order Sheet dated back in FY 2026-27 must not reuse the serial
+      // the first one vacated when it moved to FY 2027-28 — DocumentSequence's
       // high-water mark, not MAX(poSerial), drives allocation. These two
       // creates are consecutive within this test, so the serial increment
       // is deterministic regardless of sequence state left by other tests.
@@ -941,7 +957,37 @@ describe('purchase orders API', () => {
       expect(res.body.data.remarks).toBe('Updated remark');
     });
 
-    it('rejects editing a SUBMITTED PO', async () => {
+    it('rejects editing an Order Sheet already locked by a Job Order', async () => {
+      const { userId, token } = await createTestUserAndToken({
+        email: 'admin@test.local',
+        password: 'pass',
+        roles: ['ADMIN'],
+      });
+      const dist = await createTestDistributor();
+      const style = await createStyle();
+      const size = await createSize('AGE_3', 3);
+      await linkStyleSize(style.id, size.id);
+
+      const createRes = await createPO(token, {
+        distributorId: dist.id,
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 50 }] }],
+      });
+      const poId = createRes.body.data.id;
+      const jobOrder = await createTestJobOrderStub({ purchaseOrderId: poId, createdBy: userId });
+      await prisma.distributorPurchaseOrder.update({
+        where: { id: poId },
+        data: { jobOrderId: jobOrder.id },
+      });
+
+      const res = await request(app)
+        .patch(`/purchase-orders/${poId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ remarks: 'Should fail' });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects editing a cancelled Order Sheet', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -958,8 +1004,9 @@ describe('purchase orders API', () => {
       });
       const poId = createRes.body.data.id;
       await request(app)
-        .post(`/purchase-orders/${poId}/actions/submit`)
-        .set('Authorization', `Bearer ${token}`);
+        .post(`/purchase-orders/${poId}/actions/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
 
       const res = await request(app)
         .patch(`/purchase-orders/${poId}`)
@@ -971,7 +1018,7 @@ describe('purchase orders API', () => {
   });
 
   describe('audit logs', () => {
-    it('writes audit logs for create, submit, and cancel', async () => {
+    it('writes audit logs for create and cancel — no PO_SUBMITTED, there is no Submit workflow', async () => {
       const { token } = await createTestUserAndToken({
         email: 'admin@test.local',
         password: 'pass',
@@ -989,9 +1036,6 @@ describe('purchase orders API', () => {
       const poId = createRes.body.data.id;
 
       await request(app)
-        .post(`/purchase-orders/${poId}/actions/submit`)
-        .set('Authorization', `Bearer ${token}`);
-      await request(app)
         .post(`/purchase-orders/${poId}/actions/cancel`)
         .set('Authorization', `Bearer ${token}`);
 
@@ -1002,7 +1046,7 @@ describe('purchase orders API', () => {
 
       const actions = logs.map((l) => l.action);
       expect(actions).toContain('PO_CREATED');
-      expect(actions).toContain('PO_SUBMITTED');
+      expect(actions).not.toContain('PO_SUBMITTED');
       expect(actions).toContain('PO_CANCELLED');
     });
 
@@ -1036,10 +1080,10 @@ describe('purchase orders API', () => {
     });
   });
 
-  describe('GET /purchase-orders/:id/job-order-balance', () => {
-    it('returns balance with ordered and job-ordered quantities', async () => {
+  describe('retired endpoints', () => {
+    it('no longer exposes Submit, job-order-balance, or fulfilment-summary', async () => {
       const { token } = await createTestUserAndToken({
-        email: 'admin@test.local',
+        email: 'admin-retired@test.local',
         password: 'pass',
         roles: ['ADMIN'],
       });
@@ -1047,455 +1091,25 @@ describe('purchase orders API', () => {
       const style = await createStyle();
       const size = await createSize('AGE_3', 3);
       await linkStyleSize(style.id, size.id);
-
       const createRes = await createPO(token, {
         distributorId: dist.id,
-        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 100 }] }],
+        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 10 }] }],
       });
       const poId = createRes.body.data.id;
 
-      const res = await request(app)
+      const submit = await request(app)
+        .post(`/purchase-orders/${poId}/actions/submit`)
+        .set('Authorization', `Bearer ${token}`);
+      const balance = await request(app)
         .get(`/purchase-orders/${poId}/job-order-balance`)
         .set('Authorization', `Bearer ${token}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.data.lines[0].sizes[0].orderedQuantity).toBe(100);
-      expect(res.body.data.lines[0].sizes[0].balanceQuantity).toBe(100);
-    });
-  });
-
-  describe('GET /purchase-orders/:id/fulfilment-summary', () => {
-    it('returns zero downstream quantities for a PO with no Job Order yet', async () => {
-      const { token } = await createTestUserAndToken({
-        email: 'admin@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-      const dist = await createTestDistributor();
-      const style = await createStyle();
-      const size = await createSize('AGE_3', 3);
-      await linkStyleSize(style.id, size.id);
-
-      const createRes = await createPO(token, {
-        distributorId: dist.id,
-        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 50 }] }],
-      });
-      const poId = createRes.body.data.id;
-
-      const res = await request(app)
+      const fulfilment = await request(app)
         .get(`/purchase-orders/${poId}/fulfilment-summary`)
         .set('Authorization', `Bearer ${token}`);
 
-      expect(res.status).toBe(200);
-      expect(res.body.data.lines[0].totals).toMatchObject({
-        orderedQuantity: 50,
-        jobOrderedQuantity: 0,
-        preparedQuantity: 0,
-        qaReleasedQuantity: 0,
-        saleOrderAllocatedQuantity: 0,
-        remainingToJobOrderQuantity: 50,
-        notPreparedQuantity: 0,
-        preparedNotReleasedQuantity: 0,
-        releasedUnallocatedQuantity: 0,
-      });
-    });
-
-    it('reflects a single Job Order through Prepared and QA Released', async () => {
-      const { token } = await createTestUserAndToken({
-        email: 'admin-single@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-      const stock = await createReleasedQaStock({ quantity: 100 });
-      // createReleasedQaStock bypasses real Job Order creation, so it never
-      // touches jobOrderedQuantity — set it the way the real service would
-      // once a Job Order claims this exact quantity from the PO size.
-      await prisma.distributorPurchaseOrderLineSize.update({
-        where: { id: stock.purchaseOrderLineSizeId },
-        data: { jobOrderedQuantity: 100 },
-      });
-
-      const res = await request(app)
-        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
-
-      const orderedTotal = 100 * 4 + 100; // createReleasedQaStock's own ordered-quantity formula
-      expect(res.body.data.lines[0].totals).toMatchObject({
-        orderedQuantity: orderedTotal,
-        jobOrderedQuantity: 100,
-        preparedQuantity: 100,
-        qaReleasedQuantity: 100,
-        saleOrderAllocatedQuantity: 0,
-        remainingToJobOrderQuantity: orderedTotal - 100,
-        notPreparedQuantity: 0,
-        preparedNotReleasedQuantity: 0,
-        releasedUnallocatedQuantity: 100,
-      });
-    });
-
-    it('aggregates Job Ordered and Prepared quantity across multiple Job Orders against the same PO size, without double-counting', async () => {
-      const { token } = await createTestUserAndToken({
-        email: 'admin-multi@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-      const dist = await createTestDistributor();
-      const factory = await createTestFactory();
-      const style = await createStyle();
-      const size = await createSize('AGE_5', 5);
-      await linkStyleSize(style.id, size.id);
-      const flow = await prisma.processFlow.create({
-        data: {
-          id: createId(),
-          code: `FLOW-${createId()}`,
-          name: 'Fulfilment test flow',
-          versions: { create: { id: createId(), versionNumber: 1, status: 'ACTIVE' } },
-        },
-        include: { versions: true },
-      });
-
-      const poRes = await createPO(token, {
-        distributorId: dist.id,
-        lines: [{ styleId: style.id, sizes: [{ sizeId: size.id, orderedQuantity: 350 }] }],
-      });
-      await request(app)
-        .post(`/purchase-orders/${poRes.body.data.id}/actions/submit`)
-        .set('Authorization', `Bearer ${token}`);
-      const poLineId = poRes.body.data.lines[0].id;
-      const poSizeId = poRes.body.data.lines[0].sizes[0].id;
-
-      async function createJobOrder(quantity: number) {
-        return request(app)
-          .post('/job-orders')
-          .set('Authorization', `Bearer ${token}`)
-          .send({
-            purchaseOrderId: poRes.body.data.id,
-            factoryId: factory.id,
-            processFlowVersionId: flow.versions[0]!.id,
-            unitPrice: '100.00',
-            disclaimerText: 'Terms apply.',
-            lines: [{ purchaseOrderLineId: poLineId, sizes: [{ purchaseOrderLineSizeId: poSizeId, quantity }] }],
-          })
-          .expect(201);
-      }
-
-      const jo1 = await createJobOrder(200);
-      const jo2 = await createJobOrder(100);
-
-      // Prepared is entered per Job Order, independently — set them to
-      // different values to prove the aggregation sums every Job Order's
-      // line size, not just the first one created.
-      await prisma.jobOrderLineSize.update({
-        where: { id: jo1.body.data.lines[0].sizes[0].id },
-        data: { preparedQuantity: 150 },
-      });
-      await prisma.jobOrderLineSize.update({
-        where: { id: jo2.body.data.lines[0].sizes[0].id },
-        data: { preparedQuantity: 20 },
-      });
-
-      const res = await request(app)
-        .get(`/purchase-orders/${poRes.body.data.id}/fulfilment-summary`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
-
-      expect(res.body.data.lines[0].totals).toMatchObject({
-        orderedQuantity: 350,
-        jobOrderedQuantity: 300,
-        preparedQuantity: 170,
-        qaReleasedQuantity: 0,
-        remainingToJobOrderQuantity: 50,
-        notPreparedQuantity: 130,
-        preparedNotReleasedQuantity: 170,
-      });
-    });
-
-    it('does not count a cancelled Final Quality Batch as QA Released', async () => {
-      const { token } = await createTestUserAndToken({
-        email: 'admin-cancelled-batch@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-      const stock = await createReleasedQaStock({ quantity: 70 });
-      await prisma.distributorPurchaseOrderLineSize.update({
-        where: { id: stock.purchaseOrderLineSizeId },
-        data: { jobOrderedQuantity: 100 },
-      });
-      const actorId = await createTestUserAndToken({
-        email: 'qa-actor@test.local',
-        password: 'pass',
-        roles: ['QA_USER'],
-      }).then((r) => r.userId);
-      const job = await prisma.jobOrder.findUniqueOrThrow({ where: { id: stock.jobOrderId } });
-      const finalStage = await prisma.processFlowVersionStage.findFirstOrThrow({
-        where: { processFlowVersionId: job.processFlowVersionId, code: 'FINAL' },
-      });
-      await prisma.finalQualityBatch.create({
-        data: {
-          id: createId(),
-          jobOrderId: stock.jobOrderId,
-          processFlowActivityId: finalStage!.id,
-          batchNumber: 2,
-          physicalQuantity: 30,
-          disposition: 'CANCELLED',
-          createdById: actorId,
-          terminalById: actorId,
-          terminalAt: new Date(),
-          allocations: { create: { id: createId(), jobOrderLineSizeId: stock.jobOrderLineSizeId, quantity: 30 } },
-        },
-      });
-
-      const res = await request(app)
-        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
-
-      expect(res.body.data.lines[0].totals.qaReleasedQuantity).toBe(70);
-    });
-
-    it('accumulates QA Released quantity across multiple releases on the same Job Order', async () => {
-      const { token } = await createTestUserAndToken({
-        email: 'admin-multi-release@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-      const stock = await createReleasedQaStock({ quantity: 40 });
-      const actorId = await createTestUserAndToken({
-        email: 'qa-actor-2@test.local',
-        password: 'pass',
-        roles: ['QA_USER'],
-      }).then((r) => r.userId);
-      const job = await prisma.jobOrder.findUniqueOrThrow({ where: { id: stock.jobOrderId } });
-      const finalStage = await prisma.processFlowVersionStage.findFirstOrThrow({
-        where: { processFlowVersionId: job.processFlowVersionId, code: 'FINAL' },
-      });
-      const formVersion = await prisma.qualityFormVersion.findUniqueOrThrow({
-        where: { id: finalStage.qualityFormVersionId! },
-      });
-
-      const batchId = createId();
-      const executionId = createId();
-      const releaseId = createId();
-      await prisma.$transaction(async (tx) => {
-        await tx.finalQualityBatch.create({
-          data: {
-            id: batchId,
-            jobOrderId: stock.jobOrderId,
-            processFlowActivityId: finalStage!.id,
-            batchNumber: 2,
-            physicalQuantity: 30,
-            disposition: 'DRAFT',
-            createdById: actorId,
-            allocations: { create: { id: createId(), jobOrderLineSizeId: stock.jobOrderLineSizeId, quantity: 30 } },
-          },
-        });
-        await tx.qualityActivityExecution.create({
-          data: {
-            id: executionId,
-            jobOrderId: stock.jobOrderId,
-            processFlowActivityId: finalStage!.id,
-            qualityFormVersionId: formVersion.id,
-            batchNumber: 2,
-            inspectedQuantity: 30,
-            finalQualityBatchId: batchId,
-            status: 'FINALIZED',
-            startedById: actorId,
-            finalizedById: actorId,
-            finalizedAt: new Date(),
-            outcome: 'PASS',
-          },
-        });
-        await tx.qaRelease.create({
-          data: {
-            id: releaseId,
-            jobOrderId: stock.jobOrderId,
-            sourceQualityExecutionId: executionId,
-            finalQualityBatchId: batchId,
-            releasedById: actorId,
-            lines: {
-              create: {
-                id: createId(),
-                jobOrderLineSizeId: stock.jobOrderLineSizeId,
-                purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId,
-                quantity: 30,
-              },
-            },
-          },
-        });
-        await tx.finalQualityBatch.update({
-          where: { id: batchId },
-          data: { disposition: 'RELEASED', terminalById: actorId, terminalAt: new Date() },
-        });
-        await tx.distributorPurchaseOrderLineSize.update({
-          where: { id: stock.purchaseOrderLineSizeId },
-          data: { qaPassedQuantity: { increment: 30 } },
-        });
-      });
-
-      const res = await request(app)
-        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
-
-      expect(res.body.data.lines[0].totals.qaReleasedQuantity).toBe(70); // 40 (first release) + 30 (this one)
-    });
-
-    it('reconciles Sale Order Allocated with a genuine reduced approval: requested 70, approved 40', async () => {
-      const stock = await createReleasedQaStock({ quantity: 110 });
-      const { userId: distUserId, token: distToken } = await createTestUserAndToken({
-        email: 'dist-fulfilment@test.local',
-        password: 'pass',
-        roles: ['DISTRIBUTOR'],
-      });
-      await prisma.userDistributor.create({
-        data: { id: createId(), userId: distUserId, distributorId: stock.distributorId },
-      });
-      const { token: merchToken } = await createTestUserAndToken({
-        email: 'merch-fulfilment@test.local',
-        password: 'pass',
-        roles: ['MERCHANDISER'],
-      });
-      const { token: adminToken } = await createTestUserAndToken({
-        email: 'admin-so@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-
-      const created = await request(app)
-        .post('/sale-orders')
-        .set('Authorization', `Bearer ${distToken}`)
-        .send({
-          distributorId: stock.distributorId,
-          soDate: '2026-06-30',
-          lines: [{ purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: 70 }],
-        })
-        .expect(201);
-      const submitted = await request(app)
-        .post(`/sale-orders/${created.body.data.id}/actions/submit`)
-        .set('Authorization', `Bearer ${distToken}`)
-        .set('Idempotency-Key', createId())
-        .send({ expectedVersion: created.body.data.version })
-        .expect(200);
-      await request(app)
-        .post(`/sale-orders/${submitted.body.data.id}/actions/approve`)
-        .set('Authorization', `Bearer ${merchToken}`)
-        .set('Idempotency-Key', createId())
-        .send({
-          expectedVersion: submitted.body.data.version,
-          lines: [{ saleOrderLineId: submitted.body.data.lines[0].id, approvedQuantity: 40 }],
-        })
-        .expect(200);
-
-      const res = await request(app)
-        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(res.body.data.lines[0].totals).toMatchObject({
-        qaReleasedQuantity: 110,
-        saleOrderAllocatedQuantity: 40,
-        releasedUnallocatedQuantity: 70,
-      });
-    });
-
-    it('excludes a cancelled Sale Order from Sale Order Allocated', async () => {
-      const stock = await createReleasedQaStock({ quantity: 50 });
-      const { userId: distUserId, token: distToken } = await createTestUserAndToken({
-        email: 'dist-cancel@test.local',
-        password: 'pass',
-        roles: ['DISTRIBUTOR'],
-      });
-      await prisma.userDistributor.create({
-        data: { id: createId(), userId: distUserId, distributorId: stock.distributorId },
-      });
-      const { token: adminToken } = await createTestUserAndToken({
-        email: 'admin-so-cancel@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-
-      const created = await request(app)
-        .post('/sale-orders')
-        .set('Authorization', `Bearer ${distToken}`)
-        .send({
-          distributorId: stock.distributorId,
-          soDate: '2026-06-30',
-          lines: [{ purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: 50 }],
-        })
-        .expect(201);
-      const submitted = await request(app)
-        .post(`/sale-orders/${created.body.data.id}/actions/submit`)
-        .set('Authorization', `Bearer ${distToken}`)
-        .set('Idempotency-Key', createId())
-        .send({ expectedVersion: created.body.data.version })
-        .expect(200);
-
-      const midway = await request(app)
-        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-      expect(midway.body.data.lines[0].totals.saleOrderAllocatedQuantity).toBe(50);
-
-      await request(app)
-        .post(`/sale-orders/${submitted.body.data.id}/actions/cancel`)
-        .set('Authorization', `Bearer ${distToken}`)
-        .send({ expectedVersion: submitted.body.data.version })
-        .expect(200);
-
-      const res = await request(app)
-        .get(`/purchase-orders/${stock.purchaseOrderId}/fulfilment-summary`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-      expect(res.body.data.lines[0].totals.saleOrderAllocatedQuantity).toBe(0);
-      expect(res.body.data.lines[0].totals.releasedUnallocatedQuantity).toBe(50);
-    });
-
-    it('reconciles size-level totals with the sum of their size lines', async () => {
-      const { token } = await createTestUserAndToken({
-        email: 'admin-size@test.local',
-        password: 'pass',
-        roles: ['ADMIN'],
-      });
-      const dist = await createTestDistributor();
-      const style = await createStyle();
-      const sizeS = await createSize('AGE_1', 1);
-      const sizeM = await createSize('AGE_2', 2);
-      await linkStyleSize(style.id, sizeS.id);
-      await linkStyleSize(style.id, sizeM.id);
-
-      const createRes = await createPO(token, {
-        distributorId: dist.id,
-        lines: [
-          {
-            styleId: style.id,
-            sizes: [
-              { sizeId: sizeS.id, orderedQuantity: 100 },
-              { sizeId: sizeM.id, orderedQuantity: 150 },
-            ],
-          },
-        ],
-      });
-      const sizeSRow = createRes.body.data.lines[0].sizes.find((s: { sizeId: string }) => s.sizeId === sizeS.id);
-      await prisma.distributorPurchaseOrderLineSize.update({
-        where: { id: sizeSRow.id },
-        data: { jobOrderedQuantity: 80, qaPassedQuantity: 30 },
-      });
-
-      const res = await request(app)
-        .get(`/purchase-orders/${createRes.body.data.id}/fulfilment-summary`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
-
-      const { sizes, totals } = res.body.data.lines[0];
-      for (const key of Object.keys(totals) as string[]) {
-        expect(totals[key]).toBe(
-          sizes.reduce((sum: number, s: Record<string, number>) => sum + s[key]!, 0),
-        );
-      }
-      expect(totals.orderedQuantity).toBe(250);
-      expect(totals.jobOrderedQuantity).toBe(80);
-      expect(totals.qaReleasedQuantity).toBe(30);
+      expect(submit.status).toBe(404);
+      expect(balance.status).toBe(404);
+      expect(fulfilment.status).toBe(404);
     });
   });
 });

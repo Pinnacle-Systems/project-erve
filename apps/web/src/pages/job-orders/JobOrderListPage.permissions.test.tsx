@@ -278,7 +278,7 @@ describe('JobOrderListPage Permissions', () => {
 
     const requestsBeforeTyping = jobOrderSearchCalls().length;
     const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search job order or PO"]',
+      'input[placeholder="Search job order or Order Sheet"]',
     )!;
 
     vi.useFakeTimers();

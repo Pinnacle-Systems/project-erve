@@ -76,7 +76,7 @@ async function fixture() {
           id: poLineId,
           styleId: style.id,
           sizes: {
-            create: { id: poSizeId, sizeId: size.id, orderedQuantity: 10, jobOrderedQuantity: 10 },
+            create: { id: poSizeId, sizeId: size.id, orderedQuantity: 10 },
           },
         },
       },
@@ -87,7 +87,6 @@ async function fixture() {
     data: {
       id: jobOrderId,
       jobOrderNumber: `JO-${createId()}`,
-      purchaseOrderId: poId,
       factoryId: factory.id,
       processFlowVersionId: flow.versions[0]!.id,
       unitPrice: '1',
@@ -117,6 +116,12 @@ async function fixture() {
       },
     },
   });
+  // Order Sheet Phase 2: the Order Sheet <-> Job Order relationship is the
+  // Order Sheet's own jobOrderId claim, not a field on JobOrder.
+  await prisma.distributorPurchaseOrder.update({
+    where: { id: poId },
+    data: { jobOrderId },
+  });
   const moreSizeIds = [1, 2].map(() => createId());
   for (const [index, id] of moreSizeIds.entries()) {
     const extraSize = await prisma.size.create({
@@ -135,7 +140,6 @@ async function fixture() {
         purchaseOrderLineId: poLineId,
         sizeId: extraSize.id,
         orderedQuantity: 10,
-        jobOrderedQuantity: 10,
       },
     });
     await prisma.jobOrderLineSize.create({

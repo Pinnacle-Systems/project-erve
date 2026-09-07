@@ -18,6 +18,8 @@ const JOB_ORDER_AUDIT_TITLES: Record<string, string> = {
   JOB_ORDER_DISCLAIMER_CHANGED: 'Job order disclaimer changed',
   JOB_ORDER_DISCLAIMER_ACKNOWLEDGED: 'Factory acknowledged disclaimer',
   JOB_ORDER_PREPARED_QUANTITY_UPDATED: 'Job order prepared quantity updated',
+  JOB_ORDER_SOURCES_UPDATED: 'Source Order Sheets updated',
+  JOB_ORDER_DELIVERY_DATE_CHANGED: 'Delivery date changed',
   QA_REWORK_REQUESTED: 'Rework requested by QA',
   QA_REWORK_ACKNOWLEDGE: 'Factory acknowledged rework',
   QA_REWORK_NOTES: 'Factory updated rework notes',

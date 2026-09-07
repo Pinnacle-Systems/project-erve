@@ -93,7 +93,7 @@ export function JobOrderListPage() {
     <div className="space-y-5">
       <PageHeader
         title="Job Orders"
-        subtitle="Factory production orders created from purchase order demand"
+        subtitle="Factory production orders created from Order Sheet demand"
         primaryAction={
           canCreate ? (
             <Button asChild>
@@ -106,7 +106,7 @@ export function JobOrderListPage() {
       <FilterBar
         searchValue={search}
         onSearchChange={setSearch}
-        searchPlaceholder="Search job order or PO"
+        searchPlaceholder="Search job order or Order Sheet"
         statusValue={status || 'ALL'}
         statusAriaLabel="Lifecycle"
         statusPlaceholder="All lifecycle states"
@@ -168,9 +168,9 @@ export function JobOrderListPage() {
             ),
           },
           {
-            key: 'purchaseOrderNumber',
-            header: 'PO Number',
-            render: (jobOrder) => jobOrder.purchaseOrder.poNumber,
+            key: 'sourceOrderSheetCount',
+            header: 'Order Sheets',
+            render: (jobOrder) => jobOrder.sourceOrderSheetCount,
           },
           {
             key: 'financialYear',
@@ -249,7 +249,7 @@ export function JobOrderListPage() {
         emptyState={
           <EmptyState
             title="No job orders found"
-            description="Create job orders from submitted purchase order demand."
+            description="Create job orders from available Order Sheet demand."
           />
         }
         error={

@@ -13,6 +13,8 @@ import {
   listJobOrdersQuerySchema,
   updatePreparedQuantitySchema,
   updateJobOrderDisclaimerSchema,
+  updateJobOrderSourcesSchema,
+  updateJobOrderDeliveryDateSchema,
   versionedMutationSchema,
 } from './job-orders.validation.js';
 import * as jobOrdersService from './job-orders.service.js';
@@ -87,8 +89,38 @@ jobOrdersRouter.post(
   canCreateJobOrders,
   asyncHandler(async (req, res) => {
     const input = createJobOrderSchema.parse(req.body);
-    const jobOrder = await jobOrdersService.createJobOrderFromPO(req.user!, input);
+    const jobOrder = await jobOrdersService.createJobOrder(req.user!, input);
     res.status(201).json(successResponse(jobOrder));
+  }),
+);
+
+jobOrdersRouter.patch(
+  '/:id/sources',
+  canCreateJobOrders,
+  asyncHandler(async (req, res) => {
+    const input = updateJobOrderSourcesSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.updateDraftJobOrderSources(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
+    res.status(200).json(successResponse(jobOrder));
+  }),
+);
+
+jobOrdersRouter.patch(
+  '/:id/delivery-date',
+  canCreateJobOrders,
+  asyncHandler(async (req, res) => {
+    const input = updateJobOrderDeliveryDateSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.updateJobOrderDeliveryDate(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
+    res.status(200).json(successResponse(jobOrder));
   }),
 );
 

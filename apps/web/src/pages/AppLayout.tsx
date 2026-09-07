@@ -86,7 +86,7 @@ export function AppLayout() {
       heading: 'Orders',
       items: [
         ...(canViewPurchaseOrders(user)
-          ? [{ to: '/purchase-orders', label: 'Purchase Orders', end: true, icon: ClipboardList }]
+          ? [{ to: '/purchase-orders', label: 'Order Sheets', end: true, icon: ClipboardList }]
           : []),
         ...(canNavigateToJobOrders(user)
           ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }]

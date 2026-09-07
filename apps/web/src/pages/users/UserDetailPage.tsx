@@ -306,7 +306,7 @@ function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
         onOpenChange={setConfirmRemove}
         title="Remove distributor mapping"
         description={
-          mapped ? `${user.name} will lose access to ${mapped.name}'s purchase orders.` : undefined
+          mapped ? `${user.name} will lose access to ${mapped.name}'s Order Sheets.` : undefined
         }
         confirmLabel="Remove"
         destructive

@@ -355,13 +355,11 @@ export function QaInspectionPage() {
           formName="PP Sample form"
           attemptNumber={displayedSession.cycleNumber}
           status={displayedSession.status}
-          context={`${detail.purchaseOrderNumber} · ${detail.factory.name}`}
+          context={detail.factory.name}
         />
       ) : (
         <section className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-sm">
-            {detail.purchaseOrderNumber} · {detail.factory.name}
-          </p>
+          <p className="text-sm">{detail.factory.name}</p>
           <h1 className="text-2xl font-semibold">{detail.jobOrderNumber}</h1>
           <p>
             {detail.status.replaceAll('_', ' ')} · Version {detail.version}

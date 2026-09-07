@@ -41,7 +41,6 @@ describe('QA work list', () => {
               {
                 jobOrderId: 'job-1',
                 jobOrderNumber: 'JO-001',
-                purchaseOrderNumber: 'PO-001',
                 factory: { id: 'factory-1', code: 'FAC', name: 'Factory One' },
                 activity: {
                   processFlowVersionStageId: 'quality-1',
@@ -104,7 +103,6 @@ describe('QA work list', () => {
               {
                 jobOrderId: 'job-1',
                 jobOrderNumber: 'JO-001',
-                purchaseOrderNumber: 'PO-001',
                 factory: { id: 'factory-1', code: 'FAC', name: 'Factory One' },
                 activity: {
                   processFlowVersionStageId: 'quality-1',
@@ -116,7 +114,6 @@ describe('QA work list', () => {
               {
                 jobOrderId: 'job-2',
                 jobOrderNumber: 'JO-002',
-                purchaseOrderNumber: 'PO-002',
                 factory: { id: 'factory-2', code: 'FAC2', name: 'Factory Two' },
                 activity: {
                   processFlowVersionStageId: 'quality-2',
@@ -152,7 +149,7 @@ describe('QA work list', () => {
     expect(container.textContent).toContain('JO-002');
 
     const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search job order, PO, activity or factory"]',
+      'input[placeholder="Search job order, activity or factory"]',
     )!;
     act(() => setInputValue(input, 'JO-002'));
 

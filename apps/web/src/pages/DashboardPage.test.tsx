@@ -64,27 +64,27 @@ function getButtonTexts(): string[] {
 }
 
 describe('DashboardPage', () => {
-  it('ADMIN sees Master Data, Purchase Orders, and Job Orders shortcuts', async () => {
+  it('ADMIN sees Master Data, Order Sheets, and Job Orders shortcuts', async () => {
     await renderDashboard('ADMIN');
     const labels = getButtonTexts();
     expect(labels).toContain('Master Data');
-    expect(labels).toContain('Purchase Orders');
+    expect(labels).toContain('Order Sheets');
     expect(labels).toContain('Job Orders');
   });
 
-  it('MERCHANDISER sees Master Data, Purchase Orders, and Job Orders shortcuts', async () => {
+  it('MERCHANDISER sees Master Data, Order Sheets, and Job Orders shortcuts', async () => {
     await renderDashboard('MERCHANDISER');
     const labels = getButtonTexts();
     expect(labels).toContain('Master Data');
-    expect(labels).toContain('Purchase Orders');
+    expect(labels).toContain('Order Sheets');
     expect(labels).toContain('Job Orders');
   });
 
-  it('FACTORY_USER sees Job Orders but not Master Data or Purchase Orders', async () => {
+  it('FACTORY_USER sees Job Orders but not Master Data or Order Sheets', async () => {
     await renderDashboard('FACTORY_USER');
     const labels = getButtonTexts();
     expect(labels).not.toContain('Master Data');
-    expect(labels).not.toContain('Purchase Orders');
+    expect(labels).not.toContain('Order Sheets');
     expect(labels).toContain('Job Orders');
   });
 

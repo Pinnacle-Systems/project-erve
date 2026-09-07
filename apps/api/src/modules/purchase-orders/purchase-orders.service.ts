@@ -10,7 +10,6 @@ import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { toCompactFinancialYearCode } from '../master-data/financial-year.util.js';
-import { getAvailableQuantities } from '../sale-orders/inventory.service.js';
 import { SALE_ORDER_STATUSES_BLOCKING_PO_CANCELLATION } from '../sale-orders/sale-order-lifecycle.js';
 
 // ---------------------------------------------------------------------------
@@ -41,6 +40,12 @@ const poInclude = {
   merchandiser: { select: { id: true, name: true, email: true } },
   creator: { select: { id: true, name: true, email: true } },
   financialYear: { select: { id: true, code: true } },
+  // Order Sheet planning lock: exposed so the list/detail views can derive
+  // "Available for Job Order" / "Included in Job Order" without a status
+  // enum that no longer reflects the real lifecycle. lockedByJobOrder's
+  // status is included so a locked Order Sheet keeps showing correctly even
+  // if its Job Order later reaches a terminal state.
+  lockedByJobOrder: { select: { id: true, jobOrderNumber: true, status: true } },
   lines: {
     include: {
       style: { select: { id: true, styleNumber: true, styleName: true } },
@@ -78,7 +83,6 @@ function toLineView(line: PORecord['lines'][number]) {
       sizeCode: s.size.code,
       sizeLabel: s.size.label,
       orderedQuantity: s.orderedQuantity,
-      jobOrderedQuantity: s.jobOrderedQuantity,
       qaPassedQuantity: s.qaPassedQuantity,
       saleOrderedQuantity: s.saleOrderedQuantity,
       dispatchedQuantity: s.dispatchedQuantity,
@@ -107,6 +111,8 @@ function toPOView(po: PORecord): PurchaseOrderDetail {
     requiredDeliveryDate: po.requiredDeliveryDate?.toISOString() ?? null,
     purchaseMode: po.purchaseMode,
     status: po.status,
+    jobOrderId: po.jobOrderId,
+    lockedByJobOrder: po.lockedByJobOrder,
     remarks: po.remarks,
     lines: po.lines.map(toLineView),
     totalOrderedQuantity: totalQuantity,
@@ -130,17 +136,50 @@ function assertPOViewAccess(user: CurrentUser, po: { distributorId: string }): v
   throw HttpError.forbidden('You do not have access to this purchase order');
 }
 
+// An Order Sheet may be edited or cancelled only while it is not cancelled
+// and has no Job Order mapping yet (jobOrderId == null). Once a Job Order
+// claims it, the entire Order Sheet is locked — permanently, with no ADMIN
+// override — regardless of the Job Order's own later status.
+function assertOrderSheetMutable(po: { status: PurchaseOrderStatus; jobOrderId: string | null }): void {
+  if (po.status === 'CANCELLED') {
+    throw HttpError.badRequest('This Order Sheet has been cancelled');
+  }
+  if (po.jobOrderId) {
+    throw HttpError.badRequest(
+      'This Order Sheet is locked because it has already been included in a Job Order',
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Service methods
 // ---------------------------------------------------------------------------
+
+type OrderSheetPlanningState = 'AVAILABLE' | 'INCLUDED_IN_JOB_ORDER' | 'CANCELLED';
+
+// Translates the user-facing Planning State into the real underlying
+// condition — never sent to/from the client as a raw legacy status value.
+function planningStateWhere(
+  planningState: OrderSheetPlanningState,
+): Prisma.DistributorPurchaseOrderWhereInput {
+  switch (planningState) {
+    case 'CANCELLED':
+      return { status: 'CANCELLED' };
+    case 'INCLUDED_IN_JOB_ORDER':
+      return { status: { not: 'CANCELLED' }, jobOrderId: { not: null } };
+    case 'AVAILABLE':
+      return { status: { not: 'CANCELLED' }, jobOrderId: null };
+  }
+}
 
 export async function getPurchaseOrderList(
   user: CurrentUser,
   filters: {
     search?: string;
-    status?: PurchaseOrderStatus;
+    planningState?: OrderSheetPlanningState;
     distributorId?: string;
     purchaseMode?: PurchaseMode;
+    styleId?: string;
     financialYearId?: string;
     cursor?: string;
     limit: number;
@@ -152,8 +191,9 @@ export async function getPurchaseOrderList(
 
   const where: Prisma.DistributorPurchaseOrderWhereInput = {
     distributorId: distributorIdFilter ?? undefined,
-    status: filters.status,
+    ...(filters.planningState ? planningStateWhere(filters.planningState) : {}),
     purchaseMode: filters.purchaseMode,
+    lines: filters.styleId ? { some: { styleId: filters.styleId } } : undefined,
     // This PO's own Financial Year (derived from its poDate) — never a
     // downstream document's Financial Year.
     financialYearId: filters.financialYearId,
@@ -194,7 +234,6 @@ export async function createPurchaseOrder(
     distributorId: string;
     poDate: string;
     requiredDeliveryDate?: string | null;
-    purchaseMode: PurchaseMode;
     remarks?: string | null;
     lines: Array<{
       styleId: string;
@@ -247,8 +286,15 @@ export async function createPurchaseOrder(
         requiredDeliveryDate: input.requiredDeliveryDate
           ? new Date(input.requiredDeliveryDate)
           : null,
-        purchaseMode: input.purchaseMode,
-        status: 'DRAFT',
+        // Never client-supplied: Purchase Mode is authoritative on the
+        // Distributor and locked there — this is a create-time snapshot only.
+        purchaseMode: distributor.purchaseMode,
+        // No Draft -> Submitted workflow anymore: an Order Sheet is
+        // immediately eligible for Job Order planning the moment it's
+        // created. SUBMITTED is reused as the "open" internal status value
+        // rather than introducing a new enum member (see purchase-order
+        // rename plan) — it is never presented to users as a workflow step.
+        status: 'SUBMITTED',
         remarks: input.remarks ?? null,
         createdBy: actor.id,
         financialYearId: financialYear.id,
@@ -300,7 +346,6 @@ export async function updatePurchaseOrderDraft(
   input: {
     poDate?: string;
     requiredDeliveryDate?: string | null;
-    purchaseMode?: PurchaseMode;
     remarks?: string | null;
     lines?: Array<{
       styleId: string;
@@ -312,8 +357,7 @@ export async function updatePurchaseOrderDraft(
   const po = await prisma.distributorPurchaseOrder.findUnique({ where: { id } });
   if (!po) throw HttpError.notFound('Purchase order not found');
   assertPOViewAccess(actor, po);
-  if (po.status !== 'DRAFT')
-    throw HttpError.badRequest('Purchase order can only be edited in DRAFT status');
+  assertOrderSheetMutable(po);
 
   if (input.lines) {
     await validateLines(input.lines);
@@ -344,7 +388,6 @@ export async function updatePurchaseOrderDraft(
               ? new Date(input.requiredDeliveryDate)
               : null
             : undefined,
-        purchaseMode: input.purchaseMode,
         remarks: input.remarks !== undefined ? input.remarks : undefined,
         financialYearId: renumber?.financialYearId,
         poSerial: renumber?.poSerial,
@@ -406,29 +449,6 @@ export async function updatePurchaseOrderDraft(
   return getPurchaseOrderDetail(actor, id);
 }
 
-export async function submitPurchaseOrder(actor: CurrentUser, id: string) {
-  const po = await prisma.distributorPurchaseOrder.findUnique({ where: { id } });
-  if (!po) throw HttpError.notFound('Purchase order not found');
-  assertPOViewAccess(actor, po);
-  if (po.status !== 'DRAFT')
-    throw HttpError.badRequest('Only DRAFT purchase orders can be submitted');
-
-  await prisma.distributorPurchaseOrder.update({
-    where: { id },
-    data: { status: 'SUBMITTED', version: { increment: 1 } },
-  });
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'PO_SUBMITTED',
-    entityType: 'DistributorPurchaseOrder',
-    entityId: id,
-    metadata: { poNumber: po.poNumber },
-  });
-
-  return getPurchaseOrderDetail(actor, id);
-}
-
 export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
   const preCheck = await prisma.distributorPurchaseOrder.findUnique({ where: { id } });
   if (!preCheck) throw HttpError.notFound('Purchase order not found');
@@ -443,22 +463,10 @@ export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
     // a Sale Order submit against a PO mid-cancellation).
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`purchase-order-${id}`}))`;
 
-    const po = await tx.distributorPurchaseOrder.findUnique({
-      where: { id },
-      include: { lines: { include: { sizes: { select: { jobOrderedQuantity: true } } } } },
-    });
+    const po = await tx.distributorPurchaseOrder.findUnique({ where: { id } });
     if (!po) throw HttpError.notFound('Purchase order not found');
 
-    const cancellableStatuses: PurchaseOrderStatus[] = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW'];
-    if (!cancellableStatuses.includes(po.status)) {
-      throw HttpError.badRequest(`Purchase order in status ${po.status} cannot be cancelled`);
-    }
-
-    // Guard: no job ordered quantities must exist
-    const hasJobOrdered = po.lines.some((line) => line.sizes.some((sz) => sz.jobOrderedQuantity > 0));
-    if (hasJobOrdered) {
-      throw HttpError.badRequest('Cannot cancel a purchase order that has job ordered quantities');
-    }
+    assertOrderSheetMutable(po);
 
     // Guard: no active/open Sale Order demand may reference this PO — see
     // sale-order-lifecycle.ts for exactly which statuses count. Cancellation
@@ -497,173 +505,12 @@ export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
   return getPurchaseOrderDetail(actor, id);
 }
 
-export async function getJobOrderBalance(user: CurrentUser, id: string, factoryId?: string) {
-  const po = await prisma.distributorPurchaseOrder.findUnique({
-    where: { id },
-    include: {
-      lines: {
-        include: {
-          style: { select: { id: true, styleNumber: true, styleName: true } },
-          sizes: {
-            include: { size: { select: { id: true, code: true, label: true, sortOrder: true } } },
-            orderBy: { size: { sortOrder: 'asc' } },
-          },
-        },
-      },
-    },
-  });
-  if (!po) throw HttpError.notFound('Purchase order not found');
-  assertPOViewAccess(user, po);
-
-  const lines = po.lines.map((line) => ({
-    lineId: line.id,
-    styleId: line.style.id,
-    styleNumber: line.style.styleNumber,
-    styleName: line.style.styleName,
-    sizes: line.sizes.map((s) => ({
-      purchaseOrderLineSizeId: s.id,
-      sizeId: s.sizeId,
-      sizeCode: s.size.code,
-      sizeLabel: s.size.label,
-      orderedQuantity: s.orderedQuantity,
-      jobOrderedQuantity: s.jobOrderedQuantity,
-      balanceQuantity: s.orderedQuantity - s.jobOrderedQuantity,
-    })),
-  }));
-
-  const styleFactoryPrices: Record<string, number | null> = {};
-  if (factoryId) {
-    const mappings = await prisma.styleFactoryMapping.findMany({
-      where: { factoryId, styleId: { in: lines.map((line) => line.styleId) }, status: 'ACTIVE' },
-      select: { styleId: true, exFactoryPrice: true },
-    });
-    for (const mapping of mappings)
-      styleFactoryPrices[mapping.styleId] = mapping.exFactoryPrice.toNumber();
-  }
-  return { poId: id, poNumber: po.poNumber, version: po.version, lines, styleFactoryPrices };
-}
-
-const fulfilmentTotalsZero = {
-  orderedQuantity: 0,
-  jobOrderedQuantity: 0,
-  preparedQuantity: 0,
-  qaReleasedQuantity: 0,
-  saleOrderAllocatedQuantity: 0,
-  remainingToJobOrderQuantity: 0,
-  notPreparedQuantity: 0,
-  preparedNotReleasedQuantity: 0,
-  releasedUnallocatedQuantity: 0,
-};
-
-// Read-only lifecycle reconciliation: Ordered -> Job Ordered -> Prepared ->
-// QA Released -> Sale Order Allocated. Stops at Sale Order allocation
-// deliberately — packing/dispatch/invoicing don't exist in the product yet,
-// so this must not label anything "Dispatched"/"Delivered". Every quantity
-// is read from the same authoritative sources their own owning modules
-// already write (job-orders.service.ts for jobOrdered/prepared,
-// quality-executions.service.ts for qaReleased, the StockAllocation ledger
-// via getAvailableQuantities for saleOrderAllocated) — nothing here is a
-// second, competing calculation of any of those numbers.
-export async function getFulfilmentSummary(user: CurrentUser, id: string) {
-  const po = await prisma.distributorPurchaseOrder.findUnique({
-    where: { id },
-    include: {
-      lines: {
-        include: {
-          style: { select: { id: true, styleNumber: true, styleName: true } },
-          sizes: {
-            include: { size: { select: { id: true, code: true, label: true, sortOrder: true } } },
-            orderBy: { size: { sortOrder: 'asc' } },
-          },
-        },
-      },
-    },
-  });
-  if (!po) throw HttpError.notFound('Purchase order not found');
-  assertPOViewAccess(user, po);
-
-  const allSizeIds = po.lines.flatMap((line) => line.sizes.map((s) => s.id));
-
-  // Prepared is size-scoped on JobOrderLineSize, not on the PO line size
-  // itself, and a PO can be split across multiple Job Orders — sum across
-  // every non-cancelled Job Order's line size for this PO size.
-  const preparedBySize = await prisma.jobOrderLineSize.groupBy({
-    by: ['purchaseOrderLineSizeId'],
-    where: {
-      purchaseOrderLineSizeId: { in: allSizeIds },
-      jobOrderLine: { jobOrder: { status: { not: 'CANCELLED' } } },
-    },
-    _sum: { preparedQuantity: true },
-  });
-  const preparedById = new Map(
-    preparedBySize.map((row) => [row.purchaseOrderLineSizeId, row._sum.preparedQuantity ?? 0]),
-  );
-
-  // Sale Order allocation is committed against a QaReleaseLine, not against
-  // this PO's Distributor, so it must be summed via the release lines this
-  // PO's sizes actually produced — this is what makes reallocation to a
-  // different distributor's Sale Order still count correctly against this PO.
-  const releaseLines = await prisma.qaReleaseLine.findMany({
-    where: { purchaseOrderLineSizeId: { in: allSizeIds } },
-    select: { id: true, purchaseOrderLineSizeId: true },
-  });
-  const availability = await getAvailableQuantities(
-    prisma,
-    releaseLines.map((line) => line.id),
-  );
-  const allocatedById = new Map<string, number>();
-  for (const releaseLine of releaseLines) {
-    const committed = availability.get(releaseLine.id)?.committed ?? 0;
-    allocatedById.set(
-      releaseLine.purchaseOrderLineSizeId,
-      (allocatedById.get(releaseLine.purchaseOrderLineSizeId) ?? 0) + committed,
-    );
-  }
-
-  const lines = po.lines.map((line) => {
-    const sizes = line.sizes.map((s) => {
-      const orderedQuantity = s.orderedQuantity;
-      const jobOrderedQuantity = s.jobOrderedQuantity;
-      const preparedQuantity = preparedById.get(s.id) ?? 0;
-      const qaReleasedQuantity = s.qaPassedQuantity;
-      const saleOrderAllocatedQuantity = allocatedById.get(s.id) ?? 0;
-
-      return {
-        sizeId: s.sizeId,
-        sizeCode: s.size.code,
-        sizeLabel: s.size.label,
-        orderedQuantity,
-        jobOrderedQuantity,
-        preparedQuantity,
-        qaReleasedQuantity,
-        saleOrderAllocatedQuantity,
-        remainingToJobOrderQuantity: Math.max(0, orderedQuantity - jobOrderedQuantity),
-        notPreparedQuantity: Math.max(0, jobOrderedQuantity - preparedQuantity),
-        preparedNotReleasedQuantity: Math.max(0, preparedQuantity - qaReleasedQuantity),
-        releasedUnallocatedQuantity: Math.max(0, qaReleasedQuantity - saleOrderAllocatedQuantity),
-      };
-    });
-
-    const totals = sizes.reduce((acc, s) => {
-      const next = { ...acc };
-      for (const key of Object.keys(fulfilmentTotalsZero) as Array<keyof typeof fulfilmentTotalsZero>) {
-        next[key] = acc[key] + s[key];
-      }
-      return next;
-    }, fulfilmentTotalsZero);
-
-    return {
-      lineId: line.id,
-      styleId: line.style.id,
-      styleNumber: line.style.styleNumber,
-      styleName: line.style.styleName,
-      sizes,
-      totals,
-    };
-  });
-
-  return { poId: id, poNumber: po.poNumber, status: po.status, lines };
-}
+// getJobOrderBalance and getFulfilmentSummary (retired): the Order Sheet is
+// no longer a remaining-balance/partial-fulfilment ledger under the Order
+// Sheet model — Job Order creation now claims an Order Sheet wholly and
+// atomically (see job-orders.service.ts createJobOrderFromPO), so
+// "remaining quantity"/"fulfilment progress" no longer means anything at the
+// Order Sheet level. Retired along with their routes and frontend panels.
 
 // ---------------------------------------------------------------------------
 // Internal validation helper

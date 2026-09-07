@@ -3,7 +3,12 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { createPurchaseOrderLineSize, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import {
+  createPurchaseOrderLineSize,
+  createTestJobOrderStub,
+  createTestUserAndToken,
+  resetDatabase,
+} from '../../test/helpers.js';
 
 const app = createApp();
 beforeEach(resetDatabase);
@@ -246,20 +251,24 @@ describe('Purchase Order cancellation — blocked by active/open Sale Order dema
     expect(res.body.data.status).toBe('CANCELLED');
   });
 
-  it('still enforces the existing jobOrderedQuantity guard even with no Sale Orders at all', async () => {
+  it('still enforces the Job Order lock guard even with no Sale Orders at all', async () => {
     const lineSize = await createPurchaseOrderLineSize({ poStatus: 'SUBMITTED' });
-    await prisma.distributorPurchaseOrderLineSize.update({
-      where: { id: lineSize.purchaseOrderLineSizeId },
-      data: { jobOrderedQuantity: 5 },
-    });
-    const { token: adminToken } = await createTestUserAndToken({
+    const { userId: adminUserId, token: adminToken } = await createTestUserAndToken({
       email: `admin-${createId()}@test.local`,
       password: 'pass',
       roles: ['ADMIN'],
     });
+    const jobOrder = await createTestJobOrderStub({
+      purchaseOrderId: lineSize.purchaseOrderId,
+      createdBy: adminUserId,
+    });
+    await prisma.distributorPurchaseOrder.update({
+      where: { id: lineSize.purchaseOrderId },
+      data: { jobOrderId: jobOrder.id },
+    });
 
     const res = await cancelPO(adminToken, lineSize.purchaseOrderId).expect(400);
-    expect(res.body.error.message).toMatch(/job ordered quantities/i);
+    expect(res.body.error.message).toMatch(/locked/i);
     const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({ where: { id: lineSize.purchaseOrderId } });
     expect(po.status).toBe('SUBMITTED');
   });

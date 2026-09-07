@@ -196,6 +196,15 @@ describe('AppRoutes Permissions', () => {
       await renderRoutes('DISTRIBUTOR', '/master-data/factories');
       expect(getPageContent()).toContain('ForbiddenPage');
     });
+
+    it('is denied all access to Order Sheets — planning belongs to Merchandising', async () => {
+      await renderRoutes('DISTRIBUTOR', '/purchase-orders');
+      expect(getPageContent()).not.toContain('PurchaseOrderListPage');
+      expect(getPageContent()).toContain('ForbiddenPage');
+
+      await renderRoutes('DISTRIBUTOR', '/purchase-orders/new');
+      expect(getPageContent()).toContain('ForbiddenPage');
+    });
   });
 
   describe('ACCOUNTANT', () => {

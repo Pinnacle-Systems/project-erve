@@ -143,7 +143,13 @@ const gstinSchema = z
   .toUpperCase()
   .regex(GSTIN_REGEX, 'Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
 
-export const createDistributorSchema = z.object({
+// Order Sheet Purchase Mode: authoritative on the Distributor, required at
+// creation, immutable thereafter. Deliberately excluded from
+// distributorMutableFieldsSchema so it can never appear in an update
+// request's shape — see updateDistributorSchema below.
+export const distributorPurchaseModeSchema = z.enum(['OUTRIGHT', 'SALE_RETURN']);
+
+const distributorMutableFieldsSchema = z.object({
   code: z.string().trim().min(1),
   name: z.string().trim().min(1),
   gstin: gstinSchema,
@@ -159,8 +165,16 @@ export const createDistributorSchema = z.object({
   status: distributorStatusSchema.optional(),
 });
 
-export const updateDistributorSchema = createDistributorSchema
+export const createDistributorSchema = distributorMutableFieldsSchema.extend({
+  purchaseMode: distributorPurchaseModeSchema,
+});
+
+// .strict() so a client-supplied purchaseMode on update fails loudly (400)
+// instead of being silently accepted or ignored — Purchase Mode is locked
+// after creation, not even ADMIN may change it.
+export const updateDistributorSchema = distributorMutableFieldsSchema
   .partial()
+  .strict()
   .refine((value) => Object.keys(value).length > 0, { message: 'At least one field is required' });
 
 export const updateDistributorStatusSchema = z.object({ status: distributorStatusSchema });

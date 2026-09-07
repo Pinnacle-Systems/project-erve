@@ -145,7 +145,6 @@ async function createSeedGraph() {
     .send({
       distributorId: distributor.id,
       poDate: '2026-06-30',
-      purchaseMode: 'OUTRIGHT',
       lines: [
         {
           styleId: style.id,
@@ -157,9 +156,8 @@ async function createSeedGraph() {
       ],
     });
   const po = poRes.body.data;
-  await request(app)
-    .post(`/purchase-orders/${po.id}/actions/submit`)
-    .set('Authorization', `Bearer ${admin.token}`);
+  // No Draft->Submit step anymore — an Order Sheet is immediately eligible
+  // for Job Order planning (status is already 'SUBMITTED' on creation).
   const freshPo = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
     where: { id: po.id },
     include: { lines: { include: { sizes: true } } },
@@ -171,6 +169,7 @@ async function createSeedGraph() {
     distributor,
     factory,
     otherFactory,
+    style,
     processFlowId: processFlow.id,
     processFlowVersionId: processFlow.versions[0]!.id,
     draftProcessFlowVersionId: draftFlow.versions[0]!.id,
@@ -178,6 +177,43 @@ async function createSeedGraph() {
     poLineId: poLine.id,
     poSizeAId: poLine.sizes.find((size) => size.sizeId === sizeA.id)!.id,
     poSizeBId: poLine.sizes.find((size) => size.sizeId === sizeB.id)!.id,
+    sizeAId: sizeA.id,
+    sizeBId: sizeB.id,
+  };
+}
+
+// Creates one additional Order Sheet (Distributor Purchase Order) sharing
+// styleId/sizeId with the seed graph's Style — used by the multi-source
+// (Order Sheet Phase 2) tests to build a second/third eligible source. Each
+// Order Sheet gets its own Distributor (defaulting to OUTRIGHT purchase
+// mode, overridable) since Purchase Mode is derived from the Distributor,
+// not client-supplied.
+async function createOrderSheet(
+  token: string,
+  graph: { style: { id: string } },
+  sizes: Array<{ sizeId: string; orderedQuantity: number }>,
+  overrides?: { distributorId?: string; requiredDeliveryDate?: string },
+) {
+  const distributorId =
+    overrides?.distributorId ?? (await createTestDistributor()).id;
+  const res = await request(app)
+    .post('/purchase-orders')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      distributorId,
+      poDate: '2026-06-30',
+      requiredDeliveryDate: overrides?.requiredDeliveryDate,
+      lines: [{ styleId: graph.style.id, sizes }],
+    });
+  const orderSheet = res.body.data;
+  return {
+    id: orderSheet.id as string,
+    poNumber: orderSheet.poNumber as string,
+    distributorId,
+    lineId: orderSheet.lines[0].id as string,
+    sizesBySizeId: new Map<string, string>(
+      orderSheet.lines[0].sizes.map((size: { sizeId: string; id: string }) => [size.sizeId, size.id]),
+    ),
   };
 }
 
@@ -190,17 +226,16 @@ async function createJobOrder(
     .post('/job-orders')
     .set('Authorization', `Bearer ${token}`)
     .send({
-      purchaseOrderId: graph.poId,
+      sources: [
+        {
+          orderSheetId: graph.poId,
+          sizes: [{ sizeId: graph.sizeAId, quantity }],
+        },
+      ],
       factoryId: graph.factory.id,
       processFlowVersionId: graph.processFlowVersionId,
       unitPrice: '199.50',
       disclaimerText: 'Factory commercial terms apply.',
-      lines: [
-        {
-          purchaseOrderLineId: graph.poLineId,
-          sizes: [{ purchaseOrderLineSizeId: graph.poSizeAId, quantity }],
-        },
-      ],
     });
 }
 
@@ -634,25 +669,83 @@ describe('job orders API', () => {
     expect(await prisma.jobOrder.count()).toBe(0);
   });
 
-  it('atomically prevents concurrent PO over-allocation', async () => {
+  it('atomically prevents two concurrent Job Orders from both claiming the same Order Sheet', async () => {
     const graph = await createSeedGraph();
     const responses = await Promise.all([
       createJobOrder(graph.admin.token, graph, 7),
       createJobOrder(graph.admin.token, graph, 7),
     ]);
     expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+    const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+      where: { id: graph.poId },
+      select: { jobOrderId: true },
+    });
+    expect(po.jobOrderId).not.toBeNull();
+    // Only the winner's Job Order Line was created — no double-write from the loser.
+    const winnerId = responses.find((response) => response.status === 201)!.body.data.id;
+    expect(po.jobOrderId).toBe(winnerId);
+    expect(await prisma.jobOrderLine.count({ where: { purchaseOrderLineId: graph.poLineId } })).toBe(
+      1,
+    );
     const balance = await prisma.distributorPurchaseOrderLineSize.findUniqueOrThrow({
       where: { id: graph.poSizeAId },
-      select: { orderedQuantity: true, jobOrderedQuantity: true },
+      select: { orderedQuantity: true },
     });
-    expect(balance).toEqual({ orderedQuantity: 10, jobOrderedQuantity: 7 });
+    expect(balance).toEqual({ orderedQuantity: 10 });
   });
 
-  it('generates unique business numbers for concurrent job orders', async () => {
+  it('generates unique business numbers for concurrent job orders against different Order Sheets', async () => {
+    // Two independent Order Sheets — a Job Order locks its whole Order Sheet,
+    // so two concurrent Job Orders can no longer target the same one. Reuses
+    // the seed graph's admin/factory/process-flow; only the second Order
+    // Sheet (distributor + style + size) needs to be genuinely independent.
     const graph = await createSeedGraph();
+    const secondDistributor = await createTestDistributor();
+    const secondFinancialYear = await createTestFinancialYear(new Date('2026-06-30'));
+    const secondSeason = await prisma.season.create({
+      data: {
+        id: createId(),
+        code: 'JO-TEST-2',
+        name: 'Job Order Test Season 2',
+        financialYearId: secondFinancialYear.id,
+      },
+    });
+    const secondStyle = await prisma.style.create({
+      data: {
+        id: createId(),
+        styleNumber: `ST-JO2-${createId()}`,
+        styleName: 'Second Job Style',
+        finalMrp: 500,
+        styleSeasons: { create: { seasonId: secondSeason.id } },
+      },
+    });
+    const secondSize = await prisma.size.create({
+      data: { id: createId(), code: 'AGE_6', label: '6', sizeType: 'AGE', sortOrder: 6 },
+    });
+    await prisma.styleSize.create({
+      data: { id: createId(), styleId: secondStyle.id, sizeId: secondSize.id },
+    });
+    const secondPoRes = await request(app)
+      .post('/purchase-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        distributorId: secondDistributor.id,
+        poDate: '2026-06-30',
+        lines: [{ styleId: secondStyle.id, sizes: [{ sizeId: secondSize.id, orderedQuantity: 5 }] }],
+      });
+
     const [first, second] = await Promise.all([
       createJobOrder(graph.admin.token, graph, 1),
-      createJobOrder(graph.admin.token, graph, 1),
+      request(app)
+        .post('/job-orders')
+        .set('Authorization', `Bearer ${graph.admin.token}`)
+        .send({
+          sources: [{ orderSheetId: secondPoRes.body.data.id, sizes: [{ sizeId: secondSize.id, quantity: 1 }] }],
+          factoryId: graph.factory.id,
+          processFlowVersionId: graph.processFlowVersionId,
+          unitPrice: '199.50',
+          disclaimerText: 'Factory commercial terms apply.',
+        }),
     ]);
     expect(first.status).toBe(201);
     expect(second.status).toBe(201);
@@ -779,7 +872,7 @@ describe('job orders API', () => {
     expect(jobOrder.body.data.processFlowVersion.id).toBe(graph.processFlowVersionId);
   });
 
-  it('creates a draft job order, increments PO balance, rolls PO status, and writes audit', async () => {
+  it('creates a draft job order, claims (locks) the Order Sheet, and writes audit', async () => {
     const graph = await createSeedGraph();
 
     const res = await createJobOrder(graph.admin.token, graph, 4);
@@ -802,14 +895,13 @@ describe('job orders API', () => {
     const persisted = await prisma.jobOrder.findUniqueOrThrow({ where: { id: res.body.data.id } });
     expect(persisted.unitPrice.toFixed(2)).toBe('199.50');
 
-    const poSize = await prisma.distributorPurchaseOrderLineSize.findUniqueOrThrow({
-      where: { id: graph.poSizeAId },
-    });
-    expect(poSize.jobOrderedQuantity).toBe(4);
+    // No jobOrderedQuantity column anymore — the whole-sheet jobOrderId
+    // claim is the sole lock/eligibility signal.
     const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
       where: { id: graph.poId },
     });
-    expect(po.status).toBe('PARTIALLY_JOB_ORDERED');
+    expect(po.jobOrderId).toBe(res.body.data.id);
+    expect(po.status).toBe('SUBMITTED'); // no PARTIALLY_JOB_ORDERED/FULLY_JOB_ORDERED rollup anymore
     await expect(prisma.auditLog.count({ where: { action: 'JOB_ORDER_CREATED' } })).resolves.toBe(
       1,
     );
@@ -821,16 +913,10 @@ describe('job orders API', () => {
       .post('/job-orders')
       .set('Authorization', `Bearer ${graph.admin.token}`)
       .send({
-        purchaseOrderId: graph.poId,
+        sources: [{ orderSheetId: graph.poId, sizes: [{ sizeId: graph.sizeAId, quantity: 1 }] }],
         factoryId: graph.factory.id,
         processFlowVersionId: graph.processFlowVersionId,
         ...(unitPrice === undefined ? {} : { unitPrice }),
-        lines: [
-          {
-            purchaseOrderLineId: graph.poLineId,
-            sizes: [{ purchaseOrderLineSizeId: graph.poSizeAId, quantity: 1 }],
-          },
-        ],
       });
     expect(response.status).toBe(400);
   });
@@ -849,15 +935,24 @@ describe('job orders API', () => {
     ).rejects.toThrow();
   });
 
-  it('rejects DRAFT PO, inactive factory, inactive flow, excess quantity, wrong line, and wrong size', async () => {
+  it('allows Job Order quantity to exceed the Order Sheet forecast — no remaining-balance cap', async () => {
     const graph = await createSeedGraph();
-    const draftPo = await prisma.distributorPurchaseOrder.update({
+    // sizeA's Order Sheet forecast is 10; requesting 99 must still succeed —
+    // Job Order quantities are independent of the Order Sheet's forecast.
+    await expect(createJobOrder(graph.admin.token, graph, 99)).resolves.toMatchObject({
+      status: 201,
+    });
+  });
+
+  it('rejects a cancelled Order Sheet, inactive factory, inactive flow, unknown Order Sheet, and wrong size', async () => {
+    const graph = await createSeedGraph();
+    await prisma.distributorPurchaseOrder.update({
       where: { id: graph.poId },
-      data: { status: 'DRAFT' },
+      data: { status: 'CANCELLED' },
     });
     await expect(createJobOrder(graph.admin.token, graph)).resolves.toMatchObject({ status: 400 });
     await prisma.distributorPurchaseOrder.update({
-      where: { id: draftPo.id },
+      where: { id: graph.poId },
       data: { status: 'SUBMITTED' },
     });
 
@@ -870,82 +965,68 @@ describe('job orders API', () => {
         .post('/job-orders')
         .set('Authorization', `Bearer ${graph.admin.token}`)
         .send({
-          purchaseOrderId: graph.poId,
+          sources: [{ orderSheetId: graph.poId, sizes: [{ sizeId: graph.sizeAId, quantity: 1 }] }],
           factoryId: graph.factory.id,
           processFlowVersionId: graph.draftProcessFlowVersionId,
-          lines: [
-            {
-              purchaseOrderLineId: graph.poLineId,
-              sizes: [{ purchaseOrderLineSizeId: graph.poSizeAId, quantity: 1 }],
-            },
-          ],
         }),
     ).resolves.toMatchObject({ status: 400 });
 
-    await expect(createJobOrder(graph.admin.token, graph, 99)).resolves.toMatchObject({
-      status: 400,
-    });
+    // Unknown Order Sheet id.
     await expect(
       request(app)
         .post('/job-orders')
         .set('Authorization', `Bearer ${graph.admin.token}`)
         .send({
-          purchaseOrderId: graph.poId,
+          sources: [{ orderSheetId: createId(), sizes: [{ sizeId: graph.sizeAId, quantity: 1 }] }],
           factoryId: graph.factory.id,
           processFlowVersionId: graph.processFlowVersionId,
-          lines: [
-            {
-              purchaseOrderLineId: createId(),
-              sizes: [{ purchaseOrderLineSizeId: graph.poSizeAId, quantity: 1 }],
-            },
-          ],
         }),
     ).resolves.toMatchObject({ status: 400 });
+    // Size not valid for the selected Order Sheet's Style.
     await expect(
       request(app)
         .post('/job-orders')
         .set('Authorization', `Bearer ${graph.admin.token}`)
         .send({
-          purchaseOrderId: graph.poId,
+          sources: [{ orderSheetId: graph.poId, sizes: [{ sizeId: createId(), quantity: 1 }] }],
           factoryId: graph.factory.id,
           processFlowVersionId: graph.processFlowVersionId,
-          lines: [
-            {
-              purchaseOrderLineId: graph.poLineId,
-              sizes: [{ purchaseOrderLineSizeId: createId(), quantity: 1 }],
-            },
-          ],
         }),
     ).resolves.toMatchObject({ status: 400 });
   });
 
-  it('moves PO to fully job ordered when all quantities are consumed', async () => {
+  it('locks the Order Sheet once a Job Order claims it, regardless of how much of the forecast is consumed', async () => {
     const graph = await createSeedGraph();
     const res = await request(app)
       .post('/job-orders')
       .set('Authorization', `Bearer ${graph.admin.token}`)
       .send({
-        purchaseOrderId: graph.poId,
+        sources: [
+          {
+            orderSheetId: graph.poId,
+            sizes: [
+              { sizeId: graph.sizeAId, quantity: 10 },
+              { sizeId: graph.sizeBId, quantity: 5 },
+            ],
+          },
+        ],
         factoryId: graph.factory.id,
         processFlowVersionId: graph.processFlowVersionId,
         unitPrice: '199.50',
         disclaimerText: 'Factory commercial terms apply.',
-        lines: [
-          {
-            purchaseOrderLineId: graph.poLineId,
-            sizes: [
-              { purchaseOrderLineSizeId: graph.poSizeAId, quantity: 10 },
-              { purchaseOrderLineSizeId: graph.poSizeBId, quantity: 5 },
-            ],
-          },
-        ],
       });
 
     expect(res.status).toBe(201);
     const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
       where: { id: graph.poId },
     });
-    expect(po.status).toBe('FULLY_JOB_ORDERED');
+    expect(po.jobOrderId).toBe(res.body.data.id);
+    expect(po.status).toBe('SUBMITTED'); // no FULLY_JOB_ORDERED rollup anymore
+
+    // Locked: a second Job Order against the same Order Sheet is rejected,
+    // even though this first one already consumed every forecast unit.
+    const second = await createJobOrder(graph.admin.token, graph, 1);
+    expect(second.status).toBe(400);
   });
 
   it('runs send, confirm, stage completion, prepared quantity, and variance workflow', async () => {
@@ -1534,22 +1615,35 @@ describe('job orders API', () => {
       .expect(200);
 
     // Reactivation restores the factory user's mapped workflow access immediately.
+    // graph.poId is already locked by the first Job Order created above (an
+    // Order Sheet maps to at most one Job Order), so this verification uses a
+    // second, independent Order Sheet against the same style/factory/flow.
     await prisma.factory.update({ where: { id: graph.factory.id }, data: { status: 'ACTIVE' } });
+    const firstLine = await prisma.distributorPurchaseOrderLine.findUniqueOrThrow({
+      where: { id: graph.poLineId },
+    });
+    const sizeBRow = await prisma.distributorPurchaseOrderLineSize.findUniqueOrThrow({
+      where: { id: graph.poSizeBId },
+    });
+    const secondPoRes = await request(app)
+      .post('/purchase-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        distributorId: graph.distributor.id,
+        poDate: '2026-06-30',
+        lines: [{ styleId: firstLine.styleId, sizes: [{ sizeId: sizeBRow.sizeId, orderedQuantity: 5 }] }],
+      });
     const jo2Res = await request(app)
       .post('/job-orders')
       .set('Authorization', `Bearer ${graph.admin.token}`)
       .send({
-        purchaseOrderId: graph.poId,
+        sources: [
+          { orderSheetId: secondPoRes.body.data.id, sizes: [{ sizeId: sizeBRow.sizeId, quantity: 3 }] },
+        ],
         factoryId: graph.factory.id,
         processFlowVersionId: graph.processFlowVersionId,
         unitPrice: '199.50',
         disclaimerText: 'Factory commercial terms apply.',
-        lines: [
-          {
-            purchaseOrderLineId: graph.poLineId,
-            sizes: [{ purchaseOrderLineSizeId: graph.poSizeBId, quantity: 3 }],
-          },
-        ],
       });
     expect(jo2Res.status).toBe(201);
     await request(app)
@@ -1591,5 +1685,641 @@ describe('job orders API', () => {
       .set('Authorization', `Bearer ${distributorUser.token}`);
     expect(listRes.status).toBe(403);
     expect(detailRes.status).toBe(403);
+  });
+});
+
+describe('multi-source Order Sheet job orders (Order Sheet Phase 2)', () => {
+  it('creates a job order from multiple Order Sheets sharing one Style (different Distributors and Purchase Modes) and sums the combined forecast per size', async () => {
+    const graph = await createSeedGraph();
+    const saleReturnDistributor = await createTestDistributor({ purchaseMode: 'SALE_RETURN' });
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+      { sizeId: graph.sizeBId, orderedQuantity: 5 },
+    ]);
+    const sheetB = await createOrderSheet(
+      graph.admin.token,
+      graph,
+      [{ sizeId: graph.sizeAId, orderedQuantity: 20 }],
+      { distributorId: saleReturnDistributor.id },
+    );
+    const sheetC = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeBId, orderedQuantity: 8 },
+    ]);
+
+    const res = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [
+          {
+            orderSheetId: sheetA.id,
+            sizes: [
+              { sizeId: graph.sizeAId, quantity: 6 },
+              { sizeId: graph.sizeBId, quantity: 3 },
+            ],
+          },
+          { orderSheetId: sheetB.id, sizes: [{ sizeId: graph.sizeAId, quantity: 12 }] },
+          { orderSheetId: sheetC.id, sizes: [{ sizeId: graph.sizeBId, quantity: 4 }] },
+        ],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '199.50',
+        disclaimerText: 'Factory commercial terms apply.',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.sourceOrderSheetCount).toBe(3);
+    expect(res.body.data.lines).toHaveLength(3);
+    expect(res.body.data.orderedQuantityTotal).toBe(6 + 3 + 12 + 4);
+
+    const sourceIds = res.body.data.sourceOrderSheets
+      .map((source: { id: string }) => source.id)
+      .sort();
+    expect(sourceIds).toEqual([sheetA.id, sheetB.id, sheetC.id].sort());
+    const sheetBView = res.body.data.sourceOrderSheets.find(
+      (source: { id: string }) => source.id === sheetB.id,
+    );
+    expect(sheetBView.purchaseMode).toBe('SALE_RETURN');
+    expect(sheetBView.distributor.id).toBe(saleReturnDistributor.id);
+    const sheetAView = res.body.data.sourceOrderSheets.find(
+      (source: { id: string }) => source.id === sheetA.id,
+    );
+    expect(sheetAView.purchaseMode).toBe('OUTRIGHT');
+
+    // Combined forecast sums each Order Sheet's OWN forecast (not the Job
+    // Order's own production quantities) per size across all sources.
+    const forecastBySize = Object.fromEntries(
+      res.body.data.combinedForecast.map((entry: { sizeId: string; forecastQuantity: number }) => [
+        entry.sizeId,
+        entry.forecastQuantity,
+      ]),
+    );
+    expect(forecastBySize[graph.sizeAId]).toBe(10 + 20); // sheetA + sheetB
+    expect(forecastBySize[graph.sizeBId]).toBe(5 + 8); // sheetA + sheetC
+
+    for (const sheet of [sheetA, sheetB, sheetC]) {
+      const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+        where: { id: sheet.id },
+      });
+      expect(po.jobOrderId).toBe(res.body.data.id);
+    }
+  });
+
+  it('rejects Order Sheets with different Styles', async () => {
+    const graph = await createSeedGraph();
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const otherFinancialYear = await createTestFinancialYear(new Date('2026-06-30'));
+    const otherSeason = await prisma.season.create({
+      data: {
+        id: createId(),
+        code: `OTHER-SEASON-${createId()}`,
+        name: 'Other Style Season',
+        financialYearId: otherFinancialYear.id,
+      },
+    });
+    const otherStyle = await prisma.style.create({
+      data: {
+        id: createId(),
+        styleNumber: `ST-OTHER-${createId()}`,
+        styleName: 'Other Style',
+        finalMrp: 500,
+        styleSeasons: { create: { seasonId: otherSeason.id } },
+      },
+    });
+    const otherSize = await prisma.size.create({
+      data: { id: createId(), code: `OTHER_SZ_${createId()}`, label: 'OS', sizeType: 'ALPHA', sortOrder: 1 },
+    });
+    await prisma.styleSize.create({
+      data: { id: createId(), styleId: otherStyle.id, sizeId: otherSize.id },
+    });
+    const sheetB = await createOrderSheet(graph.admin.token, { style: otherStyle }, [
+      { sizeId: otherSize.id, orderedQuantity: 10 },
+    ]);
+
+    const res = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [
+          { orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 5 }] },
+          { orderSheetId: sheetB.id, sizes: [{ sizeId: otherSize.id, quantity: 5 }] },
+        ],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      });
+    expect(res.status).toBe(400);
+    expect(await prisma.jobOrder.count()).toBe(0);
+  });
+
+  it('rejects duplicate Order Sheet ids within one request', async () => {
+    const graph = await createSeedGraph();
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const res = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [
+          { orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 3 }] },
+          { orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 2 }] },
+        ],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects an already-mapped or cancelled Order Sheet among the selected sources', async () => {
+    const graph = await createSeedGraph();
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const sheetB = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+
+    await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [{ orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 2 }] }],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      })
+      .expect(201);
+
+    const mappedAttempt = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [{ orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 1 }] }],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      });
+    expect(mappedAttempt.status).toBe(400);
+
+    await prisma.distributorPurchaseOrder.update({
+      where: { id: sheetB.id },
+      data: { status: 'CANCELLED' },
+    });
+    const cancelledAttempt = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [{ orderSheetId: sheetB.id, sizes: [{ sizeId: graph.sizeAId, quantity: 1 }] }],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      });
+    expect(cancelledAttempt.status).toBe(400);
+  });
+
+  it('atomically claims all selected Order Sheets; a losing concurrent request leaves its non-conflicting Order Sheet unclaimed', async () => {
+    const graph = await createSeedGraph();
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const sheetB = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const sheetC = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+
+    const requestPayload = (orderSheetIds: string[]) => ({
+      sources: orderSheetIds.map((id) => ({
+        orderSheetId: id,
+        sizes: [{ sizeId: graph.sizeAId, quantity: 2 }],
+      })),
+      factoryId: graph.factory.id,
+      processFlowVersionId: graph.processFlowVersionId,
+      unitPrice: '100',
+    });
+
+    const [first, second] = await Promise.all([
+      request(app)
+        .post('/job-orders')
+        .set('Authorization', `Bearer ${graph.admin.token}`)
+        .send(requestPayload([sheetA.id, sheetB.id])),
+      request(app)
+        .post('/job-orders')
+        .set('Authorization', `Bearer ${graph.admin.token}`)
+        .send(requestPayload([sheetB.id, sheetC.id])),
+    ]);
+
+    expect([first.status, second.status].sort()).toEqual([201, 409]);
+    const winner = first.status === 201 ? first : second;
+    const loser = first.status === 201 ? second : first;
+    expect(loser.status).toBe(409);
+
+    const winnerSourceIds: string[] = winner.body.data.sourceOrderSheets.map(
+      (source: { id: string }) => source.id,
+    );
+    for (const id of winnerSourceIds) {
+      const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({ where: { id } });
+      expect(po.jobOrderId).toBe(winner.body.data.id);
+    }
+
+    // The loser's OTHER (non-conflicting) Order Sheet — the one the winner
+    // never touched — rolled all the way back with the rest of the loser's
+    // transaction: still fully unclaimed and available, not partially mapped.
+    const loserOnlyId = winnerSourceIds.includes(sheetA.id) ? sheetC.id : sheetA.id;
+    const loserOnly = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+      where: { id: loserOnlyId },
+    });
+    expect(loserOnly.jobOrderId).toBeNull();
+  });
+
+  it('updateDraftJobOrderSources: adds a source to a DRAFT job order without disturbing existing lines', async () => {
+    const graph = await createSeedGraph();
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const sheetB = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 15 },
+    ]);
+
+    const created = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [{ orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 4 }] }],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      })
+      .expect(201);
+    expect(created.body.data.lines).toHaveLength(1);
+    const originalLineId = created.body.data.lines[0].id;
+
+    const updated = await request(app)
+      .patch(`/job-orders/${created.body.data.id}/sources`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'add-source-1')
+      .send({
+        expectedVersion: created.body.data.version,
+        add: [{ orderSheetId: sheetB.id, sizes: [{ sizeId: graph.sizeAId, quantity: 6 }] }],
+        remove: [],
+      });
+    expect(updated.status).toBe(200);
+    expect(updated.body.data.sourceOrderSheetCount).toBe(2);
+    expect(updated.body.data.lines).toHaveLength(2);
+    const originalLine = updated.body.data.lines.find(
+      (line: { id: string }) => line.id === originalLineId,
+    );
+    expect(originalLine.orderedQuantityTotal).toBe(4);
+    expect(updated.body.data.orderedQuantityTotal).toBe(10);
+    const forecastA = updated.body.data.combinedForecast.find(
+      (entry: { sizeId: string }) => entry.sizeId === graph.sizeAId,
+    );
+    expect(forecastA.forecastQuantity).toBe(10 + 15);
+
+    const poB = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+      where: { id: sheetB.id },
+    });
+    expect(poB.jobOrderId).toBe(created.body.data.id);
+  });
+
+  it('updateDraftJobOrderSources: removes a source, releasing its Order Sheet for reuse by a new Job Order', async () => {
+    const graph = await createSeedGraph();
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const sheetB = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 15 },
+    ]);
+
+    const created = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [
+          { orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 4 }] },
+          { orderSheetId: sheetB.id, sizes: [{ sizeId: graph.sizeAId, quantity: 6 }] },
+        ],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      })
+      .expect(201);
+
+    const updated = await request(app)
+      .patch(`/job-orders/${created.body.data.id}/sources`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'remove-source-1')
+      .send({ expectedVersion: created.body.data.version, add: [], remove: [sheetB.id] });
+    expect(updated.status).toBe(200);
+    expect(updated.body.data.sourceOrderSheetCount).toBe(1);
+    expect(updated.body.data.lines).toHaveLength(1);
+    expect(updated.body.data.orderedQuantityTotal).toBe(4);
+
+    const releasedPo = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+      where: { id: sheetB.id },
+    });
+    expect(releasedPo.jobOrderId).toBeNull();
+
+    const reused = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [{ orderSheetId: sheetB.id, sizes: [{ sizeId: graph.sizeAId, quantity: 3 }] }],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      });
+    expect(reused.status).toBe(201);
+  });
+
+  it('updateDraftJobOrderSources: rejects removing the last remaining source Order Sheet', async () => {
+    const graph = await createSeedGraph();
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const created = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [{ orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 4 }] }],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      })
+      .expect(201);
+
+    const res = await request(app)
+      .patch(`/job-orders/${created.body.data.id}/sources`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'remove-last-1')
+      .send({ expectedVersion: created.body.data.version, add: [], remove: [sheetA.id] });
+    expect(res.status).toBe(400);
+    const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({ where: { id: sheetA.id } });
+    expect(po.jobOrderId).toBe(created.body.data.id);
+  });
+
+  it('updateDraftJobOrderSources: rejects adding an Order Sheet of a different Style', async () => {
+    const graph = await createSeedGraph();
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const otherFinancialYear = await createTestFinancialYear(new Date('2026-06-30'));
+    const otherSeason = await prisma.season.create({
+      data: {
+        id: createId(),
+        code: `OTHER-SEASON2-${createId()}`,
+        name: 'Other Style 2 Season',
+        financialYearId: otherFinancialYear.id,
+      },
+    });
+    const otherStyle = await prisma.style.create({
+      data: {
+        id: createId(),
+        styleNumber: `ST-OTHER2-${createId()}`,
+        styleName: 'Other Style 2',
+        finalMrp: 500,
+        styleSeasons: { create: { seasonId: otherSeason.id } },
+      },
+    });
+    const otherSize = await prisma.size.create({
+      data: {
+        id: createId(),
+        code: `OTHER_SZ2_${createId()}`,
+        label: 'OS2',
+        sizeType: 'ALPHA',
+        sortOrder: 1,
+      },
+    });
+    await prisma.styleSize.create({
+      data: { id: createId(), styleId: otherStyle.id, sizeId: otherSize.id },
+    });
+    const otherSheet = await createOrderSheet(graph.admin.token, { style: otherStyle }, [
+      { sizeId: otherSize.id, orderedQuantity: 10 },
+    ]);
+
+    const created = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [{ orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 4 }] }],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+      })
+      .expect(201);
+
+    const res = await request(app)
+      .patch(`/job-orders/${created.body.data.id}/sources`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'add-wrong-style-1')
+      .send({
+        expectedVersion: created.body.data.version,
+        add: [{ orderSheetId: otherSheet.id, sizes: [{ sizeId: otherSize.id, quantity: 1 }] }],
+        remove: [],
+      });
+    expect(res.status).toBe(400);
+    const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+      where: { id: otherSheet.id },
+    });
+    expect(po.jobOrderId).toBeNull();
+  });
+
+  it('updateDraftJobOrderSources: freezes the mapping once the Job Order is sent to factory', async () => {
+    const graph = await createSeedGraph();
+    const sheetA = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const sheetB = await createOrderSheet(graph.admin.token, graph, [
+      { sizeId: graph.sizeAId, orderedQuantity: 10 },
+    ]);
+    const created = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        sources: [{ orderSheetId: sheetA.id, sizes: [{ sizeId: graph.sizeAId, quantity: 4 }] }],
+        factoryId: graph.factory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '100',
+        disclaimerText: 'Factory commercial terms apply.',
+      })
+      .expect(201);
+    const sent = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'freeze-send-1')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+
+    const res = await request(app)
+      .patch(`/job-orders/${created.body.data.id}/sources`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'freeze-add-1')
+      .send({
+        expectedVersion: sent.body.data.version,
+        add: [{ orderSheetId: sheetB.id, sizes: [{ sizeId: graph.sizeAId, quantity: 1 }] }],
+        remove: [],
+      });
+    expect(res.status).toBe(409);
+
+    const unchanged = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    expect(unchanged.body.data.sourceOrderSheetCount).toBe(1);
+    const poB = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+      where: { id: sheetB.id },
+    });
+    expect(poB.jobOrderId).toBeNull();
+  });
+
+  it('updateJobOrderDeliveryDate: editable pre-confirmation, locked (409) once the factory confirms', async () => {
+    const graph = await createSeedGraph();
+    const factoryUser = await createTestUserAndToken({
+      email: 'delivery-date-factory@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+    });
+
+    const created = await createJobOrder(graph.admin.token, graph, 4);
+    expect(created.body.data.deliveryDateLocked).toBe(false);
+
+    const updated = await request(app)
+      .patch(`/job-orders/${created.body.data.id}/delivery-date`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'delivery-date-1')
+      .send({ expectedVersion: created.body.data.version, requiredDeliveryDate: '2026-08-15' });
+    expect(updated.status).toBe(200);
+    expect(updated.body.data.requiredDeliveryDate).toContain('2026-08-15');
+
+    const sent = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'delivery-date-send')
+      .send({ expectedVersion: updated.body.data.version })
+      .expect(200);
+    const confirmed = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'delivery-date-confirm')
+      .send({
+        expectedVersion: sent.body.data.version,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
+      .expect(200);
+    expect(confirmed.body.data.deliveryDateLocked).toBe(true);
+
+    const lockedAttempt = await request(app)
+      .patch(`/job-orders/${created.body.data.id}/delivery-date`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'delivery-date-2')
+      .send({ expectedVersion: confirmed.body.data.version, requiredDeliveryDate: '2026-09-01' });
+    expect(lockedAttempt.status).toBe(409);
+
+    const unchanged = await prisma.jobOrder.findUniqueOrThrow({
+      where: { id: created.body.data.id },
+    });
+    expect(unchanged.requiredDeliveryDate?.toISOString().slice(0, 10)).toBe('2026-08-15');
+  });
+
+  it('hides source Order Sheet provenance from Factory/QA viewers but shows it to Admin/Merchandiser, in both detail and list', async () => {
+    const graph = await createSeedGraph();
+    const factoryUser = await createTestUserAndToken({
+      email: 'visibility-factory@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+    });
+    const qaUser = await createTestUserAndToken({
+      email: 'visibility-qa@test.local',
+      password: 'pass',
+      roles: ['QA_USER'],
+    });
+
+    const created = await createJobOrder(graph.admin.token, graph, 4);
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'visibility-send')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+
+    const adminDetail = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    expect(adminDetail.body.data.sourceOrderSheets).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: graph.poId })]),
+    );
+    expect(adminDetail.body.data.combinedForecast).toBeDefined();
+    expect(adminDetail.body.data.lines[0].sourceOrderSheet).toBeDefined();
+
+    const factoryDetail = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .expect(200);
+    expect(factoryDetail.body.data.sourceOrderSheets).toBeUndefined();
+    expect(factoryDetail.body.data.combinedForecast).toBeUndefined();
+    expect(factoryDetail.body.data.lines[0].sourceOrderSheet).toBeUndefined();
+    expect(JSON.stringify(factoryDetail.body.data)).not.toContain('distributor');
+    expect(JSON.stringify(factoryDetail.body.data)).not.toContain('poNumber');
+    expect(JSON.stringify(factoryDetail.body.data)).not.toContain('jobOrderedQuantity');
+
+    const qaDetail = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${qaUser.token}`)
+      .expect(200);
+    expect(qaDetail.body.data.sourceOrderSheets).toBeUndefined();
+    expect(qaDetail.body.data.combinedForecast).toBeUndefined();
+
+    const assignedTasks = await request(app)
+      .get('/job-orders/assigned-tasks')
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .expect(200);
+    expect(assignedTasks.body.data.items.length).toBeGreaterThan(0);
+    expect(assignedTasks.body.data.items[0]).not.toHaveProperty('distributor');
+    expect(assignedTasks.body.data.items[0]).not.toHaveProperty('purchaseOrderNumber');
+    expect(JSON.stringify(assignedTasks.body.data)).not.toContain('poNumber');
+
+    const adminList = await request(app)
+      .get('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    const adminListed = adminList.body.data.items.find(
+      (item: { id: string }) => item.id === created.body.data.id,
+    );
+    expect(adminListed.sourceOrderSheets).toBeDefined();
+
+    const factoryList = await request(app)
+      .get('/job-orders')
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .expect(200);
+    const factoryListed = factoryList.body.data.items.find(
+      (item: { id: string }) => item.id === created.body.data.id,
+    );
+    expect(factoryListed.sourceOrderSheets).toBeUndefined();
+  });
+
+  it('never exposes the removed jobOrderedQuantity field anywhere in Job Order or Order Sheet responses', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 4);
+    expect(created.status).toBe(201);
+    expect(JSON.stringify(created.body)).not.toContain('jobOrderedQuantity');
+
+    const poDetail = await request(app)
+      .get(`/purchase-orders/${graph.poId}`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    expect(JSON.stringify(poDetail.body)).not.toContain('jobOrderedQuantity');
   });
 });

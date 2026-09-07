@@ -172,7 +172,7 @@ export function SaleOrderListPage() {
             title="No sale orders found"
             description={
               canCreate
-                ? 'Create a sale order to request QA-released stock against your purchase orders.'
+                ? 'Create a sale order to request QA-released stock against your Order Sheets.'
                 : 'Sale orders will appear here when they are available.'
             }
             action={

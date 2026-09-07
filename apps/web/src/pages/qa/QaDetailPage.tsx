@@ -83,12 +83,12 @@ export function QaDetailPage() {
           formName="PP Sample form"
           attemptNumber={ppSampleSession.cycleNumber}
           status={ppSampleSession.status}
-          context={`${data.purchaseOrderNumber} · ${data.factory.name}`}
+          context={`${data.jobOrderNumber} · ${data.factory.name}`}
         />
       ) : (
         <PageHeader
           title={data.jobOrderNumber}
-          subtitle={`From ${data.purchaseOrderNumber}`}
+          subtitle={data.factory.name}
           status={
             <StatusBadge label={data.status.replaceAll('_', ' ')} tone={statusTone(data.status)} />
           }
@@ -103,10 +103,7 @@ export function QaDetailPage() {
         <QualityExecutionSection title="Inspection context">
           <DescriptionList columns={3}>
             <DescriptionList.Item label="Job Order" value={data.jobOrderNumber} />
-            <DescriptionList.Item
-              label="Distributor"
-              value={data.distributor?.name ?? 'Not available'}
-            />
+            <DescriptionList.Item label="Factory" value={data.factory.name} />
             <DescriptionList.Item
               label="Season snapshot"
               value={data.seasons.map((season) => season.displayName).join(', ') || 'Not recorded'}
@@ -116,10 +113,7 @@ export function QaDetailPage() {
       ) : (
         <Panel title="Inspection context">
           <DescriptionList columns={3}>
-            <DescriptionList.Item
-              label="Distributor"
-              value={data.distributor?.name ?? 'Not available'}
-            />
+            <DescriptionList.Item label="Factory" value={data.factory.name} />
             <DescriptionList.Item
               label="Season snapshot"
               value={data.seasons.map((season) => season.displayName).join(', ') || 'Not recorded'}

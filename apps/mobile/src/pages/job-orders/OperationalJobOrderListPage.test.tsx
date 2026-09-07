@@ -33,8 +33,8 @@ describe('mobile operational Job Order list', () => {
       id: 'job-1',
       jobOrderNumber: 'JO-001',
       status: 'CONFIRMED_BY_FACTORY',
-      purchaseOrder: { poNumber: 'PO-001' },
       factory: { name: 'Factory One' },
+      sourceOrderSheetCount: 1,
       orderedQuantityTotal: 100,
       preparedQuantityTotal: 0,
       operationalState: {

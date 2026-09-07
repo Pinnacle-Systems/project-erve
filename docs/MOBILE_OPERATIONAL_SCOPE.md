@@ -11,8 +11,8 @@ and continue to the next task without a placeholder.
 | ----------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | Factory user      | Assigned job orders, assignment confirmation, production stages, completed quantities, QA rework | Factory-mapped records; operational updates               | Masters, flow configuration, bulk work, detailed reporting                          |
 | QA user           | Inspection queue, quantity disposition, evidence, reinspection, final QA outcome                 | All factories; inspect and approve                        | QA configuration and detailed reporting                                             |
-| Admin             | QA queue, factory exceptions and rework, pending QA approvals, recent activity                   | Cross-factory oversight and permitted operational actions | Master data, users, purchase orders, price lists, configuration, bulk work, reports |
-| Merchandiser      | QA queue, factory exceptions and rework, pending QA approvals, recent activity                   | Cross-factory oversight and permitted operational actions | Purchase-order authoring, masters, price lists, configuration, bulk work, reports   |
+| Admin             | QA queue, factory exceptions and rework, pending QA approvals, recent activity                   | Cross-factory oversight and permitted operational actions | Master data, users, Order Sheets, price lists, configuration, bulk work, reports    |
+| Merchandiser      | QA queue, factory exceptions and rework, pending QA approvals, recent activity                   | Cross-factory oversight and permitted operational actions | Order Sheet authoring, masters, price lists, configuration, bulk work, reports      |
 | Senior management | No committed mobile workflow in this slice                                                       | None                                                      | Reporting and management oversight                                                  |
 | Accountant        | No committed mobile workflow in this slice                                                       | None                                                      | Finance-oriented desktop workflows                                                  |
 | Distributor       | No committed mobile workflow in this slice                                                       | None                                                      | Distributor desktop workflows                                                       |
@@ -47,6 +47,6 @@ rules exist.
 - Process-flow configuration
 - User administration
 - Distributor price-list maintenance
-- Purchase-order creation and complex editing
+- Order Sheet creation and editing
 - Detailed reporting and bulk operations
 - Other configuration-heavy administration

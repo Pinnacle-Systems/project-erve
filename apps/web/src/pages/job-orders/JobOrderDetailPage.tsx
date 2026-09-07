@@ -25,7 +25,9 @@ import { apiClient } from '../../lib/api-client.js';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
 import { canManageJobOrderProduction } from '../../auth/permissions.js';
+import type { PurchaseOrder } from '../purchase-orders/types.js';
 import type { JobOrder, JobOrderLineSize } from './types.js';
+import { OrderSheetMultiSelectField } from './OrderSheetMultiSelectField.js';
 import { ProductionStageStepper } from './ProductionStageStepper.js';
 import { formatJobOrderAuditTitle } from './job-order-audit.js';
 import {
@@ -92,6 +94,7 @@ export function JobOrderDetailPage() {
   const [sendError, setSendError] = useState('');
   const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
   const [reworkNotesDrafts, setReworkNotesDrafts] = useState<Record<string, string>>({});
+  const [deliveryDateDraft, setDeliveryDateDraft] = useState<string | null>(null);
   const [qualityStartContexts, setQualityStartContexts] = useState<
     Record<string, { sizeId: string; quantity: string }>
   >({});
@@ -252,6 +255,31 @@ export function JobOrderDetailPage() {
       ),
     onSuccess: invalidate,
   });
+  const updateSourcesMutation = useMutation({
+    mutationFn: async (input: {
+      add: Array<{ orderSheetId: string; sizes: Array<{ sizeId: string; quantity: number }> }>;
+      remove: string[];
+    }) =>
+      apiClient.patch<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/sources`,
+        { ...input, expectedVersion: jobOrderQuery.data!.version },
+        { headers: { 'Idempotency-Key': `${id}:sources:${jobOrderQuery.data!.version}:${Date.now()}` } },
+      ),
+    onSuccess: invalidate,
+  });
+  const deliveryDateMutation = useMutation({
+    mutationFn: async (requiredDeliveryDate: string | null) =>
+      apiClient.patch<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/delivery-date`,
+        { requiredDeliveryDate, expectedVersion: jobOrderQuery.data!.version },
+        {
+          headers: {
+            'Idempotency-Key': `${id}:delivery-date:${jobOrderQuery.data!.version}:${Date.now()}`,
+          },
+        },
+      ),
+    onSuccess: invalidate,
+  });
   const completeStageMutation = useMutation({
     mutationFn: async (stageStatusId: string) =>
       apiClient.post<ApiSuccessResponse<JobOrder>>(
@@ -401,7 +429,7 @@ export function JobOrderDetailPage() {
     <div className="space-y-5">
       <PageHeader
         title={jobOrder.jobOrderNumber}
-        subtitle={`From ${jobOrder.purchaseOrder.poNumber}`}
+        subtitle={jobOrder.factory.name}
         status={
           <div
             className="min-w-0 max-w-xl border-l border-border-subtle pl-3"
@@ -498,8 +526,20 @@ export function JobOrderDetailPage() {
             label="Lifecycle"
             value={JOB_ORDER_STATUS_LABELS[jobOrder.status]}
           />
-          <DescriptionList.Item label="Source PO" value={jobOrder.purchaseOrder.poNumber} />
+          <DescriptionList.Item label="Order Sheets" value={jobOrder.sourceOrderSheetCount} />
           <DescriptionList.Item label="Factory" value={jobOrder.factory.name} />
+          <DescriptionList.Item
+            label="Required Delivery Date"
+            value={
+              jobOrder.requiredDeliveryDate
+                ? new Date(jobOrder.requiredDeliveryDate).toLocaleDateString('en-IN', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric',
+                  })
+                : 'Not set'
+            }
+          />
           <DescriptionList.Item
             label="Factory unit price"
             value={`₹${jobOrder.unitPrice.toFixed(2)}`}
@@ -546,6 +586,171 @@ export function JobOrderDetailPage() {
           />
         </DescriptionList>
       </Panel>
+
+      {jobOrder.sourceOrderSheets && (
+        <Panel
+          title="Source Order Sheets"
+          description={
+            jobOrder.status === 'DRAFT'
+              ? 'Merchandising planning provenance. Editable while this Job Order is a draft — the mapping freezes once it is sent to factory.'
+              : 'Merchandising planning provenance. This mapping is frozen for this Job Order.'
+          }
+        >
+          <div className="space-y-4">
+            <DataTable
+              density="compact"
+              columns={[
+                { key: 'poNumber', header: 'Order Sheet', accessor: 'poNumber' },
+                { key: 'distributor', header: 'Distributor', render: (os) => os.distributor.name },
+                {
+                  key: 'purchaseMode',
+                  header: 'Mode',
+                  render: (os) => (os.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale Return'),
+                },
+                {
+                  key: 'requiredDeliveryDate',
+                  header: 'Required Date',
+                  render: (os) => (os.requiredDeliveryDate ? formatDateTime(os.requiredDeliveryDate) : 'Not set'),
+                },
+                {
+                  key: 'forecastTotal',
+                  header: 'Forecast',
+                  align: 'right',
+                  render: (os) => os.forecastTotal.toLocaleString(),
+                },
+                ...(jobOrder.status === 'DRAFT' && canManageJobOrders
+                  ? [
+                      {
+                        key: 'remove',
+                        header: '',
+                        render: (os: NonNullable<JobOrder['sourceOrderSheets']>[number]) => (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            density="compact"
+                            disabled={
+                              updateSourcesMutation.isPending ||
+                              jobOrder.sourceOrderSheets!.length <= 1
+                            }
+                            onClick={() =>
+                              updateSourcesMutation.mutate({ add: [], remove: [os.id] })
+                            }
+                          >
+                            Remove
+                          </Button>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+              data={jobOrder.sourceOrderSheets}
+              rowKey="id"
+            />
+
+            {jobOrder.combinedForecast && jobOrder.combinedForecast.length > 0 && (
+              <DataTable
+                density="compact"
+                columns={[
+                  { key: 'size', header: 'Size', render: (row) => row.sizeLabel },
+                  {
+                    key: 'forecast',
+                    header: 'Combined Forecast',
+                    align: 'right',
+                    render: (row) => row.forecastQuantity.toLocaleString(),
+                  },
+                  {
+                    key: 'jobOrder',
+                    header: 'Job Order',
+                    align: 'right',
+                    render: (row) => {
+                      const jobOrderQuantity = jobOrder.lines
+                        .flatMap((line) => line.sizes)
+                        .filter((size) => size.sizeId === row.sizeId)
+                        .reduce((sum, size) => sum + size.orderedQuantity, 0);
+                      return jobOrderQuantity.toLocaleString();
+                    },
+                  },
+                  {
+                    key: 'variance',
+                    header: 'Variance',
+                    align: 'right',
+                    render: (row) => {
+                      const jobOrderQuantity = jobOrder.lines
+                        .flatMap((line) => line.sizes)
+                        .filter((size) => size.sizeId === row.sizeId)
+                        .reduce((sum, size) => sum + size.orderedQuantity, 0);
+                      return (jobOrderQuantity - row.forecastQuantity).toLocaleString();
+                    },
+                  },
+                ]}
+                data={jobOrder.combinedForecast}
+                rowKey="sizeId"
+              />
+            )}
+
+            {jobOrder.status === 'DRAFT' && canManageJobOrders && (
+              <OrderSheetMultiSelectField
+                label="Add another Order Sheet"
+                styleId={jobOrder.lines[0]?.styleId}
+                excludeIds={jobOrder.sourceOrderSheets.map((os) => os.id)}
+                onSelect={(orderSheet: PurchaseOrder) =>
+                  updateSourcesMutation.mutate({
+                    add: [
+                      {
+                        orderSheetId: orderSheet.id,
+                        sizes: (orderSheet.lines[0]?.sizes ?? []).map((size) => ({
+                          sizeId: size.sizeId,
+                          quantity: size.orderedQuantity,
+                        })),
+                      },
+                    ],
+                    remove: [],
+                  })
+                }
+              />
+            )}
+            {updateSourcesMutation.isError && (
+              <ValidationMessage tone="error">
+                {mutationErrorMessage(updateSourcesMutation.error, 'Unable to update source Order Sheets.')}
+              </ValidationMessage>
+            )}
+          </div>
+        </Panel>
+      )}
+
+      {!jobOrder.deliveryDateLocked && canManageJobOrders && (
+        <Panel
+          title="Delivery Date"
+          description="Editable until the factory confirms this Job Order."
+          footer={
+            <div className="flex justify-end">
+              <Button
+                onClick={() =>
+                  deliveryDateMutation.mutate(
+                    (deliveryDateDraft ?? jobOrder.requiredDeliveryDate?.slice(0, 10) ?? '') || null,
+                  )
+                }
+                loading={deliveryDateMutation.isPending}
+              >
+                Save Delivery Date
+              </Button>
+            </div>
+          }
+        >
+          <TextField
+            label="Required Delivery Date"
+            type="date"
+            value={deliveryDateDraft ?? jobOrder.requiredDeliveryDate?.slice(0, 10) ?? ''}
+            onChange={(event) => setDeliveryDateDraft(event.target.value)}
+            width="fill"
+          />
+          {deliveryDateMutation.isError && (
+            <ValidationMessage tone="error">
+              {mutationErrorMessage(deliveryDateMutation.error, 'Unable to update the delivery date.')}
+            </ValidationMessage>
+          )}
+        </Panel>
+      )}
 
       {jobOrder.reworkTasks.length > 0 && (
         <Panel

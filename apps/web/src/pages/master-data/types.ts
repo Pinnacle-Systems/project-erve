@@ -64,6 +64,9 @@ export interface DistributorSummary {
 
 export interface Distributor extends DistributorSummary {
   gstin: string;
+  // Authoritative Order Sheet purchase mode. Required at creation, immutable
+  // thereafter — never sent in an update payload.
+  purchaseMode: 'OUTRIGHT' | 'SALE_RETURN';
   contactEmail: string | null;
   contactPhone: string | null;
   addressLine1: string | null;

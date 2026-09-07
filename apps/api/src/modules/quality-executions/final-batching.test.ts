@@ -139,7 +139,6 @@ async function fixture(preparedQuantity = 840) {
     data: {
       id: createId(),
       jobOrderNumber: `JO-${createId()}`,
-      purchaseOrderId: po.id,
       factoryId: factory.id,
       processFlowVersionId: flow.versions[0]!.id,
       unitPrice: 10,
@@ -192,7 +191,13 @@ async function fixture(preparedQuantity = 840) {
     },
     include: { stageStatuses: true, lines: { include: { sizes: true } } },
   });
-  return { qa, job, finishing, final, form, outcomeId, factory };
+  // Order Sheet Phase 2: the Order Sheet <-> Job Order relationship is the
+  // Order Sheet's own jobOrderId claim, not a field on JobOrder.
+  await prisma.distributorPurchaseOrder.update({
+    where: { id: po.id },
+    data: { jobOrderId: job.id },
+  });
+  return { qa, job, finishing, final, form, outcomeId, factory, poId: po.id };
 }
 
 const payload = (version: number, outcomeId: string, outcome: 'PASS' | 'FAIL') => ({
@@ -565,7 +570,7 @@ describe('Final Inspection batching and prepared coverage', () => {
       .send({ expectedVersion: f.job.version })
       .expect(404);
     const projection = await prisma.distributorPurchaseOrderLineSize.aggregate({
-      where: { purchaseOrderLine: { purchaseOrderId: f.job.purchaseOrderId } },
+      where: { purchaseOrderLine: { purchaseOrderId: f.poId } },
       _sum: { qaPassedQuantity: true },
     });
     expect(projection._sum.qaPassedQuantity).toBe(0);
@@ -709,20 +714,10 @@ describe('Final Inspection batching and prepared coverage', () => {
       ),
     );
     const projected = await prisma.distributorPurchaseOrderLineSize.aggregate({
-      where: { purchaseOrderLine: { purchaseOrderId: f.job.purchaseOrderId } },
+      where: { purchaseOrderLine: { purchaseOrderId: f.poId } },
       _sum: { qaPassedQuantity: true },
     });
     expect(projected._sum.qaPassedQuantity).toBe(600);
-    const fulfilment = await request(app)
-      .get(`/purchase-orders/${f.job.purchaseOrderId}/fulfilment-summary`)
-      .set('Authorization', `Bearer ${f.qa.token}`)
-      .expect(200);
-    expect(
-      fulfilment.body.data.lines[0].sizes.reduce(
-        (sum: number, size: { qaReleasedQuantity: number }) => sum + size.qaReleasedQuantity,
-        0,
-      ),
-    ).toBe(600);
   });
 
   it('closes a failed physical batch as permanently rejected without downstream release', async () => {

@@ -37,7 +37,13 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-const distributor = { id: 'dist-1', code: 'DIST-1', name: 'Acme Distribution', status: 'ACTIVE' };
+const distributor = {
+  id: 'dist-1',
+  code: 'DIST-1',
+  name: 'Acme Distribution',
+  purchaseMode: 'OUTRIGHT' as const,
+  status: 'ACTIVE',
+};
 
 const styleWithSeasons = {
   id: 'style-1',
@@ -172,8 +178,8 @@ async function fillValidStyleLine(styleOption: string, sizeLabel: string): Promi
 }
 
 function submitButton(): HTMLButtonElement {
-  const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Save Draft');
-  if (!button) throw new Error('Save Draft button not found');
+  const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Save');
+  if (!button) throw new Error('Save button not found');
   return button;
 }
 
@@ -186,7 +192,7 @@ describe('PurchaseOrderFormPage save error handling', () => {
             success: false,
             error: {
               code: 'VALIDATION_ERROR',
-              message: 'Every purchase-order Style must have Seasons assigned',
+              message: 'Every Order Sheet Style must have Seasons assigned',
               details: {},
             },
           }),
@@ -232,7 +238,7 @@ describe('PurchaseOrderFormPage save error handling', () => {
     await act(async () => submitButton().click());
     await flush();
 
-    expect(container.textContent).toContain('Unable to save the Purchase Order');
+    expect(container.textContent).toContain('Unable to save the Order Sheet');
     expect(container.textContent).not.toContain('Request failed with status code');
     expect(container.textContent).not.toContain('Network Error');
   });

@@ -13,8 +13,11 @@ import * as purchaseOrdersService from './purchase-orders.service.js';
 export const purchaseOrdersRouter = Router();
 purchaseOrdersRouter.use(requireAuth);
 
-const canManagePOs = requireRoles('ADMIN', 'MERCHANDISER', 'DISTRIBUTOR');
-const canViewPOs = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR');
+// Order Sheet planning belongs to Merchandising: DISTRIBUTOR has no access at
+// all (view or manage) — mirrors DISTRIBUTOR's existing full exclusion from
+// Job Orders.
+const canManagePOs = requireRoles('ADMIN', 'MERCHANDISER');
+const canViewPOs = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT');
 
 purchaseOrdersRouter.get(
   '/',
@@ -63,18 +66,6 @@ purchaseOrdersRouter.patch(
 );
 
 purchaseOrdersRouter.post(
-  '/:id/actions/submit',
-  canManagePOs,
-  asyncHandler(async (req, res) => {
-    const order = await purchaseOrdersService.submitPurchaseOrder(
-      req.user!,
-      req.params.id! as string,
-    );
-    res.status(200).json(successResponse(order));
-  }),
-);
-
-purchaseOrdersRouter.post(
   '/:id/actions/cancel',
   canManagePOs,
   asyncHandler(async (req, res) => {
@@ -83,31 +74,5 @@ purchaseOrdersRouter.post(
       req.params.id! as string,
     );
     res.status(200).json(successResponse(order));
-  }),
-);
-
-purchaseOrdersRouter.get(
-  '/:id/job-order-balance',
-  canViewPOs,
-  asyncHandler(async (req, res) => {
-    const factoryId = typeof req.query.factoryId === 'string' ? req.query.factoryId : undefined;
-    const balance = await purchaseOrdersService.getJobOrderBalance(
-      req.user!,
-      req.params.id! as string,
-      factoryId,
-    );
-    res.status(200).json(successResponse(balance));
-  }),
-);
-
-purchaseOrdersRouter.get(
-  '/:id/fulfilment-summary',
-  canViewPOs,
-  asyncHandler(async (req, res) => {
-    const summary = await purchaseOrdersService.getFulfilmentSummary(
-      req.user!,
-      req.params.id! as string,
-    );
-    res.status(200).json(successResponse(summary));
   }),
 );
