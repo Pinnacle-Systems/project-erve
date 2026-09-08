@@ -3,7 +3,12 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { createReleasedQaStock, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import {
+  createReleasedQaStock,
+  createTestDistributor,
+  createTestUserAndToken,
+  resetDatabase,
+} from '../../test/helpers.js';
 import { getPooledFactoryInventory } from './pooled-inventory.service.js';
 
 const app = createApp();
@@ -180,5 +185,61 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
       sizeId: stock.sizeId,
     });
     expect(rows[0]).toMatchObject({ releasedQuantity: 100, committedQuantity: 0, availableQuantity: 100 });
+  });
+});
+
+describe('GET /job-orders/pooled-inventory (route + authorization)', () => {
+  it('is reachable as a literal route — never swallowed by GET /job-orders/:id', async () => {
+    const { token } = await createTestUserAndToken({
+      email: `admin-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['ADMIN'],
+    });
+    const res = await request(app)
+      .get('/job-orders/pooled-inventory')
+      .set('Authorization', `Bearer ${token}`);
+    // A 404 here would mean Express matched `/:id` with id="pooled-inventory"
+    // and looked up a non-existent Job Order instead of this literal route.
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
+  it.each(['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    'allows %s to view pooled inventory',
+    async (role) => {
+      const { token } = await createTestUserAndToken({
+        email: `${role.toLowerCase()}-${createId()}@test.local`,
+        password: 'pass',
+        roles: [role],
+      });
+      await request(app)
+        .get('/job-orders/pooled-inventory')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+    },
+  );
+
+  it.each(['FACTORY_USER', 'QA_USER', 'ACCOUNTANT'] as const)(
+    'forbids %s from viewing pooled inventory',
+    async (role) => {
+      const { token } = await createTestUserAndToken({
+        email: `${role.toLowerCase()}-${createId()}@test.local`,
+        password: 'pass',
+        roles: [role],
+      });
+      await request(app)
+        .get('/job-orders/pooled-inventory')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(403);
+    },
+  );
+
+  it('forbids a DISTRIBUTOR from viewing pooled inventory', async () => {
+    const distributor = await createTestDistributor();
+    const token = await createDistributorUser(distributor.id);
+    await request(app)
+      .get('/job-orders/pooled-inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(403);
   });
 });
