@@ -61,7 +61,7 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     const stock = await createReleasedQaStock({ quantity: 10 });
     const merchToken = await roleToken(['MERCHANDISER']);
 
-    await createDispatchOrder(merchToken, {
+    const res = await createDispatchOrder(merchToken, {
       distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
@@ -71,6 +71,18 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
 
     expect(await prisma.saleOrder.count()).toBe(0);
     expect(await prisma.stockAllocation.count()).toBe(0);
+
+    // Phase 3 smoke-check regression: the conflict message must be
+    // human-readable (Style Number / Size label), never the raw internal
+    // styleId/sizeId ULIDs — those are DB-only traceability, not meant to
+    // surface in a user-facing error.
+    const style = await prisma.style.findUniqueOrThrow({ where: { id: stock.styleId } });
+    const size = await prisma.size.findUniqueOrThrow({ where: { id: stock.sizeId } });
+    expect(res.body.error.message).toContain(style.styleNumber);
+    expect(res.body.error.message).toContain(size.label);
+    expect(res.body.error.message).not.toContain(stock.styleId);
+    expect(res.body.error.message).not.toContain(stock.sizeId);
+    expect(res.body.error.message).toMatch(/short by 10 unit\(s\)/);
   });
 
   it('supports multiple destinations and multiple styles in one Dispatch Order', async () => {

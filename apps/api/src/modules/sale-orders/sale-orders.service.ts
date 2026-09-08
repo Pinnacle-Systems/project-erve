@@ -290,8 +290,20 @@ async function reserveAcrossPools(
     }));
     const { allocations, shortfall } = planPoolAllocation(demands, candidateAvailability);
     if (shortfall > 0) {
+      // Resolve to human-readable Style/Size identifiers for the error
+      // message — this is the exceptional (conflict) path only, so the
+      // extra lookup here doesn't cost anything on the common success path.
+      // Never surface the raw internal styleId/sizeId ULIDs to the user
+      // (see the Dispatch Order Phase 3 rule against leaking internal
+      // traceability ids into user-facing text).
+      const [style, size] = await Promise.all([
+        tx.style.findUnique({ where: { id: styleId }, select: { styleNumber: true, styleName: true } }),
+        tx.size.findUnique({ where: { id: sizeId }, select: { label: true, code: true } }),
+      ]);
+      const styleLabel = style ? `${style.styleNumber} — ${style.styleName}` : styleId;
+      const sizeLabel = size ? size.label || size.code : sizeId;
       throw HttpError.conflict(
-        `Insufficient pooled stock for Style/Size ${styleId}/${sizeId} at the selected Factory: short by ${shortfall} unit(s)`,
+        `Insufficient pooled stock for ${styleLabel} / ${sizeLabel} at the selected Factory: short by ${shortfall} unit(s)`,
       );
     }
     planned.push(...allocations);

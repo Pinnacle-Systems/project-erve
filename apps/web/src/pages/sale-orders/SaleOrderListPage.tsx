@@ -9,7 +9,7 @@ import { apiClient } from '../../lib/api-client.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import { canMutateDispatchOrders, canViewDispatchOrders } from '../../auth/permissions.js';
+import { canFilterDispatchOrders, canMutateDispatchOrders } from '../../auth/permissions.js';
 import type { Distributor, Factory, SaleOrder } from './types.js';
 
 function formatDate(iso: string) {
@@ -19,7 +19,12 @@ function formatDate(iso: string) {
 export function SaleOrderListPage() {
   const { user } = useAuth();
   const canCreate = canMutateDispatchOrders(user);
-  const showFilters = canViewDispatchOrders(user);
+  // FACTORY_USER can view this list but is hard-scoped server-side to its
+  // own Factory and has no operational need for the Distributor/Factory
+  // filter pickers — a merchandiser-oriented control that also used to leak
+  // to it because this was wired to canViewDispatchOrders (true for every
+  // role that can even see the page) instead of a narrower check.
+  const showFilters = canFilterDispatchOrders(user);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
   const [distributorId, setDistributorId] = useState('');

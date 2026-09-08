@@ -95,4 +95,15 @@ describe('SaleOrderListPage Permissions', () => {
     await renderSaleOrderListPage('FACTORY_USER');
     expect(getPageContent()).not.toContain('Create Dispatch Order');
   });
+
+  // Regression test for a Phase 3 smoke-check finding: showFilters was
+  // wired to canViewDispatchOrders, which is true for every role that can
+  // even see this page (FACTORY_USER included) - so the merchandiser-
+  // oriented Distributor/Factory filter pickers incorrectly appeared for a
+  // read-only, single-Factory-scoped FACTORY_USER too. Now gated by the
+  // narrower canFilterDispatchOrders, which excludes FACTORY_USER.
+  it('FACTORY_USER does not see the Distributor/Factory filter pickers', async () => {
+    await renderSaleOrderListPage('FACTORY_USER');
+    expect(hasDistributorFilter()).toBe(false);
+  });
 });

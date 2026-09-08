@@ -115,6 +115,22 @@ export function SaleOrderFormPage() {
 
   useEffect(() => {
     if (!soQuery.data) return;
+    // Wait for the Distributor/Factory option lists too, not just the Sale
+    // Order itself, before hydrating. Radix Select keeps a hidden native
+    // <select> (SelectBubbleInput) in sync with the controlled value; if we
+    // call setDistributorId/setFactoryId while that Select has zero
+    // <option> children yet (distributorsQuery/factoriesQuery still
+    // pending), the browser silently coerces the native element back to ""
+    // and Radix's own change handler then calls onValueChange(""),
+    // clobbering the value we just hydrated with no error and no further
+    // effect re-run (this exact race was already found and fixed once for
+    // the pre-rename Sale Order form's Distributor field — see
+    // erve-sale-order-edit-hydration-fix — and reappeared here because
+    // Phase 3 rewrote this file and added the same pattern for Factory,
+    // which is now also mutable on edit). Gating on both option queries
+    // guarantees their <SelectItem>s already exist in the same render that
+    // first sets the hydrated id, so there is no window for the race.
+    if (!distributorsQuery.data || !factoriesQuery.data) return;
     const so = soQuery.data;
     // Hydrates the edit form from an async-loaded record; the data isn't
     // available for a lazy initial-state computation, so this can't be done
@@ -150,7 +166,7 @@ export function SaleOrderFormPage() {
           })),
       })),
     );
-  }, [soQuery.data]);
+  }, [soQuery.data, distributorsQuery.data, factoriesQuery.data]);
 
   // Pool key options for the Style/Size selects — the pooled inventory for
   // the selected Factory, plus (edit mode) any style/size already on a line
@@ -286,6 +302,14 @@ export function SaleOrderFormPage() {
   if (isEdit && soQuery.isLoading) {
     return <LoadingState label="Loading dispatch order" />;
   }
+  if (isEdit && (soQuery.isError || !soQuery.data)) {
+    // Without this guard, a failed load (network error, expired session,
+    // 404) fell through to the same form the create route renders, with
+    // every field silently blank/default — indistinguishable from actually
+    // creating a new Dispatch Order. Mirrors SaleOrderDetailPage's identical
+    // guard for the same query.
+    return <EmptyState title="Unable to load this dispatch order" tone="error" />;
+  }
   if (isEdit && soQuery.data?.isLocked) {
     return (
       <EmptyState
@@ -353,50 +377,59 @@ export function SaleOrderFormPage() {
                     <div className="space-y-4">
                       <FormGrid layout="content">
                         <TextField
+                          id={`dest-${dest.clientKey}-label`}
                           label="Label"
                           value={dest.label}
                           onChange={(e) => updateDestination(dest.clientKey, { label: e.target.value })}
                         />
                         <TextField
+                          id={`dest-${dest.clientKey}-contact-name`}
                           label="Contact Name"
                           value={dest.contactName}
                           onChange={(e) => updateDestination(dest.clientKey, { contactName: e.target.value })}
                         />
                         <TextField
+                          id={`dest-${dest.clientKey}-contact-phone`}
                           label="Contact Phone"
                           value={dest.contactPhone}
                           onChange={(e) => updateDestination(dest.clientKey, { contactPhone: e.target.value })}
                         />
                         <TextField
+                          id={`dest-${dest.clientKey}-address-line-1`}
                           label="Address Line 1"
                           value={dest.addressLine1}
                           onChange={(e) => updateDestination(dest.clientKey, { addressLine1: e.target.value })}
                           required
                         />
                         <TextField
+                          id={`dest-${dest.clientKey}-address-line-2`}
                           label="Address Line 2"
                           value={dest.addressLine2}
                           onChange={(e) => updateDestination(dest.clientKey, { addressLine2: e.target.value })}
                         />
                         <TextField
+                          id={`dest-${dest.clientKey}-city`}
                           label="City"
                           value={dest.city}
                           onChange={(e) => updateDestination(dest.clientKey, { city: e.target.value })}
                           required
                         />
                         <TextField
+                          id={`dest-${dest.clientKey}-state`}
                           label="State"
                           value={dest.state}
                           onChange={(e) => updateDestination(dest.clientKey, { state: e.target.value })}
                           required
                         />
                         <TextField
+                          id={`dest-${dest.clientKey}-country`}
                           label="Country"
                           value={dest.country}
                           onChange={(e) => updateDestination(dest.clientKey, { country: e.target.value })}
                           required
                         />
                         <TextField
+                          id={`dest-${dest.clientKey}-postal-code`}
                           label="Postal Code"
                           value={dest.postalCode}
                           onChange={(e) => updateDestination(dest.clientKey, { postalCode: e.target.value })}
@@ -409,6 +442,7 @@ export function SaleOrderFormPage() {
                           return (
                             <div key={line.key} className="flex items-end gap-2">
                               <SelectField
+                                id={`line-${line.key}-style-size`}
                                 label="Style / Size"
                                 value={line.styleId && line.sizeId ? `${line.styleId}:${line.sizeId}` : ''}
                                 onValueChange={(value) => {
@@ -425,6 +459,7 @@ export function SaleOrderFormPage() {
                                 ))}
                               </SelectField>
                               <TextField
+                                id={`line-${line.key}-quantity`}
                                 label="Quantity"
                                 type="number"
                                 min={1}

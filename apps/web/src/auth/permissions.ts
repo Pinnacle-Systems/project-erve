@@ -137,6 +137,19 @@ export const QA_VIEW_ROLES = [
 // here so AppRoutes.tsx's existing import site doesn't need to change.
 export { DISPATCH_ORDER_VIEW_ROLES, DISPATCH_ORDER_AUDIT_VIEW_ROLES, DISPATCH_ORDER_MUTATION_ROLES };
 
+// Web-only UI-visibility concern (mirrors JOB_ORDER_FACTORY_FILTER_ROLES
+// above) — not a server permission, since the backend already scopes
+// FACTORY_USER's list to its own Factory regardless of filter params sent.
+// FACTORY_USER is excluded: it is read-only, hard-scoped to a single
+// Factory server-side, so a Factory filter is meaningless and a Distributor
+// filter is a merchandiser-oriented control it has no operational need for.
+export const DISPATCH_ORDER_FILTER_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'ACCOUNTANT',
+] as const satisfies readonly Role[];
+
 function hasRole(user: AuthUser | null | undefined, roles: readonly Role[]): boolean {
   if (!user) return false;
   return roles.some((role) => user.roles.includes(role));
@@ -203,6 +216,9 @@ export const canViewQa = (user: AuthUser | null | undefined) => hasRole(user, QA
 
 export const canViewDispatchOrders = (user: AuthUser | null | undefined) =>
   hasRole(user, DISPATCH_ORDER_VIEW_ROLES);
+
+export const canFilterDispatchOrders = (user: AuthUser | null | undefined) =>
+  hasRole(user, DISPATCH_ORDER_FILTER_ROLES);
 
 export const canViewDispatchOrderAudit = (user: AuthUser | null | undefined) =>
   hasRole(user, DISPATCH_ORDER_AUDIT_VIEW_ROLES);
