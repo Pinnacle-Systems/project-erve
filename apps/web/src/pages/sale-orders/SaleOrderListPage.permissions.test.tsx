@@ -18,6 +18,7 @@ beforeEach(() => {
   root = createRoot(container);
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/distributors') return { data: { data: [] } };
+    if (url === '/factories') return { data: { data: [] } };
     if (url === '/sale-orders') {
       return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
     }
@@ -68,21 +69,30 @@ function hasDistributorFilter(): boolean {
   return container.querySelector('[aria-label="Distributor"]') !== null;
 }
 
+// Dispatch Order Phase 3: DISTRIBUTOR has no Dispatch Order role at all —
+// no Create action, no filters, no list access in practice (route-gated
+// separately; this component-level test covers the in-page affordances).
 describe('SaleOrderListPage Permissions', () => {
-  it('ACCOUNTANT can open the list, but sees no Create action or distributor filter', async () => {
+  it('ACCOUNTANT can open the list, sees the filters (read-only), but no Create action', async () => {
     await renderSaleOrderListPage('ACCOUNTANT');
-    expect(getPageContent()).not.toContain('Create Sale Order');
+    expect(getPageContent()).not.toContain('Create Dispatch Order');
+    expect(hasDistributorFilter()).toBe(true);
+  });
+
+  it('DISTRIBUTOR sees no Create action and no filters', async () => {
+    await renderSaleOrderListPage('DISTRIBUTOR');
+    expect(getPageContent()).not.toContain('Create Dispatch Order');
     expect(hasDistributorFilter()).toBe(false);
   });
 
-  it('DISTRIBUTOR sees the Create action (unchanged)', async () => {
-    await renderSaleOrderListPage('DISTRIBUTOR');
-    expect(getPageContent()).toContain('Create Sale Order');
-  });
-
-  it('MERCHANDISER sees the distributor filter (unchanged)', async () => {
+  it('MERCHANDISER sees both the distributor filter and the Create action', async () => {
     await renderSaleOrderListPage('MERCHANDISER');
     expect(hasDistributorFilter()).toBe(true);
-    expect(getPageContent()).not.toContain('Create Sale Order');
+    expect(getPageContent()).toContain('Create Dispatch Order');
+  });
+
+  it('FACTORY_USER sees the list (scoped server-side to its own Factory) but no Create action', async () => {
+    await renderSaleOrderListPage('FACTORY_USER');
+    expect(getPageContent()).not.toContain('Create Dispatch Order');
   });
 });

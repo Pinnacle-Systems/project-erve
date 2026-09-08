@@ -15,6 +15,9 @@ import {
   canSubmitDistributorReturn,
   canApproveDistributorReturn,
   canReceiveDistributorReturn,
+  DISPATCH_ORDER_VIEW_ROLES,
+  DISPATCH_ORDER_AUDIT_VIEW_ROLES,
+  DISPATCH_ORDER_MUTATION_ROLES,
 } from '@erve/shared';
 
 export const MASTER_DATA_DASHBOARD_SHORTCUT_ROLES = [
@@ -129,24 +132,10 @@ export const QA_VIEW_ROLES = [
   'QA_USER',
 ] as const satisfies readonly Role[];
 
-// ACCOUNTANT is a read-only financial-review addition: it can see the Sale
-// Order list/detail/audit trail (this list) but is deliberately absent from
-// SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES and SALE_ORDER_APPROVE_ROLES below, so
-// it never gets Create/Edit/Submit/Review/Approve/Reject/Cancel/sourcing.
-export const SALE_ORDER_VIEW_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-  'SENIOR_MANAGEMENT',
-  'DISTRIBUTOR',
-  'ACCOUNTANT',
-] as const satisfies readonly Role[];
-
-export const SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES = [
-  'ADMIN',
-  'DISTRIBUTOR',
-] as const satisfies readonly Role[];
-
-export const SALE_ORDER_APPROVE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
+// Dispatch Order Phase 3: role lists now live in @erve/shared's rbac.ts (the
+// single source of truth also used by apps/api's route guards) — re-exported
+// here so AppRoutes.tsx's existing import site doesn't need to change.
+export { DISPATCH_ORDER_VIEW_ROLES, DISPATCH_ORDER_AUDIT_VIEW_ROLES, DISPATCH_ORDER_MUTATION_ROLES };
 
 function hasRole(user: AuthUser | null | undefined, roles: readonly Role[]): boolean {
   if (!user) return false;
@@ -212,16 +201,14 @@ export const canFilterJobOrdersByFactory = (user: AuthUser | null | undefined) =
 
 export const canViewQa = (user: AuthUser | null | undefined) => hasRole(user, QA_VIEW_ROLES);
 
-export const canViewSaleOrders = (user: AuthUser | null | undefined) =>
-  hasRole(user, SALE_ORDER_VIEW_ROLES);
+export const canViewDispatchOrders = (user: AuthUser | null | undefined) =>
+  hasRole(user, DISPATCH_ORDER_VIEW_ROLES);
 
-export const canManageSaleOrdersAsDistributor = (user: AuthUser | null | undefined) =>
-  hasRole(user, SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES);
+export const canViewDispatchOrderAudit = (user: AuthUser | null | undefined) =>
+  hasRole(user, DISPATCH_ORDER_AUDIT_VIEW_ROLES);
 
-export const canApproveSaleOrders = (user: AuthUser | null | undefined) =>
-  hasRole(user, SALE_ORDER_APPROVE_ROLES);
-
-export const canViewSaleOrderInventory = canApproveSaleOrders;
+export const canMutateDispatchOrders = (user: AuthUser | null | undefined) =>
+  hasRole(user, DISPATCH_ORDER_MUTATION_ROLES);
 
 // ---------------------------------------------------------------------------
 // Fulfillment: Factory Packing -> Erve India Consolidation -> Distributor

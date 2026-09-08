@@ -37,11 +37,10 @@ export function FactoryPackingQueuePage() {
   const selectedLines = useMemo(
     () =>
       (queueQuery.data ?? [])
-        .filter((line) => (selectedQty[line.stockAllocationId] ?? '').trim() !== '')
+        .filter((line) => (selectedQty[line.saleOrderLineId] ?? '').trim() !== '')
         .map((line) => ({
           saleOrderLineId: line.saleOrderLineId,
-          stockAllocationId: line.stockAllocationId,
-          packedQuantity: Number(selectedQty[line.stockAllocationId]),
+          packedQuantity: Number(selectedQty[line.saleOrderLineId]),
           saleOrderId: line.saleOrderId,
         })),
     [queueQuery.data, selectedQty],
@@ -57,9 +56,8 @@ export function FactoryPackingQueuePage() {
       const saleOrderId = [...distinctSaleOrders][0]!;
       const res = await apiClient.post<ApiSuccessResponse<{ id: string }>>('/factory-dispatches', {
         saleOrderId,
-        lines: selectedLines.map(({ saleOrderLineId, stockAllocationId, packedQuantity }) => ({
+        lines: selectedLines.map(({ saleOrderLineId, packedQuantity }) => ({
           saleOrderLineId,
-          stockAllocationId,
           packedQuantity,
         })),
       });
@@ -91,7 +89,7 @@ export function FactoryPackingQueuePage() {
 
       <Panel title="Awaiting Packing" padding="none">
         <DataTable
-          rowKey="stockAllocationId"
+          rowKey="saleOrderLineId"
           data={queueQuery.data ?? []}
           emptyState={<EmptyState title="Nothing to pack" description="No approved goods are currently allocated from your Factory." />}
           columns={[
@@ -114,9 +112,9 @@ export function FactoryPackingQueuePage() {
                   max={r.remainingQuantity}
                   density="compact"
                   width="xs"
-                  value={selectedQty[r.stockAllocationId] ?? ''}
+                  value={selectedQty[r.saleOrderLineId] ?? ''}
                   onChange={(e) =>
-                    setSelectedQty((current) => ({ ...current, [r.stockAllocationId]: e.target.value }))
+                    setSelectedQty((current) => ({ ...current, [r.saleOrderLineId]: e.target.value }))
                   }
                 />
               ),

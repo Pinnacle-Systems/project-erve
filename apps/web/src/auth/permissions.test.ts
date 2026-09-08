@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AuthUser, Role } from '@erve/types';
 import {
-  canApproveSaleOrders,
   canCreateJobOrders,
   canFilterJobOrdersByFactory,
   canManagePriceLists,
@@ -9,9 +8,11 @@ import {
   canManageDistributorMaster,
   canManageProcessFlows,
   canManagePurchaseOrders,
-  canManageSaleOrdersAsDistributor,
+  canMutateDispatchOrders,
   canManageSizes,
   canManageUsers,
+  canViewDispatchOrderAudit,
+  canViewDispatchOrders,
   canViewDistributorMaster,
   canViewFactories,
   canViewJobOrders,
@@ -19,7 +20,6 @@ import {
   canViewPriceLists,
   canViewPurchaseOrders,
   canViewQa,
-  canViewSaleOrders,
   canViewStyles,
 } from './permissions.js';
 
@@ -169,25 +169,25 @@ describe('permissions', () => {
     });
   });
 
-  describe('sale-order authorization matrix', () => {
-    it('grants Sale Order view to ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, DISTRIBUTOR, ACCOUNTANT', () => {
-      const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR', 'ACCOUNTANT'];
+  describe('dispatch-order authorization matrix', () => {
+    it('grants Dispatch Order view to ADMIN, MERCHANDISER, FACTORY_USER, SENIOR_MANAGEMENT, ACCOUNTANT — never DISTRIBUTOR', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'FACTORY_USER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT'];
       for (const role of ALL_ROLES) {
-        expect(canViewSaleOrders(mockUser(role))).toBe(allowed.includes(role));
+        expect(canViewDispatchOrders(mockUser(role))).toBe(allowed.includes(role));
       }
     });
 
-    it('grants Sale Order distributor-manage (create/edit/submit) only to ADMIN, DISTRIBUTOR — not ACCOUNTANT', () => {
-      const allowed: Role[] = ['ADMIN', 'DISTRIBUTOR'];
+    it('grants Dispatch Order audit view only to ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, ACCOUNTANT — never FACTORY_USER or DISTRIBUTOR', () => {
+      const allowed: Role[] = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT'];
       for (const role of ALL_ROLES) {
-        expect(canManageSaleOrdersAsDistributor(mockUser(role))).toBe(allowed.includes(role));
+        expect(canViewDispatchOrderAudit(mockUser(role))).toBe(allowed.includes(role));
       }
     });
 
-    it('grants Sale Order review/approve only to ADMIN, MERCHANDISER — not ACCOUNTANT or SENIOR_MANAGEMENT', () => {
+    it('grants Dispatch Order create/edit only to ADMIN, MERCHANDISER — never DISTRIBUTOR', () => {
       const allowed: Role[] = ['ADMIN', 'MERCHANDISER'];
       for (const role of ALL_ROLES) {
-        expect(canApproveSaleOrders(mockUser(role))).toBe(allowed.includes(role));
+        expect(canMutateDispatchOrders(mockUser(role))).toBe(allowed.includes(role));
       }
     });
   });

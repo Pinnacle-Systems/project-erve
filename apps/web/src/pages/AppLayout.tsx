@@ -35,11 +35,11 @@ import {
   canViewFactoryDispatches,
   canViewInvoiceHandoffs,
   canViewSaleOrReturnPositions,
+  canViewDispatchOrders,
   canViewDistributorSalesReports,
   canNavigateToJobOrders,
   canViewPriceLists,
   canViewPurchaseOrders,
-  canViewSaleOrders,
   canViewStyles,
 } from '../auth/permissions.js';
 
@@ -91,8 +91,8 @@ export function AppLayout() {
         ...(canNavigateToJobOrders(user)
           ? [{ to: '/job-orders', label: 'Job Orders', icon: Hammer }]
           : []),
-        ...(canViewSaleOrders(user)
-          ? [{ to: '/sale-orders', label: 'Sale Orders', icon: ShoppingCart }]
+        ...(canViewDispatchOrders(user)
+          ? [{ to: '/sale-orders', label: 'Dispatch Orders', icon: ShoppingCart }]
           : []),
       ],
     },

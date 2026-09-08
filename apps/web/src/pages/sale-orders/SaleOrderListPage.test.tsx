@@ -64,6 +64,7 @@ function saleOrderSearchCalls(): Array<string | undefined> {
 async function renderPage() {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/distributors') return { data: { data: [] } };
+    if (url === '/factories') return { data: { data: [] } };
     if (url === '/sale-orders') {
       return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
     }
@@ -90,7 +91,7 @@ describe('SaleOrderListPage search debounce', () => {
 
     const requestsBeforeTyping = saleOrderSearchCalls().length;
     const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search Sale Order number"]',
+      'input[placeholder="Search Dispatch Order number"]',
     )!;
 
     vi.useFakeTimers();

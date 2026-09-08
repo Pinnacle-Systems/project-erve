@@ -71,8 +71,8 @@ import {
   PURCHASE_ORDER_MANAGE_ROLES,
   PURCHASE_ORDER_VIEW_ROLES,
   QA_VIEW_ROLES,
-  SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES,
-  SALE_ORDER_VIEW_ROLES,
+  DISPATCH_ORDER_MUTATION_ROLES,
+  DISPATCH_ORDER_VIEW_ROLES,
   SIZE_MANAGE_ROLES,
   SEASON_MANAGE_ROLES,
   STYLE_MANAGE_ROLES,
@@ -404,7 +404,7 @@ export function AppRoutes() {
       <Route
         path="/sale-orders"
         element={
-          <RoleRoute allowed={SALE_ORDER_VIEW_ROLES}>
+          <RoleRoute allowed={DISPATCH_ORDER_VIEW_ROLES}>
             <AppLayout />
           </RoleRoute>
         }
@@ -412,7 +412,7 @@ export function AppRoutes() {
         <Route
           index
           element={
-            <RoleRoute allowed={SALE_ORDER_VIEW_ROLES}>
+            <RoleRoute allowed={DISPATCH_ORDER_VIEW_ROLES}>
               <SaleOrderListPage />
             </RoleRoute>
           }
@@ -420,7 +420,7 @@ export function AppRoutes() {
         <Route
           path="new"
           element={
-            <RoleRoute allowed={SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES}>
+            <RoleRoute allowed={DISPATCH_ORDER_MUTATION_ROLES}>
               <SaleOrderFormPage />
             </RoleRoute>
           }
@@ -428,7 +428,7 @@ export function AppRoutes() {
         <Route
           path=":id"
           element={
-            <RoleRoute allowed={SALE_ORDER_VIEW_ROLES}>
+            <RoleRoute allowed={DISPATCH_ORDER_VIEW_ROLES}>
               <SaleOrderDetailPage />
             </RoleRoute>
           }
@@ -436,7 +436,7 @@ export function AppRoutes() {
         <Route
           path=":id/edit"
           element={
-            <RoleRoute allowed={SALE_ORDER_DISTRIBUTOR_MANAGE_ROLES}>
+            <RoleRoute allowed={DISPATCH_ORDER_MUTATION_ROLES}>
               <SaleOrderFormPage />
             </RoleRoute>
           }

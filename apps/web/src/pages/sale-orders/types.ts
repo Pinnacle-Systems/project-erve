@@ -1,19 +1,19 @@
-import type {
-  EligibleStockLine,
-  GlobalInventoryLine,
-  RequestableCatalogLine,
-  SaleOrderAllocationView,
-  SaleOrderAuditEntry,
-  SaleOrderDetail,
-  SaleOrderLineView,
-} from '@erve/types';
-export type { SaleOrderStatus, StockAllocationSource } from '@erve/types';
+import type { SaleOrderAuditEntry, SaleOrderDestinationView, SaleOrderDetail, SaleOrderLineView } from '@erve/types';
+export type { SaleOrderStatus, DispatchOrderFulfillmentStage, PooledFactoryInventoryLine } from '@erve/types';
 export type SaleOrder = SaleOrderDetail;
 export type SaleOrderLine = SaleOrderLineView;
-export type SaleOrderAllocation = SaleOrderAllocationView;
-export type { EligibleStockLine, GlobalInventoryLine, RequestableCatalogLine, SaleOrderAuditEntry };
+export type SaleOrderDestination = SaleOrderDestinationView;
+export type { SaleOrderAuditEntry };
 
 export interface Distributor {
+  id: string;
+  code: string;
+  name: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  purchaseMode?: 'OUTRIGHT' | 'SALE_RETURN';
+}
+
+export interface Factory {
   id: string;
   code: string;
   name: string;

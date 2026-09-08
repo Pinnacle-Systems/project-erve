@@ -186,7 +186,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(headings).not.toContain('Master Data');
   });
 
-  it('ACCOUNTANT sees Price Lists and Sale Orders but no other Master Data links', async () => {
+  it('ACCOUNTANT sees Price Lists and Dispatch Orders but no other Master Data links', async () => {
     await renderAppLayout(['ACCOUNTANT']);
     const labels = sidebarLinkLabels();
 
@@ -198,10 +198,14 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).toContain('Price Lists');
     expect(labels).not.toContain('Order Sheets');
     expect(labels).not.toContain('Job Orders');
-    expect(labels).toContain('Sale Orders');
+    expect(labels).toContain('Dispatch Orders');
   });
 
-  it('DISTRIBUTOR sees Sale Orders only — no master-data browsing, no Order Sheet planning', async () => {
+  // Dispatch Order Phase 3: DISTRIBUTOR has no Dispatch Order role at all
+  // (stock is pooled and allocated by Merchandising, not requested by a
+  // Distributor) — it retains only its post-dispatch Fulfillment/Actual
+  // Sales access, which is separate and unaffected by this phase.
+  it('DISTRIBUTOR sees no master-data browsing, no Order Sheet/Job Order/Dispatch Order access at all', async () => {
     await renderAppLayout(['DISTRIBUTOR']);
     const labels = sidebarLinkLabels();
 
@@ -220,14 +224,18 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('Order Sheets');
     expect(labels).not.toContain('+ New PO');
     expect(labels).not.toContain('Job Orders');
-    expect(labels).toContain('Sale Orders');
+    expect(labels).not.toContain('Dispatch Orders');
   });
 
-  it('does not render an empty Master Data section heading for DISTRIBUTOR', async () => {
+  it('does not render an empty Orders or Master Data section heading for DISTRIBUTOR', async () => {
     await renderAppLayout(['DISTRIBUTOR']);
     const text = sidebarTextContent();
 
     expect(text).not.toContain('Master Data');
-    expect(text).toContain('Orders');
+    // No Order Sheet/Job Order/Dispatch Order access left — the "Orders"
+    // heading itself must not render empty, mirroring the Master Data
+    // suppression rule.
+    expect(text).not.toContain('Orders');
+    expect(text).toContain('Fulfillment');
   });
 });

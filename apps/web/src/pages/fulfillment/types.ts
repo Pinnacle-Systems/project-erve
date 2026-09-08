@@ -23,9 +23,8 @@ import type {
   InvoiceHandoffStatus,
   InvoiceHandoffView,
   PurchaseMode,
-  SaleOrderFulfillmentLineProgress,
-  SaleOrderFulfillmentStage,
-  SaleOrderFulfillmentSummary,
+  DispatchOrderFulfillmentStage,
+  DispatchOrderFulfillmentSummary,
   SaleOrReturnPositionRow,
 } from '@erve/types';
 
@@ -54,9 +53,8 @@ export type {
   InvoiceHandoffStatus,
   InvoiceHandoffView,
   PurchaseMode,
-  SaleOrderFulfillmentLineProgress,
-  SaleOrderFulfillmentStage,
-  SaleOrderFulfillmentSummary,
+  DispatchOrderFulfillmentStage,
+  DispatchOrderFulfillmentSummary,
   SaleOrReturnPositionRow,
 };
 
