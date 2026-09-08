@@ -51,13 +51,8 @@ const returnInclude = {
       erveDispatch: { select: { id: true, erveDispatchNumber: true } },
       saleOrderLine: {
         select: {
-          purchaseOrderLineSize: {
-            select: {
-              sizeId: true,
-              size: { select: { code: true, label: true } },
-              purchaseOrderLine: { select: { style: { select: { styleNumber: true, styleName: true } } } },
-            },
-          },
+          style: { select: { styleNumber: true, styleName: true } },
+          size: { select: { code: true, label: true } },
         },
       },
       returnedStockLot: { select: { id: true, quantity: true } },
@@ -95,10 +90,10 @@ function toReturnView(record: ReturnRecord) {
       id: line.id,
       erveDispatch: line.erveDispatch,
       saleOrderLineId: line.saleOrderLineId,
-      styleNumber: line.saleOrderLine.purchaseOrderLineSize.purchaseOrderLine.style.styleNumber,
-      styleName: line.saleOrderLine.purchaseOrderLineSize.purchaseOrderLine.style.styleName,
-      sizeCode: line.saleOrderLine.purchaseOrderLineSize.size.code,
-      sizeLabel: line.saleOrderLine.purchaseOrderLineSize.size.label,
+      styleNumber: line.saleOrderLine.style.styleNumber,
+      styleName: line.saleOrderLine.style.styleName,
+      sizeCode: line.saleOrderLine.size.code,
+      sizeLabel: line.saleOrderLine.size.label,
       requestedQuantity: line.requestedQuantity,
       approvedQuantity: line.approvedQuantity,
       receivedQuantity: line.receivedQuantity,
@@ -199,11 +194,11 @@ export async function submitDistributorReturn(actor: CurrentUser, input: SubmitD
       where: { id: { in: [...new Set(input.lines.map((l) => l.saleOrderLineId))] } },
       select: {
         id: true,
-        purchaseOrderLineSize: { select: { purchaseOrderLine: { select: { purchaseOrder: { select: { purchaseMode: true } } } } } },
+        saleOrder: { select: { distributor: { select: { purchaseMode: true } } } },
       },
     });
     const modeBySaleOrderLineId = new Map(
-      saleOrderLineModes.map((sol) => [sol.id, sol.purchaseOrderLineSize.purchaseOrderLine.purchaseOrder.purchaseMode]),
+      saleOrderLineModes.map((sol) => [sol.id, sol.saleOrder.distributor.purchaseMode]),
     );
 
     for (const line of input.lines) {

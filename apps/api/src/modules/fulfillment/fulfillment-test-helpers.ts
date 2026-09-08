@@ -3,7 +3,7 @@ import { createId } from '@erve/shared';
 import type { Role } from '@erve/types';
 import type { Express } from 'express';
 import { prisma } from '../../db/prisma.js';
-import { createReleasedQaStock, createTestFactory, createTestUserAndToken, type ReleasedQaStock } from '../../test/helpers.js';
+import { createReleasedQaStock, createTestUserAndToken, type ReleasedQaStock } from '../../test/helpers.js';
 
 export async function createRoleToken(role: Role) {
   const { userId, token } = await createTestUserAndToken({
@@ -56,11 +56,13 @@ export async function createFactoryUserToken(factoryId: string) {
 }
 
 /**
- * Builds a Sale Order approved for `quantity`, sourced entirely from ONE
- * Factory's released stock via the normal DISTRIBUTOR_REQUEST submit path.
- * `purchaseMode` controls the COMMERCIAL Purchase Order backing this Sale
- * Order's single line — see invoice-handoff.service.ts for why this (not the
- * physical StockAllocation source) is what drives invoice eligibility.
+ * Dispatch Order Phase 3: creation itself is the sole allocation point —
+ * builds a Dispatch Order for `quantity`, sourced entirely from ONE
+ * Factory's pooled released stock, as a MERCHANDISER (no distributor
+ * submit/review/approve workflow exists any more). `purchaseMode` controls
+ * the Distributor's own purchaseMode (Purchase Mode is Distributor-owned —
+ * see invoice-handoff.service.ts for why this, not physical StockAllocation
+ * source, drives invoice eligibility).
  */
 export async function createSingleFactoryApprovedSaleOrder(
   app: Express,
@@ -68,127 +70,112 @@ export async function createSingleFactoryApprovedSaleOrder(
   purchaseMode: 'OUTRIGHT' | 'SALE_RETURN' = 'OUTRIGHT',
 ) {
   const stock = await createReleasedQaStock({ quantity, purchaseMode });
-  const distributorToken = await createDistributorToken(stock.distributorId);
+  const { token: merchToken } = await createRoleToken('MERCHANDISER');
   const created = await request(app)
     .post('/sale-orders')
-    .set('Authorization', `Bearer ${distributorToken}`)
-    .send({
-      distributorId: stock.distributorId,
-      soDate: '2026-06-30',
-      lines: [{ purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: quantity }],
-    })
-    .expect(201);
-  const { token: merchToken } = await createRoleToken('MERCHANDISER');
-  const submitted = await request(app)
-    .post(`/sale-orders/${created.body.data.id}/actions/submit`)
-    .set('Authorization', `Bearer ${distributorToken}`)
-    .set('Idempotency-Key', createId())
-    .send({ expectedVersion: created.body.data.version })
-    .expect(200);
-  const line = submitted.body.data.lines[0];
-  const approved = await request(app)
-    .post(`/sale-orders/${submitted.body.data.id}/actions/approve`)
     .set('Authorization', `Bearer ${merchToken}`)
     .set('Idempotency-Key', createId())
-    .send({ expectedVersion: submitted.body.data.version, lines: [{ saleOrderLineId: line.id, approvedQuantity: quantity }] })
-    .expect(200);
+    .send({
+      distributorId: stock.distributorId,
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      destinations: [
+        { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
+      ],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity }],
+    })
+    .expect(201);
 
-  const saleOrder = approved.body.data;
-  const allocation = saleOrder.lines[0].allocations[0];
-  return { stock, distributorToken, merchToken, saleOrder, saleOrderLineId: line.id, stockAllocationId: allocation.id as string };
+  const saleOrder = created.body.data;
+  const line = saleOrder.lines[0];
+  const allocation = await prisma.stockAllocation.findFirstOrThrow({
+    where: { saleOrderLineId: line.id, status: 'ACTIVE' },
+  });
+  const distributorToken = await createDistributorToken(stock.distributorId);
+
+  return {
+    stock,
+    distributorToken,
+    merchToken,
+    saleOrder,
+    saleOrderLineId: line.id as string,
+    stockAllocationId: allocation.id,
+  };
 }
 
 export interface FixtureSaleOrder {
   id: string;
   version: number;
   status: string;
-  lines: Array<{ id: string; allocations: Array<{ id: string; quantity: number }> }>;
+  lines: Array<{ id: string; quantity: number }>;
 }
 
-export interface TwoFactorySaleOrder {
+export interface TwoBatchSaleOrder {
   saleOrder: FixtureSaleOrder;
   saleOrderLineId: string;
   distributorToken: string;
   merchToken: string;
-  factoryA: { id: string; stock: ReleasedQaStock; stockAllocationId: string; quantity: number };
-  factoryB: { id: string; stock: ReleasedQaStock; stockAllocationId: string; quantity: number };
+  factoryId: string;
+  batchA: { stock: ReleasedQaStock; stockAllocationId: string; quantity: number };
+  batchB: { stock: ReleasedQaStock; stockAllocationId: string; quantity: number };
 }
 
 /**
- * The acceptance-scenario fixture: one Sale Order line whose approved
- * quantity is sourced from TWO different Factories' released stock — Factory
- * A via the distributor's own submit-time DISTRIBUTOR_REQUEST allocation,
- * Factory B via a same-distributor MERCHANDISER_ADJUSTMENT sourced at
- * approval time from a different released batch. Both release lines share
- * the same distributor/style/size but are independent PO line/sizes (a
- * distributor's stock commonly spans multiple Job Orders/Factories for the
- * same style/size — see the fulfillment audit Q1-3).
+ * One Dispatch Order line whose full quantity is sourced from TWO different
+ * Job Orders' QA-released stock at the SAME Factory (a Dispatch Order is
+ * always single-factory by construction — see the Phase 3 plan; the old
+ * cross-FACTORY sourcing-within-one-order scenario this fixture used to
+ * exercise no longer exists). Exercises the deterministic oldest-release-
+ * first allocation planner spanning multiple QaReleaseLines.
  */
-export async function createTwoFactoryApprovedSaleOrder(
+export async function createTwoBatchApprovedSaleOrder(
   app: Express,
   quantityA: number,
   quantityB: number,
-): Promise<TwoFactorySaleOrder> {
-  const factoryA = await createTestFactory();
-  const factoryB = await createTestFactory();
-  const stockA = await createReleasedQaStock({ factoryId: factoryA.id, quantity: quantityA });
+): Promise<TwoBatchSaleOrder> {
+  const stockA = await createReleasedQaStock({ quantity: quantityA, releasedAt: new Date('2026-01-01') });
   const stockB = await createReleasedQaStock({
     distributorId: stockA.distributorId,
     styleId: stockA.styleId,
     sizeId: stockA.sizeId,
-    factoryId: factoryB.id,
+    factoryId: stockA.factoryId,
     quantity: quantityB,
+    releasedAt: new Date('2026-02-01'),
   });
 
-  const distributorToken = await createDistributorToken(stockA.distributorId);
+  const { token: merchToken } = await createRoleToken('MERCHANDISER');
   const totalQuantity = quantityA + quantityB;
   const created = await request(app)
     .post('/sale-orders')
-    .set('Authorization', `Bearer ${distributorToken}`)
-    .send({
-      distributorId: stockA.distributorId,
-      soDate: '2026-06-30',
-      lines: [{ purchaseOrderLineSizeId: stockA.purchaseOrderLineSizeId, requestedQuantity: totalQuantity }],
-    })
-    .expect(201);
-  const submitted = await request(app)
-    .post(`/sale-orders/${created.body.data.id}/actions/submit`)
-    .set('Authorization', `Bearer ${distributorToken}`)
-    .set('Idempotency-Key', createId())
-    .send({ expectedVersion: created.body.data.version })
-    .expect(200);
-  // Submit best-effort-allocates up to quantityA from the distributor's own
-  // (Factory A backed) release line — matches DISTRIBUTOR_REQUEST semantics.
-  const line = submitted.body.data.lines[0];
-
-  const { token: merchToken } = await createRoleToken('MERCHANDISER');
-  const approved = await request(app)
-    .post(`/sale-orders/${submitted.body.data.id}/actions/approve`)
     .set('Authorization', `Bearer ${merchToken}`)
     .set('Idempotency-Key', createId())
     .send({
-      expectedVersion: submitted.body.data.version,
-      lines: [
-        {
-          saleOrderLineId: line.id,
-          approvedQuantity: totalQuantity,
-          sourcing: [{ qaReleaseLineId: stockB.qaReleaseLineId, quantity: quantityB }],
-        },
+      distributorId: stockA.distributorId,
+      factoryId: stockA.factoryId,
+      soDate: '2026-06-30',
+      destinations: [
+        { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
       ],
+      lines: [{ destinationClientKey: 'd1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: totalQuantity }],
     })
-    .expect(200);
+    .expect(201);
 
-  const saleOrder = approved.body.data;
-  const allocations: Array<{ id: string; quantity: number }> = saleOrder.lines[0].allocations;
-  const allocationA = allocations.find((a) => a.quantity === quantityA)!;
-  const allocationB = allocations.find((a) => a.quantity === quantityB)!;
+  const saleOrder = created.body.data;
+  const line = saleOrder.lines[0];
+  const allocations = await prisma.stockAllocation.findMany({
+    where: { saleOrderLineId: line.id, status: 'ACTIVE' },
+  });
+  const allocationA = allocations.find((a) => a.qaReleaseLineId === stockA.qaReleaseLineId)!;
+  const allocationB = allocations.find((a) => a.qaReleaseLineId === stockB.qaReleaseLineId)!;
+  const distributorToken = await createDistributorToken(stockA.distributorId);
 
   return {
     saleOrder,
-    saleOrderLineId: line.id,
+    saleOrderLineId: line.id as string,
     distributorToken,
     merchToken,
-    factoryA: { id: factoryA.id, stock: stockA, stockAllocationId: allocationA.id, quantity: quantityA },
-    factoryB: { id: factoryB.id, stock: stockB, stockAllocationId: allocationB.id, quantity: quantityB },
+    factoryId: stockA.factoryId,
+    batchA: { stock: stockA, stockAllocationId: allocationA.id, quantity: quantityA },
+    batchB: { stock: stockB, stockAllocationId: allocationB.id, quantity: quantityB },
   };
 }

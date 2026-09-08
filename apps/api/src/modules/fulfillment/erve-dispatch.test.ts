@@ -7,7 +7,6 @@ import {
   createFactoryUserToken,
   createRoleToken,
   createSingleFactoryApprovedSaleOrder,
-  createTwoFactoryApprovedSaleOrder,
 } from './fulfillment-test-helpers.js';
 
 const app = createApp();
@@ -18,13 +17,13 @@ async function packAndFinalize(
   factoryToken: string,
   saleOrderId: string,
   saleOrderLineId: string,
-  stockAllocationId: string,
+  _stockAllocationId: string,
   quantity: number,
 ) {
   const created = await request(app)
     .post('/factory-dispatches')
     .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ saleOrderId, lines: [{ saleOrderLineId, stockAllocationId, packedQuantity: quantity }] })
+    .send({ saleOrderId, lines: [{ saleOrderLineId, packedQuantity: quantity }] })
     .expect(201);
   const lineId = created.body.data.lines[0].id;
   await request(app)
@@ -64,7 +63,7 @@ describe('Erve Packing List — consolidation', () => {
     const draft = await request(app)
       .post('/factory-dispatches')
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, lines: [{ saleOrderLineId: fixture.saleOrderLineId, stockAllocationId: fixture.stockAllocationId, packedQuantity: 20 }] })
+      .send({ saleOrderId: fixture.saleOrder.id, lines: [{ saleOrderLineId: fixture.saleOrderLineId, packedQuantity: 20 }] })
       .expect(201);
 
     await request(app)
@@ -90,25 +89,6 @@ describe('Erve Packing List — consolidation', () => {
       .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [dispatch.id] })
       .expect(409);
-  });
-
-  it('consolidates finalized dispatches from two different Factories into the same Sale Order\'s packing flow', async () => {
-    const fixture = await createTwoFactoryApprovedSaleOrder(app, 60, 40);
-    const factoryAToken = await createFactoryUserToken(fixture.factoryA.id);
-    const factoryBToken = await createFactoryUserToken(fixture.factoryB.id);
-    const dispatchA = await packAndFinalize(factoryAToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.factoryA.stockAllocationId, 60);
-    const dispatchB = await packAndFinalize(factoryBToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.factoryB.stockAllocationId, 40);
-
-    const res = await request(app)
-      .post('/erve-packing-lists')
-      .set('Authorization', `Bearer ${fixture.merchToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [dispatchA.id, dispatchB.id] })
-      .expect(201);
-
-    expect(res.body.data.sources.map((s: { factory: { id: string } }) => s.factory.id).sort()).toEqual(
-      [fixture.factoryA.id, fixture.factoryB.id].sort(),
-    );
-    expect(res.body.data.totalQuantity).toBe(100);
   });
 
   it('forbids FACTORY_USER from viewing Erve Packing List detail (cross-Factory provenance)', async () => {
@@ -174,7 +154,7 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
       .expect(409);
   });
 
-  it('full dispatch of the only approved line automatically sets the Sale Order FULFILLED and populates fulfilledAt/fulfilledBy', async () => {
+  it('full dispatch of the only line moves the Dispatch Order\'s fulfillment stage to ERVE_DISPATCHED (no persisted status change)', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
     const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
@@ -191,52 +171,14 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
       .expect(201);
 
     const order = await prisma.saleOrder.findUniqueOrThrow({ where: { id: fixture.saleOrder.id } });
-    expect(order.status).toBe('FULFILLED');
-    expect(order.fulfilledAt).not.toBeNull();
-    expect(order.fulfilledById).not.toBeNull();
-  });
+    expect(order.status).toBe('ACTIVE'); // Dispatch Order Phase 3: no persisted workflow status change
 
-  it('partial dispatch across two Factories/packing lists leaves the Sale Order APPROVED until the second dispatch, then FULFILLED', async () => {
-    const fixture = await createTwoFactoryApprovedSaleOrder(app, 60, 40);
-    const factoryAToken = await createFactoryUserToken(fixture.factoryA.id);
-    const factoryBToken = await createFactoryUserToken(fixture.factoryB.id);
-
-    const dispatchA = await packAndFinalize(factoryAToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.factoryA.stockAllocationId, 60);
-    const packingListA = await request(app)
-      .post('/erve-packing-lists')
-      .set('Authorization', `Bearer ${fixture.merchToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [dispatchA.id] })
-      .expect(201);
-    await request(app)
-      .post('/erve-dispatches')
-      .set('Authorization', `Bearer ${fixture.merchToken}`)
-      .send({ ervePackingListId: packingListA.body.data.id, dispatchDate: '2026-07-01' })
-      .expect(201);
-
-    let order = await prisma.saleOrder.findUniqueOrThrow({ where: { id: fixture.saleOrder.id } });
-    expect(order.status).toBe('APPROVED');
-
-    const detailAfterFirst = await request(app)
+    const detail = await request(app)
       .get(`/sale-orders/${fixture.saleOrder.id}`)
       .set('Authorization', `Bearer ${fixture.merchToken}`)
       .expect(200);
-    expect(detailAfterFirst.body.data.fulfillment.totalDispatchedQuantity).toBe(60);
-    expect(detailAfterFirst.body.data.fulfillment.stage).toBe('PARTIALLY_DISPATCHED');
-
-    const dispatchB = await packAndFinalize(factoryBToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.factoryB.stockAllocationId, 40);
-    const packingListB = await request(app)
-      .post('/erve-packing-lists')
-      .set('Authorization', `Bearer ${fixture.merchToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [dispatchB.id] })
-      .expect(201);
-    await request(app)
-      .post('/erve-dispatches')
-      .set('Authorization', `Bearer ${fixture.merchToken}`)
-      .send({ ervePackingListId: packingListB.body.data.id, dispatchDate: '2026-07-02' })
-      .expect(201);
-
-    order = await prisma.saleOrder.findUniqueOrThrow({ where: { id: fixture.saleOrder.id } });
-    expect(order.status).toBe('FULFILLED');
+    expect(detail.body.data.fulfillment.stage).toBe('ERVE_DISPATCHED');
+    expect(detail.body.data.fulfillment.totalQuantity).toBe(20);
   });
 
   it('updates LR/transport info via the fallback action without disturbing dispatched status/quantities', async () => {
@@ -368,13 +310,13 @@ describe('Inventory integrity through packing/consolidation/dispatch', () => {
       .send({ ervePackingListId: packingList.body.data.id, dispatchDate: '2026-07-01' })
       .expect(201);
 
-    const eligible = await request(app)
-      .get('/sale-orders/eligible-stock')
-      .query({ distributorId: fixture.stock.distributorId })
-      .set('Authorization', `Bearer ${fixture.distributorToken}`)
+    const pooled = await request(app)
+      .get('/job-orders/pooled-inventory')
+      .query({ factoryId: fixture.stock.factoryId, styleId: fixture.stock.styleId, sizeId: fixture.stock.sizeId })
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .expect(200);
-    const line = eligible.body.data.find(
-      (l: { purchaseOrderLineSizeId: string }) => l.purchaseOrderLineSizeId === fixture.stock.purchaseOrderLineSizeId,
+    const line = pooled.body.data.find(
+      (l: { styleId: string; sizeId: string }) => l.styleId === fixture.stock.styleId && l.sizeId === fixture.stock.sizeId,
     );
     expect(line.availableQuantity).toBe(0);
   });

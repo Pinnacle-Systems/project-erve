@@ -11,7 +11,6 @@ import { allocateDocumentSerial } from '../master-data/document-sequence.service
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { toCompactFinancialYearCode } from '../master-data/financial-year.util.js';
 import { getActiveStyleSizeIds } from '../master-data/style-size.util.js';
-import { SALE_ORDER_STATUSES_BLOCKING_PO_CANCELLATION } from '../sale-orders/sale-order-lifecycle.js';
 
 // ---------------------------------------------------------------------------
 // PO number generation
@@ -84,7 +83,6 @@ function toLineView(line: PORecord['lines'][number]) {
       sizeCode: s.size.code,
       sizeLabel: s.size.label,
       orderedQuantity: s.orderedQuantity,
-      qaPassedQuantity: s.qaPassedQuantity,
       saleOrderedQuantity: s.saleOrderedQuantity,
       dispatchedQuantity: s.dispatchedQuantity,
       deliveredQuantity: s.deliveredQuantity,
@@ -456,12 +454,6 @@ export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
   assertPOViewAccess(actor, preCheck);
 
   await prisma.$transaction(async (tx) => {
-    // Serializes against submitSaleOrder's own purchase-order-{id} advisory
-    // lock (see sale-orders.service.ts) — whichever transaction acquires
-    // this lock first runs to completion (and commits its status change)
-    // before the other observes consistent state, so a PO can never be
-    // cancelled out from under a concurrently-submitting Sale Order (nor can
-    // a Sale Order submit against a PO mid-cancellation).
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`purchase-order-${id}`}))`;
 
     const po = await tx.distributorPurchaseOrder.findUnique({ where: { id } });
@@ -469,22 +461,11 @@ export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
 
     assertOrderSheetMutable(po);
 
-    // Guard: no active/open Sale Order demand may reference this PO — see
-    // sale-order-lifecycle.ts for exactly which statuses count. Cancellation
-    // must fail explicitly here rather than silently leaving those Sale
-    // Orders referencing a now-void Purchase Order.
-    const blockingSaleOrder = await tx.saleOrder.findFirst({
-      where: {
-        status: { in: [...SALE_ORDER_STATUSES_BLOCKING_PO_CANCELLATION] },
-        lines: { some: { purchaseOrderLineSize: { purchaseOrderLine: { purchaseOrderId: id } } } },
-      },
-      select: { id: true },
-    });
-    if (blockingSaleOrder) {
-      throw HttpError.badRequest(
-        'Purchase order cannot be cancelled because it is referenced by one or more active Sale Orders',
-      );
-    }
+    // Dispatch Order Phase 3: a Dispatch Order never references an Order
+    // Sheet/Purchase Order line/size (it allocates pooled Factory+Style+Size
+    // stock only) — the old blocking-guard against a live Sale Order
+    // referencing this PO (see the retired sale-order-lifecycle.ts) no
+    // longer has anything to check.
 
     await tx.distributorPurchaseOrder.update({
       where: { id },

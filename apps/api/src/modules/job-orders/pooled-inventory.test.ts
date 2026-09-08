@@ -3,12 +3,7 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import {
-  createReleasedQaStock,
-  createTestDistributor,
-  createTestUserAndToken,
-  resetDatabase,
-} from '../../test/helpers.js';
+import { createReleasedQaStock, createTestDistributor, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 import { getPooledFactoryInventory } from './pooled-inventory.service.js';
 
 const app = createApp();
@@ -25,44 +20,36 @@ async function createDistributorUser(distributorId: string) {
   return token;
 }
 
-function submitSaleOrder(token: string, id: string, expectedVersion: number) {
-  return request(app)
-    .post(`/sale-orders/${id}/actions/submit`)
-    .set('Authorization', `Bearer ${token}`)
-    .set('Idempotency-Key', createId())
-    .send({ expectedVersion });
+async function createMerchandiserToken() {
+  const { token } = await createTestUserAndToken({
+    email: `merch-${createId()}@test.local`,
+    password: 'pass',
+    roles: ['MERCHANDISER'],
+  });
+  return token;
 }
 
-function cancelSaleOrder(token: string, id: string, expectedVersion: number) {
-  return request(app)
-    .post(`/sale-orders/${id}/actions/cancel`)
-    .set('Authorization', `Bearer ${token}`)
-    .send({ expectedVersion, reason: null });
-}
-
-// Creates a SUBMITTED Sale Order line against `stock`'s own PO line/size,
-// requesting `quantity` — submit best-effort auto-allocates up to whatever
-// is currently available, exactly like the real Sale Order workflow (no
-// direct StockAllocation fixture helper exists, or is needed, on purpose:
-// this exercises the real allocation path).
-async function requestAndAllocate(
+// Dispatch Order Phase 3: creation is the sole allocation point — reserves
+// `quantity` from `stock`'s own pooled Factory+Style+Size stock immediately
+// (no separate submit/approve step exists any more).
+async function createAndAllocate(
   stock: Awaited<ReturnType<typeof createReleasedQaStock>>,
-  distributorToken: string,
+  merchToken: string,
   quantity: number,
 ) {
   const created = await request(app)
     .post('/sale-orders')
-    .set('Authorization', `Bearer ${distributorToken}`)
+    .set('Authorization', `Bearer ${merchToken}`)
+    .set('Idempotency-Key', createId())
     .send({
       distributorId: stock.distributorId,
+      factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      lines: [{ purchaseOrderLineSizeId: stock.purchaseOrderLineSizeId, requestedQuantity: quantity }],
+      destinations: [{ clientKey: 'd1', addressLine1: 'Test Street', city: 'Chennai', state: 'TN', country: 'India' }],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity }],
     })
     .expect(201);
-  const submitted = await submitSaleOrder(distributorToken, created.body.data.id, created.body.data.version).expect(
-    200,
-  );
-  return submitted.body.data;
+  return created.body.data;
 }
 
 describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
@@ -136,14 +123,14 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
 
   it('subtracts every ACTIVE StockAllocation once — never multiplies released quantity by allocation count', async () => {
     const stock = await createReleasedQaStock({ quantity: 100 });
-    const distributorToken = await createDistributorUser(stock.distributorId);
+    const merchToken = await createMerchandiserToken();
 
-    // Two separate allocations (20 + 10) against the SAME release line —
+    // Two separate Dispatch Orders (20 + 10) against the SAME release line —
     // a naive join between QaReleaseLine and StockAllocation would multiply
     // the release line's own quantity once per matching allocation row
     // (100 * 2 = 200, then minus 30 = 170). The correct answer is 70.
-    await requestAndAllocate(stock, distributorToken, 20);
-    await requestAndAllocate(stock, distributorToken, 10);
+    await createAndAllocate(stock, merchToken, 20);
+    await createAndAllocate(stock, merchToken, 10);
 
     const allocationCount = await prisma.stockAllocation.count({
       where: { qaReleaseLineId: stock.qaReleaseLineId, status: 'ACTIVE' },
@@ -159,11 +146,11 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
     expect(rows[0]).toMatchObject({ releasedQuantity: 100, committedQuantity: 30, availableQuantity: 70 });
   });
 
-  it('does not count a RELEASED (cancelled) allocation against pooled availability', async () => {
+  it('does not count a RELEASED (edited-down) allocation against pooled availability', async () => {
     const stock = await createReleasedQaStock({ quantity: 100 });
-    const distributorToken = await createDistributorUser(stock.distributorId);
+    const merchToken = await createMerchandiserToken();
 
-    const saleOrder = await requestAndAllocate(stock, distributorToken, 40);
+    const dispatchOrder = await createAndAllocate(stock, merchToken, 40);
     let rows = await getPooledFactoryInventory(prisma, {
       factoryId: stock.factoryId,
       styleId: stock.styleId,
@@ -171,20 +158,36 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
     });
     expect(rows[0]).toMatchObject({ committedQuantity: 40, availableQuantity: 60 });
 
-    await cancelSaleOrder(distributorToken, saleOrder.id, saleOrder.version).expect(200);
+    // Dispatch Orders cannot be cancelled — editing the quantity down is the
+    // only way stock returns to the pool (no persisted CANCELLED status, no
+    // separate reject/cancel action exists any more). Reducing to a smaller
+    // positive quantity exercises the "excess allocation released back to
+    // the pool" mechanism.
+    const destination = dispatchOrder.destinations[0];
+    await request(app)
+      .patch(`/sale-orders/${dispatchOrder.id}`)
+      .set('Authorization', `Bearer ${merchToken}`)
+      .set('Idempotency-Key', createId())
+      .send({
+        expectedVersion: dispatchOrder.version,
+        destinations: [{ clientKey: destination.id, id: destination.id, ...destination }],
+        lines: [{ id: dispatchOrder.lines[0].id, destinationClientKey: destination.id, styleId: stock.styleId, sizeId: stock.sizeId, quantity: 10 }],
+      })
+      .expect(200);
+
     expect(
       await prisma.stockAllocation.count({ where: { qaReleaseLineId: stock.qaReleaseLineId, status: 'ACTIVE' } }),
-    ).toBe(0);
+    ).toBe(1);
     expect(
       await prisma.stockAllocation.count({ where: { qaReleaseLineId: stock.qaReleaseLineId, status: 'RELEASED' } }),
-    ).toBe(1);
+    ).toBe(0); // partial release decrements quantity in place rather than flipping status
 
     rows = await getPooledFactoryInventory(prisma, {
       factoryId: stock.factoryId,
       styleId: stock.styleId,
       sizeId: stock.sizeId,
     });
-    expect(rows[0]).toMatchObject({ releasedQuantity: 100, committedQuantity: 0, availableQuantity: 100 });
+    expect(rows[0]).toMatchObject({ releasedQuantity: 100, committedQuantity: 10, availableQuantity: 90 });
   });
 });
 

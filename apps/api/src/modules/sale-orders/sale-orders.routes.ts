@@ -1,28 +1,30 @@
 import { Router } from 'express';
-import { z } from 'zod';
+import { DISPATCH_ORDER_AUDIT_VIEW_ROLES, DISPATCH_ORDER_MUTATION_ROLES, DISPATCH_ORDER_VIEW_ROLES } from '@erve/shared';
 import { requireAuth } from '../../auth/auth.middleware.js';
 import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { HttpError } from '../../errors/http-error.js';
 import { successResponse } from '../../utils/response.js';
-import {
-  approveSaleOrderSchema,
-  createSaleOrderSchema,
-  globalInventoryQuerySchema,
-  listSaleOrdersQuerySchema,
-  updateSaleOrderSchema,
-  versionedActionSchema,
-} from './sale-orders.validation.js';
+import { createDispatchOrderSchema, listDispatchOrdersQuerySchema, updateDispatchOrderSchema } from './sale-orders.validation.js';
 import * as saleOrdersService from './sale-orders.service.js';
 
 export const saleOrdersRouter = Router();
 saleOrdersRouter.use(requireAuth);
 
-const canManageAsDistributor = requireRoles('ADMIN', 'DISTRIBUTOR');
-const canView = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR', 'ACCOUNTANT');
-const canReview = requireRoles('ADMIN', 'MERCHANDISER');
-const canCancel = requireRoles('ADMIN', 'DISTRIBUTOR', 'MERCHANDISER');
-const canViewGlobalInventory = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT');
+// Dispatch Order Phase 3 role table (single source of truth: @erve/shared's
+// rbac.ts, also used by apps/web/src/auth/permissions.ts — consolidating
+// what used to be three independently-drifted copies):
+// - DISTRIBUTOR has no Dispatch Order role at all (no create/view/edit).
+// - FACTORY_USER gains read-only list/detail access (server-scoped to its
+//   own mapped Factory — see resolveListFactoryScope/
+//   assertDispatchOrderViewAccess) but never the audit trail, which carries
+//   internal correction/allocation metadata it has no operational need for.
+// - QA_USER has no access.
+// - ADMIN's create/edit rights are unchanged from the old Sale Order
+//   workflow — no new capability granted.
+const canView = requireRoles(...DISPATCH_ORDER_VIEW_ROLES);
+const canViewAudit = requireRoles(...DISPATCH_ORDER_AUDIT_VIEW_ROLES);
+const canMutate = requireRoles(...DISPATCH_ORDER_MUTATION_ROLES);
 
 function idempotencyKey(req: { get(name: string): string | undefined }): string {
   const key = req.get('Idempotency-Key')?.trim();
@@ -32,46 +34,13 @@ function idempotencyKey(req: { get(name: string): string | undefined }): string 
   return key;
 }
 
-const eligibleStockQuerySchema = z.object({ distributorId: z.string().trim().optional() });
-
 // Static routes must be registered before the `/:id` route below — Express
-// would otherwise match "eligible-stock"/"inventory"/"requestable-catalog" as
-// an `:id` value.
-saleOrdersRouter.get(
-  '/eligible-stock',
-  canManageAsDistributor,
-  asyncHandler(async (req, res) => {
-    const query = eligibleStockQuerySchema.parse(req.query);
-    const stock = await saleOrdersService.getEligibleStock(req.user!, query.distributorId);
-    res.status(200).json(successResponse(stock));
-  }),
-);
-
-saleOrdersRouter.get(
-  '/requestable-catalog',
-  canManageAsDistributor,
-  asyncHandler(async (req, res) => {
-    const query = eligibleStockQuerySchema.parse(req.query);
-    const catalog = await saleOrdersService.getRequestableCatalog(req.user!, query.distributorId);
-    res.status(200).json(successResponse(catalog));
-  }),
-);
-
-saleOrdersRouter.get(
-  '/inventory',
-  canViewGlobalInventory,
-  asyncHandler(async (req, res) => {
-    const query = globalInventoryQuerySchema.parse(req.query);
-    const inventory = await saleOrdersService.getGlobalInventoryView(req.user!, query);
-    res.status(200).json(successResponse(inventory));
-  }),
-);
-
+// would otherwise match a literal path segment as an `:id` value.
 saleOrdersRouter.get(
   '/',
   canView,
   asyncHandler(async (req, res) => {
-    const filters = listSaleOrdersQuerySchema.parse(req.query);
+    const filters = listDispatchOrdersQuerySchema.parse(req.query);
     const orders = await saleOrdersService.getSaleOrderList(req.user!, filters);
     res.status(200).json(successResponse(orders));
   }),
@@ -79,10 +48,10 @@ saleOrdersRouter.get(
 
 saleOrdersRouter.post(
   '/',
-  canManageAsDistributor,
+  canMutate,
   asyncHandler(async (req, res) => {
-    const input = createSaleOrderSchema.parse(req.body);
-    const order = await saleOrdersService.createSaleOrder(req.user!, input);
+    const input = createDispatchOrderSchema.parse(req.body);
+    const order = await saleOrdersService.createDispatchOrder(req.user!, input, idempotencyKey(req));
     res.status(201).json(successResponse(order));
   }),
 );
@@ -98,7 +67,7 @@ saleOrdersRouter.get(
 
 saleOrdersRouter.get(
   '/:id/audit',
-  canView,
+  canViewAudit,
   asyncHandler(async (req, res) => {
     const history = await saleOrdersService.getSaleOrderAuditHistory(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(history));
@@ -107,20 +76,10 @@ saleOrdersRouter.get(
 
 saleOrdersRouter.patch(
   '/:id',
-  canManageAsDistributor,
+  canMutate,
   asyncHandler(async (req, res) => {
-    const input = updateSaleOrderSchema.parse(req.body);
-    const order = await saleOrdersService.updateSaleOrderDraft(req.user!, req.params.id! as string, input);
-    res.status(200).json(successResponse(order));
-  }),
-);
-
-saleOrdersRouter.post(
-  '/:id/actions/submit',
-  canManageAsDistributor,
-  asyncHandler(async (req, res) => {
-    const input = versionedActionSchema.parse(req.body);
-    const order = await saleOrdersService.submitSaleOrder(
+    const input = updateDispatchOrderSchema.parse(req.body);
+    const order = await saleOrdersService.updateDispatchOrder(
       req.user!,
       req.params.id! as string,
       input,
@@ -130,52 +89,7 @@ saleOrdersRouter.post(
   }),
 );
 
-saleOrdersRouter.post(
-  '/:id/actions/start-review',
-  canReview,
-  asyncHandler(async (req, res) => {
-    const input = versionedActionSchema.parse(req.body);
-    const order = await saleOrdersService.startReviewSaleOrder(req.user!, req.params.id! as string, input);
-    res.status(200).json(successResponse(order));
-  }),
-);
-
-saleOrdersRouter.post(
-  '/:id/actions/reject',
-  canReview,
-  asyncHandler(async (req, res) => {
-    const input = versionedActionSchema.parse(req.body);
-    const order = await saleOrdersService.rejectSaleOrder(req.user!, req.params.id! as string, input);
-    res.status(200).json(successResponse(order));
-  }),
-);
-
-saleOrdersRouter.post(
-  '/:id/actions/cancel',
-  canCancel,
-  asyncHandler(async (req, res) => {
-    const input = versionedActionSchema.parse(req.body);
-    const order = await saleOrdersService.cancelSaleOrder(req.user!, req.params.id! as string, input);
-    res.status(200).json(successResponse(order));
-  }),
-);
-
-saleOrdersRouter.post(
-  '/:id/actions/approve',
-  canReview,
-  asyncHandler(async (req, res) => {
-    const input = approveSaleOrderSchema.parse(req.body);
-    const order = await saleOrdersService.approveSaleOrder(
-      req.user!,
-      req.params.id! as string,
-      input,
-      idempotencyKey(req),
-    );
-    res.status(200).json(successResponse(order));
-  }),
-);
-
-// The manual "/actions/fulfill" endpoint has been retired — see the comment
-// above sale-orders.service.ts's removed fulfillSaleOrder. New Sale Orders
-// become FULFILLED automatically from POST /erve-dispatches (see
-// erve-dispatch.service.ts recordErveDispatch); there is no manual trigger.
+// The old submit/start-review/reject/cancel/approve workflow routes and the
+// already-retired /actions/fulfill are gone entirely — Dispatch Order
+// creation itself is the sole allocation point (see sale-orders.service.ts),
+// there is no draft/review/approval workflow and no cancellation.

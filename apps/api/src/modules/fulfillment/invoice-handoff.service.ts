@@ -49,19 +49,9 @@ const invoiceHandoffInclude = {
   saleOrderLine: {
     select: {
       id: true,
-      purchaseOrderLineSize: {
-        select: {
-          sizeId: true,
-          size: { select: { code: true, label: true } },
-          purchaseOrderLine: {
-            select: {
-              styleId: true,
-              style: { select: { styleNumber: true, styleName: true } },
-              purchaseOrder: { select: { purchaseMode: true } },
-            },
-          },
-        },
-      },
+      style: { select: { styleNumber: true, styleName: true } },
+      size: { select: { code: true, label: true } },
+      saleOrder: { select: { distributor: { select: { purchaseMode: true } } } },
     },
   },
   recordedBy: { select: { id: true, name: true, email: true } },
@@ -74,7 +64,7 @@ type InvoiceHandoffRecord = Prisma.InvoiceHandoffGetPayload<{ include: typeof in
 // recorded, never the internal Tally voucher reference, remarks, or who
 // recorded it.
 function toInvoiceHandoffView(record: InvoiceHandoffRecord, full: boolean) {
-  const pols = record.saleOrderLine.purchaseOrderLineSize;
+  const sol = record.saleOrderLine;
   return {
     id: record.id,
     erveDispatch: {
@@ -84,13 +74,13 @@ function toInvoiceHandoffView(record: InvoiceHandoffRecord, full: boolean) {
     },
     saleOrder: record.erveDispatch.saleOrder,
     distributor: record.erveDispatch.distributor,
-    // Business context only — resolved through the COMMERCIAL chain, never
-    // stored. Does not affect handoff eligibility (see the schema module
-    // doc): every physically dispatched line gets a handoff regardless.
-    purchaseMode: pols.purchaseOrderLine.purchaseOrder.purchaseMode,
+    // Business context only — Purchase Mode is Distributor-owned, resolved
+    // directly, never stored here or used to gate eligibility: every
+    // physically dispatched line gets a handoff regardless.
+    purchaseMode: sol.saleOrder.distributor.purchaseMode,
     saleOrderLineId: record.saleOrderLineId,
-    style: { styleNumber: pols.purchaseOrderLine.style.styleNumber, styleName: pols.purchaseOrderLine.style.styleName },
-    size: { sizeCode: pols.size.code, sizeLabel: pols.size.label },
+    style: { styleNumber: sol.style.styleNumber, styleName: sol.style.styleName },
+    size: { sizeCode: sol.size.code, sizeLabel: sol.size.label },
     quantity: record.quantity,
     status: record.status,
     tallyInvoiceNumber: record.tallyInvoiceNumber,

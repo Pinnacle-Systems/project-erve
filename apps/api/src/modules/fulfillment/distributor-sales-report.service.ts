@@ -79,9 +79,7 @@ export async function listSaleOrReturnPositions(
 
   const lines = await prisma.factoryDispatchLine.findMany({
     where: {
-      saleOrderLine: {
-        purchaseOrderLineSize: { purchaseOrderLine: { purchaseOrder: { purchaseMode: 'SALE_RETURN' } } },
-      },
+      saleOrderLine: { saleOrder: { distributor: { purchaseMode: 'SALE_RETURN' } } },
     },
     select: {
       packedQuantity: true,
@@ -90,13 +88,8 @@ export async function listSaleOrReturnPositions(
           id: true,
           saleOrderId: true,
           saleOrder: { select: { saleOrderNumber: true, distributor: { select: { id: true, code: true, name: true } } } },
-          purchaseOrderLineSize: {
-            select: {
-              sizeId: true,
-              size: { select: { code: true, label: true } },
-              purchaseOrderLine: { select: { styleId: true, style: { select: { styleNumber: true, styleName: true } } } },
-            },
-          },
+          style: { select: { styleNumber: true, styleName: true } },
+          size: { select: { code: true, label: true } },
         },
       },
       factoryDispatch: {
@@ -128,7 +121,7 @@ export async function listSaleOrReturnPositions(
       existing.dispatchedQuantity += line.packedQuantity;
       continue;
     }
-    const pols = line.saleOrderLine.purchaseOrderLineSize;
+    const sol = line.saleOrderLine;
     grouped.set(key, {
       erveDispatchId: dispatch.id,
       erveDispatchNumber: dispatch.erveDispatchNumber,
@@ -137,10 +130,10 @@ export async function listSaleOrReturnPositions(
       saleOrderNumber: so.saleOrderNumber,
       distributor: so.distributor,
       saleOrderLineId: line.saleOrderLine.id,
-      styleNumber: pols.purchaseOrderLine.style.styleNumber,
-      styleName: pols.purchaseOrderLine.style.styleName,
-      sizeCode: pols.size.code,
-      sizeLabel: pols.size.label,
+      styleNumber: sol.style.styleNumber,
+      styleName: sol.style.styleName,
+      sizeCode: sol.size.code,
+      sizeLabel: sol.size.label,
       dispatchedQuantity: line.packedQuantity,
       receivedQuantity: 0,
       actualSoldQuantity: 0,
@@ -233,13 +226,8 @@ const reportInclude = {
       erveDispatch: { select: { id: true, erveDispatchNumber: true } },
       saleOrderLine: {
         select: {
-          purchaseOrderLineSize: {
-            select: {
-              sizeId: true,
-              size: { select: { code: true, label: true } },
-              purchaseOrderLine: { select: { style: { select: { styleNumber: true, styleName: true } } } },
-            },
-          },
+          style: { select: { styleNumber: true, styleName: true } },
+          size: { select: { code: true, label: true } },
         },
       },
     },
@@ -260,10 +248,10 @@ function toReportView(record: ReportRecord) {
       id: line.id,
       erveDispatch: line.erveDispatch,
       saleOrderLineId: line.saleOrderLineId,
-      styleNumber: line.saleOrderLine.purchaseOrderLineSize.purchaseOrderLine.style.styleNumber,
-      styleName: line.saleOrderLine.purchaseOrderLineSize.purchaseOrderLine.style.styleName,
-      sizeCode: line.saleOrderLine.purchaseOrderLineSize.size.code,
-      sizeLabel: line.saleOrderLine.purchaseOrderLineSize.size.label,
+      styleNumber: line.saleOrderLine.style.styleNumber,
+      styleName: line.saleOrderLine.style.styleName,
+      sizeCode: line.saleOrderLine.size.code,
+      sizeLabel: line.saleOrderLine.size.label,
       quantitySold: line.quantitySold,
     })),
   };
@@ -349,11 +337,11 @@ export async function submitDistributorSalesReport(actor: CurrentUser, input: Su
       where: { id: { in: [...new Set(input.lines.map((l) => l.saleOrderLineId))] } },
       select: {
         id: true,
-        purchaseOrderLineSize: { select: { purchaseOrderLine: { select: { purchaseOrder: { select: { purchaseMode: true } } } } } },
+        saleOrder: { select: { distributor: { select: { purchaseMode: true } } } },
       },
     });
     const modeBySaleOrderLineId = new Map(
-      saleOrderLineModes.map((sol) => [sol.id, sol.purchaseOrderLineSize.purchaseOrderLine.purchaseOrder.purchaseMode]),
+      saleOrderLineModes.map((sol) => [sol.id, sol.saleOrder.distributor.purchaseMode]),
     );
 
     for (const line of input.lines) {

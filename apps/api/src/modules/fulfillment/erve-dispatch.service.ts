@@ -8,7 +8,6 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
-import { computeSaleOrderFulfillmentProgress } from './fulfillment-progress.js';
 import { createInvoiceHandoffsForDispatch } from './invoice-handoff.service.js';
 import {
   computeAvailability,
@@ -99,15 +98,8 @@ const packingListInclude = {
             include: {
               saleOrderLine: {
                 select: {
-                  purchaseOrderLineSize: {
-                    select: {
-                      sizeId: true,
-                      size: { select: { code: true, label: true } },
-                      purchaseOrderLine: {
-                        select: { styleId: true, style: { select: { styleNumber: true, styleName: true } } },
-                      },
-                    },
-                  },
+                  style: { select: { id: true, styleNumber: true, styleName: true } },
+                  size: { select: { id: true, code: true, label: true } },
                 },
               },
               cartonLines: { select: { quantity: true } },
@@ -121,12 +113,8 @@ const packingListInclude = {
                     select: {
                       saleOrderLine: {
                         select: {
-                          purchaseOrderLineSize: {
-                            select: {
-                              size: { select: { code: true, label: true } },
-                              purchaseOrderLine: { select: { style: { select: { styleNumber: true, styleName: true } } } },
-                            },
-                          },
+                          style: { select: { styleNumber: true, styleName: true } },
+                          size: { select: { code: true, label: true } },
                         },
                       },
                     },
@@ -144,18 +132,18 @@ const packingListInclude = {
 type PackingListRecord = Prisma.ErvePackingListGetPayload<{ include: typeof packingListInclude }>;
 
 function toFactoryDispatchLineView(line: PackingListRecord['sources'][number]['factoryDispatch']['lines'][number]) {
-  const pols = line.saleOrderLine.purchaseOrderLineSize;
-  const pol = pols.purchaseOrderLine;
+  const style = line.saleOrderLine.style;
+  const size = line.saleOrderLine.size;
   return {
     id: line.id,
     saleOrderLineId: line.saleOrderLineId,
     stockAllocationId: line.stockAllocationId,
-    styleId: pol.styleId,
-    styleNumber: pol.style.styleNumber,
-    styleName: pol.style.styleName,
-    sizeId: pols.sizeId,
-    sizeCode: pols.size.code,
-    sizeLabel: pols.size.label,
+    styleId: style.id,
+    styleNumber: style.styleNumber,
+    styleName: style.styleName,
+    sizeId: size.id,
+    sizeCode: size.code,
+    sizeLabel: size.label,
     packedQuantity: line.packedQuantity,
     cartonedQuantity: line.cartonLines.reduce((sum, cartonLine) => sum + cartonLine.quantity, 0),
   };
@@ -169,14 +157,14 @@ function toFactoryPackingCartonView(carton: PackingListRecord['sources'][number]
     weight: carton.weight?.toString() ?? null,
     createdAt: carton.createdAt.toISOString(),
     lines: carton.lines.map((cartonLine) => {
-      const pols = cartonLine.factoryDispatchLine.saleOrderLine.purchaseOrderLineSize;
-      const pol = pols.purchaseOrderLine;
+      const style = cartonLine.factoryDispatchLine.saleOrderLine.style;
+      const size = cartonLine.factoryDispatchLine.saleOrderLine.size;
       return {
         factoryDispatchLineId: cartonLine.factoryDispatchLineId,
-        styleNumber: pol.style.styleNumber,
-        styleName: pol.style.styleName,
-        sizeCode: pols.size.code,
-        sizeLabel: pols.size.label,
+        styleNumber: style.styleNumber,
+        styleName: style.styleName,
+        sizeCode: size.code,
+        sizeLabel: size.label,
         quantity: cartonLine.quantity,
       };
     }),
@@ -265,10 +253,7 @@ export async function createErvePackingList(actor: CurrentUser, input: CreateErv
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sale-order-${input.saleOrderId}`}))`;
 
     const order = await tx.saleOrder.findUnique({ where: { id: input.saleOrderId } });
-    if (!order) throw HttpError.notFound('Sale order not found');
-    if (order.status !== 'APPROVED') {
-      throw HttpError.badRequest(`Sale order in status ${order.status} is not eligible for consolidation`);
-    }
+    if (!order) throw HttpError.notFound('Dispatch order not found');
 
     const sorted = [...factoryDispatchIds].sort();
     for (const id of sorted) {
@@ -366,19 +351,9 @@ async function computeDispatchFinancialBreakdown(erveDispatchId: string, ervePac
       packedQuantity: true,
       saleOrderLine: {
         select: {
-          purchaseOrderLineSize: {
-            select: {
-              sizeId: true,
-              size: { select: { code: true, label: true } },
-              purchaseOrderLine: {
-                select: {
-                  styleId: true,
-                  style: { select: { styleNumber: true, styleName: true } },
-                  purchaseOrder: { select: { purchaseMode: true } },
-                },
-              },
-            },
-          },
+          style: { select: { styleNumber: true, styleName: true } },
+          size: { select: { code: true, label: true } },
+          saleOrder: { select: { distributor: { select: { purchaseMode: true } } } },
         },
       },
     },
@@ -394,7 +369,7 @@ async function computeDispatchFinancialBreakdown(erveDispatchId: string, ervePac
   };
   const bySaleOrderLine = new Map<string, LineMeta>();
   for (const line of lines) {
-    const pols = line.saleOrderLine.purchaseOrderLineSize;
+    const sol = line.saleOrderLine;
     const existing = bySaleOrderLine.get(line.saleOrderLineId);
     if (existing) {
       existing.quantity += line.packedQuantity;
@@ -402,11 +377,11 @@ async function computeDispatchFinancialBreakdown(erveDispatchId: string, ervePac
     }
     bySaleOrderLine.set(line.saleOrderLineId, {
       quantity: line.packedQuantity,
-      purchaseMode: pols.purchaseOrderLine.purchaseOrder.purchaseMode,
-      styleNumber: pols.purchaseOrderLine.style.styleNumber,
-      styleName: pols.purchaseOrderLine.style.styleName,
-      sizeCode: pols.size.code,
-      sizeLabel: pols.size.label,
+      purchaseMode: sol.saleOrder.distributor.purchaseMode,
+      styleNumber: sol.style.styleNumber,
+      styleName: sol.style.styleName,
+      sizeCode: sol.size.code,
+      sizeLabel: sol.size.label,
     });
   }
 
@@ -589,10 +564,7 @@ export async function recordErveDispatch(actor: CurrentUser, input: RecordErveDi
 
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sale-order-${packingList.saleOrderId}`}))`;
     const order = await tx.saleOrder.findUnique({ where: { id: packingList.saleOrderId } });
-    if (!order) throw HttpError.notFound('Sale order not found');
-    if (order.status !== 'APPROVED') {
-      throw HttpError.badRequest(`Sale order in status ${order.status} cannot be dispatched`);
-    }
+    if (!order) throw HttpError.notFound('Dispatch order not found');
 
     const financialYear = await ensureFinancialYear(tx, new Date(input.dispatchDate));
     const { erveDispatchNumber, erveDispatchSerial } = await generateErveDispatchNumber(tx, financialYear);
@@ -636,40 +608,11 @@ export async function recordErveDispatch(actor: CurrentUser, input: RecordErveDi
     // sale are separate events for SALE_RETURN (see the schema module doc).
     await createInvoiceHandoffsForDispatch(tx, actor, dispatchId, erveDispatchNumber, input.ervePackingListId);
 
-    // Recompute cumulative dispatched quantity for every approved line inside
-    // this same transaction — only when every approved line's cumulative
-    // dispatched quantity now equals its approved quantity does the Sale
-    // Order become FULFILLED (see the fulfillment schema module doc).
-    const lines = await tx.saleOrderLine.findMany({
-      where: { saleOrderId: order.id },
-      select: { id: true, approvedQuantity: true },
-    });
-    const progress = await computeSaleOrderFulfillmentProgress(tx, order.id, { status: order.status }, lines);
-    const fullyDispatched =
-      progress.totalApprovedQuantity > 0 && progress.totalDispatchedQuantity === progress.totalApprovedQuantity;
-
-    if (fullyDispatched) {
-      await tx.saleOrder.update({
-        where: { id: order.id },
-        data: {
-          status: 'FULFILLED',
-          fulfilledById: actor.id,
-          fulfilledAt: new Date(),
-          fulfillmentReference: erveDispatchNumber,
-          version: { increment: 1 },
-        },
-      });
-      await recordAuditLog(
-        {
-          actorId: actor.id,
-          action: 'SALE_ORDER_FULFILLED',
-          entityType: 'SaleOrder',
-          entityId: order.id,
-          metadata: { saleOrderNumber: order.saleOrderNumber, fulfillmentReference: erveDispatchNumber },
-        },
-        tx,
-      );
-    }
+    // Dispatch Order Phase 3: there is no persisted FULFILLED status to flip
+    // to — "how far physically progressed" is entirely read-derived (see
+    // computeDispatchOrderFulfillment in fulfillment-progress.ts), driven by
+    // this same ErveDispatch/FactoryDispatch state, never a stored order
+    // status transition.
   });
 
   return getErveDispatchDetail(actor, dispatchId);

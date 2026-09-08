@@ -105,3 +105,88 @@ export async function getPooledFactoryInventory(
   }
   return [...pool.values()];
 }
+
+export interface AvailabilityRow {
+  released: number;
+  committed: number;
+  available: number;
+}
+
+// The single implementation of "how much of a QA release line is still free
+// to allocate" — released quantity minus the sum of ACTIVE StockAllocation
+// rows against it. Relocated here from the retired sale-orders/inventory
+// .service.ts (Dispatch Order Phase 3) since it is now core to Dispatch
+// Order allocation, not a Sale-Order-only helper. Deliberately not
+// denormalized onto QaReleaseLine (which must stay immutable) — this is the
+// one place that recomputes it, from the StockAllocation ledger, every
+// time. Call this AFTER acquiring the relevant dispatch-pool-* advisory
+// locks when used inside a mutating transaction; read-only call sites
+// (list/detail/pooled-inventory views) accept ordinary read-committed
+// staleness like any other list view.
+export async function getAvailableQuantities(
+  client: Client,
+  qaReleaseLineIds: string[],
+): Promise<Map<string, AvailabilityRow>> {
+  const result = new Map<string, AvailabilityRow>();
+  if (qaReleaseLineIds.length === 0) return result;
+
+  const [releaseLines, committed] = await Promise.all([
+    client.qaReleaseLine.findMany({
+      where: { id: { in: qaReleaseLineIds } },
+      select: { id: true, quantity: true },
+    }),
+    client.stockAllocation.groupBy({
+      by: ['qaReleaseLineId'],
+      where: { qaReleaseLineId: { in: qaReleaseLineIds }, status: 'ACTIVE' },
+      _sum: { quantity: true },
+    }),
+  ]);
+
+  const committedByLine = new Map(committed.map((row) => [row.qaReleaseLineId, row._sum.quantity ?? 0]));
+  for (const line of releaseLines) {
+    const committedQuantity = committedByLine.get(line.id) ?? 0;
+    result.set(line.id, {
+      released: line.quantity,
+      committed: committedQuantity,
+      available: line.quantity - committedQuantity,
+    });
+  }
+  return result;
+}
+
+export interface EligibleQaReleaseLineCandidate {
+  id: string;
+  releasedAt: Date;
+  released: number;
+}
+
+// Row-level allocation candidates for one Factory+Style+Size pool key,
+// oldest QaRelease.releasedAt first with id as a stable tiebreak
+// (Dispatch Order Phase 3 §16: a deterministic technical inventory-lot
+// selection strategy, not a business promise about Job Order preference).
+// Mirrors getPooledFactoryInventory's join shape but returns individual
+// release-line rows (with their own released quantity) instead of an
+// aggregate, so the reservation planner in sale-orders.service.ts can
+// greedily consume them in order. Callers are responsible for subtracting
+// current commitments (getAvailableQuantities) and, during an update, for
+// adding back this same Dispatch Order's own planned releases
+// (effectiveAvailable) before treating a candidate as exhausted.
+export async function getEligibleQaReleaseLinesForPool(
+  client: Client,
+  factoryId: string,
+  styleId: string,
+  sizeId: string,
+): Promise<EligibleQaReleaseLineCandidate[]> {
+  const releaseLines = await client.qaReleaseLine.findMany({
+    where: {
+      jobOrderLineSize: {
+        sizeId,
+        jobOrderLine: { styleId, jobOrder: { factoryId } },
+      },
+    },
+    select: { id: true, quantity: true, release: { select: { releasedAt: true } } },
+  });
+  return releaseLines
+    .map((line) => ({ id: line.id, releasedAt: line.release.releasedAt, released: line.quantity }))
+    .sort((a, b) => a.releasedAt.getTime() - b.releasedAt.getTime() || a.id.localeCompare(b.id));
+}

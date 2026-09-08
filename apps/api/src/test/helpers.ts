@@ -79,10 +79,14 @@ export async function resetDatabase(): Promise<void> {
     'TRUNCATE TABLE "factory_packing_carton_lines", "factory_packing_cartons", "factory_dispatch_lines", "factory_dispatches" CASCADE',
   );
   // Sale Order rows must go before the QA-release/PO truncation below —
-  // StockAllocation.qaReleaseLineId and SaleOrderLine.purchaseOrderLineSizeId
-  // are onDelete: Restrict, so they'd otherwise block those deletes.
+  // StockAllocation.qaReleaseLineId is onDelete: Restrict, so it'd
+  // otherwise block those deletes. SaleOrderDestination.saleOrderId is also
+  // onDelete: Restrict (Dispatch Order Phase 3 — a destination is only ever
+  // removed explicitly by the service, never implicitly cascaded), so it
+  // must clear before SaleOrder too.
   await prisma.stockAllocation.deleteMany();
   await prisma.saleOrderLine.deleteMany();
+  await prisma.saleOrderDestination.deleteMany();
   await prisma.saleOrder.deleteMany();
   // Repeated rework intentionally forms a historical chain where a reinspection
   // form points to cycle N and cycle N+1 points back to that form. PostgreSQL
@@ -388,7 +392,11 @@ export async function createReleasedQaStock(
   const quantity = options.quantity;
   const distributor = options.distributorId
     ? { id: options.distributorId }
-    : await createTestDistributor();
+    : // Dispatch Order Phase 3: Purchase Mode is authoritatively the
+      // Distributor's own field (see sale-orders.service.ts) — pass it
+      // through here too, not just onto the now-vestigial PO.purchaseMode
+      // below, so fixtures actually produce the commercial mode callers ask for.
+      await createTestDistributor({ purchaseMode: options.purchaseMode });
   const factory = options.factoryId ? { id: options.factoryId } : await createTestFactory();
   const actorId = await createTestUser({
     email: `qa-stock-${createId()}@test.local`,
@@ -581,17 +589,13 @@ export async function createReleasedQaStock(
         releasedById: actorId,
         releasedAt: options.releasedAt ?? new Date(),
         lines: {
-          create: { id: qaReleaseLineId, jobOrderLineSizeId, purchaseOrderLineSizeId, quantity },
+          create: { id: qaReleaseLineId, jobOrderLineSizeId, quantity },
         },
       },
     });
     await tx.finalQualityBatch.update({
       where: { id: batchId },
       data: { disposition: 'RELEASED', terminalById: actorId, terminalAt: new Date() },
-    });
-    await tx.distributorPurchaseOrderLineSize.update({
-      where: { id: purchaseOrderLineSizeId },
-      data: { qaPassedQuantity: { increment: quantity } },
     });
   });
 

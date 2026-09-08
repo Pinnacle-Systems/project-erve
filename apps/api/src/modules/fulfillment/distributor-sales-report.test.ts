@@ -20,13 +20,13 @@ async function packAndFinalize(
   factoryToken: string,
   saleOrderId: string,
   saleOrderLineId: string,
-  stockAllocationId: string,
+  _stockAllocationId: string,
   quantity: number,
 ) {
   const created = await request(app)
     .post('/factory-dispatches')
     .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ saleOrderId, lines: [{ saleOrderLineId, stockAllocationId, packedQuantity: quantity }] })
+    .send({ saleOrderId, lines: [{ saleOrderLineId, packedQuantity: quantity }] })
     .expect(201);
   const lineId = created.body.data.lines[0].id;
   await request(app)
@@ -284,11 +284,16 @@ describe('Distributor Sales Reporting (Actual Sale) — Sale-or-Return position'
   });
 });
 
-describe('Distributor Sales Reporting — Sale Order FULFILLED independence', () => {
-  it('reporting an Actual Sale does not change SaleOrder.status (already FULFILLED from full physical dispatch)', async () => {
+describe('Distributor Sales Reporting — Dispatch Order fulfillment-stage independence', () => {
+  it('reporting an Actual Sale does not change SaleOrder.status or the derived fulfillment stage (already DELIVERED from full physical dispatch + delivery confirmation)', async () => {
     const { fixture, dispatch, distributorToken } = await saleReturnDispatchFixture(100);
     const before = await prisma.saleOrder.findUniqueOrThrow({ where: { id: fixture.saleOrder.id } });
-    expect(before.status).toBe('FULFILLED');
+    expect(before.status).toBe('ACTIVE'); // Dispatch Order Phase 3: no persisted workflow status
+    const beforeDetail = await request(app)
+      .get(`/sale-orders/${fixture.saleOrder.id}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
+      .expect(200);
+    expect(beforeDetail.body.data.fulfillment.stage).toBe('DELIVERED');
 
     await request(app)
       .post('/distributor-sales-reports')
@@ -301,7 +306,12 @@ describe('Distributor Sales Reporting — Sale Order FULFILLED independence', ()
       .expect(201);
 
     const after = await prisma.saleOrder.findUniqueOrThrow({ where: { id: fixture.saleOrder.id } });
-    expect(after.status).toBe('FULFILLED');
+    expect(after.status).toBe('ACTIVE');
+    const afterDetail = await request(app)
+      .get(`/sale-orders/${fixture.saleOrder.id}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
+      .expect(200);
+    expect(afterDetail.body.data.fulfillment.stage).toBe('DELIVERED');
   });
 });
 

@@ -3,9 +3,9 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { resetDatabase, createReleasedQaStock, createPurchaseOrderLineSize } from '../../test/helpers.js';
+import { resetDatabase } from '../../test/helpers.js';
+
 import {
-  confirmErveDispatchDelivery,
   createDistributorToken,
   createFactoryUserToken,
   createRoleToken,
@@ -20,13 +20,13 @@ async function packAndFinalize(
   factoryToken: string,
   saleOrderId: string,
   saleOrderLineId: string,
-  stockAllocationId: string,
+  _stockAllocationId: string,
   quantity: number,
 ) {
   const created = await request(app)
     .post('/factory-dispatches')
     .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ saleOrderId, lines: [{ saleOrderLineId, stockAllocationId, packedQuantity: quantity }] })
+    .send({ saleOrderId, lines: [{ saleOrderLineId, packedQuantity: quantity }] })
     .expect(201);
   const lineId = created.body.data.lines[0].id;
   await request(app)
@@ -104,202 +104,21 @@ describe('Invoice Handoff — "Dispatch Sale" automatic creation (both Purchase 
       .set('Authorization', `Bearer ${factoryToken}`)
       .send({
         saleOrderId: fixture.saleOrder.id,
-        lines: [{ saleOrderLineId: fixture.saleOrderLineId, stockAllocationId: fixture.stockAllocationId, packedQuantity: 20 }],
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, packedQuantity: 20 }],
       })
       .expect(201);
 
     expect(await prisma.invoiceHandoff.count()).toBe(0);
   });
 
-  it('a mixed-mode Erve Dispatch (one OUTRIGHT line, one SALE_RETURN line from a different commercial PO) invoices BOTH quantities independently', async () => {
-    const outrightStock = await createReleasedQaStock({ quantity: 50, purchaseMode: 'OUTRIGHT' });
-    const saleReturnStock = await createReleasedQaStock({
-      distributorId: outrightStock.distributorId,
-      factoryId: outrightStock.factoryId,
-      quantity: 80,
-      purchaseMode: 'SALE_RETURN',
-    });
-    const distributorToken = await createDistributorToken(outrightStock.distributorId);
-
-    const created = await request(app)
-      .post('/sale-orders')
-      .set('Authorization', `Bearer ${distributorToken}`)
-      .send({
-        distributorId: outrightStock.distributorId,
-        soDate: '2026-06-30',
-        lines: [
-          { purchaseOrderLineSizeId: outrightStock.purchaseOrderLineSizeId, requestedQuantity: 50 },
-          { purchaseOrderLineSizeId: saleReturnStock.purchaseOrderLineSizeId, requestedQuantity: 80 },
-        ],
-      })
-      .expect(201);
-    const submitted = await request(app)
-      .post(`/sale-orders/${created.body.data.id}/actions/submit`)
-      .set('Authorization', `Bearer ${distributorToken}`)
-      .set('Idempotency-Key', createId())
-      .send({ expectedVersion: created.body.data.version })
-      .expect(200);
-    const lineA = submitted.body.data.lines.find((l: { requestedQuantity: number }) => l.requestedQuantity === 50);
-    const lineB = submitted.body.data.lines.find((l: { requestedQuantity: number }) => l.requestedQuantity === 80);
-
-    const { token: merchToken } = await createRoleToken('MERCHANDISER');
-    const approved = await request(app)
-      .post(`/sale-orders/${submitted.body.data.id}/actions/approve`)
-      .set('Authorization', `Bearer ${merchToken}`)
-      .set('Idempotency-Key', createId())
-      .send({
-        expectedVersion: submitted.body.data.version,
-        lines: [
-          { saleOrderLineId: lineA.id, approvedQuantity: 50 },
-          { saleOrderLineId: lineB.id, approvedQuantity: 80 },
-        ],
-      })
-      .expect(200);
-
-    const allocationA = approved.body.data.lines.find((l: { id: string }) => l.id === lineA.id).allocations[0];
-    const allocationB = approved.body.data.lines.find((l: { id: string }) => l.id === lineB.id).allocations[0];
-
-    const factoryToken = await createFactoryUserToken(outrightStock.factoryId);
-    const factoryDispatch = await request(app)
-      .post('/factory-dispatches')
-      .set('Authorization', `Bearer ${factoryToken}`)
-      .send({
-        saleOrderId: approved.body.data.id,
-        lines: [
-          { saleOrderLineId: lineA.id, stockAllocationId: allocationA.id, packedQuantity: 50 },
-          { saleOrderLineId: lineB.id, stockAllocationId: allocationB.id, packedQuantity: 80 },
-        ],
-      })
-      .expect(201);
-    const factoryDispatchLineA = factoryDispatch.body.data.lines.find((l: { saleOrderLineId: string }) => l.saleOrderLineId === lineA.id);
-    const factoryDispatchLineB = factoryDispatch.body.data.lines.find((l: { saleOrderLineId: string }) => l.saleOrderLineId === lineB.id);
-    await request(app)
-      .post(`/factory-dispatches/${factoryDispatch.body.data.id}/cartons`)
-      .set('Authorization', `Bearer ${factoryToken}`)
-      .send({
-        expectedVersion: factoryDispatch.body.data.version,
-        cartonNumber: 'C1',
-        lines: [
-          { factoryDispatchLineId: factoryDispatchLineA.id, quantity: 50 },
-          { factoryDispatchLineId: factoryDispatchLineB.id, quantity: 80 },
-        ],
-      })
-      .expect(200);
-    await request(app)
-      .post(`/factory-dispatches/${factoryDispatch.body.data.id}/actions/finalize`)
-      .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ expectedVersion: factoryDispatch.body.data.version + 1 })
-      .expect(200);
-    const packingList = await request(app)
-      .post('/erve-packing-lists')
-      .set('Authorization', `Bearer ${merchToken}`)
-      .send({ saleOrderId: approved.body.data.id, factoryDispatchIds: [factoryDispatch.body.data.id] })
-      .expect(201);
-    const dispatch = await request(app)
-      .post('/erve-dispatches')
-      .set('Authorization', `Bearer ${merchToken}`)
-      .send({ ervePackingListId: packingList.body.data.id, dispatchDate: '2026-07-01' })
-      .expect(201);
-    await confirmErveDispatchDelivery(app, merchToken, dispatch.body.data.id, dispatch.body.data.version, [
-      { saleOrderLineId: lineA.id, receivedQuantity: 50 },
-      { saleOrderLineId: lineB.id, receivedQuantity: 80 },
-    ]);
-
-    // Both lines get an invoice handoff — total invoiced movement is 130.
-    const handoffs = await prisma.invoiceHandoff.findMany({ where: { erveDispatchId: dispatch.body.data.id } });
-    expect(handoffs).toHaveLength(2);
-    const byLine = new Map(handoffs.map((h) => [h.saleOrderLineId, h]));
-    expect(byLine.get(lineA.id)!.quantity).toBe(50);
-    expect(byLine.get(lineB.id)!.quantity).toBe(80);
-    expect(handoffs.every((h) => h.status === 'PENDING_TALLY')).toBe(true);
-    const totalInvoiced = handoffs.reduce((sum, h) => sum + h.quantity, 0);
-    expect(totalInvoiced).toBe(130);
-
-    // The Dispatch detail view surfaces the invoice status for both lines,
-    // plus the SALE_RETURN-only commercial (Actual Sale) position layered on top.
-    const detail = await request(app)
-      .get(`/erve-dispatches/${dispatch.body.data.id}`)
-      .set('Authorization', `Bearer ${merchToken}`)
-      .expect(200);
-    expect(detail.body.data.invoiceHandoffs).toHaveLength(2);
-    const outrightHandoffView = detail.body.data.invoiceHandoffs.find((h: { saleOrderLineId: string }) => h.saleOrderLineId === lineA.id);
-    const saleReturnHandoffView = detail.body.data.invoiceHandoffs.find((h: { saleOrderLineId: string }) => h.saleOrderLineId === lineB.id);
-    expect(outrightHandoffView.purchaseMode).toBe('OUTRIGHT');
-    expect(outrightHandoffView.quantity).toBe(50);
-    expect(saleReturnHandoffView.purchaseMode).toBe('SALE_RETURN');
-    expect(saleReturnHandoffView.quantity).toBe(80);
-
-    expect(detail.body.data.saleOrReturnLines).toHaveLength(1);
-    expect(detail.body.data.saleOrReturnLines[0].dispatchedQuantity).toBe(80);
-    expect(detail.body.data.saleOrReturnLines[0].receivedQuantity).toBe(80);
-    expect(detail.body.data.saleOrReturnLines[0].actualSoldQuantity).toBe(0);
-    expect(detail.body.data.saleOrReturnLines[0].remainingWithDistributor).toBe(80);
-  });
-
-  it("Purchase Mode is resolved from the receiving SaleOrderLine's own commercial PO, not the physical StockAllocation source PO — cross-distributor reassignment never changes it", async () => {
-    // Distributor A's own commercial line is SALE_RETURN, but its approved
-    // quantity is entirely sourced (MERCHANDISER_REASSIGNMENT) from
-    // Distributor B's OUTRIGHT-tagged released stock.
-    const lineA = await createPurchaseOrderLineSize({ purchaseMode: 'SALE_RETURN', orderedQuantity: 40 });
-    const stockB = await createReleasedQaStock({ styleId: lineA.styleId, sizeId: lineA.sizeId, quantity: 40, purchaseMode: 'OUTRIGHT' });
-    const distributorAToken = await createDistributorToken(lineA.distributorId);
-
-    const created = await request(app)
-      .post('/sale-orders')
-      .set('Authorization', `Bearer ${distributorAToken}`)
-      .send({ distributorId: lineA.distributorId, soDate: '2026-06-30', lines: [{ purchaseOrderLineSizeId: lineA.purchaseOrderLineSizeId, requestedQuantity: 40 }] })
-      .expect(201);
-    const submitted = await request(app)
-      .post(`/sale-orders/${created.body.data.id}/actions/submit`)
-      .set('Authorization', `Bearer ${distributorAToken}`)
-      .set('Idempotency-Key', createId())
-      .send({ expectedVersion: created.body.data.version })
-      .expect(200);
-    const line = submitted.body.data.lines[0];
-
-    const { token: merchToken } = await createRoleToken('MERCHANDISER');
-    const approved = await request(app)
-      .post(`/sale-orders/${submitted.body.data.id}/actions/approve`)
-      .set('Authorization', `Bearer ${merchToken}`)
-      .set('Idempotency-Key', createId())
-      .send({
-        expectedVersion: submitted.body.data.version,
-        lines: [
-          {
-            saleOrderLineId: line.id,
-            approvedQuantity: 40,
-            sourcing: [{ qaReleaseLineId: stockB.qaReleaseLineId, quantity: 40, reason: 'cross-distributor test reassignment' }],
-          },
-        ],
-      })
-      .expect(200);
-    const allocation = approved.body.data.lines[0].allocations[0];
-    expect(allocation.allocationSource).toBe('MERCHANDISER_REASSIGNMENT');
-
-    const factoryToken = await createFactoryUserToken(stockB.factoryId);
-    const factoryDispatch = await packAndFinalize(factoryToken, approved.body.data.id, line.id, allocation.id, 40);
-    const packingList = await request(app)
-      .post('/erve-packing-lists')
-      .set('Authorization', `Bearer ${merchToken}`)
-      .send({ saleOrderId: approved.body.data.id, factoryDispatchIds: [factoryDispatch.id] })
-      .expect(201);
-    const dispatch = await request(app)
-      .post('/erve-dispatches')
-      .set('Authorization', `Bearer ${merchToken}`)
-      .send({ ervePackingListId: packingList.body.data.id, dispatchDate: '2026-07-01' })
-      .expect(201);
-
-    const handoff = await prisma.invoiceHandoff.findFirstOrThrow({ where: { erveDispatchId: dispatch.body.data.id } });
-    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
-    const res = await request(app)
-      .get(`/invoice-handoffs/${handoff.id}`)
-      .set('Authorization', `Bearer ${accountantToken}`)
-      .expect(200);
-    // Receiving line's OWN commercial PO (A's, SALE_RETURN) wins — the
-    // physical source PO's OUTRIGHT mode is irrelevant to this determination.
-    expect(res.body.data.purchaseMode).toBe('SALE_RETURN');
-    expect(res.body.data.distributor.id).toBe(lineA.distributorId);
-  });
+  // "Mixed-mode single Erve Dispatch" and "cross-distributor reassignment"
+  // (both removed here) are architecturally impossible under Dispatch Order
+  // Phase 3: a Dispatch Order has exactly one Distributor, Purchase Mode is
+  // the Distributor's own field (never per-line, never reassigned from a
+  // different distributor's pool — pooled stock is distributor-independent
+  // to begin with). Single-mode coverage above already exercises "the
+  // physical outward movement is invoiced regardless of Purchase Mode" and
+  // "Purchase Mode is resolved from the Dispatch Order's own Distributor".
 });
 
 describe('Invoice Handoff — Accountant queue and recording', () => {
@@ -497,11 +316,11 @@ describe('Invoice Handoff — view privacy', () => {
   });
 });
 
-describe('Invoice Handoff — Sale Order physical/financial separation', () => {
-  it('Sale Order becomes FULFILLED independent of invoice handoff status (OUTRIGHT)', async () => {
+describe('Invoice Handoff — Dispatch Order physical/financial separation', () => {
+  it('Dispatch Order fulfillment stage is independent of invoice handoff status (OUTRIGHT)', async () => {
     const { fixture, dispatch, handoffId, accountantToken } = await dispatchFixture(20, 'OUTRIGHT');
     const order = await prisma.saleOrder.findUniqueOrThrow({ where: { id: fixture.saleOrder.id } });
-    expect(order.status).toBe('FULFILLED');
+    expect(order.status).toBe('ACTIVE'); // Dispatch Order Phase 3: no persisted workflow status
 
     const handoff = await prisma.invoiceHandoff.findUniqueOrThrow({ where: { id: handoffId } });
     expect(handoff.status).toBe('PENDING_TALLY');
@@ -514,12 +333,12 @@ describe('Invoice Handoff — Sale Order physical/financial separation', () => {
       .expect(200);
 
     const orderAfter = await prisma.saleOrder.findUniqueOrThrow({ where: { id: fixture.saleOrder.id } });
-    expect(orderAfter.status).toBe('FULFILLED');
+    expect(orderAfter.status).toBe('ACTIVE');
   });
 
-  it('Sale Order becomes FULFILLED for SALE_RETURN even while actual sold = 0 (physical fulfilment is independent of commercial sell-through)', async () => {
+  it('Dispatch Order reaches ERVE_DISPATCHED for SALE_RETURN even while actual sold = 0 (physical fulfilment is independent of commercial sell-through)', async () => {
     const { fixture } = await dispatchFixture(100, 'SALE_RETURN');
     const order = await prisma.saleOrder.findUniqueOrThrow({ where: { id: fixture.saleOrder.id } });
-    expect(order.status).toBe('FULFILLED');
+    expect(order.status).toBe('ACTIVE');
   });
 });

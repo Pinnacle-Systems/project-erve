@@ -1,80 +1,63 @@
 import { z } from 'zod';
 
-export const saleOrderStatusSchema = z.enum([
-  'DRAFT',
-  'SUBMITTED',
-  'UNDER_REVIEW',
-  'APPROVED',
-  'REJECTED',
-  'CANCELLED',
-  'FULFILLED',
-]);
-
-const createLineSchema = z.object({
-  purchaseOrderLineSizeId: z.string().trim().min(1),
-  requestedQuantity: z.number().int().positive(),
-  remarks: z.string().trim().optional().nullable(),
+const destinationSchema = z.object({
+  clientKey: z.string().trim().min(1),
+  id: z.string().trim().min(1).optional(),
+  label: z.string().trim().min(1).optional().nullable(),
+  contactName: z.string().trim().min(1).optional().nullable(),
+  contactEmail: z.string().trim().min(1).optional().nullable(),
+  contactPhone: z.string().trim().min(1).optional().nullable(),
+  addressLine1: z.string().trim().min(1),
+  addressLine2: z.string().trim().min(1).optional().nullable(),
+  city: z.string().trim().min(1),
+  state: z.string().trim().min(1),
+  country: z.string().trim().min(1),
+  postalCode: z.string().trim().min(1).optional().nullable(),
 });
 
-export const createSaleOrderSchema = z.object({
-  distributorId: z.string().trim().min(1),
-  soDate: z.string().trim().min(1),
-  remarks: z.string().trim().optional().nullable(),
-  lines: z.array(createLineSchema).min(1, 'At least one line is required'),
-});
-
-export const updateSaleOrderSchema = z
-  .object({
-    soDate: z.string().trim().optional(),
-    remarks: z.string().trim().optional().nullable(),
-    lines: z.array(createLineSchema).min(1).optional(),
-  })
-  .refine((v) => Object.keys(v).length > 0, { message: 'At least one field is required' });
-
-export const listSaleOrdersQuerySchema = z.object({
-  search: z.string().trim().optional(),
-  status: saleOrderStatusSchema.optional(),
-  distributorId: z.string().trim().optional(),
-  financialYearId: z.string().trim().optional(),
-  cursor: z.string().trim().min(1).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(25),
-});
-
-export const versionedActionSchema = z.object({
-  expectedVersion: z.number().int().nonnegative(),
-  reason: z.string().trim().optional().nullable(),
-});
-
-const sourcingEntrySchema = z.object({
-  qaReleaseLineId: z.string().trim().min(1),
+const dispatchLineSchema = z.object({
+  id: z.string().trim().min(1).optional(),
+  destinationClientKey: z.string().trim().min(1),
+  styleId: z.string().trim().min(1),
+  sizeId: z.string().trim().min(1),
   quantity: z.number().int().positive(),
-  reason: z.string().trim().optional().nullable(),
 });
 
-const approveLineSchema = z
+export const createDispatchOrderSchema = z.object({
+  distributorId: z.string().trim().min(1),
+  factoryId: z.string().trim().min(1),
+  soDate: z.string().trim().min(1),
+  remarks: z.string().trim().min(1).optional().nullable(),
+  destinations: z.array(destinationSchema).min(1),
+  lines: z.array(dispatchLineSchema).min(1),
+});
+
+export const updateDispatchOrderSchema = z
   .object({
-    saleOrderLineId: z.string().trim().min(1),
-    approvedQuantity: z.number().int().nonnegative(),
-    sourcing: z.array(sourcingEntrySchema).optional(),
+    expectedVersion: z.number().int().nonnegative(),
+    distributorId: z.string().trim().min(1).optional(),
+    factoryId: z.string().trim().min(1).optional(),
+    soDate: z.string().trim().min(1).optional(),
+    remarks: z.string().trim().min(1).optional().nullable(),
+    destinations: z.array(destinationSchema).min(1).optional(),
+    lines: z.array(dispatchLineSchema).min(1).optional(),
   })
   .refine(
-    (line) => {
-      if (!line.sourcing || line.sourcing.length === 0) return true;
-      const ids = line.sourcing.map((s) => s.qaReleaseLineId);
-      return new Set(ids).size === ids.length;
-    },
-    { message: 'Each sourcing entry within a line must reference a distinct QA release line' },
+    (value) =>
+      value.distributorId !== undefined ||
+      value.factoryId !== undefined ||
+      value.soDate !== undefined ||
+      value.remarks !== undefined ||
+      value.destinations !== undefined ||
+      value.lines !== undefined,
+    { message: 'At least one field must be supplied' },
   );
 
-export const approveSaleOrderSchema = z.object({
-  expectedVersion: z.number().int().nonnegative(),
-  reason: z.string().trim().optional().nullable(),
-  lines: z.array(approveLineSchema).min(1, 'At least one line decision is required'),
-});
-
-export const globalInventoryQuerySchema = z.object({
-  styleId: z.string().trim().optional(),
-  sizeId: z.string().trim().optional(),
-  distributorId: z.string().trim().optional(),
-  onlyAvailable: z.coerce.boolean().optional(),
+export const listDispatchOrdersQuerySchema = z.object({
+  search: z.string().trim().min(1).optional(),
+  distributorId: z.string().trim().min(1).optional(),
+  factoryId: z.string().trim().min(1).optional(),
+  financialYearId: z.string().trim().min(1).optional(),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
 });

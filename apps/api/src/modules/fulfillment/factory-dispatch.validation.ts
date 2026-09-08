@@ -1,19 +1,16 @@
 import { z } from 'zod';
 
-export const factoryDispatchLineInputSchema = z.object({
+// Business-level only — no stockAllocationId: the Factory records packed
+// quantity against a Dispatch Order line, never selecting a
+// StockAllocation/QaReleaseLine/Job Order (see recordFactoryPacking).
+export const recordPackingLineInputSchema = z.object({
   saleOrderLineId: z.string().trim().min(1),
-  stockAllocationId: z.string().trim().min(1),
   packedQuantity: z.number().int().positive(),
 });
 
-export const createFactoryDispatchSchema = z.object({
+export const recordPackingSchema = z.object({
   saleOrderId: z.string().trim().min(1),
-  lines: z.array(factoryDispatchLineInputSchema).min(1, 'At least one line is required'),
-});
-
-export const addFactoryDispatchLinesSchema = z.object({
-  expectedVersion: z.number().int().nonnegative(),
-  lines: z.array(factoryDispatchLineInputSchema).min(1, 'At least one line is required'),
+  lines: z.array(recordPackingLineInputSchema).min(1, 'At least one line is required'),
 });
 
 export const versionedActionSchema = z.object({ expectedVersion: z.number().int().nonnegative() });

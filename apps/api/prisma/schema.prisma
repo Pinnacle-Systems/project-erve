@@ -300,8 +300,6 @@ model User {
   completedFinalBatchReworks           FinalQualityBatchRework[]  @relation("FinalBatchReworkCompletedBy")
   qaReleases                           QaRelease[]                @relation("QaReleaseActor")
   createdSaleOrders                    SaleOrder[]                @relation("SaleOrderCreator")
-  reviewedSaleOrders                   SaleOrder[]                @relation("SaleOrderReviewer")
-  fulfilledSaleOrders                  SaleOrder[]                @relation("SaleOrderFulfiller")
   allocatedStockAllocations            StockAllocation[]          @relation("StockAllocationAllocator")
   releasedStockAllocations             StockAllocation[]          @relation("StockAllocationReleaser")
   preparedFactoryDispatches            FactoryDispatch[]          @relation("FactoryDispatchPreparer")
@@ -424,6 +422,7 @@ model Factory {
   styleFactoryMappings StyleFactoryMapping[]
   jobOrders            JobOrder[]
   factoryDispatches    FactoryDispatch[]
+  saleOrders           SaleOrder[]
 
   @@index([status])
   @@map("factories")
@@ -554,6 +553,7 @@ model Style {
   purchaseOrderLines   DistributorPurchaseOrderLine[]
   jobOrderLines        JobOrderLine[]
   styleSeasons         StyleSeason[]
+  saleOrderLines       SaleOrderLine[]
 
   @@index([status])
   @@map("styles")
@@ -625,6 +625,7 @@ model Size {
   styleSizes             StyleSize[]
   purchaseOrderLineSizes DistributorPurchaseOrderLineSize[]
   jobOrderLineSizes      JobOrderLineSize[]
+  saleOrderLines         SaleOrderLine[]
 
   @@index([status])
   @@index([sizeType])
@@ -966,7 +967,11 @@ model DistributorPurchaseOrderLineSize {
   // Order Sheet -> Job Order relationship itself is now expressed solely by
   // jobOrderId above (whole-sheet claim); per-size production quantities
   // live on JobOrderLineSize.orderedQuantity, not here.
-  qaPassedQuantity    Int      @default(0) @map("qa_passed_quantity")
+  // qaPassedQuantity removed (Dispatch Order Phase 3): it only ever existed
+  // to support the legacy Sale Order allocation bridge below, which is now
+  // fully removed. Order Sheets do not own QA-passed stock — pooled
+  // Factory+Style+Size inventory (see pooled-inventory.service.ts) is the
+  // sole authority.
   saleOrderedQuantity Int      @default(0) @map("sale_ordered_quantity")
   dispatchedQuantity  Int      @default(0) @map("dispatched_quantity")
   deliveredQuantity   Int      @default(0) @map("delivered_quantity")
@@ -978,12 +983,6 @@ model DistributorPurchaseOrderLineSize {
 
   purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Cascade)
   size              Size                         @relation(fields: [sizeId], references: [id], onDelete: Restrict)
-  // Phase 2.1: qaReleaseLines is now the LEGACY Sale Order compatibility
-  // bridge only (see QaReleaseLine.purchaseOrderLineSizeId) — populated
-  // only when a QA release can be unambiguously attributed to this single
-  // Order Sheet line-size, never a general ownership relationship.
-  qaReleaseLines    QaReleaseLine[]
-  saleOrderLines    SaleOrderLine[]
 
   @@unique([purchaseOrderLineId, sizeId])
   @@index([purchaseOrderLineId])
@@ -1215,50 +1214,44 @@ model QaRelease {
   @@map("qa_releases")
 }
 
-// Phase 2.1: QA-passed stock is pooled by Factory + Style + Size (see the
-// pooled-inventory read path), not owned by any source Order Sheet.
-// purchaseOrderLineSizeId is now a NULLABLE, isolated legacy compatibility
-// bridge for the existing Sale Order allocation workflow only: it is
-// populated by quality-executions.service.ts exclusively when (A) the
-// releasing Job Order has exactly one source Order Sheet, AND (B) that
-// source Order Sheet has a matching line-size for the produced sizeId.
-// Otherwise it stays null — that QA-passed quantity is visible only through
-// pooled inventory and is not allocatable via the legacy Sale Order
-// workflow until the Dispatch Order redesign. Never treat this field as
-// ownership/attribution beyond that narrow bridge.
+// Phase 2.1 pooled QA-passed stock by Factory + Style + Size (see
+// pooled-inventory.service.ts) is authoritative. Dispatch Order Phase 3
+// removed the temporary purchaseOrderLineSizeId legacy Sale Order
+// compatibility bridge entirely — no Order Sheet/Distributor ever owns
+// this row; allocation happens exclusively through StockAllocation below.
 model QaReleaseLine {
-  id                      String  @id
-  qaReleaseId             String  @map("qa_release_id")
-  jobOrderLineSizeId      String  @map("job_order_line_size_id")
-  purchaseOrderLineSizeId String? @map("purchase_order_line_size_id")
-  quantity                Int
+  id                 String @id
+  qaReleaseId        String @map("qa_release_id")
+  jobOrderLineSizeId String @map("job_order_line_size_id")
+  quantity           Int
 
-  release               QaRelease                         @relation(fields: [qaReleaseId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  jobOrderLineSize      JobOrderLineSize                  @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  purchaseOrderLineSize DistributorPurchaseOrderLineSize? @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  allocations           StockAllocation[]
+  release          QaRelease         @relation(fields: [qaReleaseId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  jobOrderLineSize JobOrderLineSize  @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocations      StockAllocation[]
 
   @@unique([qaReleaseId, jobOrderLineSizeId], map: "qa_release_line_size_key")
-  @@index([purchaseOrderLineSizeId], map: "qa_release_line_po_size_idx")
   @@map("qa_release_lines")
 }
 
 // ---------------------------------------------------------------------------
-// Sale Orders — a distributor's request against their own QA-released stock,
-// reviewed/approved by a merchandiser. QaRelease/QaReleaseLine above remain
-// the immutable authoritative record of released stock; this feature never
-// mutates them. Inventory reservation/reassignment is expressed entirely
-// through StockAllocation rows layered on top.
+// Dispatch Orders (technical model name remains SaleOrder) — Merchandising
+// allocates pooled Factory+Style+Size QA-passed stock (see
+// pooled-inventory.service.ts) to one Distributor's destinations. Creation
+// is the sole allocation point: no draft/submit/review/approve workflow,
+// no cancellation, no partial fulfilment. QaRelease/QaReleaseLine remain the
+// immutable authoritative record of released stock; this feature never
+// mutates them — reservation is expressed entirely through StockAllocation
+// rows layered on top. See sale-orders.service.ts.
 // ---------------------------------------------------------------------------
 
+// Not a workflow field — Dispatch Order has no draft/submit/review/approve/
+// reject/cancel lifecycle. Kept (rather than dropped) only to preserve
+// @@index([status]) filterability and leave a documented seam for a future
+// genuine terminal state. The real "is this still editable" fact is derived
+// from FactoryDispatch/ErveDispatch (see isDispatchOrderLocked), never from
+// this column.
 enum SaleOrderStatus {
-  DRAFT
-  SUBMITTED
-  UNDER_REVIEW
-  APPROVED
-  REJECTED
-  CANCELLED
-  FULFILLED
+  ACTIVE
 }
 
 enum StockAllocationStatus {
@@ -1266,51 +1259,40 @@ enum StockAllocationStatus {
   RELEASED
 }
 
-// DISTRIBUTOR_REQUEST: created at submit time from the requesting
-// distributor's own released stock. MERCHANDISER_ADJUSTMENT: merchandiser
-// sources an increase from the same distributor's other Job Orders/POs.
-// MERCHANDISER_REASSIGNMENT: merchandiser sources an increase from a
-// different distributor's released stock (requires `reason`).
+// Every Dispatch Order reservation is a Merchandiser action against pooled,
+// distributor-independent Factory+Style+Size stock — there is no
+// distributor-initiated request and no cross-distributor reassignment
+// concept anymore (both were legacy Sale Order workflow ideas tied to
+// per-Order-Sheet stock ownership). Internal lot-level traceability survives
+// entirely through StockAllocation -> QaReleaseLine -> JobOrderLineSize ->
+// JobOrder, not through this enum.
 enum StockAllocationSource {
-  DISTRIBUTOR_REQUEST
-  MERCHANDISER_ADJUSTMENT
-  MERCHANDISER_REASSIGNMENT
+  MERCHANDISER_ALLOCATION
 }
 
 model SaleOrder {
-  id                   String          @id
-  saleOrderNumber      String          @unique @map("sale_order_number")
-  distributorId        String          @map("distributor_id")
-  createdBy            String          @map("created_by")
-  soDate               DateTime        @map("so_date") @db.Date
-  status               SaleOrderStatus @default(DRAFT)
-  remarks              String?
-  submittedAt          DateTime?       @map("submitted_at")
-  reviewedById         String?         @map("reviewed_by_id")
-  reviewedAt           DateTime?       @map("reviewed_at")
-  decisionReason       String?         @map("decision_reason")
-  // Set only on the APPROVED -> FULFILLED transition (fulfillSaleOrder) — the
-  // minimal "stock was actually handed to the distributor" closing step.
-  // fulfillmentReference is a free-text business reference (e.g. a delivery
-  // challan/POD number) captured outside this system for now; no
-  // Dispatch/Shipment model exists yet, this is deliberately not one.
-  fulfilledById        String?         @map("fulfilled_by_id")
-  fulfilledAt          DateTime?       @map("fulfilled_at")
-  fulfillmentReference String?         @map("fulfillment_reference")
-  // The Sale Order's own Financial Year, derived from its own soDate — never
-  // inherited from the referenced Purchase Order(s), matching the
+  id              String          @id
+  saleOrderNumber String          @unique @map("sale_order_number")
+  distributorId   String          @map("distributor_id")
+  factoryId       String          @map("factory_id")
+  createdBy       String          @map("created_by")
+  soDate          DateTime        @map("so_date") @db.Date
+  status          SaleOrderStatus @default(ACTIVE)
+  remarks         String?
+  // The Dispatch Order's own Financial Year, derived from its own soDate —
+  // never inherited from any Job Order/Order Sheet, matching the
   // DistributorPurchaseOrder/JobOrder convention.
-  financialYearId      String          @map("financial_year_id")
-  soSerial             Int             @map("so_serial")
-  version              Int             @default(1)
-  createdAt            DateTime        @default(now()) @map("created_at")
-  updatedAt            DateTime        @updatedAt @map("updated_at")
+  financialYearId String          @map("financial_year_id")
+  soSerial        Int             @map("so_serial")
+  version         Int             @default(1)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
 
   distributor        Distributor                  @relation(fields: [distributorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  factory            Factory                      @relation(fields: [factoryId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   creator            User                         @relation("SaleOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  reviewedBy         User?                        @relation("SaleOrderReviewer", fields: [reviewedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  fulfilledBy        User?                        @relation("SaleOrderFulfiller", fields: [fulfilledById], references: [id], onDelete: SetNull, onUpdate: NoAction)
   financialYear      FinancialYear                @relation(fields: [financialYearId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  destinations       SaleOrderDestination[]
   lines              SaleOrderLine[]
   idempotencyRecords SaleOrderIdempotencyRecord[]
   factoryDispatches  FactoryDispatch[]
@@ -1319,28 +1301,60 @@ model SaleOrder {
 
   @@unique([financialYearId, soSerial])
   @@index([distributorId])
+  @@index([factoryId])
   @@index([status])
   @@map("sale_orders")
 }
 
-model SaleOrderLine {
-  id                      String   @id
-  saleOrderId             String   @map("sale_order_id")
-  // The distributor's own PO line/size — the same granularity
-  // qaPassedQuantity is already exposed at. Resolution to specific
-  // QaReleaseLine(s) happens at submit/approve time via StockAllocation, not
-  // at line-creation time.
-  purchaseOrderLineSizeId String   @map("purchase_order_line_size_id")
-  // Immutable once the Sale Order is submitted — enforced in the service
-  // layer, never overwritten by a merchandiser's decision.
-  requestedQuantity       Int      @map("requested_quantity")
-  approvedQuantity        Int?     @map("approved_quantity")
-  remarks                 String?
-  createdAt               DateTime @default(now()) @map("created_at")
-  updatedAt               DateTime @updatedAt @map("updated_at")
+// Destination address snapshot — no Store/Outlet master exists. Follows the
+// same flat address-field convention as Distributor/Factory. A Merchandiser
+// may correct these fields until Factory Dispatch; onDelete: Restrict is
+// deliberate (a destination is only ever removed explicitly by the service
+// after confirming zero lines remain under it, never implicitly cascaded).
+model SaleOrderDestination {
+  id           String   @id
+  saleOrderId  String   @map("sale_order_id")
+  label        String?
+  contactName  String?  @map("contact_name")
+  contactEmail String?  @map("contact_email")
+  contactPhone String?  @map("contact_phone")
+  addressLine1 String   @map("address_line1")
+  addressLine2 String?  @map("address_line2")
+  city         String
+  state        String
+  country      String
+  postalCode   String?  @map("postal_code")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  saleOrder                   SaleOrder                        @relation(fields: [saleOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  purchaseOrderLineSize       DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  saleOrder SaleOrder       @relation(fields: [saleOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  lines     SaleOrderLine[]
+
+  @@index([saleOrderId])
+  @@map("sale_order_destinations")
+}
+
+// Grain: Dispatch Order + Destination + Style + Size + Quantity. Individual
+// pieces only (no assortment/carton conversion). Identity is this row's own
+// id, not the (destinationId, styleId, sizeId) tuple — an edit may move an
+// existing line to a different destination while preserving its id and its
+// StockAllocation/FactoryDispatchLine references; see sale-orders.service.ts
+// updateDispatchOrder.
+model SaleOrderLine {
+  id            String   @id
+  saleOrderId   String   @map("sale_order_id")
+  destinationId String   @map("destination_id")
+  styleId       String   @map("style_id")
+  sizeId        String   @map("size_id")
+  quantity      Int
+  remarks       String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  saleOrder                   SaleOrder                    @relation(fields: [saleOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  destination                 SaleOrderDestination         @relation(fields: [destinationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  style                       Style                        @relation(fields: [styleId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  size                        Size                         @relation(fields: [sizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   allocations                 StockAllocation[]
   factoryDispatchLines        FactoryDispatchLine[]
   invoiceHandoffs             InvoiceHandoff[]
@@ -1349,9 +1363,9 @@ model SaleOrderLine {
   distributorReturnLines      DistributorReturnLine[]
   returnedStockLots           ReturnedStockLot[]
 
-  @@unique([saleOrderId, purchaseOrderLineSizeId], map: "sale_order_line_size_key")
+  @@unique([saleOrderId, destinationId, styleId, sizeId], map: "sale_order_line_grain_key")
   @@index([saleOrderId])
-  @@index([purchaseOrderLineSizeId])
+  @@index([destinationId])
   @@map("sale_order_lines")
 }
 
@@ -1406,11 +1420,14 @@ enum FactoryDispatchStatus {
   READY_FOR_ERVE
 }
 
-// One batch of approved goods a single Factory prepares for handoff into
-// Erve India's consolidation flow. factoryId is resolved once at creation
-// from the (single, authoritative) Factory that owns every line's source
-// StockAllocation — see factory-source-resolution.ts — never inferred from
-// the Sale Order itself, which may be sourced from multiple Factories.
+// One packing root per Dispatch Order (Dispatch Order Phase 3: enforced by
+// @@unique([saleOrderId]) below — the legacy model allowed multiple
+// FactoryDispatch batches per Sale Order for successive partial-fulfilment
+// packing cycles, which the Dispatch Order model does not support).
+// factoryId always equals the Dispatch Order's own single factoryId now;
+// resolveUniformFactory/factory-source-resolution.ts's cross-allocation
+// consistency check is retained defensively but is no longer the only thing
+// establishing it.
 model FactoryDispatch {
   id                    String                @id
   factoryDispatchNumber String                @unique @map("factory_dispatch_number")
@@ -1437,18 +1454,21 @@ model FactoryDispatch {
   ervePackingSource ErvePackingListSource?
 
   @@unique([financialYearId, factoryDispatchSerial])
+  @@unique([saleOrderId], map: "factory_dispatch_one_root_per_sale_order_key")
   @@index([factoryId, status])
-  @@index([saleOrderId])
   @@map("factory_dispatches")
 }
 
 // One line = one packed quantity backed by exactly one authoritative
 // StockAllocation row — the proof that this Factory really owns these
 // physical units (see the module doc comment above and
-// factory-source-resolution.ts). Multiple lines against the SAME allocation
-// across DIFFERENT FactoryDispatch batches are expected (successive partial
-// packing cycles); the unique constraint below only prevents a duplicate
-// line within one batch.
+// factory-source-resolution.ts). Dispatch Order Phase 3: since one Dispatch
+// Order now has exactly one FactoryDispatch packing root
+// (@@unique([saleOrderId]) above), progressive/successive packing calls
+// against the same allocation increment this row's packedQuantity in place
+// rather than creating a new row in a new batch — the unique constraint
+// below now also means at most one packing-quantity row exists per
+// allocation for the order's entire packing lifetime.
 model FactoryDispatchLine {
   id                String   @id
   factoryDispatchId String   @map("factory_dispatch_id")

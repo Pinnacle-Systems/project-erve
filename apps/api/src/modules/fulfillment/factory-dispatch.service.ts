@@ -8,7 +8,6 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
-import { resolveAllocationFactories } from './factory-source-resolution.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -73,13 +72,8 @@ const dispatchInclude = {
     include: {
       saleOrderLine: {
         select: {
-          purchaseOrderLineSize: {
-            select: {
-              sizeId: true,
-              size: { select: { code: true, label: true } },
-              purchaseOrderLine: { select: { styleId: true, style: { select: { styleNumber: true, styleName: true } } } },
-            },
-          },
+          style: { select: { id: true, styleNumber: true, styleName: true } },
+          size: { select: { id: true, code: true, label: true } },
         },
       },
       cartonLines: { select: { quantity: true } },
@@ -93,12 +87,8 @@ const dispatchInclude = {
             select: {
               saleOrderLine: {
                 select: {
-                  purchaseOrderLineSize: {
-                    select: {
-                      size: { select: { code: true, label: true } },
-                      purchaseOrderLine: { select: { style: { select: { styleNumber: true, styleName: true } } } },
-                    },
-                  },
+                  style: { select: { styleNumber: true, styleName: true } },
+                  size: { select: { code: true, label: true } },
                 },
               },
             },
@@ -112,18 +102,18 @@ const dispatchInclude = {
 type DispatchRecord = Prisma.FactoryDispatchGetPayload<{ include: typeof dispatchInclude }>;
 
 function toLineView(line: DispatchRecord['lines'][number]) {
-  const pols = line.saleOrderLine.purchaseOrderLineSize;
-  const pol = pols.purchaseOrderLine;
+  const style = line.saleOrderLine.style;
+  const size = line.saleOrderLine.size;
   return {
     id: line.id,
     saleOrderLineId: line.saleOrderLineId,
     stockAllocationId: line.stockAllocationId,
-    styleId: pol.styleId,
-    styleNumber: pol.style.styleNumber,
-    styleName: pol.style.styleName,
-    sizeId: pols.sizeId,
-    sizeCode: pols.size.code,
-    sizeLabel: pols.size.label,
+    styleId: style.id,
+    styleNumber: style.styleNumber,
+    styleName: style.styleName,
+    sizeId: size.id,
+    sizeCode: size.code,
+    sizeLabel: size.label,
     packedQuantity: line.packedQuantity,
     cartonedQuantity: line.cartonLines.reduce((sum, cartonLine) => sum + cartonLine.quantity, 0),
   };
@@ -137,14 +127,14 @@ function toCartonView(carton: DispatchRecord['cartons'][number]) {
     weight: carton.weight?.toString() ?? null,
     createdAt: carton.createdAt.toISOString(),
     lines: carton.lines.map((cartonLine) => {
-      const pols = cartonLine.factoryDispatchLine.saleOrderLine.purchaseOrderLineSize;
-      const pol = pols.purchaseOrderLine;
+      const style = cartonLine.factoryDispatchLine.saleOrderLine.style;
+      const size = cartonLine.factoryDispatchLine.saleOrderLine.size;
       return {
         factoryDispatchLineId: cartonLine.factoryDispatchLineId,
-        styleNumber: pol.style.styleNumber,
-        styleName: pol.style.styleName,
-        sizeCode: pols.size.code,
-        sizeLabel: pols.size.label,
+        styleNumber: style.styleNumber,
+        styleName: style.styleName,
+        sizeCode: size.code,
+        sizeLabel: size.label,
         quantity: cartonLine.quantity,
       };
     }),
@@ -230,7 +220,8 @@ export async function getFactoryDispatchList(
 }
 
 // ---------------------------------------------------------------------------
-// Stage 1 — Factory Packing Queue
+// Stage 1 — Factory Packing Queue (business-level: Dispatch Order line only —
+// Factory never sees/selects a StockAllocation/QaReleaseLine/Job Order)
 // ---------------------------------------------------------------------------
 
 export async function getFactoryPackingQueue(actor: CurrentUser, requestedFactoryId?: string) {
@@ -245,138 +236,54 @@ export async function getFactoryPackingQueue(actor: CurrentUser, requestedFactor
     factoryId = getSoleFactoryId(actor);
   }
 
-  const allocations = await prisma.stockAllocation.findMany({
-    where: {
-      status: 'ACTIVE',
-      saleOrderLine: { saleOrder: { status: 'APPROVED' } },
-      qaReleaseLine: { release: { jobOrder: { factoryId } } },
-    },
+  const lines = await prisma.saleOrderLine.findMany({
+    where: { saleOrder: { factoryId } },
     select: {
       id: true,
       quantity: true,
-      saleOrderLine: {
-        select: {
-          id: true,
-          saleOrder: {
-            select: { id: true, saleOrderNumber: true, distributor: { select: { id: true, code: true, name: true } } },
-          },
-          purchaseOrderLineSize: {
-            select: {
-              sizeId: true,
-              size: { select: { code: true, label: true } },
-              purchaseOrderLine: { select: { styleId: true, style: { select: { styleNumber: true, styleName: true } } } },
-            },
-          },
-        },
+      style: { select: { id: true, styleNumber: true, styleName: true } },
+      size: { select: { id: true, code: true, label: true } },
+      saleOrder: {
+        select: { id: true, saleOrderNumber: true, distributor: { select: { id: true, code: true, name: true } } },
       },
     },
     orderBy: { createdAt: 'asc' },
   });
-  if (allocations.length === 0) return [];
+  if (lines.length === 0) return [];
 
   const packedRows = await prisma.factoryDispatchLine.groupBy({
-    by: ['stockAllocationId'],
-    where: { stockAllocationId: { in: allocations.map((a) => a.id) } },
+    by: ['saleOrderLineId'],
+    where: { saleOrderLineId: { in: lines.map((l) => l.id) } },
     _sum: { packedQuantity: true },
   });
-  const packedByAllocation = new Map(packedRows.map((row) => [row.stockAllocationId, row._sum.packedQuantity ?? 0]));
+  const packedByLine = new Map(packedRows.map((row) => [row.saleOrderLineId, row._sum.packedQuantity ?? 0]));
 
-  return allocations
-    .map((allocation) => {
-      const pols = allocation.saleOrderLine.purchaseOrderLineSize;
-      const pol = pols.purchaseOrderLine;
-      const packedQuantity = packedByAllocation.get(allocation.id) ?? 0;
+  return lines
+    .map((line) => {
+      const packedQuantity = packedByLine.get(line.id) ?? 0;
       return {
-        saleOrderId: allocation.saleOrderLine.saleOrder.id,
-        saleOrderNumber: allocation.saleOrderLine.saleOrder.saleOrderNumber,
-        distributor: allocation.saleOrderLine.saleOrder.distributor,
-        saleOrderLineId: allocation.saleOrderLine.id,
-        stockAllocationId: allocation.id,
-        styleId: pol.styleId,
-        styleNumber: pol.style.styleNumber,
-        styleName: pol.style.styleName,
-        sizeId: pols.sizeId,
-        sizeCode: pols.size.code,
-        sizeLabel: pols.size.label,
-        allocatedQuantity: allocation.quantity,
+        saleOrderId: line.saleOrder.id,
+        saleOrderNumber: line.saleOrder.saleOrderNumber,
+        distributor: line.saleOrder.distributor,
+        saleOrderLineId: line.id,
+        styleId: line.style.id,
+        styleNumber: line.style.styleNumber,
+        styleName: line.style.styleName,
+        sizeId: line.size.id,
+        sizeCode: line.size.code,
+        sizeLabel: line.size.label,
+        allocatedQuantity: line.quantity,
         packedQuantity,
-        remainingQuantity: allocation.quantity - packedQuantity,
+        remainingQuantity: line.quantity - packedQuantity,
       };
     })
     .filter((row) => row.remainingQuantity > 0);
 }
 
 // ---------------------------------------------------------------------------
-// Stage 2 — Factory Dispatch header/lines
+// Stage 2 — recording packing (one Dispatch Order -> one FactoryDispatch
+// packing root; see the Dispatch Order Phase 3 plan §2.6/§2.7/§2.8)
 // ---------------------------------------------------------------------------
-
-interface FactoryDispatchLineInput {
-  saleOrderLineId: string;
-  stockAllocationId: string;
-  packedQuantity: number;
-}
-
-async function lockAllocationsAscending(tx: Tx, allocationIds: string[]): Promise<void> {
-  const sorted = [...new Set(allocationIds)].sort();
-  for (const id of sorted) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`stock-allocation-${id}`}))`;
-  }
-}
-
-// Re-reads allocation/approved-quantity ceilings inside the caller's already-
-// locked transaction and throws if the requested additional packedQuantity
-// values would push any allocation or any Sale Order line's cumulative
-// packed quantity past its ceiling. `excludeDispatchId` lets a line-add on an
-// existing dispatch ignore that dispatch's own already-counted lines (not
-// used today since lines are only ever added, never replaced in place, but
-// keeps the guard correct if that changes).
-async function assertWithinPackingCeilings(
-  tx: Tx,
-  lines: FactoryDispatchLineInput[],
-  allocationById: Map<string, { id: string; quantity: number; saleOrderLineId: string }>,
-  approvedQuantityBySOLine: Map<string, number>,
-): Promise<void> {
-  const allocationIds = [...new Set(lines.map((l) => l.stockAllocationId))];
-  const existingByAllocation = await tx.factoryDispatchLine.groupBy({
-    by: ['stockAllocationId'],
-    where: { stockAllocationId: { in: allocationIds } },
-    _sum: { packedQuantity: true },
-  });
-  const existingByAllocationMap = new Map(existingByAllocation.map((r) => [r.stockAllocationId, r._sum.packedQuantity ?? 0]));
-
-  const soLineIds = [...new Set(lines.map((l) => l.saleOrderLineId))];
-  const existingBySOLine = await tx.factoryDispatchLine.groupBy({
-    by: ['saleOrderLineId'],
-    where: { saleOrderLineId: { in: soLineIds } },
-    _sum: { packedQuantity: true },
-  });
-  const existingBySOLineMap = new Map(existingBySOLine.map((r) => [r.saleOrderLineId, r._sum.packedQuantity ?? 0]));
-
-  const requestedTotalBySOLine = new Map<string, number>();
-  for (const line of lines) {
-    const allocation = allocationById.get(line.stockAllocationId);
-    if (!allocation) throw HttpError.badRequest(`Stock allocation ${line.stockAllocationId} not found`);
-    const existingForAllocation = existingByAllocationMap.get(line.stockAllocationId) ?? 0;
-    if (existingForAllocation + line.packedQuantity > allocation.quantity) {
-      throw HttpError.conflict(
-        `Packed quantity for stock allocation ${line.stockAllocationId} would exceed the allocated quantity (${allocation.quantity})`,
-      );
-    }
-    requestedTotalBySOLine.set(
-      line.saleOrderLineId,
-      (requestedTotalBySOLine.get(line.saleOrderLineId) ?? 0) + line.packedQuantity,
-    );
-  }
-  for (const [soLineId, requestedTotal] of requestedTotalBySOLine) {
-    const approvedQuantity = approvedQuantityBySOLine.get(soLineId) ?? 0;
-    const existing = existingBySOLineMap.get(soLineId) ?? 0;
-    if (existing + requestedTotal > approvedQuantity) {
-      throw HttpError.conflict(
-        `Packed quantity for sale order line ${soLineId} would exceed the approved quantity (${approvedQuantity})`,
-      );
-    }
-  }
-}
 
 // Explicit child-first deletion order for one or more Factory Dispatches.
 // Required because Postgres cascade resolution does not order two SEPARATE
@@ -399,208 +306,164 @@ export async function hardDeleteFactoryDispatches(tx: Tx, factoryDispatchIds: st
   return result.count;
 }
 
-async function resolveUniformFactory(
-  tx: Tx,
-  allocationIds: string[],
-  actorFactoryScope: string | null,
-): Promise<string> {
-  const factories = await resolveAllocationFactories(tx, allocationIds);
-  let resolvedFactoryId: string | null = null;
-  for (const allocationId of allocationIds) {
-    const factory = factories.get(allocationId);
-    if (!factory) throw HttpError.badRequest(`Stock allocation ${allocationId} not found`);
-    if (resolvedFactoryId === null) resolvedFactoryId = factory.id;
-    else if (resolvedFactoryId !== factory.id) {
-      throw HttpError.badRequest('All lines in a Factory Dispatch must be sourced from the same Factory');
-    }
-  }
-  const factoryId = resolvedFactoryId!;
-  if (actorFactoryScope !== null && actorFactoryScope !== factoryId) {
-    throw HttpError.forbidden('You may only pack quantity allocated from your own mapped Factory');
-  }
-  return factoryId;
-}
-
-export interface CreateFactoryDispatchInput {
+export interface RecordPackingInput {
   saleOrderId: string;
-  lines: FactoryDispatchLineInput[];
+  // Incremental packed quantity to ADD for each line (not a running total) —
+  // business-level only: Dispatch Order line + quantity. The backend
+  // auto-distributes this across the line's own ACTIVE StockAllocation rows,
+  // oldest-QaRelease-first — never exposed to or chosen by the Factory user.
+  lines: Array<{ saleOrderLineId: string; packedQuantity: number }>;
 }
 
-export async function createFactoryDispatch(actor: CurrentUser, input: CreateFactoryDispatchInput) {
+// Records progressive Factory packing against a Dispatch Order. Reuses the
+// order's single FactoryDispatch packing root if one already exists (DB-
+// enforced via @@unique([saleOrderId])), otherwise creates exactly one.
+// Acquires the SAME sale-order-{id} advisory lock updateDispatchOrder and
+// finalizeFactoryDispatch use, in the same outermost position, so a
+// Merchandiser edit and a packing call can never race past each other (see
+// plan §2.5/§2.7): the invariant SUM(packedQuantity for a line) <=
+// SaleOrderLine.quantity is checked fresh, inside the lock, every time.
+export async function recordFactoryPacking(actor: CurrentUser, input: RecordPackingInput) {
   assertMutationAccess(actor);
   const actorFactoryScope = resolveActorFactoryScope(actor);
 
-  const allocationIds = input.lines.map((l) => l.stockAllocationId);
-  if (new Set(allocationIds).size !== allocationIds.length) {
-    throw HttpError.badRequest('Duplicate stock allocation entries are not allowed in the same Factory Dispatch');
+  if (input.lines.length === 0) throw HttpError.badRequest('At least one line is required');
+  if (input.lines.some((l) => !Number.isInteger(l.packedQuantity) || l.packedQuantity <= 0)) {
+    throw HttpError.badRequest('packedQuantity must be a positive integer');
+  }
+  const saleOrderLineIds = input.lines.map((l) => l.saleOrderLineId);
+  if (new Set(saleOrderLineIds).size !== saleOrderLineIds.length) {
+    throw HttpError.badRequest('Duplicate dispatch order line entries are not allowed in the same request');
   }
 
-  const dispatchId = createId();
+  let dispatchId!: string;
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sale-order-${input.saleOrderId}`}))`;
 
-    const order = await tx.saleOrder.findUnique({ where: { id: input.saleOrderId } });
-    if (!order) throw HttpError.notFound('Sale order not found');
-    if (order.status !== 'APPROVED') {
-      throw HttpError.badRequest(`Sale order in status ${order.status} is not eligible for Factory packing`);
+    const order = await tx.saleOrder.findUnique({ where: { id: input.saleOrderId }, include: { lines: true } });
+    if (!order) throw HttpError.notFound('Dispatch order not found');
+    if (actorFactoryScope !== null && actorFactoryScope !== order.factoryId) {
+      throw HttpError.forbidden('You may only pack quantity for your own mapped Factory');
     }
 
-    await lockAllocationsAscending(tx, allocationIds);
-
-    const allocations = await tx.stockAllocation.findMany({
-      where: { id: { in: allocationIds } },
-      include: { saleOrderLine: { select: { id: true, saleOrderId: true, approvedQuantity: true } } },
-    });
-    const allocationById = new Map(allocations.map((a) => [a.id, a]));
-    const approvedQuantityBySOLine = new Map<string, number>();
-
+    const linesById = new Map(order.lines.map((l) => [l.id, l]));
     for (const line of input.lines) {
-      const allocation = allocationById.get(line.stockAllocationId);
-      if (!allocation) throw HttpError.badRequest(`Stock allocation ${line.stockAllocationId} not found`);
-      if (allocation.status !== 'ACTIVE') {
-        throw HttpError.badRequest(`Stock allocation ${line.stockAllocationId} is not active`);
+      if (!linesById.has(line.saleOrderLineId)) {
+        throw HttpError.badRequest(`Line ${line.saleOrderLineId} does not belong to this dispatch order`);
       }
-      if (allocation.saleOrderLineId !== line.saleOrderLineId) {
-        throw HttpError.badRequest(
-          `Stock allocation ${line.stockAllocationId} does not belong to sale order line ${line.saleOrderLineId}`,
+    }
+
+    let dispatch = await tx.factoryDispatch.findUnique({ where: { saleOrderId: input.saleOrderId } });
+    if (dispatch && dispatch.status !== 'DRAFT') {
+      throw HttpError.badRequest('This dispatch order has already completed Factory Dispatch');
+    }
+
+    let createdNew = false;
+    if (!dispatch) {
+      const financialYear = await ensureFinancialYear(tx, new Date());
+      const { factoryDispatchNumber, factoryDispatchSerial } = await generateFactoryDispatchNumber(tx, financialYear);
+      dispatch = await tx.factoryDispatch.create({
+        data: {
+          id: createId(),
+          factoryDispatchNumber,
+          factoryId: order.factoryId,
+          saleOrderId: input.saleOrderId,
+          status: 'DRAFT',
+          preparedById: actor.id,
+          financialYearId: financialYear.id,
+          factoryDispatchSerial,
+        },
+      });
+      createdNew = true;
+    }
+    dispatchId = dispatch.id;
+
+    // Invariant: SUM(packedQuantity for a line) <= SaleOrderLine.quantity.
+    const existingPackedRows = await tx.factoryDispatchLine.groupBy({
+      by: ['saleOrderLineId'],
+      where: { saleOrderLineId: { in: saleOrderLineIds } },
+      _sum: { packedQuantity: true },
+    });
+    const existingPackedByLine = new Map(existingPackedRows.map((r) => [r.saleOrderLineId, r._sum.packedQuantity ?? 0]));
+    for (const line of input.lines) {
+      const existingPacked = existingPackedByLine.get(line.saleOrderLineId) ?? 0;
+      const targetQuantity = linesById.get(line.saleOrderLineId)!.quantity;
+      if (existingPacked + line.packedQuantity > targetQuantity) {
+        throw HttpError.conflict(
+          `Packed quantity for line ${line.saleOrderLineId} would exceed its Dispatch Order quantity (${targetQuantity})`,
         );
       }
-      if (allocation.saleOrderLine.saleOrderId !== input.saleOrderId) {
-        throw HttpError.badRequest(`Sale order line ${line.saleOrderLineId} does not belong to this sale order`);
-      }
-      approvedQuantityBySOLine.set(line.saleOrderLineId, allocation.saleOrderLine.approvedQuantity ?? 0);
     }
 
-    const factoryId = await resolveUniformFactory(tx, allocationIds, actorFactoryScope);
-    await assertWithinPackingCeilings(
-      tx,
-      input.lines,
-      new Map(allocations.map((a) => [a.id, { id: a.id, quantity: a.quantity, saleOrderLineId: a.saleOrderLineId }])),
-      approvedQuantityBySOLine,
-    );
+    for (const line of input.lines) {
+      const allocations = await tx.stockAllocation.findMany({
+        where: { saleOrderLineId: line.saleOrderLineId, status: 'ACTIVE' },
+        include: { qaReleaseLine: { include: { release: { select: { releasedAt: true } } } } },
+      });
+      const sorted = [...allocations].sort(
+        (a, b) =>
+          a.qaReleaseLine.release.releasedAt.getTime() - b.qaReleaseLine.release.releasedAt.getTime() ||
+          a.id.localeCompare(b.id),
+      );
+      const existingByAllocation = await tx.factoryDispatchLine.groupBy({
+        by: ['stockAllocationId'],
+        where: { stockAllocationId: { in: sorted.map((a) => a.id) } },
+        _sum: { packedQuantity: true },
+      });
+      const packedByAllocation = new Map(existingByAllocation.map((r) => [r.stockAllocationId, r._sum.packedQuantity ?? 0]));
 
-    const financialYear = await ensureFinancialYear(tx, new Date());
-    const { factoryDispatchNumber, factoryDispatchSerial } = await generateFactoryDispatchNumber(tx, financialYear);
+      let remaining = line.packedQuantity;
+      for (const allocation of sorted) {
+        if (remaining <= 0) break;
+        const alreadyPacked = packedByAllocation.get(allocation.id) ?? 0;
+        const capacity = allocation.quantity - alreadyPacked;
+        if (capacity <= 0) continue;
+        const increment = Math.min(capacity, remaining);
+        remaining -= increment;
 
-    await tx.factoryDispatch.create({
-      data: {
-        id: dispatchId,
-        factoryDispatchNumber,
-        factoryId,
-        saleOrderId: input.saleOrderId,
-        status: 'DRAFT',
-        preparedById: actor.id,
-        financialYearId: financialYear.id,
-        factoryDispatchSerial,
-        lines: {
-          create: input.lines.map((line) => ({
-            id: createId(),
-            saleOrderLineId: line.saleOrderLineId,
-            stockAllocationId: line.stockAllocationId,
-            packedQuantity: line.packedQuantity,
-          })),
-        },
-      },
-    });
+        const existingLine = await tx.factoryDispatchLine.findUnique({
+          where: {
+            factoryDispatchId_stockAllocationId: { factoryDispatchId: dispatch.id, stockAllocationId: allocation.id },
+          },
+        });
+        if (existingLine) {
+          await tx.factoryDispatchLine.update({ where: { id: existingLine.id }, data: { packedQuantity: { increment } } });
+        } else {
+          await tx.factoryDispatchLine.create({
+            data: {
+              id: createId(),
+              factoryDispatchId: dispatch.id,
+              saleOrderLineId: line.saleOrderLineId,
+              stockAllocationId: allocation.id,
+              packedQuantity: increment,
+            },
+          });
+        }
+      }
+      if (remaining > 0) {
+        // Unreachable given the ceiling check above (a line's total ACTIVE
+        // allocation quantity always equals its Dispatch Order quantity) —
+        // guarded defensively rather than silently dropping quantity.
+        throw HttpError.conflict(
+          `Unable to attribute all packed quantity for line ${line.saleOrderLineId} to a stock allocation`,
+        );
+      }
+    }
 
+    await tx.factoryDispatch.update({ where: { id: dispatch.id }, data: { version: { increment: 1 } } });
     await recordAuditLog(
       {
         actorId: actor.id,
-        action: 'FACTORY_DISPATCH_CREATED',
+        action: createdNew ? 'FACTORY_DISPATCH_CREATED' : 'FACTORY_DISPATCH_PACKED',
         entityType: 'FactoryDispatch',
-        entityId: dispatchId,
-        metadata: { factoryDispatchNumber, saleOrderId: input.saleOrderId, factoryId, lineCount: input.lines.length },
+        entityId: dispatch.id,
+        metadata: { saleOrderId: input.saleOrderId, factoryId: order.factoryId, lines: input.lines },
       },
       tx,
     );
   });
 
   return getFactoryDispatchDetail(actor, dispatchId);
-}
-
-export async function addFactoryDispatchLines(
-  actor: CurrentUser,
-  id: string,
-  input: { expectedVersion: number; lines: FactoryDispatchLineInput[] },
-) {
-  assertMutationAccess(actor);
-  const actorFactoryScope = resolveActorFactoryScope(actor);
-
-  const allocationIds = input.lines.map((l) => l.stockAllocationId);
-  if (new Set(allocationIds).size !== allocationIds.length) {
-    throw HttpError.badRequest('Duplicate stock allocation entries are not allowed in the same request');
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`factory-dispatch-${id}`}))`;
-
-    const dispatch = await tx.factoryDispatch.findUnique({ where: { id }, include: { lines: true } });
-    if (!dispatch) throw HttpError.notFound('Factory dispatch not found');
-    if (dispatch.version !== input.expectedVersion) throw HttpError.staleVersion(dispatch.version);
-    if (dispatch.status !== 'DRAFT') throw HttpError.badRequest('Only a DRAFT Factory Dispatch can be edited');
-    assertFactoryRowAccess(actor, dispatch.factoryId);
-
-    const existingAllocationIds = new Set(dispatch.lines.map((l) => l.stockAllocationId));
-    for (const line of input.lines) {
-      if (existingAllocationIds.has(line.stockAllocationId)) {
-        throw HttpError.badRequest(
-          `Stock allocation ${line.stockAllocationId} is already a line on this Factory Dispatch`,
-        );
-      }
-    }
-
-    await lockAllocationsAscending(tx, allocationIds);
-
-    const allocations = await tx.stockAllocation.findMany({
-      where: { id: { in: allocationIds } },
-      include: { saleOrderLine: { select: { id: true, saleOrderId: true, approvedQuantity: true } } },
-    });
-    const allocationById = new Map(allocations.map((a) => [a.id, a]));
-    const approvedQuantityBySOLine = new Map<string, number>();
-
-    for (const line of input.lines) {
-      const allocation = allocationById.get(line.stockAllocationId);
-      if (!allocation) throw HttpError.badRequest(`Stock allocation ${line.stockAllocationId} not found`);
-      if (allocation.status !== 'ACTIVE') {
-        throw HttpError.badRequest(`Stock allocation ${line.stockAllocationId} is not active`);
-      }
-      if (allocation.saleOrderLineId !== line.saleOrderLineId) {
-        throw HttpError.badRequest(
-          `Stock allocation ${line.stockAllocationId} does not belong to sale order line ${line.saleOrderLineId}`,
-        );
-      }
-      if (allocation.saleOrderLine.saleOrderId !== dispatch.saleOrderId) {
-        throw HttpError.badRequest(`Sale order line ${line.saleOrderLineId} does not belong to this Sale Order`);
-      }
-      approvedQuantityBySOLine.set(line.saleOrderLineId, allocation.saleOrderLine.approvedQuantity ?? 0);
-    }
-
-    // resolveUniformFactory checks internal consistency across OLD (already
-    // known to be dispatch.factoryId) and NEW allocations together — any new
-    // allocation resolving to a different Factory fails here, which is what
-    // guarantees the new lines match dispatch.factoryId without a second pass.
-    await resolveUniformFactory(tx, [...existingAllocationIds, ...allocationIds], actorFactoryScope);
-
-    await assertWithinPackingCeilings(
-      tx,
-      input.lines,
-      new Map(allocations.map((a) => [a.id, { id: a.id, quantity: a.quantity, saleOrderLineId: a.saleOrderLineId }])),
-      approvedQuantityBySOLine,
-    );
-
-    await tx.factoryDispatchLine.createMany({
-      data: input.lines.map((line) => ({
-        id: createId(),
-        factoryDispatchId: id,
-        saleOrderLineId: line.saleOrderLineId,
-        stockAllocationId: line.stockAllocationId,
-        packedQuantity: line.packedQuantity,
-      })),
-    });
-    await tx.factoryDispatch.update({ where: { id }, data: { version: { increment: 1 } } });
-  });
-
-  return getFactoryDispatchDetail(actor, id);
 }
 
 export async function removeFactoryDispatchLine(
@@ -612,6 +475,9 @@ export async function removeFactoryDispatchLine(
   assertMutationAccess(actor);
 
   await prisma.$transaction(async (tx) => {
+    const pre = await tx.factoryDispatch.findUnique({ where: { id }, select: { saleOrderId: true } });
+    if (!pre) throw HttpError.notFound('Factory dispatch not found');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sale-order-${pre.saleOrderId}`}))`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`factory-dispatch-${id}`}))`;
 
     const dispatch = await tx.factoryDispatch.findUnique({ where: { id } });
@@ -640,6 +506,9 @@ export async function deleteFactoryDispatch(actor: CurrentUser, id: string, inpu
   assertMutationAccess(actor);
 
   await prisma.$transaction(async (tx) => {
+    const pre = await tx.factoryDispatch.findUnique({ where: { id }, select: { saleOrderId: true } });
+    if (!pre) throw HttpError.notFound('Factory dispatch not found');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sale-order-${pre.saleOrderId}`}))`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`factory-dispatch-${id}`}))`;
 
     const dispatch = await tx.factoryDispatch.findUnique({ where: { id } });
@@ -774,13 +643,23 @@ export async function removeFactoryPackingCarton(
 }
 
 // ---------------------------------------------------------------------------
-// Lifecycle — finalize (DRAFT -> READY_FOR_ERVE)
+// Lifecycle — finalize (DRAFT -> READY_FOR_ERVE): the authoritative "goods
+// left the factory for Erve" fact that locks the Dispatch Order (see the
+// Phase 3 plan §2.5/§2.6). Coordinates on the SAME sale-order-{id} advisory
+// lock updateDispatchOrder/recordFactoryPacking use, in the same outermost
+// position, so a Merchandiser edit and this transition can never both
+// commit past each other. The completion invariant (every line fully and
+// exactly packed) is enforced here, not earlier — DRAFT packing may remain
+// partial/progressive.
 // ---------------------------------------------------------------------------
 
 export async function finalizeFactoryDispatch(actor: CurrentUser, id: string, input: { expectedVersion: number }) {
   assertMutationAccess(actor);
 
   await prisma.$transaction(async (tx) => {
+    const pre = await tx.factoryDispatch.findUnique({ where: { id }, select: { saleOrderId: true } });
+    if (!pre) throw HttpError.notFound('Factory dispatch not found');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sale-order-${pre.saleOrderId}`}))`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`factory-dispatch-${id}`}))`;
 
     const dispatch = await tx.factoryDispatch.findUnique({
@@ -800,6 +679,29 @@ export async function finalizeFactoryDispatch(actor: CurrentUser, id: string, in
           `Line ${line.id} has ${cartonedQuantity} unit(s) carton-packed but ${line.packedQuantity} packed — carton contents must reconcile exactly before finalizing`,
         );
       }
+    }
+
+    // Completion invariant (no partial-fulfilment finalize): every Dispatch
+    // Order line must be packed EXACTLY to its quantity — not more, not
+    // less. Because one Dispatch Order has exactly one FactoryDispatch
+    // packing root (@@unique([saleOrderId])), this dispatch's own lines are
+    // the complete packing picture for the whole order.
+    const saleOrderLines = await tx.saleOrderLine.findMany({
+      where: { saleOrderId: dispatch.saleOrderId },
+      select: { id: true, quantity: true },
+    });
+    const packedBySOLine = new Map<string, number>();
+    for (const line of dispatch.lines) {
+      packedBySOLine.set(line.saleOrderLineId, (packedBySOLine.get(line.saleOrderLineId) ?? 0) + line.packedQuantity);
+    }
+    const mismatches = saleOrderLines
+      .map((line) => ({ id: line.id, required: line.quantity, packed: packedBySOLine.get(line.id) ?? 0 }))
+      .filter((line) => line.packed !== line.required);
+    if (mismatches.length > 0) {
+      const detail = mismatches.map((m) => `${m.id} (packed ${m.packed}/${m.required})`).join(', ');
+      throw HttpError.badRequest(
+        `Cannot finalize: every Dispatch Order line must be packed exactly to its quantity — mismatched line(s): ${detail}`,
+      );
     }
 
     const updated = await tx.factoryDispatch.updateMany({

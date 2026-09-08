@@ -5,11 +5,10 @@ import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
 import {
-  addFactoryDispatchLinesSchema,
   createCartonSchema,
-  createFactoryDispatchSchema,
   listFactoryDispatchesQuerySchema,
   packingQueueQuerySchema,
+  recordPackingSchema,
   versionedActionSchema,
 } from './factory-dispatch.validation.js';
 import * as factoryDispatchService from './factory-dispatch.service.js';
@@ -41,12 +40,16 @@ factoryDispatchesRouter.get(
   }),
 );
 
+// Records progressive packing at the Dispatch Order line level — the
+// Factory never selects a StockAllocation/QaReleaseLine/Job Order; the
+// backend gets-or-creates the order's single FactoryDispatch packing root
+// and auto-distributes across its allocations (see recordFactoryPacking).
 factoryDispatchesRouter.post(
   '/',
   canMutate,
   asyncHandler(async (req, res) => {
-    const input = createFactoryDispatchSchema.parse(req.body);
-    const dispatch = await factoryDispatchService.createFactoryDispatch(req.user!, input);
+    const input = recordPackingSchema.parse(req.body);
+    const dispatch = await factoryDispatchService.recordFactoryPacking(req.user!, input);
     res.status(201).json(successResponse(dispatch));
   }),
 );
@@ -67,16 +70,6 @@ factoryDispatchesRouter.delete(
     const input = versionedActionSchema.parse(req.body);
     await factoryDispatchService.deleteFactoryDispatch(req.user!, req.params.id! as string, input);
     res.status(204).send();
-  }),
-);
-
-factoryDispatchesRouter.post(
-  '/:id/lines',
-  canMutate,
-  asyncHandler(async (req, res) => {
-    const input = addFactoryDispatchLinesSchema.parse(req.body);
-    const dispatch = await factoryDispatchService.addFactoryDispatchLines(req.user!, req.params.id! as string, input);
-    res.status(200).json(successResponse(dispatch));
   }),
 );
 

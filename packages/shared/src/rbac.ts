@@ -50,33 +50,48 @@ export function canReadFinancialYears(user: RoleHolder): boolean {
   return hasAnyRole(user, FINANCIAL_YEAR_READ_ROLES);
 }
 
-/** Roles that may view Sale Orders (row-level distributor scoping still applies). */
-export const SALE_ORDER_VIEW_ROLES = [
+/**
+ * Dispatch Order Phase 3 (user-facing rename of Sale Order): these three
+ * lists are the single source of truth, consolidating what used to be three
+ * independently-drifted copies (this file's now-removed
+ * SALE_ORDER_VIEW_ROLES/SALE_ORDER_DISTRIBUTOR_MUTATION_ROLES/
+ * SALE_ORDER_REVIEW_ROLES, apps/api's inlined route lists, and apps/web's
+ * own permissions.ts copy — the API's list included ACCOUNTANT while this
+ * file's never did, a real divergence found during the Phase 3 audit).
+ * DISTRIBUTOR has no Dispatch Order role at all (no create/view — stock is
+ * pooled and allocated by Merchandising, not requested by a Distributor).
+ * FACTORY_USER gets read-only list/detail (server-scoped to its own mapped
+ * Factory) but not the audit trail, which carries internal
+ * correction/allocation metadata it has no operational need for.
+ */
+export const DISPATCH_ORDER_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'FACTORY_USER',
+  'SENIOR_MANAGEMENT',
+  'ACCOUNTANT',
+] as const satisfies readonly Role[];
+
+export function canViewDispatchOrders(user: RoleHolder): boolean {
+  return hasAnyRole(user, DISPATCH_ORDER_VIEW_ROLES);
+}
+
+export const DISPATCH_ORDER_AUDIT_VIEW_ROLES = [
   'ADMIN',
   'MERCHANDISER',
   'SENIOR_MANAGEMENT',
-  'DISTRIBUTOR',
+  'ACCOUNTANT',
 ] as const satisfies readonly Role[];
 
-export function canViewSaleOrders(user: RoleHolder): boolean {
-  return hasAnyRole(user, SALE_ORDER_VIEW_ROLES);
+export function canViewDispatchOrderAudit(user: RoleHolder): boolean {
+  return hasAnyRole(user, DISPATCH_ORDER_AUDIT_VIEW_ROLES);
 }
 
-/** Roles that may create/edit/submit a Sale Order as the requesting distributor. */
-export const SALE_ORDER_DISTRIBUTOR_MUTATION_ROLES = [
-  'ADMIN',
-  'DISTRIBUTOR',
-] as const satisfies readonly Role[];
+/** Roles that may create/edit a Dispatch Order (creation is the sole allocation point — no separate review/approve step exists). */
+export const DISPATCH_ORDER_MUTATION_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
-export function canMutateSaleOrderAsDistributor(user: RoleHolder): boolean {
-  return hasAnyRole(user, SALE_ORDER_DISTRIBUTOR_MUTATION_ROLES);
-}
-
-/** Roles that may review/approve/reject a submitted Sale Order and see global inventory. */
-export const SALE_ORDER_REVIEW_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
-
-export function canReviewSaleOrders(user: RoleHolder): boolean {
-  return hasAnyRole(user, SALE_ORDER_REVIEW_ROLES);
+export function canMutateDispatchOrders(user: RoleHolder): boolean {
+  return hasAnyRole(user, DISPATCH_ORDER_MUTATION_ROLES);
 }
 
 /**

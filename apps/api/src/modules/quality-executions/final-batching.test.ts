@@ -563,11 +563,6 @@ describe('Final Inspection batching and prepared coverage', () => {
       .set('Idempotency-Key', 'obsolete-final-publisher')
       .send({ expectedVersion: f.job.version })
       .expect(404);
-    const projection = await prisma.distributorPurchaseOrderLineSize.aggregate({
-      where: { purchaseOrderLine: { purchaseOrderId: f.poId } },
-      _sum: { qaPassedQuantity: true },
-    });
-    expect(projection._sum.qaPassedQuantity).toBe(0);
     expect(await prisma.qaRelease.count({ where: { jobOrderId: f.job.id } })).toBe(0);
   });
 
@@ -707,11 +702,6 @@ describe('Final Inspection batching and prepared coverage', () => {
         ),
       ),
     );
-    const projected = await prisma.distributorPurchaseOrderLineSize.aggregate({
-      where: { purchaseOrderLine: { purchaseOrderId: f.poId } },
-      _sum: { qaPassedQuantity: true },
-    });
-    expect(projected._sum.qaPassedQuantity).toBe(600);
   });
 
   it('closes a failed physical batch as permanently rejected without downstream release', async () => {
@@ -806,37 +796,6 @@ describe('Final Inspection batching and prepared coverage', () => {
       coverageCompleteSoFar: true,
       finalQaComplete: true,
     });
-  });
-
-  it('rolls PASS finalization back if its compatibility projection cannot be written', async () => {
-    const f = await fixture(10);
-    await prisma.jobOrderStageStatus.update({
-      where: { id: f.job.stageStatuses[0]!.id },
-      data: { status: 'COMPLETED', completedAt: new Date() },
-    });
-    const execution = (await start(f, 10).expect(201)).body.data;
-    const allocation = execution.finalBatch.allocations[0];
-    const allocatedSize = await prisma.jobOrderLineSize.findUniqueOrThrow({
-      where: { id: allocation.jobOrderLineSizeId },
-    });
-    // This fixture's Job Order has exactly one source Order Sheet (f.poId),
-    // so the legacy compatibility bridge (Phase 2.1) resolves this size to
-    // that Order Sheet's matching line-size — force it to overflow so the
-    // PASS transaction's qaPassedQuantity increment fails.
-    const legacyPurchaseOrderLineSize = await prisma.distributorPurchaseOrderLineSize.findFirstOrThrow({
-      where: { sizeId: allocatedSize.sizeId, purchaseOrderLine: { purchaseOrderId: f.poId } },
-    });
-    await prisma.distributorPurchaseOrderLineSize.update({
-      where: { id: legacyPurchaseOrderLineSize.id },
-      data: { qaPassedQuantity: 2_147_483_647 },
-    });
-    await finalize(f, execution, 'PASS').expect(500);
-    expect(
-      await prisma.qualityActivityExecution.findUniqueOrThrow({ where: { id: execution.id } }),
-    ).toMatchObject({ status: 'DRAFT', outcome: null });
-    expect(
-      await prisma.qaRelease.count({ where: { finalQualityBatchId: execution.finalBatch.id } }),
-    ).toBe(0);
   });
 
   it('serializes concurrent PASS requests and publishes one release', async () => {

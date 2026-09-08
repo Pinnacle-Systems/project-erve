@@ -106,7 +106,6 @@ export interface PurchaseOrderLineSize {
   sizeCode: string;
   sizeLabel: string;
   orderedQuantity: number;
-  qaPassedQuantity: number;
   saleOrderedQuantity: number;
   dispatchedQuantity: number;
   deliveredQuantity: number;
@@ -146,89 +145,74 @@ export interface PurchaseOrderDetail extends PurchaseOrderSummary {
 // service/routes in the same pass.
 
 // ---------------------------------------------------------------------------
-// Sale Orders
+// Dispatch Orders (user-facing name; technical model/type names keep the
+// SaleOrder prefix to avoid unnecessary churn — see the Dispatch Order Phase
+// 3 plan). Merchandising allocates pooled Factory+Style+Size QA-passed stock
+// to one Distributor's destinations; creation is the sole allocation point,
+// there is no draft/submit/review/approve workflow, no cancellation, no
+// partial fulfilment. Internal StockAllocation/QaReleaseLine/Job Order
+// traceability is never exposed on these views — see
+// DispatchOrderAuditDetail (ADMIN/MERCHANDISER only) for that.
 // ---------------------------------------------------------------------------
 
-export type SaleOrderStatus =
-  | 'DRAFT'
-  | 'SUBMITTED'
-  | 'UNDER_REVIEW'
-  | 'APPROVED'
-  | 'REJECTED'
-  | 'CANCELLED'
-  | 'FULFILLED';
+// Not a workflow field — kept for filterability/forward-compatibility only;
+// see the schema comment on SaleOrderStatus.
+export type SaleOrderStatus = 'ACTIVE';
 
 export type StockAllocationStatus = 'ACTIVE' | 'RELEASED';
-export type StockAllocationSource =
-  | 'DISTRIBUTOR_REQUEST'
-  | 'MERCHANDISER_ADJUSTMENT'
-  | 'MERCHANDISER_REASSIGNMENT';
+// Every reservation is a Merchandiser action against a pooled,
+// distributor-independent Factory+Style+Size pool — there is no
+// distributor-initiated request or cross-distributor reassignment concept.
+export type StockAllocationSource = 'MERCHANDISER_ALLOCATION';
 
-export interface StockAllocationSourceDetail {
-  qaReleaseLineId: string;
-  distributor: { id: string; code: string; name: string };
-  purchaseOrder: { id: string; poNumber: string };
-  jobOrder: { id: string; jobOrderNumber: string };
-  factory: { id: string; code: string; name: string };
-  releasedAt: string;
-}
-
-export interface SaleOrderAllocationView {
+export interface SaleOrderDestinationView {
   id: string;
-  quantity: number;
-  status: StockAllocationStatus;
-  allocationSource: StockAllocationSource;
-  reason: string | null;
-  createdAt: string;
-  // Null when redacted for a viewer who is not permitted to see cross-
-  // distributor provenance (a DISTRIBUTOR viewer on a MERCHANDISER_REASSIGNMENT
-  // allocation) — see requirement 4/10 in the Sale Order spec.
-  source: StockAllocationSourceDetail | null;
+  label: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  state: string;
+  country: string;
+  postalCode: string | null;
 }
 
 export interface SaleOrderLineView {
   id: string;
-  purchaseOrderLineSizeId: string;
-  purchaseOrderId: string;
-  poNumber: string;
+  destinationId: string;
   styleId: string;
   styleNumber: string;
   styleName: string;
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
-  orderedQuantity: number;
-  qaPassedQuantity: number;
-  requestedQuantity: number;
-  approvedQuantity: number | null;
+  quantity: number;
   remarks: string | null;
-  allocations: SaleOrderAllocationView[];
 }
 
 export interface SaleOrderSummary extends VersionedResource {
   id: string;
   saleOrderNumber: string;
-  distributor: { id: string; code: string; name: string };
+  distributor: { id: string; code: string; name: string; purchaseMode: PurchaseMode };
+  factory: { id: string; code: string; name: string };
   financialYear: { id: string; code: string };
   soDate: string;
   status: SaleOrderStatus;
-  totalRequestedQuantity: number;
-  totalApprovedQuantity: number;
+  destinationCount: number;
+  totalQuantity: number;
   createdAt: string;
+  /** Server-computed: true once the authoritative Factory Dispatch fact (a FactoryDispatch reaching READY_FOR_ERVE, or any ErveDispatch) exists — see isDispatchOrderLocked. No role, including ADMIN, may mutate a locked Dispatch Order. */
+  isLocked: boolean;
 }
 
 export interface SaleOrderDetail extends SaleOrderSummary {
   creator: { id: string; name: string; email: string };
-  reviewedBy: { id: string; name: string; email: string } | null;
-  fulfilledBy: { id: string; name: string; email: string } | null;
   remarks: string | null;
-  submittedAt: string | null;
-  reviewedAt: string | null;
-  fulfilledAt: string | null;
-  fulfillmentReference: string | null;
-  decisionReason: string | null;
+  destinations: SaleOrderDestinationView[];
   lines: SaleOrderLineView[];
-  fulfillment: SaleOrderFulfillmentSummary;
+  fulfillment: DispatchOrderFulfillmentSummary;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,13 +228,12 @@ export type ErvePackingListStatus = 'OPEN' | 'DISPATCHED';
 export type ErveDispatchStatus = 'DISPATCHED' | 'DELIVERED';
 export type DeliveryConfirmationSource = 'USER_CONFIRMED' | 'LEGACY_ASSUMED_FULL_RECEIPT';
 
-/** One approved-allocation row a FACTORY_USER may pack, scoped to their own mapped Factory only. */
+/** One Dispatch Order line a FACTORY_USER may pack, scoped to their own mapped Factory only — business-level (no StockAllocation/QaReleaseLine/Job Order exposed). */
 export interface FactoryPackingQueueLine {
   saleOrderId: string;
   saleOrderNumber: string;
   distributor: { id: string; code: string; name: string };
   saleOrderLineId: string;
-  stockAllocationId: string;
   styleId: string;
   styleNumber: string;
   styleName: string;
@@ -545,32 +528,20 @@ export interface DistributorSalesReportView {
   lines: DistributorSalesReportLineView[];
 }
 
-export interface SaleOrderFulfillmentLineProgress {
-  saleOrderLineId: string;
-  approvedQuantity: number;
-  factoryPackedQuantity: number;
-  dispatchedQuantity: number;
-  remainingToPackQuantity: number;
-  remainingToDispatchQuantity: number;
-}
+// Dispatch Order Phase 3: a small set of discrete operational facts derived
+// from FactoryDispatch/ErveDispatch state — never a percentage/remaining-
+// balance computation (there is no partial-fulfilment lifecycle).
+export type DispatchOrderFulfillmentStage =
+  | 'AWAITING_PACKING'
+  | 'PACKING_IN_PROGRESS'
+  | 'FACTORY_DISPATCHED'
+  | 'ERVE_DISPATCHED'
+  | 'DELIVERED';
 
-/** View-model-only progress derived at read time — never persisted on SaleOrder.status (see spec). */
-export type SaleOrderFulfillmentStage =
-  | 'NOT_APPLICABLE'
-  | 'AWAITING_FACTORY_PACKING'
-  | 'PARTIALLY_FACTORY_PACKED'
-  | 'READY_FOR_ERVE_PACKING'
-  | 'PARTIALLY_DISPATCHED'
-  | 'DISPATCHED_IN_FULL';
-
-export interface SaleOrderFulfillmentSummary {
-  stage: SaleOrderFulfillmentStage;
-  totalApprovedQuantity: number;
+export interface DispatchOrderFulfillmentSummary {
+  stage: DispatchOrderFulfillmentStage;
+  totalQuantity: number;
   totalFactoryPackedQuantity: number;
-  totalDispatchedQuantity: number;
-  lines: SaleOrderFulfillmentLineProgress[];
-  /** true when status is FULFILLED via the old manual action with no Erve Dispatch history behind it. */
-  isLegacyFulfilled: boolean;
 }
 
 export interface SaleOrderAuditEntry {
@@ -587,55 +558,11 @@ export interface SaleOrderAuditEntry {
   createdAt: string;
 }
 
-// The demand-side catalog a DISTRIBUTOR selects from when creating a Sale
-// Order line: identity fields only, from their own Purchase Order line/sizes
-// — deliberately carries no stock/availability quantity of any kind (own or
-// central), so it stays safe to show regardless of what QA-released stock
-// currently exists anywhere.
-export interface RequestableCatalogLine {
-  purchaseOrderLineSizeId: string;
-  purchaseOrderId: string;
-  poNumber: string;
-  styleId: string;
-  styleNumber: string;
-  styleName: string;
-  sizeId: string;
-  sizeCode: string;
-  sizeLabel: string;
-}
-
-export interface EligibleStockLine {
-  purchaseOrderLineSizeId: string;
-  purchaseOrderId: string;
-  poNumber: string;
-  styleId: string;
-  styleNumber: string;
-  styleName: string;
-  sizeId: string;
-  sizeCode: string;
-  sizeLabel: string;
-  releasedQuantity: number;
-  committedQuantity: number;
-  availableQuantity: number;
-}
-
-export interface GlobalInventoryLine {
-  qaReleaseLineId: string;
-  distributor: { id: string; code: string; name: string };
-  purchaseOrder: { id: string; poNumber: string };
-  jobOrder: { id: string; jobOrderNumber: string };
-  factory: { id: string; code: string; name: string };
-  styleId: string;
-  styleNumber: string;
-  styleName: string;
-  sizeId: string;
-  sizeCode: string;
-  sizeLabel: string;
-  releasedQuantity: number;
-  committedQuantity: number;
-  availableQuantity: number;
-  releasedAt: string;
-}
+// RequestableCatalogLine / EligibleStockLine / GlobalInventoryLine (retired,
+// Dispatch Order Phase 3): all three were built on the legacy per-Order-
+// Sheet Sale Order allocation bridge (QaReleaseLine.purchaseOrderLineSizeId)
+// and are fully removed. PooledFactoryInventoryLine below is the sole
+// inventory-availability read path for Dispatch Order creation/editing.
 
 // Phase 2.1 target fact: QA-passed stock pooled by Factory + Style + Size
 // only — never by Distributor/Order Sheet/Purchase Mode, and never

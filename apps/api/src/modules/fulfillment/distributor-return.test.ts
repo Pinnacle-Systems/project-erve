@@ -20,13 +20,13 @@ async function packAndFinalize(
   factoryToken: string,
   saleOrderId: string,
   saleOrderLineId: string,
-  stockAllocationId: string,
+  _stockAllocationId: string,
   quantity: number,
 ) {
   const created = await request(app)
     .post('/factory-dispatches')
     .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ saleOrderId, lines: [{ saleOrderLineId, stockAllocationId, packedQuantity: quantity }] })
+    .send({ saleOrderId, lines: [{ saleOrderLineId, packedQuantity: quantity }] })
     .expect(201);
   const lineId = created.body.data.lines[0].id;
   await request(app)
@@ -142,7 +142,7 @@ describe('Distributor Return — acceptance scenario', () => {
     const qaReleaseLine = await prisma.qaReleaseLine.findUniqueOrThrow({ where: { id: allocation.qaReleaseLineId } });
     expect(qaReleaseLine.quantity).toBe(100);
     const saleOrder = await prisma.saleOrder.findUniqueOrThrow({ where: { id: fixture.saleOrder.id } });
-    expect(saleOrder.status).toBe('FULFILLED');
+    expect(saleOrder.status).toBe('ACTIVE'); // Dispatch Order Phase 3: no persisted workflow status
   });
 });
 
