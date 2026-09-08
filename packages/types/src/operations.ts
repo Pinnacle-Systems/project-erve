@@ -637,9 +637,31 @@ export interface GlobalInventoryLine {
   releasedAt: string;
 }
 
+// Phase 2.1 target fact: QA-passed stock pooled by Factory + Style + Size
+// only — never by Distributor/Order Sheet/Purchase Mode, and never
+// requiring the caller to pick a specific Job Order. Aggregated across every
+// Job Order (single- or multi-source) that released stock for that
+// Factory+Style+Size combination.
+export interface PooledFactoryInventoryLine {
+  factoryId: string;
+  factoryCode: string;
+  factoryName: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  releasedQuantity: number;
+  committedQuantity: number;
+  availableQuantity: number;
+}
+
+// Phase 2.1: no purchaseOrderLineSizeId — the Job Order's production plan
+// is independent of any source Order Sheet (see JobOrderSourceOrderSheet
+// below for planning provenance, kept entirely separate).
 export interface JobOrderLineSize {
   id: string;
-  purchaseOrderLineSizeId: string;
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
@@ -649,7 +671,6 @@ export interface JobOrderLineSize {
 }
 export interface JobOrderLine {
   id: string;
-  purchaseOrderLineId: string;
   styleId: string;
   styleNumber: string;
   styleName: string;
@@ -657,15 +678,6 @@ export interface JobOrderLine {
   preparedQuantityTotal: number;
   status: JobOrderStatus;
   sizes: JobOrderLineSize[];
-  // Which source Order Sheet this line's production quantities were entered
-  // against. Merchandising-planning-provenance only — undefined for Factory/
-  // QA viewers (see toJobOrderView's role-aware sanitization).
-  sourceOrderSheet?: {
-    id: string;
-    poNumber: string;
-    distributor: { id: string; code: string; name: string };
-    purchaseMode: PurchaseMode;
-  } | null;
 }
 
 // One consolidated source Order Sheet feeding a Job Order's planning
@@ -1123,15 +1135,14 @@ export interface AssignedFactoryTaskSummary extends VersionedResource {
   finalBatchReworkRequired: boolean;
 }
 
-// One selected source Order Sheet + the production quantities entered
-// against it, keyed by sizeId (the Style's canonical size set — all
-// selected Order Sheets share one Style). A missing sizeId means 0.
-export interface CreateJobOrderSourceInput {
-  orderSheetId: string;
-  sizes: Array<{ sizeId: string; quantity: number }>;
+// The Job Order's own production plan (Phase 2.1) — one entry per Style
+// size, entirely independent of any source Order Sheet's forecast.
+export interface JobOrderPlanSizeInput {
+  sizeId: string;
+  quantity: number;
 }
 export interface CreateJobOrderInput {
-  sources: CreateJobOrderSourceInput[];
+  orderSheetIds: string[];
   factoryId: string;
   processFlowVersionId: string;
   unitPrice: string;
@@ -1139,6 +1150,7 @@ export interface CreateJobOrderInput {
   // Required only when the selected Order Sheets have differing
   // requiredDeliveryDate values; otherwise defaults to their shared date.
   requiredDeliveryDate?: string | null;
+  sizes: JobOrderPlanSizeInput[];
 }
 export interface VersionedMutationInput {
   expectedVersion: number;
@@ -1146,13 +1158,18 @@ export interface VersionedMutationInput {
 export interface UpdateJobOrderDisclaimerInput extends VersionedMutationInput {
   disclaimerText?: string;
 }
-// DRAFT-only source Order Sheet mapping edit (Order Sheet Phase 2) — add
+// DRAFT-only source Order Sheet mapping edit (Order Sheet Phase 2/2.1) — add
 // and/or remove source Order Sheets in one atomic call. At least one of
 // add/remove must be non-empty, and the Job Order must retain at least one
-// source Order Sheet afterward.
+// source Order Sheet afterward. Pure planning provenance (Phase 2.1) — never
+// carries production quantities; see UpdateJobOrderPlanInput for those.
 export interface UpdateJobOrderSourcesInput extends VersionedMutationInput {
-  add: CreateJobOrderSourceInput[];
+  add: string[];
   remove: string[];
+}
+// DRAFT-only Job Order production-plan edit (Phase 2.1).
+export interface UpdateJobOrderPlanInput extends VersionedMutationInput {
+  sizes: JobOrderPlanSizeInput[];
 }
 export interface UpdateJobOrderDeliveryDateInput extends VersionedMutationInput {
   requiredDeliveryDate: string | null;

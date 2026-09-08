@@ -371,13 +371,11 @@ async function workflow() {
       lines: {
         create: {
           id: lineId,
-          purchaseOrderLineId: po.lines[0]!.id,
           styleId: style.id,
           orderedQuantityTotal: 20,
           sizes: {
             create: po.lines[0]!.sizes.map((size) => ({
               id: createId(),
-              purchaseOrderLineSizeId: size.id,
               sizeId: size.sizeId,
               orderedQuantity: 10,
             })),

@@ -543,7 +543,6 @@ async function loadJobOrder(jobOrderId: string) {
       lines: {
         include: {
           style: true,
-          purchaseOrderLine: true,
           sizes: { include: { size: true } },
         },
       },
@@ -649,6 +648,40 @@ function eligible(
       : priorExecutions.length > 0;
   }
   return false;
+}
+
+// Phase 2.1 legacy Sale Order compatibility bridge — resolves, for each
+// produced sizeId, the single DistributorPurchaseOrderLineSize id that a
+// released QaReleaseLine may (still) be attributed to, so the existing
+// (pre-pooled-inventory) Sale Order allocation workflow keeps working for
+// the exact case it was ever designed for. Returns an EMPTY map — i.e.
+// every sizeId resolves to undefined/null — unless the releasing Job Order
+// has exactly ONE source Order Sheet (condition A); a sizeId with no
+// matching line-size on that single source (condition B) also resolves to
+// nothing. Never invent/synthesize a line-size, and never look at which
+// source "looks like" it forecasts a given size when there is more than
+// one source — see job-orders PHASE_2_1 plan §"QA / production service
+// changes". The resulting `null` on QaReleaseLine.purchaseOrderLineSizeId
+// is the correct, intentional signal that this QA-passed quantity is
+// pooled-only (Factory + Style + Size) and not yet Sale-Order-allocatable.
+async function resolveLegacyPurchaseOrderLineSizeIds(
+  tx: Prisma.TransactionClient,
+  jobOrderId: string,
+  sizeIds: string[],
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const orderSheets = await tx.distributorPurchaseOrder.findMany({
+    where: { jobOrderId },
+    select: { lines: { select: { sizes: { select: { id: true, sizeId: true } } } } },
+  });
+  if (orderSheets.length !== 1) return result;
+  const uniqueSizeIds = new Set(sizeIds);
+  for (const line of orderSheets[0]!.lines) {
+    for (const size of line.sizes) {
+      if (uniqueSizeIds.has(size.sizeId)) result.set(size.sizeId, size.id);
+    }
+  }
+  return result;
 }
 
 function allocationKey(
@@ -1292,6 +1325,11 @@ async function persist(
       });
       if (input.outcome?.value === 'PASS') {
         const releaseId = createId();
+        const legacyPurchaseOrderLineSizeIdBySize = await resolveLegacyPurchaseOrderLineSizeIds(
+          tx,
+          execution.jobOrderId,
+          batch.allocations.map((allocation) => allocation.jobOrderLineSize.sizeId),
+        );
         await tx.qaRelease.create({
           data: {
             id: releaseId,
@@ -1303,17 +1341,23 @@ async function persist(
               create: batch.allocations.map((allocation) => ({
                 id: createId(),
                 jobOrderLineSizeId: allocation.jobOrderLineSizeId,
-                purchaseOrderLineSizeId: allocation.jobOrderLineSize.purchaseOrderLineSizeId,
+                purchaseOrderLineSizeId:
+                  legacyPurchaseOrderLineSizeIdBySize.get(allocation.jobOrderLineSize.sizeId) ?? null,
                 quantity: allocation.quantity,
               })),
             },
           },
         });
-        for (const allocation of batch.allocations)
+        for (const allocation of batch.allocations) {
+          const legacyPurchaseOrderLineSizeId = legacyPurchaseOrderLineSizeIdBySize.get(
+            allocation.jobOrderLineSize.sizeId,
+          );
+          if (!legacyPurchaseOrderLineSizeId) continue;
           await tx.distributorPurchaseOrderLineSize.update({
-            where: { id: allocation.jobOrderLineSize.purchaseOrderLineSizeId },
+            where: { id: legacyPurchaseOrderLineSizeId },
             data: { qaPassedQuantity: { increment: allocation.quantity } },
           });
+        }
         await tx.finalQualityBatch.update({
           where: { id: batch.id },
           data: {

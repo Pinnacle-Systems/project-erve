@@ -34,24 +34,51 @@ Order Sheet Phase 2: one Job Order consolidates one or more source Order
 Sheets — always the same Style, optionally different Distributors/Purchase
 Modes (`DistributorPurchaseOrder.jobOrderId` / `JobOrder.orderSheets` is the
 sole authoritative relationship; `JobOrder.purchaseOrderId` no longer
-exists). `POST /job-orders` accepts `sources: [{orderSheetId, sizes:
-[{sizeId, quantity}]}]` instead of a single `purchaseOrderId`. Creating a Job
-Order claims every selected Order Sheet atomically via one conditional
-`updateMany` on `DistributorPurchaseOrder.jobOrderId` (`WHERE id IN (...) AND
-jobOrderId IS NULL`; a short count mismatch rolls back the whole transaction
-and returns 409) — Job Order quantities are independent of any source Order
-Sheet's forecast (each source's quantities pre-fill as that source's own
-forecast, freely editable per size per source, no remaining-balance cap, no
-per-Order-Sheet allocation ledger). Once claimed, each Order Sheet is locked
-(uneditable, uncancellable, unselectable by another Job Order) for as long as
-the mapping exists.
+exists). Creating a Job Order claims every selected Order Sheet atomically
+via one conditional `updateMany` on `DistributorPurchaseOrder.jobOrderId`
+(`WHERE id IN (...) AND jobOrderId IS NULL`; a short count mismatch rolls
+back the whole transaction and returns 409). Once claimed, each Order Sheet
+is locked (uneditable, uncancellable, unselectable by another Job Order) for
+as long as the mapping exists. `DistributorPurchaseOrder.jobOrderId` is
+`ON DELETE RESTRICT` (not `SET NULL`) — Job Orders have no hard-delete path
+in application code, so a future accidental one now fails loudly instead of
+silently releasing frozen planning provenance.
 
-While a Job Order is DRAFT, its source Order Sheet set is itself editable via
-`PATCH /job-orders/:id/sources` (`{expectedVersion, add: [...], remove:
-[...]}` — same atomic-claim/release semantics, at least one source must
-remain, added/removed sources must share the existing Style). The mapping
-freezes permanently once the Job Order reaches `SENT_TO_FACTORY`. There is
-still no Job-Order-cancellation path that would release a locked mapping.
+**Order Sheet Phase 2.1 — Job Order Production Plan / QA-Pooled Inventory
+decoupling.** Order Sheets are planning provenance only; they never own the
+Job Order's production quantities or its QA-passed inventory:
+
+- `POST /job-orders` accepts `{orderSheetIds: [...], sizes: [{sizeId,
+  quantity}], factoryId, processFlowVersionId, unitPrice, disclaimerText?,
+  requiredDeliveryDate?}` — ONE flat production plan for the whole Job
+  Order, entirely independent of any source Order Sheet's own forecast (no
+  per-source quantity, no per-source `JobOrderLine`). `sizes[].sizeId` is
+  validated against the shared Style's own canonical valid-size set
+  (`StyleSize` + `Size` both `ACTIVE` — `getActiveStyleSizeIds`, shared with
+  Order Sheet line validation), not against any source's forecast sizes; at
+  least one entry must have `quantity > 0` and the plan total must be `> 0`.
+  `JobOrderLine`/`JobOrderLineSize` are correspondingly now exactly one line
+  per Job Order and one size row per line+size — no `purchaseOrderLineId`/
+  `purchaseOrderLineSizeId` FK exists on either anymore.
+- `PATCH /job-orders/:id/sources` (`{expectedVersion, add: [orderSheetId,
+  ...], remove: [orderSheetId, ...]}`) is DRAFT-only, pure planning-
+  provenance mutation — `add`/`remove` are bare Order Sheet id lists (no
+  quantities). It only ever mutates `DistributorPurchaseOrder.jobOrderId`;
+  it never creates, deletes, or otherwise touches the Job Order's own
+  `JobOrderLine`/`JobOrderLineSize` production plan. At least one source
+  must remain; an added source must share the Job Order's own (already
+  fixed) Style. The mapping freezes permanently once the Job Order reaches
+  `SENT_TO_FACTORY`.
+- `PATCH /job-orders/:id/production-plan` (`{expectedVersion, sizes:
+  [{sizeId, quantity}]}`) is DRAFT-only and is the sole way to change the
+  Job Order's own production-plan quantities once created — source changes
+  never do. It fully replaces the size set each call, with one carve-out:
+  an existing size whose `StyleSize` mapping has since been removed or
+  deactivated is preserved unchanged if omitted, accepted as a no-op if
+  resubmitted with the same quantity, and rejected if resubmitted with a
+  different quantity (never silently applied or dropped). Records
+  `JOB_ORDER_PRODUCTION_PLAN_UPDATED` audit with `{before, after}` per-size
+  snapshots — never a per-Order-Sheet breakdown.
 
 `JobOrder.requiredDeliveryDate` is the Job Order's own delivery target date
 (independent of any source's `requiredDeliveryDate`) — editable via `PATCH
@@ -59,11 +86,44 @@ still no Job-Order-cancellation path that would release a locked mapping.
 `CONFIRMED` (a separate, later lifecycle point from the source-mapping
 freeze).
 
-Order Sheet provenance (`sourceOrderSheets`, `combinedForecast`, each
-line's `sourceOrderSheet`) is Merchandising planning information only —
-`toJobOrderView`'s `includeSourceOrderSheets` option omits it entirely for
-FACTORY_USER/QA_USER viewers, who identify work by Job Order Number/Style/
-Factory only. Every viewer still gets a bare `sourceOrderSheetCount`.
+Order Sheet provenance (`sourceOrderSheets`, `combinedForecast`) is
+Merchandising planning information only — `toJobOrderView`'s
+`includeSourceOrderSheets` option omits it entirely for FACTORY_USER/
+QA_USER viewers, who identify work by Job Order Number/Style/Factory only.
+Every viewer still gets a bare `sourceOrderSheetCount`. `combinedForecast`
+sums each source's own forecast per size and is purely informational — it
+never constrains or resets the Production Plan.
+
+**QA-passed pooled inventory.** Final-QA-passed stock is dispatch-
+allocatable pooled inventory keyed by **Factory + Style + Size** only —
+never by Distributor, Order Sheet, or Purchase Mode — computed via
+`getPooledFactoryInventory` (`apps/api/src/modules/job-orders/
+pooled-inventory.service.ts`, exposed at `GET /job-orders/pooled-inventory`)
+purely from `QaReleaseLine.jobOrderLineSizeId -> JobOrderLineSize ->
+JobOrderLine -> JobOrder` (factory, style) + `JobOrderLineSize.sizeId`,
+minus `StockAllocation` (`ACTIVE`) committed quantity. This correctly pools
+across every contributing Job Order regardless of source-Order-Sheet count.
+
+`QaReleaseLine.purchaseOrderLineSizeId` is now **nullable** and is an
+isolated **legacy Sale Order compatibility bridge only** — it does not mean
+ownership. `quality-executions.service.ts`'s
+`resolveLegacyPurchaseOrderLineSizeIds` populates it for a produced size
+only when **both**: (A) the releasing Job Order has exactly one source
+Order Sheet, and (B) that source has a matching `DistributorPurchaseOrderLineSize`
+for the produced size. Otherwise it is `null`, and no
+`DistributorPurchaseOrderLineSize.qaPassedQuantity` is incremented. The
+existing (pre-pooled-inventory) Sale Order allocation workflow
+(`sale-orders.service.ts` `submitSaleOrder`/`approveSaleOrder`) matches
+`SaleOrderLine.purchaseOrderLineSizeId` to this field by strict equality —
+a `null` bridge value is therefore automatically and correctly excluded
+from Sale Order availability, with no code change needed there. **This
+means pooled-only QA-passed stock (any multi-source Job Order's output, or
+a single-source Job Order's output for a size its one source never
+forecast) is not yet allocatable through the legacy Sale Order workflow —
+only through the pooled-inventory read path above.** Do not enable
+workflows in production that expect such stock to flow through the current
+Sale Order path before the Dispatch Order redesign (next phase) implements
+true pooled allocation.
 
 PO/JO numbering still holds a transaction-scoped PostgreSQL advisory lock per
 type/year until insertion; unique indexes remain the final invariant.

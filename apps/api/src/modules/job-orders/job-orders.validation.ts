@@ -41,25 +41,22 @@ const unitPriceSchema = z
   })
   .transform(String);
 
-// One source Order Sheet + the production quantities entered against it,
-// keyed by sizeId (the Style's canonical size set). A sizeId the caller
-// omits is treated as 0 — see job-orders.service.ts createJobOrderLineForSource.
-const jobOrderSourceSchema = z.object({
-  orderSheetId: z.string().trim().min(1),
-  sizes: z
-    .array(
-      z.object({
-        sizeId: z.string().trim().min(1),
-        quantity: z.number().int().min(0),
-      }),
-    )
-    .min(1),
+// The Job Order's own production plan (Phase 2.1) — one entry per Style
+// size, entirely independent of any source Order Sheet. Validated further
+// in job-orders.service.ts (no duplicates, every sizeId ACTIVE for the
+// Style, at least one non-zero quantity, total > 0).
+export const jobOrderPlanSizeSchema = z.object({
+  sizeId: z.string().trim().min(1),
+  quantity: z.number().int().min(0),
 });
 
+export const jobOrderPlanSizesSchema = z.array(jobOrderPlanSizeSchema).min(1);
+
 // One or more compatible Order Sheets (same Style; any Distributor/Purchase
-// Mode) consolidate into one Job Order — see the Order Sheet Phase 2 plan.
+// Mode) inform this Job Order's planning provenance only — see Order Sheet
+// Phase 2/2.1. Production quantities live solely in `sizes` below.
 export const createJobOrderSchema = z.object({
-  sources: z.array(jobOrderSourceSchema).min(1, 'At least one Order Sheet is required'),
+  orderSheetIds: z.array(z.string().trim().min(1)).min(1, 'At least one Order Sheet is required'),
   factoryId: z.string().trim().min(1),
   processFlowVersionId: z.string().trim().min(1),
   unitPrice: unitPriceSchema,
@@ -67,20 +64,32 @@ export const createJobOrderSchema = z.object({
   // Required only when the selected Order Sheets disagree on their own
   // requiredDeliveryDate; otherwise their shared date is used.
   requiredDeliveryDate: z.string().trim().min(1).optional().nullable(),
+  sizes: jobOrderPlanSizesSchema,
 });
 
 // DRAFT-only source Order Sheet mapping edit (§14) — add and/or remove
 // source Order Sheets in one call; at least one change is required, and the
-// service enforces "at least one source Order Sheet must remain."
+// service enforces "at least one source Order Sheet must remain." Source
+// mapping is pure planning provenance (Phase 2.1) — it never carries
+// production quantities, so `add` is a bare list of Order Sheet ids.
 export const updateJobOrderSourcesSchema = z
   .object({
     expectedVersion: z.number().int().positive(),
-    add: z.array(jobOrderSourceSchema).optional().default([]),
+    add: z.array(z.string().trim().min(1)).optional().default([]),
     remove: z.array(z.string().trim().min(1)).optional().default([]),
   })
   .refine((value) => value.add.length > 0 || value.remove.length > 0, {
     message: 'At least one Order Sheet addition or removal is required',
   });
+
+// DRAFT-only Job Order production-plan edit (Phase 2.1) — the sole way to
+// set/change the Job Order's own size-wise production quantities once
+// created. Fully replaces the size set (subject to the inactive-existing-
+// size preservation rule in job-orders.service.ts).
+export const updateJobOrderPlanSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  sizes: jobOrderPlanSizesSchema,
+});
 
 export const updateJobOrderDeliveryDateSchema = z.object({
   expectedVersion: z.number().int().positive(),
@@ -129,6 +138,13 @@ export const completeStageSchema = z.object({
 export const startStageSchema = z.object({
   expectedVersion: z.number().int().positive(),
   stageStatusId: z.string().trim().min(1),
+});
+
+// Pooled Factory + Style + Size inventory read path (Phase 2.1 §12/§29).
+export const pooledInventoryQuerySchema = z.object({
+  factoryId: z.string().trim().min(1).optional(),
+  styleId: z.string().trim().min(1).optional(),
+  sizeId: z.string().trim().min(1).optional(),
 });
 
 export const updatePreparedQuantitySchema = z.object({

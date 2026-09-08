@@ -893,6 +893,11 @@ model DistributorPurchaseOrder {
   // consolidation of multiple Order Sheets (Phase 2) needs many-to-one here;
   // "one Order Sheet -> at most one Job Order" is already guaranteed by this
   // being a scalar FK on the Order Sheet, not by a DB uniqueness constraint.
+  // onDelete: Restrict (Phase 2.1) — Job Orders have no production
+  // hard-delete path (confirmed: the only jobOrder.delete* call anywhere is
+  // the test-suite's full-database cleanup routine), so a future accidental
+  // hard-delete must fail loudly rather than silently releasing frozen
+  // planning provenance via SET NULL.
   jobOrderId           String?             @map("job_order_id")
 
   distributor      Distributor                    @relation(fields: [distributorId], references: [id], onDelete: Restrict)
@@ -900,7 +905,7 @@ model DistributorPurchaseOrder {
   creator          User                           @relation("POCreator", fields: [createdBy], references: [id], onDelete: Restrict)
   financialYear    FinancialYear                  @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
   lines            DistributorPurchaseOrderLine[]
-  lockedByJobOrder JobOrder?                      @relation("OrderSheetJobOrderLock", fields: [jobOrderId], references: [id], onDelete: SetNull)
+  lockedByJobOrder JobOrder?                      @relation("OrderSheetJobOrderLock", fields: [jobOrderId], references: [id], onDelete: Restrict)
 
   @@unique([financialYearId, poSerial])
   @@index([distributorId])
@@ -922,7 +927,6 @@ model DistributorPurchaseOrderLine {
   purchaseOrder   DistributorPurchaseOrder           @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   style           Style                              @relation(fields: [styleId], references: [id], onDelete: Restrict)
   sizes           DistributorPurchaseOrderLineSize[]
-  jobOrderLines   JobOrderLine[]
   seasonSnapshots PurchaseOrderLineSeasonSnapshot[]
 
   // Order Sheet enforcement: at most one line per Order Sheet (DB-level "at
@@ -974,7 +978,10 @@ model DistributorPurchaseOrderLineSize {
 
   purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Cascade)
   size              Size                         @relation(fields: [sizeId], references: [id], onDelete: Restrict)
-  jobOrderLineSizes JobOrderLineSize[]
+  // Phase 2.1: qaReleaseLines is now the LEGACY Sale Order compatibility
+  // bridge only (see QaReleaseLine.purchaseOrderLineSizeId) — populated
+  // only when a QA release can be unambiguously attributed to this single
+  // Order Sheet line-size, never a general ownership relationship.
   qaReleaseLines    QaReleaseLine[]
   saleOrderLines    SaleOrderLine[]
 
@@ -1045,11 +1052,12 @@ model JobOrder {
   qaReleases          QaRelease[]
   // Order Sheets consolidated into this Job Order via
   // DistributorPurchaseOrder.jobOrderId — the sole authoritative Order Sheet
-  // <-> Job Order relationship (Order Sheet Phase 2). One or more Order
-  // Sheets, always the same Style, optionally different Distributors/
-  // Purchase Modes; each maps to at most one JobOrderLine (see
-  // JobOrderLine.purchaseOrderLineId) carrying that source's own production
-  // quantities.
+  // <-> Job Order relationship, and PLANNING PROVENANCE ONLY (Order Sheet
+  // Phase 2 / Phase 2.1). One or more Order Sheets, always the same Style,
+  // optionally different Distributors/Purchase Modes. The Job Order's own
+  // production plan (`lines` above — exactly one JobOrderLine, one Style)
+  // is independent of and never split across these sources; see
+  // JobOrderLine's own comment.
   orderSheets         DistributorPurchaseOrder[]  @relation("OrderSheetJobOrderLock")
 
   @@unique([financialYearId, jobOrderSerial])
@@ -1207,16 +1215,27 @@ model QaRelease {
   @@map("qa_releases")
 }
 
+// Phase 2.1: QA-passed stock is pooled by Factory + Style + Size (see the
+// pooled-inventory read path), not owned by any source Order Sheet.
+// purchaseOrderLineSizeId is now a NULLABLE, isolated legacy compatibility
+// bridge for the existing Sale Order allocation workflow only: it is
+// populated by quality-executions.service.ts exclusively when (A) the
+// releasing Job Order has exactly one source Order Sheet, AND (B) that
+// source Order Sheet has a matching line-size for the produced sizeId.
+// Otherwise it stays null — that QA-passed quantity is visible only through
+// pooled inventory and is not allocatable via the legacy Sale Order
+// workflow until the Dispatch Order redesign. Never treat this field as
+// ownership/attribution beyond that narrow bridge.
 model QaReleaseLine {
-  id                      String @id
-  qaReleaseId             String @map("qa_release_id")
-  jobOrderLineSizeId      String @map("job_order_line_size_id")
-  purchaseOrderLineSizeId String @map("purchase_order_line_size_id")
+  id                      String  @id
+  qaReleaseId             String  @map("qa_release_id")
+  jobOrderLineSizeId      String  @map("job_order_line_size_id")
+  purchaseOrderLineSizeId String? @map("purchase_order_line_size_id")
   quantity                Int
 
-  release               QaRelease                        @relation(fields: [qaReleaseId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  jobOrderLineSize      JobOrderLineSize                 @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  purchaseOrderLineSize DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  release               QaRelease                         @relation(fields: [qaReleaseId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  jobOrderLineSize      JobOrderLineSize                  @relation(fields: [jobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  purchaseOrderLineSize DistributorPurchaseOrderLineSize? @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   allocations           StockAllocation[]
 
   @@unique([qaReleaseId, jobOrderLineSizeId], map: "qa_release_line_size_key")
@@ -2172,10 +2191,13 @@ model JobOrderIdempotencyRecord {
   @@map("job_order_idempotency_records")
 }
 
+// Phase 2.1: exactly one production line per Job Order (a Job Order has
+// exactly one Style). The old purchaseOrderLineId FK is removed — a Job
+// Order's production plan is independent of any source Order Sheet (see
+// JobOrder.orderSheets, the sole planning-provenance relationship).
 model JobOrderLine {
   id                    String         @id
   jobOrderId            String         @map("job_order_id")
-  purchaseOrderLineId   String         @map("purchase_order_line_id")
   styleId               String         @map("style_id")
   orderedQuantityTotal  Int            @map("ordered_quantity_total")
   preparedQuantityTotal Int            @default(0) @map("prepared_quantity_total")
@@ -2183,40 +2205,36 @@ model JobOrderLine {
   createdAt             DateTime       @default(now()) @map("created_at")
   updatedAt             DateTime       @updatedAt @map("updated_at")
 
-  jobOrder          JobOrder                     @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
-  purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
-  style             Style                        @relation(fields: [styleId], references: [id], onDelete: Restrict)
-  sizes             JobOrderLineSize[]
+  jobOrder JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
+  style    Style              @relation(fields: [styleId], references: [id], onDelete: Restrict)
+  sizes    JobOrderLineSize[]
 
-  @@unique([jobOrderId, purchaseOrderLineId])
-  @@index([jobOrderId])
-  @@index([purchaseOrderLineId])
+  @@unique([jobOrderId])
   @@index([styleId])
   @@map("job_order_lines")
 }
 
+// One row per Job Order Line + Size (Phase 2.1: no longer keyed by source
+// Order Sheet line-size — see JobOrderLine's comment above).
 model JobOrderLineSize {
-  id                      String   @id
-  jobOrderLineId          String   @map("job_order_line_id")
-  purchaseOrderLineSizeId String   @map("purchase_order_line_size_id")
-  sizeId                  String   @map("size_id")
-  orderedQuantity         Int      @map("ordered_quantity")
-  preparedQuantity        Int      @default(0) @map("prepared_quantity")
-  createdAt               DateTime @default(now()) @map("created_at")
-  updatedAt               DateTime @updatedAt @map("updated_at")
+  id               String   @id
+  jobOrderLineId   String   @map("job_order_line_id")
+  sizeId           String   @map("size_id")
+  orderedQuantity  Int      @map("ordered_quantity")
+  preparedQuantity Int      @default(0) @map("prepared_quantity")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  jobOrderLine                 JobOrderLine                     @relation(fields: [jobOrderLineId], references: [id], onDelete: Cascade)
-  purchaseOrderLineSize        DistributorPurchaseOrderLineSize @relation(fields: [purchaseOrderLineSizeId], references: [id], onDelete: Restrict)
-  size                         Size                             @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+  jobOrderLine                 JobOrderLine                  @relation(fields: [jobOrderLineId], references: [id], onDelete: Cascade)
+  size                         Size                          @relation(fields: [sizeId], references: [id], onDelete: Restrict)
   qaSizeInspectionForms        QaSizeInspectionForm[]
   qaReworkTasks                QaReworkTask[]
-  qualitySampleExecutions      QualityActivityExecution[]       @relation("QualityExecutionSampleSize")
+  qualitySampleExecutions      QualityActivityExecution[]    @relation("QualityExecutionSampleSize")
   finalQualityBatchAllocations FinalQualityBatchAllocation[]
   qaReleaseLines               QaReleaseLine[]
 
-  @@unique([jobOrderLineId, purchaseOrderLineSizeId])
+  @@unique([jobOrderLineId, sizeId])
   @@index([jobOrderLineId])
-  @@index([purchaseOrderLineSizeId])
   @@index([sizeId])
   @@map("job_order_line_sizes")
 }

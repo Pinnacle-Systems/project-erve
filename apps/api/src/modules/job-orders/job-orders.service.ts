@@ -18,6 +18,7 @@ import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { toBusinessCalendarDate } from '../master-data/financial-year.util.js';
+import { getActiveStyleSizeIds } from '../master-data/style-size.util.js';
 import { isOrderSheetEligibleForJobOrder } from '../purchase-orders/purchase-order-eligibility.js';
 
 const jobOrderInclude = {
@@ -67,19 +68,6 @@ const jobOrderInclude = {
   lines: {
     include: {
       style: { select: { id: true, styleNumber: true, styleName: true } },
-      purchaseOrderLine: {
-        select: {
-          id: true,
-          purchaseOrder: {
-            select: {
-              id: true,
-              poNumber: true,
-              purchaseMode: true,
-              distributor: { select: { id: true, code: true, name: true } },
-            },
-          },
-        },
-      },
       sizes: {
         include: { size: { select: { id: true, code: true, label: true, sortOrder: true } } },
         orderBy: { size: { sortOrder: 'asc' as const } },
@@ -727,24 +715,14 @@ function toJobOrderView(
       : undefined,
     lines: jobOrder.lines.map((line) => ({
       id: line.id,
-      purchaseOrderLineId: line.purchaseOrderLineId,
       styleId: line.styleId,
       styleNumber: line.style.styleNumber,
       styleName: line.style.styleName,
       orderedQuantityTotal: line.orderedQuantityTotal,
       preparedQuantityTotal: line.preparedQuantityTotal,
       status: line.status,
-      sourceOrderSheet: options.includeSourceOrderSheets
-        ? {
-            id: line.purchaseOrderLine.purchaseOrder.id,
-            poNumber: line.purchaseOrderLine.purchaseOrder.poNumber,
-            distributor: line.purchaseOrderLine.purchaseOrder.distributor,
-            purchaseMode: line.purchaseOrderLine.purchaseOrder.purchaseMode,
-          }
-        : undefined,
       sizes: line.sizes.map((size) => ({
         id: size.id,
-        purchaseOrderLineSizeId: size.purchaseOrderLineSizeId,
         sizeId: size.sizeId,
         sizeCode: size.size.code,
         sizeLabel: size.size.label,
@@ -1131,80 +1109,101 @@ async function loadAndValidateOrderSheetSources(
   return orderSheets;
 }
 
-type ValidatedOrderSheet = Awaited<ReturnType<typeof loadAndValidateOrderSheetSources>>[number];
-
-// Validates one source's caller-supplied per-size quantities against its own
-// Order Sheet line (sizeId must be valid for that line; no duplicates). A
-// missing sizeId is treated as 0 (§8) — the caller need not enumerate every
-// size explicitly.
-function validateSourceSizes(
-  orderSheet: ValidatedOrderSheet,
+// The Job Order's Production Plan validator (Phase 2.1) — shared by
+// createJobOrder and updateDraftJobOrderPlan. Sizes are validated against
+// the Style's own canonical valid-size set (getActiveStyleSizeIds), never
+// against any source Order Sheet's forecast — the production plan is fully
+// independent of Order Sheet provenance (§1/§4/§6).
+//
+// `existingSizes`, when given (updateDraftJobOrderPlan only), carries the
+// Job Order's current JobOrderLineSize rows. A size that is no longer in
+// the Style's active set but already exists there is allowed through
+// UNCHANGED (same quantity) — see the inactive-existing-size handling
+// below — never as a route to silently changing or newly adding an
+// inactive size.
+async function validateProductionPlanSizes(
+  tx: Tx,
+  styleId: string,
   sizes: Array<{ sizeId: string; quantity: number }>,
-) {
-  const line = orderSheet.lines[0]!;
-  const sizesByStyleSizeId = new Map(line.sizes.map((size) => [size.sizeId, size]));
+  existingSizes?: Array<{ sizeId: string; sizeCode: string; orderedQuantity: number }>,
+): Promise<void> {
+  if (sizes.length === 0) {
+    throw HttpError.badRequest('The Production Plan must include at least one size');
+  }
   const seen = new Set<string>();
   for (const size of sizes) {
+    if (!Number.isInteger(size.quantity) || size.quantity < 0) {
+      throw HttpError.badRequest('Production Plan quantities must be non-negative whole numbers');
+    }
     if (seen.has(size.sizeId)) {
-      throw HttpError.badRequest(`Duplicate sizes for Order Sheet ${orderSheet.poNumber} are not allowed`);
+      throw HttpError.badRequest('Duplicate sizes are not allowed in the Production Plan');
     }
     seen.add(size.sizeId);
-    if (!sizesByStyleSizeId.has(size.sizeId)) {
-      throw HttpError.badRequest(`Size is not valid for Order Sheet ${orderSheet.poNumber}`);
+  }
+  const activeSizeIds = await getActiveStyleSizeIds(tx, styleId);
+  const existingBySizeId = new Map((existingSizes ?? []).map((size) => [size.sizeId, size]));
+  for (const size of sizes) {
+    if (activeSizeIds.has(size.sizeId)) continue;
+    const existing = existingBySizeId.get(size.sizeId);
+    if (!existing) {
+      throw HttpError.badRequest('Size is not valid for this Style');
+    }
+    if (existing.orderedQuantity !== size.quantity) {
+      throw HttpError.badRequest(
+        `Size ${existing.sizeCode} is no longer active for this Style; its existing quantity of ${existing.orderedQuantity} cannot be changed here`,
+      );
     }
   }
-  return { line, sizesByStyleSizeId };
+  const total = sizes.reduce((sum, size) => sum + size.quantity, 0);
+  if (total <= 0) {
+    throw HttpError.badRequest('The Production Plan must include at least one size with a quantity greater than 0');
+  }
 }
 
-async function createJobOrderLineForSource(
+// Creates the Job Order's single production-plan line (Phase 2.1: exactly
+// one JobOrderLine per Job Order, independent of source Order Sheet count —
+// see JobOrderLine's schema comment).
+async function createJobOrderLine(
   tx: Tx,
   jobOrderId: string,
-  orderSheet: ValidatedOrderSheet,
+  styleId: string,
   sizes: Array<{ sizeId: string; quantity: number }>,
 ) {
-  const { line, sizesByStyleSizeId } = validateSourceSizes(orderSheet, sizes);
-  const quantityBySizeId = new Map(sizes.map((size) => [size.sizeId, size.quantity]));
+  await validateProductionPlanSizes(tx, styleId, sizes);
   const orderedQuantityTotal = sizes.reduce((sum, size) => sum + size.quantity, 0);
   await tx.jobOrderLine.create({
     data: {
       id: createId(),
       jobOrderId,
-      purchaseOrderLineId: line.id,
-      styleId: line.styleId,
+      styleId,
       orderedQuantityTotal,
       sizes: {
-        // Every size on the source's line gets a JobOrderLineSize row (§8:
-        // a size the caller omitted defaults to 0) — downstream QA-passed
-        // stock attribution (JobOrderLineSize.purchaseOrderLineSizeId) needs
-        // one row per DistributorPurchaseOrderLineSize regardless of whether
-        // this Job Order actually plans to produce any of it.
-        create: line.sizes.map((poSize) => ({
+        create: sizes.map((size) => ({
           id: createId(),
-          purchaseOrderLineSizeId: poSize.id,
-          sizeId: poSize.sizeId,
-          orderedQuantity: quantityBySizeId.get(poSize.sizeId) ?? 0,
+          sizeId: size.sizeId,
+          orderedQuantity: size.quantity,
         })),
       },
     },
   });
-  return { line, sizesByStyleSizeId };
 }
 
 export async function createJobOrder(
   actor: CurrentUser,
   input: {
-    sources: Array<{ orderSheetId: string; sizes: Array<{ sizeId: string; quantity: number }> }>;
+    orderSheetIds: string[];
     factoryId: string;
     processFlowVersionId: string;
     unitPrice: string;
     disclaimerText?: string;
     requiredDeliveryDate?: string | null;
+    sizes: Array<{ sizeId: string; quantity: number }>;
   },
 ) {
   if (!canManageJobOrders(actor))
     throw HttpError.forbidden('Only admins and merchandisers can create job orders');
 
-  const orderSheetIds = input.sources.map((source) => source.orderSheetId);
+  const orderSheetIds = input.orderSheetIds;
   if (orderSheetIds.length === 0) {
     throw HttpError.badRequest('At least one Order Sheet is required');
   }
@@ -1240,7 +1239,7 @@ export async function createJobOrder(
 
   await prisma.$transaction(async (tx) => {
     const orderSheets = await loadAndValidateOrderSheetSources(tx, orderSheetIds);
-    const orderSheetsById = new Map(orderSheets.map((orderSheet) => [orderSheet.id, orderSheet]));
+    const sharedStyleId = orderSheets[0]!.lines[0]!.styleId;
 
     // Delivery date: an explicit value always wins; otherwise every
     // selected Order Sheet must agree on one date (§7) — no invented
@@ -1321,9 +1320,7 @@ export async function createJobOrder(
       );
     }
 
-    for (const source of input.sources) {
-      await createJobOrderLineForSource(tx, jobOrderId, orderSheetsById.get(source.orderSheetId)!, source.sizes);
-    }
+    await createJobOrderLine(tx, jobOrderId, sharedStyleId, input.sizes);
 
     await recordAuditLog(
       {
@@ -1346,18 +1343,20 @@ export async function createJobOrder(
   return getJobOrderDetail(actor, jobOrderId);
 }
 
-// Order Sheet Phase 2 §14: the source Order Sheet set is editable while the
-// Job Order is DRAFT (freezes at SENT_TO_FACTORY, enforced below by the
+// Order Sheet Phase 2/2.1 §14: the source Order Sheet set is editable while
+// the Job Order is DRAFT (freezes at SENT_TO_FACTORY, enforced below by the
 // `status !== 'DRAFT'` check). Adds and removes are applied atomically in
-// one transaction; existing lines/quantities for sources not touched by
-// this call are left completely alone (§15 — no silent reset of the
-// production plan when the source set changes).
+// one transaction and are PURE planning-provenance changes (Phase 2.1) —
+// they only ever mutate DistributorPurchaseOrder.jobOrderId, never the Job
+// Order's own JobOrderLine/JobOrderLineSize production plan, which this
+// function does not touch at all (§8/§9/§15: source edits never change
+// production quantities).
 export async function updateDraftJobOrderSources(
   actor: CurrentUser,
   id: string,
   input: {
     expectedVersion: number;
-    add: Array<{ orderSheetId: string; sizes: Array<{ sizeId: string; quantity: number }> }>;
+    add: string[];
     remove: string[];
   },
   idempotencyKey: string,
@@ -1375,8 +1374,8 @@ export async function updateDraftJobOrderSources(
     const jobOrder = await tx.jobOrder.findUnique({
       where: { id },
       include: {
-        orderSheets: { select: { id: true, poNumber: true, lines: { select: { id: true } } } },
-        lines: { select: { id: true, purchaseOrderLineId: true, styleId: true } },
+        orderSheets: { select: { id: true, poNumber: true } },
+        lines: { select: { styleId: true } },
       },
     });
     if (!jobOrder) throw HttpError.notFound('Job order not found');
@@ -1388,7 +1387,7 @@ export async function updateDraftJobOrderSources(
     }
 
     const currentOrderSheetIds = new Set(jobOrder.orderSheets.map((orderSheet) => orderSheet.id));
-    const addIds = input.add.map((source) => source.orderSheetId);
+    const addIds = input.add;
     for (const removeId of input.remove) {
       if (!currentOrderSheetIds.has(removeId)) {
         throw HttpError.badRequest('Order Sheet is not currently mapped to this Job Order');
@@ -1407,15 +1406,14 @@ export async function updateDraftJobOrderSources(
       throw HttpError.badRequest('A Job Order must retain at least one source Order Sheet');
     }
 
+    // Every added source must share the Job Order's own, already-
+    // authoritative Style (never merely "agree with each other") — the Job
+    // Order's Style/production plan is never touched or reinterpreted by a
+    // source-mapping change.
     const existingStyleId = jobOrder.lines[0]?.styleId;
     const addedOrderSheets = addIds.length
       ? await loadAndValidateOrderSheetSources(tx, addIds, existingStyleId)
       : [];
-    const addedOrderSheetsById = new Map(addedOrderSheets.map((orderSheet) => [orderSheet.id, orderSheet]));
-    // Validate every added source's sizes up front, before any writes.
-    for (const source of input.add) {
-      validateSourceSizes(addedOrderSheetsById.get(source.orderSheetId)!, source.sizes);
-    }
 
     if (input.remove.length) {
       const released = await tx.distributorPurchaseOrder.updateMany({
@@ -1425,14 +1423,6 @@ export async function updateDraftJobOrderSources(
       if (released.count !== input.remove.length) {
         throw HttpError.conflict('Failed to release one or more Order Sheets; reload and try again');
       }
-      const removedLineIds = jobOrder.orderSheets
-        .filter((orderSheet) => input.remove.includes(orderSheet.id))
-        .map((orderSheet) => orderSheet.lines[0]?.id)
-        .filter((poLineId): poLineId is string => Boolean(poLineId));
-      const jobOrderLineIdsToDelete = jobOrder.lines
-        .filter((line) => removedLineIds.includes(line.purchaseOrderLineId))
-        .map((line) => line.id);
-      await tx.jobOrderLine.deleteMany({ where: { id: { in: jobOrderLineIdsToDelete } } });
     }
 
     if (addIds.length) {
@@ -1444,9 +1434,6 @@ export async function updateDraftJobOrderSources(
         throw HttpError.conflict(
           'One or more Order Sheets were just linked to another Job Order; reload and try again',
         );
-      }
-      for (const source of input.add) {
-        await createJobOrderLineForSource(tx, id, addedOrderSheetsById.get(source.orderSheetId)!, source.sizes);
       }
     }
 
@@ -1470,6 +1457,118 @@ export async function updateDraftJobOrderSources(
       tx,
     );
     await finishIdempotentOperation(tx, actor.id, id, 'UPDATE_SOURCES', idempotencyKey, hash, updated.version);
+  });
+  return getJobOrderDetail(actor, id);
+}
+
+// Phase 2.1: the sole way to set/change the Job Order's own production-plan
+// quantities once created. DRAFT-only. Fully replaces the size set each
+// call — safe because DRAFT necessarily precedes factory confirmation, so
+// no JobOrderLineSize can yet carry a prepared quantity or a Final QA
+// allocation — except for sizes that have since become invalid for the
+// Style (removeStyleSize is a hard delete with no usage guard, or the
+// underlying Size was deactivated): those are preserved unless the caller
+// tries to change their quantity (see validateProductionPlanSizes).
+export async function updateDraftJobOrderPlan(
+  actor: CurrentUser,
+  id: string,
+  input: { expectedVersion: number; sizes: Array<{ sizeId: string; quantity: number }> },
+  idempotencyKey: string,
+) {
+  if (!canManageJobOrders(actor))
+    throw HttpError.forbidden('Only admins and merchandisers can edit the job order production plan');
+  const hash = requestHash(input);
+  await prisma.$transaction(async (tx) => {
+    if (await beginIdempotentOperation(tx, actor.id, id, 'UPDATE_PRODUCTION_PLAN', idempotencyKey, hash))
+      return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const jobOrder = await tx.jobOrder.findUnique({
+      where: { id },
+      include: {
+        lines: { include: { sizes: { include: { size: true } } } },
+      },
+    });
+    if (!jobOrder) throw HttpError.notFound('Job order not found');
+    if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+    if (jobOrder.status !== 'DRAFT') {
+      throw HttpError.conflict('The production plan can only be changed while the job order is a draft');
+    }
+    const line = jobOrder.lines[0];
+    if (!line) throw HttpError.conflict('Job order has no production line');
+
+    const existingSizes = line.sizes.map((size) => ({
+      sizeId: size.sizeId,
+      sizeCode: size.size.code,
+      orderedQuantity: size.orderedQuantity,
+    }));
+    await validateProductionPlanSizes(tx, line.styleId, input.sizes, existingSizes);
+
+    const before = existingSizes.map((size) => ({
+      sizeId: size.sizeId,
+      sizeCode: size.sizeCode,
+      quantity: size.orderedQuantity,
+    }));
+
+    const existingSizeIds = new Set(line.sizes.map((size) => size.sizeId));
+    const inputSizeIds = new Set(input.sizes.map((size) => size.sizeId));
+    const activeSizeIds = await getActiveStyleSizeIds(tx, line.styleId);
+
+    // Delete sizes that are active but no longer in the submitted plan.
+    // Inactive existing sizes omitted from the input are left untouched
+    // (see validateProductionPlanSizes's inactive-size carve-out).
+    const toDelete = line.sizes.filter(
+      (size) => !inputSizeIds.has(size.sizeId) && activeSizeIds.has(size.sizeId),
+    );
+    if (toDelete.length) {
+      await tx.jobOrderLineSize.deleteMany({ where: { id: { in: toDelete.map((size) => size.id) } } });
+    }
+
+    for (const size of input.sizes) {
+      if (existingSizeIds.has(size.sizeId)) {
+        await tx.jobOrderLineSize.update({
+          where: { jobOrderLineId_sizeId: { jobOrderLineId: line.id, sizeId: size.sizeId } },
+          data: { orderedQuantity: size.quantity },
+        });
+      } else {
+        await tx.jobOrderLineSize.create({
+          data: { id: createId(), jobOrderLineId: line.id, sizeId: size.sizeId, orderedQuantity: size.quantity },
+        });
+      }
+    }
+
+    const freshSizes = await tx.jobOrderLineSize.findMany({
+      where: { jobOrderLineId: line.id },
+      include: { size: true },
+    });
+    const orderedQuantityTotal = freshSizes.reduce((sum, size) => sum + size.orderedQuantity, 0);
+    await tx.jobOrderLine.update({ where: { id: line.id }, data: { orderedQuantityTotal } });
+
+    const updated = await tx.jobOrder.update({ where: { id }, data: { version: { increment: 1 } } });
+
+    const after = freshSizes.map((size) => ({
+      sizeId: size.sizeId,
+      sizeCode: size.size.code,
+      quantity: size.orderedQuantity,
+    }));
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_PRODUCTION_PLAN_UPDATED',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: { before, after },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'UPDATE_PRODUCTION_PLAN',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
   });
   return getJobOrderDetail(actor, id);
 }

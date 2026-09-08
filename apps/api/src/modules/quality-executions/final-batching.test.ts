@@ -151,7 +151,6 @@ async function fixture(preparedQuantity = 840) {
       lines: {
         create: {
           id: createId(),
-          purchaseOrderLineId: po.lines[0]!.id,
           styleId: style.id,
           orderedQuantityTotal: 840,
           preparedQuantityTotal: preparedQuantity,
@@ -159,17 +158,12 @@ async function fixture(preparedQuantity = 840) {
             create: [
               {
                 id: createId(),
-                purchaseOrderLineSizeId: po.lines[0]!.sizes.find((item) => item.sizeId === size.id)!
-                  .id,
                 sizeId: size.id,
                 orderedQuantity: 500,
                 preparedQuantity: Math.min(500, preparedQuantity),
               },
               {
                 id: createId(),
-                purchaseOrderLineSizeId: po.lines[0]!.sizes.find(
-                  (item) => item.sizeId === secondSize.id,
-                )!.id,
                 sizeId: secondSize.id,
                 orderedQuantity: 340,
                 preparedQuantity: Math.max(0, preparedQuantity - 500),
@@ -825,8 +819,15 @@ describe('Final Inspection batching and prepared coverage', () => {
     const allocatedSize = await prisma.jobOrderLineSize.findUniqueOrThrow({
       where: { id: allocation.jobOrderLineSizeId },
     });
+    // This fixture's Job Order has exactly one source Order Sheet (f.poId),
+    // so the legacy compatibility bridge (Phase 2.1) resolves this size to
+    // that Order Sheet's matching line-size — force it to overflow so the
+    // PASS transaction's qaPassedQuantity increment fails.
+    const legacyPurchaseOrderLineSize = await prisma.distributorPurchaseOrderLineSize.findFirstOrThrow({
+      where: { sizeId: allocatedSize.sizeId, purchaseOrderLine: { purchaseOrderId: f.poId } },
+    });
     await prisma.distributorPurchaseOrderLineSize.update({
-      where: { id: allocatedSize.purchaseOrderLineSizeId },
+      where: { id: legacyPurchaseOrderLineSize.id },
       data: { qaPassedQuantity: 2_147_483_647 },
     });
     await finalize(f, execution, 'PASS').expect(500);

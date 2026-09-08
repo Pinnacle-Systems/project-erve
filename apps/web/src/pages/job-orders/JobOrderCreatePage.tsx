@@ -16,6 +16,14 @@ interface SizeRow {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sortOrder: number;
+  // Currently valid for the shared Style (ACTIVE StyleSize mapping + ACTIVE
+  // Size) — the Production Plan quantity is only editable for these. A row
+  // can still appear here with active: false when a selected Order Sheet's
+  // historical forecast references a size that has since become inactive or
+  // had its Style mapping removed entirely — its forecast stays visible,
+  // just not producible.
+  active: boolean;
 }
 
 function formatDate(iso: string | null) {
@@ -28,14 +36,13 @@ export function JobOrderCreatePage() {
   const [searchParams] = useSearchParams();
   const deepLinkOrderSheetId = searchParams.get('purchaseOrderId');
   const [selectedOrderSheets, setSelectedOrderSheets] = useState<PurchaseOrder[]>([]);
-  // quantities[orderSheetId][sizeId] = the production quantity entered
-  // against that specific source's line for that size. Kept per-source
-  // because JobOrderLineSize still resolves to one specific source Order
-  // Sheet's line/size (downstream QA-passed-stock attribution depends on
-  // it) — see job-orders.service.ts createJobOrderLineForSource. Each
-  // source defaults to its own forecast; the Merchandiser may edit any
-  // cell freely, independent of the others.
-  const [quantities, setQuantities] = useState<Record<string, Record<string, number>>>({});
+  // The Job Order's OWN production plan (Phase 2.1) — one flat quantity per
+  // size, entirely independent of any source Order Sheet. touchedSizeIds
+  // tracks which sizes the Merchandiser has manually edited: an untouched
+  // size keeps following the Combined Forecast default as sources change;
+  // a touched size never gets overwritten by a source change again.
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [touchedSizeIds, setTouchedSizeIds] = useState<Set<string>>(new Set());
   const [factoryId, setFactoryId] = useState('');
   const [processFlowVersionId, setProcessFlowVersionId] = useState('');
   const [unitPrice, setUnitPrice] = useState('');
@@ -47,22 +54,19 @@ export function JobOrderCreatePage() {
 
   function addOrderSheet(orderSheet: PurchaseOrder) {
     setSelectedOrderSheets((current) => [...current, orderSheet]);
-    const line = orderSheet.lines[0];
-    setQuantities((current) => ({
-      ...current,
-      [orderSheet.id]: Object.fromEntries(
-        (line?.sizes ?? []).map((size) => [size.sizeId, size.orderedQuantity]),
-      ),
-    }));
   }
 
   function removeOrderSheet(id: string) {
     setSelectedOrderSheets((current) => current.filter((os) => os.id !== id));
-    setQuantities((current) => {
-      const next = { ...current };
-      delete next[id];
+  }
+
+  function setSizeQuantity(sizeId: string, value: number) {
+    setTouchedSizeIds((current) => {
+      const next = new Set(current);
+      next.add(sizeId);
       return next;
     });
+    setQuantities((current) => ({ ...current, [sizeId]: value }));
   }
 
   const deepLinkQuery = useQuery({
@@ -75,23 +79,12 @@ export function JobOrderCreatePage() {
       return res.data.data;
     },
   });
-  /* eslint-disable react-hooks/set-state-in-effect -- deep-link pre-selection, mirrors the
-     Order Sheet forecast pre-fill pattern below */
+  /* eslint-disable react-hooks/set-state-in-effect -- deep-link pre-selection */
   useEffect(() => {
     if (!deepLinkQuery.data) return;
     setSelectedOrderSheets((current) => {
       if (current.some((os) => os.id === deepLinkQuery.data!.id)) return current;
       return [...current, deepLinkQuery.data!];
-    });
-    setQuantities((current) => {
-      if (current[deepLinkQuery.data!.id]) return current;
-      const line = deepLinkQuery.data!.lines[0];
-      return {
-        ...current,
-        [deepLinkQuery.data!.id]: Object.fromEntries(
-          (line?.sizes ?? []).map((size) => [size.sizeId, size.orderedQuantity]),
-        ),
-      };
     });
   }, [deepLinkQuery.data]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -141,18 +134,16 @@ export function JobOrderCreatePage() {
       ? ''
       : String(mappedUnitPrice);
 
-  // Union of sizes across every selected source, in first-seen order.
-  const sizeRows: SizeRow[] = useMemo(() => {
-    const seen = new Map<string, SizeRow>();
-    for (const orderSheet of selectedOrderSheets) {
-      for (const size of orderSheet.lines[0]?.sizes ?? []) {
-        if (!seen.has(size.sizeId)) {
-          seen.set(size.sizeId, { sizeId: size.sizeId, sizeCode: size.sizeCode, sizeLabel: size.sizeLabel });
-        }
-      }
-    }
-    return [...seen.values()];
-  }, [selectedOrderSheets]);
+  // Style-change reset (Phase 2.1): clear the Production Plan whenever the
+  // effective shared Style actually changes (e.g. every Style-A source is
+  // removed and a Style-B one is added) — Style-A quantities/touched state
+  // must never leak into a Style-B plan.
+  /* eslint-disable react-hooks/set-state-in-effect -- style-change reset */
+  useEffect(() => {
+    setQuantities({});
+    setTouchedSizeIds(new Set());
+  }, [styleId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const combinedForecastBySize = useMemo(() => {
     const totals = new Map<string, number>();
@@ -164,18 +155,62 @@ export function JobOrderCreatePage() {
     return totals;
   }, [selectedOrderSheets]);
 
-  const jobOrderTotalBySize = useMemo(() => {
-    const totals = new Map<string, number>();
+  // The Production Plan's size columns come from the Style's own canonical
+  // valid-size list (Phase 2.1) — not from union(selected Order Sheet
+  // sizes). A size the Style currently maps as ACTIVE (and whose own Size
+  // master row is ACTIVE) is producible; every other size that appears in a
+  // selected Order Sheet's forecast (deactivated, or its StyleSize mapping
+  // removed entirely) is still shown for historical/provenance context, just
+  // not editable.
+  const sizeRows: SizeRow[] = useMemo(() => {
+    const bySizeId = new Map<string, SizeRow>();
+    for (const size of styleDetailQuery.data?.sizes ?? []) {
+      bySizeId.set(size.id, {
+        sizeId: size.id,
+        sizeCode: size.code,
+        sizeLabel: size.label,
+        sortOrder: size.sortOrder,
+        active: size.status === 'ACTIVE' && size.mappingStatus === 'ACTIVE',
+      });
+    }
     for (const orderSheet of selectedOrderSheets) {
-      const bySize = quantities[orderSheet.id] ?? {};
-      for (const sizeId of Object.keys(bySize)) {
-        totals.set(sizeId, (totals.get(sizeId) ?? 0) + (bySize[sizeId] ?? 0));
+      for (const size of orderSheet.lines[0]?.sizes ?? []) {
+        if (bySizeId.has(size.sizeId)) continue;
+        bySizeId.set(size.sizeId, {
+          sizeId: size.sizeId,
+          sizeCode: size.sizeCode,
+          sizeLabel: size.sizeLabel,
+          sortOrder: Number.POSITIVE_INFINITY,
+          active: false,
+        });
       }
     }
-    return totals;
-  }, [quantities, selectedOrderSheets]);
+    return [...bySizeId.values()].sort((a, b) => a.sortOrder - b.sortOrder);
+  }, [styleDetailQuery.data, selectedOrderSheets]);
 
-  const grandTotal = [...jobOrderTotalBySize.values()].reduce((sum, qty) => sum + qty, 0);
+  // Untouched sizes keep following the Combined Forecast default; a size the
+  // Merchandiser has manually edited is never overwritten by a source change.
+  /* eslint-disable react-hooks/set-state-in-effect -- forecast-driven defaults */
+  useEffect(() => {
+    setQuantities((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const row of sizeRows) {
+        if (!row.active || touchedSizeIds.has(row.sizeId)) continue;
+        const forecastDefault = combinedForecastBySize.get(row.sizeId) ?? 0;
+        if (next[row.sizeId] !== forecastDefault) {
+          next[row.sizeId] = forecastDefault;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [combinedForecastBySize, sizeRows, touchedSizeIds]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const grandTotal = sizeRows
+    .filter((row) => row.active)
+    .reduce((sum, row) => sum + (quantities[row.sizeId] ?? 0), 0);
 
   const distinctDeliveryDates = useMemo(
     () => [...new Set(selectedOrderSheets.map((os) => os.requiredDeliveryDate ?? ''))],
@@ -189,13 +224,10 @@ export function JobOrderCreatePage() {
   const createMutation = useMutation({
     mutationFn: async () => {
       const res = await apiClient.post<ApiSuccessResponse<JobOrder>>('/job-orders', {
-        sources: selectedOrderSheets.map((orderSheet) => ({
-          orderSheetId: orderSheet.id,
-          sizes: (orderSheet.lines[0]?.sizes ?? []).map((size) => ({
-            sizeId: size.sizeId,
-            quantity: quantities[orderSheet.id]?.[size.sizeId] ?? 0,
-          })),
-        })),
+        orderSheetIds: selectedOrderSheets.map((orderSheet) => orderSheet.id),
+        sizes: sizeRows
+          .filter((row) => row.active)
+          .map((row) => ({ sizeId: row.sizeId, quantity: quantities[row.sizeId] ?? 0 })),
         factoryId,
         processFlowVersionId,
         unitPrice: effectiveUnitPrice,
@@ -230,7 +262,7 @@ export function JobOrderCreatePage() {
 
       <Panel
         title="Source Order Sheets"
-        description="Every selected Order Sheet must share the same Style. Distributors and Purchase Modes may differ."
+        description="Every selected Order Sheet must share the same Style. Distributors and Purchase Modes may differ. These are planning provenance only — they do not set the Production Plan's quantities."
       >
         <div className="space-y-4">
           {selectedOrderSheets.length > 0 && (
@@ -381,8 +413,8 @@ export function JobOrderCreatePage() {
 
       {selectedOrderSheets.length > 0 && sizeRows.length > 0 && (
         <Panel
-          title="Combined Order Sheet Forecast vs Job Order Quantities"
-          description="Job Order quantities default to the combined forecast and may be freely adjusted per size, per source — no cap or minimum applies."
+          title="Combined Forecast vs Production Plan"
+          description="The Production Plan is the Job Order's own, independent production quantity per size — it defaults to the Combined Forecast but is freely editable and is never re-derived from source Order Sheets once you edit it."
           footer={
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -400,83 +432,49 @@ export function JobOrderCreatePage() {
             </div>
           }
         >
-          <div className="space-y-4">
-            <DataTable
-              density="compact"
-              columns={[
-                { key: 'size', header: 'Size', render: (size) => size.sizeLabel },
-                {
-                  key: 'forecast',
-                  header: 'Combined Forecast',
-                  align: 'right',
-                  render: (size) => (combinedForecastBySize.get(size.sizeId) ?? 0).toLocaleString(),
-                },
-                {
-                  key: 'jobOrder',
-                  header: 'Job Order',
-                  align: 'right',
-                  render: (size) => (jobOrderTotalBySize.get(size.sizeId) ?? 0).toLocaleString(),
-                },
-                {
-                  key: 'variance',
-                  header: 'Variance',
-                  align: 'right',
-                  render: (size) =>
-                    (
-                      (jobOrderTotalBySize.get(size.sizeId) ?? 0) - (combinedForecastBySize.get(size.sizeId) ?? 0)
-                    ).toLocaleString(),
-                },
-              ]}
-              data={sizeRows}
-              rowKey="sizeId"
-            />
-            {selectedOrderSheets.map((orderSheet) => (
-              <div key={orderSheet.id} className="space-y-2">
-                <h3 className="text-sm font-semibold">
-                  {orderSheet.poNumber} · {orderSheet.distributor.name}
-                </h3>
-                <DataTable
-                  density="compact"
-                  columns={[
-                    { key: 'size', header: 'Size', render: (size) => size.sizeLabel },
-                    {
-                      key: 'forecast',
-                      header: 'Order Sheet Forecast',
-                      align: 'right',
-                      render: (size) =>
-                        (
-                          orderSheet.lines[0]?.sizes.find((s) => s.sizeId === size.sizeId)?.orderedQuantity ?? 0
-                        ).toLocaleString(),
-                    },
-                    {
-                      key: 'quantity',
-                      header: 'Job Order Qty',
-                      align: 'right',
-                      render: (size) => (
-                        <TextField
-                          aria-label={`Quantity for ${orderSheet.poNumber} ${size.sizeLabel}`}
-                          type="number"
-                          min={0}
-                          value={quantities[orderSheet.id]?.[size.sizeId] ?? ''}
-                          onChange={(event) => {
-                            const next = Math.max(0, Number(event.target.value || 0));
-                            setQuantities((current) => ({
-                              ...current,
-                              [orderSheet.id]: { ...current[orderSheet.id], [size.sizeId]: next },
-                            }));
-                          }}
-                          density="compact"
-                          width="xs"
-                        />
-                      ),
-                    },
-                  ]}
-                  data={orderSheet.lines[0]?.sizes.map((s) => ({ sizeId: s.sizeId, sizeLabel: s.sizeLabel })) ?? []}
-                  rowKey="sizeId"
-                />
-              </div>
-            ))}
-          </div>
+          <DataTable
+            density="compact"
+            columns={[
+              { key: 'size', header: 'Size', render: (row) => row.sizeLabel },
+              {
+                key: 'forecast',
+                header: 'Combined Forecast',
+                align: 'right',
+                render: (row) => (combinedForecastBySize.get(row.sizeId) ?? 0).toLocaleString(),
+              },
+              {
+                key: 'productionPlan',
+                header: 'Production Plan',
+                align: 'right',
+                render: (row) =>
+                  row.active ? (
+                    <TextField
+                      aria-label={`Production quantity for ${row.sizeLabel}`}
+                      type="number"
+                      min={0}
+                      value={quantities[row.sizeId] ?? ''}
+                      onChange={(event) => setSizeQuantity(row.sizeId, Math.max(0, Number(event.target.value || 0)))}
+                      density="compact"
+                      width="xs"
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Size inactive — cannot be produced</span>
+                  ),
+              },
+              {
+                key: 'variance',
+                header: 'Variance',
+                align: 'right',
+                render: (row) =>
+                  (
+                    (row.active ? (quantities[row.sizeId] ?? 0) : 0) -
+                    (combinedForecastBySize.get(row.sizeId) ?? 0)
+                  ).toLocaleString(),
+              },
+            ]}
+            data={sizeRows}
+            rowKey="sizeId"
+          />
         </Panel>
       )}
     </div>

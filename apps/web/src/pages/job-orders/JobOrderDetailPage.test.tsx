@@ -907,3 +907,186 @@ describe('JobOrderDetailPage stage completion mutation', () => {
     expect(container.querySelector('input[aria-label^="Prepared quantity for"]')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Production Plan (Phase 2.1) — the sources panel currently has zero
+// coverage of the Production Plan edit control or the simplified
+// orderSheetId-only add/remove flow; these tests close that gap.
+// ---------------------------------------------------------------------------
+
+describe('JobOrderDetailPage Production Plan (Phase 2.1)', () => {
+  const draftOverrides = {
+    lines: [
+      {
+        id: 'line-1',
+        styleId: 'style-1',
+        styleNumber: 'ST-1',
+        styleName: 'Style One',
+        orderedQuantityTotal: 10,
+        preparedQuantityTotal: 0,
+        status: 'DRAFT',
+        sizes: [
+          {
+            id: 'size-1',
+            sizeId: 'sz-1',
+            sizeCode: 'S',
+            sizeLabel: 'Small',
+            orderedQuantity: 10,
+            preparedQuantity: 0,
+            varianceQuantity: 0,
+          },
+        ],
+      },
+    ],
+    sourceOrderSheets: [
+      {
+        id: 'os-1',
+        poNumber: 'EIOS/26-27/0001',
+        distributor: { id: 'd1', code: 'D1', name: 'ABC Distributors' },
+        purchaseMode: 'OUTRIGHT',
+        requiredDeliveryDate: null,
+        forecastTotal: 10,
+      },
+    ],
+    combinedForecast: [{ sizeId: 'sz-1', sizeCode: 'S', sizeLabel: 'Small', forecastQuantity: 10 }],
+    sourceOrderSheetCount: 1,
+  };
+  const styleLookup = {
+    id: 'style-1',
+    sizes: [
+      {
+        id: 'sz-1',
+        code: 'S',
+        label: 'Small',
+        sizeType: 'ALPHA',
+        sortOrder: 1,
+        status: 'ACTIVE',
+        mappingStatus: 'ACTIVE',
+      },
+    ],
+    factories: [],
+  };
+
+  const renderDraftPage = async (overrides: Record<string, unknown> = {}) => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/audit')) return { data: { data: [] } };
+      if (url === '/styles/style-1') return { data: { data: styleLookup } };
+      if (url === '/job-orders/jo-1')
+        return { data: { data: mockJobOrder('DRAFT', standardStages, { ...draftOverrides, ...overrides }) } };
+      throw new Error(`Unexpected GET request: ${url}`);
+    });
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/job-orders/jo-1']}>
+            <Routes>
+              <Route path="/job-orders/:id" element={<JobOrderDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(content()).not.toContain('Loading job order'));
+  };
+
+  it('renders an editable Production Plan for a DRAFT job order and saves via PATCH .../production-plan', async () => {
+    await renderDraftPage();
+
+    const quantityInput = await vi.waitFor(() => {
+      const input = container.querySelector<HTMLInputElement>(
+        '[aria-label="Production quantity for Small"]',
+      );
+      expect(input).not.toBeNull();
+      return input!;
+    });
+    expect(quantityInput.value).toBe('10');
+    changeInput(quantityInput, '7');
+
+    vi.spyOn(apiClient, 'patch').mockResolvedValue({
+      data: { data: mockJobOrder('DRAFT', standardStages, draftOverrides) },
+    } as never);
+
+    const saveButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Save Production Plan',
+    )!;
+    act(() => saveButton.click());
+    await vi.waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+
+    const [url, body] = vi.mocked(apiClient.patch).mock.calls[0]!;
+    expect(url).toBe('/job-orders/jo-1/production-plan');
+    expect(body).toMatchObject({ sizes: [{ sizeId: 'sz-1', quantity: 7 }], expectedVersion: 1 });
+  });
+
+  it('does not render an editable Production Plan once the job order leaves DRAFT', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/audit')) return { data: { data: [] } };
+      if (url === '/job-orders/jo-1')
+        return {
+          data: {
+            data: mockJobOrder('SENT_TO_FACTORY', standardStages, draftOverrides),
+          },
+        };
+      throw new Error(`Unexpected GET request: ${url}`);
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/job-orders/jo-1']}>
+            <Routes>
+              <Route path="/job-orders/:id" element={<JobOrderDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(content()).not.toContain('Loading job order'));
+
+    expect(container.querySelector('[aria-label="Production quantity for Small"]')).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (button) => button.textContent === 'Save Production Plan',
+      ),
+    ).toBe(false);
+  });
+
+  it('removing a source sends a bare orderSheetId list, never per-source quantities', async () => {
+    // Two sources so Remove isn't disabled (a Job Order must retain at
+    // least one).
+    await renderDraftPage({
+      sourceOrderSheets: [
+        ...draftOverrides.sourceOrderSheets,
+        {
+          id: 'os-2',
+          poNumber: 'EIOS/26-27/0002',
+          distributor: { id: 'd2', code: 'D2', name: 'XYZ Distributors' },
+          purchaseMode: 'OUTRIGHT',
+          requiredDeliveryDate: null,
+          forecastTotal: 15,
+        },
+      ],
+      sourceOrderSheetCount: 2,
+    });
+    await vi.waitFor(() => expect(content()).toContain('EIOS/26-27/0002'));
+
+    vi.spyOn(apiClient, 'patch').mockResolvedValue({
+      data: { data: mockJobOrder('DRAFT', standardStages, draftOverrides) },
+    } as never);
+
+    const removeButtons = Array.from(container.querySelectorAll('button')).filter(
+      (button) => button.textContent === 'Remove',
+    );
+    expect(removeButtons).toHaveLength(2);
+    act(() => removeButtons[0]!.click());
+    await vi.waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+
+    const [url, body] = vi.mocked(apiClient.patch).mock.calls[0]!;
+    expect(url).toBe('/job-orders/jo-1/sources');
+    // Bare orderSheetId list — no `sizes` anywhere in the payload (Phase
+    // 2.1: source mapping is pure planning provenance).
+    expect(body).toMatchObject({ add: [], remove: ['os-1'], expectedVersion: 1 });
+    expect(JSON.stringify(body)).not.toContain('sizes');
+  });
+});

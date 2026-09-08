@@ -148,7 +148,10 @@ export async function getEligibleStockForDistributor(
   for (const line of releaseLines) {
     const availabilityRow = availability.get(line.id);
     if (!availabilityRow) continue;
-    const pols = line.purchaseOrderLineSize;
+    // Non-null: the `where` above filters on this relation, which Prisma
+    // translates to "the relation exists" for an optional to-one relation —
+    // a row with a null legacy bridge (Phase 2.1) never matches this query.
+    const pols = line.purchaseOrderLineSize!;
     const pol = pols.purchaseOrderLine;
     const existing = byLineSize.get(pols.id);
     if (existing) {
@@ -243,7 +246,8 @@ export async function getGlobalInventory(filters: {
     const availabilityRow = availability.get(line.id);
     if (!availabilityRow) continue;
     if (filters.onlyAvailable && availabilityRow.available <= 0) continue;
-    const pols = line.purchaseOrderLineSize;
+    // Non-null: same reasoning as getEligibleStockForDistributor above.
+    const pols = line.purchaseOrderLineSize!;
     const pol = pols.purchaseOrderLine;
     rows.push({
       qaReleaseLineId: line.id,
@@ -284,7 +288,11 @@ export async function getReleaseLineDistributorIds(
       },
     },
   });
+  // Non-null: callers only ever pass qaReleaseLineIds already resolved via
+  // the legacy purchaseOrderLineSizeId-matching query in
+  // sale-orders.service.ts (submitSaleOrder/approveSaleOrder), which by
+  // construction never returns a Phase 2.1 pooled-only (null-bridge) row.
   return new Map(
-    rows.map((row) => [row.id, row.purchaseOrderLineSize.purchaseOrderLine.purchaseOrder.distributorId]),
+    rows.map((row) => [row.id, row.purchaseOrderLineSize!.purchaseOrderLine.purchaseOrder.distributorId]),
   );
 }

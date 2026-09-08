@@ -98,7 +98,6 @@ async function fixture() {
       lines: {
         create: {
           id: jobLineId,
-          purchaseOrderLineId: poLineId,
           styleId: style.id,
           orderedQuantityTotal: 30,
           preparedQuantityTotal: 30,
@@ -106,7 +105,6 @@ async function fixture() {
           sizes: {
             create: {
               id: formSizeId,
-              purchaseOrderLineSizeId: poSizeId,
               sizeId: size.id,
               orderedQuantity: 10,
               preparedQuantity: 10,
@@ -146,7 +144,6 @@ async function fixture() {
       data: {
         id,
         jobOrderLineId: jobLineId,
-        purchaseOrderLineSizeId: extraPoSizeId,
         sizeId: extraSize.id,
         orderedQuantity: 10,
         preparedQuantity: 10,

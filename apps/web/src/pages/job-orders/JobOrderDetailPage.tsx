@@ -26,6 +26,7 @@ import { useAuthedImage } from '../../lib/use-authed-image.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
 import { canManageJobOrderProduction } from '../../auth/permissions.js';
 import type { PurchaseOrder } from '../purchase-orders/types.js';
+import type { Style } from '../master-data/types.js';
 import type { JobOrder, JobOrderLineSize } from './types.js';
 import { OrderSheetMultiSelectField } from './OrderSheetMultiSelectField.js';
 import { ProductionStageStepper } from './ProductionStageStepper.js';
@@ -256,16 +257,26 @@ export function JobOrderDetailPage() {
     onSuccess: invalidate,
   });
   const updateSourcesMutation = useMutation({
-    mutationFn: async (input: {
-      add: Array<{ orderSheetId: string; sizes: Array<{ sizeId: string; quantity: number }> }>;
-      remove: string[];
-    }) =>
+    mutationFn: async (input: { add: string[]; remove: string[] }) =>
       apiClient.patch<ApiSuccessResponse<JobOrder>>(
         `/job-orders/${id}/sources`,
         { ...input, expectedVersion: jobOrderQuery.data!.version },
         { headers: { 'Idempotency-Key': `${id}:sources:${jobOrderQuery.data!.version}:${Date.now()}` } },
       ),
     onSuccess: invalidate,
+  });
+  const [planDrafts, setPlanDrafts] = useState<Record<string, number>>({});
+  const updatePlanMutation = useMutation({
+    mutationFn: async (sizes: Array<{ sizeId: string; quantity: number }>) =>
+      apiClient.patch<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/production-plan`,
+        { sizes, expectedVersion: jobOrderQuery.data!.version },
+        { headers: { 'Idempotency-Key': `${id}:plan:${jobOrderQuery.data!.version}:${Date.now()}` } },
+      ),
+    onSuccess: () => {
+      setPlanDrafts({});
+      invalidate();
+    },
   });
   const deliveryDateMutation = useMutation({
     mutationFn: async (requiredDeliveryDate: string | null) =>
@@ -338,6 +349,10 @@ export function JobOrderDetailPage() {
   });
 
   const jobOrder = jobOrderQuery.data;
+  const canManageJobOrders = Boolean(
+    user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'),
+  );
+  const canEditProductionPlan = jobOrder?.status === 'DRAFT' && canManageJobOrders;
   const flatSizes: FlatSize[] = useMemo(
     () =>
       (jobOrder?.lines ?? []).flatMap((line) =>
@@ -349,6 +364,59 @@ export function JobOrderDetailPage() {
       ),
     [jobOrder],
   );
+  // Production Plan editable size set (Phase 2.1): the Style's own
+  // canonical valid-size list, unioned with any size already on the plan or
+  // present in the Combined Forecast (so a size that's no longer active but
+  // still has a persisted quantity, or a historical forecast, stays visible
+  // — never silently dropped).
+  const styleDetailQuery = useQuery({
+    queryKey: ['style', jobOrder?.lines[0]?.styleId],
+    enabled: Boolean(jobOrder?.lines[0]?.styleId) && canEditProductionPlan,
+    queryFn: async () =>
+      (await apiClient.get<ApiSuccessResponse<Style>>(`/styles/${jobOrder!.lines[0]!.styleId}`)).data
+        .data,
+  });
+  const productionPlanRows = useMemo(() => {
+    const bySizeId = new Map<
+      string,
+      { sizeId: string; sizeCode: string; sizeLabel: string; sortOrder: number; active: boolean }
+    >();
+    for (const size of styleDetailQuery.data?.sizes ?? []) {
+      bySizeId.set(size.id, {
+        sizeId: size.id,
+        sizeCode: size.code,
+        sizeLabel: size.label,
+        sortOrder: size.sortOrder,
+        active: size.status === 'ACTIVE' && size.mappingStatus === 'ACTIVE',
+      });
+    }
+    for (const size of flatSizes) {
+      if (!bySizeId.has(size.sizeId)) {
+        bySizeId.set(size.sizeId, {
+          sizeId: size.sizeId,
+          sizeCode: size.sizeCode,
+          sizeLabel: size.sizeLabel,
+          sortOrder: Number.POSITIVE_INFINITY,
+          active: false,
+        });
+      }
+    }
+    for (const row of jobOrder?.combinedForecast ?? []) {
+      if (!bySizeId.has(row.sizeId)) {
+        bySizeId.set(row.sizeId, {
+          sizeId: row.sizeId,
+          sizeCode: row.sizeCode,
+          sizeLabel: row.sizeLabel,
+          sortOrder: Number.POSITIVE_INFINITY,
+          active: false,
+        });
+      }
+    }
+    return [...bySizeId.values()].sort((a, b) => a.sortOrder - b.sortOrder);
+  }, [styleDetailQuery.data, flatSizes, jobOrder?.combinedForecast]);
+  function currentPlanQuantity(sizeId: string): number {
+    return flatSizes.find((size) => size.sizeId === sizeId)?.orderedQuantity ?? 0;
+  }
   const nextStage = jobOrder?.stages.find((stage) => stage.status !== 'COMPLETED');
   const productionQualityGateLocked = Boolean(
     jobOrder?.qualityActivities.some(
@@ -366,9 +434,6 @@ export function JobOrderDetailPage() {
       />
     );
 
-  const canManageJobOrders = Boolean(
-    user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'),
-  );
   const canSend = jobOrder.status === 'DRAFT' && canManageJobOrders;
   const acknowledgementKey = `${jobOrder.id}:${jobOrder.version}:${jobOrder.disclaimerRevision}`;
   const acknowledgeDisclaimer = acknowledgedRevision === acknowledgementKey;
@@ -694,18 +759,7 @@ export function JobOrderDetailPage() {
                 styleId={jobOrder.lines[0]?.styleId}
                 excludeIds={jobOrder.sourceOrderSheets.map((os) => os.id)}
                 onSelect={(orderSheet: PurchaseOrder) =>
-                  updateSourcesMutation.mutate({
-                    add: [
-                      {
-                        orderSheetId: orderSheet.id,
-                        sizes: (orderSheet.lines[0]?.sizes ?? []).map((size) => ({
-                          sizeId: size.sizeId,
-                          quantity: size.orderedQuantity,
-                        })),
-                      },
-                    ],
-                    remove: [],
-                  })
+                  updateSourcesMutation.mutate({ add: [orderSheet.id], remove: [] })
                 }
               />
             )}
@@ -1496,33 +1550,110 @@ export function JobOrderDetailPage() {
         </Panel>
       )}
 
-      <Panel title="Style and Size Quantities">
-        <DataTable
-          columns={[
-            { key: 'style', header: 'Style', accessor: 'style' },
-            { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-            {
-              key: 'orderedQuantity',
-              header: 'Ordered',
-              align: 'right',
-              render: (size) => size.orderedQuantity.toLocaleString(),
-            },
-            {
-              key: 'preparedQuantity',
-              header: 'Prepared',
-              align: 'right',
-              render: (size) => size.preparedQuantity.toLocaleString(),
-            },
-            {
-              key: 'varianceQuantity',
-              header: 'Variance',
-              align: 'right',
-              render: (size) => (size.preparedQuantity - size.orderedQuantity).toLocaleString(),
-            },
-          ]}
-          data={flatSizes}
-          rowKey="id"
-        />
+      <Panel
+        title="Production Plan"
+        description={
+          canEditProductionPlan
+            ? "The Job Order's own size-wise production quantities — independent of source Order Sheets. Editable while this Job Order is a draft; source Order Sheet changes never alter it."
+            : undefined
+        }
+        footer={
+          canEditProductionPlan ? (
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                {updatePlanMutation.isError && (
+                  <ValidationMessage tone="error">
+                    {mutationErrorMessage(
+                      updatePlanMutation.error,
+                      'Unable to update the production plan.',
+                    )}
+                  </ValidationMessage>
+                )}
+              </div>
+              <Button
+                onClick={() =>
+                  updatePlanMutation.mutate(
+                    productionPlanRows
+                      .filter((row) => row.active)
+                      .map((row) => ({
+                        sizeId: row.sizeId,
+                        quantity: planDrafts[row.sizeId] ?? currentPlanQuantity(row.sizeId),
+                      })),
+                  )
+                }
+                loading={updatePlanMutation.isPending}
+              >
+                Save Production Plan
+              </Button>
+            </div>
+          ) : undefined
+        }
+      >
+        {canEditProductionPlan ? (
+          <DataTable
+            density="compact"
+            columns={[
+              { key: 'size', header: 'Size', render: (row) => row.sizeLabel },
+              {
+                key: 'quantity',
+                header: 'Production Plan',
+                align: 'right',
+                render: (row) =>
+                  row.active ? (
+                    <TextField
+                      aria-label={`Production quantity for ${row.sizeLabel}`}
+                      type="number"
+                      min={0}
+                      value={planDrafts[row.sizeId] ?? currentPlanQuantity(row.sizeId)}
+                      onChange={(event) =>
+                        setPlanDrafts((current) => ({
+                          ...current,
+                          [row.sizeId]: Math.max(0, Number(event.target.value || 0)),
+                        }))
+                      }
+                      density="compact"
+                      width="xs"
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      {currentPlanQuantity(row.sizeId) > 0
+                        ? `${currentPlanQuantity(row.sizeId).toLocaleString()} — size inactive, cannot be changed`
+                        : 'Size inactive — cannot be produced'}
+                    </span>
+                  ),
+              },
+            ]}
+            data={productionPlanRows}
+            rowKey="sizeId"
+          />
+        ) : (
+          <DataTable
+            columns={[
+              { key: 'style', header: 'Style', accessor: 'style' },
+              { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
+              {
+                key: 'orderedQuantity',
+                header: 'Ordered',
+                align: 'right',
+                render: (size) => size.orderedQuantity.toLocaleString(),
+              },
+              {
+                key: 'preparedQuantity',
+                header: 'Prepared',
+                align: 'right',
+                render: (size) => size.preparedQuantity.toLocaleString(),
+              },
+              {
+                key: 'varianceQuantity',
+                header: 'Variance',
+                align: 'right',
+                render: (size) => (size.preparedQuantity - size.orderedQuantity).toLocaleString(),
+              },
+            ]}
+            data={flatSizes}
+            rowKey="id"
+          />
+        )}
       </Panel>
 
       <Panel title="Seasons">

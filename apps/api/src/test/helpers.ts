@@ -97,10 +97,16 @@ export async function resetDatabase(): Promise<void> {
   await prisma.jobOrderStageStatus.deleteMany();
   await prisma.jobOrderLineSize.deleteMany();
   await prisma.jobOrderLine.deleteMany();
-  await prisma.jobOrder.deleteMany();
+  // Phase 2.1: DistributorPurchaseOrder.jobOrderId is now onDelete: Restrict
+  // (was SET NULL) — the Order Sheet -> Job Order lock must be cleared
+  // before jobOrder.deleteMany() below, not after. JobOrderLine/
+  // JobOrderLineSize no longer FK into these PO tables at all (their old
+  // purchaseOrderLineId/purchaseOrderLineSizeId FKs were removed in the same
+  // migration), so this reordering is safe.
   await prisma.distributorPurchaseOrderLineSize.deleteMany();
   await prisma.distributorPurchaseOrderLine.deleteMany();
   await prisma.distributorPurchaseOrder.deleteMany();
+  await prisma.jobOrder.deleteMany();
   await prisma.processFlowVersionStage.deleteMany();
   await prisma.processFlowVersion.deleteMany();
   await prisma.processFlow.deleteMany();
@@ -502,7 +508,6 @@ export async function createReleasedQaStock(
       lines: {
         create: {
           id: createId(),
-          purchaseOrderLineId: po.lines[0]!.id,
           styleId: style.id,
           orderedQuantityTotal: quantity,
           preparedQuantityTotal: quantity,
@@ -510,7 +515,6 @@ export async function createReleasedQaStock(
             create: [
               {
                 id: createId(),
-                purchaseOrderLineSizeId,
                 sizeId: size.id,
                 orderedQuantity: quantity,
                 preparedQuantity: quantity,

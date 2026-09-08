@@ -136,7 +136,10 @@ function toAllocationView(allocation: SOAllocationRecord, includeFullProvenance:
   }
 
   const releaseLine = allocation.qaReleaseLine;
-  const purchaseOrderLine = releaseLine.purchaseOrderLineSize.purchaseOrderLine;
+  // Non-null: a StockAllocation only ever exists against a QaReleaseLine
+  // resolved via the legacy purchaseOrderLineSizeId-matching query (Phase
+  // 2.1) — a pooled-only (null-bridge) release line can never be allocated.
+  const purchaseOrderLine = releaseLine.purchaseOrderLineSize!.purchaseOrderLine;
   return {
     ...base,
     source: {
@@ -472,12 +475,15 @@ async function resolveReassignmentSources(releaseLineIds: string[]): Promise<Map
       },
     },
   });
+  // Non-null: only ever looked up for release lines already backing a
+  // StockAllocation, which requires the legacy purchaseOrderLineSizeId
+  // bridge to be populated (Phase 2.1) — see toAllocationView's comment.
   return new Map(
     rows.map((row) => [
       row.id,
       {
-        distributorName: row.purchaseOrderLineSize.purchaseOrderLine.purchaseOrder.distributor.name,
-        poNumber: row.purchaseOrderLineSize.purchaseOrderLine.purchaseOrder.poNumber,
+        distributorName: row.purchaseOrderLineSize!.purchaseOrderLine.purchaseOrder.distributor.name,
+        poNumber: row.purchaseOrderLineSize!.purchaseOrderLine.purchaseOrder.poNumber,
         jobOrderNumber: row.release.jobOrder.jobOrderNumber,
         factoryName: row.release.jobOrder.factory.name,
       },
@@ -848,9 +854,14 @@ export async function submitSaleOrder(
     });
     const candidatesByLineSize = new Map<string, string[]>();
     for (const candidate of candidates) {
-      const list = candidatesByLineSize.get(candidate.purchaseOrderLineSizeId) ?? [];
+      // Non-null: an `in` filter against a set of actual (non-null)
+      // purchaseOrderLineSizeIds never matches a NULL column value (Phase
+      // 2.1's pooled-only bridge rows are naturally excluded by SQL NULL
+      // semantics, not by an explicit non-null check).
+      const purchaseOrderLineSizeId = candidate.purchaseOrderLineSizeId!;
+      const list = candidatesByLineSize.get(purchaseOrderLineSizeId) ?? [];
       list.push(candidate.id);
-      candidatesByLineSize.set(candidate.purchaseOrderLineSizeId, list);
+      candidatesByLineSize.set(purchaseOrderLineSizeId, list);
     }
 
     const releaseLineIds = [...new Set(candidates.map((candidate) => candidate.id))].sort();

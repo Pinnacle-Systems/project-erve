@@ -10,6 +10,7 @@ import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { toCompactFinancialYearCode } from '../master-data/financial-year.util.js';
+import { getActiveStyleSizeIds } from '../master-data/style-size.util.js';
 import { SALE_ORDER_STATUSES_BLOCKING_PO_CANCELLATION } from '../sale-orders/sale-order-lifecycle.js';
 
 // ---------------------------------------------------------------------------
@@ -535,21 +536,13 @@ async function validateLines(
       throw HttpError.badRequest('Duplicate sizes are not allowed in the same line');
     }
 
-    const style = await prisma.style.findUnique({
-      where: { id: line.styleId },
-      include: {
-        styleSizes: {
-          where: { status: 'ACTIVE', size: { status: 'ACTIVE' } },
-          select: { sizeId: true },
-        },
-      },
-    });
+    const style = await prisma.style.findUnique({ where: { id: line.styleId } });
 
     if (!style) throw HttpError.badRequest(`Style ${line.styleId} not found`);
     if (style.status !== 'ACTIVE')
       throw HttpError.badRequest(`Style ${style.styleNumber} is not active`);
 
-    const validSizeIds = new Set(style.styleSizes.map((ss) => ss.sizeId));
+    const validSizeIds = await getActiveStyleSizeIds(prisma, line.styleId);
     for (const sz of line.sizes) {
       if (!validSizeIds.has(sz.sizeId)) {
         throw HttpError.badRequest(`Size ${sz.sizeId} is not valid for style ${style.styleNumber}`);

@@ -215,14 +215,12 @@ async function fixture(
       lines: {
         create: {
           id: createId(),
-          purchaseOrderLineId: po.lines[0]!.id,
           styleId: style.id,
           orderedQuantityTotal: 100,
           status: 'IN_PRODUCTION',
           sizes: {
             create: {
               id: createId(),
-              purchaseOrderLineSizeId: po.lines[0]!.sizes[0]!.id,
               sizeId: size.id,
               orderedQuantity: 100,
             },

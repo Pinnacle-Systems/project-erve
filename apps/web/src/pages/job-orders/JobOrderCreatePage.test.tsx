@@ -193,7 +193,30 @@ async function searchAndSelect(poNumber: string) {
 // Common non-Order-Sheet endpoints most tests don't care about.
 const emptyFactories = { data: { data: [] } };
 const emptyProcessFlows = { data: { data: [] } };
-const benignStyleLookup = { data: { data: { id: 'style-1', factories: [] } } };
+// The Production Plan's size columns come from the Style's own canonical
+// valid-size list (Phase 2.1) — matches makePurchaseOrder's default
+// sizeId/sizeCode/sizeLabel ('sz-1' / 'S' / 'Small') so it renders as an
+// editable (ACTIVE) row rather than falling back to the "size inactive"
+// display path.
+const benignStyleLookup = {
+  data: {
+    data: {
+      id: 'style-1',
+      factories: [],
+      sizes: [
+        {
+          id: 'sz-1',
+          code: 'S',
+          label: 'Small',
+          sizeType: 'ALPHA',
+          sortOrder: 1,
+          status: 'ACTIVE',
+          mappingStatus: 'ACTIVE',
+        },
+      ],
+    },
+  },
+};
 
 describe('Job Order Process Flow assignment', () => {
   it('selects supported Production and Quality versions and explains unsupported versions', async () => {
@@ -521,7 +544,7 @@ describe('Order Sheet multi-select', () => {
 
     await renderJobOrderCreatePage();
     await searchAndSelect('EIOS/26-27/0001');
-    expect(container.textContent).toContain('Combined Order Sheet Forecast vs Job Order Quantities');
+    expect(container.textContent).toContain('Combined Forecast vs Production Plan');
 
     const removeButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent === 'Remove',
@@ -529,7 +552,7 @@ describe('Order Sheet multi-select', () => {
     act(() => removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     await flush();
 
-    expect(container.textContent).not.toContain('Combined Order Sheet Forecast vs Job Order Quantities');
+    expect(container.textContent).not.toContain('Combined Forecast vs Production Plan');
     expect(container.textContent).toContain('Select at least one Order Sheet');
     // The removed Order Sheet is no longer selected (no Remove action left
     // for it) — it may still reappear in the always-live search results
@@ -568,7 +591,7 @@ describe('Order Sheet multi-select', () => {
     expect(searchInput()).not.toBeNull();
   });
 
-  it('pre-fills Job Order quantity from the Order Sheet forecast, allows editing, and submits the new sources payload', async () => {
+  it('pre-fills the Production Plan from the Combined Forecast, allows editing, and submits the new orderSheetIds/sizes payload', async () => {
     const po = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001', orderedQuantity: 10 });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/factories') {
@@ -627,9 +650,9 @@ describe('Order Sheet multi-select', () => {
     await flush();
 
     const quantityInput = container.querySelector<HTMLInputElement>(
-      `[aria-label="Quantity for ${po.poNumber} Small"]`,
+      '[aria-label="Production quantity for Small"]',
     )!;
-    // Pre-filled from the Order Sheet's forecast quantity (10), not empty.
+    // Pre-filled from the Combined Forecast (10), not empty.
     expect(quantityInput.value).toBe('10');
     // Freely editable beyond the forecast — no remaining-balance cap.
     act(() => setInputValue(quantityInput, '15'));
@@ -662,21 +685,22 @@ describe('Order Sheet multi-select', () => {
     expect(apiClient.post).toHaveBeenCalledTimes(1);
     const [, body] = vi.mocked(apiClient.post).mock.calls[0]!;
     const payload = body as {
-      sources: Array<{ orderSheetId: string; sizes: Array<{ sizeId: string; quantity: number }> }>;
+      orderSheetIds: string[];
+      sizes: Array<{ sizeId: string; quantity: number }>;
       factoryId: string;
       processFlowVersionId: string;
       unitPrice: string;
     };
-    expect(payload.sources).toHaveLength(1);
-    expect(payload.sources[0]!.orderSheetId).toBe('po-internal-123');
-    expect(payload.sources[0]!.orderSheetId).not.toBe('EIOS/26-27/0001');
-    expect(payload.sources[0]!.sizes[0]!.quantity).toBe(15);
+    expect(payload.orderSheetIds).toEqual(['po-internal-123']);
+    expect(payload.orderSheetIds).not.toContain('EIOS/26-27/0001');
+    expect(payload.sizes).toHaveLength(1);
+    expect(payload.sizes[0]).toEqual({ sizeId: 'sz-1', quantity: 15 });
     expect(payload.factoryId).toBe('factory-1');
     expect(payload.processFlowVersionId).toBe('pfv-1');
     expect(payload.unitPrice).toBe('250');
   });
 
-  it('supports selecting two Order Sheets of the same Style, enforced via the search filter, and submits both as combined sources', async () => {
+  it('supports selecting two Order Sheets of the same Style, enforced via the search filter, and submits one combined Production Plan', async () => {
     const poA = makePurchaseOrder({ id: 'po-multi-a', poNumber: 'EIOS/26-27/0010', orderedQuantity: 10 });
     const poB = makePurchaseOrder({
       id: 'po-multi-b',
@@ -787,13 +811,99 @@ describe('Order Sheet multi-select', () => {
     expect(apiClient.post).toHaveBeenCalledTimes(1);
     const [, body] = vi.mocked(apiClient.post).mock.calls[0]!;
     const payload = body as {
-      sources: Array<{ orderSheetId: string; sizes: Array<{ sizeId: string; quantity: number }> }>;
+      orderSheetIds: string[];
+      sizes: Array<{ sizeId: string; quantity: number }>;
     };
-    expect(payload.sources.map((source) => source.orderSheetId)).toEqual([
-      'po-multi-a',
-      'po-multi-b',
-    ]);
-    expect(payload.sources[0]!.sizes[0]!.quantity).toBe(10);
-    expect(payload.sources[1]!.sizes[0]!.quantity).toBe(6);
+    expect(payload.orderSheetIds).toEqual(['po-multi-a', 'po-multi-b']);
+    // ONE flat production-plan entry per size — never split per source —
+    // defaulting to the Combined Forecast total (10 + 6).
+    expect(payload.sizes).toHaveLength(1);
+    expect(payload.sizes[0]).toEqual({ sizeId: 'sz-1', quantity: 16 });
+  });
+
+  it('keeps a manually edited Production Plan quantity when a new source changes the Combined Forecast (§8/§9)', async () => {
+    const poA = makePurchaseOrder({ id: 'po-touch-a', poNumber: 'EIOS/26-27/0020', orderedQuantity: 10 });
+    const poB = makePurchaseOrder({ id: 'po-touch-b', poNumber: 'EIOS/26-27/0021', orderedQuantity: 15 });
+    vi.spyOn(apiClient, 'get').mockImplementation(
+      async (url: string, config?: { params?: { search?: string } }) => {
+        if (url === '/factories') return emptyFactories;
+        if (url === '/process-flows') return emptyProcessFlows;
+        if (url === '/styles/style-1') return benignStyleLookup;
+        if (url === '/purchase-orders') {
+          const search = config?.params?.search ?? '';
+          const items = [poA, poB].filter((po) => po.poNumber.includes(search));
+          return { data: { data: { items, pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+        }
+        throw new Error(`Unexpected GET request: ${url}`);
+      },
+    );
+
+    await renderJobOrderCreatePage();
+    await searchAndSelect('EIOS/26-27/0020');
+
+    const quantityInput = () =>
+      container.querySelector<HTMLInputElement>('[aria-label="Production quantity for Small"]')!;
+    expect(quantityInput().value).toBe('10');
+    act(() => setInputValue(quantityInput(), '4'));
+    await flush();
+    expect(quantityInput().value).toBe('4');
+
+    await searchAndSelect('EIOS/26-27/0021');
+
+    // Combined Forecast now reflects both sources (10 + 15 = 25)...
+    const forecastRow = Array.from(container.querySelectorAll('tr')).find((row) =>
+      row.textContent?.includes('Small'),
+    )!;
+    expect(forecastRow.textContent).toContain('25');
+    // ...but the manually-touched Production Plan quantity is untouched.
+    expect(quantityInput().value).toBe('4');
+  });
+
+  it('shows a historical forecast size that is no longer an active Style size as read-only, without dropping it', async () => {
+    const po = makePurchaseOrder({ id: 'po-inactive-size', poNumber: 'EIOS/26-27/0030' });
+    // Style-1 currently maps only 'sz-1' (Small) as ACTIVE — the Order
+    // Sheet's own forecast still references a second size ('sz-legacy',
+    // 'Large') whose StyleSize mapping has since been removed entirely.
+    po.lines[0]!.sizes.push({
+      id: 'size-legacy',
+      sizeId: 'sz-legacy',
+      sizeCode: 'L',
+      sizeLabel: 'Large',
+      orderedQuantity: 7,
+      qaPassedQuantity: 0,
+      saleOrderedQuantity: 0,
+      dispatchedQuantity: 0,
+      deliveredQuantity: 0,
+      actualSoldQuantity: 0,
+      returnedQuantity: 0,
+      reassignedQuantity: 0,
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/factories') return emptyFactories;
+      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/styles/style-1') return benignStyleLookup;
+      if (url === '/purchase-orders') {
+        return { data: { data: { items: [po], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+      }
+      throw new Error(`Unexpected GET request: ${url}`);
+    });
+
+    await renderJobOrderCreatePage();
+    await searchAndSelect('EIOS/26-27/0030');
+
+    // The historical forecast (7) for the inactive size is still shown...
+    const largeRow = Array.from(container.querySelectorAll('tr')).find((row) =>
+      row.textContent?.includes('Large'),
+    )!;
+    expect(largeRow.textContent).toContain('7');
+    expect(largeRow.textContent).toContain('Size inactive — cannot be produced');
+    // ...but it is never rendered as an editable Production Plan input.
+    expect(
+      container.querySelector('[aria-label="Production quantity for Large"]'),
+    ).toBeNull();
+    // The still-active size is unaffected and remains editable.
+    expect(
+      container.querySelector('[aria-label="Production quantity for Small"]'),
+    ).not.toBeNull();
   });
 });

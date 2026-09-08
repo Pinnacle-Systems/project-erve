@@ -15,12 +15,16 @@ import {
   updateJobOrderDisclaimerSchema,
   updateJobOrderSourcesSchema,
   updateJobOrderDeliveryDateSchema,
+  updateJobOrderPlanSchema,
   versionedMutationSchema,
 } from './job-orders.validation.js';
 import * as jobOrdersService from './job-orders.service.js';
 import * as qualityExecutionsService from '../quality-executions/quality-executions.service.js';
 import { startQualityExecutionSchema } from '../quality-executions/quality-executions.validation.js';
 import { JOB_ORDER_PRODUCTION_MUTATION_ROLES } from '@erve/shared';
+import { getPooledFactoryInventory } from './pooled-inventory.service.js';
+import { prisma } from '../../db/prisma.js';
+import { pooledInventoryQuerySchema } from './job-orders.validation.js';
 
 export const jobOrdersRouter = Router();
 jobOrdersRouter.use(requireAuth);
@@ -110,6 +114,21 @@ jobOrdersRouter.patch(
 );
 
 jobOrdersRouter.patch(
+  '/:id/production-plan',
+  canCreateJobOrders,
+  asyncHandler(async (req, res) => {
+    const input = updateJobOrderPlanSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.updateDraftJobOrderPlan(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
+    res.status(200).json(successResponse(jobOrder));
+  }),
+);
+
+jobOrdersRouter.patch(
   '/:id/delivery-date',
   canCreateJobOrders,
   asyncHandler(async (req, res) => {
@@ -121,6 +140,16 @@ jobOrdersRouter.patch(
       idempotencyKey(req),
     );
     res.status(200).json(successResponse(jobOrder));
+  }),
+);
+
+jobOrdersRouter.get(
+  '/pooled-inventory',
+  requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'),
+  asyncHandler(async (req, res) => {
+    const filters = pooledInventoryQuerySchema.parse(req.query);
+    const rows = await getPooledFactoryInventory(prisma, filters);
+    res.status(200).json(successResponse(rows));
   }),
 );
 
