@@ -10,39 +10,45 @@ beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
 
 // The primary acceptance scenario, verified with exact quantity
-// reconciliation after every step, under the Dispatch Order Phase 3 model
-// (one Factory per Dispatch Order, one FactoryDispatch packing root, no
+// reconciliation after every step, under the Dispatch Order Phase 3/4 model
+// (one Factory per Dispatch Order, one FactoryDispatch packing root, cartons
+// are the sole physical packing fact, QA_USER confirms Packing Audit, no
 // persisted workflow status, no cancellation):
 //
 //   Dispatch Order created for 100 (sourced from two Job Orders' QA-passed
 //   stock at the SAME Factory: 60 + 40, auto-distributed, never exposed)
-//   Factory packs 40 first, cartons generated
+//   Factory cartons 40 first
 //   Erve consolidates and dispatches 40 -> fulfillment stage ERVE_DISPATCHED, dispatched=40
-//   Factory packs its remaining 60 across the same packing root
+//   Factory cartons its remaining 60 across the same packing root, QA audits both cartons
 //   Erve consolidates and dispatches the remaining 60 -> fully dispatched, exact reconciliation
 describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Distributor Dispatch', () => {
   it('reconciles exact quantities through a multi-Job-Order, single-Factory, partial-then-full dispatch', async () => {
     const fixture = await createTwoBatchApprovedSaleOrder(app, 60, 40);
     const factoryToken = await createFactoryUserToken(fixture.factoryId);
     const { token: merchToken } = await createRoleToken('MERCHANDISER');
+    const { token: qaToken } = await createRoleToken('QA_USER');
+    const destinationId = fixture.saleOrder.destinations[0]!.id;
 
-    // --- Factory packs 40 of the 100 total; cannot finalize yet (incomplete) ---
-    const dispatch1 = await request(app)
-      .post('/factory-dispatches')
+    // --- Factory cartons 40 of the 100 total; cannot finalize yet (incomplete, unaudited) ---
+    const carton1 = await request(app)
+      .post(`/sale-orders/${fixture.saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, lines: [{ saleOrderLineId: fixture.saleOrderLineId, packedQuantity: 40 }] })
-      .expect(201);
+      .send({ cartonNumber: 'C1', destinationId, lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 40 }] })
+      .expect(200);
+    const factoryDispatchId = carton1.body.data.factoryDispatch.id as string;
+    const carton1Id = carton1.body.data.destinations[0].cartons[0].id as string;
+
     await request(app)
-      .post(`/factory-dispatches/${dispatch1.body.data.id}/actions/finalize`)
+      .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ expectedVersion: dispatch1.body.data.version })
-      .expect(400); // carton contents don't reconcile yet, and only 40/100 is packed
+      .send({ expectedVersion: carton1.body.data.factoryDispatch.version })
+      .expect(400); // only 40/100 packed, and C1 not yet audited
 
     // --- Erve cannot consolidate a DRAFT (not finalized) dispatch either ---
     await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${merchToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [dispatch1.body.data.id] })
+      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [factoryDispatchId] })
       .expect(400);
 
     // Factory's queue still shows the remaining 60.
@@ -52,34 +58,45 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
       .expect(200);
     expect(queue.body.data).toEqual([expect.objectContaining({ remainingQuantity: 60 })]);
 
-    // --- Factory packs the remaining 60 against the SAME packing root ---
-    const dispatch2 = await request(app)
-      .post('/factory-dispatches')
+    // --- Factory cartons the remaining 60 against the SAME packing root —
+    // the auto-distribution across the two underlying Job Orders' stock
+    // (60 already-consumed batch A capacity, spilling into batch B) is
+    // entirely opaque here: the Factory only ever states saleOrderLineId +
+    // quantity, never an internal allocation/line id. ---
+    const carton2 = await request(app)
+      .post(`/sale-orders/${fixture.saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, lines: [{ saleOrderLineId: fixture.saleOrderLineId, packedQuantity: 60 }] })
-      .expect(201);
-    expect(dispatch2.body.data.id).toBe(dispatch1.body.data.id); // one packing root, reused
-    expect(dispatch2.body.data.totalPackedQuantity).toBe(100);
+      .send({ cartonNumber: 'C2', destinationId, lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 60 }] })
+      .expect(200);
+    expect(carton2.body.data.factoryDispatch.id).toBe(factoryDispatchId); // one packing root, reused
+    expect(carton2.body.data.destinations[0].lines[0].packedQuantity).toBe(100);
+    const carton2Id = carton2.body.data.destinations[0].cartons.find((c: { cartonNumber: string }) => c.cartonNumber === 'C2').id as string;
 
-    // Carton every line to its full packed quantity (auto-distribution may
-    // have split the 100 across more than one internal line — opaque to the
-    // Factory, reconciled here purely from the detail response).
-    let version = dispatch2.body.data.version as number;
-    for (const [i, line] of (dispatch2.body.data.lines as Array<{ id: string; packedQuantity: number }>).entries()) {
-      const res = await request(app)
-        .post(`/factory-dispatches/${dispatch2.body.data.id}/cartons`)
-        .set('Authorization', `Bearer ${factoryToken}`)
-        .send({ expectedVersion: version, cartonNumber: `C${i + 1}`, lines: [{ factoryDispatchLineId: line.id, quantity: line.packedQuantity }] })
-        .expect(200);
-      version = res.body.data.version;
-    }
+    // QA must audit BOTH cartons before finalize is allowed.
+    await request(app)
+      .post(`/factory-dispatches/${factoryDispatchId}/cartons/${carton1Id}/audit`)
+      .set('Authorization', `Bearer ${qaToken}`)
+      .send({})
+      .expect(200);
+    const stillMissingAudit = await request(app)
+      .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+      .set('Authorization', `Bearer ${factoryToken}`)
+      .send({ expectedVersion: carton2.body.data.factoryDispatch.version })
+      .expect(400);
+    expect(stillMissingAudit.body.error.details.cartonsNotAudited).toHaveLength(1);
+
+    await request(app)
+      .post(`/factory-dispatches/${factoryDispatchId}/cartons/${carton2Id}/audit`)
+      .set('Authorization', `Bearer ${qaToken}`)
+      .send({})
+      .expect(200);
 
     const finalized = await request(app)
-      .post(`/factory-dispatches/${dispatch2.body.data.id}/actions/finalize`)
+      .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ expectedVersion: version })
+      .send({ expectedVersion: carton2.body.data.factoryDispatch.version })
       .expect(200);
-    expect(finalized.body.data.status).toBe('READY_FOR_ERVE');
+    expect(finalized.body.data.factoryDispatch.status).toBe('READY_FOR_ERVE');
 
     const queueFinal = await request(app)
       .get('/factory-dispatches/packing-queue')
@@ -91,7 +108,7 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${merchToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [finalized.body.data.id] })
+      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [factoryDispatchId] })
       .expect(201);
     expect(packingList.body.data.totalQuantity).toBe(100);
 

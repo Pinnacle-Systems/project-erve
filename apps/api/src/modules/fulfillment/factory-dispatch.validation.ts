@@ -1,33 +1,38 @@
 import { z } from 'zod';
 
-// Business-level only — no stockAllocationId: the Factory records packed
-// quantity against a Dispatch Order line, never selecting a
-// StockAllocation/QaReleaseLine/Job Order (see recordFactoryPacking).
-export const recordPackingLineInputSchema = z.object({
-  saleOrderLineId: z.string().trim().min(1),
-  packedQuantity: z.number().int().positive(),
-});
-
-export const recordPackingSchema = z.object({
-  saleOrderId: z.string().trim().min(1),
-  lines: z.array(recordPackingLineInputSchema).min(1, 'At least one line is required'),
-});
-
 export const versionedActionSchema = z.object({ expectedVersion: z.number().int().nonnegative() });
 
+// Business-level only — no stockAllocationId/factoryDispatchLineId: the
+// Factory records physical carton contents against a Dispatch Order line
+// directly, never selecting a StockAllocation/QaReleaseLine/Job Order.
+export const cartonLineInputSchema = z.object({
+  saleOrderLineId: z.string().trim().min(1),
+  quantity: z.number().int().positive(),
+});
+
+// Carton create takes no version param — the FactoryDispatch packing root
+// may not exist yet at all; correctness comes from lock ordering, not
+// client-supplied CAS (see the Phase 4 plan §2).
 export const createCartonSchema = z.object({
-  expectedVersion: z.number().int().nonnegative(),
   cartonNumber: z.string().trim().min(1).max(100),
+  destinationId: z.string().trim().min(1),
   packageDetails: z.string().trim().max(500).optional().nullable(),
   weight: z.number().positive().max(99999.999).optional().nullable(),
-  lines: z
-    .array(
-      z.object({
-        factoryDispatchLineId: z.string().trim().min(1),
-        quantity: z.number().int().positive(),
-      }),
-    )
-    .min(1, 'A carton must contain at least one line'),
+  lines: z.array(cartonLineInputSchema).min(1, 'A carton must contain at least one line'),
+});
+
+// Desired-state carton update — CAS via the carton's own expectedVersion
+// (never the FactoryDispatch's).
+export const updateCartonSchema = z.object({
+  expectedVersion: z.number().int().nonnegative(),
+  destinationId: z.string().trim().min(1),
+  packageDetails: z.string().trim().max(500).optional().nullable(),
+  weight: z.number().positive().max(99999.999).optional().nullable(),
+  lines: z.array(cartonLineInputSchema).min(1, 'A carton must contain at least one line'),
+});
+
+export const confirmCartonAuditSchema = z.object({
+  remarks: z.string().trim().max(1000).optional().nullable(),
 });
 
 export const listFactoryDispatchesQuerySchema = z.object({
@@ -40,3 +45,9 @@ export const listFactoryDispatchesQuerySchema = z.object({
 });
 
 export const packingQueueQuerySchema = z.object({ factoryId: z.string().trim().optional() });
+
+export const packingAuditQueueQuerySchema = z.object({
+  factoryId: z.string().trim().optional(),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});

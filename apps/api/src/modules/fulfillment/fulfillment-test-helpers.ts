@@ -103,11 +103,55 @@ export async function createSingleFactoryApprovedSaleOrder(
   };
 }
 
+/**
+ * Carton-first packing (Phase 4): creates one carton covering `quantity`,
+ * confirms its Packing Audit as a fresh QA_USER, then finalizes. Shared by
+ * every fixture that just needs "a finalized Factory Dispatch exists" as a
+ * precondition (Erve consolidation/dispatch/invoice/returns/sales-report
+ * tests) without re-deriving the carton-first flow in each file.
+ */
+export async function packAndFinalize(
+  app: Express,
+  factoryToken: string,
+  saleOrderId: string,
+  saleOrderLineId: string,
+  destinationId: string,
+  quantity: number,
+) {
+  const created = await request(app)
+    .post(`/sale-orders/${saleOrderId}/packing-list/cartons`)
+    .set('Authorization', `Bearer ${factoryToken}`)
+    .send({ cartonNumber: 'C1', destinationId, lines: [{ saleOrderLineId, quantity }] })
+    .expect(200);
+  const factoryDispatchId = created.body.data.factoryDispatch.id as string;
+  const cartonId = created.body.data.destinations[0].cartons[0].id as string;
+
+  const { token: qaToken } = await createRoleToken('QA_USER');
+  await request(app)
+    .post(`/factory-dispatches/${factoryDispatchId}/cartons/${cartonId}/audit`)
+    .set('Authorization', `Bearer ${qaToken}`)
+    .send({})
+    .expect(200);
+
+  const finalized = await request(app)
+    .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+    .set('Authorization', `Bearer ${factoryToken}`)
+    .send({ expectedVersion: created.body.data.factoryDispatch.version })
+    .expect(200);
+  return finalized.body.data.factoryDispatch as {
+    id: string;
+    factoryDispatchNumber: string;
+    status: string;
+    version: number;
+  };
+}
+
 export interface FixtureSaleOrder {
   id: string;
   version: number;
   status: string;
   lines: Array<{ id: string; quantity: number }>;
+  destinations: Array<{ id: string }>;
 }
 
 export interface TwoBatchSaleOrder {

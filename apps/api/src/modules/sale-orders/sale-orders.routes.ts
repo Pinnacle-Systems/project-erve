@@ -1,12 +1,19 @@
 import { Router } from 'express';
-import { DISPATCH_ORDER_AUDIT_VIEW_ROLES, DISPATCH_ORDER_MUTATION_ROLES, DISPATCH_ORDER_VIEW_ROLES } from '@erve/shared';
+import {
+  DISPATCH_ORDER_AUDIT_VIEW_ROLES,
+  DISPATCH_ORDER_MUTATION_ROLES,
+  DISPATCH_ORDER_VIEW_ROLES,
+  FACTORY_DISPATCH_MUTATION_ROLES,
+} from '@erve/shared';
 import { requireAuth } from '../../auth/auth.middleware.js';
 import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { HttpError } from '../../errors/http-error.js';
 import { successResponse } from '../../utils/response.js';
 import { createDispatchOrderSchema, listDispatchOrdersQuerySchema, updateDispatchOrderSchema } from './sale-orders.validation.js';
+import { createCartonSchema } from '../fulfillment/factory-dispatch.validation.js';
 import * as saleOrdersService from './sale-orders.service.js';
+import * as factoryDispatchService from '../fulfillment/factory-dispatch.service.js';
 
 export const saleOrdersRouter = Router();
 saleOrdersRouter.use(requireAuth);
@@ -25,6 +32,12 @@ saleOrdersRouter.use(requireAuth);
 const canView = requireRoles(...DISPATCH_ORDER_VIEW_ROLES);
 const canViewAudit = requireRoles(...DISPATCH_ORDER_AUDIT_VIEW_ROLES);
 const canMutate = requireRoles(...DISPATCH_ORDER_MUTATION_ROLES);
+// Packing List / carton creation is a Factory Dispatch mutation, not a
+// Dispatch Order one (FACTORY_USER/ADMIN, not MERCHANDISER — see
+// FACTORY_DISPATCH_MUTATION_ROLES) — kept on this router only because carton
+// creation is keyed by the Dispatch Order (Phase 4 plan §2/§5), not a
+// FactoryDispatch id which may not exist yet.
+const canCreateCarton = requireRoles(...FACTORY_DISPATCH_MUTATION_ROLES);
 
 function idempotencyKey(req: { get(name: string): string | undefined }): string {
   const key = req.get('Idempotency-Key')?.trim();
@@ -71,6 +84,33 @@ saleOrdersRouter.get(
   asyncHandler(async (req, res) => {
     const history = await saleOrdersService.getSaleOrderAuditHistory(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(history));
+  }),
+);
+
+// Phase 4: the Factory Packing List is readable the moment a Dispatch Order
+// exists — no FactoryDispatch id required, and this creates nothing. Reuses
+// the SAME Dispatch Order view-access rule as GET /:id above (see
+// getDispatchOrderPackingList). QA_USER is deliberately excluded — its
+// Packing Audit discovery path is /packing-audit/... instead.
+saleOrdersRouter.get(
+  '/:id/packing-list',
+  canView,
+  asyncHandler(async (req, res) => {
+    const packingList = await saleOrdersService.getDispatchOrderPackingList(req.user!, req.params.id! as string);
+    res.status(200).json(successResponse(packingList));
+  }),
+);
+
+// Carton creation is keyed by the Dispatch Order, not a FactoryDispatch id,
+// because the packing root may not exist yet (Phase 4 plan §2/§5) — the
+// service gets-or-creates it atomically under the sale-order lock.
+saleOrdersRouter.post(
+  '/:id/packing-list/cartons',
+  canCreateCarton,
+  asyncHandler(async (req, res) => {
+    const input = createCartonSchema.parse(req.body);
+    const packingList = await factoryDispatchService.addFactoryPackingCarton(req.user!, req.params.id! as string, input);
+    res.status(200).json(successResponse(packingList));
   }),
 );
 

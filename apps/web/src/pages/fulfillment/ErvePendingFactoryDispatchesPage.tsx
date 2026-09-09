@@ -100,7 +100,6 @@ export function ErvePendingFactoryDispatchesPage() {
             { key: 'factory', header: 'Factory', render: (r) => r.factory.name },
             { key: 'saleOrder', header: 'Sale Order', render: (r) => r.saleOrder.saleOrderNumber },
             { key: 'distributor', header: 'Distributor', render: (r) => r.saleOrder.distributor.name },
-            { key: 'qty', header: 'Packed Qty', align: 'right', render: (r) => r.totalPackedQuantity.toLocaleString() },
             { key: 'finalizedAt', header: 'Finalized', render: (r) => (r.finalizedAt ? new Date(r.finalizedAt).toLocaleDateString() : '—') },
           ]}
         />

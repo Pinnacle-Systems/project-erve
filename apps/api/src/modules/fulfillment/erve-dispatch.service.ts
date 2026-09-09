@@ -102,21 +102,19 @@ const packingListInclude = {
                   size: { select: { id: true, code: true, label: true } },
                 },
               },
-              cartonLines: { select: { quantity: true } },
             },
           },
+          // Retired cartons are immutable historical records — never part of
+          // the current, consolidated Erve view (Phase 4 plan §4/§9).
           cartons: {
+            where: { retiredAt: null },
             include: {
               lines: {
                 include: {
-                  factoryDispatchLine: {
+                  saleOrderLine: {
                     select: {
-                      saleOrderLine: {
-                        select: {
-                          style: { select: { styleNumber: true, styleName: true } },
-                          size: { select: { code: true, label: true } },
-                        },
-                      },
+                      style: { select: { styleNumber: true, styleName: true } },
+                      size: { select: { code: true, label: true } },
                     },
                   },
                 },
@@ -145,7 +143,6 @@ function toFactoryDispatchLineView(line: PackingListRecord['sources'][number]['f
     sizeCode: size.code,
     sizeLabel: size.label,
     packedQuantity: line.packedQuantity,
-    cartonedQuantity: line.cartonLines.reduce((sum, cartonLine) => sum + cartonLine.quantity, 0),
   };
 }
 
@@ -153,14 +150,15 @@ function toFactoryPackingCartonView(carton: PackingListRecord['sources'][number]
   return {
     id: carton.id,
     cartonNumber: carton.cartonNumber,
+    destinationId: carton.destinationId,
     packageDetails: carton.packageDetails,
     weight: carton.weight?.toString() ?? null,
     createdAt: carton.createdAt.toISOString(),
     lines: carton.lines.map((cartonLine) => {
-      const style = cartonLine.factoryDispatchLine.saleOrderLine.style;
-      const size = cartonLine.factoryDispatchLine.saleOrderLine.size;
+      const style = cartonLine.saleOrderLine.style;
+      const size = cartonLine.saleOrderLine.size;
       return {
-        factoryDispatchLineId: cartonLine.factoryDispatchLineId,
+        saleOrderLineId: cartonLine.saleOrderLineId,
         styleNumber: style.styleNumber,
         styleName: style.styleName,
         sizeCode: size.code,

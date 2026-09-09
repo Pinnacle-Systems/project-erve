@@ -123,6 +123,42 @@ export function canViewFactoryDispatch(user: RoleHolder): boolean {
 }
 
 /**
+ * Packing Audit (carton inspection sign-off) is a separate authority from
+ * packing itself — QA_USER is the sole confirming role (segregation of
+ * duties: FACTORY_USER packs, QA_USER audits). ADMIN may VIEW audit state
+ * but does NOT get a compatibility bypass to confirm audits — unlike most
+ * other mutation lists in this file, ADMIN is deliberately absent here.
+ * QA_USER is not factory-scoped for this action (see PACKING_AUDIT_VIEW_ROLES
+ * doc comment) — it mirrors the existing, already-unscoped Job-Order-QA
+ * inspection workflow rather than introducing a new per-role factory-mapping
+ * capability.
+ */
+export const PACKING_AUDIT_MUTATION_ROLES = ['QA_USER'] as const satisfies readonly Role[];
+
+export function canConfirmPackingAudit(user: RoleHolder): boolean {
+  return hasAnyRole(user, PACKING_AUDIT_MUTATION_ROLES);
+}
+
+/**
+ * Roles that may reach the narrow /packing-audit/... discovery surface
+ * (queue + carton detail + history) — QA_USER (the confirming role) and
+ * ADMIN (oversight only, no confirm right — see PACKING_AUDIT_MUTATION_ROLES).
+ * Deliberately NOT the broader Dispatch-Order-view audience
+ * (FACTORY_USER/MERCHANDISER/SENIOR_MANAGEMENT): those roles already see a
+ * carton's audit state through the main Packing List projection, gated by
+ * DISPATCH_ORDER_VIEW_ROLES instead — this constant exists only for the
+ * QA-specific discovery endpoints, not as a general "can see audit info"
+ * flag, so it stays exactly as narrow as those endpoints' real audience.
+ * QA_USER is intentionally cross-factory here (see
+ * PACKING_AUDIT_MUTATION_ROLES doc comment).
+ */
+export const PACKING_AUDIT_VIEW_ROLES = ['ADMIN', 'QA_USER'] as const satisfies readonly Role[];
+
+export function canViewPackingAudit(user: RoleHolder): boolean {
+  return hasAnyRole(user, PACKING_AUDIT_VIEW_ROLES);
+}
+
+/**
  * Roles that may consolidate finalized Factory Dispatches into an Erve
  * Packing List and record/update the resulting Erve Dispatch (LR/transport
  * fallback update included). There is no dedicated warehouse role in the

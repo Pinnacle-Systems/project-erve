@@ -10,7 +10,8 @@ import { allocateDocumentSerial } from '../master-data/document-sequence.service
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { getAvailableQuantities, getEligibleQaReleaseLinesForPool } from '../job-orders/pooled-inventory.service.js';
 import { computeDispatchOrderFulfillment } from '../fulfillment/fulfillment-progress.js';
-import { hardDeleteFactoryDispatches } from '../fulfillment/factory-dispatch.service.js';
+import { buildPackingListProjection, hardDeleteFactoryDispatches } from '../fulfillment/factory-dispatch.service.js';
+import { getPhysicalPackedQuantitiesForLines } from '../fulfillment/packing-reconciliation.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -450,6 +451,22 @@ export async function getSaleOrderDetail(user: CurrentUser, id: string) {
   return toSaleOrderView(order);
 }
 
+// Phase 4: the Factory Packing List is readable the moment a Dispatch Order
+// exists — no FactoryDispatch id required, and this creates nothing. Reuses
+// the SAME server-side access rule as GET /sale-orders/:id
+// (assertDispatchOrderViewAccess) rather than inventing a separate one, so a
+// Factory-F2-mapped FACTORY_USER requesting Factory F1's packing-list URL is
+// rejected exactly like it would be for the Dispatch Order itself — before
+// any FactoryDispatch root exists to check against. QA_USER is deliberately
+// NOT granted this endpoint; its Packing Audit discovery path is the narrow
+// /packing-audit/... surface instead.
+export async function getDispatchOrderPackingList(user: CurrentUser, id: string) {
+  const order = await prisma.saleOrder.findUnique({ where: { id }, select: { id: true, factoryId: true } });
+  if (!order) throw HttpError.notFound('Dispatch order not found');
+  assertDispatchOrderViewAccess(user, order);
+  return buildPackingListProjection(order);
+}
+
 const DISPATCH_ORDER_AUDIT_TITLES: Record<string, string> = {
   DISPATCH_ORDER_CREATED: 'Dispatch Order Created',
   DISPATCH_ORDER_UPDATED: 'Dispatch Order Corrected',
@@ -738,8 +755,34 @@ export async function updateDispatchOrder(
       };
 
       const allActiveAllocationIds = order.lines.flatMap((l) => l.allocations.map((a) => a.id));
+      // Per-allocation attribution — retained for reallocation safety (which
+      // StockAllocation's unpacked capacity is releasable), never for the
+      // business "is this line packed" floor checks below (see
+      // physicalPackedByLine / getPhysicalPackedQuantitiesForLines).
       const packedByAllocation = await loadPackedForAllocations(tx, allActiveAllocationIds);
       const factoryDispatchLinesByAllocation = await loadFactoryDispatchLinesByAllocation(tx, allActiveAllocationIds);
+
+      // Cartons are the sole BUSINESS physical-packing authority (Phase 4) —
+      // every packed-floor check in this function reads physical carton
+      // totals, never FactoryDispatchLine.packedQuantity directly.
+      const physicalPackedByLine = await getPhysicalPackedQuantitiesForLines(
+        tx,
+        order.lines.map((l) => l.id),
+      );
+      // Defensive consistency check: FactoryDispatchLine attribution must
+      // always equal the physical carton total per line (every carton
+      // mutation reconciles this inline) — an edit must not silently trust a
+      // broken invariant, but it also must never guess at which allocation
+      // to release when reconciling; a mismatch here is an internal bug.
+      for (const line of order.lines) {
+        const attributed = line.allocations.reduce((sum, a) => sum + (packedByAllocation.get(a.id) ?? 0), 0);
+        const physical = physicalPackedByLine.get(line.id) ?? 0;
+        if (attributed !== physical) {
+          throw HttpError.internal(
+            `Packing attribution inconsistency for line ${line.id}: attributed ${attributed} vs. physical ${physical}`,
+          );
+        }
+      }
 
       const loadedLines: LoadedLine[] = order.lines.map((l) => ({
         id: l.id,
@@ -749,8 +792,7 @@ export async function updateDispatchOrder(
         quantity: l.quantity,
         allocations: l.allocations.map((a) => ({ id: a.id, qaReleaseLineId: a.qaReleaseLineId, quantity: a.quantity })),
       }));
-      const packedForLine = (line: LoadedLine): number =>
-        line.allocations.reduce((sum, a) => sum + (packedByAllocation.get(a.id) ?? 0), 0);
+      const packedForLine = (line: LoadedLine): number => physicalPackedByLine.get(line.id) ?? 0;
 
       const newFactoryId = input.factoryId ?? order.factoryId;
       const factoryChanging = newFactoryId !== order.factoryId;
@@ -841,6 +883,7 @@ export async function updateDispatchOrder(
           input.lines!,
           packedByAllocation,
           factoryDispatchLinesByAllocation,
+          physicalPackedByLine,
         );
 
         // Execute merges first (re-point allocations before computing release/reserve deltas).
@@ -890,8 +933,79 @@ export async function updateDispatchOrder(
           await tx.factoryDispatchLine.deleteMany({ where: { id: { in: desired.factoryDispatchLineDeleteIds } } });
         }
 
+        // Phase 4: a destination becoming unreferenced by any line (the only
+        // thing resolveDesiredLinesForReconciliation itself checks) is not
+        // enough to make it deletable any more — FactoryPackingCarton.
+        // destinationId is onDelete: Restrict, so a destination that still
+        // has ANY carton (retired or not — a retired carton is an immutable
+        // historical record permanently tied to its destination) must be
+        // rejected with a clear message rather than surfacing a raw FK
+        // constraint error.
+        if (desired.destinationDeleteIds.length > 0) {
+          const cartonedDestinations = await tx.factoryPackingCarton.findMany({
+            where: { destinationId: { in: desired.destinationDeleteIds } },
+            select: { destinationId: true },
+            distinct: ['destinationId'],
+          });
+          if (cartonedDestinations.length > 0) {
+            throw HttpError.badRequest(
+              `Cannot remove destination(s) ${cartonedDestinations.map((c) => c.destinationId).join(', ')}: cartons have already been packed for them.`,
+            );
+          }
+        }
+
         await applyDestinationPlan(tx, id, desired.destinationCreates, desired.destinationUpdates, desired.destinationDeleteIds);
         await applyLinePlan(tx, id, desired.lineCreates, desired.lineFieldUpdates, desired.lineDeleteIds, []);
+
+        // Phase 4 carton invalidation: a destination ADDRESS edit or a
+        // stable-line DESTINATION MOVE must invalidate the current Packing
+        // Audit of every affected NON-RETIRED carton (retired cartons are
+        // immutable historical records, never re-touched here). Only an
+        // actual field change counts — round-tripping the same address
+        // value must not invalidate anything.
+        const editedDestinationIds = new Set<string>();
+        if (input.destinations) {
+          const existingDestById = new Map(order.destinations.map((d) => [d.id, d]));
+          for (const d of input.destinations) {
+            if (!d.id) continue;
+            const existing = existingDestById.get(d.id);
+            if (!existing) continue;
+            const changed =
+              (d.label ?? null) !== existing.label ||
+              (d.contactName ?? null) !== existing.contactName ||
+              (d.contactEmail ?? null) !== existing.contactEmail ||
+              (d.contactPhone ?? null) !== existing.contactPhone ||
+              d.addressLine1 !== existing.addressLine1 ||
+              (d.addressLine2 ?? null) !== existing.addressLine2 ||
+              d.city !== existing.city ||
+              d.state !== existing.state ||
+              d.country !== existing.country ||
+              (d.postalCode ?? null) !== existing.postalCode;
+            if (changed) editedDestinationIds.add(d.id);
+          }
+        }
+
+        const movedLineIds = new Set<string>();
+        for (const update of desired.lineFieldUpdates) {
+          const original = loadedLines.find((l) => l.id === update.id);
+          if (original && original.destinationId !== update.destinationId) movedLineIds.add(update.id);
+        }
+
+        if (editedDestinationIds.size > 0 || movedLineIds.size > 0) {
+          const orConditions: Prisma.FactoryPackingCartonWhereInput[] = [];
+          if (editedDestinationIds.size > 0) orConditions.push({ destinationId: { in: [...editedDestinationIds] } });
+          if (movedLineIds.size > 0) orConditions.push({ lines: { some: { saleOrderLineId: { in: [...movedLineIds] } } } });
+          const affectedCartons = await tx.factoryPackingCarton.findMany({
+            where: { factoryDispatch: { saleOrderId: id }, retiredAt: null, OR: orConditions },
+            select: { id: true },
+          });
+          if (affectedCartons.length > 0) {
+            await tx.factoryPackingCarton.updateMany({
+              where: { id: { in: affectedCartons.map((c) => c.id) } },
+              data: { version: { increment: 1 } },
+            });
+          }
+        }
 
         if (desired.poolDemand.size > 0) {
           await lockPoolKeys(tx, newFactoryId, desired.poolDemand.keys());
@@ -1185,10 +1299,15 @@ function resolveDesiredLinesForReconciliation(
   linesInput: DispatchOrderLineInput[],
   packedByAllocation: Map<string, number>,
   factoryDispatchLinesByAllocation: Map<string, string[]>,
+  physicalPackedByLine: Map<string, number>,
 ) {
+  // packedForAllocation drives the RELEASE-AMOUNT math only (which specific
+  // StockAllocation's unpacked capacity is releasable) — unaffected by
+  // Phase 4. packedForLine drives every FLOOR check (style/size change,
+  // line removal, quantity reduction) and now reads the physical carton
+  // total, per the Phase 4 plan §1 correction.
   const packedForAllocation = (allocationId: string): number => packedByAllocation.get(allocationId) ?? 0;
-  const packedForLine = (line: LoadedLine): number =>
-    line.allocations.reduce((sum, a) => sum + packedForAllocation(a.id), 0);
+  const packedForLine = (line: LoadedLine): number => physicalPackedByLine.get(line.id) ?? 0;
   const existingDestIds = new Set(existingDestinations.map((d) => d.id));
   const existingLineById = new Map(existingLines.map((l) => [l.id, l]));
 

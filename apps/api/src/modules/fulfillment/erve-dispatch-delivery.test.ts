@@ -10,47 +10,23 @@ import {
   createFactoryUserToken,
   createRoleToken,
   createSingleFactoryApprovedSaleOrder,
+  packAndFinalize,
 } from './fulfillment-test-helpers.js';
 
 const app = createApp();
 beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
 
-async function packAndFinalize(
-  factoryToken: string,
-  saleOrderId: string,
-  saleOrderLineId: string,
-  stockAllocationId: string,
-  quantity: number,
-) {
-  const created = await request(app)
-    .post('/factory-dispatches')
-    .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ saleOrderId, lines: [{ saleOrderLineId, stockAllocationId, packedQuantity: quantity }] })
-    .expect(201);
-  const lineId = created.body.data.lines[0].id;
-  await request(app)
-    .post(`/factory-dispatches/${created.body.data.id}/cartons`)
-    .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ expectedVersion: created.body.data.version, cartonNumber: 'C1', lines: [{ factoryDispatchLineId: lineId, quantity }] })
-    .expect(200);
-  const finalized = await request(app)
-    .post(`/factory-dispatches/${created.body.data.id}/actions/finalize`)
-    .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ expectedVersion: created.body.data.version + 1 })
-    .expect(200);
-  return finalized.body.data;
-}
-
 /** Builds a Sale Order dispatched (but not yet delivery-confirmed) for `quantity`. */
 async function dispatchedFixture(quantity = 100, purchaseMode: 'OUTRIGHT' | 'SALE_RETURN' = 'SALE_RETURN') {
   const fixture = await createSingleFactoryApprovedSaleOrder(app, quantity, purchaseMode);
   const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
   const factoryDispatch = await packAndFinalize(
+    app,
     factoryToken,
     fixture.saleOrder.id,
     fixture.saleOrderLineId,
-    fixture.stockAllocationId,
+    fixture.saleOrder.destinations[0].id,
     quantity,
   );
   const packingList = await request(app)

@@ -4,6 +4,8 @@ import {
   canMutateJobOrderProduction,
   canMutateFactoryDispatch,
   canViewFactoryDispatch,
+  canConfirmPackingAudit,
+  canViewPackingAudit,
   canMutateErveDispatch,
   canViewErveDispatch,
   canViewErvePackingList,
@@ -237,6 +239,12 @@ export const canViewFactoryDispatches = (user: AuthUser | null | undefined) =>
 
 export const canMutateFactoryDispatches = (user: AuthUser | null | undefined) =>
   Boolean(user && canMutateFactoryDispatch(user));
+
+export const canConfirmPackingAudits = (user: AuthUser | null | undefined) =>
+  Boolean(user && canConfirmPackingAudit(user));
+
+export const canViewPackingAudits = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewPackingAudit(user));
 
 export const canViewErvePackingLists = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewErvePackingList(user));

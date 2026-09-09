@@ -7,43 +7,18 @@ import {
   createFactoryUserToken,
   createRoleToken,
   createSingleFactoryApprovedSaleOrder,
+  packAndFinalize,
 } from './fulfillment-test-helpers.js';
 
 const app = createApp();
 beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
 
-async function packAndFinalize(
-  factoryToken: string,
-  saleOrderId: string,
-  saleOrderLineId: string,
-  _stockAllocationId: string,
-  quantity: number,
-) {
-  const created = await request(app)
-    .post('/factory-dispatches')
-    .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ saleOrderId, lines: [{ saleOrderLineId, packedQuantity: quantity }] })
-    .expect(201);
-  const lineId = created.body.data.lines[0].id;
-  await request(app)
-    .post(`/factory-dispatches/${created.body.data.id}/cartons`)
-    .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ expectedVersion: created.body.data.version, cartonNumber: 'C1', lines: [{ factoryDispatchLineId: lineId, quantity }] })
-    .expect(200);
-  const finalized = await request(app)
-    .post(`/factory-dispatches/${created.body.data.id}/actions/finalize`)
-    .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ expectedVersion: created.body.data.version + 1 })
-    .expect(200);
-  return finalized.body.data;
-}
-
 describe('Erve Packing List — consolidation', () => {
   it('consolidates a finalized Factory Dispatch into an Erve Packing List', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
 
     const res = await request(app)
       .post('/erve-packing-lists')
@@ -61,22 +36,26 @@ describe('Erve Packing List — consolidation', () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
     const draft = await request(app)
-      .post('/factory-dispatches')
+      .post(`/sale-orders/${fixture.saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, lines: [{ saleOrderLineId: fixture.saleOrderLineId, packedQuantity: 20 }] })
-      .expect(201);
+      .send({
+        cartonNumber: 'C1',
+        destinationId: fixture.saleOrder.destinations[0].id,
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }],
+      })
+      .expect(200);
 
     await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [draft.body.data.id] })
+      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [draft.body.data.factoryDispatch.id] })
       .expect(400);
   });
 
   it('cannot consume the same Factory Dispatch twice', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
 
     await request(app)
       .post('/erve-packing-lists')
@@ -94,7 +73,7 @@ describe('Erve Packing List — consolidation', () => {
   it('forbids FACTORY_USER from viewing Erve Packing List detail (cross-Factory provenance)', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -112,7 +91,7 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
   it('records an Erve Dispatch from a valid Erve Packing List with required/optional fields', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -134,7 +113,7 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
   it('cannot dispatch the same Erve packed goods twice', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -157,7 +136,7 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
   it('full dispatch of the only line moves the Dispatch Order\'s fulfillment stage to ERVE_DISPATCHED (no persisted status change)', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -184,7 +163,7 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
   it('updates LR/transport info via the fallback action without disturbing dispatched status/quantities', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -211,7 +190,7 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
   it('a Distributor can view its own Erve Dispatch but not another distributor\'s', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -238,7 +217,7 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
   it('forbids DISTRIBUTOR and ACCOUNTANT from consolidating or recording dispatch', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
 
     await request(app)
       .post('/erve-packing-lists')
@@ -257,7 +236,7 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
   it('forbids FACTORY_USER from recording the final Distributor dispatch', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -276,7 +255,7 @@ describe('Inventory integrity through packing/consolidation/dispatch', () => {
   it('never releases StockAllocation through packing, consolidation, or dispatch', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -298,7 +277,7 @@ describe('Inventory integrity through packing/consolidation/dispatch', () => {
   it('dispatched quantity never reappears in availability', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.stockAllocationId, 20);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)

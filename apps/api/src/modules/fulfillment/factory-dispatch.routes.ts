@@ -1,14 +1,14 @@
 import { Router } from 'express';
-import { FACTORY_DISPATCH_MUTATION_ROLES, FACTORY_DISPATCH_VIEW_ROLES } from '@erve/shared';
+import { FACTORY_DISPATCH_MUTATION_ROLES, FACTORY_DISPATCH_VIEW_ROLES, PACKING_AUDIT_MUTATION_ROLES } from '@erve/shared';
 import { requireAuth } from '../../auth/auth.middleware.js';
 import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
 import {
-  createCartonSchema,
+  confirmCartonAuditSchema,
   listFactoryDispatchesQuerySchema,
   packingQueueQuerySchema,
-  recordPackingSchema,
+  updateCartonSchema,
   versionedActionSchema,
 } from './factory-dispatch.validation.js';
 import * as factoryDispatchService from './factory-dispatch.service.js';
@@ -18,8 +18,11 @@ factoryDispatchesRouter.use(requireAuth);
 
 const canView = requireRoles(...FACTORY_DISPATCH_VIEW_ROLES);
 const canMutate = requireRoles(...FACTORY_DISPATCH_MUTATION_ROLES);
+const canAudit = requireRoles(...PACKING_AUDIT_MUTATION_ROLES);
 
-// Static routes must be registered before `/:id`.
+// Carton creation lives at POST /sale-orders/:saleOrderId/packing-list/cartons
+// instead — the FactoryDispatch id may not exist yet (see sale-orders.routes.ts
+// and the Phase 4 plan §5/§2). Static routes must be registered before `/:id`.
 factoryDispatchesRouter.get(
   '/packing-queue',
   canView,
@@ -37,20 +40,6 @@ factoryDispatchesRouter.get(
     const filters = listFactoryDispatchesQuerySchema.parse(req.query);
     const result = await factoryDispatchService.getFactoryDispatchList(req.user!, filters);
     res.status(200).json(successResponse(result));
-  }),
-);
-
-// Records progressive packing at the Dispatch Order line level — the
-// Factory never selects a StockAllocation/QaReleaseLine/Job Order; the
-// backend gets-or-creates the order's single FactoryDispatch packing root
-// and auto-distributes across its allocations (see recordFactoryPacking).
-factoryDispatchesRouter.post(
-  '/',
-  canMutate,
-  asyncHandler(async (req, res) => {
-    const input = recordPackingSchema.parse(req.body);
-    const dispatch = await factoryDispatchService.recordFactoryPacking(req.user!, input);
-    res.status(201).json(successResponse(dispatch));
   }),
 );
 
@@ -73,27 +62,17 @@ factoryDispatchesRouter.delete(
   }),
 );
 
-factoryDispatchesRouter.delete(
-  '/:id/lines/:lineId',
+factoryDispatchesRouter.patch(
+  '/:id/cartons/:cartonId',
   canMutate,
   asyncHandler(async (req, res) => {
-    const input = versionedActionSchema.parse(req.body);
-    const dispatch = await factoryDispatchService.removeFactoryDispatchLine(
+    const input = updateCartonSchema.parse(req.body);
+    const dispatch = await factoryDispatchService.updateFactoryPackingCarton(
       req.user!,
       req.params.id! as string,
-      req.params.lineId! as string,
+      req.params.cartonId! as string,
       input,
     );
-    res.status(200).json(successResponse(dispatch));
-  }),
-);
-
-factoryDispatchesRouter.post(
-  '/:id/cartons',
-  canMutate,
-  asyncHandler(async (req, res) => {
-    const input = createCartonSchema.parse(req.body);
-    const dispatch = await factoryDispatchService.addFactoryPackingCarton(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(dispatch));
   }),
 );
@@ -104,6 +83,24 @@ factoryDispatchesRouter.delete(
   asyncHandler(async (req, res) => {
     const input = versionedActionSchema.parse(req.body);
     const dispatch = await factoryDispatchService.removeFactoryPackingCarton(
+      req.user!,
+      req.params.id! as string,
+      req.params.cartonId! as string,
+      input,
+    );
+    res.status(200).json(successResponse(dispatch));
+  }),
+);
+
+// Packing Audit (carton inspection sign-off) — QA_USER only. Lives on the
+// carton sub-resource here (rather than the separate /packing-audit router,
+// which is a read-only discovery surface) since it mutates this carton.
+factoryDispatchesRouter.post(
+  '/:id/cartons/:cartonId/audit',
+  canAudit,
+  asyncHandler(async (req, res) => {
+    const input = confirmCartonAuditSchema.parse(req.body);
+    const dispatch = await factoryDispatchService.confirmCartonPackingAudit(
       req.user!,
       req.params.id! as string,
       req.params.cartonId! as string,

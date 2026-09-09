@@ -67,14 +67,16 @@ export async function resetDatabase(): Promise<void> {
   await prisma.erveDispatch.deleteMany();
   await prisma.ervePackingListSource.deleteMany();
   await prisma.ervePackingList.deleteMany();
-  // TRUNCATE (not deleteMany) because FactoryPackingCartonLine.factoryDispatchLineId
-  // is onDelete: Restrict against a SEPARATE cascade branch from
-  // FactoryDispatch (-> FactoryDispatchLine) than the one that reaches it
-  // (-> FactoryPackingCarton -> FactoryPackingCartonLine) — Postgres does not
-  // order those two branches against each other, so a row-by-row cascade
-  // delete of factory_dispatches can spuriously violate that Restrict
-  // whenever cartons exist. TRUNCATE ... CASCADE clears all four tables
-  // atomically without going through per-row FK cascade resolution at all.
+  // TRUNCATE (not deleteMany): FactoryPackingCartonAudit.cartonId is
+  // onDelete: Restrict against FactoryPackingCarton, and FactoryDispatchLine
+  // is a separate cascade branch from FactoryDispatch than the one that
+  // reaches cartons — Postgres does not order those branches against each
+  // other, so a row-by-row cascade delete of factory_dispatches can
+  // spuriously violate a Restrict whenever cartons/audits exist. TRUNCATE
+  // ... CASCADE clears every table in this chain atomically (it also
+  // transitively cascades to factory_packing_carton_audits automatically,
+  // without needing to name it) without going through per-row FK cascade
+  // resolution at all.
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "factory_packing_carton_lines", "factory_packing_cartons", "factory_dispatch_lines", "factory_dispatches" CASCADE',
   );

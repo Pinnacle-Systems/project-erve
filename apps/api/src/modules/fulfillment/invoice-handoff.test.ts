@@ -10,47 +10,23 @@ import {
   createFactoryUserToken,
   createRoleToken,
   createSingleFactoryApprovedSaleOrder,
+  packAndFinalize,
 } from './fulfillment-test-helpers.js';
 
 const app = createApp();
 beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
 
-async function packAndFinalize(
-  factoryToken: string,
-  saleOrderId: string,
-  saleOrderLineId: string,
-  _stockAllocationId: string,
-  quantity: number,
-) {
-  const created = await request(app)
-    .post('/factory-dispatches')
-    .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ saleOrderId, lines: [{ saleOrderLineId, packedQuantity: quantity }] })
-    .expect(201);
-  const lineId = created.body.data.lines[0].id;
-  await request(app)
-    .post(`/factory-dispatches/${created.body.data.id}/cartons`)
-    .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ expectedVersion: created.body.data.version, cartonNumber: 'C1', lines: [{ factoryDispatchLineId: lineId, quantity }] })
-    .expect(200);
-  const finalized = await request(app)
-    .post(`/factory-dispatches/${created.body.data.id}/actions/finalize`)
-    .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ expectedVersion: created.body.data.version + 1 })
-    .expect(200);
-  return finalized.body.data;
-}
-
 /** Drives a Sale Order (given Purchase Mode) all the way to a recorded Erve Dispatch and its auto-created PENDING_TALLY "Dispatch Sale" handoff. */
 async function dispatchFixture(quantity = 20, purchaseMode: 'OUTRIGHT' | 'SALE_RETURN' = 'OUTRIGHT') {
   const fixture = await createSingleFactoryApprovedSaleOrder(app, quantity, purchaseMode);
   const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
   const factoryDispatch = await packAndFinalize(
+    app,
     factoryToken,
     fixture.saleOrder.id,
     fixture.saleOrderLineId,
-    fixture.stockAllocationId,
+    fixture.saleOrder.destinations[0].id,
     quantity,
   );
   const packingList = await request(app)
@@ -100,13 +76,14 @@ describe('Invoice Handoff — "Dispatch Sale" automatic creation (both Purchase 
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20, 'OUTRIGHT');
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
     await request(app)
-      .post('/factory-dispatches')
+      .post(`/sale-orders/${fixture.saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
       .send({
-        saleOrderId: fixture.saleOrder.id,
-        lines: [{ saleOrderLineId: fixture.saleOrderLineId, packedQuantity: 20 }],
+        cartonNumber: 'C1',
+        destinationId: fixture.saleOrder.destinations[0].id,
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }],
       })
-      .expect(201);
+      .expect(200);
 
     expect(await prisma.invoiceHandoff.count()).toBe(0);
   });

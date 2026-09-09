@@ -40,7 +40,9 @@ import { SaleOrderListPage } from '../pages/sale-orders/SaleOrderListPage.js';
 import { SaleOrderFormPage } from '../pages/sale-orders/SaleOrderFormPage.js';
 import { SaleOrderDetailPage } from '../pages/sale-orders/SaleOrderDetailPage.js';
 import { FactoryPackingQueuePage } from '../pages/fulfillment/FactoryPackingQueuePage.js';
-import { FactoryDispatchDetailPage } from '../pages/fulfillment/FactoryDispatchDetailPage.js';
+import { FactoryDispatchDetailPage, PackingListPage } from '../pages/fulfillment/PackingListPage.js';
+import { PackingAuditQueuePage } from '../pages/fulfillment/PackingAuditQueuePage.js';
+import { PackingAuditCartonDetailPage } from '../pages/fulfillment/PackingAuditCartonDetailPage.js';
 import { ErvePendingFactoryDispatchesPage } from '../pages/fulfillment/ErvePendingFactoryDispatchesPage.js';
 import { ErvePackingListDetailPage } from '../pages/fulfillment/ErvePackingListDetailPage.js';
 import { ErveDispatchListPage } from '../pages/fulfillment/ErveDispatchListPage.js';
@@ -81,6 +83,7 @@ import {
 import {
   FACTORY_DISPATCH_MUTATION_ROLES,
   FACTORY_DISPATCH_VIEW_ROLES,
+  PACKING_AUDIT_VIEW_ROLES,
   ERVE_DISPATCH_VIEW_ROLES,
   ERVE_PACKING_LIST_VIEW_ROLES,
   INVOICE_HANDOFF_VIEW_ROLES,
@@ -441,6 +444,14 @@ export function AppRoutes() {
             </RoleRoute>
           }
         />
+        <Route
+          path=":id/packing-list"
+          element={
+            <RoleRoute allowed={DISPATCH_ORDER_VIEW_ROLES}>
+              <PackingListPage />
+            </RoleRoute>
+          }
+        />
       </Route>
 
       <Route
@@ -460,6 +471,17 @@ export function AppRoutes() {
           }
         />
         <Route path=":id" element={<FactoryDispatchDetailPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/packing-audit"
+        element={
+          <RoleRoute allowed={PACKING_AUDIT_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<PackingAuditQueuePage />} />
+        <Route path="cartons/:cartonId" element={<PackingAuditCartonDetailPage />} />
       </Route>
       <Route
         path="/fulfillment/erve-packing-lists"

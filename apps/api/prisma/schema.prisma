@@ -304,6 +304,9 @@ model User {
   releasedStockAllocations             StockAllocation[]          @relation("StockAllocationReleaser")
   preparedFactoryDispatches            FactoryDispatch[]          @relation("FactoryDispatchPreparer")
   finalizedFactoryDispatches           FactoryDispatch[]          @relation("FactoryDispatchFinalizer")
+  createdFactoryPackingCartons         FactoryPackingCarton[]      @relation("FactoryPackingCartonCreator")
+  retiredFactoryPackingCartons         FactoryPackingCarton[]      @relation("FactoryPackingCartonRetirer")
+  inspectedFactoryPackingCartonAudits  FactoryPackingCartonAudit[] @relation("FactoryPackingCartonAuditInspector")
   createdErvePackingLists              ErvePackingList[]          @relation("ErvePackingListCreator")
   dispatchedErveDispatches             ErveDispatch[]             @relation("ErveDispatchDispatcher")
   lrUpdatedErveDispatches              ErveDispatch[]             @relation("ErveDispatchLrUpdater")
@@ -1327,8 +1330,9 @@ model SaleOrderDestination {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  saleOrder SaleOrder       @relation(fields: [saleOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  saleOrder SaleOrder              @relation(fields: [saleOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   lines     SaleOrderLine[]
+  cartons   FactoryPackingCarton[]
 
   @@index([saleOrderId])
   @@map("sale_order_destinations")
@@ -1357,6 +1361,7 @@ model SaleOrderLine {
   size                        Size                         @relation(fields: [sizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   allocations                 StockAllocation[]
   factoryDispatchLines        FactoryDispatchLine[]
+  cartonLines                 FactoryPackingCartonLine[]
   invoiceHandoffs             InvoiceHandoff[]
   distributorSalesReportLines DistributorSalesReportLine[]
   erveDispatchDeliveryLines   ErveDispatchDeliveryLine[]
@@ -1459,16 +1464,18 @@ model FactoryDispatch {
   @@map("factory_dispatches")
 }
 
-// One line = one packed quantity backed by exactly one authoritative
-// StockAllocation row — the proof that this Factory really owns these
-// physical units (see the module doc comment above and
-// factory-source-resolution.ts). Dispatch Order Phase 3: since one Dispatch
-// Order now has exactly one FactoryDispatch packing root
-// (@@unique([saleOrderId]) above), progressive/successive packing calls
-// against the same allocation increment this row's packedQuantity in place
-// rather than creating a new row in a new batch — the unique constraint
-// below now also means at most one packing-quantity row exists per
-// allocation for the order's entire packing lifetime.
+// One row = internal StockAllocation attribution for a packed quantity —
+// the proof that this Factory really owns these physical units (see the
+// module doc comment above). Phase 4: this is a DERIVED provenance ledger,
+// reconciled FROM carton totals (see FactoryPackingCarton's doc comment) by
+// packing-reconciliation.ts — it is never itself the business "packed"
+// read; that's SUM(FactoryPackingCartonLine.quantity) for a SaleOrderLine.
+// Dispatch Order Phase 3: since one Dispatch Order now has exactly one
+// FactoryDispatch packing root (@@unique([saleOrderId]) above), the
+// reconciler recomputes this row's packedQuantity in place rather than
+// creating a new row in a new batch — the unique constraint below also
+// means at most one packing-quantity row exists per allocation for the
+// order's entire packing lifetime.
 model FactoryDispatchLine {
   id                String   @id
   factoryDispatchId String   @map("factory_dispatch_id")
@@ -1477,10 +1484,9 @@ model FactoryDispatchLine {
   packedQuantity    Int      @map("packed_quantity")
   createdAt         DateTime @default(now()) @map("created_at")
 
-  factoryDispatch FactoryDispatch            @relation(fields: [factoryDispatchId], references: [id], onDelete: Cascade)
-  saleOrderLine   SaleOrderLine              @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
-  stockAllocation StockAllocation            @relation(fields: [stockAllocationId], references: [id], onDelete: Restrict)
-  cartonLines     FactoryPackingCartonLine[]
+  factoryDispatch FactoryDispatch @relation(fields: [factoryDispatchId], references: [id], onDelete: Cascade)
+  saleOrderLine   SaleOrderLine   @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+  stockAllocation StockAllocation @relation(fields: [stockAllocationId], references: [id], onDelete: Restrict)
 
   @@unique([factoryDispatchId, stockAllocationId], map: "factory_dispatch_line_allocation_key")
   @@index([stockAllocationId])
@@ -1490,39 +1496,90 @@ model FactoryDispatchLine {
 
 // Minimal carton/package record per the original scope (carton number,
 // package details, weight only) — deliberately no barcode/dimensions/rates/
-// warehouse bin.
+// warehouse bin. Phase 4: cartons are the sole BUSINESS physical-packing
+// authority (see packing-reconciliation.ts) — FactoryDispatchLine is derived
+// StockAllocation provenance only, reconciled FROM carton totals. A carton
+// belongs to exactly one destination; contents (FactoryPackingCartonLine)
+// reference SaleOrderLine directly, never the internal per-allocation
+// FactoryDispatchLine, so the Factory/QA user never sees an allocation split.
+// version bumps only on an actual, normalized-diff material change
+// (destination/contents/packageDetails/weight) — that's what invalidates the
+// current FactoryPackingCartonAudit. retiredAt/retiredById mark a carton that
+// was ever audited and then removed: it becomes an immutable historical
+// record, excluded from physical packed totals, READY_FOR_ERVE validation,
+// and the current Packing List/print, but its audit history remains
+// queryable. A never-audited carton is hard-deleted instead (no retirement
+// needed).
 model FactoryPackingCarton {
-  id                String   @id
-  factoryDispatchId String   @map("factory_dispatch_id")
-  cartonNumber      String   @map("carton_number")
-  packageDetails    String?  @map("package_details")
-  weight            Decimal? @db.Decimal(10, 3)
-  createdAt         DateTime @default(now()) @map("created_at")
+  id                String    @id
+  factoryDispatchId String    @map("factory_dispatch_id")
+  destinationId     String    @map("destination_id")
+  cartonNumber      String    @map("carton_number")
+  packageDetails    String?   @map("package_details")
+  weight            Decimal?  @db.Decimal(10, 3)
+  version           Int       @default(1)
+  createdById       String    @map("created_by_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  retiredById       String?   @map("retired_by_id")
+  retiredAt         DateTime? @map("retired_at")
 
   factoryDispatch FactoryDispatch            @relation(fields: [factoryDispatchId], references: [id], onDelete: Cascade)
+  destination     SaleOrderDestination       @relation(fields: [destinationId], references: [id], onDelete: Restrict)
+  createdBy       User                       @relation("FactoryPackingCartonCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  retiredBy       User?                      @relation("FactoryPackingCartonRetirer", fields: [retiredById], references: [id], onDelete: Restrict)
   lines           FactoryPackingCartonLine[]
+  audits          FactoryPackingCartonAudit[]
 
   @@unique([factoryDispatchId, cartonNumber])
+  @@index([factoryDispatchId, destinationId])
   @@map("factory_packing_cartons")
 }
 
-// A carton's contents, by quantity, against one packed FactoryDispatchLine.
-// SUM(quantity) per factoryDispatchLineId must never exceed that line's
-// packedQuantity (service-enforced) — this is what prevents the same packed
-// units from being placed into multiple cartons.
+// A carton's physical contents, by quantity, against the stable Dispatch
+// Order SaleOrderLine it belongs to (never the internal per-allocation
+// FactoryDispatchLine — see the carton's own doc comment). SUM(quantity)
+// per saleOrderLineId across all non-retired cartons must never exceed that
+// line's Dispatch Order quantity (service-enforced), and
+// FactoryDispatchLine.packedQuantity is reconciled to always equal this sum.
 model FactoryPackingCartonLine {
-  id                    String   @id
-  cartonId              String   @map("carton_id")
-  factoryDispatchLineId String   @map("factory_dispatch_line_id")
-  quantity              Int
-  createdAt             DateTime @default(now()) @map("created_at")
+  id              String   @id
+  cartonId        String   @map("carton_id")
+  saleOrderLineId String   @map("sale_order_line_id")
+  quantity        Int
+  createdAt       DateTime @default(now()) @map("created_at")
 
-  carton              FactoryPackingCarton @relation(fields: [cartonId], references: [id], onDelete: Cascade)
-  factoryDispatchLine FactoryDispatchLine  @relation(fields: [factoryDispatchLineId], references: [id], onDelete: Restrict)
+  carton        FactoryPackingCarton @relation(fields: [cartonId], references: [id], onDelete: Cascade)
+  saleOrderLine SaleOrderLine        @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
 
-  @@unique([cartonId, factoryDispatchLineId])
-  @@index([factoryDispatchLineId])
+  @@unique([cartonId, saleOrderLineId])
+  @@index([saleOrderLineId])
   @@map("factory_packing_carton_lines")
+}
+
+// Lightweight packing-audit sign-off: an authenticated QA_USER visually
+// inspected this carton in its current state and confirms it. Current
+// validity is derived, never stored: an audit is CURRENT only while
+// cartonVersion == carton.version at read time; a later material change to
+// the carton (see FactoryPackingCarton's doc comment) bumps carton.version,
+// which makes this row stale ("Needs Reinspection") without deleting it —
+// history is preserved. @@unique([cartonId, cartonVersion]) means at most
+// one sign-off exists per carton version; confirming an already-current
+// version is idempotent (returns the existing row).
+model FactoryPackingCartonAudit {
+  id            String    @id
+  cartonId      String    @map("carton_id")
+  cartonVersion Int       @map("carton_version")
+  inspectedById String    @map("inspected_by_id")
+  inspectedAt   DateTime  @default(now()) @map("inspected_at")
+  remarks       String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  carton      FactoryPackingCarton @relation(fields: [cartonId], references: [id], onDelete: Restrict)
+  inspectedBy User                 @relation("FactoryPackingCartonAuditInspector", fields: [inspectedById], references: [id], onDelete: Restrict)
+
+  @@unique([cartonId, cartonVersion])
+  @@map("factory_packing_carton_audits")
 }
 
 enum ErvePackingListStatus {

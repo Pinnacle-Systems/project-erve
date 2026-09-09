@@ -1,0 +1,55 @@
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import type { ApiSuccessResponse } from '@erve/types';
+import { PageHeader, StatusBadge } from '@erve/app-components';
+import { Panel } from '@erve/layout';
+import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { apiClient } from '../../lib/api-client.js';
+import type { PackingAuditQueueItem, PaginatedResult } from './types.js';
+
+function auditStateBadge(state: PackingAuditQueueItem['auditState']) {
+  if (state === 'INSPECTED') return <StatusBadge label="Inspected" tone="approved" />;
+  if (state === 'NEEDS_REINSPECTION') return <StatusBadge label="Needs Reinspection" tone="rejected" />;
+  return <StatusBadge label="Not Inspected" tone="draft" />;
+}
+
+// QA's lightweight, cross-factory Packing Audit discovery surface (Phase 4).
+// No StockAllocation/QaReleaseLine/Job Order fields — carton identity,
+// destination, and Style/Size quantities only.
+export function PackingAuditQueuePage() {
+  const navigate = useNavigate();
+
+  const query = useQuery({
+    queryKey: ['packing-audit-queue'],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<PackingAuditQueueItem>>>('/packing-audit/queue', {
+        params: { limit: 100 },
+      });
+      return res.data.data.items;
+    },
+  });
+
+  if (query.isLoading) return <LoadingState label="Loading Packing Audit queue" />;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Packing Audit" subtitle="Confirm cartons as inspected before Factory Dispatch" />
+
+      <Panel title="Cartons" padding="none">
+        <DataTable
+          rowKey="id"
+          data={query.data ?? []}
+          emptyState={<EmptyState title="Nothing to inspect" description="No open cartons are currently awaiting Packing Audit." />}
+          onRowClick={(row) => navigate(`/fulfillment/packing-audit/cartons/${row.id}`)}
+          columns={[
+            { key: 'saleOrder', header: 'Sale Order', render: (r) => r.saleOrder.saleOrderNumber },
+            { key: 'factory', header: 'Factory', render: (r) => r.factory.name },
+            { key: 'carton', header: 'Carton #', accessor: 'cartonNumber' },
+            { key: 'qty', header: 'Total Qty', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },
+            { key: 'state', header: 'Audit State', render: (r) => auditStateBadge(r.auditState) },
+          ]}
+        />
+      </Panel>
+    </div>
+  );
+}

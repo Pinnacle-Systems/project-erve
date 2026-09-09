@@ -85,6 +85,11 @@ export function SaleOrderDetailPage() {
         subtitle={`${so.distributor.name} — ${so.factory.name}`}
         secondaryActions={
           <div className="flex gap-2">
+            {canSeeFactoryDispatches && (
+              <Button asChild variant="secondary">
+                <Link to={`/sale-orders/${so.id}/packing-list`}>Packing List</Link>
+              </Button>
+            )}
             {canEdit && !so.isLocked && (
               <Button asChild>
                 <Link to={`/sale-orders/${so.id}/edit`}>Edit / Correct</Link>
@@ -193,7 +198,7 @@ export function SaleOrderDetailPage() {
                         <Link className="text-[var(--erp-text-link)]" to={`/fulfillment/factory-dispatches/${fd.id}`}>
                           {fd.factoryDispatchNumber}
                         </Link>{' '}
-                        — {fd.status === 'READY_FOR_ERVE' ? 'Ready for Erve' : 'Draft'} ({fd.totalPackedQuantity.toLocaleString()} packed)
+                        — {fd.status === 'READY_FOR_ERVE' ? 'Ready for Erve' : 'Draft'}
                       </li>
                     ))}
                   </ul>

@@ -256,45 +256,120 @@ export interface FactoryDispatchLineView {
   sizeCode: string;
   sizeLabel: string;
   packedQuantity: number;
-  cartonedQuantity: number;
 }
 
+/** Phase 4: carton contents reference the stable Dispatch Order line directly — never a StockAllocation/FactoryDispatchLine id. */
 export interface FactoryPackingCartonLineView {
-  factoryDispatchLineId: string;
+  saleOrderLineId: string;
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  sizeId: string;
   sizeCode: string;
   sizeLabel: string;
   quantity: number;
+  /** The line's CURRENT destinationId — compare against the carton's own destinationId to detect a destination-move mismatch. */
+  currentDestinationId: string;
+}
+
+export type PackingAuditState = 'NOT_INSPECTED' | 'INSPECTED' | 'NEEDS_REINSPECTION';
+
+export interface PackingCartonAuditHistoryEntry {
+  cartonVersion: number;
+  inspectedById: string;
+  inspectedByName: string;
+  inspectedAt: string;
+  remarks: string | null;
 }
 
 export interface FactoryPackingCartonView {
   id: string;
   cartonNumber: string;
+  destinationId: string;
   packageDetails: string | null;
   weight: string | null;
-  lines: FactoryPackingCartonLineView[];
+  version: number;
+  totalQuantity: number;
+  destinationMismatch: boolean;
+  auditState: PackingAuditState;
+  retired: boolean;
+  retiredAt: string | null;
   createdAt: string;
+  updatedAt: string;
+  lines: FactoryPackingCartonLineView[];
+  auditHistory: PackingCartonAuditHistoryEntry[];
 }
 
-export interface FactoryDispatchSummary extends VersionedResource {
+export interface PackingListLineView {
+  saleOrderLineId: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  requiredQuantity: number;
+  packedQuantity: number;
+}
+
+export interface PackingListDestinationView extends SaleOrderDestinationView {
+  lines: PackingListLineView[];
+  cartons: FactoryPackingCartonView[];
+}
+
+/** The Factory Packing List — Dispatch-Order-centric, readable before any FactoryDispatch exists (Phase 4). */
+export interface PackingListView {
+  saleOrderId: string;
+  saleOrderNumber: string;
+  distributor: { id: string; code: string; name: string };
+  factory: { id: string; code: string; name: string };
+  factoryDispatch: { id: string; factoryDispatchNumber: string; status: FactoryDispatchStatus; version: number } | null;
+  destinations: PackingListDestinationView[];
+  retiredCartons: FactoryPackingCartonView[];
+}
+
+export interface FactoryDispatchSummary {
   id: string;
   factoryDispatchNumber: string;
   factory: { id: string; code: string; name: string };
   saleOrder: { id: string; saleOrderNumber: string; distributor: { id: string; code: string; name: string } };
   status: FactoryDispatchStatus;
-  preparedBy: { id: string; name: string; email: string };
+  version: number;
   preparedAt: string;
-  finalizedBy: { id: string; name: string; email: string } | null;
   finalizedAt: string | null;
-  totalPackedQuantity: number;
   consolidated: boolean;
-  createdAt: string;
 }
 
-export interface FactoryDispatchDetail extends FactoryDispatchSummary {
-  lines: FactoryDispatchLineView[];
-  cartons: FactoryPackingCartonView[];
+export interface FinalizeIssueLine {
+  saleOrderLineId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  required: number;
+  packed: number;
+}
+
+export interface FinalizeIssueCarton {
+  cartonId: string;
+  cartonNumber: string;
+  destinationId: string;
+}
+
+export interface FinalizeBlockers {
+  cartonsNotAudited: FinalizeIssueCarton[];
+  cartonsNeedingReinspection: FinalizeIssueCarton[];
+  emptyCartons: FinalizeIssueCarton[];
+  destinationMismatchCartons: FinalizeIssueCarton[];
+  underPackedLines: FinalizeIssueLine[];
+  overPackedLines: FinalizeIssueLine[];
+  internalPackingMismatch: FinalizeIssueLine[];
+}
+
+export interface PackingAuditQueueItem extends FactoryPackingCartonView {
+  factoryDispatchNumber: string;
+  factory: { id: string; code: string; name: string };
+  saleOrder: { id: string; saleOrderNumber: string };
 }
 
 export interface ErvePackingListSourceView {
@@ -302,7 +377,15 @@ export interface ErvePackingListSourceView {
   factoryDispatchNumber: string;
   factory: { id: string; code: string; name: string };
   lines: FactoryDispatchLineView[];
-  cartons: FactoryPackingCartonView[];
+  cartons: Array<{
+    id: string;
+    cartonNumber: string;
+    destinationId: string;
+    packageDetails: string | null;
+    weight: string | null;
+    createdAt: string;
+    lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>;
+  }>;
 }
 
 export interface ErvePackingListSummary {
