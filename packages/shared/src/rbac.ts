@@ -320,3 +320,46 @@ export const DISTRIBUTOR_RETURN_RECEIVE_ROLES = ['ADMIN', 'MERCHANDISER'] as con
 export function canReceiveDistributorReturn(user: RoleHolder): boolean {
   return hasAnyRole(user, DISTRIBUTOR_RETURN_RECEIVE_ROLES);
 }
+
+/**
+ * Roles that may view a Factory Invoice — the ERVE-generated payable
+ * document snapshotted from a finalized Factory Packing List. Deliberately
+ * narrower than most fulfillment view lists: only FACTORY_USER (scoped to
+ * its own mapped Factory, service-enforced) and ACCOUNTANT have a confirmed
+ * operational need, plus ADMIN's usual oversight standing. MERCHANDISER and
+ * SENIOR_MANAGEMENT are NOT included — unlike Invoice Handoff, no existing
+ * financial-document read convention establishes that they need this view;
+ * add them only against an explicit later requirement.
+ */
+export const FACTORY_INVOICE_VIEW_ROLES = ['ADMIN', 'ACCOUNTANT', 'FACTORY_USER'] as const satisfies readonly Role[];
+
+export function canViewFactoryInvoice(user: RoleHolder): boolean {
+  return hasAnyRole(user, FACTORY_INVOICE_VIEW_ROLES);
+}
+
+/**
+ * FACTORY_USER-only — the mapped Factory's formal, one-way confirmation of a
+ * generated invoice. ADMIN is deliberately EXCLUDED (unlike most mutation
+ * lists in this file): mirrors PACKING_AUDIT_MUTATION_ROLES's precedent of
+ * not giving ADMIN a compatibility bypass for a role-specific sign-off, per
+ * an explicit business instruction not to auto-grant ADMIN Factory-confirm
+ * powers merely because ADMIN is broad elsewhere.
+ */
+export const FACTORY_INVOICE_CONFIRM_ROLES = ['FACTORY_USER'] as const satisfies readonly Role[];
+
+export function canConfirmFactoryInvoice(user: RoleHolder): boolean {
+  return hasAnyRole(user, FACTORY_INVOICE_CONFIRM_ROLES);
+}
+
+/**
+ * ACCOUNTANT-only — editing a Factory Invoice's financial fields (unit rate,
+ * GST amount, remarks) once FACTORY_USER has confirmed it, and finalizing it.
+ * ADMIN is deliberately EXCLUDED, same reasoning as
+ * FACTORY_INVOICE_CONFIRM_ROLES above — this is Accounts' financial
+ * authority, not a general administrative one.
+ */
+export const FACTORY_INVOICE_FINANCIAL_ROLES = ['ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canManageFactoryInvoiceFinancials(user: RoleHolder): boolean {
+  return hasAnyRole(user, FACTORY_INVOICE_FINANCIAL_ROLES);
+}

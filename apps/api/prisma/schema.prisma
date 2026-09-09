@@ -318,6 +318,8 @@ model User {
   receivedDistributorReturns           DistributorReturn[]        @relation("DistributorReturnReceiver")
   cancelledDistributorReturns          DistributorReturn[]        @relation("DistributorReturnCanceller")
   creditNoteRecordedDistributorReturns DistributorReturn[]        @relation("DistributorReturnCreditNoteRecorder")
+  factoryConfirmedFactoryInvoices      FactoryInvoice[]           @relation("FactoryInvoiceFactoryConfirmedBy")
+  finalizedFactoryInvoices             FactoryInvoice[]           @relation("FactoryInvoiceFinalizedBy")
 
   @@index([status])
   @@map("users")
@@ -426,6 +428,7 @@ model Factory {
   jobOrders            JobOrder[]
   factoryDispatches    FactoryDispatch[]
   saleOrders           SaleOrder[]
+  factoryInvoices      FactoryInvoice[]
 
   @@index([status])
   @@map("factories")
@@ -1367,6 +1370,7 @@ model SaleOrderLine {
   erveDispatchDeliveryLines   ErveDispatchDeliveryLine[]
   distributorReturnLines      DistributorReturnLine[]
   returnedStockLots           ReturnedStockLot[]
+  factoryInvoiceLines         FactoryInvoiceLine[]
 
   @@unique([saleOrderId, destinationId, styleId, sizeId], map: "sale_order_line_grain_key")
   @@index([saleOrderId])
@@ -1457,6 +1461,7 @@ model FactoryDispatch {
   lines             FactoryDispatchLine[]
   cartons           FactoryPackingCarton[]
   ervePackingSource ErvePackingListSource?
+  factoryInvoice    FactoryInvoice?
 
   @@unique([financialYearId, factoryDispatchSerial])
   @@unique([saleOrderId], map: "factory_dispatch_one_root_per_sale_order_key")
@@ -1580,6 +1585,82 @@ model FactoryPackingCartonAudit {
 
   @@unique([cartonId, cartonVersion])
   @@map("factory_packing_carton_audits")
+}
+
+enum FactoryInvoiceStatus {
+  GENERATED
+  FACTORY_CONFIRMED
+  FINALIZED
+}
+
+// ERVE-generated payable document: exactly one per finalized (READY_FOR_ERVE)
+// FactoryDispatch — generated automatically, in the same transaction, the
+// moment finalizeFactoryDispatch flips status (see factory-invoice.service.ts
+// generateFactoryInvoiceForFinalizedDispatch, called from
+// factory-dispatch.service.ts). There is deliberately no create endpoint: the
+// @@unique([factoryDispatchId]) below is the DB-level backstop making a
+// second invoice for the same Factory Dispatch impossible. Physical
+// Style/Size/Quantity live only on FactoryInvoiceLine via saleOrderLineId
+// (never duplicated here or on the line) — once a FactoryDispatch reaches
+// READY_FOR_ERVE, sale-orders.service.ts's isDispatchOrderLocked blocks every
+// SaleOrderLine edit, so joining through saleOrderLineId is safe for the
+// life of the invoice. subtotal/gstAmount/total are persisted (not
+// read-time-derived) so they reflect the authoritative value from the last
+// financial mutation or finalize, whichever is more recent.
+model FactoryInvoice {
+  id                   String               @id
+  factoryDispatchId    String               @unique @map("factory_dispatch_id")
+  factoryId            String               @map("factory_id")
+  status               FactoryInvoiceStatus @default(GENERATED)
+  version              Int                  @default(1)
+  generatedAt          DateTime             @default(now()) @map("generated_at")
+  factoryConfirmedById String?              @map("factory_confirmed_by_id")
+  factoryConfirmedAt   DateTime?            @map("factory_confirmed_at")
+  finalizedById        String?              @map("finalized_by_id")
+  finalizedAt          DateTime?            @map("finalized_at")
+  subtotal             Decimal              @default(0) @db.Decimal(14, 2)
+  gstAmount            Decimal              @default(0) @db.Decimal(14, 2) @map("gst_amount")
+  total                Decimal              @default(0) @db.Decimal(14, 2)
+  remarks              String?
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  factoryDispatch    FactoryDispatch     @relation(fields: [factoryDispatchId], references: [id], onDelete: Restrict)
+  factory            Factory             @relation(fields: [factoryId], references: [id], onDelete: Restrict)
+  factoryConfirmedBy User?               @relation("FactoryInvoiceFactoryConfirmedBy", fields: [factoryConfirmedById], references: [id], onDelete: Restrict)
+  finalizedBy        User?               @relation("FactoryInvoiceFinalizedBy", fields: [finalizedById], references: [id], onDelete: Restrict)
+  lines              FactoryInvoiceLine[]
+
+  @@index([factoryId, status])
+  @@map("factory_invoices")
+}
+
+// quantity is a snapshot of the finalized physical packed quantity at
+// generation time (from packing-reconciliation.ts's
+// getPhysicalPackedQuantitiesForLines) — never re-derived from cartons after
+// the fact. defaultRate is an immutable snapshot of the Style<->Factory
+// StyleFactoryMapping.exFactoryPrice used at generation time; unitRate starts
+// equal to it and is the only ACCOUNTANT-editable financial field on a line
+// (see factory-invoice.service.ts) — comparing the two shows whether Accounts
+// overrode the master rate. Editing unitRate here never writes back to
+// StyleFactoryMapping.
+model FactoryInvoiceLine {
+  id               String   @id
+  factoryInvoiceId String   @map("factory_invoice_id")
+  saleOrderLineId  String   @map("sale_order_line_id")
+  quantity         Int
+  defaultRate      Decimal  @db.Decimal(12, 2) @map("default_rate")
+  unitRate         Decimal  @db.Decimal(12, 2) @map("unit_rate")
+  lineAmount       Decimal  @db.Decimal(14, 2) @map("line_amount")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  factoryInvoice FactoryInvoice @relation(fields: [factoryInvoiceId], references: [id], onDelete: Cascade)
+  saleOrderLine  SaleOrderLine  @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+
+  @@unique([factoryInvoiceId, saleOrderLineId])
+  @@index([saleOrderLineId])
+  @@map("factory_invoice_lines")
 }
 
 enum ErvePackingListStatus {

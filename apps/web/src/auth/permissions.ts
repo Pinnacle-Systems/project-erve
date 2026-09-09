@@ -11,6 +11,9 @@ import {
   canViewErvePackingList,
   canMutateInvoiceHandoff,
   canViewInvoiceHandoff,
+  canViewFactoryInvoice,
+  canConfirmFactoryInvoice,
+  canManageFactoryInvoiceFinancials,
   canViewSaleOrReturnPosition,
   canViewDistributorSalesReport,
   canSubmitDistributorSalesReport,
@@ -260,6 +263,15 @@ export const canViewInvoiceHandoffs = (user: AuthUser | null | undefined) =>
 
 export const canMutateInvoiceHandoffs = (user: AuthUser | null | undefined) =>
   Boolean(user && canMutateInvoiceHandoff(user));
+
+export const canViewFactoryInvoices = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewFactoryInvoice(user));
+
+export const canConfirmFactoryInvoices = (user: AuthUser | null | undefined) =>
+  Boolean(user && canConfirmFactoryInvoice(user));
+
+export const canEditFactoryInvoiceFinancials = (user: AuthUser | null | undefined) =>
+  Boolean(user && canManageFactoryInvoiceFinancials(user));
 
 export const canViewSaleOrReturnPositions = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewSaleOrReturnPosition(user));

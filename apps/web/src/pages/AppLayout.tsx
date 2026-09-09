@@ -33,6 +33,7 @@ import {
   canViewErvePackingLists,
   canViewFactories,
   canViewFactoryDispatches,
+  canViewFactoryInvoices,
   canViewPackingAudits,
   canViewInvoiceHandoffs,
   canViewSaleOrReturnPositions,
@@ -105,6 +106,9 @@ export function AppLayout() {
           : []),
         ...(canViewPackingAudits(user)
           ? [{ to: '/fulfillment/packing-audit', label: 'Packing Audit', icon: ClipboardCheck }]
+          : []),
+        ...(canViewFactoryInvoices(user)
+          ? [{ to: '/fulfillment/factory-invoices', label: 'Factory Invoices', icon: FileText }]
           : []),
         ...(canViewErvePackingLists(user)
           ? [{ to: '/fulfillment/erve-packing-lists', label: 'Erve Packing Lists', icon: PackageCheck }]

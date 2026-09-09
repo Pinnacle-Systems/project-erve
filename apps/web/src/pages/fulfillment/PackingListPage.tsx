@@ -232,6 +232,11 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
         }
         secondaryActions={
           <>
+            {dispatch?.factoryInvoiceId && (
+              <Button variant="secondary" onClick={() => navigate(`/fulfillment/factory-invoices/${dispatch.factoryInvoiceId}`)}>
+                View Factory Invoice
+              </Button>
+            )}
             <Button variant="secondary" onClick={() => window.print()}>
               Print Packing List
             </Button>

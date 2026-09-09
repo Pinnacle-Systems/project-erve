@@ -111,7 +111,7 @@ function buildPackingList(overrides: Partial<PackingListView> = {}): PackingList
     saleOrderNumber: 'EISO/26-27/0001',
     distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
     factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
-    factoryDispatch: { id: 'fd-1', factoryDispatchNumber: 'EIFD/26-27/0001', status: 'DRAFT', version: 1 },
+    factoryDispatch: { id: 'fd-1', factoryDispatchNumber: 'EIFD/26-27/0001', status: 'DRAFT', version: 1, factoryInvoiceId: null },
     destinations: [
       {
         id: 'dest-1',
@@ -301,7 +301,7 @@ describe('PackingListPage carton edit (Phase 4)', () => {
   it('shows no Edit action once the Factory Dispatch is finalized (READY_FOR_ERVE)', async () => {
     await renderPage(
       buildPackingList({
-        factoryDispatch: { id: 'fd-1', factoryDispatchNumber: 'EIFD/26-27/0001', status: 'READY_FOR_ERVE', version: 2 },
+        factoryDispatch: { id: 'fd-1', factoryDispatchNumber: 'EIFD/26-27/0001', status: 'READY_FOR_ERVE', version: 2, factoryInvoiceId: null },
         destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'INSPECTED' })] }],
       }),
     );

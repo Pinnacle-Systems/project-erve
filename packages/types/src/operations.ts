@@ -323,7 +323,9 @@ export interface PackingListView {
   saleOrderNumber: string;
   distributor: { id: string; code: string; name: string };
   factory: { id: string; code: string; name: string };
-  factoryDispatch: { id: string; factoryDispatchNumber: string; status: FactoryDispatchStatus; version: number } | null;
+  factoryDispatch:
+    | { id: string; factoryDispatchNumber: string; status: FactoryDispatchStatus; version: number; factoryInvoiceId: string | null }
+    | null;
   destinations: PackingListDestinationView[];
   retiredCartons: FactoryPackingCartonView[];
 }
@@ -364,6 +366,53 @@ export interface FinalizeBlockers {
   underPackedLines: FinalizeIssueLine[];
   overPackedLines: FinalizeIssueLine[];
   internalPackingMismatch: FinalizeIssueLine[];
+}
+
+// ---------------------------------------------------------------------------
+// Factory Invoice — ERVE-generated payable document, one per finalized
+// (READY_FOR_ERVE) Factory Packing List. No create endpoint: generated
+// automatically the moment Factory Packing List finalization succeeds (see
+// the API's factory-invoice.service.ts). Style/Size/Quantity are the
+// finalized packing snapshot and are never independently editable through
+// this API — see the confirm/financials/finalize actions below for exactly
+// what each role may change.
+// ---------------------------------------------------------------------------
+
+export type FactoryInvoiceStatus = 'GENERATED' | 'FACTORY_CONFIRMED' | 'FINALIZED';
+
+export interface FactoryInvoiceLineView {
+  id: string;
+  saleOrderLineId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  /** Finalized physical packed quantity — read-only, never editable through this API. */
+  quantity: number;
+  /** Immutable snapshot of the Style<->Factory production rate used when the invoice was generated. */
+  defaultRate: number;
+  /** Current invoice rate — equal to defaultRate until an ACCOUNTANT overrides it post-Factory-confirmation. */
+  unitRate: number;
+  lineAmount: number;
+}
+
+export interface FactoryInvoiceView extends VersionedResource {
+  id: string;
+  status: FactoryInvoiceStatus;
+  factory: { id: string; code: string; name: string };
+  factoryDispatch: { id: string; factoryDispatchNumber: string };
+  saleOrder: { id: string; saleOrderNumber: string };
+  generatedAt: string;
+  factoryConfirmedBy: { id: string; name: string; email: string } | null;
+  factoryConfirmedAt: string | null;
+  finalizedBy: { id: string; name: string; email: string } | null;
+  finalizedAt: string | null;
+  subtotal: number;
+  gstAmount: number;
+  total: number;
+  remarks: string | null;
+  lines: FactoryInvoiceLineView[];
+  createdAt: string;
 }
 
 export interface PackingAuditQueueItem extends FactoryPackingCartonView {

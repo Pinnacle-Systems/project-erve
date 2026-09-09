@@ -3,7 +3,12 @@ import request from 'supertest';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import { resetDatabase } from '../../test/helpers.js';
-import { createFactoryUserToken, createRoleToken, createTwoBatchApprovedSaleOrder } from './fulfillment-test-helpers.js';
+import {
+  createFactoryUserToken,
+  createRoleToken,
+  createTwoBatchApprovedSaleOrder,
+  ensureStyleFactoryRate,
+} from './fulfillment-test-helpers.js';
 
 const app = createApp();
 beforeEach(resetDatabase);
@@ -28,6 +33,7 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
     const { token: merchToken } = await createRoleToken('MERCHANDISER');
     const { token: qaToken } = await createRoleToken('QA_USER');
     const destinationId = fixture.saleOrder.destinations[0]!.id;
+    await ensureStyleFactoryRate(fixture.batchA.stock.styleId, fixture.factoryId);
 
     // --- Factory cartons 40 of the 100 total; cannot finalize yet (incomplete, unaudited) ---
     const carton1 = await request(app)

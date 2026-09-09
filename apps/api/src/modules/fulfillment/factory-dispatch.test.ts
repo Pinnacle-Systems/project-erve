@@ -9,6 +9,7 @@ import {
   createRoleToken,
   createSingleFactoryApprovedSaleOrder,
   createTwoBatchApprovedSaleOrder,
+  ensureStyleFactoryRate,
 } from './fulfillment-test-helpers.js';
 
 const app = createApp();
@@ -238,6 +239,7 @@ describe('Factory Dispatch — carton-first packing creation and ceilings', () =
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
     const { token: qaToken } = await createRoleToken('QA_USER');
     const destinationId = destinationOf(fixture.saleOrder);
+    await ensureStyleFactoryRate(fixture.stock.styleId, fixture.stock.factoryId);
 
     const created = await createCarton(factoryToken, fixture.saleOrder.id, {
       cartonNumber: 'C1',
@@ -643,6 +645,7 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
     });
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
     const { token: qaToken } = await createRoleToken('QA_USER');
+    await ensureStyleFactoryRate(fixture.stock.styleId, fixture.stock.factoryId);
 
     const packed = await createCarton(factoryToken, fixture.saleOrder.id, {
       cartonNumber: 'C1',
@@ -783,6 +786,7 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
     const { token: qaToken } = await createRoleToken('QA_USER');
     const destinationId = destinationOf(fixture.saleOrder);
+    await ensureStyleFactoryRate(fixture.stock.styleId, fixture.stock.factoryId);
 
     const created = await createCarton(factoryToken, fixture.saleOrder.id, {
       cartonNumber: 'C1',

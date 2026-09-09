@@ -104,11 +104,32 @@ export async function createSingleFactoryApprovedSaleOrder(
 }
 
 /**
+ * Provisions (upsert — safe for a style/factory pair used across several
+ * fixtures) an ACTIVE StyleFactoryMapping so a Factory Invoice can be
+ * generated when the Factory Dispatch finalizes (see
+ * factory-invoice.service.ts's generateFactoryInvoiceForFinalizedDispatch —
+ * finalization fails atomically without an active rate). Deliberately not
+ * folded into createReleasedQaStock, which stays a pure QA-stock fixture —
+ * this is called explicitly by packAndFinalize instead. A test exercising
+ * the missing-rate path skips packAndFinalize and drives the underlying
+ * carton/audit/finalize calls directly without this.
+ */
+export async function ensureStyleFactoryRate(styleId: string, factoryId: string, exFactoryPrice = 150) {
+  return prisma.styleFactoryMapping.upsert({
+    where: { styleId_factoryId: { styleId, factoryId } },
+    create: { id: createId(), styleId, factoryId, exFactoryPrice, status: 'ACTIVE' },
+    update: { exFactoryPrice, status: 'ACTIVE' },
+  });
+}
+
+/**
  * Carton-first packing (Phase 4): creates one carton covering `quantity`,
  * confirms its Packing Audit as a fresh QA_USER, then finalizes. Shared by
  * every fixture that just needs "a finalized Factory Dispatch exists" as a
  * precondition (Erve consolidation/dispatch/invoice/returns/sales-report
- * tests) without re-deriving the carton-first flow in each file.
+ * tests) without re-deriving the carton-first flow in each file. Provisions
+ * an active Style<->Factory rate first (see ensureStyleFactoryRate above) so
+ * finalize's automatic Factory Invoice generation always succeeds here.
  */
 export async function packAndFinalize(
   app: Express,
@@ -117,6 +138,7 @@ export async function packAndFinalize(
   saleOrderLineId: string,
   destinationId: string,
   quantity: number,
+  rate = 150,
 ) {
   const created = await request(app)
     .post(`/sale-orders/${saleOrderId}/packing-list/cartons`)
@@ -125,6 +147,11 @@ export async function packAndFinalize(
     .expect(200);
   const factoryDispatchId = created.body.data.factoryDispatch.id as string;
   const cartonId = created.body.data.destinations[0].cartons[0].id as string;
+  const factoryId = created.body.data.factory.id as string;
+  const packedLine = created.body.data.destinations
+    .flatMap((d: { lines: Array<{ saleOrderLineId: string; styleId: string }> }) => d.lines)
+    .find((l: { saleOrderLineId: string }) => l.saleOrderLineId === saleOrderLineId) as { styleId: string };
+  await ensureStyleFactoryRate(packedLine.styleId, factoryId, rate);
 
   const { token: qaToken } = await createRoleToken('QA_USER');
   await request(app)

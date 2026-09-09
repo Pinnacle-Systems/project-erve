@@ -49,6 +49,8 @@ import { ErveDispatchListPage } from '../pages/fulfillment/ErveDispatchListPage.
 import { ErveDispatchDetailPage } from '../pages/fulfillment/ErveDispatchDetailPage.js';
 import { InvoiceHandoffListPage } from '../pages/fulfillment/InvoiceHandoffListPage.js';
 import { InvoiceHandoffDetailPage } from '../pages/fulfillment/InvoiceHandoffDetailPage.js';
+import { FactoryInvoiceListPage } from '../pages/fulfillment/FactoryInvoiceListPage.js';
+import { FactoryInvoiceDetailPage } from '../pages/fulfillment/FactoryInvoiceDetailPage.js';
 import { SaleOrReturnPositionListPage } from '../pages/fulfillment/SaleOrReturnPositionListPage.js';
 import { DistributorSalesReportListPage } from '../pages/fulfillment/DistributorSalesReportListPage.js';
 import { DistributorSalesReportDetailPage } from '../pages/fulfillment/DistributorSalesReportDetailPage.js';
@@ -83,6 +85,7 @@ import {
 import {
   FACTORY_DISPATCH_MUTATION_ROLES,
   FACTORY_DISPATCH_VIEW_ROLES,
+  FACTORY_INVOICE_VIEW_ROLES,
   PACKING_AUDIT_VIEW_ROLES,
   ERVE_DISPATCH_VIEW_ROLES,
   ERVE_PACKING_LIST_VIEW_ROLES,
@@ -471,6 +474,17 @@ export function AppRoutes() {
           }
         />
         <Route path=":id" element={<FactoryDispatchDetailPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/factory-invoices"
+        element={
+          <RoleRoute allowed={FACTORY_INVOICE_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<FactoryInvoiceListPage />} />
+        <Route path=":id" element={<FactoryInvoiceDetailPage />} />
       </Route>
       <Route
         path="/fulfillment/packing-audit"

@@ -14,6 +14,7 @@ import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { getPhysicalPackedQuantitiesForLines, reconcileFactoryDispatchLineAttribution } from './packing-reconciliation.js';
+import { generateFactoryInvoiceForFinalizedDispatch } from './factory-invoice.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -160,7 +161,9 @@ export interface PackingListView {
   saleOrderNumber: string;
   distributor: { id: string; code: string; name: string };
   factory: { id: string; code: string; name: string };
-  factoryDispatch: { id: string; factoryDispatchNumber: string; status: 'DRAFT' | 'READY_FOR_ERVE'; version: number } | null;
+  factoryDispatch:
+    | { id: string; factoryDispatchNumber: string; status: 'DRAFT' | 'READY_FOR_ERVE'; version: number; factoryInvoiceId: string | null }
+    | null;
   destinations: PackingListDestinationView[];
   retiredCartons: PackingListCartonView[];
 }
@@ -266,6 +269,9 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
     prisma,
     lines.map((l) => l.id),
   );
+  const factoryInvoice = dispatch
+    ? await prisma.factoryInvoice.findUnique({ where: { factoryDispatchId: dispatch.id }, select: { id: true } })
+    : null;
 
   const cartonViews = cartons.map(toPackingListCartonView);
   const activeCartonsByDestination = new Map<string, PackingListCartonView[]>();
@@ -304,7 +310,13 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
     distributor: saleOrder.distributor,
     factory: saleOrder.factory,
     factoryDispatch: dispatch
-      ? { id: dispatch.id, factoryDispatchNumber: dispatch.factoryDispatchNumber, status: dispatch.status, version: dispatch.version }
+      ? {
+          id: dispatch.id,
+          factoryDispatchNumber: dispatch.factoryDispatchNumber,
+          status: dispatch.status,
+          version: dispatch.version,
+          factoryInvoiceId: factoryInvoice?.id ?? null,
+        }
       : null,
     destinations: destinations.map((destination) => ({
       id: destination.id,
@@ -1132,6 +1144,19 @@ export async function finalizeFactoryDispatch(actor: CurrentUser, id: string, in
         metadata: { factoryDispatchNumber: dispatch.factoryDispatchNumber },
       },
       tx,
+    );
+
+    // Factory Invoice generation is a data-integrity prerequisite of this
+    // same atomic finalization, not a second independent workflow (see
+    // factory-invoice.service.ts's module doc comment) — a missing
+    // Style<->Factory rate fails this entire transaction, leaving the
+    // dispatch DRAFT, rather than completing without the required invoice.
+    await generateFactoryInvoiceForFinalizedDispatch(
+      tx,
+      actor,
+      { id, factoryId: dispatch.factoryId, factoryDispatchNumber: dispatch.factoryDispatchNumber },
+      saleOrderLines,
+      physicalPackedByLine,
     );
   });
 
