@@ -35,7 +35,7 @@ export function ErveDispatchListPage() {
             emptyState={<EmptyState title="No dispatches yet" />}
             columns={[
               { key: 'number', header: 'Dispatch #', accessor: 'erveDispatchNumber' },
-              { key: 'saleOrder', header: 'Sale Order', render: (r) => r.saleOrder.saleOrderNumber },
+              { key: 'saleOrder', header: 'Sale Order', render: (r) => r.saleOrder?.saleOrderNumber ?? 'Multiple' },
               { key: 'distributor', header: 'Distributor', render: (r) => r.distributor.name },
               { key: 'date', header: 'Dispatch Date', render: (r) => new Date(r.dispatchDate).toLocaleDateString() },
               { key: 'transporter', header: 'Transporter', render: (r) => r.transporter ?? '—' },

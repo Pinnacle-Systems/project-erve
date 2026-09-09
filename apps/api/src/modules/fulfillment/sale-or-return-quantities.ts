@@ -42,6 +42,11 @@ export interface SaleOrReturnAvailability {
   availableForNewReturn: number;
 }
 
+// Phase 6: sourced from the frozen carton set consolidated into this Erve
+// Dispatch's Erve Packing List (FactoryPackingCartonLine), never
+// FactoryDispatchLine — a source FactoryDispatch may contribute cartons to
+// several destination-specific Erve Packing Lists, so its whole-batch
+// FactoryDispatchLine total is no longer this pair's authoritative quantity.
 export async function getDispatchedQuantityForPair(
   client: Client,
   erveDispatchId: string,
@@ -49,11 +54,11 @@ export async function getDispatchedQuantityForPair(
 ): Promise<number> {
   const dispatch = await client.erveDispatch.findUnique({ where: { id: erveDispatchId }, select: { ervePackingListId: true } });
   if (!dispatch) return 0;
-  const rows = await client.factoryDispatchLine.findMany({
-    where: { saleOrderLineId, factoryDispatch: { ervePackingSource: { ervePackingListId: dispatch.ervePackingListId } } },
-    select: { packedQuantity: true },
+  const rows = await client.factoryPackingCartonLine.findMany({
+    where: { saleOrderLineId, carton: { ervePackingListId: dispatch.ervePackingListId, retiredAt: null } },
+    select: { quantity: true },
   });
-  return rows.reduce((sum, row) => sum + row.packedQuantity, 0);
+  return rows.reduce((sum, row) => sum + row.quantity, 0);
 }
 
 export async function getReceivedQuantityForPair(

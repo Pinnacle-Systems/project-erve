@@ -1,15 +1,23 @@
 import { z } from 'zod';
 
 export const createErvePackingListSchema = z.object({
-  saleOrderId: z.string().trim().min(1),
-  factoryDispatchIds: z.array(z.string().trim().min(1)).min(1, 'At least one Factory Dispatch is required'),
+  cartonIds: z.array(z.string().trim().min(1)).min(1, 'At least one carton is required'),
+});
+
+export const addErvePackingListCartonsSchema = z.object({
+  cartonIds: z.array(z.string().trim().min(1)).min(1, 'At least one carton is required'),
 });
 
 export const listErvePackingListsQuerySchema = z.object({
   saleOrderId: z.string().trim().optional(),
-  status: z.enum(['OPEN', 'DISPATCHED']).optional(),
+  distributorId: z.string().trim().optional(),
+  status: z.enum(['OPEN', 'FINALIZED', 'DISPATCHED']).optional(),
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export const listEligibleCartonsQuerySchema = z.object({
+  ervePackingListId: z.string().trim().optional(),
 });
 
 export const recordErveDispatchSchema = z.object({

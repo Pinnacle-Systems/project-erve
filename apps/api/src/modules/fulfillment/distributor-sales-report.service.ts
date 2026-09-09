@@ -30,7 +30,8 @@ function resolveViewerDistributorScope(actor: CurrentUser, requestedDistributorI
 
 // ---------------------------------------------------------------------------
 // Sale-or-Return consignment position — derived, never independently
-// mutated. dispatchedQuantity sums FactoryDispatchLine.packedQuantity for
+// mutated. dispatchedQuantity sums FactoryPackingCartonLine.quantity (Phase
+// 6: the consolidated carton set, never FactoryDispatchLine) for
 // this (erveDispatchId, saleOrderLineId) pair; actualSoldQuantity sums
 // DistributorSalesReportLine.quantitySold (the ACTUAL SALE fact) for the
 // same pair. Purchase Mode is resolved through the COMMERCIAL chain
@@ -77,12 +78,18 @@ export async function listSaleOrReturnPositions(
   }
   const distributorId = resolveViewerDistributorScope(actor, filters.distributorId);
 
-  const lines = await prisma.factoryDispatchLine.findMany({
+  // Phase 6: sourced from consolidated carton contents (FactoryPackingCartonLine),
+  // never FactoryDispatchLine — a source FactoryDispatch may contribute
+  // cartons to several destination-specific Erve Packing Lists, so its
+  // whole-batch FactoryDispatchLine total is no longer a safe basis for
+  // "which Erve Dispatch was this line actually dispatched on."
+  const lines = await prisma.factoryPackingCartonLine.findMany({
     where: {
       saleOrderLine: { saleOrder: { distributor: { purchaseMode: 'SALE_RETURN' } } },
+      carton: { retiredAt: null },
     },
     select: {
-      packedQuantity: true,
+      quantity: true,
       saleOrderLine: {
         select: {
           id: true,
@@ -92,15 +99,11 @@ export async function listSaleOrReturnPositions(
           size: { select: { code: true, label: true } },
         },
       },
-      factoryDispatch: {
+      carton: {
         select: {
-          ervePackingSource: {
+          ervePackingList: {
             select: {
-              ervePackingList: {
-                select: {
-                  dispatch: { select: { id: true, erveDispatchNumber: true, dispatchDate: true } },
-                },
-              },
+              dispatch: { select: { id: true, erveDispatchNumber: true, dispatchDate: true } },
             },
           },
         },
@@ -110,7 +113,7 @@ export async function listSaleOrReturnPositions(
 
   const grouped = new Map<string, SaleOrReturnPositionRow>();
   for (const line of lines) {
-    const dispatch = line.factoryDispatch.ervePackingSource?.ervePackingList.dispatch;
+    const dispatch = line.carton.ervePackingList?.dispatch;
     if (!dispatch) continue; // packed but not yet Erve-dispatched — no consignment position exists yet
     const so = line.saleOrderLine.saleOrder;
     if (distributorId && so.distributor.id !== distributorId) continue;
@@ -118,7 +121,7 @@ export async function listSaleOrReturnPositions(
     const key = `${dispatch.id}:${line.saleOrderLine.id}`;
     const existing = grouped.get(key);
     if (existing) {
-      existing.dispatchedQuantity += line.packedQuantity;
+      existing.dispatchedQuantity += line.quantity;
       continue;
     }
     const sol = line.saleOrderLine;
@@ -134,7 +137,7 @@ export async function listSaleOrReturnPositions(
       styleName: sol.style.styleName,
       sizeCode: sol.size.code,
       sizeLabel: sol.size.label,
-      dispatchedQuantity: line.packedQuantity,
+      dispatchedQuantity: line.quantity,
       receivedQuantity: 0,
       actualSoldQuantity: 0,
       returnedQuantity: 0,

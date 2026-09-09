@@ -43,7 +43,8 @@ import { FactoryPackingQueuePage } from '../pages/fulfillment/FactoryPackingQueu
 import { FactoryDispatchDetailPage, PackingListPage } from '../pages/fulfillment/PackingListPage.js';
 import { PackingAuditQueuePage } from '../pages/fulfillment/PackingAuditQueuePage.js';
 import { PackingAuditCartonDetailPage } from '../pages/fulfillment/PackingAuditCartonDetailPage.js';
-import { ErvePendingFactoryDispatchesPage } from '../pages/fulfillment/ErvePendingFactoryDispatchesPage.js';
+import { ErvePackingListListPage } from '../pages/fulfillment/ErvePackingListListPage.js';
+import { ErvePackingListCreatePage } from '../pages/fulfillment/ErvePackingListCreatePage.js';
 import { ErvePackingListDetailPage } from '../pages/fulfillment/ErvePackingListDetailPage.js';
 import { ErveDispatchListPage } from '../pages/fulfillment/ErveDispatchListPage.js';
 import { ErveDispatchDetailPage } from '../pages/fulfillment/ErveDispatchDetailPage.js';
@@ -505,7 +506,8 @@ export function AppRoutes() {
           </RoleRoute>
         }
       >
-        <Route index element={<ErvePendingFactoryDispatchesPage />} />
+        <Route index element={<ErvePackingListListPage />} />
+        <Route path="new" element={<ErvePackingListCreatePage />} />
         <Route path=":id" element={<ErvePackingListDetailPage />} />
       </Route>
       <Route

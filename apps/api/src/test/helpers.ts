@@ -59,6 +59,11 @@ export async function resetDatabase(): Promise<void> {
   await prisma.distributorReturnLine.deleteMany();
   await prisma.distributorReturn.deleteMany();
   await prisma.erveDispatchDeliveryLine.deleteMany();
+  // Phase 6: FactoryPackingCarton.ervePackingListId is onDelete: Restrict
+  // against ErvePackingList — clear it before the ErvePackingList delete
+  // below (the carton rows themselves are cleared shortly after via
+  // TRUNCATE, so this is only about breaking the restrictive reference).
+  await prisma.$executeRawUnsafe('UPDATE "factory_packing_cartons" SET "erve_packing_list_id" = NULL');
   // Fulfillment rows must go before Sale Order/StockAllocation/Factory
   // below — every FK in this chain (ErveDispatch -> ErvePackingList ->
   // FactoryDispatch -> StockAllocation/SaleOrder/Factory) is onDelete:

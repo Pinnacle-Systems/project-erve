@@ -165,11 +165,115 @@ export async function packAndFinalize(
     .set('Authorization', `Bearer ${factoryToken}`)
     .send({ expectedVersion: created.body.data.factoryDispatch.version })
     .expect(200);
-  return finalized.body.data.factoryDispatch as {
+  return {
+    ...(finalized.body.data.factoryDispatch as { id: string; factoryDispatchNumber: string; status: string; version: number }),
+    cartonId,
+  };
+}
+
+/**
+ * Phase 6: consolidates one or more already-finalized (READY_FOR_ERVE),
+ * audited cartons — see packAndFinalize — into a new Erve Packing List,
+ * finalizes it, and records the physical Erve Dispatch, as a MERCHANDISER.
+ * Shared by every fixture downstream of "an Erve Dispatch exists"
+ * (delivery/Actual-Sales/Returns/sales-report/invoice-handoff tests) so they
+ * don't each re-derive the carton-consolidation flow.
+ */
+export async function consolidateAndDispatch(app: Express, merchToken: string, cartonIds: string[], dispatchDate = '2026-07-01') {
+  const created = await request(app)
+    .post('/erve-packing-lists')
+    .set('Authorization', `Bearer ${merchToken}`)
+    .send({ cartonIds })
+    .expect(201);
+  const ervePackingListId = created.body.data.id as string;
+
+  await request(app)
+    .post(`/erve-packing-lists/${ervePackingListId}/finalize`)
+    .set('Authorization', `Bearer ${merchToken}`)
+    .send({})
+    .expect(200);
+
+  const dispatched = await request(app)
+    .post('/erve-dispatches')
+    .set('Authorization', `Bearer ${merchToken}`)
+    .send({ ervePackingListId, dispatchDate })
+    .expect(201);
+
+  return dispatched.body.data as {
     id: string;
-    factoryDispatchNumber: string;
-    status: string;
+    erveDispatchNumber: string;
     version: number;
+    status: string;
+    ervePackingList: { id: string; ervePackingListNumber: string };
+  };
+}
+
+export interface ApprovedSaleOrderOptions {
+  distributorId?: string;
+  factoryId?: string;
+  quantity?: number;
+  purchaseMode?: 'OUTRIGHT' | 'SALE_RETURN';
+  destination?: {
+    addressLine1?: string;
+    addressLine2?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    postalCode?: string;
+  };
+}
+
+/**
+ * Generalized version of createSingleFactoryApprovedSaleOrder (Phase 6) that
+ * accepts an explicit distributorId/factoryId/destination so tests can build
+ * TWO Dispatch Orders that deliberately share (or deliberately differ on)
+ * Distributor/Factory/destination — needed to exercise cross-Dispatch-Order,
+ * cross-factory, same-destination and cross-distributor Erve consolidation
+ * scenarios (Phase 6 plan §6/§15).
+ */
+export async function createApprovedSaleOrder(app: Express, options: ApprovedSaleOrderOptions = {}) {
+  const quantity = options.quantity ?? 20;
+  const stock = await createReleasedQaStock({
+    distributorId: options.distributorId,
+    factoryId: options.factoryId,
+    quantity,
+    purchaseMode: options.purchaseMode,
+  });
+  const { token: merchToken } = await createRoleToken('MERCHANDISER');
+  const destination = {
+    addressLine1: 'Test Address',
+    city: 'Chennai',
+    state: 'TN',
+    country: 'India',
+    ...options.destination,
+  };
+  const created = await request(app)
+    .post('/sale-orders')
+    .set('Authorization', `Bearer ${merchToken}`)
+    .set('Idempotency-Key', createId())
+    .send({
+      distributorId: stock.distributorId,
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      destinations: [{ clientKey: 'd1', ...destination }],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity }],
+    })
+    .expect(201);
+
+  const saleOrder = created.body.data;
+  const line = saleOrder.lines[0];
+  const allocation = await prisma.stockAllocation.findFirstOrThrow({
+    where: { saleOrderLineId: line.id, status: 'ACTIVE' },
+  });
+  const distributorToken = await createDistributorToken(stock.distributorId);
+
+  return {
+    stock,
+    distributorToken,
+    merchToken,
+    saleOrder,
+    saleOrderLineId: line.id as string,
+    stockAllocationId: allocation.id,
   };
 }
 

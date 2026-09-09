@@ -6,6 +6,7 @@ import { prisma } from '../../db/prisma.js';
 import { resetDatabase } from '../../test/helpers.js';
 
 import {
+  consolidateAndDispatch,
   createDistributorToken,
   createFactoryUserToken,
   createRoleToken,
@@ -29,22 +30,13 @@ async function dispatchFixture(quantity = 20, purchaseMode: 'OUTRIGHT' | 'SALE_R
     fixture.saleOrder.destinations[0].id,
     quantity,
   );
-  const packingList = await request(app)
-    .post('/erve-packing-lists')
-    .set('Authorization', `Bearer ${fixture.merchToken}`)
-    .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [factoryDispatch.id] })
-    .expect(201);
-  const dispatch = await request(app)
-    .post('/erve-dispatches')
-    .set('Authorization', `Bearer ${fixture.merchToken}`)
-    .send({ ervePackingListId: packingList.body.data.id, dispatchDate: '2026-07-01' })
-    .expect(201);
+  const dispatch = await consolidateAndDispatch(app, fixture.merchToken, [factoryDispatch.cartonId]);
 
   const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
   const distributorToken = await createDistributorToken(fixture.stock.distributorId);
-  const handoff = await prisma.invoiceHandoff.findFirstOrThrow({ where: { erveDispatchId: dispatch.body.data.id } });
+  const handoff = await prisma.invoiceHandoff.findFirstOrThrow({ where: { erveDispatchId: dispatch.id } });
 
-  return { fixture, factoryToken, dispatch: dispatch.body.data, handoffId: handoff.id, accountantToken, distributorToken };
+  return { fixture, factoryToken, dispatch, handoffId: handoff.id, accountantToken, distributorToken };
 }
 
 describe('Invoice Handoff — "Dispatch Sale" automatic creation (both Purchase Modes)', () => {

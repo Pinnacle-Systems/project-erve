@@ -360,11 +360,17 @@ export async function getFactoryDispatchList(
   const scope = resolveActorFactoryScope(actor);
   const factoryId = scope ?? filters.factoryId;
 
+  // Phase 6: "consolidated" is now carton-level (a Factory Dispatch's
+  // cartons may be split across several destination-specific Erve Packing
+  // Lists — see FactoryPackingCarton.ervePackingListId) rather than the
+  // legacy whole-batch ErvePackingListSource join, which the carton-based
+  // flow never writes to. unconsolidatedOnly means "has at least one active
+  // carton not yet claimed by any Erve Packing List".
   const where: Prisma.FactoryDispatchWhereInput = {
     factoryId,
     status: filters.status,
     saleOrderId: filters.saleOrderId,
-    ervePackingSource: filters.unconsolidatedOnly ? null : undefined,
+    cartons: filters.unconsolidatedOnly ? { some: { retiredAt: null, ervePackingListId: null } } : undefined,
   };
 
   const records = await prisma.factoryDispatch.findMany({
@@ -379,7 +385,7 @@ export async function getFactoryDispatchList(
       saleOrderId: true,
       factory: { select: { id: true, code: true, name: true } },
       saleOrder: { select: { id: true, saleOrderNumber: true, distributor: { select: { id: true, code: true, name: true } } } },
-      ervePackingSource: { select: { id: true } },
+      cartons: { where: { retiredAt: null }, select: { ervePackingListId: true } },
     },
     orderBy: { id: 'desc' },
     take: filters.limit + 1,
@@ -398,7 +404,7 @@ export async function getFactoryDispatchList(
       version: record.version,
       preparedAt: record.preparedAt.toISOString(),
       finalizedAt: record.finalizedAt?.toISOString() ?? null,
-      consolidated: record.ervePackingSource !== null,
+      consolidated: record.cartons.length > 0 && record.cartons.every((c) => c.ervePackingListId !== null),
     })),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };

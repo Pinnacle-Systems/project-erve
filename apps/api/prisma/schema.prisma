@@ -308,6 +308,7 @@ model User {
   retiredFactoryPackingCartons         FactoryPackingCarton[]      @relation("FactoryPackingCartonRetirer")
   inspectedFactoryPackingCartonAudits  FactoryPackingCartonAudit[] @relation("FactoryPackingCartonAuditInspector")
   createdErvePackingLists              ErvePackingList[]          @relation("ErvePackingListCreator")
+  finalizedErvePackingLists            ErvePackingList[]          @relation("ErvePackingListFinalizer")
   dispatchedErveDispatches             ErveDispatch[]             @relation("ErveDispatchDispatcher")
   lrUpdatedErveDispatches              ErveDispatch[]             @relation("ErveDispatchLrUpdater")
   deliveredErveDispatches              ErveDispatch[]             @relation("ErveDispatchDeliveryConfirmer")
@@ -398,6 +399,7 @@ model Distributor {
   priceLists         PriceList[]
   purchaseOrders     DistributorPurchaseOrder[]
   saleOrders         SaleOrder[]
+  ervePackingLists   ErvePackingList[]
   erveDispatches     ErveDispatch[]
   salesReports       DistributorSalesReport[]
   distributorReturns DistributorReturn[]
@@ -1336,6 +1338,7 @@ model SaleOrderDestination {
   saleOrder SaleOrder              @relation(fields: [saleOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   lines     SaleOrderLine[]
   cartons   FactoryPackingCarton[]
+  ervePackingListOrigins ErvePackingList[]
 
   @@index([saleOrderId])
   @@map("sale_order_destinations")
@@ -1515,10 +1518,23 @@ model FactoryDispatchLine {
 // and the current Packing List/print, but its audit history remains
 // queryable. A never-audited carton is hard-deleted instead (no retirement
 // needed).
+//
+// Phase 6: ervePackingListId is the physical no-double-dispatch authority —
+// a plain nullable FK rather than a join table, since a scalar column is
+// already single-valued (a carton can only ever point at one Erve Packing
+// List at a time, which IS "at most one Erve Dispatch" — Phase 6 plan §8).
+// Claiming a carton (setting this from null to an id) is done via a
+// WHERE ervePackingListId IS NULL guarded UPDATE inside the owning
+// transaction (see erve-dispatch.service.ts), so Postgres's own row-level
+// locking serializes concurrent claims without needing a separate advisory
+// lock per carton. Setting/clearing this deliberately never bumps `version`
+// — it is not one of the material-content changes that invalidate a
+// FactoryPackingCartonAudit.
 model FactoryPackingCarton {
   id                String    @id
   factoryDispatchId String    @map("factory_dispatch_id")
   destinationId     String    @map("destination_id")
+  ervePackingListId String?   @map("erve_packing_list_id")
   cartonNumber      String    @map("carton_number")
   packageDetails    String?   @map("package_details")
   weight            Decimal?  @db.Decimal(10, 3)
@@ -1531,6 +1547,7 @@ model FactoryPackingCarton {
 
   factoryDispatch FactoryDispatch            @relation(fields: [factoryDispatchId], references: [id], onDelete: Cascade)
   destination     SaleOrderDestination       @relation(fields: [destinationId], references: [id], onDelete: Restrict)
+  ervePackingList ErvePackingList?           @relation(fields: [ervePackingListId], references: [id], onDelete: Restrict)
   createdBy       User                       @relation("FactoryPackingCartonCreator", fields: [createdById], references: [id], onDelete: Restrict)
   retiredBy       User?                      @relation("FactoryPackingCartonRetirer", fields: [retiredById], references: [id], onDelete: Restrict)
   lines           FactoryPackingCartonLine[]
@@ -1538,6 +1555,7 @@ model FactoryPackingCarton {
 
   @@unique([factoryDispatchId, cartonNumber])
   @@index([factoryDispatchId, destinationId])
+  @@index([ervePackingListId])
   @@map("factory_packing_cartons")
 }
 
@@ -1665,38 +1683,94 @@ model FactoryInvoiceLine {
 
 enum ErvePackingListStatus {
   OPEN
+  FINALIZED
   DISPATCHED
 }
 
-// Erve India's consolidation of one or more finalized (READY_FOR_ERVE)
-// Factory Dispatch batches, scoped to a single Sale Order for MVP (see
-// module doc). Line-level contents are deliberately NOT duplicated here —
-// they are derived by joining ErvePackingListSource -> FactoryDispatch ->
-// FactoryDispatchLine, so there is exactly one packed-quantity ledger.
+// Erve India's destination-specific Consolidated Packing List (Phase 6):
+// consolidates individually-selected, already-audited FactoryPackingCarton
+// rows — never whole FactoryDispatch batches — and may draw cartons from
+// several Dispatch Orders/factories as long as every carton resolves to the
+// SAME physical destination (see destinationMatchKey below) and the SAME
+// distributorId. Carton membership lives on FactoryPackingCarton.
+// ervePackingListId (the physical authority — Phase 6 plan §8), so there is
+// exactly one packed-quantity ledger: FactoryPackingCartonLine.
+//
+// saleOrderId is now OPTIONAL and legacy-only: pre-Phase-6 rows were scoped
+// to exactly one Dispatch Order and keep that value; every row created by
+// the carton-based flow leaves it null because one Consolidated Packing List
+// may legitimately span several Dispatch Orders (see sourceDispatchOrders,
+// derived on read from selected carton provenance — never stored, to avoid a
+// second maintained list). distributorId, by contrast, IS first-class and
+// required going forward — it is the commercial-owner safety boundary
+// (Phase 6 plan §15): every carton added must match it, independent of
+// address matching, since a matching address never implies a matching
+// distributor.
+//
+// destination* fields are a snapshot taken from the FIRST carton's
+// SaleOrderDestination at creation — never a live dependency on that
+// (mutable-until-Dispatch-Order-lock, Dispatch-Order-owned) row, since a
+// Consolidated Packing List's destination is now a cross-order business fact
+// of its own. destinationMatchKey is the normalized comparison key (see
+// erve-dispatch.service.ts destinationMatchKeyOf) used to admit further
+// cartons and to query eligible cartons for this same physical destination —
+// deliberately NOT the free-text label, and deliberately not a comparison of
+// live SaleOrderDestination row identity (which would make cross-Dispatch-
+// Order consolidation impossible, since every Dispatch Order owns its own
+// destination rows even for an identical physical address). originDestinationId
+// is kept purely for traceability/display back to that first carton's source
+// row — it must never be used for eligibility/matching logic.
 model ErvePackingList {
   id                    String                @id
   ervePackingListNumber String                @unique @map("erve_packing_list_number")
-  saleOrderId           String                @map("sale_order_id")
+  saleOrderId           String?               @map("sale_order_id")
+  distributorId         String?               @map("distributor_id")
+  originDestinationId   String?               @map("origin_destination_id")
+  destinationMatchKey   String?               @map("destination_match_key")
+  destinationLabel      String?               @map("destination_label")
+  destinationContactName  String?             @map("destination_contact_name")
+  destinationContactEmail String?             @map("destination_contact_email")
+  destinationContactPhone String?             @map("destination_contact_phone")
+  destinationAddressLine1 String?             @map("destination_address_line1")
+  destinationAddressLine2 String?             @map("destination_address_line2")
+  destinationCity         String?             @map("destination_city")
+  destinationState        String?             @map("destination_state")
+  destinationCountry      String?             @map("destination_country")
+  destinationPostalCode   String?             @map("destination_postal_code")
   status                ErvePackingListStatus @default(OPEN)
   createdById           String                @map("created_by_id")
   createdAt             DateTime              @default(now()) @map("created_at")
+  finalizedById         String?               @map("finalized_by_id")
+  finalizedAt           DateTime?             @map("finalized_at")
   financialYearId       String                @map("financial_year_id")
   ervePackingListSerial Int                   @map("erve_packing_list_serial")
 
-  saleOrder     SaleOrder               @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
-  createdBy     User                    @relation("ErvePackingListCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  financialYear FinancialYear           @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
-  sources       ErvePackingListSource[]
-  dispatch      ErveDispatch?
+  saleOrder         SaleOrder?              @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
+  distributor       Distributor?            @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  originDestination SaleOrderDestination?   @relation(fields: [originDestinationId], references: [id], onDelete: Restrict)
+  createdBy         User                    @relation("ErvePackingListCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  finalizedBy       User?                   @relation("ErvePackingListFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict)
+  financialYear     FinancialYear           @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  sources           ErvePackingListSource[]
+  cartons           FactoryPackingCarton[]
+  dispatch          ErveDispatch?
 
   @@unique([financialYearId, ervePackingListSerial])
   @@index([saleOrderId, status])
+  @@index([distributorId, status])
   @@map("erve_packing_lists")
 }
 
-// Join of exactly which finalized Factory Dispatch batches were consolidated
-// into this Erve Packing List. factoryDispatchId is unique — a Factory
-// Dispatch may be consumed into at most one Erve Packing List, ever.
+// Legacy-only: join of whole finalized Factory Dispatch batches consolidated
+// into a pre-Phase-6 Erve Packing List. The Phase 6 carton-based flow never
+// writes new rows here (a single FactoryDispatch's cartons may now be split
+// across several destination-specific Packing Lists — see
+// FactoryPackingCarton.ervePackingListId — so "this FactoryDispatch is
+// entirely inside this Packing List" is no longer a safe inference and this
+// join must never again be read as implying whole-batch inclusion). Kept
+// only so historical rows keep their existing provenance display;
+// factoryDispatchId's uniqueness constraint is harmless going forward since
+// nothing new is ever inserted here.
 model ErvePackingListSource {
   id                String   @id
   ervePackingListId String   @map("erve_packing_list_id")
@@ -1734,11 +1808,17 @@ enum DeliveryConfirmationSource {
 // vehicleNumber may be filled in later via the LR-update fallback action
 // (lrUpdatedById/At) since the LR is often issued by the transporter only
 // after physical pickup.
+//
+// saleOrderId is optional for the same reason as ErvePackingList.saleOrderId
+// (Phase 6): a Phase-6-created Dispatch may consolidate cartons from several
+// Dispatch Orders, so there is no longer always a single owning Sale Order.
+// distributorId remains required — every Erve Dispatch still has exactly
+// one commercial owner, snapshotted from its Erve Packing List at creation.
 model ErveDispatch {
   id                         String                      @id
   erveDispatchNumber         String                      @unique @map("erve_dispatch_number")
   ervePackingListId          String                      @unique @map("erve_packing_list_id")
-  saleOrderId                String                      @map("sale_order_id")
+  saleOrderId                String?                     @map("sale_order_id")
   distributorId              String                      @map("distributor_id")
   status                     ErveDispatchStatus          @default(DISPATCHED)
   dispatchDate               DateTime                    @map("dispatch_date") @db.Date
@@ -1766,7 +1846,7 @@ model ErveDispatch {
   erveDispatchSerial         Int                         @map("erve_dispatch_serial")
 
   ervePackingList             ErvePackingList              @relation(fields: [ervePackingListId], references: [id], onDelete: Restrict)
-  saleOrder                   SaleOrder                    @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
+  saleOrder                   SaleOrder?                   @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
   distributor                 Distributor                  @relation(fields: [distributorId], references: [id], onDelete: Restrict)
   dispatchedBy                User                         @relation("ErveDispatchDispatcher", fields: [dispatchedById], references: [id], onDelete: Restrict)
   lrUpdatedBy                 User?                        @relation("ErveDispatchLrUpdater", fields: [lrUpdatedById], references: [id], onDelete: Restrict)

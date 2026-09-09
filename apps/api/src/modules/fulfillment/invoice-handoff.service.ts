@@ -120,14 +120,14 @@ export async function createInvoiceHandoffsForDispatch(
   erveDispatchNumber: string,
   ervePackingListId: string,
 ): Promise<void> {
-  const lines = await tx.factoryDispatchLine.findMany({
-    where: { factoryDispatch: { ervePackingSource: { ervePackingListId } } },
-    select: { saleOrderLineId: true, packedQuantity: true },
+  const lines = await tx.factoryPackingCartonLine.findMany({
+    where: { carton: { ervePackingListId, retiredAt: null } },
+    select: { saleOrderLineId: true, quantity: true },
   });
 
   const quantityBySaleOrderLine = new Map<string, number>();
   for (const line of lines) {
-    quantityBySaleOrderLine.set(line.saleOrderLineId, (quantityBySaleOrderLine.get(line.saleOrderLineId) ?? 0) + line.packedQuantity);
+    quantityBySaleOrderLine.set(line.saleOrderLineId, (quantityBySaleOrderLine.get(line.saleOrderLineId) ?? 0) + line.quantity);
   }
 
   for (const [saleOrderLineId, quantity] of quantityBySaleOrderLine) {

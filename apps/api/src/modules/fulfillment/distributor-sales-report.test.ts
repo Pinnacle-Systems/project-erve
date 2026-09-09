@@ -6,6 +6,7 @@ import { prisma } from '../../db/prisma.js';
 import { resetDatabase } from '../../test/helpers.js';
 import {
   confirmErveDispatchDelivery,
+  consolidateAndDispatch,
   createDistributorToken,
   createFactoryUserToken,
   createRoleToken,
@@ -29,22 +30,13 @@ async function saleReturnDispatchFixture(quantity = 100) {
     fixture.saleOrder.destinations[0].id,
     quantity,
   );
-  const packingList = await request(app)
-    .post('/erve-packing-lists')
-    .set('Authorization', `Bearer ${fixture.merchToken}`)
-    .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [factoryDispatch.id] })
-    .expect(201);
-  const dispatch = await request(app)
-    .post('/erve-dispatches')
-    .set('Authorization', `Bearer ${fixture.merchToken}`)
-    .send({ ervePackingListId: packingList.body.data.id, dispatchDate: '2026-07-01' })
-    .expect(201);
-  const delivered = await confirmErveDispatchDelivery(app, fixture.merchToken, dispatch.body.data.id, dispatch.body.data.version, [
+  const dispatch = await consolidateAndDispatch(app, fixture.merchToken, [factoryDispatch.cartonId]);
+  const delivered = await confirmErveDispatchDelivery(app, fixture.merchToken, dispatch.id, dispatch.version, [
     { saleOrderLineId: fixture.saleOrderLineId, receivedQuantity: quantity },
   ]);
 
   const distributorToken = await createDistributorToken(fixture.stock.distributorId);
-  const dispatchSaleHandoff = await prisma.invoiceHandoff.findFirstOrThrow({ where: { erveDispatchId: dispatch.body.data.id } });
+  const dispatchSaleHandoff = await prisma.invoiceHandoff.findFirstOrThrow({ where: { erveDispatchId: dispatch.id } });
   return { fixture, distributorToken, dispatch: delivered.body.data, dispatchSaleHandoff };
 }
 
@@ -221,17 +213,8 @@ describe('Distributor Sales Reporting (Actual Sale) — Sale-or-Return position'
       fixture.saleOrder.destinations[0].id,
       20,
     );
-    const packingList = await request(app)
-      .post('/erve-packing-lists')
-      .set('Authorization', `Bearer ${fixture.merchToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [factoryDispatch.id] })
-      .expect(201);
-    const dispatch = await request(app)
-      .post('/erve-dispatches')
-      .set('Authorization', `Bearer ${fixture.merchToken}`)
-      .send({ ervePackingListId: packingList.body.data.id, dispatchDate: '2026-07-01' })
-      .expect(201);
-    await confirmErveDispatchDelivery(app, fixture.merchToken, dispatch.body.data.id, dispatch.body.data.version, [
+    const dispatch = await consolidateAndDispatch(app, fixture.merchToken, [factoryDispatch.cartonId]);
+    await confirmErveDispatchDelivery(app, fixture.merchToken, dispatch.id, dispatch.version, [
       { saleOrderLineId: fixture.saleOrderLineId, receivedQuantity: 20 },
     ]);
     const distributorToken = await createDistributorToken(fixture.stock.distributorId);
@@ -242,7 +225,7 @@ describe('Distributor Sales Reporting (Actual Sale) — Sale-or-Return position'
       .send({
         distributorId: fixture.stock.distributorId,
         reportDate: '2026-08-01',
-        lines: [{ erveDispatchId: dispatch.body.data.id, saleOrderLineId: fixture.saleOrderLineId, quantitySold: 5 }],
+        lines: [{ erveDispatchId: dispatch.id, saleOrderLineId: fixture.saleOrderLineId, quantitySold: 5 }],
       })
       .expect(400);
   });

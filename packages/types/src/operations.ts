@@ -224,7 +224,7 @@ export interface SaleOrderDetail extends SaleOrderSummary {
 // ---------------------------------------------------------------------------
 
 export type FactoryDispatchStatus = 'DRAFT' | 'READY_FOR_ERVE';
-export type ErvePackingListStatus = 'OPEN' | 'DISPATCHED';
+export type ErvePackingListStatus = 'OPEN' | 'FINALIZED' | 'DISPATCHED';
 export type ErveDispatchStatus = 'DISPATCHED' | 'DELIVERED';
 export type DeliveryConfirmationSource = 'USER_CONFIRMED' | 'LEGACY_ASSUMED_FULL_RECEIPT';
 
@@ -421,34 +421,84 @@ export interface PackingAuditQueueItem extends FactoryPackingCartonView {
   saleOrder: { id: string; saleOrderNumber: string };
 }
 
-export interface ErvePackingListSourceView {
+/** Phase 6: cartons individually selected for Erve consolidation, filterable/groupable client-side by factory/Dispatch Order/destination — never a StockAllocation/Job Order id (Phase 6 plan §7). */
+export interface EligibleErveCartonView {
+  id: string;
+  cartonNumber: string;
+  factory: { id: string; code: string; name: string };
   factoryDispatchId: string;
   factoryDispatchNumber: string;
-  factory: { id: string; code: string; name: string };
-  lines: FactoryDispatchLineView[];
-  cartons: Array<{
-    id: string;
-    cartonNumber: string;
-    destinationId: string;
-    packageDetails: string | null;
-    weight: string | null;
-    createdAt: string;
-    lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>;
-  }>;
+  saleOrder: { id: string; saleOrderNumber: string };
+  distributor: { id: string; code: string; name: string };
+  destination: { id: string; label: string | null; city: string; state: string };
+  packageDetails: string | null;
+  weight: string | null;
+  totalQuantity: number;
+  lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>;
 }
 
+/** A carton consolidated into one Erve Packing List — the physical authority for the Consolidated Packing List (Phase 6 plan §7/§8). */
+export interface ErvePackingListCartonView {
+  id: string;
+  cartonNumber: string;
+  factory: { id: string; code: string; name: string };
+  factoryDispatchId: string;
+  factoryDispatchNumber: string;
+  saleOrder: { id: string; saleOrderNumber: string };
+  packageDetails: string | null;
+  weight: string | null;
+  totalQuantity: number;
+  lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>;
+}
+
+export interface ErvePackingListDestinationSnapshot {
+  label: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  postalCode: string | null;
+}
+
+export interface ErvePackingListStyleSizeSummaryRow {
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  quantity: number;
+}
+
+/**
+ * Erve India's destination-specific Consolidated Packing List (Phase 6).
+ * saleOrder is legacy-only and may be null — a Consolidated Packing List may
+ * now draw cartons from several Dispatch Orders, so sourceDispatchOrders
+ * (derived from the selected cartons) is the general-purpose replacement.
+ */
 export interface ErvePackingListSummary {
   id: string;
   ervePackingListNumber: string;
-  saleOrder: { id: string; saleOrderNumber: string; distributor: { id: string; code: string; name: string } };
+  distributor: { id: string; code: string; name: string } | null;
+  saleOrder: { id: string; saleOrderNumber: string } | null;
+  destination: ErvePackingListDestinationSnapshot;
   status: ErvePackingListStatus;
   createdBy: { id: string; name: string; email: string };
   createdAt: string;
+  cartonCount: number;
   totalQuantity: number;
+  sourceFactories: Array<{ id: string; code: string; name: string }>;
+  sourceDispatchOrders: Array<{ id: string; saleOrderNumber: string }>;
+  dispatch: { id: string; erveDispatchNumber: string; status: ErveDispatchStatus } | null;
 }
 
 export interface ErvePackingListDetail extends ErvePackingListSummary {
-  sources: ErvePackingListSourceView[];
+  finalizedBy: { id: string; name: string; email: string } | null;
+  finalizedAt: string | null;
+  cartons: ErvePackingListCartonView[];
+  styleSizeSummary: ErvePackingListStyleSizeSummaryRow[];
 }
 
 /**
@@ -493,7 +543,7 @@ export interface ErveDispatchView extends VersionedResource {
   id: string;
   erveDispatchNumber: string;
   ervePackingList: { id: string; ervePackingListNumber: string };
-  saleOrder: { id: string; saleOrderNumber: string };
+  saleOrder: { id: string; saleOrderNumber: string } | null;
   distributor: { id: string; code: string; name: string };
   status: ErveDispatchStatus;
   dispatchDate: string;

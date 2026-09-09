@@ -6,6 +6,7 @@ import { prisma } from '../../db/prisma.js';
 import { resetDatabase } from '../../test/helpers.js';
 import {
   confirmErveDispatchDelivery,
+  consolidateAndDispatch,
   createDistributorToken,
   createFactoryUserToken,
   createRoleToken,
@@ -29,17 +30,8 @@ async function dispatchedFixture(quantity = 100, purchaseMode: 'OUTRIGHT' | 'SAL
     fixture.saleOrder.destinations[0].id,
     quantity,
   );
-  const packingList = await request(app)
-    .post('/erve-packing-lists')
-    .set('Authorization', `Bearer ${fixture.merchToken}`)
-    .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [factoryDispatch.id] })
-    .expect(201);
-  const dispatch = await request(app)
-    .post('/erve-dispatches')
-    .set('Authorization', `Bearer ${fixture.merchToken}`)
-    .send({ ervePackingListId: packingList.body.data.id, dispatchDate: '2026-07-01' })
-    .expect(201);
-  return { fixture, dispatch: dispatch.body.data };
+  const dispatch = await consolidateAndDispatch(app, fixture.merchToken, [factoryDispatch.cartonId]);
+  return { fixture, dispatch };
 }
 
 describe('Erve Dispatch delivery confirmation', () => {

@@ -5,8 +5,10 @@ import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
 import {
+  addErvePackingListCartonsSchema,
   confirmErveDispatchDeliverySchema,
   createErvePackingListSchema,
+  listEligibleCartonsQuerySchema,
   listErveDispatchesQuerySchema,
   listErvePackingListsQuerySchema,
   recordErveDispatchSchema,
@@ -30,6 +32,16 @@ ervePackingListsRouter.get(
   }),
 );
 
+ervePackingListsRouter.get(
+  '/eligible-cartons',
+  canMutatePackingLists,
+  asyncHandler(async (req, res) => {
+    const filters = listEligibleCartonsQuerySchema.parse(req.query);
+    const result = await erveDispatchService.getEligibleErveCartons(req.user!, filters);
+    res.status(200).json(successResponse(result));
+  }),
+);
+
 ervePackingListsRouter.post(
   '/',
   canMutatePackingLists,
@@ -45,6 +57,34 @@ ervePackingListsRouter.get(
   canViewPackingLists,
   asyncHandler(async (req, res) => {
     const packingList = await erveDispatchService.getErvePackingListDetail(req.user!, req.params.id! as string);
+    res.status(200).json(successResponse(packingList));
+  }),
+);
+
+ervePackingListsRouter.post(
+  '/:id/cartons',
+  canMutatePackingLists,
+  asyncHandler(async (req, res) => {
+    const input = addErvePackingListCartonsSchema.parse(req.body);
+    const packingList = await erveDispatchService.addErvePackingListCartons(req.user!, req.params.id! as string, input.cartonIds);
+    res.status(200).json(successResponse(packingList));
+  }),
+);
+
+ervePackingListsRouter.delete(
+  '/:id/cartons/:cartonId',
+  canMutatePackingLists,
+  asyncHandler(async (req, res) => {
+    const packingList = await erveDispatchService.removeErvePackingListCarton(req.user!, req.params.id! as string, req.params.cartonId! as string);
+    res.status(200).json(successResponse(packingList));
+  }),
+);
+
+ervePackingListsRouter.post(
+  '/:id/finalize',
+  canMutatePackingLists,
+  asyncHandler(async (req, res) => {
+    const packingList = await erveDispatchService.finalizeErvePackingList(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(packingList));
   }),
 );

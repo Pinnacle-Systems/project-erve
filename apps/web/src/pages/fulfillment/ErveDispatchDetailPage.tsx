@@ -78,7 +78,7 @@ export function ErveDispatchDetailPage() {
     <div className="space-y-6">
       <PageHeader
         title={dispatch.erveDispatchNumber}
-        subtitle={`${dispatch.saleOrder.saleOrderNumber} · ${dispatch.distributor.name}`}
+        subtitle={`${dispatch.saleOrder?.saleOrderNumber ?? 'Multiple Dispatch Orders'} · ${dispatch.distributor.name}`}
         status={
           dispatch.status === 'DELIVERED' ? (
             <StatusBadge label="Delivered" tone="posted" />

@@ -50,11 +50,11 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
       .send({ expectedVersion: carton1.body.data.factoryDispatch.version })
       .expect(400); // only 40/100 packed, and C1 not yet audited
 
-    // --- Erve cannot consolidate a DRAFT (not finalized) dispatch either ---
+    // --- Erve cannot consolidate a carton whose Factory Dispatch is still DRAFT (not finalized) ---
     await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${merchToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [factoryDispatchId] })
+      .send({ cartonIds: [carton1Id] })
       .expect(400);
 
     // Factory's queue still shows the remaining 60.
@@ -110,13 +110,18 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
       .expect(200);
     expect(queueFinal.body.data).toHaveLength(0);
 
-    // --- Erve consolidates the single packing root and dispatches it in full ---
+    // --- Erve consolidates both cartons from the single packing root and dispatches them in full ---
     const packingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${merchToken}`)
-      .send({ saleOrderId: fixture.saleOrder.id, factoryDispatchIds: [factoryDispatchId] })
+      .send({ cartonIds: [carton1Id, carton2Id] })
       .expect(201);
     expect(packingList.body.data.totalQuantity).toBe(100);
+
+    await request(app)
+      .post(`/erve-packing-lists/${packingList.body.data.id}/finalize`)
+      .set('Authorization', `Bearer ${merchToken}`)
+      .expect(200);
 
     const erveDispatch = await request(app)
       .post('/erve-dispatches')
