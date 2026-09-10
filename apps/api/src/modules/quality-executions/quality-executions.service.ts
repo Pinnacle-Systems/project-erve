@@ -624,28 +624,24 @@ function eligible(
         BigInt(Math.round(Number(activity.progressThresholdPercent) * 100))
     );
   if (activity.qualityExecutionMode === 'SEQUENTIAL_GATE') {
-    const prior = [...jobOrder.processFlowVersion.stages]
+    // SEQUENTIAL_GATE quality activities are only ever gated by the nearest
+    // preceding PRODUCTION stage (or factory confirmation, if none precedes
+    // them). Other quality gates sharing the same pre-production slot (e.g.
+    // PP Sample and PPM) are deliberately excluded here so they remain
+    // independent, parallel gates rather than chaining off one another.
+    const priorProduction = [...jobOrder.processFlowVersion.stages]
       .filter(
         (candidate) =>
           candidate.sequence < activity.sequence &&
           candidate.status === 'ACTIVE' &&
-          (candidate.activityType === 'PRODUCTION' ||
-            candidate.qualityExecutionMode === 'SEQUENTIAL_GATE'),
+          candidate.activityType === 'PRODUCTION',
       )
       .sort((a, b) => b.sequence - a.sequence)[0];
-    if (!prior) return jobOrder.factoryConfirmationStatus === 'CONFIRMED';
-    if (prior.activityType === 'PRODUCTION')
-      return jobOrder.stageStatuses.some(
-        (runtime) =>
-          runtime.processFlowVersionStageId === prior.id && runtime.status === 'COMPLETED',
-      );
-    const priorExecutions = jobOrder.qualityExecutions.filter(
-      (candidate) =>
-        candidate.processFlowActivityId === prior.id && candidate.status === 'FINALIZED',
+    if (!priorProduction) return jobOrder.factoryConfirmationStatus === 'CONFIRMED';
+    return jobOrder.stageStatuses.some(
+      (runtime) =>
+        runtime.processFlowVersionStageId === priorProduction.id && runtime.status === 'COMPLETED',
     );
-    return prior.gateSatisfactionRequirement === 'OUTCOME_PASS'
-      ? priorExecutions.some((candidate) => candidate.outcome === 'PASS')
-      : priorExecutions.length > 0;
   }
   return false;
 }

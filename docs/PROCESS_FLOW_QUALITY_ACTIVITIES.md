@@ -23,7 +23,7 @@ The seed/master-data convention configures `ERVE_PRODUCTION_QUALITY` version 1 a
 7. FINISHING — Production
 8. FINAL INSPECTION — Quality, FINAL form, `JOB_ORDER`, `IN_PROCESS`, `BATCHED`, associated with Sewing, `AFTER_ASSOCIATED_ACTIVITY_COMPLETES`, `PREPARED_QUANTITY`
 
-Factory acknowledgement makes PP Sample available. A PP Sample execution chooses one Job Order size and a positive quantity and bridges to exactly one ERVE-015 size form. Its QA PASS/FAIL is explicit. FAIL preserves the finalized cycle and permits an explicit new cycle; a later finalized PASS satisfies the gate. PPM then becomes available, and its finalization unlocks Cutting.
+Factory acknowledgement makes PP Sample and PPM independently available at the same time, as two parallel pre-production gates — neither's availability, starting, editing, or finalization depends on the other's lifecycle or result. A PP Sample execution chooses one Job Order size and a positive quantity and bridges to exactly one ERVE-015 size form. Its QA PASS/FAIL is explicit. FAIL preserves the finalized cycle and permits an explicit new cycle; a later finalized PASS satisfies the gate. PPM has no PASS/FAIL; it is satisfied by successful finalization of its required form data. Cutting is locked until both gates are independently satisfied: PP Sample finalized PASS, and PPM finalized. Failure or incompleteness of either gate continues to block Cutting regardless of the other gate's state.
 
 `attemptNumber` is the PP Sample cycle number. PP Sample cycles always use batch 1. Final Inspection currently remains attempt 1 and uses independent, increasing batch numbers. This separation reserves future Final reinspection attempts without conflating attempts and physical batches.
 

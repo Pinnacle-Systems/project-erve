@@ -503,6 +503,169 @@ async function finalizeStartedPp(
     .expect(200);
 }
 
+async function confirmFactory(f: Awaited<ReturnType<typeof workflow>>) {
+  return prisma.jobOrder.update({
+    where: { id: f.job.id },
+    data: { status: 'CONFIRMED_BY_FACTORY', factoryConfirmationStatus: 'CONFIRMED' },
+  });
+}
+
+function startPpm(f: Awaited<ReturnType<typeof workflow>>) {
+  return request(app)
+    .post(`/job-orders/${f.job.id}/quality-activities/${f.ppm.id}/executions`)
+    .set('Authorization', `Bearer ${f.qa.token}`)
+    .send({});
+}
+
+function ppmPayload(f: Awaited<ReturnType<typeof workflow>>, expectedVersion: number) {
+  return {
+    expectedVersion,
+    checklistResponses: [],
+    aqlResults: [],
+    defects: [],
+    correctiveActions: [],
+    testResults: [],
+    quantities: [],
+    comments: [],
+    fieldResponses: [{ componentId: f.fieldId, fieldKey: 'meetingDate', value: '2026-08-18' }],
+    attendees: [{ componentId: f.attendeeId, roleKey: 'QA', attendeeName: 'Inspector One' }],
+    actions: [
+      { componentId: f.actionId, values: { action: 'Confirm trims', settleDate: '2026-08-19' } },
+    ],
+    signoffs: [],
+    outcome: null,
+  };
+}
+
+async function completePpm(f: Awaited<ReturnType<typeof workflow>>) {
+  const started = await startPpm(f).expect(201);
+  await request(app)
+    .post(`/quality-executions/${started.body.data.id}/finalize`)
+    .set('Authorization', `Bearer ${f.qa.token}`)
+    .send(ppmPayload(f, started.body.data.version))
+    .expect(200);
+  return started.body.data;
+}
+
+function attemptStartCutting(f: Awaited<ReturnType<typeof workflow>>) {
+  const cuttingRuntime = f.job.stageStatuses.find(
+    (stage) => stage.processFlowVersionStageId === f.cutting.id,
+  )!;
+  return request(app)
+    .post(`/job-orders/${f.job.id}/actions/start-stage`)
+    .set('Authorization', `Bearer ${f.factoryUser.token}`)
+    .set('Idempotency-Key', createId())
+    .send({ expectedVersion: f.job.version, stageStatusId: cuttingRuntime.id });
+}
+
+async function qualityActivity(
+  f: Awaited<ReturnType<typeof workflow>>,
+  processFlowVersionStageId: string,
+) {
+  const detail = await request(app)
+    .get(`/job-orders/${f.job.id}`)
+    .set('Authorization', `Bearer ${f.qa.token}`)
+    .expect(200);
+  return detail.body.data.qualityActivities.find(
+    (a: { processFlowVersionStageId: string }) =>
+      a.processFlowVersionStageId === processFlowVersionStageId,
+  );
+}
+
+describe('PP Sample and PPM as independent parallel pre-production gates', () => {
+  it('makes both PP Sample and PPM available immediately after Factory confirmation', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    const pp = await qualityActivity(f, f.pp.id);
+    const ppm = await qualityActivity(f, f.ppm.id);
+    expect(pp.status).toBe('AVAILABLE');
+    expect(ppm.status).toBe('AVAILABLE');
+  });
+
+  it('allows PPM to be started and finalized before PP Sample is ever touched', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    const started = await startPpm(f).expect(201);
+    const invalidAttendee = await request(app)
+      .put(`/quality-executions/${started.body.data.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({
+        ...ppmPayload(f, started.body.data.version),
+        attendees: [{ componentId: f.attendeeId, roleKey: 'Unknown', attendeeName: 'Invalid' }],
+      })
+      .expect(400);
+    expect(invalidAttendee.body.error).toBeDefined();
+    await request(app)
+      .post(`/quality-executions/${started.body.data.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send(ppmPayload(f, started.body.data.version))
+      .expect(200);
+    const pp = await qualityActivity(f, f.pp.id);
+    const ppm = await qualityActivity(f, f.ppm.id);
+    expect(ppm.status).toBe('COMPLETED');
+    expect(pp.status).toBe('AVAILABLE');
+  });
+
+  it('lets PP Sample be worked to completion independently of PPM', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    await completePp(f, 'PASS');
+    const pp = await qualityActivity(f, f.pp.id);
+    const ppm = await qualityActivity(f, f.ppm.id);
+    expect(pp.status).toBe('COMPLETED');
+    expect(ppm.status).toBe('AVAILABLE');
+  });
+
+  it('does not allow Cutting when only PPM is finalized', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    await completePpm(f);
+    await attemptStartCutting(f).expect(409);
+  });
+
+  it('does not allow Cutting when only PP Sample has passed', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    await completePp(f, 'PASS');
+    await attemptStartCutting(f).expect(409);
+  });
+
+  it('allows Cutting once both PP Sample has passed and PPM is finalized', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    await completePpm(f);
+    await completePp(f, 'PASS');
+    await attemptStartCutting(f).expect(200);
+  });
+
+  it('keeps Production blocked on a PP Sample FAIL even after PPM is finalized', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    await completePp(f, 'FAIL');
+    await completePpm(f);
+    await attemptStartCutting(f).expect(409);
+  });
+
+  it('finalizes PPM without any PASS/FAIL decision', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    const started = await startPpm(f).expect(201);
+    await request(app)
+      .post(`/quality-executions/${started.body.data.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send(ppmPayload(f, started.body.data.version))
+      .expect(200);
+    const execution = await prisma.qualityActivityExecution.findUniqueOrThrow({
+      where: { id: started.body.data.id },
+    });
+    expect(execution.status).toBe('FINALIZED');
+    expect(execution.outcome).toBeNull();
+    const ppm = await qualityActivity(f, f.ppm.id);
+    expect(ppm.status).toBe('COMPLETED');
+    expect(ppm.gateSatisfactionRequirement).toBe('FINALIZED');
+  });
+});
+
 describe('Process Flow PP Sample bridge and PPM gate', () => {
   it('is unavailable before acknowledgement and creates one locked size form afterward', async () => {
     const f = await workflow();
@@ -666,11 +829,13 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
           (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.pp.id,
         ).status,
       ).toBe(decision === 'PASS' ? 'COMPLETED' : 'FAILED');
+      // PP Sample and PPM are independent parallel gates: PPM's availability
+      // never depends on PP Sample's decision.
       expect(
         detail.body.data.qualityActivities.find(
           (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.ppm.id,
         ).status,
-      ).toBe(decision === 'PASS' ? 'AVAILABLE' : 'NOT_AVAILABLE');
+      ).toBe('AVAILABLE');
     },
   );
 
@@ -721,7 +886,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     });
   });
 
-  it('PASS unlocks PPM, not Production; PPM finalization unlocks Cutting', async () => {
+  it('PP Sample PASS alone still leaves Cutting locked; finalizing the independent PPM gate then unlocks it', async () => {
     const f = await workflow();
     await prisma.jobOrder.update({
       where: { id: f.job.id },
@@ -731,6 +896,8 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     const cuttingRuntime = f.job.stageStatuses.find(
       (stage) => stage.processFlowVersionStageId === f.cutting.id,
     )!;
+    // PPM was already available before PP Sample passed (parallel gates) — it
+    // simply hasn't been finalized yet, so Cutting stays locked on that gate.
     await request(app)
       .post(`/job-orders/${f.job.id}/actions/start-stage`)
       .set('Authorization', `Bearer ${f.factoryUser.token}`)
@@ -822,11 +989,12 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       .get(`/job-orders/${f.job.id}`)
       .set('Authorization', `Bearer ${f.qa.token}`)
       .expect(200);
+    // PPM is an independent parallel gate: a PP Sample FAIL does not lock it.
     expect(
       afterFail.body.data.qualityActivities.find(
         (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.ppm.id,
       ).status,
-    ).toBe('NOT_AVAILABLE');
+    ).toBe('AVAILABLE');
 
     const [retryA, retryB] = await Promise.all([startPp(f), startPp(f)]);
     expect([retryA.status, retryB.status]).toEqual([201, 201]);
@@ -948,11 +1116,12 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     const afterPpFail = (
       await request(app).get(`/job-orders/${f.job.id}`).set('Authorization', `Bearer ${f.qa.token}`)
     ).body.data;
+    // PPM is an independent parallel gate: a PP Sample FAIL does not lock it.
     expect(
       afterPpFail.qualityActivities.find(
         (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.ppm.id,
       ).status,
-    ).toBe('NOT_AVAILABLE');
+    ).toBe('AVAILABLE');
     expect(afterPpFail.operationalState.primaryDisplayState.label).toBe(`${f.pp.name} Failed`);
     await completePp(f, 'PASS');
 

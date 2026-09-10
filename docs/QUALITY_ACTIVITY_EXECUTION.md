@@ -11,13 +11,13 @@ Sequential gates declare how they are satisfied:
 
 In-process activities declare availability (`WHILE_ASSOCIATED_ACTIVITY_ACTIVE`, `AFTER_ASSOCIATED_ACTIVITY_COMPLETES`, or the retained generic `PROGRESS_PERCENTAGE`), multiplicity (`SINGLE` or `BATCHED`), and an optional controlled coverage target (`PREPARED_QUANTITY`). These rules belong to immutable Process Flow version configuration rather than form-code branches.
 
-Factory acknowledgement makes the first sequential Quality gate eligible. Earlier sequential Quality gates are evaluated directly from their finalized executions before Production can start. Production runtime rows remain Production-only.
+Factory acknowledgement makes every sequential Quality gate that precedes the first Production activity eligible at the same time — PP Sample and PPM are independent, parallel gates, not a chain. A `SEQUENTIAL_GATE` activity's eligibility depends only on the nearest preceding `PRODUCTION` activity completing (or factory confirmation, if none precedes it); it never depends on another Quality gate's lifecycle or result. Before Production can start, every such gate is evaluated independently and directly from its own finalized executions. Production runtime rows remain Production-only.
 
 ## PP Sample bridge
 
 The PP Sample Process Flow path reuses the ERVE-015 `QaInspectionSession` and `QaSizeInspectionForm` runtime. Starting it creates one Quality execution, one linked QA session, and one size form for the QA-selected Job Order size. The positive sample quantity and size are locked after start; no all-size tabs or Factory sample-preparation state are created.
 
-QA must explicitly select `PASS` or `FAIL` while finalizing the size form. This gate outcome is stored on the linked Quality execution and is not inferred from checklist, accepted, rework, rejection, or defect values. A Process Flow gate configured as `OUTCOME_PASS` is satisfied only by explicit `PASS`; `FAIL` leaves the following PPM gate locked. The decision is immutable, and PP retry/reopen is intentionally unavailable until a retry model is defined.
+QA must explicitly select `PASS` or `FAIL` while finalizing the size form. This gate outcome is stored on the linked Quality execution and is not inferred from checklist, accepted, rework, rejection, or defect values. A Process Flow gate configured as `OUTCOME_PASS` is satisfied only by explicit `PASS`; `FAIL` leaves Cutting locked on the PP Sample gate specifically, independently of PPM's own state. The decision is immutable, and PP retry/reopen is intentionally unavailable until a retry model is defined.
 
 The ERVE-015 session and size-form internals remain reusable infrastructure for PP Sample execution. Unlinked sessions are not an alternative end-user workflow and prepared quantity does not create or route work into them.
 
@@ -25,7 +25,7 @@ The PP Sample adapter reuses the strongly typed checklist, remarks, defect infor
 
 ## PPM / Size Set
 
-PPM is one `MEETING + JOB_ORDER` execution. Its authoritative Job Order context is read-only; meeting/planning fields are user-entered `FIELD_GROUP` values. `ATTENDEE_LIST`, `ACTION_LIST`, and `SIGNATURES` use normalized runtime records and definition-driven finalization validation. PPM has no size tabs and no fabricated PASS/FAIL. A `FINALIZED` PPM gate unlocks the first valid Production activity in normal sequence.
+PPM is one `MEETING + JOB_ORDER` execution. Its authoritative Job Order context is read-only; meeting/planning fields are user-entered `FIELD_GROUP` values. `ATTENDEE_LIST`, `ACTION_LIST`, and `SIGNATURES` use normalized runtime records and definition-driven finalization validation. PPM has no size tabs and no fabricated PASS/FAIL. PPM becomes available at the same time as PP Sample, immediately after factory confirmation, and can be started, edited, or finalized independently of PP Sample's lifecycle or result. A `FINALIZED` PPM gate satisfies PPM's own requirement toward the first valid Production activity in normal sequence, but Cutting also independently requires PP Sample to be finalized with `PASS`.
 
 Corrected published definitions are created as successor versions only when an existing published PPM definition needs correction. Historical definitions and Process Flow references are not silently rewritten.
 

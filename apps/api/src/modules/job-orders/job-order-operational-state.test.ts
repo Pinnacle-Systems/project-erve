@@ -86,16 +86,20 @@ describe('derived Job Order operational state', () => {
     ['factory acknowledgement / PP available', 'AVAILABLE', 'PP Sample Pending'],
     ['PP Sample draft', 'IN_PROGRESS', 'PP Sample In Progress'],
     ['PP Sample failed', 'FAILED', 'PP Sample Failed'],
-  ] as const)('%s retains lifecycle but promotes the PP gate', (_scenario, status, label) => {
-    const result = derive(production(), [
-      gate(1, 'PP Sample', status),
-      gate(2, 'PPM', 'NOT_AVAILABLE'),
-    ]);
-    expect(result.lifecycleContext).toMatchObject({ code: 'CONFIRMED_BY_FACTORY' });
-    expect(result.productionState).toMatchObject({ code: 'LOCKED' });
-    expect(result.qualityState?.label).toBe(label);
-    expect(result.primaryDisplayState.label).toBe(label);
-  });
+  ] as const)(
+    '%s retains lifecycle but promotes the PP gate while PPM is independently available',
+    (_scenario, status, label) => {
+      // Both gates open in parallel immediately after factory confirmation.
+      const result = derive(production(), [
+        gate(1, 'PP Sample', status),
+        gate(2, 'PPM', 'AVAILABLE'),
+      ]);
+      expect(result.lifecycleContext).toMatchObject({ code: 'CONFIRMED_BY_FACTORY' });
+      expect(result.productionState).toMatchObject({ code: 'LOCKED' });
+      expect(result.qualityState?.label).toBe(label);
+      expect(result.primaryDisplayState.label).toBe(label);
+    },
+  );
 
   it.each([
     ['PP passed / PPM available', 'AVAILABLE', 'PPM Pending'],
@@ -119,6 +123,16 @@ describe('derived Job Order operational state', () => {
     expect(result.productionState?.label).toBe('Cutting Ready');
     expect(result.qualityState?.label).toBe('PPM Completed');
     expect(result.primaryDisplayState.label).toBe('Cutting Ready');
+  });
+
+  it('keeps Production locked on the still-pending PP Sample gate even when PPM finishes first', () => {
+    const result = derive(production(), [
+      gate(1, 'PP Sample', 'AVAILABLE'),
+      gate(2, 'PPM', 'COMPLETED'),
+    ]);
+    expect(result.productionState).toMatchObject({ code: 'LOCKED' });
+    expect(result.qualityState?.label).toBe('PP Sample Pending');
+    expect(result.primaryDisplayState.label).toBe('PP Sample Pending');
   });
 
   it.each(['Cutting', 'Printing', 'Sewing', 'Finishing'])(

@@ -327,16 +327,22 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
       const associated = activity.associatedProductionActivityId
         ? runtimeByDefinitionId.get(activity.associatedProductionActivityId)
         : undefined;
-      const previous = [...definitions]
+      // SEQUENTIAL_GATE quality activities are only ever gated by the nearest
+      // preceding PRODUCTION stage (or factory confirmation, if none precedes
+      // them). Other quality gates sharing the same pre-production slot (e.g.
+      // PP Sample and PPM) are deliberately excluded here so they remain
+      // independent, parallel gates rather than chaining off one another.
+      const previousProduction = [...definitions]
         .reverse()
         .find(
           (candidate) =>
             candidate.sequence < activity.sequence &&
             candidate.status === 'ACTIVE' &&
-            (candidate.activityType === 'PRODUCTION' ||
-              candidate.qualityExecutionMode === 'SEQUENTIAL_GATE'),
+            candidate.activityType === 'PRODUCTION',
         );
-      const previousRuntime = previous ? runtimeByDefinitionId.get(previous.id) : undefined;
+      const previousProductionRuntime = previousProduction
+        ? runtimeByDefinitionId.get(previousProduction.id)
+        : undefined;
       let eligible = false;
       if (activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE') {
         eligible =
@@ -356,21 +362,8 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
           activity.progressThresholdPercent,
         );
       } else if (activity.qualityExecutionMode === 'SEQUENTIAL_GATE') {
-        eligible = previous
-          ? previous.activityType === 'PRODUCTION'
-            ? previousRuntime?.status === 'COMPLETED'
-            : previous.gateSatisfactionRequirement === 'OUTCOME_PASS'
-              ? jobOrder.qualityExecutions.some(
-                  (candidate) =>
-                    candidate.processFlowActivityId === previous.id &&
-                    candidate.status === 'FINALIZED' &&
-                    candidate.outcome === 'PASS',
-                )
-              : jobOrder.qualityExecutions.some(
-                  (candidate) =>
-                    candidate.processFlowActivityId === previous.id &&
-                    candidate.status === 'FINALIZED',
-                )
+        eligible = previousProduction
+          ? previousProductionRuntime?.status === 'COMPLETED'
           : jobOrder.factoryConfirmationStatus === 'CONFIRMED';
       }
       const physicalBatches = jobOrder.finalQualityBatches.filter(
