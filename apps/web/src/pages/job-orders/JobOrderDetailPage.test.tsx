@@ -908,6 +908,100 @@ describe('JobOrderDetailPage stage completion mutation', () => {
   });
 });
 
+describe('JobOrderDetailPage manual Production Complete (Correction 3)', () => {
+  it('lets a Merchandiser mark an in-production Job Order Production Complete', async () => {
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValue({ data: { data: mockJobOrder('PRODUCTION_COMPLETE') } });
+    await renderPage('IN_PRODUCTION');
+
+    const trigger = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Mark Production Complete',
+    ) as HTMLButtonElement;
+    expect(trigger).toBeDefined();
+    expect(trigger.disabled).toBe(false);
+    act(() => trigger.click());
+
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Confirm',
+    ) as HTMLButtonElement;
+    expect(confirm).toBeDefined();
+    await act(async () => confirm.click());
+
+    expect(post).toHaveBeenCalledWith(
+      '/job-orders/jo-1/actions/mark-production-complete',
+      { expectedVersion: 1 },
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+  });
+
+  it('disables the action while a production stage is in progress', async () => {
+    await renderPage('IN_PRODUCTION', [
+      stage('stage-1', 'Cutting', 1, 'IN_PROGRESS'),
+      stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
+    ]);
+
+    const trigger = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Mark Production Complete',
+    ) as HTMLButtonElement;
+    expect(trigger).toBeDefined();
+    expect(trigger.disabled).toBe(true);
+    expect(content()).toContain(
+      'Stop or complete the in-progress production stage before marking Production Complete.',
+    );
+  });
+
+  it('hides the action from a Factory-only user', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderPage('IN_PRODUCTION');
+
+    expect(content()).toContain('Production Completion');
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (button) => button.textContent === 'Mark Production Complete',
+      ),
+    ).toBe(false);
+  });
+
+  it('does not show the action once already Production Complete', async () => {
+    await renderPage('PRODUCTION_COMPLETE');
+
+    expect(content()).not.toContain('Mark Production Complete');
+  });
+
+  it('surfaces a server-side eligibility error', async () => {
+    vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      message: 'Request failed with status code 409',
+      response: {
+        data: {
+          error: {
+            code: 'CONFLICT',
+            message:
+              'A production stage is currently in progress; stop or complete it before marking Production Complete',
+          },
+        },
+      },
+    });
+    await renderPage('IN_PRODUCTION');
+    const trigger = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Mark Production Complete',
+    ) as HTMLButtonElement;
+    act(() => trigger.click());
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Confirm',
+    ) as HTMLButtonElement;
+
+    await act(async () => confirm.click());
+
+    await vi.waitFor(() =>
+      expect(content()).toContain(
+        'A production stage is currently in progress; stop or complete it before marking Production Complete',
+      ),
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Production Plan (Phase 2.1) — the sources panel currently has zero
 // coverage of the Production Plan edit control or the simplified

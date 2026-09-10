@@ -31,7 +31,16 @@ Inline is available only while Sewing is active. A draft started in that window 
 
 Final becomes available when Sewing completes, independently of Finishing percentage or incremental factory quantities. It is consolidated at Job Order scope. Finalized `inspectedQuantity` values reconcile against the sum of `JobOrderLineSize.preparedQuantity`; drafts do not count. Zero/unsubmitted prepared quantity is treated as unknown, so a draft can be saved but not finalized. Coverage is `UNKNOWN`, `IN_PROGRESS`, `COMPLETE`, or `CONFLICT`. Batch PASS/FAIL counts are reported separately; a failed batch still counts as physical coverage and has no automatic rework or Production effect.
 
-Recording prepared quantity keeps the top-level Job Order at `PRODUCTION_COMPLETE` and feeds configured Final Inspection coverage. It never routes a Job Order into a separate prepared-quantity QA workflow. All QA orchestration comes from the assigned Process Flow; a flow with no Quality activities therefore creates no QA work. Detailed Production stages, Quality gates, Final coverage, and Quality outcomes remain separate runtime facts; Production completion is not presented as QA approval.
+Recording prepared quantity feeds configured Final Inspection coverage and, together with that coverage reaching a resolved outcome, is what the top-level Job Order's `PRODUCTION_COMPLETE` transition is actually computed from (see "Job Order production completion" below) — completing Finishing does not by itself set it. It never routes a Job Order into a separate prepared-quantity QA workflow. All QA orchestration comes from the assigned Process Flow; a flow with no Quality activities therefore creates no QA work. Detailed Production stages, Quality gates, Final coverage, and Quality outcomes remain separate runtime facts; Production completion is not presented as QA approval.
+
+### Job Order production completion
+
+`JobOrderStatus.PRODUCTION_COMPLETE` is derived, not tied to any single Production stage. A centralized recalculation (`recalculateJobOrderStatus`, triggered after Prepared Quantity changes, Final batch disposition changes, and stage completion) promotes an `IN_PRODUCTION` Job Order to `PRODUCTION_COMPLETE` once:
+
+- `preparedQuantityTotal` equals the Job Order's full planned `orderedQuantityTotal`, and
+- every non-cancelled Final Quality Batch has reached a resolved disposition — `RELEASED` or `PERMANENTLY_REJECTED` — with none left `AWAITING_REINSPECTION`, and the sum of their `physicalQuantity` equals `preparedQuantityTotal`.
+
+Completing every configured Production stage (including Finishing) is a separate fact and does not by itself satisfy this condition. A Merchandiser (or Admin) may also mark an eligible `IN_PRODUCTION` Job Order `PRODUCTION_COMPLETE` explicitly — `POST /job-orders/:id/actions/mark-production-complete` — to deliberately stop/accept short production; this manual action never fabricates Prepared Quantity, never creates a QA Release, and is blocked only while a Production stage is currently `IN_PROGRESS`. `PRODUCTION_COMPLETE` is independent of Dispatch Orders, Factory Packing/Invoice, and Erve Dispatch/Delivery — none of those read or require it, and there is no downstream `CLOSED` Job Order status.
 
 ## Activity types and execution
 

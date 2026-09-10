@@ -1302,7 +1302,11 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         })),
       })
       .expect(200);
-    expect(current.body.data.status).toBe('PRODUCTION_COMPLETE');
+    // Correction 3: Finishing has completed and the full 20-unit plan is now
+    // prepared, but only 5 units (firstFinal) have been through Final QA so
+    // far — coverage is not yet fully resolved, so the Job Order remains
+    // IN_PRODUCTION until the remaining Final batches below resolve it.
+    expect(current.body.data.status).toBe('IN_PRODUCTION');
     let finalized = firstFinalized;
     for (const [sizeIndex, quantity, outcome] of [
       [0, 5, 'FAIL'],

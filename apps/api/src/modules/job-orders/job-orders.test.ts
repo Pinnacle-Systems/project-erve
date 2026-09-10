@@ -1196,7 +1196,11 @@ describe('job orders API', () => {
       .set('Authorization', `Bearer ${factoryUser.token}`)
       .set('Idempotency-Key', 'stage-two')
       .send({ stageStatusId: stages[1].id, expectedVersion: finalStageStarted.body.data.version });
-    expect(finalStageRes.body.data.status).toBe('PRODUCTION_COMPLETE');
+    // Correction 3: completing the last (Finishing) stage no longer implies
+    // Job Order production completion by itself — no Final QA coverage has
+    // been recorded yet, so the automatic PRODUCTION_COMPLETE condition is
+    // not met and the Job Order stays IN_PRODUCTION.
+    expect(finalStageRes.body.data.status).toBe('IN_PRODUCTION');
 
     const sizeId = finalStageRes.body.data.lines[0].sizes[0].id;
     const preparedRes = await request(app)
@@ -1208,7 +1212,9 @@ describe('job orders API', () => {
         sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }],
       });
     expect(preparedRes.status).toBe(200);
-    expect(preparedRes.body.data.status).toBe('PRODUCTION_COMPLETE');
+    // Prepared quantity (3) is still short of the full planned quantity (4
+    // per size across 2 sizes), so the automatic condition remains unmet.
+    expect(preparedRes.body.data.status).toBe('IN_PRODUCTION');
     expect(preparedRes.body.data.preparedQuantityTotal).toBe(3);
     const preparedReplay = await request(app)
       .post(`/job-orders/${jobOrderId}/actions/update-prepared-quantity`)
@@ -1541,7 +1547,9 @@ describe('job orders API', () => {
       .set('Idempotency-Key', 'admin-stage')
       .send({ stageStatusId: stages[1].id, expectedVersion: stage2Started.body.data.version });
     expect(stage2Res.status).toBe(200);
-    expect(stage2Res.body.data.status).toBe('PRODUCTION_COMPLETE');
+    // Correction 3: Finishing completion alone no longer implies Job Order
+    // production completion — no Final QA coverage exists yet.
+    expect(stage2Res.body.data.status).toBe('IN_PRODUCTION');
 
     const sizeId = stage2Res.body.data.lines[0].sizes[0].id;
     await request(app)
@@ -1563,7 +1571,9 @@ describe('job orders API', () => {
         sizes: [{ jobOrderLineSizeId: sizeId, preparedQuantity: 3 }],
       });
     expect(preparedRes.status).toBe(200);
-    expect(preparedRes.body.data.status).toBe('PRODUCTION_COMPLETE');
+    // Still short of the full planned quantity and with no Final QA coverage
+    // recorded, so the automatic condition remains unmet.
+    expect(preparedRes.body.data.status).toBe('IN_PRODUCTION');
 
     // An unmapped QA user can view Process Flow Quality work at any factory;
     // view access depends on active QA role membership, not factory mapping.
@@ -1571,7 +1581,7 @@ describe('job orders API', () => {
       .get(`/job-orders/${jobOrderId}`)
       .set('Authorization', `Bearer ${qaUser.token}`);
     expect(qaView.status).toBe(200);
-    expect(qaView.body.data.status).toBe('PRODUCTION_COMPLETE');
+    expect(qaView.body.data.status).toBe('IN_PRODUCTION');
 
     // Production remains read-only for QA even though the same Job Order is visible.
     await request(app)
@@ -1680,6 +1690,244 @@ describe('job orders API', () => {
       .set('Authorization', `Bearer ${distributorUser.token}`);
     expect(listRes.status).toBe(403);
     expect(detailRes.status).toBe(403);
+  });
+});
+
+// Correction 3: explicit Merchandiser "stop/accept production" action — used
+// when the automatic full-quantity/full-QA-coverage rule has not (and may
+// never) be met, e.g. deliberate short production.
+describe('manual Job Order Production Complete (Correction 3)', () => {
+  async function toInProduction(graph: Awaited<ReturnType<typeof createSeedGraph>>) {
+    const factoryUser = await createTestUserAndToken({
+      email: `manual-complete-factory-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+    });
+    const created = await createJobOrder(graph.admin.token, graph, 10);
+    const sent = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', `${created.body.data.id}-send`)
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    const confirmed = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${created.body.data.id}-confirm`)
+      .send({
+        expectedVersion: sent.body.data.version,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
+      .expect(200);
+    const stages = confirmed.body.data.stages;
+    const started = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${created.body.data.id}-start-1`)
+      .send({ stageStatusId: stages[0].id, expectedVersion: confirmed.body.data.version })
+      .expect(200);
+    const completed = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${created.body.data.id}-complete-1`)
+      .send({ stageStatusId: stages[0].id, expectedVersion: started.body.data.version })
+      .expect(200);
+    expect(completed.body.data.status).toBe('IN_PRODUCTION');
+    return { jobOrderId: created.body.data.id as string, version: completed.body.data.version as number, stages: completed.body.data.stages, factoryUser };
+  }
+
+  it('lets a Merchandiser mark an eligible short-produced Job Order Production Complete, recording actor and timestamp in the audit trail', async () => {
+    const graph = await createSeedGraph();
+    const merchandiser = await createTestUserAndToken({
+      email: `manual-complete-merch-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    const { jobOrderId, version } = await toInProduction(graph);
+
+    const res = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'manual-complete-1')
+      .send({ expectedVersion: version })
+      .expect(200);
+    expect(res.body.data.status).toBe('PRODUCTION_COMPLETE');
+    expect(res.body.data.preparedQuantityTotal).toBe(0);
+
+    const audit = await request(app)
+      .get(`/job-orders/${jobOrderId}/audit`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    const entry = audit.body.data.find(
+      (item: { action: string }) => item.action === 'JOB_ORDER_PRODUCTION_COMPLETED_MANUAL',
+    );
+    expect(entry).toBeDefined();
+    expect(entry.actor.id).toBe(merchandiser.userId);
+    expect(entry.createdAt).toBeTruthy();
+
+    // No Prepared Quantity was fabricated, no QA Release was created, and no
+    // Final Quality Batch was touched.
+    expect(
+      await prisma.jobOrder.findUniqueOrThrow({ where: { id: jobOrderId } }),
+    ).toMatchObject({ preparedQuantityTotal: 0 });
+    expect(await prisma.qaRelease.count({ where: { jobOrderId } })).toBe(0);
+    expect(await prisma.finalQualityBatch.count({ where: { jobOrderId } })).toBe(0);
+  });
+
+  it('rejects an unauthorized role (Factory/QA) and allows Admin as the confirmed override', async () => {
+    const graph = await createSeedGraph();
+    const admin = graph.admin;
+    const qaUser = await createTestUserAndToken({
+      email: `manual-complete-qa-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['QA_USER'],
+    });
+    const { jobOrderId, version, factoryUser } = await toInProduction(graph);
+
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'manual-complete-factory-denied')
+      .send({ expectedVersion: version })
+      .expect(403);
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${qaUser.token}`)
+      .set('Idempotency-Key', 'manual-complete-qa-denied')
+      .send({ expectedVersion: version })
+      .expect(403);
+
+    const res = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .set('Idempotency-Key', 'manual-complete-admin')
+      .send({ expectedVersion: version })
+      .expect(200);
+    expect(res.body.data.status).toBe('PRODUCTION_COMPLETE');
+  });
+
+  it('is unavailable while a production stage is in progress, and does not create a CLOSED status', async () => {
+    const graph = await createSeedGraph();
+    const merchandiser = await createTestUserAndToken({
+      email: `manual-complete-locked-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    const { jobOrderId, version, stages, factoryUser } = await toInProduction(graph);
+    const finishingStarted = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${jobOrderId}-start-2`)
+      .send({ stageStatusId: stages[1].id, expectedVersion: version })
+      .expect(200);
+
+    const blocked = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'manual-complete-blocked')
+      .send({ expectedVersion: finishingStarted.body.data.version })
+      .expect(409);
+    expect(blocked.body.error.message).toContain('in progress');
+
+    const completedFinishing = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${jobOrderId}-complete-2`)
+      .send({ stageStatusId: stages[1].id, expectedVersion: finishingStarted.body.data.version })
+      .expect(200);
+    // All stages complete but no Final QA coverage recorded — still not
+    // automatically complete, and now eligible for the manual action.
+    expect(completedFinishing.body.data.status).toBe('IN_PRODUCTION');
+
+    const res = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'manual-complete-after-finishing')
+      .send({ expectedVersion: completedFinishing.body.data.version })
+      .expect(200);
+    expect(res.body.data.status).toBe('PRODUCTION_COMPLETE');
+    expect(res.body.data.status).not.toBe('CLOSED');
+  });
+
+  it('replays idempotently and safely rejects a repeat request once already Production Complete', async () => {
+    const graph = await createSeedGraph();
+    const merchandiser = await createTestUserAndToken({
+      email: `manual-complete-idem-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    const { jobOrderId, version } = await toInProduction(graph);
+
+    const first = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'manual-complete-replay')
+      .send({ expectedVersion: version })
+      .expect(200);
+    const replay = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'manual-complete-replay')
+      .send({ expectedVersion: version })
+      .expect(200);
+    expect(replay.body.data.status).toBe('PRODUCTION_COMPLETE');
+    expect(replay.body.data.version).toBe(first.body.data.version);
+
+    // A fresh request (new idempotency key) against the now-stale version is
+    // safely rejected rather than silently repeating the transition.
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'manual-complete-again')
+      .send({ expectedVersion: version })
+      .expect(409);
+
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          entityType: 'JobOrder',
+          entityId: jobOrderId,
+          action: 'JOB_ORDER_PRODUCTION_COMPLETED_MANUAL',
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it('concurrent qualifying requests do not produce inconsistent transitions', async () => {
+    const graph = await createSeedGraph();
+    const merchandiser = await createTestUserAndToken({
+      email: `manual-complete-race-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    const { jobOrderId, version } = await toInProduction(graph);
+
+    const [one, two] = await Promise.all([
+      request(app)
+        .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+        .set('Authorization', `Bearer ${merchandiser.token}`)
+        .set('Idempotency-Key', 'manual-complete-race-1')
+        .send({ expectedVersion: version }),
+      request(app)
+        .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+        .set('Authorization', `Bearer ${merchandiser.token}`)
+        .set('Idempotency-Key', 'manual-complete-race-2')
+        .send({ expectedVersion: version }),
+    ]);
+    expect([one.status, two.status].sort()).toEqual([200, 409]);
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          entityType: 'JobOrder',
+          entityId: jobOrderId,
+          action: 'JOB_ORDER_PRODUCTION_COMPLETED_MANUAL',
+        },
+      }),
+    ).toBe(1);
   });
 });
 

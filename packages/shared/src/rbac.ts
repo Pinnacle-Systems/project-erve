@@ -31,6 +31,24 @@ export function canPerformQaOperation(user: RoleHolder): boolean {
 }
 
 /**
+ * Roles that may explicitly mark a Job Order PRODUCTION_COMPLETE while
+ * planned quantity/Final QA coverage is still short (deliberate stop/accept
+ * of short production). This is a Merchandising business decision, not a
+ * Factory production action — deliberately narrower than
+ * JOB_ORDER_PRODUCTION_MUTATION_ROLES (which includes FACTORY_USER for
+ * ordinary stage/prepared-quantity work). ADMIN keeps the same override
+ * standing it holds everywhere else in this codebase.
+ */
+export const JOB_ORDER_MANUAL_PRODUCTION_COMPLETE_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+] as const satisfies readonly Role[];
+
+export function canMarkJobOrderProductionComplete(user: RoleHolder): boolean {
+  return hasAnyRole(user, JOB_ORDER_MANUAL_PRODUCTION_COMPLETE_ROLES);
+}
+
+/**
  * Financial Year reference data (a code + two dates) is low-sensitivity and
  * needed by every role that touches a dated document or Season — not just
  * master-data managers — so it's a dedicated, deliberately broad capability

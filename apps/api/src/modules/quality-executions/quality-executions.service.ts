@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { canPerformQaOperation, createId } from '@erve/shared';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
+import { recalculateJobOrderStatus } from '../job-orders/job-orders.service.js';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { HttpError } from '../../errors/http-error.js';
 import { env } from '../../config/env.js';
@@ -1304,6 +1305,12 @@ async function persist(
           },
         });
       }
+      // A FAIL only ever moves a batch to AWAITING_REINSPECTION (still
+      // unresolved), so this can only ever newly satisfy the automatic
+      // completion condition on the PASS/RELEASED branch above — but
+      // recalculateJobOrderStatus is a cheap no-op once already resolved,
+      // so it's simplest to call it unconditionally after either outcome.
+      await recalculateJobOrderStatus(tx, execution.jobOrderId, user);
     }
     await recordAuditLog(
       {
@@ -1463,6 +1470,10 @@ export async function cancelFinalBatch(
       },
       tx,
     );
+    // Cancelling removes an otherwise-blocking DRAFT-disposition batch from
+    // consideration entirely, which can newly satisfy the automatic
+    // completion condition if every remaining batch is already resolved.
+    await recalculateJobOrderStatus(tx, batch.jobOrderId, user);
   });
   return getFinalBatch(user, batchId);
 }
@@ -1517,6 +1528,9 @@ export async function permanentlyRejectFinalBatch(
       },
       tx,
     );
+    // A permanent rejection resolves a previously AWAITING_REINSPECTION
+    // batch — this can newly satisfy the automatic completion condition.
+    await recalculateJobOrderStatus(tx, batch.jobOrderId, user);
   });
   return getFinalBatch(user, batchId);
 }

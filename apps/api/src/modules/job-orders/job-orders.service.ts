@@ -1,4 +1,8 @@
-import { canPerformQaOperation, createId } from '@erve/shared';
+import {
+  canMarkJobOrderProductionComplete,
+  canPerformQaOperation,
+  createId,
+} from '@erve/shared';
 import { createHash } from 'node:crypto';
 import {
   type AssignedFactoryTaskSummary,
@@ -1789,6 +1793,198 @@ export async function confirmJobOrder(
   return getJobOrderDetail(actor, id);
 }
 
+// Merchandiser-only override for the automatic rule below — see
+// markJobOrderProductionComplete. Deliberately narrower than
+// assertJobOrderWorkflowAuthorization (which also admits a Factory user for
+// ordinary stage/prepared-quantity work): "stop/accept production" is a
+// Merchandising business decision, not a Factory production action.
+function assertCanMarkJobOrderProductionComplete(user: CurrentUser): void {
+  if (!canMarkJobOrderProductionComplete(user))
+    throw HttpError.forbidden('Only Merchandising can mark a Job Order Production Complete');
+}
+
+// Centralized PRODUCTION_COMPLETE evaluation (§ Correction 3). The
+// confirmed rule: production is complete once the entire planned quantity
+// has both been produced/prepared AND been carried through Final QA to a
+// resolved disposition (RELEASED or PERMANENTLY_REJECTED — AWAITING_
+// REINSPECTION is deliberately excluded as unresolved; CANCELLED batches
+// never reserved real production and are excluded from consideration
+// entirely). This is independent of whether every production stage
+// (including Finishing) has been marked complete — the confirmed rule ties
+// completion to quantity + QA outcome, not to stage bookkeeping.
+//
+// Call this from every place that can move the underlying facts (Prepared
+// Quantity, a Final batch's disposition, stage completion) rather than
+// duplicating the condition. It is a no-op unless the Job Order is
+// currently IN_PRODUCTION, so repeated/concurrent calls are safe and never
+// produce a duplicate audit entry once PRODUCTION_COMPLETE is reached.
+export async function recalculateJobOrderStatus(
+  tx: Tx,
+  jobOrderId: string,
+  actor: CurrentUser,
+): Promise<number> {
+  const jobOrder = await tx.jobOrder.findUniqueOrThrow({
+    where: { id: jobOrderId },
+    include: {
+      lines: { select: { orderedQuantityTotal: true } },
+      processFlowVersion: { include: { stages: { include: { qualityFormVersion: true } } } },
+      finalQualityBatches: {
+        select: { id: true, processFlowActivityId: true, disposition: true, physicalQuantity: true },
+      },
+    },
+  });
+  if (jobOrder.status !== 'IN_PRODUCTION') return jobOrder.version;
+  const orderedQuantityTotal = jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
+  if (orderedQuantityTotal <= 0 || jobOrder.preparedQuantityTotal !== orderedQuantityTotal)
+    return jobOrder.version;
+  const finalActivity = jobOrder.processFlowVersion.stages.find(isProcessFlowFinalActivity);
+  if (!finalActivity) return jobOrder.version;
+  const physicalBatches = jobOrder.finalQualityBatches.filter(
+    (batch) => batch.processFlowActivityId === finalActivity.id && batch.disposition !== 'CANCELLED',
+  );
+  const resolvedPhysicalCoverage = physicalBatches.reduce(
+    (sum, batch) => sum + batch.physicalQuantity,
+    0,
+  );
+  const fullyResolved =
+    physicalBatches.length > 0 &&
+    physicalBatches.every((batch) => ['RELEASED', 'PERMANENTLY_REJECTED'].includes(batch.disposition)) &&
+    resolvedPhysicalCoverage === jobOrder.preparedQuantityTotal;
+  if (!fullyResolved) return jobOrder.version;
+
+  const updated = await tx.jobOrder.updateMany({
+    where: { id: jobOrderId, status: 'IN_PRODUCTION', version: jobOrder.version },
+    data: { status: 'PRODUCTION_COMPLETE', version: { increment: 1 } },
+  });
+  if (updated.count !== 1) return jobOrder.version;
+  await recordAuditLog(
+    {
+      actorId: actor.id,
+      action: 'JOB_ORDER_PRODUCTION_COMPLETED_AUTOMATIC',
+      entityType: 'JobOrder',
+      entityId: jobOrderId,
+      metadata: {
+        orderedQuantityTotal,
+        preparedQuantityTotal: jobOrder.preparedQuantityTotal,
+        processFlowActivityId: finalActivity.id,
+        finalQualityBatchIds: physicalBatches.map((batch) => batch.id),
+      },
+    },
+    tx,
+  );
+  return jobOrder.version + 1;
+}
+
+// Explicit Merchandiser "stop/accept production" action (§ Correction 3).
+// Used when the automatic full-quantity/full-QA-coverage rule above has not
+// (and may never) be met — e.g. deliberate short production. It never
+// fabricates Prepared Quantity, never creates a QA Release, never touches
+// Final QA disposition/history, and never touches already-released/
+// allocated/dispatched inventory: it only flips the Job Order's own status.
+//
+// Eligibility is deliberately narrow: only from IN_PRODUCTION, and only when
+// no production stage is currently IN_PROGRESS. A live in-progress stage
+// record left hanging under a terminal production status would be an
+// inconsistent state, and this codebase defines no stage-termination
+// semantics to reconcile it — so rather than inventing one, the action is
+// simply unavailable until the factory stops/completes that stage. It does
+// NOT require every stage to be COMPLETED (NOT_STARTED stages are fine —
+// nothing "live" needs reconciling there), and it deliberately does not
+// check for an in-progress Final QA execution: Final QA is independent of
+// Job Order production-completion status by design (see
+// recalculateJobOrderStatus), so gating this action on QA activity would
+// reintroduce the coupling this correction removes. Flagged in the
+// close-out report as a judgment call, not a directly-confirmed rule.
+export async function markJobOrderProductionComplete(
+  actor: CurrentUser,
+  id: string,
+  input: { expectedVersion: number },
+  idempotencyKey: string,
+) {
+  assertCanMarkJobOrderProductionComplete(actor);
+  const hash = requestHash(input);
+  const replay = await prisma.jobOrderIdempotencyRecord.findUnique({
+    where: {
+      actorId_operation_idempotencyKey: {
+        actorId: actor.id,
+        operation: 'MARK_PRODUCTION_COMPLETE',
+        idempotencyKey,
+      },
+    },
+  });
+  if (replay) {
+    if (replay.jobOrderId !== id || replay.requestHash !== hash) throw HttpError.idempotencyKeyReused();
+    return getJobOrderDetail(actor, id);
+  }
+  const jobOrder = await prisma.jobOrder.findUnique({
+    where: { id },
+    include: { stageStatuses: { select: { status: true } } },
+  });
+  if (!jobOrder) throw HttpError.notFound('Job order not found');
+  if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+  if (jobOrder.status !== 'IN_PRODUCTION')
+    throw HttpError.conflict(
+      'Only a Job Order currently in production can be marked Production Complete',
+    );
+  if (jobOrder.stageStatuses.some((stage) => stage.status === 'IN_PROGRESS'))
+    throw HttpError.conflict(
+      'A production stage is currently in progress; stop or complete it before marking Production Complete',
+    );
+
+  await prisma.$transaction(async (tx) => {
+    if (
+      await beginIdempotentOperation(
+        tx,
+        actor.id,
+        id,
+        'MARK_PRODUCTION_COMPLETE',
+        idempotencyKey,
+        hash,
+      )
+    )
+      return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const current = await tx.jobOrder.findUnique({
+      where: { id },
+      include: { stageStatuses: { select: { status: true } } },
+    });
+    if (!current) throw HttpError.notFound('Job order not found');
+    if (current.version !== input.expectedVersion) throw HttpError.staleVersion(current.version);
+    if (current.status !== 'IN_PRODUCTION')
+      throw HttpError.conflict(
+        'Only a Job Order currently in production can be marked Production Complete',
+      );
+    if (current.stageStatuses.some((stage) => stage.status === 'IN_PROGRESS'))
+      throw HttpError.conflict(
+        'A production stage is currently in progress; stop or complete it before marking Production Complete',
+      );
+    const updated = await tx.jobOrder.update({
+      where: { id },
+      data: { status: 'PRODUCTION_COMPLETE', version: { increment: 1 } },
+    });
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_PRODUCTION_COMPLETED_MANUAL',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: { previousPreparedQuantityTotal: current.preparedQuantityTotal },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'MARK_PRODUCTION_COMPLETE',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
+  });
+  return getJobOrderDetail(actor, id);
+}
+
 export async function completeProductionStage(
   actor: CurrentUser,
   id: string,
@@ -1881,10 +2077,16 @@ export async function completeProductionStage(
       },
     });
     if (stageUpdated.count !== 1) throw HttpError.staleVersion(jobOrder.version);
-    const updated = await tx.jobOrder.update({
+    // Completing every configured production stage (including Finishing)
+    // means production work is done — it does NOT by itself mean the Job
+    // Order's production/inspection lifecycle is complete (Correction 3):
+    // prepared-quantity/Final QA coverage may still be unresolved. Status
+    // stays IN_PRODUCTION here; recalculateJobOrderStatus below is the only
+    // place that may promote it to PRODUCTION_COMPLETE.
+    await tx.jobOrder.update({
       where: { id },
       data: {
-        status: isFinalStage ? 'PRODUCTION_COMPLETE' : 'IN_PRODUCTION',
+        status: 'IN_PRODUCTION',
         productionStartedAt: jobOrder.productionStartedAt ?? now,
         productionCompletedAt: isFinalStage ? now : undefined,
         version: { increment: 1 },
@@ -1905,6 +2107,7 @@ export async function completeProductionStage(
       },
       tx,
     );
+    const finalVersion = await recalculateJobOrderStatus(tx, id, actor);
     await finishIdempotentOperation(
       tx,
       actor.id,
@@ -1912,7 +2115,7 @@ export async function completeProductionStage(
       'COMPLETE_STAGE',
       idempotencyKey,
       hash,
-      updated.version,
+      finalVersion,
     );
   });
   return getJobOrderDetail(actor, id);
@@ -2172,7 +2375,7 @@ export async function updatePreparedQuantity(
       (sum, line) => sum + line.preparedQuantityTotal,
       0,
     );
-    const updated = await tx.jobOrder.update({
+    await tx.jobOrder.update({
       where: { id },
       data: {
         preparedQuantityTotal,
@@ -2190,6 +2393,7 @@ export async function updatePreparedQuantity(
       },
       tx,
     );
+    const finalVersion = await recalculateJobOrderStatus(tx, id, actor);
     await finishIdempotentOperation(
       tx,
       actor.id,
@@ -2197,7 +2401,7 @@ export async function updatePreparedQuantity(
       'UPDATE_PREPARED_QUANTITY',
       idempotencyKey,
       hash,
-      updated.version,
+      finalVersion,
     );
   });
   return getJobOrderDetail(actor, id);

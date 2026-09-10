@@ -765,6 +765,143 @@ describe('Final Inspection batching and prepared coverage', () => {
     });
   });
 
+  // Correction 3: automatic Job Order PRODUCTION_COMPLETE — independent of
+  // whether Finishing itself has been marked complete, driven purely by
+  // preparedQuantityTotal === orderedQuantityTotal plus every non-cancelled
+  // Final batch reaching a resolved disposition (RELEASED or
+  // PERMANENTLY_REJECTED).
+  it('does not automatically complete the Job Order when the full planned quantity is prepared but not fully inspected', async () => {
+    const f = await fixture(840);
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+    const execution = (await start(f, 500).expect(201)).body.data;
+    await finalize(f, execution, 'PASS').expect(200);
+
+    const detail = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('IN_PRODUCTION');
+    expect(
+      await prisma.auditLog.count({
+        where: { entityType: 'JobOrder', action: 'JOB_ORDER_PRODUCTION_COMPLETED_AUTOMATIC' },
+      }),
+    ).toBe(0);
+  });
+
+  it('automatically marks the Job Order PRODUCTION_COMPLETE once the full planned quantity is prepared and fully resolved through Final QA, exactly once', async () => {
+    const f = await fixture(840);
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+    const first = (await start(f, 500).expect(201)).body.data;
+    await finalize(f, first, 'PASS').expect(200);
+    const second = (await start(f, 340, 500).expect(201)).body.data;
+    const finalized = await finalize(f, second, 'PASS').expect(200);
+    expect(finalized.body.data.finalBatch.disposition).toBe('RELEASED');
+
+    const detail = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('PRODUCTION_COMPLETE');
+    // Final-QA-passed quantity is unaffected — released exactly as before.
+    expect(await prisma.qaRelease.count({ where: { jobOrderId: f.job.id } })).toBe(2);
+    const autoCompletionAudits = await prisma.auditLog.findMany({
+      where: {
+        entityType: 'JobOrder',
+        entityId: f.job.id,
+        action: 'JOB_ORDER_PRODUCTION_COMPLETED_AUTOMATIC',
+      },
+    });
+    expect(autoCompletionAudits).toHaveLength(1);
+
+    // A later event that re-triggers recalculation (here, a no-op Prepared
+    // Quantity save) must not duplicate the automatic-completion audit
+    // entry or otherwise disturb the now-terminal status.
+    await request(app)
+      .post(`/job-orders/${f.job.id}/actions/update-prepared-quantity`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', 'no-op-recalculation-trigger')
+      .send({
+        expectedVersion: detail.body.data.version,
+        sizes: f.job.lines[0]!.sizes.map((size) => ({
+          jobOrderLineSizeId: size.id,
+          preparedQuantity: size.orderedQuantity,
+        })),
+      })
+      .expect(200);
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          entityType: 'JobOrder',
+          entityId: f.job.id,
+          action: 'JOB_ORDER_PRODUCTION_COMPLETED_AUTOMATIC',
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it('treats a Permanently Rejected batch as a resolved production/inspection outcome (not a forced PASS) for automatic completion', async () => {
+    const f = await fixture(840);
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+    const released = (await start(f, 500).expect(201)).body.data;
+    await finalize(f, released, 'PASS').expect(200);
+    const failed = (await start(f, 340, 500).expect(201)).body.data;
+    await finalize(f, failed, 'FAIL').expect(200);
+
+    // Still AWAITING_REINSPECTION — unresolved, so not yet complete.
+    const midway = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(midway.body.data.status).toBe('IN_PRODUCTION');
+
+    await request(app)
+      .post(`/quality-executions/final-batches/${failed.finalBatch.id}/permanently-reject`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({ reason: 'Unrecoverable construction defect' })
+      .expect(200);
+
+    const detail = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('PRODUCTION_COMPLETE');
+
+    // The permanently-rejected 340 units never became QA-passed inventory —
+    // only the 500 PASS units were ever released.
+    const releases = await prisma.qaRelease.findMany({
+      where: { jobOrderId: f.job.id },
+      include: { lines: true },
+    });
+    expect(releases).toHaveLength(1);
+    expect(releases[0]!.lines.reduce((sum, line) => sum + line.quantity, 0)).toBe(500);
+  });
+
+  it('does not automatically complete a short-produced Job Order, and raises no tolerance error', async () => {
+    const f = await fixture(500); // 500 prepared of 840 ordered — deliberately short
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+    const execution = (await start(f, 500).expect(201)).body.data;
+    const finalized = await finalize(f, execution, 'PASS').expect(200);
+    expect(finalized.body.data.finalBatch.disposition).toBe('RELEASED');
+
+    const detail = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('IN_PRODUCTION');
+  });
+
   it('serializes concurrent PASS requests and publishes one release', async () => {
     const f = await fixture(100);
     await prisma.jobOrderStageStatus.update({

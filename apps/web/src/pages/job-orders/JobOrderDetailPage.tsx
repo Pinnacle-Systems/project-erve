@@ -89,6 +89,7 @@ export function JobOrderDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [markCompleteDialogOpen, setMarkCompleteDialogOpen] = useState(false);
   const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
   const [disclaimerDrafts, setDisclaimerDrafts] = useState<Record<string, string>>({});
   const [disclaimerError, setDisclaimerError] = useState('');
@@ -317,6 +318,22 @@ export function JobOrderDetailPage() {
       ),
     onSuccess: invalidate,
   });
+  const markProductionCompleteMutation = useMutation({
+    mutationFn: async () =>
+      apiClient.post<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/actions/mark-production-complete`,
+        { expectedVersion: jobOrderQuery.data!.version },
+        {
+          headers: {
+            'Idempotency-Key': `${id}:mark-production-complete:${jobOrderQuery.data!.version}`,
+          },
+        },
+      ),
+    onSuccess: () => {
+      setMarkCompleteDialogOpen(false);
+      invalidate();
+    },
+  });
   const preparedMutation = useMutation({
     mutationFn: async (sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }>) =>
       apiClient.post<ApiSuccessResponse<JobOrder>>(
@@ -458,6 +475,14 @@ export function JobOrderDetailPage() {
     'IN_PRODUCTION',
     'PRODUCTION_COMPLETE',
   ].includes(jobOrder.status);
+  // Mirrors the server's eligibility rule in markJobOrderProductionComplete
+  // — a live in-progress stage must be stopped/completed first. This is a
+  // UI convenience only; the server is authoritative and re-checks it.
+  const anyProductionStageInProgress = jobOrder.stages.some(
+    (stage) => stage.status === 'IN_PROGRESS',
+  );
+  const canMarkProductionComplete =
+    jobOrder.status === 'IN_PRODUCTION' && canManageJobOrders;
   const preparedPayload = flatSizes.map((size) => ({
     jobOrderLineSizeId: size.id,
     preparedQuantity: preparedQuantities[size.id] ?? size.preparedQuantity,
@@ -1126,6 +1151,51 @@ export function JobOrderDetailPage() {
           </Panel>
         )}
 
+      {jobOrder.status === 'IN_PRODUCTION' && (
+        <Panel title="Production Completion">
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-muted-foreground">
+              Production completes automatically once the entire planned quantity has been
+              produced and carried through Final QA to a resolved outcome (Released or
+              Permanently Rejected). This is independent of Dispatch — no Dispatch Order or
+              delivery activity is required.
+            </p>
+            {canManageJobOrders && (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  If no further production will be pursued for this Job Order — including a
+                  short-produced quantity that will not be completed — Merchandising can mark it
+                  Production Complete now.
+                </p>
+                {anyProductionStageInProgress && (
+                  <p className="text-sm text-[var(--erp-form-field-error-text-color)]">
+                    Stop or complete the in-progress production stage before marking Production
+                    Complete.
+                  </p>
+                )}
+                <div>
+                  <Button
+                    variant="secondary"
+                    disabled={!canMarkProductionComplete || anyProductionStageInProgress}
+                    onClick={() => setMarkCompleteDialogOpen(true)}
+                  >
+                    Mark Production Complete
+                  </Button>
+                </div>
+                {markProductionCompleteMutation.isError && (
+                  <ValidationMessage tone="error">
+                    {mutationErrorMessage(
+                      markProductionCompleteMutation.error,
+                      'Unable to mark this Job Order Production Complete.',
+                    )}
+                  </ValidationMessage>
+                )}
+              </>
+            )}
+          </div>
+        </Panel>
+      )}
+
       {jobOrder.qualityActivities.length > 0 && (
         <Panel
           title="Quality activities"
@@ -1715,6 +1785,16 @@ export function JobOrderDetailPage() {
         confirmLabel="Send"
         loading={sendMutation.isPending}
         onConfirm={sendToFactory}
+      />
+
+      <ConfirmDialog
+        open={markCompleteDialogOpen}
+        onOpenChange={setMarkCompleteDialogOpen}
+        title="Mark Production Complete?"
+        description="No further production is expected for this Job Order — any remaining planned quantity will not be pursued. This does not create or change Prepared Quantity, QA Releases, or Final QA outcomes, and does not affect Dispatch or pooled inventory."
+        confirmLabel="Confirm"
+        loading={markProductionCompleteMutation.isPending}
+        onConfirm={() => markProductionCompleteMutation.mutate()}
       />
     </div>
   );
