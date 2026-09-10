@@ -208,17 +208,6 @@ enum FinalQualityBatchDisposition {
   CANCELLED
 }
 
-// Factory corrective-action lifecycle for one failed Final inspection cycle
-// on a physical FinalQualityBatch. Each FAIL creates the next cycle; the
-// batch itself stays AWAITING_REINSPECTION throughout — this enum tracks who
-// is responsible for the next action, not a duplicate of batch disposition.
-enum FinalQualityBatchReworkStatus {
-  REQUIRED
-  ACKNOWLEDGED
-  IN_PROGRESS
-  COMPLETED
-}
-
 enum QualityDefectSeverity {
   CRITICAL
   MAJOR
@@ -295,9 +284,6 @@ model User {
   qualitySignoffs                      QualitySignoff[]           @relation("QualitySignoffRecorder")
   createdFinalQualityBatches           FinalQualityBatch[]        @relation("FinalQualityBatchCreator")
   terminalFinalQualityBatches          FinalQualityBatch[]        @relation("FinalQualityBatchTerminalActor")
-  acknowledgedFinalBatchReworks        FinalQualityBatchRework[]  @relation("FinalBatchReworkAcknowledgedBy")
-  startedFinalBatchReworks             FinalQualityBatchRework[]  @relation("FinalBatchReworkStartedBy")
-  completedFinalBatchReworks           FinalQualityBatchRework[]  @relation("FinalBatchReworkCompletedBy")
   qaReleases                           QaRelease[]                @relation("QaReleaseActor")
   createdSaleOrders                    SaleOrder[]                @relation("SaleOrderCreator")
   allocatedStockAllocations            StockAllocation[]          @relation("StockAllocationAllocator")
@@ -1121,7 +1107,6 @@ model QualityActivityExecution {
   sampleJobOrderLineSize JobOrderLineSize?          @relation("QualityExecutionSampleSize", fields: [sampleJobOrderLineSizeId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_sample_size_id_fkey")
   finalQualityBatch      FinalQualityBatch?         @relation(fields: [finalQualityBatchId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "quality_activity_executions_final_quality_batch_id_fkey")
   qaRelease              QaRelease?
-  spawnedRework          FinalQualityBatchRework?
 
   @@unique([jobOrderId, processFlowActivityId, attemptNumber, batchNumber], map: "quality_execution_attempt_batch_key")
   @@index([jobOrderId, processFlowActivityId, status], map: "quality_execution_status_idx")
@@ -1151,42 +1136,10 @@ model FinalQualityBatch {
   allocations         FinalQualityBatchAllocation[]
   executions          QualityActivityExecution[]
   release             QaRelease?
-  reworks             FinalQualityBatchRework[]
 
   @@unique([jobOrderId, processFlowActivityId, batchNumber], map: "final_quality_batch_number_key")
   @@index([jobOrderId, processFlowActivityId, disposition], map: "final_quality_batch_state_idx")
   @@map("final_quality_batches")
-}
-
-// One Factory corrective-action cycle spawned by a Final FAIL. Append-only:
-// a repeat FAIL creates the next cycle rather than mutating a prior one, so
-// the full rework history for a physical batch is always reconstructable.
-model FinalQualityBatchRework {
-  id                       String                        @id
-  finalQualityBatchId      String                        @map("final_quality_batch_id")
-  failedQualityExecutionId String                        @unique @map("failed_quality_execution_id")
-  cycleNumber              Int                           @map("cycle_number")
-  status                   FinalQualityBatchReworkStatus @default(REQUIRED)
-  acknowledgedById         String?                       @map("acknowledged_by_id")
-  acknowledgedAt           DateTime?                     @map("acknowledged_at")
-  startedById              String?                       @map("started_by_id")
-  startedAt                DateTime?                     @map("started_at")
-  completedById            String?                       @map("completed_by_id")
-  completedAt              DateTime?                     @map("completed_at")
-  notes                    String?
-  version                  Int                           @default(1)
-  createdAt                DateTime                      @default(now()) @map("created_at")
-  updatedAt                DateTime                      @updatedAt @map("updated_at")
-
-  finalQualityBatch      FinalQualityBatch        @relation(fields: [finalQualityBatchId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  failedQualityExecution QualityActivityExecution @relation(fields: [failedQualityExecutionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  acknowledgedBy         User?                    @relation("FinalBatchReworkAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  startedBy              User?                    @relation("FinalBatchReworkStartedBy", fields: [startedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  completedBy            User?                    @relation("FinalBatchReworkCompletedBy", fields: [completedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
-
-  @@unique([finalQualityBatchId, cycleNumber], map: "final_quality_batch_rework_cycle_key")
-  @@index([finalQualityBatchId, status], map: "final_quality_batch_rework_state_idx")
-  @@map("final_quality_batch_reworks")
 }
 
 model FinalQualityBatchAllocation {
@@ -1982,7 +1935,7 @@ model InvoiceHandoff {
 // mutates an InvoiceHandoff (that invoice already exists from the physical
 // Dispatch). Append-only per report — a Distributor submits repeated partial
 // reports over time rather than overwriting a cumulative total, matching
-// this codebase's append-only-fact convention (see FinalQualityBatchRework).
+// this codebase's append-only-fact convention.
 // Only quantities against SALE_RETURN-sourced dispatched lines may be
 // reported (service-enforced); OUTRIGHT lines never go through this model —
 // for OUTRIGHT, physically dispatched quantity IS the commercially sold

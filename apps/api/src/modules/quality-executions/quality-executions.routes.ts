@@ -9,8 +9,6 @@ import * as service from './quality-executions.service.js';
 import {
   attachmentParamsSchema,
   finalBatchActionSchema,
-  finalBatchReworkActionSchema,
-  finalBatchReworkCompleteSchema,
   qualityExecutionPayloadSchema,
 } from './quality-executions.validation.js';
 
@@ -98,51 +96,6 @@ qualityExecutionsRouter.post(
           req.user!,
           req.params.batchId! as string,
           finalBatchActionSchema.parse(req.body),
-        ),
-      ),
-    ),
-  ),
-);
-qualityExecutionsRouter.post(
-  '/final-batches/:batchId/rework/acknowledge',
-  requireRoles('ADMIN', 'FACTORY_USER'),
-  asyncHandler(async (req, res) =>
-    res.json(
-      successResponse(
-        await service.acknowledgeFinalBatchRework(
-          req.user!,
-          req.params.batchId! as string,
-          finalBatchReworkActionSchema.parse(req.body),
-        ),
-      ),
-    ),
-  ),
-);
-qualityExecutionsRouter.post(
-  '/final-batches/:batchId/rework/start',
-  requireRoles('ADMIN', 'FACTORY_USER'),
-  asyncHandler(async (req, res) =>
-    res.json(
-      successResponse(
-        await service.startFinalBatchRework(
-          req.user!,
-          req.params.batchId! as string,
-          finalBatchReworkActionSchema.parse(req.body),
-        ),
-      ),
-    ),
-  ),
-);
-qualityExecutionsRouter.post(
-  '/final-batches/:batchId/rework/complete',
-  requireRoles('ADMIN', 'FACTORY_USER'),
-  asyncHandler(async (req, res) =>
-    res.json(
-      successResponse(
-        await service.completeFinalBatchRework(
-          req.user!,
-          req.params.batchId! as string,
-          finalBatchReworkCompleteSchema.parse(req.body),
         ),
       ),
     ),

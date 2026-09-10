@@ -248,16 +248,11 @@ async function createFactoryUser(factoryId: string) {
   });
   return factoryUser;
 }
-const reworkAction = (
-  action: 'acknowledge' | 'start' | 'complete',
-  token: string,
-  batchId: string,
-  body: Record<string, unknown>,
-) =>
+const reinspect = (f: Awaited<ReturnType<typeof fixture>>, batchId: string) =>
   request(app)
-    .post(`/quality-executions/final-batches/${batchId}/rework/${action}`)
-    .set('Authorization', `Bearer ${token}`)
-    .send(body);
+    .post(`/quality-executions/final-batches/${batchId}/reinspect`)
+    .set('Authorization', `Bearer ${f.qa.token}`)
+    .send({ inspectedQuantity: 1, allocations: [] });
 
 describe('Final Inspection batching and prepared coverage', () => {
   it('rejects missing, zero, negative, and non-numeric batch quantities at the API boundary', async () => {
@@ -630,38 +625,10 @@ describe('Final Inspection batching and prepared coverage', () => {
       disposition: 'AWAITING_REINSPECTION',
       release: null,
     });
-    expect(failed.body.data.finalBatch.reworks).toMatchObject([
-      { cycleNumber: 1, status: 'REQUIRED' },
-    ]);
 
-    await request(app)
-      .post(`/quality-executions/final-batches/${first.finalBatch.id}/reinspect`)
-      .set('Authorization', `Bearer ${f.qa.token}`)
-      .send({ inspectedQuantity: 1, allocations: [] })
-      .expect(409);
-
-    const factoryUser = await createFactoryUser(f.factory.id);
-    await reworkAction('acknowledge', factoryUser.token, first.finalBatch.id, {
-      expectedVersion: 1,
-    }).expect(200);
-    await reworkAction('start', factoryUser.token, first.finalBatch.id, {
-      expectedVersion: 2,
-    }).expect(200);
-    const completed = await reworkAction('complete', factoryUser.token, first.finalBatch.id, {
-      expectedVersion: 3,
-      notes: 'Reworked stitching defect on collar',
-    }).expect(200);
-    expect(completed.body.data.reworks).toMatchObject([
-      {
-        cycleNumber: 1,
-        status: 'COMPLETED',
-        notes: 'Reworked stitching defect on collar',
-        acknowledgedBy: { id: factoryUser.userId },
-        startedBy: { id: factoryUser.userId },
-        completedBy: { id: factoryUser.userId },
-      },
-    ]);
-
+    // No internal Factory Rework state gates this — QA can start reinspecting
+    // the same failed batch immediately once the (offline, physical)
+    // correction is ready.
     const retry = await request(app)
       .post(`/quality-executions/final-batches/${first.finalBatch.id}/reinspect`)
       .set('Authorization', `Bearer ${f.qa.token}`)
@@ -865,7 +832,12 @@ describe('Final Inspection batching and prepared coverage', () => {
   });
 });
 
-describe('Factory rework for failed Final Quality batches', () => {
+// Factory Rework was removed as an internal ERVE workflow: physical
+// correction happens with the Factory, outside the application. QA
+// reinspection eligibility is derived only from the batch's own
+// disposition and its Final Inspection attempt history — see
+// startFinalBatchReinspection in quality-executions.service.ts.
+describe('Final QA reinspection of a failed batch (no Factory Rework workflow)', () => {
   async function failedBatch(preparedQuantity = 100) {
     const f = await fixture(preparedQuantity);
     await prisma.jobOrderStageStatus.update({
@@ -877,15 +849,17 @@ describe('Factory rework for failed Final Quality batches', () => {
     return { f, batchId: failed.body.data.finalBatch.id as string };
   }
 
-  it('opens rework cycle 1 as REQUIRED on FAIL, keeping the batch reserved with no release', async () => {
+  it('a FAIL leaves the batch awaiting reinspection, releases zero stock, and keeps its allocation attached', async () => {
     const { f, batchId } = await failedBatch(100);
     const batch = await prisma.finalQualityBatch.findUniqueOrThrow({
       where: { id: batchId },
-      include: { reworks: true, release: true },
+      include: { release: true, allocations: true },
     });
     expect(batch.disposition).toBe('AWAITING_REINSPECTION');
     expect(batch.release).toBeNull();
-    expect(batch.reworks).toMatchObject([{ cycleNumber: 1, status: 'REQUIRED' }]);
+    expect(batch.allocations.reduce((sum, a) => sum + a.quantity, 0)).toBe(100);
+    expect(await prisma.qaRelease.count({ where: { finalQualityBatchId: batchId } })).toBe(0);
+
     const coverage = await request(app)
       .get(`/job-orders/${f.job.id}`)
       .set('Authorization', `Bearer ${f.qa.token}`)
@@ -893,131 +867,12 @@ describe('Factory rework for failed Final Quality batches', () => {
     expect(coverage.body.data.qualityActivities[0].coverage).toMatchObject({
       reservedForFinalQuantity: 100,
       availableForNewFinalBatch: 0,
+      releasedQuantity: 0,
     });
   });
 
-  it('only the mapped Factory User (or ADMIN) may acknowledge/start/complete rework — not QA, not another factory', async () => {
-    const { f, batchId } = await failedBatch();
-    const qaOnly = await createTestUserAndToken({
-      email: `qa-only-${createId()}@test.local`,
-      password: 'pass',
-      roles: ['QA_USER'],
-    });
-    const wrongFactory = await createTestFactory();
-    const wrongFactoryUser = await createFactoryUser(wrongFactory.id);
-    const mappedFactoryUser = await createFactoryUser(f.factory.id);
-
-    await reworkAction('acknowledge', qaOnly.token, batchId, { expectedVersion: 1 }).expect(403);
-    await reworkAction('acknowledge', wrongFactoryUser.token, batchId, {
-      expectedVersion: 1,
-    }).expect(403);
-    await reworkAction('acknowledge', mappedFactoryUser.token, batchId, {
-      expectedVersion: 1,
-    }).expect(200);
-  });
-
-  it('enforces the acknowledge -> start -> complete order and requires notes to complete', async () => {
-    const { f, batchId } = await failedBatch();
-    const factoryUser = await createFactoryUser(f.factory.id);
-
-    await reworkAction('start', factoryUser.token, batchId, { expectedVersion: 1 }).expect(409);
-    await reworkAction('complete', factoryUser.token, batchId, {
-      expectedVersion: 1,
-      notes: 'skip ahead',
-    }).expect(409);
-
-    await reworkAction('acknowledge', factoryUser.token, batchId, {
-      expectedVersion: 1,
-    }).expect(200);
-    await reworkAction('acknowledge', factoryUser.token, batchId, {
-      expectedVersion: 2,
-    }).expect(409);
-
-    await reworkAction('complete', factoryUser.token, batchId, {
-      expectedVersion: 2,
-    }).expect(400);
-    await reworkAction('start', factoryUser.token, batchId, { expectedVersion: 2 }).expect(200);
-    await reworkAction('complete', factoryUser.token, batchId, {
-      expectedVersion: 3,
-      notes: 'Corrected the seam allowance and reinforced stitching',
-    }).expect(200);
-  });
-
-  it('rejects a stale expectedVersion and does not apply a duplicate transition', async () => {
-    const { f, batchId } = await failedBatch();
-    const factoryUser = await createFactoryUser(f.factory.id);
-    await reworkAction('acknowledge', factoryUser.token, batchId, {
-      expectedVersion: 1,
-    }).expect(200);
-    const stale = await reworkAction('acknowledge', factoryUser.token, batchId, {
-      expectedVersion: 1,
-    }).expect(409);
-    expect(stale.body.error.code).toBe('STALE_VERSION');
-    const rework = await prisma.finalQualityBatchRework.findFirstOrThrow({
-      where: { finalQualityBatchId: batchId },
-    });
-    expect(rework.version).toBe(2);
-  });
-
-  it('blocks QA reinspection until the current rework cycle is COMPLETED, then allows it', async () => {
-    const { f, batchId } = await failedBatch();
-    const factoryUser = await createFactoryUser(f.factory.id);
-    const reinspect = () =>
-      request(app)
-        .post(`/quality-executions/final-batches/${batchId}/reinspect`)
-        .set('Authorization', `Bearer ${f.qa.token}`)
-        .send({ inspectedQuantity: 1, allocations: [] });
-
-    await reinspect().expect(409);
-    await reworkAction('acknowledge', factoryUser.token, batchId, {
-      expectedVersion: 1,
-    }).expect(200);
-    await reinspect().expect(409);
-    await reworkAction('start', factoryUser.token, batchId, { expectedVersion: 2 }).expect(200);
-    await reinspect().expect(409);
-    await reworkAction('complete', factoryUser.token, batchId, {
-      expectedVersion: 3,
-      notes: 'Corrective action complete',
-    }).expect(200);
-    await reinspect().expect(201);
-  });
-
-  it('opens a fresh rework cycle 2 on a repeat FAIL without mutating the completed cycle 1, preserving full history', async () => {
-    const { f, batchId } = await failedBatch();
-    const factoryUser = await createFactoryUser(f.factory.id);
-    await reworkAction('acknowledge', factoryUser.token, batchId, {
-      expectedVersion: 1,
-    }).expect(200);
-    await reworkAction('start', factoryUser.token, batchId, { expectedVersion: 2 }).expect(200);
-    await reworkAction('complete', factoryUser.token, batchId, {
-      expectedVersion: 3,
-      notes: 'First corrective pass',
-    }).expect(200);
-
-    const retry = (
-      await request(app)
-        .post(`/quality-executions/final-batches/${batchId}/reinspect`)
-        .set('Authorization', `Bearer ${f.qa.token}`)
-        .send({ inspectedQuantity: 1, allocations: [] })
-        .expect(201)
-    ).body.data;
-    const failedAgain = await finalize(f, retry, 'FAIL').expect(200);
-    expect(failedAgain.body.data.finalBatch.reworks).toMatchObject([
-      { cycleNumber: 1, status: 'COMPLETED', notes: 'First corrective pass' },
-      { cycleNumber: 2, status: 'REQUIRED', notes: null },
-    ]);
-
-    await reworkAction('start', factoryUser.token, batchId, { expectedVersion: 1 }).expect(409);
-    const cycle1 = await prisma.finalQualityBatchRework.findFirstOrThrow({
-      where: { finalQualityBatchId: batchId, cycleNumber: 1 },
-    });
-    expect(cycle1.status).toBe('COMPLETED');
-    expect(cycle1.version).toBe(4);
-  });
-
-  it('leaves prepared/reserved/available capacity unchanged across an entire rework + reinspection cycle', async () => {
+  it('lets QA start reinspection immediately on the same batch, with no Prepared Quantity consumed a second time', async () => {
     const { f, batchId } = await failedBatch(170);
-    const factoryUser = await createFactoryUser(f.factory.id);
     const coverageOf = async () => {
       const detail = await request(app)
         .get(`/job-orders/${f.job.id}`)
@@ -1027,19 +882,9 @@ describe('Factory rework for failed Final Quality batches', () => {
     };
     const before = await coverageOf();
 
-    await reworkAction('acknowledge', factoryUser.token, batchId, {
-      expectedVersion: 1,
-    }).expect(200);
-    await reworkAction('start', factoryUser.token, batchId, { expectedVersion: 2 }).expect(200);
-    await reworkAction('complete', factoryUser.token, batchId, {
-      expectedVersion: 3,
-      notes: 'Reworked',
-    }).expect(200);
-    await request(app)
-      .post(`/quality-executions/final-batches/${batchId}/reinspect`)
-      .set('Authorization', `Bearer ${f.qa.token}`)
-      .send({ inspectedQuantity: 1, allocations: [] })
-      .expect(201);
+    const retry = (await reinspect(f, batchId).expect(201)).body.data;
+    expect(retry.finalBatch.id).toBe(batchId);
+    expect(retry.attemptNumber).toBe(2);
 
     const after = await coverageOf();
     expect(after).toMatchObject({
@@ -1047,54 +892,106 @@ describe('Factory rework for failed Final Quality batches', () => {
       reservedForFinalQuantity: before.reservedForFinalQuantity,
       availableForNewFinalBatch: before.availableForNewFinalBatch,
     });
-    expect(before.preparedQuantity).toBe(170);
-    expect(before.reservedForFinalQuantity).toBe(170);
-    expect(before.availableForNewFinalBatch).toBe(0);
+    expect(
+      await prisma.finalQualityBatch.count({ where: { jobOrderId: f.job.id } }),
+    ).toBe(1);
   });
 
-  it('surfaces the open rework on the mapped Factory User\'s Job Order detail, and lets them view (but not another factory) the batch directly', async () => {
-    const { f, batchId } = await failedBatch();
-    const wrongFactory = await createTestFactory();
-    const wrongFactoryUser = await createFactoryUser(wrongFactory.id);
-    const mappedFactoryUser = await createFactoryUser(f.factory.id);
+  it('retains every prior FAIL attempt across FAIL -> FAIL -> PASS and releases stock exactly once, only on the final PASS', async () => {
+    const { f, batchId } = await failedBatch(60);
+    const secondAttempt = (await reinspect(f, batchId).expect(201)).body.data;
+    await finalize(f, secondAttempt, 'FAIL').expect(200);
+    const thirdAttempt = (await reinspect(f, batchId).expect(201)).body.data;
+    const passed = await finalize(f, thirdAttempt, 'PASS').expect(200);
 
-    const detail = await request(app)
-      .get(`/job-orders/${f.job.id}`)
-      .set('Authorization', `Bearer ${mappedFactoryUser.token}`)
-      .expect(200);
-    expect(detail.body.data.finalBatchReworks).toMatchObject([
-      { finalQualityBatchId: batchId, cycleNumber: 1, status: 'REQUIRED' },
+    expect(passed.body.data.finalBatch).toMatchObject({
+      disposition: 'RELEASED',
+      release: { quantity: 60 },
+    });
+    expect(passed.body.data.finalBatch.attempts).toMatchObject([
+      { attemptNumber: 1, status: 'FINALIZED', outcome: 'FAIL' },
+      { attemptNumber: 2, status: 'FINALIZED', outcome: 'FAIL' },
+      { attemptNumber: 3, status: 'FINALIZED', outcome: 'PASS' },
     ]);
-
-    await request(app)
-      .get(`/quality-executions/final-batches/${batchId}`)
-      .set('Authorization', `Bearer ${wrongFactoryUser.token}`)
-      .expect(403);
-    await request(app)
-      .get(`/quality-executions/final-batches/${batchId}`)
-      .set('Authorization', `Bearer ${mappedFactoryUser.token}`)
-      .expect(200);
+    const releases = await prisma.qaRelease.findMany({ where: { finalQualityBatchId: batchId } });
+    expect(releases).toHaveLength(1);
   });
 
-  it('permanently rejecting a batch preserves rework history and still creates no release', async () => {
+  it('cannot double-release a batch under concurrent duplicate finalize PASS requests', async () => {
+    const { f, batchId } = await failedBatch(50);
+    const retry = (await reinspect(f, batchId).expect(201)).body.data;
+    const body = payload(retry.version, f.outcomeId, 'PASS');
+    const [first, second] = await Promise.all([
+      request(app)
+        .post(`/quality-executions/${retry.id}/finalize`)
+        .set('Authorization', `Bearer ${f.qa.token}`)
+        .send(body),
+      request(app)
+        .post(`/quality-executions/${retry.id}/finalize`)
+        .set('Authorization', `Bearer ${f.qa.token}`)
+        .send(body),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+    const releases = await prisma.qaRelease.findMany({
+      where: { finalQualityBatchId: batchId },
+      include: { lines: true },
+    });
+    expect(releases).toHaveLength(1);
+    expect(releases[0]!.lines.reduce((sum, line) => sum + line.quantity, 0)).toBe(50);
+  });
+
+  it('cannot reinspect a batch that has already been released', async () => {
+    const { f, batchId } = await failedBatch(40);
+    const retry = (await reinspect(f, batchId).expect(201)).body.data;
+    await finalize(f, retry, 'PASS').expect(200);
+    await reinspect(f, batchId).expect(409);
+  });
+
+  it('cannot start a second reinspection while another attempt is still Draft/In Progress', async () => {
+    const { f, batchId } = await failedBatch(30);
+    await reinspect(f, batchId).expect(201);
+    await reinspect(f, batchId).expect(409);
+  });
+
+  it('cannot reinspect a batch with no prior finalized FAIL', async () => {
+    const f = await fixture(80);
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+    const draftExecution = (await start(f, 80).expect(201)).body.data;
+    await reinspect(f, draftExecution.finalBatch.id).expect(409);
+  });
+
+  it('does not allow a Factory User (or other unauthorized role) to start reinspection', async () => {
     const { f, batchId } = await failedBatch();
     const factoryUser = await createFactoryUser(f.factory.id);
-    await reworkAction('acknowledge', factoryUser.token, batchId, {
-      expectedVersion: 1,
-    }).expect(200);
-
-    await request(app)
-      .post(`/quality-executions/final-batches/${batchId}/permanently-reject`)
-      .set('Authorization', `Bearer ${f.qa.token}`)
-      .send({ reason: 'Unrecoverable fabric defect' })
-      .expect(200);
-
-    const batch = await prisma.finalQualityBatch.findUniqueOrThrow({
-      where: { id: batchId },
-      include: { reworks: true, release: true },
+    const merchandiser = await createTestUserAndToken({
+      email: `merch-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['MERCHANDISER'],
     });
-    expect(batch.disposition).toBe('PERMANENTLY_REJECTED');
-    expect(batch.release).toBeNull();
-    expect(batch.reworks).toMatchObject([{ cycleNumber: 1, status: 'ACKNOWLEDGED' }]);
+    await request(app)
+      .post(`/quality-executions/final-batches/${batchId}/reinspect`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .send({ inspectedQuantity: 1, allocations: [] })
+      .expect(403);
+    await request(app)
+      .post(`/quality-executions/final-batches/${batchId}/reinspect`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .send({ inspectedQuantity: 1, allocations: [] })
+      .expect(403);
+  });
+
+  it('exposes no Factory Rework endpoints for a failed batch', async () => {
+    const { f, batchId } = await failedBatch();
+    const factoryUser = await createFactoryUser(f.factory.id);
+    for (const action of ['acknowledge', 'start', 'complete']) {
+      await request(app)
+        .post(`/quality-executions/final-batches/${batchId}/rework/${action}`)
+        .set('Authorization', `Bearer ${factoryUser.token}`)
+        .send({ expectedVersion: 1 })
+        .expect(404);
+    }
   });
 });

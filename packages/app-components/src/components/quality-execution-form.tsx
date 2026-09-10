@@ -1761,68 +1761,33 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
       execution.finalBatch?.disposition === 'AWAITING_REINSPECTION' ? (
         <div className="space-y-3 rounded-md border border-border bg-surface-muted p-4">
           <p className="text-sm text-muted-foreground">
-            This physical batch released no quantity.
+            This physical batch released no quantity. Physical correction with the Factory happens
+            outside ERVE — once the goods are ready, QA can start reinspecting this same batch.
           </p>
-          {(() => {
-            const currentRework = execution.finalBatch.reworks?.at(-1);
-            const reworkComplete = currentRework?.status === 'COMPLETED';
-            const reworkLabel: Record<string, string> = {
-              REQUIRED: 'Awaiting Factory rework',
-              ACKNOWLEDGED: 'Factory has acknowledged — awaiting corrective action',
-              IN_PROGRESS: 'Factory rework in progress',
-              COMPLETED: 'Ready for reinspection',
-            };
-            return (
-              <>
-                {currentRework ? (
-                  <div className="rounded-md border border-border bg-surface p-3 text-sm">
-                    <p className="font-medium">
-                      {reworkLabel[currentRework.status] ?? currentRework.status} · cycle{' '}
-                      {currentRework.cycleNumber}
-                    </p>
-                    {currentRework.notes ? (
-                      <p className="mt-1 text-muted-foreground">
-                        Factory notes: {currentRework.notes}
-                      </p>
-                    ) : null}
-                    {(execution.finalBatch.reworks?.length ?? 0) > 1 ? (
-                      <p className="mt-1 text-muted-foreground">
-                        {(execution.finalBatch.reworks?.length ?? 1) - 1} prior rework cycle
-                        {(execution.finalBatch.reworks?.length ?? 1) - 1 === 1 ? '' : 's'} on this
-                        same physical batch.
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
-                <TextField
-                  label="Permanent rejection reason"
-                  value={batchReason}
-                  width="full"
-                  onChange={(event) => setBatchReason(event.target.value)}
-                />
-                <QualityExecutionActions>
-                  <Button
-                    type="button"
-                    variant="default"
-                    disabled={busy || !reworkComplete}
-                    onClick={() => void props.onStartReinspection?.()}
-                  >
-                    {reworkComplete
-                      ? 'Start reinspection'
-                      : 'Start reinspection (factory rework must complete first)'}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={busy || !batchReason.trim()}
-                    onClick={() => void props.onPermanentlyReject?.(batchReason.trim())}
-                  >
-                    Mark permanently rejected
-                  </Button>
-                </QualityExecutionActions>
-              </>
-            );
-          })()}
+          <TextField
+            label="Permanent rejection reason"
+            value={batchReason}
+            width="full"
+            onChange={(event) => setBatchReason(event.target.value)}
+          />
+          <QualityExecutionActions>
+            <Button
+              type="button"
+              variant="default"
+              disabled={busy}
+              onClick={() => void props.onStartReinspection?.()}
+            >
+              Start reinspection
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy || !batchReason.trim()}
+              onClick={() => void props.onPermanentlyReject?.(batchReason.trim())}
+            >
+              Mark permanently rejected
+            </Button>
+          </QualityExecutionActions>
         </div>
       ) : null}
       <ConfirmDialog
