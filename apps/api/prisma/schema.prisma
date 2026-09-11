@@ -1082,6 +1082,7 @@ model QualityActivityExecution {
   outcomeComponentId       String?                        @map("outcome_component_id")
   outcome                  QualityInspectionOutcome?
   outcomeRemarks           String?                        @map("outcome_remarks")
+  outcomeRejectionReason   String?                        @map("outcome_rejection_reason")
   version                  Int                            @default(1)
   createdAt                DateTime                       @default(now()) @map("created_at")
   updatedAt                DateTime                       @updatedAt @map("updated_at")

@@ -118,7 +118,12 @@ export const qualityExecutionPayloadSchema = z
       )
       .default([]),
     outcome: z
-      .object({ componentId, value: z.enum(['PASS', 'FAIL']), remarks: optionalRemarks })
+      .object({
+        componentId,
+        value: z.enum(['PASS', 'FAIL']),
+        remarks: optionalRemarks,
+        rejectionReason: optionalRemarks,
+      })
       .optional()
       .nullable(),
   })

@@ -194,7 +194,12 @@ async function fixture(preparedQuantity = 840) {
   return { qa, job, finishing, final, form, outcomeId, factory, poId: po.id };
 }
 
-const payload = (version: number, outcomeId: string, outcome: 'PASS' | 'FAIL') => ({
+const payload = (
+  version: number,
+  outcomeId: string,
+  outcome: 'PASS' | 'FAIL',
+  rejectionReason?: string | null,
+) => ({
   expectedVersion: version,
   checklistResponses: [],
   aqlResults: [],
@@ -207,7 +212,11 @@ const payload = (version: number, outcomeId: string, outcome: 'PASS' | 'FAIL') =
   attendees: [],
   actions: [],
   signoffs: [],
-  outcome: { componentId: outcomeId, value: outcome },
+  outcome: {
+    componentId: outcomeId,
+    value: outcome,
+    ...(rejectionReason === undefined ? {} : { rejectionReason }),
+  },
 });
 const start = (f: Awaited<ReturnType<typeof fixture>>, quantity: number, offset = 0) =>
   request(app)
@@ -231,11 +240,23 @@ const finalize = (
   f: Awaited<ReturnType<typeof fixture>>,
   execution: { id: string; version: number },
   outcome: 'PASS' | 'FAIL' = 'PASS',
+  rejectionReason?: string | null,
 ) =>
   request(app)
     .post(`/quality-executions/${execution.id}/finalize`)
     .set('Authorization', `Bearer ${f.qa.token}`)
-    .send(payload(execution.version, f.outcomeId, outcome));
+    .send(
+      payload(
+        execution.version,
+        f.outcomeId,
+        outcome,
+        rejectionReason !== undefined
+          ? rejectionReason
+          : outcome === 'FAIL'
+            ? 'Stitching defect found on collar'
+            : undefined,
+      ),
+    );
 
 async function createFactoryUser(factoryId: string) {
   const factoryUser = await createTestUserAndToken({
@@ -975,14 +996,17 @@ describe('Final Inspection batching and prepared coverage', () => {
 // disposition and its Final Inspection attempt history — see
 // startFinalBatchReinspection in quality-executions.service.ts.
 describe('Final QA reinspection of a failed batch (no Factory Rework workflow)', () => {
-  async function failedBatch(preparedQuantity = 100) {
+  async function failedBatch(
+    preparedQuantity = 100,
+    rejectionReason = 'Stitching defect found on collar',
+  ) {
     const f = await fixture(preparedQuantity);
     await prisma.jobOrderStageStatus.update({
       where: { id: f.job.stageStatuses[0]!.id },
       data: { status: 'COMPLETED', completedAt: new Date() },
     });
     const execution = (await start(f, preparedQuantity).expect(201)).body.data;
-    const failed = await finalize(f, execution, 'FAIL').expect(200);
+    const failed = await finalize(f, execution, 'FAIL', rejectionReason).expect(200);
     return { f, batchId: failed.body.data.finalBatch.id as string };
   }
 
@@ -1034,10 +1058,10 @@ describe('Final QA reinspection of a failed batch (no Factory Rework workflow)',
     ).toBe(1);
   });
 
-  it('retains every prior FAIL attempt across FAIL -> FAIL -> PASS and releases stock exactly once, only on the final PASS', async () => {
-    const { f, batchId } = await failedBatch(60);
+  it('retains every prior FAIL attempt (and its own rejection reason) across FAIL -> FAIL -> PASS and releases stock exactly once, only on the final PASS', async () => {
+    const { f, batchId } = await failedBatch(60, 'Attempt 1: broken zipper');
     const secondAttempt = (await reinspect(f, batchId).expect(201)).body.data;
-    await finalize(f, secondAttempt, 'FAIL').expect(200);
+    await finalize(f, secondAttempt, 'FAIL', 'Attempt 2: loose collar stitching').expect(200);
     const thirdAttempt = (await reinspect(f, batchId).expect(201)).body.data;
     const passed = await finalize(f, thirdAttempt, 'PASS').expect(200);
 
@@ -1046,9 +1070,19 @@ describe('Final QA reinspection of a failed batch (no Factory Rework workflow)',
       release: { quantity: 60 },
     });
     expect(passed.body.data.finalBatch.attempts).toMatchObject([
-      { attemptNumber: 1, status: 'FINALIZED', outcome: 'FAIL' },
-      { attemptNumber: 2, status: 'FINALIZED', outcome: 'FAIL' },
-      { attemptNumber: 3, status: 'FINALIZED', outcome: 'PASS' },
+      {
+        attemptNumber: 1,
+        status: 'FINALIZED',
+        outcome: 'FAIL',
+        rejectionReason: 'Attempt 1: broken zipper',
+      },
+      {
+        attemptNumber: 2,
+        status: 'FINALIZED',
+        outcome: 'FAIL',
+        rejectionReason: 'Attempt 2: loose collar stitching',
+      },
+      { attemptNumber: 3, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null },
     ]);
     const releases = await prisma.qaRelease.findMany({ where: { finalQualityBatchId: batchId } });
     expect(releases).toHaveLength(1);
@@ -1130,5 +1164,135 @@ describe('Final QA reinspection of a failed batch (no Factory Rework workflow)',
         .send({ expectedVersion: 1 })
         .expect(404);
     }
+  });
+});
+
+describe('Final Inspection mandatory rejection reason on FAIL', () => {
+  async function draftBatch(preparedQuantity = 50) {
+    const f = await fixture(preparedQuantity);
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+    const execution = (await start(f, preparedQuantity).expect(201)).body.data;
+    return { f, execution };
+  }
+
+  it('never requires a rejection reason for PASS', async () => {
+    const { f, execution } = await draftBatch();
+    const passed = await finalize(f, execution, 'PASS').expect(200);
+    expect(passed.body.data.finalBatch.attempts).toMatchObject([
+      { outcome: 'PASS', rejectionReason: null },
+    ]);
+  });
+
+  it('rejects finalizing a FAIL with no rejection reason', async () => {
+    const { f, execution } = await draftBatch();
+    const response = await finalize(f, execution, 'FAIL', null).expect(400);
+    expect(response.body.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      details: {
+        validationErrors: expect.arrayContaining([
+          expect.objectContaining({
+            fieldKey: 'rejectionReason',
+            fieldLabel: 'Rejection / Defect Reason',
+            code: 'REQUIRED',
+            message: 'Rejection reason is required when Final Inspection fails',
+          }),
+        ]),
+      },
+    });
+    expect(
+      await prisma.qualityActivityExecution.findUniqueOrThrow({ where: { id: execution.id } }),
+    ).toMatchObject({ status: 'DRAFT', outcome: null });
+  });
+
+  it('rejects finalizing a FAIL with a whitespace-only rejection reason', async () => {
+    const { f, execution } = await draftBatch();
+    await finalize(f, execution, 'FAIL', '   ').expect(400);
+  });
+
+  it('finalizes a FAIL with a valid rejection reason and persists it against that attempt', async () => {
+    const { f, execution } = await draftBatch();
+    const failed = await finalize(f, execution, 'FAIL', 'Torn side seam').expect(200);
+    expect(failed.body.data.finalBatch.attempts).toMatchObject([
+      { attemptNumber: 1, outcome: 'FAIL', rejectionReason: 'Torn side seam' },
+    ]);
+    const view = await request(app)
+      .get(`/quality-executions/final-batches/${failed.body.data.finalBatch.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(view.body.data.attempts).toMatchObject([
+      { attemptNumber: 1, outcome: 'FAIL', rejectionReason: 'Torn side seam' },
+    ]);
+  });
+
+  it('cannot be bypassed by a direct API call that omits rejectionReason entirely', async () => {
+    const { f, execution } = await draftBatch(20);
+    const response = await request(app)
+      .post(`/quality-executions/${execution.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({
+        expectedVersion: execution.version,
+        checklistResponses: [],
+        aqlResults: [],
+        defects: [],
+        correctiveActions: [],
+        testResults: [],
+        quantities: [],
+        comments: [],
+        fieldResponses: [],
+        attendees: [],
+        actions: [],
+        signoffs: [],
+        outcome: { componentId: f.outcomeId, value: 'FAIL' },
+      });
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    expect(
+      await prisma.qualityActivityExecution.findUniqueOrThrow({ where: { id: execution.id } }),
+    ).toMatchObject({ status: 'DRAFT' });
+  });
+
+  it('requires reinspection FAIL to independently supply its own rejection reason, distinct from the first attempt', async () => {
+    const f = await fixture(40);
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+    const execution = (await start(f, 40).expect(201)).body.data;
+    const failed = await finalize(f, execution, 'FAIL', 'Initial defect: uneven hem').expect(200);
+    const batchId = failed.body.data.finalBatch.id as string;
+
+    const retry = (await reinspect(f, batchId).expect(201)).body.data;
+    await finalize(f, retry, 'FAIL', null).expect(400);
+    const reinspectedFail = await finalize(
+      f,
+      retry,
+      'FAIL',
+      'Reinspection: hem defect persists',
+    ).expect(200);
+
+    expect(reinspectedFail.body.data.finalBatch.attempts).toMatchObject([
+      { attemptNumber: 1, outcome: 'FAIL', rejectionReason: 'Initial defect: uneven hem' },
+      { attemptNumber: 2, outcome: 'FAIL', rejectionReason: 'Reinspection: hem defect persists' },
+    ]);
+  });
+
+  it('keeps a historical FAIL attempt without a rejection reason readable', async () => {
+    const { f, execution } = await draftBatch(30);
+    const failed = await finalize(f, execution, 'FAIL', 'Recorded at time of failure').expect(200);
+    const batchId = failed.body.data.finalBatch.id as string;
+    // Simulate a pre-existing historical record from before this rule
+    // existed, where no rejection reason was ever captured.
+    await prisma.qualityActivityExecution.update({
+      where: { id: execution.id },
+      data: { outcomeRejectionReason: null },
+    });
+    const view = await request(app)
+      .get(`/quality-executions/final-batches/${batchId}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(view.body.data.attempts).toMatchObject([{ outcome: 'FAIL', rejectionReason: null }]);
   });
 });

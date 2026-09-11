@@ -59,6 +59,7 @@ const executionInclude = {
           inspectedQuantity: true,
           status: true,
           outcome: true,
+          outcomeRejectionReason: true,
           startedAt: true,
           finalizedAt: true,
         },
@@ -112,6 +113,7 @@ function toFinalBatchView(batch: FinalBatch) {
       attemptNumber: attempt.attemptNumber,
       status: attempt.status,
       outcome: attempt.outcome,
+      rejectionReason: attempt.outcomeRejectionReason,
       startedBy: attempt.startedBy,
       startedAt: attempt.startedAt.toISOString(),
       finalizedBy: attempt.finalizedBy,
@@ -419,8 +421,25 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
     if (item.type === 'INSPECTION_OUTCOME') {
       if (input.outcome?.componentId !== item.id)
         add(item, 'value', item.title, `${item.title} is required`);
-      else if (cfg.remarksRequiredWhen === input.outcome.value && !input.outcome.remarks?.trim())
-        add(item, 'remarks', 'Outcome remarks', 'Outcome remarks are required');
+      else {
+        if (cfg.remarksRequiredWhen === input.outcome.value && !input.outcome.remarks?.trim())
+          add(item, 'remarks', 'Outcome remarks', 'Outcome remarks are required');
+        // Final Inspection (the BATCHED execution multiplicity) must always
+        // record why a batch failed — this is a business rule of the
+        // Final QA batch flow itself, not a per-form config toggle, so it
+        // cannot be silently disabled by editing a quality form's config.
+        if (
+          execution.processFlowActivity.executionMultiplicity === 'BATCHED' &&
+          input.outcome.value === 'FAIL' &&
+          !input.outcome.rejectionReason?.trim()
+        )
+          add(
+            item,
+            'rejectionReason',
+            'Rejection / Defect Reason',
+            'Rejection reason is required when Final Inspection fails',
+          );
+      }
     }
     if (item.type === 'ATTACHMENTS')
       for (const requirement of list(cfg.requirements)) {
@@ -1059,6 +1078,7 @@ function currentPayload(execution: Execution): QualityExecutionPayload {
             componentId: execution.outcomeComponentId,
             value: execution.outcome,
             remarks: execution.outcomeRemarks,
+            rejectionReason: execution.outcomeRejectionReason,
           }
         : null,
   };
@@ -1144,6 +1164,7 @@ async function persist(
         outcome: input.outcome?.value ?? null,
         outcomeComponentId: input.outcome?.componentId ?? null,
         outcomeRemarks: input.outcome?.remarks ?? null,
+        outcomeRejectionReason: input.outcome?.rejectionReason?.trim() || null,
         ...(finalize
           ? { status: 'FINALIZED' as const, finalizedById: user.id, finalizedAt: new Date() }
           : {}),
@@ -1676,6 +1697,7 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
             attemptNumber: attempt.attemptNumber,
             status: attempt.status,
             outcome: attempt.outcome,
+            rejectionReason: attempt.outcomeRejectionReason,
             startedAt: attempt.startedAt.toISOString(),
             finalizedAt: attempt.finalizedAt?.toISOString() ?? null,
           })),

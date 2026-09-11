@@ -1245,7 +1245,12 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         where: { jobOrderId: f.job.id, processFlowActivityId: f.inline.id },
       }),
     ).toBe(1);
-    const qualityPayload = (version: number, componentId: string, outcome: 'PASS' | 'FAIL') => ({
+    const qualityPayload = (
+      version: number,
+      componentId: string,
+      outcome: 'PASS' | 'FAIL',
+      rejectionReason?: string,
+    ) => ({
       expectedVersion: version,
       checklistResponses: [],
       aqlResults: [],
@@ -1258,7 +1263,11 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       attendees: [],
       actions: [],
       signoffs: [],
-      outcome: { componentId, value: outcome },
+      outcome: {
+        componentId,
+        value: outcome,
+        ...(rejectionReason === undefined ? {} : { rejectionReason }),
+      },
     });
     await request(app)
       .post(`/quality-executions/${inlineStarted.id}/finalize`)
@@ -1329,7 +1338,14 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       finalized = await request(app)
         .post(`/quality-executions/${batch.id}/finalize`)
         .set('Authorization', `Bearer ${f.qa.token}`)
-        .send(qualityPayload(batch.version, f.finalOutcomeId, outcome))
+        .send(
+          qualityPayload(
+            batch.version,
+            f.finalOutcomeId,
+            outcome,
+            outcome === 'FAIL' ? 'End-to-end fixture Final Inspection failure' : undefined,
+          ),
+        )
         .expect(200);
       if (outcome === 'FAIL')
         await request(app)

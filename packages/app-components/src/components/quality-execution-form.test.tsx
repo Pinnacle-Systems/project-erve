@@ -1219,3 +1219,192 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 });
+
+function setTextareaValue(textarea: HTMLTextAreaElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+  setter.call(textarea, value);
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+describe('Final Inspection mandatory rejection reason on FAIL', () => {
+  const withFinalBatch = (status: 'DRAFT' | 'FINALIZED' = 'DRAFT'): QualityExecutionView => {
+    const item = finalExecution(status);
+    item.finalBatch = {
+      id: 'batch-2',
+      batchNumber: 2,
+      physicalQuantity: 25,
+      disposition: status === 'FINALIZED' ? 'AWAITING_REINSPECTION' : 'DRAFT',
+      allocations: [{ jobOrderLineSizeId: 'size-1', sizeCode: 'M', sizeLabel: 'M', quantity: 25 }],
+      attempts: [],
+      release: null,
+    };
+    return item;
+  };
+
+  it('only reveals the Rejection / Defect Reason field once Fail is selected, on a Final Inspection', async () => {
+    const item = withFinalBatch();
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={vi.fn()} />,
+      ),
+    );
+    expect(container.textContent).not.toContain('Rejection / Defect Reason');
+    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    await act(async () =>
+      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+    );
+    const field = container.querySelector(
+      '#quality-outcome-rejectionReason',
+    ) as HTMLTextAreaElement;
+    expect(field).not.toBeNull();
+    expect(field.required).toBe(true);
+  });
+
+  it('does not require a Rejection / Defect Reason for a plain (non-Final) inspection', async () => {
+    const item = execution();
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={vi.fn()} />,
+      ),
+    );
+    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    await act(async () =>
+      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+    );
+    expect(container.querySelector('#quality-outcome-rejectionReason')).toBeNull();
+  });
+
+  it('removes the Rejection / Defect Reason field and its requirement when switching back to Pass', async () => {
+    const item = withFinalBatch();
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={vi.fn()} />,
+      ),
+    );
+    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    await act(async () =>
+      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+    );
+    expect(container.querySelector('#quality-outcome-rejectionReason')).not.toBeNull();
+    await act(async () =>
+      (group.querySelector('input[value="PASS"]') as HTMLInputElement).click(),
+    );
+    expect(container.querySelector('#quality-outcome-rejectionReason')).toBeNull();
+  });
+
+  it('shows the server validation error inline when Finalize is attempted without a reason', () => {
+    const item = withFinalBatch();
+    item.responses.outcome = {
+      componentId: 'outcome',
+      value: 'FAIL',
+      remarks: null,
+      rejectionReason: null,
+    };
+    const validationErrors: QualityExecutionValidationError[] = [
+      {
+        sectionId: 's2',
+        sectionTitle: 'Conclusion',
+        componentId: 'outcome',
+        componentTitle: 'Outcome',
+        fieldKey: 'rejectionReason',
+        fieldLabel: 'Rejection / Defect Reason',
+        code: 'REQUIRED',
+        message: 'Rejection reason is required when Final Inspection fails',
+      },
+    ];
+    act(() =>
+      root.render(
+        <QualityExecutionForm
+          execution={item}
+          onSave={vi.fn()}
+          onFinalize={vi.fn()}
+          validationErrors={validationErrors}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain(
+      'Rejection reason is required when Final Inspection fails',
+    );
+    expect(
+      container.querySelector('#quality-outcome-rejectionReason')?.getAttribute('aria-invalid'),
+    ).toBe('true');
+  });
+
+  it('lets QA enter a reason and includes it in the finalize payload', async () => {
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    const item = withFinalBatch();
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={finalize} />,
+      ),
+    );
+    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    await act(async () =>
+      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+    );
+    const field = container.querySelector(
+      '#quality-outcome-rejectionReason',
+    ) as HTMLTextAreaElement;
+    act(() => setTextareaValue(field, 'Broken zipper'));
+
+    await act(async () => button('Finalize').click());
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Yes, finalize',
+    ) as HTMLButtonElement;
+    await act(async () => confirm.click());
+
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: expect.objectContaining({ value: 'FAIL', rejectionReason: 'Broken zipper' }),
+      }),
+    );
+  });
+
+  it("displays a finalized FAILed attempt's own rejection reason in the read-only outcome view", () => {
+    const item = withFinalBatch('FINALIZED');
+    item.responses.outcome = {
+      componentId: 'outcome',
+      value: 'FAIL',
+      remarks: 'General remarks',
+      rejectionReason: 'Torn side seam',
+    };
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={vi.fn()} />,
+      ),
+    );
+    expect(container.textContent).toContain('Rejection / Defect Reason');
+    expect(container.textContent).toContain('Torn side seam');
+  });
+
+  it("shows each failed attempt's own rejection reason in the batch inspection-attempts history, without leaking onto a later PASS", () => {
+    const item = withFinalBatch('FINALIZED');
+    item.finalBatch!.attempts = [
+      {
+        id: 'attempt-1',
+        attemptNumber: 1,
+        status: 'FINALIZED',
+        outcome: 'FAIL',
+        rejectionReason: 'Broken zipper',
+        startedAt: '',
+        finalizedAt: '',
+      },
+      {
+        id: 'attempt-2',
+        attemptNumber: 2,
+        status: 'FINALIZED',
+        outcome: 'PASS',
+        rejectionReason: null,
+        startedAt: '',
+        finalizedAt: '',
+      },
+    ];
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={vi.fn()} />,
+      ),
+    );
+    expect(container.textContent).toContain('Rejection / Defect Reason: Broken zipper');
+    expect(container.textContent).not.toContain('Rejection / Defect Reason: null');
+  });
+});

@@ -924,7 +924,12 @@ export interface QualityExecutionPayload {
     values: Record<string, string | number | boolean | null>;
   }>;
   signoffs: Array<{ componentId: string; roleKey: string; signatoryName: string }>;
-  outcome?: { componentId: string; value: 'PASS' | 'FAIL'; remarks?: string | null } | null;
+  outcome?: {
+    componentId: string;
+    value: 'PASS' | 'FAIL';
+    remarks?: string | null;
+    rejectionReason?: string | null;
+  } | null;
 }
 
 export interface QualityExecutionValidationError {
@@ -1072,6 +1077,7 @@ export interface FinalQualityBatchView {
     attemptNumber: number;
     status: 'DRAFT' | 'FINALIZED' | 'CANCELLED';
     outcome: 'PASS' | 'FAIL' | null;
+    rejectionReason: string | null;
     startedBy?: { id: string; name: string; email: string };
     startedAt: string;
     finalizedBy?: { id: string; name: string; email: string } | null;

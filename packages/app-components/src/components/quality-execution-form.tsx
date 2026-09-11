@@ -203,12 +203,21 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
               {execution.finalBatch.attempts.map((attempt) => (
                 <li
                   key={attempt.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
+                  className="rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
                 >
-                  <span>Attempt {attempt.attemptNumber}</span>
-                  <span className="font-medium">
-                    {attempt.status === 'FINALIZED' ? attempt.outcome : titleCase(attempt.status)}
-                  </span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>Attempt {attempt.attemptNumber}</span>
+                    <span className="font-medium">
+                      {attempt.status === 'FINALIZED' ? attempt.outcome : titleCase(attempt.status)}
+                    </span>
+                  </div>
+                  {attempt.status === 'FINALIZED' &&
+                  attempt.outcome === 'FAIL' &&
+                  attempt.rejectionReason ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Rejection / Defect Reason: {attempt.rejectionReason}
+                    </p>
+                  ) : null}
                 </li>
               ))}
             </ol>
@@ -1513,6 +1522,12 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                 label="Outcome remarks"
                                 value={draft.outcome?.remarks}
                               />
+                              {execution.finalBatch && draft.outcome?.value === 'FAIL' ? (
+                                <QualityReadOnlyValue
+                                  label="Rejection / Defect Reason"
+                                  value={draft.outcome?.rejectionReason}
+                                />
+                              ) : null}
                             </div>
                           ) : (
                             <div className="space-y-3">
@@ -1530,10 +1545,13 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                   error={fieldError(component.id, 'value')?.message}
                                   onChange={(outcome) => {
                                     clearFieldError(component.id, 'value');
+                                    if (outcome !== 'FAIL')
+                                      clearFieldError(component.id, 'rejectionReason');
                                     set('outcome', {
                                       componentId: component.id,
                                       value: outcome as 'PASS' | 'FAIL',
                                       remarks: draft.outcome?.remarks,
+                                      rejectionReason: draft.outcome?.rejectionReason,
                                     });
                                   }}
                                 />
@@ -1574,6 +1592,49 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                   className="text-xs text-danger"
                                 >
                                   {fieldError(component.id, 'remarks')?.message}
+                                </p>
+                              ) : null}
+                              {execution.finalBatch && draft.outcome?.value === 'FAIL' ? (
+                                <label className="block space-y-1.5 text-sm font-medium">
+                                  Rejection / Defect Reason
+                                  <textarea
+                                    id={controlId(component.id, 'rejectionReason')}
+                                    required
+                                    aria-invalid={
+                                      fieldError(component.id, 'rejectionReason')
+                                        ? true
+                                        : undefined
+                                    }
+                                    aria-describedby={
+                                      fieldError(component.id, 'rejectionReason')
+                                        ? `${controlId(component.id, 'rejectionReason')}-error`
+                                        : undefined
+                                    }
+                                    className={`${textAreaClass} ${fieldError(component.id, 'rejectionReason') ? errorClass : ''}`}
+                                    value={draft.outcome?.rejectionReason ?? ''}
+                                    onChange={(event) => {
+                                      clearFieldError(
+                                        component.id,
+                                        'rejectionReason',
+                                        undefined,
+                                        Boolean(event.target.value.trim()),
+                                      );
+                                      if (draft.outcome)
+                                        set('outcome', {
+                                          ...draft.outcome,
+                                          rejectionReason: event.target.value,
+                                        });
+                                    }}
+                                  />
+                                </label>
+                              ) : null}
+                              {fieldError(component.id, 'rejectionReason') ? (
+                                <p
+                                  id={`${controlId(component.id, 'rejectionReason')}-error`}
+                                  role="alert"
+                                  className="text-xs text-danger"
+                                >
+                                  {fieldError(component.id, 'rejectionReason')?.message}
                                 </p>
                               ) : null}
                             </div>

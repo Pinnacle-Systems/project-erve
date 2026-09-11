@@ -185,6 +185,7 @@ describe('web Quality execution workflow', () => {
             attemptNumber: 1,
             status: 'FINALIZED',
             outcome: 'FAIL',
+            rejectionReason: 'Broken zipper',
             startedAt: '2026-08-24T00:00:00.000Z',
             finalizedAt: '2026-08-24T01:00:00.000Z',
           },
@@ -212,6 +213,7 @@ describe('web Quality execution workflow', () => {
     await vi.waitFor(() => expect(container.textContent).toContain('Physical Final batch 3'));
     expect(container.textContent).toContain('S · Small5');
     expect(container.textContent).toContain('Attempt 1FAIL');
+    expect(container.textContent).toContain('Rejection / Defect Reason: Broken zipper');
     expect(container.querySelector('input[aria-label^="Final batch quantity"]')).toBeNull();
     const reinspectButton = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Start reinspection',
