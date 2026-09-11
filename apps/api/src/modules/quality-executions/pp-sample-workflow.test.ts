@@ -8,6 +8,7 @@ import {
   createTestDistributor,
   createTestFactory,
   createTestFinancialYear,
+  createTestSeason,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -56,7 +57,13 @@ async function workflow() {
   });
   const distributor = await createTestDistributor();
   const style = await prisma.style.create({
-    data: { id: createId(), styleNumber: `PP-${createId()}`, styleName: 'PP style', finalMrp: 100 },
+    data: {
+      id: createId(),
+      styleNumber: `PP-${createId()}`,
+      styleName: 'PP style',
+      finalMrp: 100,
+      seasonId: (await createTestSeason()).id,
+    },
   });
   const sizes = await Promise.all(
     ['S', 'M'].map((label, index) =>

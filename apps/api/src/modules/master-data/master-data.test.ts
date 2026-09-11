@@ -56,7 +56,7 @@ async function createStyle(token: string, overrides?: Record<string, unknown>) {
       finalMrp: 849,
       hsnCode: '61091000',
       royaltyPercentage: 12,
-      seasonIds: [season.id],
+      seasonId: season.id,
       ...overrides,
     });
 }

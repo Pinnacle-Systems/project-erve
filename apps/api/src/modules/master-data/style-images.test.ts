@@ -6,7 +6,7 @@ import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import { getFileStorage, resolveFileStorageDir } from '../../storage/index.js';
-import { createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import { createTestSeason, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 
 const app = createApp();
 
@@ -49,6 +49,7 @@ async function createStyleRecord() {
       styleNumber: `ST-${createId()}`,
       styleName: 'Image Test Style',
       finalMrp: 100,
+      seasonId: (await createTestSeason()).id,
     },
   });
 }

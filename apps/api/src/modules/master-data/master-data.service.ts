@@ -17,10 +17,7 @@ import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/proce
 import { toCompactFinancialYearCode } from './financial-year.util.js';
 
 const styleInclude = {
-  styleSeasons: {
-    include: { season: { include: { financialYear: { select: { id: true, code: true } } } } },
-    orderBy: { season: { name: 'asc' } },
-  },
+  season: { include: { financialYear: { select: { id: true, code: true } } } },
   styleSizes: { include: { size: true }, orderBy: { size: { sortOrder: 'asc' } } },
   styleFactoryMappings: { include: { factory: true }, orderBy: { factory: { name: 'asc' } } },
   images: {
@@ -87,14 +84,14 @@ function toStyleView(style: StyleRecord) {
     finalMrp: decimalToNumber(style.finalMrp),
     royaltyPercentage: decimalToNumber(style.royaltyPercentage),
     status: style.status,
-    seasons: style.styleSeasons.map(({ season }) => ({
-      id: season.id,
-      code: season.code,
-      name: season.name,
-      financialYear: season.financialYear,
-      displayName: `${season.code} ${toCompactFinancialYearCode(season.financialYear.code)}`,
-      status: season.status,
-    })),
+    season: {
+      id: style.season.id,
+      code: style.season.code,
+      name: style.season.name,
+      financialYear: style.season.financialYear,
+      displayName: `${style.season.code} ${toCompactFinancialYearCode(style.season.financialYear.code)}`,
+      status: style.season.status,
+    },
     sizes: style.styleSizes.map((mapping) => ({
       id: mapping.size.id,
       code: mapping.size.code,
@@ -233,20 +230,19 @@ export async function createStyle(
     styleName: string;
     finalMrp: number;
     status?: StyleStatus;
+    seasonId: string;
     [key: string]: unknown;
   },
 ) {
   const styleId = createId();
-  const seasonIds = input.seasonIds as string[];
-  await assertActiveSeasons(seasonIds);
+  await assertActiveSeason(input.seasonId);
 
   try {
     await prisma.style.create({
       data: {
         id: styleId,
-        ...Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'seasonIds')),
+        ...input,
         status: input.status ?? 'ACTIVE',
-        styleSeasons: { create: seasonIds.map((seasonId) => ({ seasonId })) },
       } as Prisma.StyleUncheckedCreateInput,
     });
   } catch (error) {
@@ -271,32 +267,21 @@ export async function updateStyle(
   styleId: string,
   input: Record<string, unknown>,
 ) {
-  const existing = await prisma.style.findUnique({
-    where: { id: styleId },
-    include: { styleSeasons: true },
-  });
+  const existing = await prisma.style.findUnique({ where: { id: styleId } });
   if (!existing) {
     throw HttpError.notFound('Style not found');
   }
 
-  const seasonIds = input.seasonIds as string[] | undefined;
-  // An inactive master can remain on an existing Style during edits, but it
-  // cannot be newly assigned.
-  if (seasonIds) {
-    const retainedInactiveIds = new Set(existing.styleSeasons.map((mapping) => mapping.seasonId));
-    await assertActiveSeasons(seasonIds.filter((seasonId) => !retainedInactiveIds.has(seasonId)));
+  const seasonId = input.seasonId as string | undefined;
+  // An inactive master can remain on an already-assigned Style during
+  // unrelated edits, but a Season change must land on an active Season.
+  if (seasonId && seasonId !== existing.seasonId) {
+    await assertActiveSeason(seasonId);
   }
   try {
     await prisma.style.update({
       where: { id: styleId },
-      data: {
-        ...Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'seasonIds')),
-        ...(seasonIds
-          ? {
-              styleSeasons: { deleteMany: {}, create: seasonIds.map((seasonId) => ({ seasonId })) },
-            }
-          : {}),
-      },
+      data: input as Prisma.StyleUncheckedUpdateInput,
     });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
@@ -310,7 +295,7 @@ export async function updateStyle(
     action: 'STYLE_UPDATED',
     entityType: 'Style',
     entityId: styleId,
-    metadata: seasonIds ? { seasonIds } : undefined,
+    metadata: seasonId ? { seasonId } : undefined,
   });
 
   return getStyleById(styleId);
@@ -356,10 +341,10 @@ export async function getSeasonById(id: string) {
   return toSeasonView(season);
 }
 
-async function assertActiveSeasons(ids: string[]) {
-  const seasons = await prisma.season.findMany({ where: { id: { in: ids }, status: 'ACTIVE' } });
-  if (seasons.length !== ids.length)
-    throw HttpError.badRequest('Every selected Season must exist and be active');
+async function assertActiveSeason(id: string) {
+  const season = await prisma.season.findUnique({ where: { id } });
+  if (!season || season.status !== 'ACTIVE')
+    throw HttpError.badRequest('The selected Season must exist and be active');
 }
 
 export async function createSeason(

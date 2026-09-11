@@ -6,6 +6,7 @@ import {
   createTestDistributor,
   createTestFactory,
   createTestFinancialYear,
+  createTestSeason,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -19,7 +20,7 @@ async function fixture(): Promise<Fixture> {
   const user = await createTestUserAndToken({ email: 'qa-db@test.local', password: 'pass', roles: ['QA_USER'] });
   const distributor = await createTestDistributor();
   const factory = await createTestFactory();
-  const style = await prisma.style.create({ data: { id: createId(), styleNumber: `QA-DB-${createId()}`, styleName: 'QA DB', finalMrp: 100 } });
+  const style = await prisma.style.create({ data: { id: createId(), styleNumber: `QA-DB-${createId()}`, styleName: 'QA DB', finalMrp: 100, seasonId: (await createTestSeason()).id } });
   const flow = await prisma.processFlow.create({ data: { id: createId(), code: `QA-DB-${createId()}`, name: 'QA DB', versions: { create: { id: createId(), versionNumber: 1, status: 'ACTIVE' } } }, include: { versions: true } });
   const size = await prisma.size.create({ data: { id: createId(), code: `QA-DB-${createId()}`, label: 'QA DB', sizeType: 'ALPHA', sortOrder: 1 } });
   const financialYear = await createTestFinancialYear();

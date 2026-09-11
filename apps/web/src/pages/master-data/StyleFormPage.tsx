@@ -76,12 +76,12 @@ const styleFieldLayout = [
 const HSN_CODE_PATTERN = /^\d{8}$/;
 const isValidHsnCode = (value: string) => !value || HSN_CODE_PATTERN.test(value);
 
-function cleanPayload(form: typeof emptyForm, seasonIds: string[]) {
+function cleanPayload(form: typeof emptyForm, seasonId: string) {
   return {
     ...form,
     finalMrp: Number(form.finalMrp),
     royaltyPercentage: form.royaltyPercentage === '' ? null : Number(form.royaltyPercentage),
-    seasonIds,
+    seasonId,
   };
 }
 
@@ -91,7 +91,7 @@ export function StyleFormPage() {
   const isEdit = Boolean(id);
   const [form, setForm] = useState(emptyForm);
   const [selectedSizeIds, setSelectedSizeIds] = useState<string[]>([]);
-  const [selectedSeasonIds, setSelectedSeasonIds] = useState<string[]>([]);
+  const [seasonId, setSeasonId] = useState('');
   const [factoryMappings, setFactoryMappings] = useState<
     Array<{ factoryId: string; exFactoryPrice: string }>
   >([]);
@@ -179,7 +179,7 @@ export function StyleFormPage() {
       status: styleQuery.data.status,
     });
     setSelectedSizeIds(styleQuery.data.sizes.map((size) => size.id));
-    setSelectedSeasonIds(styleQuery.data.seasons.map((season) => season.id));
+    setSeasonId(styleQuery.data.season.id);
     setFactoryMappings(
       styleQuery.data.factories.map((factory) => ({
         factoryId: factory.id,
@@ -194,12 +194,12 @@ export function StyleFormPage() {
       if (!isValidHsnCode(form.hsnCode)) {
         throw new Error('HSN Code must be exactly 8 digits.');
       }
-      if (!form.styleNumber || !form.styleName || Number(form.finalMrp) <= 0 || selectedSeasonIds.length === 0) {
-        throw new Error('Style number, style name, final MRP, and at least one Season are required');
+      if (!form.styleNumber || !form.styleName || Number(form.finalMrp) <= 0 || !seasonId) {
+        throw new Error('Style number, style name, final MRP, and Season are required');
       }
       const response = isEdit
-        ? await apiClient.patch<ApiSuccessResponse<Style>>(`/styles/${id}`, cleanPayload(form, selectedSeasonIds))
-        : await apiClient.post<ApiSuccessResponse<Style>>('/styles', cleanPayload(form, selectedSeasonIds));
+        ? await apiClient.patch<ApiSuccessResponse<Style>>(`/styles/${id}`, cleanPayload(form, seasonId))
+        : await apiClient.post<ApiSuccessResponse<Style>>('/styles', cleanPayload(form, seasonId));
       const style = response.data.data;
 
       const currentSizeIds = new Set(style.sizes.map((size) => size.id));
@@ -347,16 +347,24 @@ export function StyleFormPage() {
             </FormGrid>
           </FormSection>
 
-          <FormSection title="Seasons">
-            <div className="grid gap-2 md:grid-cols-3" role="group" aria-label="Seasons">
-              {(seasonsQuery.data ?? []).filter((season) => season.status === 'ACTIVE' || selectedSeasonIds.includes(season.id)).map((season) => (
-                <label key={season.id} className="flex items-center gap-2 rounded-control border border-border-subtle bg-surface-muted p-2 text-sm text-foreground">
-                  <Checkbox checked={selectedSeasonIds.includes(season.id)} onCheckedChange={(checked) => setSelectedSeasonIds((current) => checked === true ? [...current, season.id] : current.filter((seasonId) => seasonId !== season.id))} />
-                  {season.displayName} — {season.name}{season.status === 'INACTIVE' ? ' (inactive)' : ''}
-                </label>
-              ))}
-            </div>
-            {error && selectedSeasonIds.length === 0 ? <ValidationMessage tone="error">At least one season is required.</ValidationMessage> : null}
+          <FormSection title="Season">
+            <SelectField
+              label="Season *"
+              value={seasonId || 'NONE'}
+              onValueChange={(value) => setSeasonId(value === 'NONE' ? '' : value)}
+              errorMessage={error && !seasonId ? 'Season is required.' : undefined}
+              width="md"
+            >
+              <SelectItem value="NONE">Select season</SelectItem>
+              {(seasonsQuery.data ?? [])
+                .filter((season) => season.status === 'ACTIVE' || season.id === seasonId)
+                .map((season) => (
+                  <SelectItem key={season.id} value={season.id}>
+                    {season.displayName} — {season.name}
+                    {season.status === 'INACTIVE' ? ' (inactive)' : ''}
+                  </SelectItem>
+                ))}
+            </SelectField>
           </FormSection>
 
           <FormSection title="Valid Sizes">

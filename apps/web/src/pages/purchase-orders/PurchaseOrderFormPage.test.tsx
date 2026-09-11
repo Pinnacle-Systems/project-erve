@@ -45,7 +45,7 @@ const distributor = {
   status: 'ACTIVE',
 };
 
-const styleWithSeasons = {
+const testStyle = {
   id: 'style-1',
   styleNumber: 'ST-001',
   styleName: 'Classic Tee',
@@ -53,18 +53,7 @@ const styleWithSeasons = {
   sizes: [
     { id: 'size-1', code: 'M', label: 'Medium', sizeType: 'ALPHA', sortOrder: 1, status: 'ACTIVE', mappingStatus: 'ACTIVE' },
   ],
-  seasons: [{ id: 'season-1', code: 'SS26', name: 'Summer 26', displayName: 'SS26 26-27', status: 'ACTIVE' }],
-};
-
-const styleWithoutSeasons = {
-  id: 'style-2',
-  styleNumber: 'ST-002',
-  styleName: 'Winter Jacket',
-  status: 'ACTIVE',
-  sizes: [
-    { id: 'size-2', code: 'L', label: 'Large', sizeType: 'ALPHA', sortOrder: 1, status: 'ACTIVE', mappingStatus: 'ACTIVE' },
-  ],
-  seasons: [] as unknown[],
+  season: { id: 'season-1', code: 'SS26', name: 'Summer 26', displayName: 'SS26 26-27', status: 'ACTIVE' },
 };
 
 let container: HTMLDivElement;
@@ -184,33 +173,9 @@ function submitButton(): HTMLButtonElement {
 }
 
 describe('PurchaseOrderFormPage save error handling', () => {
-  it('shows the backend business validation message for the Seasons rule, not the raw Axios error', async () => {
+  it('surfaces a VALIDATION_ERROR business message rather than the raw Axios error', async () => {
     await renderPage(
-      baseAdapter([styleWithSeasons], {
-        createPO: async (config) =>
-          fail(config, 400, {
-            success: false,
-            error: {
-              code: 'VALIDATION_ERROR',
-              message: 'Every Order Sheet Style must have Seasons assigned',
-              details: {},
-            },
-          }),
-      }),
-    );
-
-    await fillValidStyleLine('ST-001 - Classic Tee', 'M');
-    await act(async () => submitButton().click());
-    await flush();
-
-    expect(container.textContent).toContain('Seasons');
-    expect(container.textContent).not.toContain('Request failed with status code 400');
-    expect(container.textContent).not.toContain('status code');
-  });
-
-  it('surfaces a different VALIDATION_ERROR business message without hardcoding only the Seasons case', async () => {
-    await renderPage(
-      baseAdapter([styleWithSeasons], {
+      baseAdapter([testStyle], {
         createPO: async (config) =>
           fail(config, 400, {
             success: false,
@@ -232,7 +197,7 @@ describe('PurchaseOrderFormPage save error handling', () => {
   });
 
   it('falls back to a generic message when the API provides no usable business message', async () => {
-    await renderPage(baseAdapter([styleWithSeasons], { createPO: async () => networkFail() }));
+    await renderPage(baseAdapter([testStyle], { createPO: async () => networkFail() }));
 
     await fillValidStyleLine('ST-001 - Classic Tee', 'M');
     await act(async () => submitButton().click());
@@ -244,7 +209,7 @@ describe('PurchaseOrderFormPage save error handling', () => {
   });
 
   it('saves the draft successfully and navigates away when the request is valid', async () => {
-    await renderPage(baseAdapter([styleWithSeasons]));
+    await renderPage(baseAdapter([testStyle]));
 
     await fillValidStyleLine('ST-001 - Classic Tee', 'M');
     await act(async () => submitButton().click());
@@ -252,42 +217,5 @@ describe('PurchaseOrderFormPage save error handling', () => {
 
     expect(container.textContent).toContain('Purchase Order Detail Page');
     expect(container.textContent).not.toContain('Unable to save');
-  });
-});
-
-describe('PurchaseOrderFormPage proactive Seasons validation', () => {
-  it('shows no warning for a Style that already has Seasons assigned', async () => {
-    await renderPage(baseAdapter([styleWithSeasons]));
-
-    await selectOption('Style *', 'ST-001 - Classic Tee');
-    await flush();
-
-    expect(container.textContent).not.toContain('has no Seasons assigned');
-    expect(submitButton().disabled).toBe(false);
-  });
-
-  it('warns and blocks submission for a Style with no Seasons assigned', async () => {
-    let createCalled = false;
-    await renderPage(
-      baseAdapter([styleWithoutSeasons], {
-        createPO: async (config) => {
-          createCalled = true;
-          return ok(config, { success: true, data: { id: 'po-1' } });
-        },
-      }),
-    );
-
-    await selectOption('Distributor *', 'Acme Distribution');
-    await flush();
-    await selectOption('Style *', 'ST-002 - Winter Jacket');
-    await flush();
-
-    expect(container.textContent).toContain('has no Seasons assigned');
-    expect(submitButton().disabled).toBe(true);
-
-    await act(async () => submitButton().click());
-    await flush();
-
-    expect(createCalled).toBe(false);
   });
 });

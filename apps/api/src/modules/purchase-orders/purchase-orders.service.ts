@@ -258,13 +258,11 @@ export async function createPurchaseOrder(
   await validateLines(input.lines);
   const styles = await prisma.style.findMany({
     where: { id: { in: input.lines.map((line) => line.styleId) } },
-    include: { styleSeasons: { include: { season: { include: { financialYear: true } } } } },
+    include: { season: { include: { financialYear: true } } },
   });
-  const seasonsByStyle = new Map(
-    styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]),
-  );
-  if ([...seasonsByStyle.values()].some((seasons) => seasons.length === 0))
-    throw HttpError.badRequest('Every purchase-order Style must have Seasons assigned');
+  // Every Style has a required Season (Correction 7), so this is always
+  // resolvable — the map exists only to look line styles up by id.
+  const seasonByStyle = new Map(styles.map((style) => [style.id, style.season]));
 
   const poId = createId();
   await prisma.$transaction(async (tx) => {
@@ -304,14 +302,21 @@ export async function createPurchaseOrder(
             styleId: line.styleId,
             remarks: line.remarks ?? null,
             seasonSnapshots: {
-              create: (seasonsByStyle.get(line.styleId) ?? []).map((season) => ({
-                id: createId(),
-                seasonId: season.id,
-                code: season.code,
-                name: season.name,
-                financialYear: toCompactFinancialYearCode(season.financialYear.code),
-                displayName: `${season.code} ${toCompactFinancialYearCode(season.financialYear.code)}`,
-              })),
+              create: (() => {
+                const season = seasonByStyle.get(line.styleId);
+                return season
+                  ? [
+                      {
+                        id: createId(),
+                        seasonId: season.id,
+                        code: season.code,
+                        name: season.name,
+                        financialYear: toCompactFinancialYearCode(season.financialYear.code),
+                        displayName: `${season.code} ${toCompactFinancialYearCode(season.financialYear.code)}`,
+                      },
+                    ]
+                  : [];
+              })(),
             },
             sizes: {
               create: line.sizes.map((sz) => ({
@@ -398,13 +403,11 @@ export async function updatePurchaseOrderDraft(
     if (input.lines) {
       const styles = await tx.style.findMany({
         where: { id: { in: input.lines.map((line) => line.styleId) } },
-        include: { styleSeasons: { include: { season: { include: { financialYear: true } } } } },
+        include: { season: { include: { financialYear: true } } },
       });
-      const seasonsByStyle = new Map(
-        styles.map((style) => [style.id, style.styleSeasons.map(({ season }) => season)]),
-      );
-      if ([...seasonsByStyle.values()].some((seasons) => seasons.length === 0))
-        throw HttpError.badRequest('Every purchase-order Style must have Seasons assigned');
+      // Every Style has a required Season (Correction 7), so this is always
+      // resolvable — the map exists only to look line styles up by id.
+      const seasonByStyle = new Map(styles.map((style) => [style.id, style.season]));
       // Replace all lines atomically
       await tx.distributorPurchaseOrderLine.deleteMany({ where: { purchaseOrderId: id } });
       for (const line of input.lines) {
@@ -416,14 +419,21 @@ export async function updatePurchaseOrderDraft(
             styleId: line.styleId,
             remarks: line.remarks ?? null,
             seasonSnapshots: {
-              create: (seasonsByStyle.get(line.styleId) ?? []).map((season) => ({
-                id: createId(),
-                seasonId: season.id,
-                code: season.code,
-                name: season.name,
-                financialYear: toCompactFinancialYearCode(season.financialYear.code),
-                displayName: `${season.code} ${toCompactFinancialYearCode(season.financialYear.code)}`,
-              })),
+              create: (() => {
+                const season = seasonByStyle.get(line.styleId);
+                return season
+                  ? [
+                      {
+                        id: createId(),
+                        seasonId: season.id,
+                        code: season.code,
+                        name: season.name,
+                        financialYear: toCompactFinancialYearCode(season.financialYear.code),
+                        displayName: `${season.code} ${toCompactFinancialYearCode(season.financialYear.code)}`,
+                      },
+                    ]
+                  : [];
+              })(),
             },
             sizes: {
               create: line.sizes.map((sz) => ({

@@ -51,16 +51,12 @@ async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCO
       styleName: 'Test Style',
       finalMrp: 500,
       status: overrides?.status ?? 'ACTIVE',
-      styleSeasons: {
+      season: {
         create: {
-          season: {
-            create: {
-              id: seasonId,
-              code: `T-${seasonId.slice(-6)}`,
-              name: 'Test Season',
-              financialYearId: financialYear.id,
-            },
-          },
+          id: seasonId,
+          code: `T-${seasonId.slice(-6)}`,
+          name: 'Test Season',
+          financialYearId: financialYear.id,
         },
       },
     },

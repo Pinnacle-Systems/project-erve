@@ -537,19 +537,25 @@ model Style {
   finalMrp            Decimal     @map("final_mrp") @db.Decimal(12, 2)
   royaltyPercentage   Decimal?    @map("royalty_percentage") @db.Decimal(5, 2)
   status              StyleStatus @default(ACTIVE)
+  // Correction 7: a Style belongs to exactly one Season. Styles are created
+  // for a specific Season and retired when it ends — a later Season's need
+  // is met by a new Style, never by re-pointing this one. Required: every
+  // Style must resolve to a Season.
+  seasonId            String      @map("season_id")
   createdAt           DateTime    @default(now()) @map("created_at")
   updatedAt           DateTime    @updatedAt @map("updated_at")
 
+  season               Season                          @relation(fields: [seasonId], references: [id], onDelete: Restrict)
   images               StyleImage[]
   styleSizes           StyleSize[]
   styleFactoryMappings StyleFactoryMapping[]
   priceListLines       PriceListLine[]
   purchaseOrderLines   DistributorPurchaseOrderLine[]
   jobOrderLines        JobOrderLine[]
-  styleSeasons         StyleSeason[]
   saleOrderLines       SaleOrderLine[]
 
   @@index([status])
+  @@index([seasonId])
   @@map("styles")
 }
 
@@ -567,22 +573,10 @@ model Season {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   financialYear FinancialYear @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
-  styleSeasons  StyleSeason[]
+  styles        Style[]
 
   @@index([status])
   @@map("seasons")
-}
-
-model StyleSeason {
-  styleId  String @map("style_id")
-  seasonId String @map("season_id")
-
-  style  Style  @relation(fields: [styleId], references: [id], onDelete: Cascade)
-  season Season @relation(fields: [seasonId], references: [id], onDelete: Restrict)
-
-  @@id([styleId, seasonId])
-  @@index([seasonId])
-  @@map("style_seasons")
 }
 
 // A raw partial unique index in the migrations

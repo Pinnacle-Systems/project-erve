@@ -130,7 +130,7 @@ export interface Style {
   finalMrp: number;
   royaltyPercentage: number | null;
   status: Status;
-  seasons: Season[];
+  season: Season;
   sizes: Array<Size & { mappingStatus: Status; importedSizeRangeLabel: string | null }>;
   factories: Array<Factory & { mappingStatus: Status; exFactoryPrice: number }>;
   images: StyleImage[];

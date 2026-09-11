@@ -237,6 +237,27 @@ export async function createTestFactory(overrides?: {
   return { id, code, name };
 }
 
+// Every Style requires a Season (Correction 7: one Style, exactly one
+// Season) — this gives fixtures a real, valid Season to attach rather than
+// each Style-creating helper inventing its own Financial Year + Season pair.
+export async function createTestSeason(overrides?: {
+  code?: string;
+  name?: string;
+  financialYearId?: string;
+}): Promise<{ id: string }> {
+  const id = createId();
+  const financialYearId = overrides?.financialYearId ?? (await createTestFinancialYear()).id;
+  await prisma.season.create({
+    data: {
+      id,
+      code: overrides?.code ?? `T-${id.slice(-6)}`,
+      name: overrides?.name ?? 'Test Season',
+      financialYearId,
+    },
+  });
+  return { id };
+}
+
 // A minimal-but-real JobOrder row (real Factory/ProcessFlowVersion/Financial
 // Year/serial, satisfying every FK/CHECK constraint) for tests that only
 // need *some* Job Order to exist to simulate an Order Sheet's jobOrderId
@@ -345,6 +366,7 @@ export async function createPurchaseOrderLineSize(
           styleNumber: `SO-${createId()}`,
           styleName: 'Sale order fixture style (no stock)',
           finalMrp: 100,
+          seasonId: (await createTestSeason()).id,
         },
       });
   const size = options.sizeId
@@ -419,6 +441,7 @@ export async function createReleasedQaStock(
           styleNumber: `SO-${createId()}`,
           styleName: 'Sale order fixture style',
           finalMrp: 100,
+          seasonId: (await createTestSeason()).id,
         },
       });
   const size = options.sizeId

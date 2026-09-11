@@ -5,6 +5,7 @@ import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
   createTestDistributor,
+  createTestSeason,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -31,6 +32,7 @@ async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCO
       styleName: 'Test Style',
       finalMrp: 500,
       status: overrides?.status ?? 'ACTIVE',
+      seasonId: (await createTestSeason()).id,
     },
   });
 }

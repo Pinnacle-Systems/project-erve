@@ -8,6 +8,7 @@ import {
   createTestDistributor,
   createTestFactory,
   createTestFinancialYear,
+  createTestSeason,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -30,6 +31,7 @@ async function fixture(preparedQuantity = 840) {
       styleNumber: `FINAL-${createId()}`,
       styleName: 'Final style',
       finalMrp: 100,
+      seasonId: (await createTestSeason()).id,
     },
   });
   const size = await prisma.size.create({

@@ -74,8 +74,11 @@ export function StyleDetailPage() {
         </DescriptionList>
       </Panel>
 
-      <Panel title="Seasons">
-        <div className="flex flex-wrap gap-2">{style.seasons.map((season) => <StatusBadge key={season.id} label={`${season.displayName} — ${season.name}`} tone={season.status === 'ACTIVE' ? 'info' : 'muted'} />)}</div>
+      <Panel title="Season">
+        <StatusBadge
+          label={`${style.season.displayName} — ${style.season.name}`}
+          tone={style.season.status === 'ACTIVE' ? 'info' : 'muted'}
+        />
       </Panel>
 
       <StyleImagesPanel

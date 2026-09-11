@@ -51,5 +51,5 @@ export interface StyleOption {
   styleName: string;
   status: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
   sizes: StyleSize[];
-  seasons: StyleSeason[];
+  season: StyleSeason;
 }

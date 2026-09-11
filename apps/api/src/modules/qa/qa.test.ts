@@ -9,6 +9,7 @@ import {
   createTestDistributor,
   createTestFactory,
   createTestFinancialYear,
+  createTestSeason,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -41,7 +42,13 @@ async function fixture() {
     data: { id: createId(), code: 'QA-M', label: 'M', sizeType: 'ALPHA', sortOrder: 1 },
   });
   const style = await prisma.style.create({
-    data: { id: createId(), styleNumber: 'QA-STYLE', styleName: 'QA Style', finalMrp: 100 },
+    data: {
+      id: createId(),
+      styleNumber: 'QA-STYLE',
+      styleName: 'QA Style',
+      finalMrp: 100,
+      seasonId: (await createTestSeason()).id,
+    },
   });
   const flow = await prisma.processFlow.create({
     data: {

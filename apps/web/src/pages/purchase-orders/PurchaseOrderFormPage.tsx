@@ -11,10 +11,6 @@ import { getLocalDateString } from '../../lib/dates.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import type { Distributor, PurchaseOrder, StyleOption } from './types.js';
 
-const SEASONS_VALIDATION_MESSAGE = 'Every Order Sheet Style must have Seasons assigned';
-const SEASONS_WARNING_MESSAGE =
-  'The selected Style does not have any Seasons assigned. Assign at least one Season to the Style before saving the Order Sheet.';
-
 interface SizeRow {
   sizeId: string;
   sizeCode: string;
@@ -41,7 +37,6 @@ export function PurchaseOrderFormPage() {
   const [remarks, setRemarks] = useState('');
   const [line, setLine] = useState<LineState>(emptyLine());
   const [error, setError] = useState('');
-  const [styleLineError, setStyleLineError] = useState('');
 
   const poQuery = useQuery({
     queryKey: ['purchase-order', id],
@@ -117,13 +112,6 @@ export function PurchaseOrderFormPage() {
     return (style?.sizes ?? []).filter((sz) => sz.status === 'ACTIVE' && sz.mappingStatus === 'ACTIVE');
   }
 
-  // Returns null when the style hasn't loaded yet (or isn't selected), so callers
-  // can distinguish "unknown" from "known to have zero Seasons assigned".
-  function getStyleSeasons(styleId: string): StyleOption['seasons'] | null {
-    if (!styleId) return null;
-    return stylesQuery.data?.find((s) => s.id === styleId)?.seasons ?? null;
-  }
-
   function handleStyleChange(styleId: string) {
     const sizes = getStyleSizes(styleId);
     setLine((current) => ({
@@ -145,7 +133,6 @@ export function PurchaseOrderFormPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      setStyleLineError('');
       if (!distributorId) throw new Error('Distributor is required');
       if (!poDate) throw new Error('Order Sheet date is required');
       if (!line.styleId) throw new Error('A Style is required');
@@ -180,19 +167,10 @@ export function PurchaseOrderFormPage() {
       }
     },
     onSuccess: (po) => navigate(`/purchase-orders/${po.id}`),
-    onError: (caught) => {
-      const message = getApiErrorMessage(caught, 'Unable to save the Order Sheet. Please try again.');
-      if (message === SEASONS_VALIDATION_MESSAGE) {
-        setStyleLineError(SEASONS_WARNING_MESSAGE);
-      } else {
-        setError(message);
-      }
-    },
+    onError: (caught) => setError(getApiErrorMessage(caught, 'Unable to save the Order Sheet. Please try again.')),
   });
 
   const availableStyles = stylesQuery.data?.filter((s) => s.status === 'ACTIVE') ?? [];
-  const seasons = getStyleSeasons(line.styleId);
-  const lineHasNoSeasons = seasons !== null && seasons.length === 0;
   const sizesForStyle = getStyleSizes(line.styleId);
 
   return (
@@ -212,10 +190,6 @@ export function PurchaseOrderFormPage() {
           className="space-y-6"
           onSubmit={(e) => {
             e.preventDefault();
-            if (lineHasNoSeasons) {
-              setStyleLineError(SEASONS_WARNING_MESSAGE);
-              return;
-            }
             mutation.mutate();
           }}
         >
@@ -282,7 +256,6 @@ export function PurchaseOrderFormPage() {
           </FormSection>
 
           <FormSection title="Style">
-            {styleLineError ? <ValidationMessage tone="error">{styleLineError}</ValidationMessage> : null}
             <Panel variant="bordered" padding="sm" className="space-y-4">
               <div className="flex flex-wrap items-end gap-3">
                 <SelectField
@@ -305,13 +278,6 @@ export function PurchaseOrderFormPage() {
                   onChange={(e) => setLine((current) => ({ ...current, remarks: e.target.value }))}
                 />
               </div>
-
-              {lineHasNoSeasons && (
-                <ValidationMessage tone="warning">
-                  This Style has no Seasons assigned. Assign at least one Season to the Style before it can be
-                  used on an Order Sheet.
-                </ValidationMessage>
-              )}
 
               {line.styleId && sizesForStyle.length > 0 && (
                 <div>
@@ -349,7 +315,7 @@ export function PurchaseOrderFormPage() {
             <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
               Cancel
             </Button>
-            <Button type="submit" loading={mutation.isPending} disabled={lineHasNoSeasons}>
+            <Button type="submit" loading={mutation.isPending}>
               Save
             </Button>
           </div>

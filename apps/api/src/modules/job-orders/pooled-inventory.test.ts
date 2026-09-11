@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { createReleasedQaStock, createTestDistributor, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import { createReleasedQaStock, createTestDistributor, createTestSeason, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 import { getPooledFactoryInventory } from './pooled-inventory.service.js';
 
 const app = createApp();
@@ -56,7 +56,13 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
   it('pools QA-passed stock from two Job Orders at the same Factory + Style + Size', async () => {
     const styleId = createId();
     await prisma.style.create({
-      data: { id: styleId, styleNumber: `POOL-${createId()}`, styleName: 'Pooled Style', finalMrp: 100 },
+      data: {
+        id: styleId,
+        styleNumber: `POOL-${createId()}`,
+        styleName: 'Pooled Style',
+        finalMrp: 100,
+        seasonId: (await createTestSeason()).id,
+      },
     });
     const factoryId = createId();
     await prisma.factory.create({
@@ -87,7 +93,13 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
   it('never pools across a different Factory', async () => {
     const styleId = createId();
     await prisma.style.create({
-      data: { id: styleId, styleNumber: `POOL-${createId()}`, styleName: 'Pooled Style', finalMrp: 100 },
+      data: {
+        id: styleId,
+        styleNumber: `POOL-${createId()}`,
+        styleName: 'Pooled Style',
+        finalMrp: 100,
+        seasonId: (await createTestSeason()).id,
+      },
     });
     const sizeId = createId();
     await prisma.size.create({

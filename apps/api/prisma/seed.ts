@@ -2,7 +2,10 @@ import { createId } from '@erve/shared';
 import { prisma, type RoleName } from '../src/db/prisma.js';
 import { hashPassword } from '../src/auth/password.js';
 import { qualityFormDefinitionSchema } from '../src/modules/quality-forms/quality-forms.validation.js';
-import { ensureFinancialYearWindow } from '../src/modules/master-data/financial-year.service.js';
+import {
+  ensureFinancialYearWindow,
+  getCurrentFinancialYear,
+} from '../src/modules/master-data/financial-year.service.js';
 import {
   CANONICAL_QUALITY_FORMS,
   type CanonicalQualityFormDefinition,
@@ -185,7 +188,35 @@ const DEFAULT_STYLES: SeedStyleInput[] = [
   },
 ];
 
+// A Style requires a Season (Correction 7: one Style, exactly one Season).
+// The sample item-master rows have no real Season of their own, so seeding
+// gives them one default Season tied to the current Financial Year rather
+// than leaving seasonId unset — dev/test fixtures need a valid, non-invented
+// value to satisfy the required relation, not a fabricated historical one.
+async function seedDefaultSeason(): Promise<{ id: string }> {
+  const financialYear = await getCurrentFinancialYear();
+  // Season's (financialYearId, code) uniqueness is a case-insensitive
+  // expression index, not a plain Prisma @@unique — findFirst + create
+  // (rather than upsert) mirrors how master-data.service.ts's own
+  // createSeason handles this same constraint shape.
+  const existing = await prisma.season.findFirst({
+    where: { financialYearId: financialYear.id, code: 'DEFAULT' },
+    select: { id: true },
+  });
+  if (existing) return existing;
+  return prisma.season.create({
+    data: {
+      id: createId(),
+      code: 'DEFAULT',
+      name: 'Default Season',
+      financialYearId: financialYear.id,
+    },
+    select: { id: true },
+  });
+}
+
 async function seedStyles(): Promise<void> {
+  const defaultSeason = await seedDefaultSeason();
   for (const input of DEFAULT_STYLES) {
     const styleFields = {
       styleName: input.styleName,
@@ -205,7 +236,12 @@ async function seedStyles(): Promise<void> {
     const style = await prisma.style.upsert({
       where: { styleNumber: input.styleNumber },
       update: styleFields,
-      create: { id: createId(), styleNumber: input.styleNumber, ...styleFields },
+      create: {
+        id: createId(),
+        styleNumber: input.styleNumber,
+        seasonId: defaultSeason.id,
+        ...styleFields,
+      },
     });
 
     const factory = await prisma.factory.findUniqueOrThrow({

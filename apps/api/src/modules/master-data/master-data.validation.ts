@@ -21,13 +21,7 @@ export const factoryStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const processFlowStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const processFlowVersionStatusSchema = z.enum(['DRAFT', 'ACTIVE', 'RETIRED']);
 export const seasonStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
-const seasonIdsSchema = z
-  .array(z.string().trim().min(1))
-  .min(1, 'At least one Season is required')
-  .superRefine((ids, ctx) => {
-    if (new Set(ids).size !== ids.length)
-      ctx.addIssue({ code: 'custom', message: 'Duplicate Season identifiers are not allowed' });
-  });
+const seasonIdSchema = z.string().trim().min(1, 'Season is required');
 
 export const createStyleSchema = z.object({
   styleNumber: z.string().trim().min(1),
@@ -44,7 +38,7 @@ export const createStyleSchema = z.object({
   finalMrp: positiveMoney,
   royaltyPercentage: z.coerce.number().min(0).max(100).optional().nullable(),
   status: styleStatusSchema.optional(),
-  seasonIds: seasonIdsSchema,
+  seasonId: seasonIdSchema,
 });
 
 export const updateStyleSchema = createStyleSchema

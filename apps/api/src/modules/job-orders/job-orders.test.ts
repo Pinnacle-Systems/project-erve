@@ -66,7 +66,7 @@ async function createSeedGraph() {
       styleNumber: 'ST-JO',
       styleName: 'Job Style',
       finalMrp: 500,
-      styleSeasons: { create: { seasonId: season.id } },
+      seasonId: season.id,
     },
   });
   await prisma.styleSize.createMany({
@@ -711,7 +711,7 @@ describe('job orders API', () => {
         styleNumber: `ST-JO2-${createId()}`,
         styleName: 'Second Job Style',
         finalMrp: 500,
-        styleSeasons: { create: { seasonId: secondSeason.id } },
+        seasonId: secondSeason.id,
       },
     });
     const secondSize = await prisma.size.create({
@@ -2456,7 +2456,7 @@ describe('multi-source Order Sheet job orders (Order Sheet Phase 2)', () => {
         styleNumber: `ST-OTHER-${createId()}`,
         styleName: 'Other Style',
         finalMrp: 500,
-        styleSeasons: { create: { seasonId: otherSeason.id } },
+        seasonId: otherSeason.id,
       },
     });
     const otherSize = await prisma.size.create({
@@ -2755,7 +2755,7 @@ describe('multi-source Order Sheet job orders (Order Sheet Phase 2)', () => {
         styleNumber: `ST-OTHER2-${createId()}`,
         styleName: 'Other Style 2',
         finalMrp: 500,
-        styleSeasons: { create: { seasonId: otherSeason.id } },
+        seasonId: otherSeason.id,
       },
     });
     const otherSize = await prisma.size.create({
