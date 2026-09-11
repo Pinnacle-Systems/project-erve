@@ -341,6 +341,9 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
           ? previousProductionRuntime?.status === 'COMPLETED'
           : jobOrder.factoryConfirmationStatus === 'CONFIRMED';
       }
+      // A cancelled Job Order can never newly start or resume any Quality
+      // activity, regardless of what the rest of this function computed.
+      if (jobOrder.status === 'CANCELLED') eligible = false;
       const physicalBatches = jobOrder.finalQualityBatches.filter(
         (batch) => batch.processFlowActivityId === activity.id && batch.disposition !== 'CANCELLED',
       );
@@ -1977,6 +1980,78 @@ export async function markJobOrderProductionComplete(
       actor.id,
       id,
       'MARK_PRODUCTION_COMPLETE',
+      idempotencyKey,
+      hash,
+      updated.version,
+    );
+  });
+  return getJobOrderDetail(actor, id);
+}
+
+const CANCELLABLE_JOB_ORDER_STATUSES: JobOrderStatus[] = [
+  'DRAFT',
+  'SENT_TO_FACTORY',
+  'CONFIRMED_BY_FACTORY',
+];
+
+// Merchandiser/Admin-only lifecycle transition (Correction 4). A Job Order
+// may be cancelled only until production actually starts — i.e. while its
+// status is still one of DRAFT / SENT_TO_FACTORY / CONFIRMED_BY_FACTORY.
+// startProductionStage moves the Job Order straight to IN_PRODUCTION in the
+// same transaction as the first stage reaching IN_PROGRESS (see
+// startProductionStage above), so "status is still one of the three
+// pre-production values" and "production has not started" are the same
+// fact — no separate productionStartedAt check is needed here.
+//
+// This is a soft transition only: it never deletes the Job Order, never
+// releases the source Order Sheet mappings (Order Sheet Phase 2's confirmed
+// rule is that creating a Job Order against an Order Sheet locks it
+// permanently; cancellation gives no confirmed business rule to reverse
+// that — flagged as a business ambiguity rather than guessed), never
+// touches Factory assignment/commercial history, and creates no inventory
+// adjustment, QA Release, or stage completion. cancelJobOrder and
+// startProductionStage take the same per-Job-Order advisory lock, so a
+// race between the two resolves to exactly one winner: whichever
+// transaction commits first invalidates the other's optimistic version
+// check.
+export async function cancelJobOrder(
+  actor: CurrentUser,
+  id: string,
+  input: { expectedVersion: number },
+  idempotencyKey: string,
+) {
+  if (!canManageJobOrders(actor))
+    throw HttpError.forbidden('Only admins and merchandisers can cancel job orders');
+  const hash = requestHash(input);
+  await prisma.$transaction(async (tx) => {
+    if (await beginIdempotentOperation(tx, actor.id, id, 'CANCEL', idempotencyKey, hash)) return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const jobOrder = await tx.jobOrder.findUnique({ where: { id } });
+    if (!jobOrder) throw HttpError.notFound('Job order not found');
+    if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+    if (!CANCELLABLE_JOB_ORDER_STATUSES.includes(jobOrder.status))
+      throw HttpError.conflict(
+        'This job order can no longer be cancelled — production has already started',
+      );
+    const updated = await tx.jobOrder.update({
+      where: { id },
+      data: { status: 'CANCELLED', version: { increment: 1 } },
+    });
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_CANCELLED',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: { jobOrderNumber: jobOrder.jobOrderNumber, previousStatus: jobOrder.status },
+      },
+      tx,
+    );
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'CANCEL',
       idempotencyKey,
       hash,
       updated.version,

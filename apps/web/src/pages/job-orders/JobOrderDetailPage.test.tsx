@@ -1002,6 +1002,104 @@ describe('JobOrderDetailPage manual Production Complete (Correction 3)', () => {
   });
 });
 
+describe('JobOrderDetailPage Cancel Job Order (Correction 4)', () => {
+  it.each(['DRAFT', 'SENT_TO_FACTORY', 'CONFIRMED_BY_FACTORY'])(
+    'lets a Merchandiser cancel a %s job order with a confirmation dialog',
+    async (status) => {
+      const post = vi
+        .spyOn(apiClient, 'post')
+        .mockResolvedValue({ data: { data: mockJobOrder('CANCELLED') } });
+      await renderPage(status);
+
+      const trigger = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Cancel Job Order',
+      ) as HTMLButtonElement;
+      expect(trigger).toBeDefined();
+      act(() => trigger.click());
+
+      const dialogButtons = Array.from(document.body.querySelectorAll('button'));
+      const confirm = dialogButtons.find(
+        (button) => button.textContent === 'Yes, cancel Job Order',
+      ) as HTMLButtonElement;
+      expect(confirm).toBeDefined();
+      await act(async () => confirm.click());
+
+      expect(post).toHaveBeenCalledWith(
+        '/job-orders/jo-1/actions/cancel',
+        { expectedVersion: 1 },
+        expect.objectContaining({ headers: expect.any(Object) }),
+      );
+    },
+  );
+
+  it('shows the consequence of cancellation before confirming', async () => {
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: mockJobOrder('CANCELLED') } });
+    await renderPage('DRAFT');
+    const trigger = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Cancel Job Order',
+    ) as HTMLButtonElement;
+    act(() => trigger.click());
+
+    const dialogText = document.body.textContent ?? '';
+    expect(dialogText).toContain('production cannot continue');
+    expect(dialogText).toContain('source Order Sheets remain locked');
+    expect(dialogText).toContain('cannot be undone');
+  });
+
+  it.each(['IN_PRODUCTION', 'PRODUCTION_COMPLETE', 'CANCELLED'])(
+    'does not offer cancellation once the job order is %s',
+    async (status) => {
+      await renderPage(status);
+      expect(
+        Array.from(container.querySelectorAll('button')).some(
+          (button) => button.textContent === 'Cancel Job Order',
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it('hides the action from a Factory-only user', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderPage('DRAFT');
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (button) => button.textContent === 'Cancel Job Order',
+      ),
+    ).toBe(false);
+  });
+
+  it('surfaces a server-side eligibility error', async () => {
+    vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      message: 'Request failed with status code 409',
+      response: {
+        data: {
+          error: {
+            code: 'CONFLICT',
+            message: 'This job order can no longer be cancelled — production has already started',
+          },
+        },
+      },
+    });
+    await renderPage('CONFIRMED_BY_FACTORY');
+    const trigger = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Cancel Job Order',
+    ) as HTMLButtonElement;
+    act(() => trigger.click());
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Yes, cancel Job Order',
+    ) as HTMLButtonElement;
+
+    await act(async () => confirm.click());
+
+    await vi.waitFor(() =>
+      expect(content()).toContain(
+        'This job order can no longer be cancelled — production has already started',
+      ),
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Production Plan (Phase 2.1) — the sources panel currently has zero
 // coverage of the Production Plan edit control or the simplified

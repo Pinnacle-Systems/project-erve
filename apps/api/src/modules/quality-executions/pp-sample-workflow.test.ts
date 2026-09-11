@@ -1480,3 +1480,90 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       .expect(403);
   }, 30_000);
 });
+
+// Correction 4: cancelling a Job Order before production starts must
+// invalidate PP Sample/PPM QA start/finalization regardless of prior
+// progress on either gate. The cancellation mutation itself (and its RBAC/
+// audit/race behavior) is covered in job-orders.test.ts; these tests are
+// scoped to the QA-side gating (eligible()/persist()) that reacts to it.
+describe('cancellation blocks PP Sample/PPM QA start and finalization (Correction 4)', () => {
+  it('rejects starting either PP Sample or PPM once the Job Order is cancelled', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    await prisma.jobOrder.update({ where: { id: f.job.id }, data: { status: 'CANCELLED' } });
+
+    await startPp(f).expect(409);
+    await startPpm(f).expect(409);
+  });
+
+  it('rejects finalizing an already-started PPM draft once the Job Order is cancelled', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    const started = await startPpm(f).expect(201);
+    await prisma.jobOrder.update({ where: { id: f.job.id }, data: { status: 'CANCELLED' } });
+
+    await request(app)
+      .post(`/quality-executions/${started.body.data.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send(ppmPayload(f, started.body.data.version))
+      .expect(409);
+  });
+
+  it('rejects saving or finalizing an already-started PP Sample draft (the ERVE-015 size-form bridge) once the Job Order is cancelled', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    const started = await startPp(f).expect(201);
+    const session = await prisma.qaInspectionSession.findUniqueOrThrow({
+      where: { qualityActivityExecutionId: started.body.data.id },
+      include: { forms: true },
+    });
+    const form = session.forms[0]!;
+    await prisma.jobOrder.update({ where: { id: f.job.id }, data: { status: 'CANCELLED' } });
+
+    await request(app)
+      .put(`/qa/inspections/${session.id}/forms/${form.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send({
+        expectedVersion: form.version,
+        sampleQuantity: form.sampleQuantity,
+        inspectionRemarks: null,
+        checklist: checklistCodes.map((itemCode) => ({ itemCode, status: 'YES', remarks: null })),
+        defectCategory: null,
+        otherDefectDetails: null,
+        defectNotes: null,
+      })
+      .expect(409);
+    await request(app)
+      .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send({ expectedVersion: form.version, ppSampleDecision: 'PASS' })
+      .expect(409);
+  });
+
+  it('shows a not-yet-started PP Sample/PPM as NOT_AVAILABLE on a cancelled Job Order, without retroactively hiding an already-completed one', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    // PPM is finalized before cancellation; PP Sample is left untouched.
+    await completePpm(f);
+    await prisma.jobOrder.update({ where: { id: f.job.id }, data: { status: 'CANCELLED' } });
+
+    const detail = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    const pp = detail.body.data.qualityActivities.find(
+      (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.pp.id,
+    );
+    const ppm = detail.body.data.qualityActivities.find(
+      (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.ppm.id,
+    );
+    // Never started: cancellation makes it NOT_AVAILABLE, not still AVAILABLE.
+    expect(pp.status).toBe('NOT_AVAILABLE');
+    // Already finalized before cancellation: that historical fact is
+    // preserved, not rewritten — cancellation only ever prevents *new* or
+    // *resumed* Quality work, never erases completed work.
+    expect(ppm.status).toBe('COMPLETED');
+  });
+});

@@ -20,6 +20,7 @@ type DefinitionComponent = {
   config: unknown;
 };
 const executionInclude = {
+  jobOrder: { select: { status: true } },
   startedBy: { select: { id: true, name: true, email: true } },
   finalizedBy: { select: { id: true, name: true, email: true } },
   processFlowActivity: { include: { associatedProductionActivity: true } },
@@ -561,6 +562,9 @@ function eligible(
   jobOrder: Awaited<ReturnType<typeof loadJobOrder>>,
   activity: (typeof jobOrder.processFlowVersion.stages)[number],
 ) {
+  // A cancelled Job Order can never newly start any Quality activity,
+  // regardless of what production/gate state it was in beforehand.
+  if (jobOrder.status === 'CANCELLED') return false;
   const associated = jobOrder.stageStatuses.find(
     (x) => x.processFlowVersionStageId === activity.associatedProductionActivityId,
   );
@@ -1072,6 +1076,12 @@ async function persist(
     include: executionInclude,
   });
   if (!execution) throw HttpError.notFound('Quality execution not found');
+  // A cancelled Job Order can never resume a Quality activity that was
+  // already started (DRAFT) before cancellation — this covers save-draft
+  // and finalize alike, independently of the eligible() gate above (which
+  // only applies to newly starting an activity).
+  if (execution.jobOrder.status === 'CANCELLED')
+    throw HttpError.conflict('This job order has been cancelled');
   if (execution.status !== 'DRAFT')
     throw HttpError.conflict('Finalized Quality executions are immutable');
   if (execution.version !== input.expectedVersion) throw HttpError.staleVersion(execution.version);

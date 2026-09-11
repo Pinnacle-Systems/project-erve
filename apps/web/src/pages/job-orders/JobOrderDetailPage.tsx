@@ -90,6 +90,7 @@ export function JobOrderDetailPage() {
   const queryClient = useQueryClient();
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [markCompleteDialogOpen, setMarkCompleteDialogOpen] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
   const [disclaimerDrafts, setDisclaimerDrafts] = useState<Record<string, string>>({});
   const [disclaimerError, setDisclaimerError] = useState('');
@@ -334,6 +335,22 @@ export function JobOrderDetailPage() {
       invalidate();
     },
   });
+  const cancelJobOrderMutation = useMutation({
+    mutationFn: async () =>
+      apiClient.post<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${id}/actions/cancel`,
+        { expectedVersion: jobOrderQuery.data!.version },
+        {
+          headers: {
+            'Idempotency-Key': `${id}:cancel:${jobOrderQuery.data!.version}`,
+          },
+        },
+      ),
+    onSuccess: () => {
+      setCancelDialogOpen(false);
+      invalidate();
+    },
+  });
   const preparedMutation = useMutation({
     mutationFn: async (sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }>) =>
       apiClient.post<ApiSuccessResponse<JobOrder>>(
@@ -483,6 +500,11 @@ export function JobOrderDetailPage() {
   );
   const canMarkProductionComplete =
     jobOrder.status === 'IN_PRODUCTION' && canManageJobOrders;
+  // Mirrors the server's cancellation boundary in cancelJobOrder — a Job
+  // Order may be cancelled only until production actually starts.
+  const canCancelJobOrder =
+    ['DRAFT', 'SENT_TO_FACTORY', 'CONFIRMED_BY_FACTORY'].includes(jobOrder.status) &&
+    canManageJobOrders;
   const preparedPayload = flatSizes.map((size) => ({
     jobOrderLineSizeId: size.id,
     preparedQuantity: preparedQuantities[size.id] ?? size.preparedQuantity,
@@ -590,6 +612,11 @@ export function JobOrderDetailPage() {
                 Confirm
               </Button>
             )}
+            {canCancelJobOrder && (
+              <Button variant="destructive" onClick={() => setCancelDialogOpen(true)}>
+                Cancel Job Order
+              </Button>
+            )}
           </div>
         }
       />
@@ -599,6 +626,15 @@ export function JobOrderDetailPage() {
           {[confirmMutation.error, completeStageMutation.error, preparedMutation.error].find(
             (error) => error instanceof Error,
           )?.message ?? 'Unable to update job order'}
+        </ValidationMessage>
+      )}
+
+      {cancelJobOrderMutation.isError && (
+        <ValidationMessage tone="error">
+          {mutationErrorMessage(
+            cancelJobOrderMutation.error,
+            'Unable to cancel this Job Order.',
+          )}
         </ValidationMessage>
       )}
 
@@ -1795,6 +1831,16 @@ export function JobOrderDetailPage() {
         confirmLabel="Confirm"
         loading={markProductionCompleteMutation.isPending}
         onConfirm={() => markProductionCompleteMutation.mutate()}
+      />
+
+      <ConfirmDialog
+        open={cancelDialogOpen}
+        onOpenChange={setCancelDialogOpen}
+        title="Cancel this Job Order?"
+        description="This Job Order will be cancelled and production cannot continue on it. Its source Order Sheets remain locked and mapped to this Job Order — they are not released or made available for another Job Order. This cannot be undone."
+        confirmLabel="Yes, cancel Job Order"
+        loading={cancelJobOrderMutation.isPending}
+        onConfirm={() => cancelJobOrderMutation.mutate()}
       />
     </div>
   );

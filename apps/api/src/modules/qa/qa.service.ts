@@ -557,6 +557,10 @@ export async function saveSizeInspectionForm(
     if (form.session.inspectorId !== user.id && !isSupervisor(user))
       throw HttpError.forbidden('Only the inspector can edit this draft');
     if (form.version !== input.expectedVersion) throw HttpError.staleVersion(form.version);
+    // A cancelled Job Order can never resume a PP Sample (or other QA)
+    // inspection that was already started before cancellation.
+    if (form.session.jobOrder.status === 'CANCELLED')
+      throw HttpError.conflict('This job order has been cancelled');
     if (!['DRAFT', 'REOPENED'].includes(form.status))
       throw HttpError.conflict('Size inspection form is finalized');
     if (
@@ -713,6 +717,10 @@ export async function finalizeSizeInspectionForm(
     if (form.session.inspectorId !== user.id && !isSupervisor(user))
       throw HttpError.forbidden('Only the inspector can finalize this form');
     if (form.version !== input.expectedVersion) throw HttpError.staleVersion(form.version);
+    // A cancelled Job Order can never finalize a PP Sample (or other QA)
+    // inspection that was already started before cancellation.
+    if (form.session.jobOrder.status === 'CANCELLED')
+      throw HttpError.conflict('This job order has been cancelled');
     if (form.status !== 'DRAFT')
       throw HttpError.conflict('Size inspection form is already finalized');
     const ppExecution = form.session.qualityActivityExecution;

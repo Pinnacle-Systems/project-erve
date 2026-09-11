@@ -23,6 +23,7 @@ const JOB_ORDER_AUDIT_TITLES: Record<string, string> = {
   JOB_ORDER_PRODUCTION_COMPLETED_AUTOMATIC:
     'Production automatically marked complete — planned quantity fully produced and inspected',
   JOB_ORDER_PRODUCTION_COMPLETED_MANUAL: 'Production marked complete by Merchandising',
+  JOB_ORDER_CANCELLED: 'Job order cancelled',
   QA_REWORK_REQUESTED: 'Rework requested by QA',
   QA_REWORK_ACKNOWLEDGE: 'Factory acknowledged rework',
   QA_REWORK_NOTES: 'Factory updated rework notes',

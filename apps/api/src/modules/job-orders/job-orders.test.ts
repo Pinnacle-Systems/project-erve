@@ -1931,6 +1931,434 @@ describe('manual Job Order Production Complete (Correction 3)', () => {
   });
 });
 
+// Correction 4: a Job Order may be cancelled only until production actually
+// starts. Once the first Production stage reaches IN_PROGRESS,
+// startProductionStage moves the Job Order straight to IN_PRODUCTION in the
+// same transaction — so "status is still DRAFT / SENT_TO_FACTORY /
+// CONFIRMED_BY_FACTORY" and "production has not started" are the same fact.
+describe('Job Order cancellation (Correction 4)', () => {
+  async function createFactoryUserFor(graph: Awaited<ReturnType<typeof createSeedGraph>>) {
+    const factoryUser = await createTestUserAndToken({
+      email: `cancel-factory-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+    });
+    return factoryUser;
+  }
+
+  async function sendAndConfirm(
+    graph: Awaited<ReturnType<typeof createSeedGraph>>,
+    factoryUser: { token: string },
+    created: { body: { data: { id: string; version: number } } },
+  ) {
+    const sent = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', `${created.body.data.id}-send`)
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    return request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${created.body.data.id}-confirm`)
+      .send({
+        expectedVersion: sent.body.data.version,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
+      .expect(200);
+  }
+
+  async function toInProduction(graph: Awaited<ReturnType<typeof createSeedGraph>>) {
+    const factoryUser = await createFactoryUserFor(graph);
+    const created = await createJobOrder(graph.admin.token, graph, 10);
+    const confirmed = await sendAndConfirm(graph, factoryUser, created);
+    const stages = confirmed.body.data.stages;
+    const started = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${created.body.data.id}-start-1`)
+      .send({ stageStatusId: stages[0].id, expectedVersion: confirmed.body.data.version })
+      .expect(200);
+    return {
+      jobOrderId: created.body.data.id as string,
+      version: started.body.data.version as number,
+      stages,
+      factoryUser,
+    };
+  }
+
+  it('cancels a DRAFT job order', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 5);
+    const res = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-draft')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    expect(res.body.data.status).toBe('CANCELLED');
+  });
+
+  it('cancels a SENT_TO_FACTORY job order', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 5);
+    const sent = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-sent-send')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    const res = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-sent')
+      .send({ expectedVersion: sent.body.data.version })
+      .expect(200);
+    expect(res.body.data.status).toBe('CANCELLED');
+  });
+
+  it('cancels a CONFIRMED_BY_FACTORY job order before production starts, as Merchandiser, recording actor and timestamp in the audit trail', async () => {
+    const graph = await createSeedGraph();
+    const merchandiser = await createTestUserAndToken({
+      email: `cancel-merch-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    const factoryUser = await createFactoryUserFor(graph);
+    const created = await createJobOrder(graph.admin.token, graph, 5);
+    const confirmed = await sendAndConfirm(graph, factoryUser, created);
+    expect(confirmed.body.data.status).toBe('CONFIRMED_BY_FACTORY');
+
+    const res = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'cancel-confirmed')
+      .send({ expectedVersion: confirmed.body.data.version })
+      .expect(200);
+    expect(res.body.data.status).toBe('CANCELLED');
+
+    const audit = await request(app)
+      .get(`/job-orders/${created.body.data.id}/audit`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    const entry = audit.body.data.find(
+      (item: { action: string }) => item.action === 'JOB_ORDER_CANCELLED',
+    );
+    expect(entry).toBeDefined();
+    expect(entry.actor.id).toBe(merchandiser.userId);
+    expect(entry.createdAt).toBeTruthy();
+  });
+
+  it('allows Admin as well as Merchandiser to cancel, and rejects every other role', async () => {
+    const graph = await createSeedGraph();
+    const factoryUser = await createFactoryUserFor(graph);
+    const qaUser = await createTestUserAndToken({
+      email: `cancel-qa-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['QA_USER'],
+    });
+    const accountant = await createTestUserAndToken({
+      email: `cancel-acct-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['ACCOUNTANT'],
+    });
+    const distributor = await createTestUserAndToken({
+      email: `cancel-dist-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['DISTRIBUTOR'],
+    });
+    const seniorMgmt = await createTestUserAndToken({
+      email: `cancel-sm-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['SENIOR_MANAGEMENT'],
+    });
+    const created = await createJobOrder(graph.admin.token, graph, 5);
+
+    for (const unauthorized of [factoryUser, qaUser, accountant, distributor, seniorMgmt]) {
+      await request(app)
+        .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+        .set('Authorization', `Bearer ${unauthorized.token}`)
+        .set('Idempotency-Key', `cancel-denied-${unauthorized.userId}`)
+        .send({ expectedVersion: created.body.data.version })
+        .expect(403);
+    }
+
+    const res = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-admin-ok')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    expect(res.body.data.status).toBe('CANCELLED');
+  });
+
+  it('forbids cancellation once the first Production stage has started (Cutting)', async () => {
+    const graph = await createSeedGraph();
+    const { jobOrderId, version } = await toInProduction(graph);
+    const blocked = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-after-cutting')
+      .send({ expectedVersion: version })
+      .expect(409);
+    expect(blocked.body.error.message).toContain('production has already started');
+
+    const stillInProduction = await prisma.jobOrder.findUniqueOrThrow({ where: { id: jobOrderId } });
+    expect(stillInProduction.status).toBe('IN_PRODUCTION');
+  });
+
+  it('forbids cancellation while a later production stage is active', async () => {
+    const graph = await createSeedGraph();
+    const { jobOrderId, version, stages, factoryUser } = await toInProduction(graph);
+    const completedFirst = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${jobOrderId}-complete-1`)
+      .send({ stageStatusId: stages[0].id, expectedVersion: version })
+      .expect(200);
+    const startedSecond = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${jobOrderId}-start-2`)
+      .send({ stageStatusId: stages[1].id, expectedVersion: completedFirst.body.data.version })
+      .expect(200);
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-later-stage')
+      .send({ expectedVersion: startedSecond.body.data.version })
+      .expect(409);
+  });
+
+  it('forbids cancellation once PRODUCTION_COMPLETE (manual or automatic)', async () => {
+    const graph = await createSeedGraph();
+    const merchandiser = await createTestUserAndToken({
+      email: `cancel-pc-merch-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    const { jobOrderId, version, stages, factoryUser } = await toInProduction(graph);
+    const completedFirst = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${jobOrderId}-complete-a`)
+      .send({ stageStatusId: stages[0].id, expectedVersion: version })
+      .expect(200);
+    const startedSecond = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${jobOrderId}-start-2`)
+      .send({ stageStatusId: stages[1].id, expectedVersion: completedFirst.body.data.version })
+      .expect(200);
+    const completedFinal = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', `${jobOrderId}-complete-b`)
+      .send({ stageStatusId: stages[1].id, expectedVersion: startedSecond.body.data.version })
+      .expect(200);
+    // Finishing stage completion alone does not automatically complete
+    // production (Correction 3) — use the manual action to deliberately
+    // reach PRODUCTION_COMPLETE for this test.
+    expect(completedFinal.body.data.status).toBe('IN_PRODUCTION');
+    const manuallyComplete = await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'cancel-pc-mark')
+      .send({ expectedVersion: completedFinal.body.data.version })
+      .expect(200);
+    expect(manuallyComplete.body.data.status).toBe('PRODUCTION_COMPLETE');
+
+    await request(app)
+      .post(`/job-orders/${jobOrderId}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-after-pc')
+      .send({ expectedVersion: manuallyComplete.body.data.version })
+      .expect(409);
+  });
+
+  it('replays a repeated cancellation idempotently and safely rejects a fresh attempt once already cancelled', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 5);
+    const first = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-replay')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    const replay = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-replay')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    expect(replay.body.data.version).toBe(first.body.data.version);
+    expect(replay.body.data.status).toBe('CANCELLED');
+
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-again-fresh-key')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(409);
+
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          entityType: 'JobOrder',
+          entityId: created.body.data.id,
+          action: 'JOB_ORDER_CANCELLED',
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it('prevents Factory confirmation, starting a production stage, and manual Production Complete on a cancelled job order', async () => {
+    const graph = await createSeedGraph();
+    const merchandiser = await createTestUserAndToken({
+      email: `cancel-post-merch-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    const factoryUser = await createFactoryUserFor(graph);
+    const created = await createJobOrder(graph.admin.token, graph, 5);
+    const sent = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'post-cancel-send')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+    const cancelled = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'post-cancel-cancel')
+      .send({ expectedVersion: sent.body.data.version })
+      .expect(200);
+
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/confirm`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'post-cancel-confirm')
+      .send({
+        expectedVersion: cancelled.body.data.version,
+        expectedDisclaimerRevision: 1,
+        acknowledgeDisclaimer: true,
+      })
+      .expect(400);
+
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/mark-production-complete`)
+      .set('Authorization', `Bearer ${merchandiser.token}`)
+      .set('Idempotency-Key', 'post-cancel-mark-complete')
+      .send({ expectedVersion: cancelled.body.data.version })
+      .expect(409);
+
+    const detail = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('CANCELLED');
+  });
+
+  it('prevents starting a production stage on a job order cancelled while it was CONFIRMED_BY_FACTORY', async () => {
+    const graph = await createSeedGraph();
+    const factoryUser = await createFactoryUserFor(graph);
+    const created = await createJobOrder(graph.admin.token, graph, 5);
+    const confirmed = await sendAndConfirm(graph, factoryUser, created);
+    const cancelled = await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-before-stage')
+      .send({ expectedVersion: confirmed.body.data.version })
+      .expect(200);
+
+    const stages = confirmed.body.data.stages;
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'cancel-blocked-start-stage')
+      .send({ stageStatusId: stages[0].id, expectedVersion: cancelled.body.data.version })
+      .expect(400);
+  });
+
+  it('preserves the source Order Sheet mapping and lock after cancellation — it does not become available for another Job Order', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 5);
+    const before = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+      where: { id: graph.poId },
+    });
+    expect(before.jobOrderId).toBe(created.body.data.id);
+
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'cancel-preserve-mapping')
+      .send({ expectedVersion: created.body.data.version })
+      .expect(200);
+
+    const after = await prisma.distributorPurchaseOrder.findUniqueOrThrow({
+      where: { id: graph.poId },
+    });
+    expect(after.jobOrderId).toBe(created.body.data.id);
+
+    // Attempting to create ANOTHER job order against the same (now
+    // cancelled-parent's) Order Sheet still fails — the mapping was never
+    // released by cancellation.
+    const secondAttempt = await createJobOrder(graph.admin.token, graph, 3);
+    expect(secondAttempt.status).toBe(400);
+    expect(secondAttempt.body.error.message).toContain('already linked to a Job Order');
+
+    const detail = await request(app)
+      .get(`/job-orders/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('CANCELLED');
+    expect(detail.body.data.sourceOrderSheetCount).toBe(1);
+  });
+
+  it('a race between starting production and cancelling cannot leave a Job Order cancelled after production actually started', async () => {
+    const graph = await createSeedGraph();
+    const factoryUser = await createFactoryUserFor(graph);
+    const merchandiser = await createTestUserAndToken({
+      email: `cancel-race-merch-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    const created = await createJobOrder(graph.admin.token, graph, 5);
+    const confirmed = await sendAndConfirm(graph, factoryUser, created);
+    const stages = confirmed.body.data.stages;
+
+    const [startRes, cancelRes] = await Promise.all([
+      request(app)
+        .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
+        .set('Authorization', `Bearer ${factoryUser.token}`)
+        .set('Idempotency-Key', 'race-start')
+        .send({ stageStatusId: stages[0].id, expectedVersion: confirmed.body.data.version }),
+      request(app)
+        .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+        .set('Authorization', `Bearer ${merchandiser.token}`)
+        .set('Idempotency-Key', 'race-cancel')
+        .send({ expectedVersion: confirmed.body.data.version }),
+    ]);
+    expect([startRes.status, cancelRes.status].sort()).toEqual([200, 409]);
+
+    const final = await prisma.jobOrder.findUniqueOrThrow({
+      where: { id: created.body.data.id },
+      include: { stageStatuses: true },
+    });
+    if (startRes.status === 200) {
+      expect(final.status).toBe('IN_PRODUCTION');
+      expect(final.stageStatuses.some((stage) => stage.status === 'IN_PROGRESS')).toBe(true);
+    } else {
+      expect(final.status).toBe('CANCELLED');
+      expect(final.stageStatuses.every((stage) => stage.status === 'NOT_STARTED')).toBe(true);
+    }
+  });
+});
+
 describe('multi-source Order Sheet job orders (Order Sheet Phase 2)', () => {
   it('creates a job order from multiple Order Sheets sharing one Style (different Distributors and Purchase Modes) and sums the combined forecast per size', async () => {
     const graph = await createSeedGraph();

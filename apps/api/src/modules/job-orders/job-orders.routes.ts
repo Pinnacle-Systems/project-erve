@@ -275,6 +275,24 @@ jobOrdersRouter.post(
   }),
 );
 
+// Merchandiser-only lifecycle transition — deliberately a narrower gate
+// than canWorkflowJobOrders (no FACTORY_USER), matching
+// mark-production-complete's precedent. See jobOrdersService.cancelJobOrder.
+jobOrdersRouter.post(
+  '/:id/actions/cancel',
+  requireRoles('ADMIN', 'MERCHANDISER'),
+  asyncHandler(async (req, res) => {
+    const input = versionedMutationSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.cancelJobOrder(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
+    res.status(200).json(successResponse(jobOrder));
+  }),
+);
+
 jobOrdersRouter.get(
   '/:id/stages',
   canViewJobOrders,
