@@ -560,6 +560,7 @@ export function JobOrderDetailPage() {
                   tone={operationalPresentation.tone}
                 />
               )}
+              {jobOrder.isDelayed && <StatusBadge label="Delayed" tone="warning" />}
             </div>
             {operationalPresentation.secondaryLanes.length > 0 && (
               <div className="mt-1 flex min-w-0 flex-wrap gap-x-4 gap-y-1">
@@ -657,13 +658,20 @@ export function JobOrderDetailPage() {
           <DescriptionList.Item
             label="Required Delivery Date"
             value={
-              jobOrder.requiredDeliveryDate
-                ? new Date(jobOrder.requiredDeliveryDate).toLocaleDateString('en-IN', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                  })
-                : 'Not set'
+              jobOrder.requiredDeliveryDate ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>
+                    {new Date(jobOrder.requiredDeliveryDate).toLocaleDateString('en-IN', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                  </span>
+                  {jobOrder.isDelayed && <StatusBadge label="Delayed" tone="warning" />}
+                </div>
+              ) : (
+                'Not set'
+              )
             }
           />
           <DescriptionList.Item

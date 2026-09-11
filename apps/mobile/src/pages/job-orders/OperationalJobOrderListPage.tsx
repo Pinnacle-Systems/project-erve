@@ -73,9 +73,16 @@ export function OperationalJobOrderListPage() {
                   {job.sourceOrderSheetCount === 1 ? '' : 's'}
                 </p>
               </div>
-              <span className="max-w-[55%] break-words text-right text-xs">
-                {job.operationalState.primaryDisplayState.label}
-              </span>
+              <div className="flex max-w-[55%] flex-col items-end gap-1 text-right">
+                <span className="break-words text-xs">
+                  {job.operationalState.primaryDisplayState.label}
+                </span>
+                {job.isDelayed && (
+                  <span className="rounded-full bg-warning/10 px-2 py-0.5 text-xs text-warning">
+                    Delayed
+                  </span>
+                )}
+              </div>
             </div>
             <p className="mt-3 text-sm">
               Prepared {job.preparedQuantityTotal} of {job.orderedQuantityTotal}

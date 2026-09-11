@@ -24,6 +24,37 @@ const lifecycleLabels: Record<JobOrderStatus, string> = {
   CANCELLED: 'Cancelled',
 };
 
+// § Correction 6. Statuses reached strictly before PRODUCTION_COMPLETE — the
+// only ones where "production is still open" is meaningful. Every other
+// status (PRODUCTION_COMPLETE itself, every post-completion QA state, and
+// CLOSED) is reached only after production is done and is never regressed
+// to one of these (see job-orders.service.ts's PRODUCTION_COMPLETE
+// evaluation and qa.service.ts's rework loop), and CANCELLED is excluded
+// separately since it is not an active production obligation at all.
+const OPEN_PRODUCTION_STATUSES: readonly JobOrderStatus[] = [
+  'DRAFT',
+  'SENT_TO_FACTORY',
+  'CONFIRMED_BY_FACTORY',
+  'IN_PRODUCTION',
+];
+
+// Required Delivery Date is a target, not a hard deadline: this is a pure,
+// derived read-time indicator (never persisted, never blocks workflow, never
+// triggers a lifecycle transition). `businessToday` must be the caller's
+// current ERVE business-timezone calendar date (see
+// financial-year.util.ts's `toBusinessCalendarDate`) represented the same
+// way as `requiredDeliveryDate` — UTC midnight of the calendar day — so the
+// comparison is timezone-safe without redoing the conversion here.
+export function isJobOrderDelayed(input: {
+  status: JobOrderStatus;
+  requiredDeliveryDate: Date | null;
+  businessToday: Date;
+}): boolean {
+  if (!input.requiredDeliveryDate) return false;
+  if (!OPEN_PRODUCTION_STATUSES.includes(input.status)) return false;
+  return input.requiredDeliveryDate.getTime() < input.businessToday.getTime();
+}
+
 function value(
   code: string,
   label: string,

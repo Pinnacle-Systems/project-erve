@@ -1103,6 +1103,10 @@ export interface JobOrderSummary extends VersionedResource {
   // source Order Sheet mapping freeze, which happens earlier at
   // SENT_TO_FACTORY.
   deliveryDateLocked: boolean;
+  // Derived, non-persisted: requiredDeliveryDate has passed (India business
+  // date) while production is still open (before PRODUCTION_COMPLETE).
+  // Informational only — never blocks workflow, never a lifecycle status.
+  isDelayed: boolean;
   orderedQuantityTotal: number;
   preparedQuantityTotal: number;
   // How many source Order Sheets are consolidated into this Job Order.
@@ -1176,6 +1180,7 @@ export interface AssignedFactoryTaskSummary extends VersionedResource {
   orderedQuantityTotal: number;
   preparedQuantityTotal: number;
   requiredDeliveryDate: string | null;
+  isDelayed: boolean;
   actionRequired: boolean;
 }
 

@@ -3186,3 +3186,290 @@ describe('Job Order Production Plan (Order Sheet Phase 2.1)', () => {
     },
   );
 });
+
+// § Correction 6: Required Delivery Date is a target, not a hard deadline.
+// isDelayed is derived at read time from status + requiredDeliveryDate vs
+// the current India (Asia/Kolkata) business date — never persisted, never a
+// lifecycle status, never blocking. "Now" is frozen for every test in this
+// block (vi.useFakeTimers/vi.setSystemTime — the same convention used
+// elsewhere in this file for Financial Year boundary tests) so the overdue
+// boundary is deterministic regardless of the machine's timezone or the
+// real wall clock. The whole seed graph/tokens are created *inside* the
+// frozen window so every JWT is minted (and later verified) against the
+// same fixed clock — no separate reissue step is needed.
+describe('Job Order delay indicator (Correction 6)', () => {
+  // 2026-09-12T05:00:00.000Z is 2026-09-12 10:30 IST — safely inside 12
+  // Sept 2026 in India business time, nowhere near a midnight boundary.
+  const FROZEN_NOW = new Date('2026-09-12T05:00:00.000Z');
+  const BUSINESS_TODAY = '2026-09-12';
+  const OVERDUE_DATE = '2026-09-10'; // two India-calendar days before "today"
+  const FUTURE_DATE = '2026-09-20';
+
+  async function freeze<T>(run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers();
+    vi.setSystemTime(FROZEN_NOW);
+    try {
+      return await run();
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it(
+    'is not delayed with no Required Delivery Date, a future date, or the ' +
+      'business date itself, but is delayed the day after — and an edit ' +
+      'before Factory confirmation immediately changes the result',
+    () =>
+      freeze(async () => {
+        const graph = await createSeedGraph();
+        const created = await createJobOrder(graph.admin.token, graph, 4);
+        expect(created.body.data.requiredDeliveryDate).toBeNull();
+        expect(created.body.data.isDelayed).toBe(false);
+
+        const setFuture = await request(app)
+          .patch(`/job-orders/${created.body.data.id}/delivery-date`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-boundary-future')
+          .send({ expectedVersion: created.body.data.version, requiredDeliveryDate: FUTURE_DATE })
+          .expect(200);
+        expect(setFuture.body.data.isDelayed).toBe(false);
+
+        const setToday = await request(app)
+          .patch(`/job-orders/${created.body.data.id}/delivery-date`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-boundary-today')
+          .send({
+            expectedVersion: setFuture.body.data.version,
+            requiredDeliveryDate: BUSINESS_TODAY,
+          })
+          .expect(200);
+        // On the Required Delivery Date itself: not yet delayed.
+        expect(setToday.body.data.isDelayed).toBe(false);
+
+        const setOverdue = await request(app)
+          .patch(`/job-orders/${created.body.data.id}/delivery-date`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-boundary-overdue')
+          .send({
+            expectedVersion: setToday.body.data.version,
+            requiredDeliveryDate: OVERDUE_DATE,
+          })
+          .expect(200);
+        expect(setOverdue.body.data.isDelayed).toBe(true);
+
+        // Moving the target back to the future clears the indicator again —
+        // no separate "clear delay" operation exists; the next read simply
+        // recomputes it.
+        const backToFuture = await request(app)
+          .patch(`/job-orders/${created.body.data.id}/delivery-date`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-boundary-cleared')
+          .send({
+            expectedVersion: setOverdue.body.data.version,
+            requiredDeliveryDate: FUTURE_DATE,
+          })
+          .expect(200);
+        expect(backToFuture.body.data.isDelayed).toBe(false);
+
+        // Also visible via the list endpoint, not just detail.
+        const list = await request(app)
+          .get('/job-orders')
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .expect(200);
+        const listed = list.body.data.items.find(
+          (item: { id: string }) => item.id === created.body.data.id,
+        );
+        expect(listed.isDelayed).toBe(false);
+      }),
+  );
+
+  it(
+    'flags an overdue Job Order as delayed at every open-production status, ' +
+      'clears once Production Complete, and never blocks the underlying action',
+    () =>
+      freeze(async () => {
+        const graph = await createSeedGraph();
+        const factoryUser = await createTestUserAndToken({
+          email: `delay-lifecycle-factory-${createId()}@test.local`,
+          password: 'pass',
+          roles: ['FACTORY_USER'],
+        });
+        await prisma.userFactory.create({
+          data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+        });
+        const merchandiser = await createTestUserAndToken({
+          email: `delay-lifecycle-merch-${createId()}@test.local`,
+          password: 'pass',
+          roles: ['MERCHANDISER'],
+        });
+
+        const created = await createJobOrder(graph.admin.token, graph, 4);
+        const withDate = await request(app)
+          .patch(`/job-orders/${created.body.data.id}/delivery-date`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-lifecycle-set-date')
+          .send({ expectedVersion: created.body.data.version, requiredDeliveryDate: OVERDUE_DATE })
+          .expect(200);
+        expect(withDate.body.data.status).toBe('DRAFT');
+        expect(withDate.body.data.isDelayed).toBe(true);
+
+        const sent = await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-lifecycle-send')
+          .send({ expectedVersion: withDate.body.data.version })
+          .expect(200);
+        expect(sent.body.data.status).toBe('SENT_TO_FACTORY');
+        expect(sent.body.data.isDelayed).toBe(true);
+
+        const confirmed = await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/confirm`)
+          .set('Authorization', `Bearer ${factoryUser.token}`)
+          .set('Idempotency-Key', 'delay-lifecycle-confirm')
+          .send({
+            expectedVersion: sent.body.data.version,
+            expectedDisclaimerRevision: 1,
+            acknowledgeDisclaimer: true,
+          })
+          .expect(200);
+        expect(confirmed.body.data.status).toBe('CONFIRMED_BY_FACTORY');
+        expect(confirmed.body.data.isDelayed).toBe(true);
+        // The date is now locked, per existing pre-Correction-6 behavior —
+        // unaffected by the delay indicator.
+        expect(confirmed.body.data.deliveryDateLocked).toBe(true);
+
+        // Non-blocking: starting and completing a production stage succeeds
+        // normally even though the Job Order is currently delayed.
+        const stages = confirmed.body.data.stages;
+        const started = await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
+          .set('Authorization', `Bearer ${factoryUser.token}`)
+          .set('Idempotency-Key', 'delay-lifecycle-start-stage')
+          .send({ stageStatusId: stages[0].id, expectedVersion: confirmed.body.data.version })
+          .expect(200);
+        const inProduction = await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+          .set('Authorization', `Bearer ${factoryUser.token}`)
+          .set('Idempotency-Key', 'delay-lifecycle-complete-stage')
+          .send({ stageStatusId: stages[0].id, expectedVersion: started.body.data.version })
+          .expect(200);
+        expect(inProduction.body.data.status).toBe('IN_PRODUCTION');
+        expect(inProduction.body.data.isDelayed).toBe(true);
+
+        // Start Finishing (the stage associated with Final Inspection) so
+        // Prepared Quantity entry becomes available, and prove it can still
+        // be recorded while delayed.
+        const finishingStarted = await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/start-stage`)
+          .set('Authorization', `Bearer ${factoryUser.token}`)
+          .set('Idempotency-Key', 'delay-lifecycle-start-finishing')
+          .send({ stageStatusId: stages[1].id, expectedVersion: inProduction.body.data.version })
+          .expect(200);
+        const preparedQuantityLineSizeId = finishingStarted.body.data.lines[0].sizes[0].id;
+        const preparedUpdate = await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/update-prepared-quantity`)
+          .set('Authorization', `Bearer ${factoryUser.token}`)
+          .set('Idempotency-Key', 'delay-lifecycle-prepared-quantity')
+          .send({
+            expectedVersion: finishingStarted.body.data.version,
+            sizes: [{ jobOrderLineSizeId: preparedQuantityLineSizeId, preparedQuantity: 4 }],
+          })
+          .expect(200);
+        expect(preparedUpdate.body.data.isDelayed).toBe(true);
+
+        // Finishing itself completing must NOT clear the delay indicator —
+        // only the legitimate PRODUCTION_COMPLETE transition does (§9). The
+        // Job Order stays IN_PRODUCTION (no automatic completion: quantity
+        // is prepared but never resolved through Final QA) and still
+        // delayed.
+        const finishingCompleted = await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+          .set('Authorization', `Bearer ${factoryUser.token}`)
+          .set('Idempotency-Key', 'delay-lifecycle-complete-finishing')
+          .send({ stageStatusId: stages[1].id, expectedVersion: preparedUpdate.body.data.version })
+          .expect(200);
+        expect(finishingCompleted.body.data.status).toBe('IN_PRODUCTION');
+        expect(finishingCompleted.body.data.isDelayed).toBe(true);
+
+        // Manual Production Complete succeeds while delayed, and clears the
+        // indicator the instant status reaches PRODUCTION_COMPLETE — using
+        // the corrected Correction 3 semantics (merely finishing production
+        // stages, above, did not clear it).
+        const complete = await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/mark-production-complete`)
+          .set('Authorization', `Bearer ${merchandiser.token}`)
+          .set('Idempotency-Key', 'delay-lifecycle-complete')
+          .send({ expectedVersion: finishingCompleted.body.data.version })
+          .expect(200);
+        expect(complete.body.data.status).toBe('PRODUCTION_COMPLETE');
+        expect(complete.body.data.isDelayed).toBe(false);
+      }),
+  );
+
+  it(
+    'does not show an overdue Cancelled Job Order as delayed, and cancellation ' +
+      'remains unaffected by the Required Delivery Date',
+    () =>
+      freeze(async () => {
+        const graph = await createSeedGraph();
+        const created = await createJobOrder(graph.admin.token, graph, 4);
+        const withDate = await request(app)
+          .patch(`/job-orders/${created.body.data.id}/delivery-date`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-cancel-set-date')
+          .send({ expectedVersion: created.body.data.version, requiredDeliveryDate: OVERDUE_DATE })
+          .expect(200);
+        expect(withDate.body.data.isDelayed).toBe(true);
+
+        const cancelled = await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/cancel`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-cancel')
+          .send({ expectedVersion: withDate.body.data.version })
+          .expect(200);
+        expect(cancelled.body.data.status).toBe('CANCELLED');
+        expect(cancelled.body.data.isDelayed).toBe(false);
+      }),
+  );
+
+  it(
+    'exposes isDelayed on the Factory assigned-tasks list using the same ' +
+      'centralized computation as the Job Order view',
+    () =>
+      freeze(async () => {
+        const graph = await createSeedGraph();
+        const factoryUser = await createTestUserAndToken({
+          email: `delay-factory-tasks-${createId()}@test.local`,
+          password: 'pass',
+          roles: ['FACTORY_USER'],
+        });
+        await prisma.userFactory.create({
+          data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id },
+        });
+
+        const created = await createJobOrder(graph.admin.token, graph, 4);
+        const withDate = await request(app)
+          .patch(`/job-orders/${created.body.data.id}/delivery-date`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-factory-tasks-set-date')
+          .send({ expectedVersion: created.body.data.version, requiredDeliveryDate: OVERDUE_DATE })
+          .expect(200);
+        await request(app)
+          .post(`/job-orders/${created.body.data.id}/actions/send-to-factory`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delay-factory-tasks-send')
+          .send({ expectedVersion: withDate.body.data.version })
+          .expect(200);
+
+        const tasks = await request(app)
+          .get('/job-orders/assigned-tasks')
+          .set('Authorization', `Bearer ${factoryUser.token}`)
+          .expect(200);
+        const task = tasks.body.data.items.find(
+          (item: { id: string }) => item.id === created.body.data.id,
+        );
+        expect(task).toBeDefined();
+        expect(task.isDelayed).toBe(true);
+      }),
+  );
+});

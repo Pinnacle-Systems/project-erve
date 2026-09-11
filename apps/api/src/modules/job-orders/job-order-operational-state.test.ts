@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type {
   JobOrderQualityActivity,
   JobOrderStage,
+  JobOrderStatus,
   QualityCoverageView,
   QualityRuntimeStatus,
 } from '@erve/types';
-import { deriveJobOrderOperationalState } from './job-order-operational-state.js';
+import {
+  deriveJobOrderOperationalState,
+  isJobOrderDelayed,
+} from './job-order-operational-state.js';
 
 function stage(
   sequence: number,
@@ -254,4 +258,92 @@ describe('derived Job Order operational state', () => {
     expect(complete.qualityState).toBeNull();
     expect(complete.primaryDisplayState.label).toBe('Workflow Completed');
   });
+});
+
+// § Correction 6: derived, non-persisted Required Delivery Date delay
+// indicator. Pure function — "now" is always an explicit businessToday
+// parameter, so no fake-timer setup is needed (mirrors
+// financial-year.util.test.ts's convention of passing a fixed instant
+// rather than mocking the system clock).
+describe('isJobOrderDelayed', () => {
+  const businessToday = new Date('2026-09-12T00:00:00.000Z'); // India calendar date 12 Sep 2026
+  const dayBefore = new Date('2026-09-11T00:00:00.000Z'); // Required Delivery Date = today itself
+  const twoDaysBefore = new Date('2026-09-10T00:00:00.000Z'); // Required Delivery Date already passed
+  const future = new Date('2026-09-13T00:00:00.000Z');
+
+  it('is not delayed when there is no Required Delivery Date', () => {
+    expect(
+      isJobOrderDelayed({ status: 'IN_PRODUCTION', requiredDeliveryDate: null, businessToday }),
+    ).toBe(false);
+  });
+
+  it('is not delayed while the Required Delivery Date is still in the future', () => {
+    expect(
+      isJobOrderDelayed({
+        status: 'IN_PRODUCTION',
+        requiredDeliveryDate: future,
+        businessToday,
+      }),
+    ).toBe(false);
+  });
+
+  it('is not delayed on the Required Delivery Date itself (India business date)', () => {
+    expect(
+      isJobOrderDelayed({
+        status: 'IN_PRODUCTION',
+        requiredDeliveryDate: dayBefore,
+        businessToday: dayBefore,
+      }),
+    ).toBe(false);
+  });
+
+  it('is delayed from the following business date once production is still open', () => {
+    expect(
+      isJobOrderDelayed({
+        status: 'IN_PRODUCTION',
+        requiredDeliveryDate: dayBefore,
+        businessToday,
+      }),
+    ).toBe(true);
+    expect(
+      isJobOrderDelayed({
+        status: 'IN_PRODUCTION',
+        requiredDeliveryDate: twoDaysBefore,
+        businessToday,
+      }),
+    ).toBe(true);
+  });
+
+  const openStatuses: JobOrderStatus[] = [
+    'DRAFT',
+    'SENT_TO_FACTORY',
+    'CONFIRMED_BY_FACTORY',
+    'IN_PRODUCTION',
+  ];
+  it.each(openStatuses)('flags an overdue %s job order as delayed', (status) => {
+    expect(isJobOrderDelayed({ status, requiredDeliveryDate: twoDaysBefore, businessToday })).toBe(
+      true,
+    );
+  });
+
+  const closedOrPostProductionStatuses: JobOrderStatus[] = [
+    'PRODUCTION_COMPLETE',
+    'READY_FOR_QA',
+    'QA_IN_PROGRESS',
+    'REWORK_REQUIRED',
+    'READY_FOR_REINSPECTION',
+    'QA_APPROVED',
+    'QA_PASSED',
+    'PARTIALLY_QA_PASSED',
+    'CLOSED',
+    'CANCELLED',
+  ];
+  it.each(closedOrPostProductionStatuses)(
+    'does not flag an overdue %s job order as actively delayed',
+    (status) => {
+      expect(
+        isJobOrderDelayed({ status, requiredDeliveryDate: twoDaysBefore, businessToday }),
+      ).toBe(false);
+    },
+  );
 });

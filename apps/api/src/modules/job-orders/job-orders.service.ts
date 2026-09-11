@@ -17,7 +17,10 @@ import { getSoleFactoryId } from '../../auth/access.js';
 import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
-import { deriveJobOrderOperationalState } from './job-order-operational-state.js';
+import {
+  deriveJobOrderOperationalState,
+  isJobOrderDelayed,
+} from './job-order-operational-state.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
@@ -639,6 +642,11 @@ function toJobOrderView(
     factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
     requiredDeliveryDate: jobOrder.requiredDeliveryDate?.toISOString() ?? null,
     deliveryDateLocked: jobOrder.factoryConfirmationStatus === 'CONFIRMED',
+    isDelayed: isJobOrderDelayed({
+      status: jobOrder.status,
+      requiredDeliveryDate: jobOrder.requiredDeliveryDate,
+      businessToday: toBusinessCalendarDate(new Date()),
+    }),
     sourceOrderSheetCount: jobOrder.orderSheets.length,
     unitPrice: jobOrder.unitPrice.toNumber(),
     seasonSnapshots: jobOrder.seasonSnapshots.map((season) => ({
@@ -936,6 +944,7 @@ export async function getAssignedFactoryTasks(
         ),
         preparedQuantityTotal: record.preparedQuantityTotal,
         requiredDeliveryDate: record.requiredDeliveryDate?.toISOString() ?? null,
+        isDelayed: view.isDelayed,
         version: record.version,
         updatedAt: record.updatedAt.toISOString(),
         actionRequired: [

@@ -866,6 +866,44 @@ describe('Final Inspection batching and prepared coverage', () => {
     ).toBe(1);
   });
 
+  // § Correction 6: the derived isDelayed indicator must clear the instant
+  // status reaches PRODUCTION_COMPLETE, regardless of whether that happened
+  // through this automatic full-quantity/full-QA-coverage rule or the
+  // Merchandiser's manual action (see job-orders.test.ts's manual-completion
+  // suite for that path) — the indicator is a pure function of status, not
+  // of which route reached it.
+  it('clears the delayed indicator once the automatic PRODUCTION_COMPLETE rule fires', async () => {
+    const f = await fixture(840);
+    await prisma.jobOrder.update({
+      where: { id: f.job.id },
+      data: { requiredDeliveryDate: new Date('2020-01-01') },
+    });
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+
+    const first = (await start(f, 500).expect(201)).body.data;
+    await finalize(f, first, 'PASS').expect(200);
+
+    const stillOpen = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(stillOpen.body.data.status).toBe('IN_PRODUCTION');
+    expect(stillOpen.body.data.isDelayed).toBe(true);
+
+    const second = (await start(f, 340, 500).expect(201)).body.data;
+    await finalize(f, second, 'PASS').expect(200);
+
+    const completed = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(completed.body.data.status).toBe('PRODUCTION_COMPLETE');
+    expect(completed.body.data.isDelayed).toBe(false);
+  });
+
   it('treats a Permanently Rejected batch as a resolved production/inspection outcome (not a forced PASS) for automatic completion', async () => {
     const f = await fixture(840);
     await prisma.jobOrderStageStatus.update({

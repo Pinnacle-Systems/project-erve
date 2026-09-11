@@ -253,6 +253,11 @@ export function FactoryTaskDetailPage() {
             {operationalPresentation.stateLabel && (
               <span className="text-sm">{operationalPresentation.stateLabel}</span>
             )}
+            {job.isDelayed && (
+              <span className="rounded-full bg-warning/10 px-2 py-0.5 text-xs text-warning">
+                Delayed
+              </span>
+            )}
           </div>
           {operationalPresentation.secondaryLanes.map((lane) => (
             <p key={lane.domain} className="mt-1 text-sm text-muted-foreground">

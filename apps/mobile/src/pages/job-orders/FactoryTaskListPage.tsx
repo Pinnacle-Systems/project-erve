@@ -87,11 +87,18 @@ export function FactoryTaskListPage() {
                 <p className="font-semibold">{task.jobOrderNumber}</p>
                 <p className="text-sm text-muted-foreground">{task.factory.name}</p>
               </div>
-              {task.actionRequired && (
-                <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
-                  Action needed
-                </span>
-              )}
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                {task.actionRequired && (
+                  <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
+                    Action needed
+                  </span>
+                )}
+                {task.isDelayed && (
+                  <span className="rounded-full bg-warning/10 px-2 py-1 text-xs text-warning">
+                    Delayed
+                  </span>
+                )}
+              </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
               <span>Current: {task.operationalState.primaryDisplayState.label}</span>

@@ -190,22 +190,28 @@ export function JobOrderListPage() {
             render: (jobOrder) => {
               if (!showQaWork) {
                 return (
-                  <StatusBadge
-                    label={jobOrder.operationalState.primaryDisplayState.label}
-                    tone={jobOrder.operationalState.primaryDisplayState.tone}
-                    className="max-w-[18rem] whitespace-normal break-words leading-tight"
-                  />
+                  <div className="flex max-w-[18rem] flex-wrap items-center gap-1.5">
+                    <StatusBadge
+                      label={jobOrder.operationalState.primaryDisplayState.label}
+                      tone={jobOrder.operationalState.primaryDisplayState.tone}
+                      className="whitespace-normal break-words leading-tight"
+                    />
+                    {jobOrder.isDelayed && <StatusBadge label="Delayed" tone="warning" />}
+                  </div>
                 );
               }
 
               const status = getQaStatusPresentation(jobOrder.operationalState);
               return (
                 <div className="max-w-[18rem] space-y-1">
-                  <StatusBadge
-                    label={status.primary.label}
-                    tone={status.primary.tone}
-                    className="whitespace-normal break-words leading-tight"
-                  />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <StatusBadge
+                      label={status.primary.label}
+                      tone={status.primary.tone}
+                      className="whitespace-normal break-words leading-tight"
+                    />
+                    {jobOrder.isDelayed && <StatusBadge label="Delayed" tone="warning" />}
+                  </div>
                   {status.secondaryLabel ? (
                     <div className="text-xs leading-tight text-muted-foreground">
                       Production: {status.secondaryLabel}
