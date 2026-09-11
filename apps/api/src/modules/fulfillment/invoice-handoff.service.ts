@@ -51,7 +51,10 @@ const invoiceHandoffInclude = {
       id: true,
       style: { select: { styleNumber: true, styleName: true } },
       size: { select: { code: true, label: true } },
-      saleOrder: { select: { distributor: { select: { purchaseMode: true } } } },
+      // Correction 8: purchaseMode is resolved per line via its own
+      // destination's Distributor-group snapshot, never a single
+      // order-level value.
+      destination: { select: { saleOrderDistributor: { select: { purchaseMode: true } } } },
     },
   },
   recordedBy: { select: { id: true, name: true, email: true } },
@@ -77,7 +80,7 @@ function toInvoiceHandoffView(record: InvoiceHandoffRecord, full: boolean) {
     // Business context only — Purchase Mode is Distributor-owned, resolved
     // directly, never stored here or used to gate eligibility: every
     // physically dispatched line gets a handoff regardless.
-    purchaseMode: sol.saleOrder.distributor.purchaseMode,
+    purchaseMode: sol.destination.saleOrderDistributor.purchaseMode,
     saleOrderLineId: record.saleOrderLineId,
     style: { styleNumber: sol.style.styleNumber, styleName: sol.style.styleName },
     size: { sizeCode: sol.size.code, sizeLabel: sol.size.label },

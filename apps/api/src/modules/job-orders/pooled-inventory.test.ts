@@ -42,14 +42,24 @@ async function createAndAllocate(
     .set('Authorization', `Bearer ${merchToken}`)
     .set('Idempotency-Key', createId())
     .send({
-      distributorId: stock.distributorId,
+      distributors: [
+        {
+          clientKey: 'dg1',
+          distributorId: stock.distributorId,
+          destinations: [{ clientKey: 'd1', addressLine1: 'Test Street', city: 'Chennai', state: 'TN', country: 'India' }],
+        },
+      ],
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [{ clientKey: 'd1', addressLine1: 'Test Street', city: 'Chennai', state: 'TN', country: 'India' }],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity }],
     })
     .expect(201);
-  return created.body.data;
+  const saleOrder = created.body.data;
+  // Correction 8: flatten distributorGroups[].destinations into a plain
+  // `destinations` array for this file's own call sites, matching the old
+  // flat response shape they were written against.
+  saleOrder.destinations = saleOrder.distributorGroups.flatMap((g: { destinations: unknown[] }) => g.destinations);
+  return saleOrder;
 }
 
 describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
@@ -176,13 +186,21 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
     // positive quantity exercises the "excess allocation released back to
     // the pool" mechanism.
     const destination = dispatchOrder.destinations[0];
+    const groupId = dispatchOrder.distributorGroups[0].id as string;
     await request(app)
       .patch(`/sale-orders/${dispatchOrder.id}`)
       .set('Authorization', `Bearer ${merchToken}`)
       .set('Idempotency-Key', createId())
       .send({
         expectedVersion: dispatchOrder.version,
-        destinations: [{ clientKey: destination.id, id: destination.id, ...destination }],
+        distributors: [
+          {
+            clientKey: 'dg1',
+            id: groupId,
+            distributorId: stock.distributorId,
+            destinations: [{ clientKey: destination.id, id: destination.id, ...destination }],
+          },
+        ],
         lines: [{ id: dispatchOrder.lines[0].id, destinationClientKey: destination.id, styleId: stock.styleId, sizeId: stock.sizeId, quantity: 10 }],
       })
       .expect(200);

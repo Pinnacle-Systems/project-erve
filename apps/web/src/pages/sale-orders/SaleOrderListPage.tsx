@@ -138,7 +138,15 @@ export function SaleOrderListPage() {
               </Link>
             ),
           },
-          { key: 'distributor', header: 'Distributor', render: (so) => so.distributor.name },
+          {
+            key: 'distributor',
+            header: 'Distributors',
+            render: (so) => {
+              const names = so.distributors.map((d) => d.name);
+              if (names.length <= 2) return names.join(', ');
+              return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+            },
+          },
           { key: 'factory', header: 'Factory', render: (so) => so.factory.name },
           { key: 'soDate', header: 'Date', render: (so) => formatDate(so.soDate) },
           {

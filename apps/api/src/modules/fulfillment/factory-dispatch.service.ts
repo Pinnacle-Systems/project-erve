@@ -142,6 +142,11 @@ export interface PackingListLineView {
 
 export interface PackingListDestinationView {
   id: string;
+  // Correction 8: a Dispatch Order may now contain destinations belonging to
+  // several Distributors — this per-destination field is what makes the
+  // owning Distributor obvious when selecting a destination for a carton
+  // (the carton itself never carries a distributor field, only destinationId).
+  distributor: { id: string; code: string; name: string };
   label: string | null;
   contactName: string | null;
   contactEmail: string | null;
@@ -152,6 +157,7 @@ export interface PackingListDestinationView {
   state: string;
   country: string;
   postalCode: string | null;
+  gstin: string | null;
   lines: PackingListLineView[];
   cartons: PackingListCartonView[];
 }
@@ -159,7 +165,13 @@ export interface PackingListDestinationView {
 export interface PackingListView {
   saleOrderId: string;
   saleOrderNumber: string;
-  distributor: { id: string; code: string; name: string };
+  // Deduplicated list of every Distributor represented in this Dispatch
+  // Order (Correction 8 — replaces the old singular `distributor` field,
+  // which assumed exactly one Distributor per Dispatch Order). The Factory
+  // Packing List still mirrors the WHOLE Dispatch Order quantitatively
+  // (one FPL per DO, never per-Distributor) — this is a header-level summary
+  // only; per-destination ownership is on PackingListDestinationView.
+  distributors: Array<{ id: string; code: string; name: string }>;
   factory: { id: string; code: string; name: string };
   factoryDispatch:
     | { id: string; factoryDispatchNumber: string; status: 'DRAFT' | 'READY_FOR_ERVE'; version: number; factoryInvoiceId: string | null }
@@ -244,11 +256,14 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       where: { id: order.id },
       select: {
         saleOrderNumber: true,
-        distributor: { select: { id: true, code: true, name: true } },
         factory: { select: { id: true, code: true, name: true } },
       },
     }),
-    prisma.saleOrderDestination.findMany({ where: { saleOrderId: order.id }, orderBy: { createdAt: 'asc' } }),
+    prisma.saleOrderDestination.findMany({
+      where: { saleOrderId: order.id },
+      include: { saleOrderDistributor: { include: { distributor: { select: { id: true, code: true, name: true } } } } },
+      orderBy: { createdAt: 'asc' },
+    }),
     prisma.saleOrderLine.findMany({
       where: { saleOrderId: order.id },
       include: {
@@ -304,10 +319,13 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
     linesByDestination.set(line.destinationId, list);
   }
 
+  const distributorsById = new Map<string, { id: string; code: string; name: string }>();
+  for (const destination of destinations) distributorsById.set(destination.saleOrderDistributor.distributor.id, destination.saleOrderDistributor.distributor);
+
   return {
     saleOrderId: order.id,
     saleOrderNumber: saleOrder.saleOrderNumber,
-    distributor: saleOrder.distributor,
+    distributors: [...distributorsById.values()],
     factory: saleOrder.factory,
     factoryDispatch: dispatch
       ? {
@@ -320,6 +338,7 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       : null,
     destinations: destinations.map((destination) => ({
       id: destination.id,
+      distributor: destination.saleOrderDistributor.distributor,
       label: destination.label,
       contactName: destination.contactName,
       contactEmail: destination.contactEmail,
@@ -330,6 +349,7 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       state: destination.state,
       country: destination.country,
       postalCode: destination.postalCode,
+      gstin: destination.gstin,
       lines: linesByDestination.get(destination.id) ?? [],
       cartons: activeCartonsByDestination.get(destination.id) ?? [],
     })),
@@ -384,7 +404,13 @@ export async function getFactoryDispatchList(
       finalizedAt: true,
       saleOrderId: true,
       factory: { select: { id: true, code: true, name: true } },
-      saleOrder: { select: { id: true, saleOrderNumber: true, distributor: { select: { id: true, code: true, name: true } } } },
+      saleOrder: {
+        select: {
+          id: true,
+          saleOrderNumber: true,
+          distributorGroups: { select: { distributor: { select: { id: true, code: true, name: true } } } },
+        },
+      },
       cartons: { where: { retiredAt: null }, select: { ervePackingListId: true } },
     },
     orderBy: { id: 'desc' },
@@ -399,7 +425,13 @@ export async function getFactoryDispatchList(
       id: record.id,
       factoryDispatchNumber: record.factoryDispatchNumber,
       factory: record.factory,
-      saleOrder: record.saleOrder,
+      saleOrder: {
+        id: record.saleOrder.id,
+        saleOrderNumber: record.saleOrder.saleOrderNumber,
+        // Correction 8: a Dispatch Order may now involve several
+        // Distributors — replaces the old singular `distributor` field.
+        distributors: record.saleOrder.distributorGroups.map((g) => g.distributor),
+      },
       status: record.status,
       version: record.version,
       preparedAt: record.preparedAt.toISOString(),
@@ -435,9 +467,11 @@ export async function getFactoryPackingQueue(actor: CurrentUser, requestedFactor
       quantity: true,
       style: { select: { id: true, styleNumber: true, styleName: true } },
       size: { select: { id: true, code: true, label: true } },
-      saleOrder: {
-        select: { id: true, saleOrderNumber: true, distributor: { select: { id: true, code: true, name: true } } },
-      },
+      saleOrder: { select: { id: true, saleOrderNumber: true } },
+      // Correction 8: resolved per line via its own destination's
+      // Distributor-group — a Dispatch Order may span several Distributors,
+      // so this can no longer be read off the order root.
+      destination: { select: { saleOrderDistributor: { select: { distributor: { select: { id: true, code: true, name: true } } } } } },
     },
     orderBy: { createdAt: 'asc' },
   });
@@ -454,7 +488,7 @@ export async function getFactoryPackingQueue(actor: CurrentUser, requestedFactor
       return {
         saleOrderId: line.saleOrder.id,
         saleOrderNumber: line.saleOrder.saleOrderNumber,
-        distributor: line.saleOrder.distributor,
+        distributor: line.destination.saleOrderDistributor.distributor,
         saleOrderLineId: line.id,
         styleId: line.style.id,
         styleNumber: line.style.styleNumber,

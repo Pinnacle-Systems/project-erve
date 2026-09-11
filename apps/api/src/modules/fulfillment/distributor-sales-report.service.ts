@@ -85,7 +85,11 @@ export async function listSaleOrReturnPositions(
   // "which Erve Dispatch was this line actually dispatched on."
   const lines = await prisma.factoryPackingCartonLine.findMany({
     where: {
-      saleOrderLine: { saleOrder: { distributor: { purchaseMode: 'SALE_RETURN' } } },
+      // Correction 8: purchaseMode is resolved per line via its own
+      // destination's Distributor-group snapshot, never a single
+      // order-level value — a Dispatch Order may mix Distributors/Purchase
+      // Modes.
+      saleOrderLine: { destination: { saleOrderDistributor: { purchaseMode: 'SALE_RETURN' } } },
       carton: { retiredAt: null },
     },
     select: {
@@ -94,7 +98,8 @@ export async function listSaleOrReturnPositions(
         select: {
           id: true,
           saleOrderId: true,
-          saleOrder: { select: { saleOrderNumber: true, distributor: { select: { id: true, code: true, name: true } } } },
+          saleOrder: { select: { saleOrderNumber: true } },
+          destination: { select: { saleOrderDistributor: { select: { distributor: { select: { id: true, code: true, name: true } } } } } },
           style: { select: { styleNumber: true, styleName: true } },
           size: { select: { code: true, label: true } },
         },
@@ -116,7 +121,8 @@ export async function listSaleOrReturnPositions(
     const dispatch = line.carton.ervePackingList?.dispatch;
     if (!dispatch) continue; // packed but not yet Erve-dispatched — no consignment position exists yet
     const so = line.saleOrderLine.saleOrder;
-    if (distributorId && so.distributor.id !== distributorId) continue;
+    const distributor = line.saleOrderLine.destination.saleOrderDistributor.distributor;
+    if (distributorId && distributor.id !== distributorId) continue;
 
     const key = `${dispatch.id}:${line.saleOrderLine.id}`;
     const existing = grouped.get(key);
@@ -131,7 +137,7 @@ export async function listSaleOrReturnPositions(
       dispatchDate: dispatch.dispatchDate.toISOString(),
       saleOrderId: line.saleOrderLine.saleOrderId,
       saleOrderNumber: so.saleOrderNumber,
-      distributor: so.distributor,
+      distributor,
       saleOrderLineId: line.saleOrderLine.id,
       styleNumber: sol.style.styleNumber,
       styleName: sol.style.styleName,
@@ -340,11 +346,11 @@ export async function submitDistributorSalesReport(actor: CurrentUser, input: Su
       where: { id: { in: [...new Set(input.lines.map((l) => l.saleOrderLineId))] } },
       select: {
         id: true,
-        saleOrder: { select: { distributor: { select: { purchaseMode: true } } } },
+        destination: { select: { saleOrderDistributor: { select: { purchaseMode: true } } } },
       },
     });
     const modeBySaleOrderLineId = new Map(
-      saleOrderLineModes.map((sol) => [sol.id, sol.saleOrder.distributor.purchaseMode]),
+      saleOrderLineModes.map((sol) => [sol.id, sol.destination.saleOrderDistributor.purchaseMode]),
     );
 
     for (const line of input.lines) {

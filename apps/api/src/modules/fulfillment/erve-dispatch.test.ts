@@ -203,13 +203,18 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
       .set('Authorization', `Bearer ${merchToken}`)
       .set('Idempotency-Key', 'mixed-destination-fixture')
       .send({
-        distributorId: stock.distributorId,
+        distributors: [
+          {
+            clientKey: 'dg1',
+            distributorId: stock.distributorId,
+            destinations: [
+              { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
+              { clientKey: 'd2', addressLine1: 'Other Address', city: 'Mumbai', state: 'MH', country: 'India' },
+            ],
+          },
+        ],
         factoryId: stock.factoryId,
         soDate: '2026-06-30',
-        destinations: [
-          { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
-          { clientKey: 'd2', addressLine1: 'Other Address', city: 'Mumbai', state: 'MH', country: 'India' },
-        ],
         lines: [
           { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 },
           { destinationClientKey: 'd2', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 },
@@ -217,22 +222,23 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
       })
       .expect(201);
     const saleOrder = created.body.data;
-    const lineA = saleOrder.lines.find((l: { destinationId: string }) => l.destinationId === saleOrder.destinations[0].id);
-    const lineB = saleOrder.lines.find((l: { destinationId: string }) => l.destinationId === saleOrder.destinations[1].id);
+    const destinations = saleOrder.distributorGroups.flatMap((g: { destinations: unknown[] }) => g.destinations);
+    const lineA = saleOrder.lines.find((l: { destinationId: string }) => l.destinationId === destinations[0].id);
+    const lineB = saleOrder.lines.find((l: { destinationId: string }) => l.destinationId === destinations[1].id);
 
     const first = await request(app)
       .post(`/sale-orders/${saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ cartonNumber: 'C1', destinationId: saleOrder.destinations[0].id, lines: [{ saleOrderLineId: lineA.id, quantity: 20 }] })
+      .send({ cartonNumber: 'C1', destinationId: destinations[0].id, lines: [{ saleOrderLineId: lineA.id, quantity: 20 }] })
       .expect(200);
-    const cartonAId = first.body.data.destinations.find((d: { id: string }) => d.id === saleOrder.destinations[0].id).cartons[0].id as string;
+    const cartonAId = first.body.data.destinations.find((d: { id: string }) => d.id === destinations[0].id).cartons[0].id as string;
     const factoryDispatchId = first.body.data.factoryDispatch.id as string;
     const second = await request(app)
       .post(`/sale-orders/${saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ cartonNumber: 'C2', destinationId: saleOrder.destinations[1].id, lines: [{ saleOrderLineId: lineB.id, quantity: 20 }] })
+      .send({ cartonNumber: 'C2', destinationId: destinations[1].id, lines: [{ saleOrderLineId: lineB.id, quantity: 20 }] })
       .expect(200);
-    const cartonBId = second.body.data.destinations.find((d: { id: string }) => d.id === saleOrder.destinations[1].id).cartons[0].id as string;
+    const cartonBId = second.body.data.destinations.find((d: { id: string }) => d.id === destinations[1].id).cartons[0].id as string;
 
     await ensureStyleFactoryRate(stock.styleId, stock.factoryId);
     const { token: qaToken } = await createRoleToken('QA_USER');

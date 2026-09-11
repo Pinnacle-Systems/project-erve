@@ -76,17 +76,28 @@ export async function createSingleFactoryApprovedSaleOrder(
     .set('Authorization', `Bearer ${merchToken}`)
     .set('Idempotency-Key', createId())
     .send({
-      distributorId: stock.distributorId,
+      distributors: [
+        {
+          clientKey: 'dg1',
+          distributorId: stock.distributorId,
+          destinations: [
+            { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
+          ],
+        },
+      ],
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [
-        { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
-      ],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity }],
     })
     .expect(201);
 
   const saleOrder = created.body.data;
+  // Correction 8: the API response nests destinations under
+  // distributorGroups. A flat `destinations` array is added here purely as
+  // a test-fixture convenience shim, so the large existing surface of
+  // fulfillment tests built against the old flat shape (saleOrder.destinations[0].id)
+  // keeps working without each needing to be individually rewritten.
+  saleOrder.destinations = saleOrder.distributorGroups.flatMap((g: { destinations: unknown[] }) => g.destinations);
   const line = saleOrder.lines[0];
   const allocation = await prisma.stockAllocation.findFirstOrThrow({
     where: { saleOrderLineId: line.id, status: 'ACTIVE' },
@@ -252,15 +263,16 @@ export async function createApprovedSaleOrder(app: Express, options: ApprovedSal
     .set('Authorization', `Bearer ${merchToken}`)
     .set('Idempotency-Key', createId())
     .send({
-      distributorId: stock.distributorId,
+      distributors: [{ clientKey: 'dg1', distributorId: stock.distributorId, destinations: [{ clientKey: 'd1', ...destination }] }],
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [{ clientKey: 'd1', ...destination }],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity }],
     })
     .expect(201);
 
   const saleOrder = created.body.data;
+  // See the identical shim/comment in createSingleFactoryApprovedSaleOrder above.
+  saleOrder.destinations = saleOrder.distributorGroups.flatMap((g: { destinations: unknown[] }) => g.destinations);
   const line = saleOrder.lines[0];
   const allocation = await prisma.stockAllocation.findFirstOrThrow({
     where: { saleOrderLineId: line.id, status: 'ACTIVE' },
@@ -325,17 +337,24 @@ export async function createTwoBatchApprovedSaleOrder(
     .set('Authorization', `Bearer ${merchToken}`)
     .set('Idempotency-Key', createId())
     .send({
-      distributorId: stockA.distributorId,
+      distributors: [
+        {
+          clientKey: 'dg1',
+          distributorId: stockA.distributorId,
+          destinations: [
+            { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
+          ],
+        },
+      ],
       factoryId: stockA.factoryId,
       soDate: '2026-06-30',
-      destinations: [
-        { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
-      ],
       lines: [{ destinationClientKey: 'd1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: totalQuantity }],
     })
     .expect(201);
 
   const saleOrder = created.body.data;
+  // See the identical shim/comment in createSingleFactoryApprovedSaleOrder above.
+  saleOrder.destinations = saleOrder.distributorGroups.flatMap((g: { destinations: unknown[] }) => g.destinations);
   const line = saleOrder.lines[0];
   const allocations = await prisma.stockAllocation.findMany({
     where: { saleOrderLineId: line.id, status: 'ACTIVE' },

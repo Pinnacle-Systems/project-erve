@@ -1,6 +1,7 @@
 import { createId } from '@erve/shared';
 import { createHash } from 'node:crypto';
 import { Prisma, prisma } from '../../db/prisma.js';
+import type { PurchaseMode } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleFactoryId, requireFactoryAccess } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -37,11 +38,16 @@ async function generateSaleOrderNumber(
 // ---------------------------------------------------------------------------
 
 const soInclude = {
-  distributor: { select: { id: true, code: true, name: true, purchaseMode: true } },
   factory: { select: { id: true, code: true, name: true } },
   creator: { select: { id: true, name: true, email: true } },
   financialYear: { select: { id: true, code: true } },
-  destinations: { orderBy: { createdAt: 'asc' as const } },
+  distributorGroups: {
+    include: {
+      distributor: { select: { id: true, code: true, name: true } },
+      destinations: { orderBy: { createdAt: 'asc' as const } },
+    },
+    orderBy: { createdAt: 'asc' as const },
+  },
   lines: {
     include: {
       style: { select: { id: true, styleNumber: true, styleName: true } },
@@ -53,9 +59,17 @@ const soInclude = {
 
 type SORecord = Prisma.SaleOrderGetPayload<{ include: typeof soInclude }>;
 type SOLineRecord = SORecord['lines'][number];
-type SODestinationRecord = SORecord['destinations'][number];
+type SOGroupRecord = SORecord['distributorGroups'][number];
+type SODestinationRecord = SOGroupRecord['destinations'][number];
 
-function toDestinationView(destination: SODestinationRecord) {
+// Distributor.purchaseMode is immutable after creation, so this snapshot
+// (taken when the Distributor is attached to the Dispatch Order) can never
+// diverge from the master — see the "Distributor identity snapshot scope"
+// section of the Correction 8 plan. name/code/GSTIN are deliberately NOT
+// snapshotted (live-joined via `distributor` instead), matching the only
+// other snapshot precedent in this codebase
+// (DistributorPurchaseOrder.purchaseMode).
+function toDestinationView(destination: SODestinationRecord, canMoveDistributor: boolean) {
   return {
     id: destination.id,
     label: destination.label,
@@ -68,6 +82,8 @@ function toDestinationView(destination: SODestinationRecord) {
     state: destination.state,
     country: destination.country,
     postalCode: destination.postalCode,
+    gstin: destination.gstin,
+    canMoveDistributor,
   };
 }
 
@@ -86,6 +102,42 @@ function toLineView(line: SOLineRecord) {
   };
 }
 
+// The single shared eligibility predicate for "may this destination's
+// Distributor-group be changed right now" — used identically by the read
+// projection below and by the updateDispatchOrder move guard, so the two
+// can never drift apart (Correction 8 review point). A destination is
+// movable only while the whole Dispatch Order is still editable AND it has
+// zero (non-retired) cartons — see the Correction 8 plan's safety-boundary
+// verification: no Distributor-sensitive downstream record (FactoryInvoice,
+// EIPL, ErveDispatch, InvoiceHandoff, delivery/sales/return lines) can exist
+// for a destination before its first carton does, so "zero cartons" is the
+// exact and earliest safe boundary.
+async function getCartonCountByDestination(client: Tx | typeof prisma, destinationIds: string[]): Promise<Map<string, number>> {
+  if (destinationIds.length === 0) return new Map();
+  const rows = await client.factoryPackingCarton.groupBy({
+    by: ['destinationId'],
+    where: { destinationId: { in: destinationIds }, retiredAt: null },
+    _count: { _all: true },
+  });
+  return new Map(rows.map((r) => [r.destinationId, r._count._all]));
+}
+
+async function computeCanMoveDistributor(
+  client: Tx | typeof prisma,
+  saleOrderId: string,
+  destinationIds: string[],
+): Promise<Map<string, boolean>> {
+  const [locked, cartonCounts] = await Promise.all([
+    isDispatchOrderLocked(client, saleOrderId),
+    getCartonCountByDestination(client, destinationIds),
+  ]);
+  const result = new Map<string, boolean>();
+  for (const id of destinationIds) {
+    result.set(id, !locked && (cartonCounts.get(id) ?? 0) === 0);
+  }
+  return result;
+}
+
 async function toSaleOrderView(order: SORecord) {
   const isLocked = await isDispatchOrderLocked(prisma, order.id);
   const fulfillment = await computeDispatchOrderFulfillment(
@@ -93,22 +145,49 @@ async function toSaleOrderView(order: SORecord) {
     order.id,
     order.lines.map((line) => ({ quantity: line.quantity })),
   );
+
+  const allDestinationIds = order.distributorGroups.flatMap((g) => g.destinations.map((d) => d.id));
+  const canMoveByDestinationId = await computeCanMoveDistributor(prisma, order.id, allDestinationIds);
+  const canMove = (destinationId: string) => canMoveByDestinationId.get(destinationId) ?? false;
+
   const lines = order.lines.map(toLineView);
+  const linesByDestinationId = new Map<string, ReturnType<typeof toLineView>[]>();
+  for (const line of lines) {
+    const list = linesByDestinationId.get(line.destinationId) ?? [];
+    list.push(line);
+    linesByDestinationId.set(line.destinationId, list);
+  }
+
+  const distributorGroups = order.distributorGroups.map((group) => ({
+    id: group.id,
+    distributor: { id: group.distributor.id, code: group.distributor.code, name: group.distributor.name },
+    purchaseMode: group.purchaseMode,
+    destinations: group.destinations.map((d) => toDestinationView(d, canMove(d.id))),
+    lines: group.destinations.flatMap((d) => linesByDestinationId.get(d.id) ?? []),
+  }));
+
+  const distributors = order.distributorGroups.map((g) => ({
+    id: g.distributor.id,
+    code: g.distributor.code,
+    name: g.distributor.name,
+    purchaseMode: g.purchaseMode,
+  }));
+
   return {
     id: order.id,
     saleOrderNumber: order.saleOrderNumber,
-    distributor: order.distributor,
+    distributors,
     factory: order.factory,
     financialYear: order.financialYear,
     soDate: order.soDate.toISOString(),
     status: order.status,
-    destinationCount: order.destinations.length,
+    destinationCount: allDestinationIds.length,
     totalQuantity: lines.reduce((sum, line) => sum + line.quantity, 0),
     createdAt: order.createdAt.toISOString(),
     isLocked,
     creator: order.creator,
     remarks: order.remarks,
-    destinations: order.destinations.map(toDestinationView),
+    distributorGroups,
     lines,
     fulfillment,
     version: order.version,
@@ -225,7 +304,11 @@ async function recordIdempotentOperation(
 // lineRef; candidates are walked in the order the caller provides them
 // (oldest-QaRelease-first, id tiebreak — see getEligibleQaReleaseLinesForPool)
 // and consumed monotonically, so a given (lineRef, qaReleaseLineId) pair is
-// produced at most once per call.
+// produced at most once per call. Correction 8: this pool is keyed only by
+// Factory+Style+Size and has no awareness of Distributor/destination — it
+// aggregates demand across every destination/Distributor in the order
+// identically to before, so it needs no changes for multi-distributor
+// support.
 // ---------------------------------------------------------------------------
 
 interface PoolDemandEntry {
@@ -342,6 +425,14 @@ export interface DispatchOrderDestinationInput {
   state: string;
   country: string;
   postalCode?: string | null;
+  gstin?: string | null;
+}
+
+export interface DispatchOrderDistributorGroupInput {
+  clientKey: string;
+  id?: string;
+  distributorId: string;
+  destinations: DispatchOrderDestinationInput[];
 }
 
 export interface DispatchOrderLineInput {
@@ -353,29 +444,62 @@ export interface DispatchOrderLineInput {
 }
 
 export interface CreateDispatchOrderInput {
-  distributorId: string;
   factoryId: string;
   soDate: string;
   remarks?: string | null;
-  destinations: DispatchOrderDestinationInput[];
+  distributors: DispatchOrderDistributorGroupInput[];
   lines: DispatchOrderLineInput[];
 }
 
 export interface UpdateDispatchOrderInput {
   expectedVersion: number;
-  distributorId?: string;
   factoryId?: string;
   soDate?: string;
   remarks?: string | null;
-  destinations?: DispatchOrderDestinationInput[];
+  distributors?: DispatchOrderDistributorGroupInput[];
   lines?: DispatchOrderLineInput[];
 }
+
+type FlattenedDestinationInput = DispatchOrderDestinationInput & { groupClientKey: string };
 
 function validateDestinationClientKeys(destinations: DispatchOrderDestinationInput[]): void {
   if (destinations.length === 0) throw HttpError.badRequest('At least one destination is required');
   const keys = destinations.map((d) => d.clientKey);
   if (keys.some((k) => !k?.trim())) throw HttpError.badRequest('Every destination must have a non-empty clientKey');
   if (new Set(keys).size !== keys.length) throw HttpError.badRequest('Duplicate destination clientKey');
+}
+
+// Validates the Distributor-group level of the request and returns the
+// flattened destination list (each tagged with its owning group's
+// clientKey) for the existing destination/line machinery below. Two
+// separate clientKey namespaces are enforced, each independently unique:
+// group clientKeys among themselves, and destination clientKeys globally
+// across every group (never per-group) — required because
+// lines[].destinationClientKey resolves through one flat lookup map. A
+// group clientKey happening to equal some destination's clientKey is
+// harmless and not restricted; the two are never looked up through the
+// same map.
+function validateDistributorGroups(distributors: DispatchOrderDistributorGroupInput[]): FlattenedDestinationInput[] {
+  if (distributors.length === 0) throw HttpError.badRequest('At least one Distributor is required');
+  const groupClientKeys = distributors.map((g) => g.clientKey);
+  if (groupClientKeys.some((k) => !k?.trim())) {
+    throw HttpError.badRequest('Every Distributor group must have a non-empty clientKey');
+  }
+  if (new Set(groupClientKeys).size !== groupClientKeys.length) {
+    throw HttpError.badRequest('Duplicate Distributor group clientKey');
+  }
+  const distributorIds = distributors.map((g) => g.distributorId);
+  if (new Set(distributorIds).size !== distributorIds.length) {
+    throw HttpError.badRequest('Duplicate Distributor — each Distributor may appear only once per Dispatch Order');
+  }
+  for (const group of distributors) {
+    if (group.destinations.length === 0) {
+      throw HttpError.badRequest(`Distributor group ${group.clientKey} has no destinations`);
+    }
+  }
+  const flattened = distributors.flatMap((g) => g.destinations.map((d) => ({ ...d, groupClientKey: g.clientKey })));
+  validateDestinationClientKeys(flattened);
+  return flattened;
 }
 
 function validateLinesShape(destinations: DispatchOrderDestinationInput[], lines: DispatchOrderLineInput[]): void {
@@ -411,6 +535,25 @@ async function assertStylesAndSizesExist(styleIds: string[], sizeIds: string[]):
   for (const sizeId of sizeIds) if (!sizeIdSet.has(sizeId)) throw HttpError.badRequest(`Size ${sizeId} not found`);
 }
 
+interface DistributorRow {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+  purchaseMode: PurchaseMode;
+}
+
+async function loadAndValidateDistributors(distributorIds: string[]): Promise<Map<string, DistributorRow>> {
+  const distributors = await prisma.distributor.findMany({ where: { id: { in: distributorIds } } });
+  const distributorById = new Map(distributors.map((d) => [d.id, d]));
+  for (const distributorId of distributorIds) {
+    const distributor = distributorById.get(distributorId);
+    if (!distributor) throw HttpError.badRequest(`Distributor ${distributorId} not found`);
+    if (distributor.status !== 'ACTIVE') throw HttpError.badRequest(`Distributor ${distributor.name} is not active`);
+  }
+  return distributorById;
+}
+
 // ---------------------------------------------------------------------------
 // Service methods — reads
 // ---------------------------------------------------------------------------
@@ -421,8 +564,11 @@ export async function getSaleOrderList(
 ) {
   const factoryIdFilter = resolveListFactoryScope(user, filters.factoryId);
 
+  // "Show Dispatch Orders containing this Distributor" (Correction 8) — a
+  // relation `some` filter is a plain EXISTS subquery, so this composes
+  // fine alongside cursor/skip/take without breaking pagination.
   const where: Prisma.SaleOrderWhereInput = {
-    distributorId: filters.distributorId,
+    distributorGroups: filters.distributorId ? { some: { distributorId: filters.distributorId } } : undefined,
     factoryId: factoryIdFilter,
     financialYearId: filters.financialYearId,
     OR: filters.search ? [{ saleOrderNumber: { contains: filters.search, mode: 'insensitive' } }] : undefined,
@@ -483,6 +629,25 @@ function auditMetadataObject(metadata: unknown): Record<string, unknown> {
     : {};
 }
 
+interface DistributorAuditEntry {
+  distributorId: string;
+  code: string;
+  purchaseMode: string;
+}
+
+interface DestinationMoveAuditEntry {
+  destinationId: string;
+  label: string | null;
+  fromDistributorId: string;
+  toDistributorId: string;
+  fromPurchaseMode: string;
+  toPurchaseMode: string;
+}
+
+function formatDistributorLabel(entry: { code: string; purchaseMode: string }): string {
+  return `${entry.code} (${entry.purchaseMode})`;
+}
+
 export async function getSaleOrderAuditHistory(user: CurrentUser, id: string) {
   assertDispatchOrderAuditAccess(user);
   const order = await prisma.saleOrder.findUnique({ where: { id }, select: { id: true } });
@@ -507,15 +672,30 @@ export async function getSaleOrderAuditHistory(user: CurrentUser, id: string) {
       case 'DISPATCH_ORDER_CREATED': {
         const totalQuantity = typeof metadata.totalQuantity === 'number' ? metadata.totalQuantity : undefined;
         const lineCount = typeof metadata.lineCount === 'number' ? metadata.lineCount : undefined;
+        const distributors = Array.isArray(metadata.distributors) ? (metadata.distributors as DistributorAuditEntry[]) : [];
+        const distributorsPart =
+          distributors.length > 0 ? `; distributors: ${distributors.map(formatDistributorLabel).join(', ')}` : '';
         detail =
           totalQuantity !== undefined && lineCount !== undefined
-            ? `${totalQuantity} unit(s) reserved across ${lineCount} line(s)`
+            ? `${totalQuantity} unit(s) reserved across ${lineCount} line(s)${distributorsPart}`
             : null;
         break;
       }
       case 'DISPATCH_ORDER_UPDATED': {
         const summary = typeof metadata.summary === 'string' ? metadata.summary : undefined;
-        detail = summary ?? null;
+        const added = Array.isArray(metadata.distributorsAdded) ? (metadata.distributorsAdded as DistributorAuditEntry[]) : [];
+        const removed = Array.isArray(metadata.distributorsRemoved) ? (metadata.distributorsRemoved as DistributorAuditEntry[]) : [];
+        const moved = Array.isArray(metadata.destinationsMoved) ? (metadata.destinationsMoved as DestinationMoveAuditEntry[]) : [];
+        const parts: string[] = [];
+        if (summary) parts.push(summary);
+        for (const d of added) parts.push(`Distributor ${formatDistributorLabel(d)} added`);
+        for (const d of removed) parts.push(`Distributor ${formatDistributorLabel(d)} removed`);
+        for (const m of moved) {
+          parts.push(
+            `${m.label ?? m.destinationId} moved (${m.fromPurchaseMode} -> ${m.toPurchaseMode})`,
+          );
+        }
+        detail = parts.length > 0 ? parts.join('; ') : null;
         break;
       }
       default:
@@ -545,18 +725,17 @@ export async function createDispatchOrder(
   if (input.lines.some((line) => line.id)) {
     throw HttpError.badRequest('Line ids may only be supplied when correcting an existing dispatch order');
   }
-  if (input.destinations.some((destination) => destination.id)) {
-    throw HttpError.badRequest('Destination ids may only be supplied when correcting an existing dispatch order');
+  for (const group of input.distributors) {
+    if (group.id) throw HttpError.badRequest('Distributor group ids may only be supplied when correcting an existing dispatch order');
+    if (group.destinations.some((d) => d.id)) {
+      throw HttpError.badRequest('Destination ids may only be supplied when correcting an existing dispatch order');
+    }
   }
-  validateDestinationClientKeys(input.destinations);
-  validateLinesShape(input.destinations, input.lines);
+  const flattenedDestinations = validateDistributorGroups(input.distributors);
+  validateLinesShape(flattenedDestinations, input.lines);
 
-  const [distributor, factory] = await Promise.all([
-    prisma.distributor.findUnique({ where: { id: input.distributorId } }),
-    prisma.factory.findUnique({ where: { id: input.factoryId } }),
-  ]);
-  if (!distributor) throw HttpError.badRequest('Distributor not found');
-  if (distributor.status !== 'ACTIVE') throw HttpError.badRequest('Distributor is not active');
+  const distributorById = await loadAndValidateDistributors(input.distributors.map((g) => g.distributorId));
+  const factory = await prisma.factory.findUnique({ where: { id: input.factoryId } });
   if (!factory) throw HttpError.badRequest('Factory not found');
   if (factory.status !== 'ACTIVE') throw HttpError.badRequest('Factory is not active');
 
@@ -572,7 +751,8 @@ export async function createDispatchOrder(
     const existingId = await findIdempotentSaleOrderId(tx, actor.id, 'CREATE', idempotencyKey, hash);
     if (existingId) return existingId;
 
-    const destinationIdByClientKey = new Map(input.destinations.map((d) => [d.clientKey, createId()]));
+    const groupIdByClientKey = new Map(input.distributors.map((g) => [g.clientKey, createId()]));
+    const destinationIdByClientKey = new Map(flattenedDestinations.map((d) => [d.clientKey, createId()]));
     const lineDefs = input.lines.map((line) => ({
       id: createId(),
       destinationId: destinationIdByClientKey.get(line.destinationClientKey)!,
@@ -599,29 +779,44 @@ export async function createDispatchOrder(
       data: {
         id: soId,
         saleOrderNumber,
-        distributorId: input.distributorId,
         factoryId: input.factoryId,
         createdBy: actor.id,
         soDate: new Date(input.soDate),
         remarks: input.remarks ?? null,
         financialYearId: financialYear.id,
         soSerial: saleOrderSerial,
-        destinations: {
-          create: input.destinations.map((d) => ({
-            id: destinationIdByClientKey.get(d.clientKey)!,
-            label: d.label ?? null,
-            contactName: d.contactName ?? null,
-            contactEmail: d.contactEmail ?? null,
-            contactPhone: d.contactPhone ?? null,
-            addressLine1: d.addressLine1,
-            addressLine2: d.addressLine2 ?? null,
-            city: d.city,
-            state: d.state,
-            country: d.country,
-            postalCode: d.postalCode ?? null,
-          })),
-        },
       },
+    });
+
+    await tx.saleOrderDistributor.createMany({
+      data: input.distributors.map((g) => ({
+        id: groupIdByClientKey.get(g.clientKey)!,
+        saleOrderId: soId,
+        distributorId: g.distributorId,
+        // Explicit application-generated id (createId(), a ULID) — distinct
+        // from the one-time raw-SQL migration backfill, which necessarily
+        // used gen_random_uuid()::text instead (no app code access there).
+        purchaseMode: distributorById.get(g.distributorId)!.purchaseMode,
+      })),
+    });
+
+    await tx.saleOrderDestination.createMany({
+      data: flattenedDestinations.map((d) => ({
+        id: destinationIdByClientKey.get(d.clientKey)!,
+        saleOrderId: soId,
+        saleOrderDistributorId: groupIdByClientKey.get(d.groupClientKey)!,
+        label: d.label ?? null,
+        contactName: d.contactName ?? null,
+        contactEmail: d.contactEmail ?? null,
+        contactPhone: d.contactPhone ?? null,
+        addressLine1: d.addressLine1,
+        addressLine2: d.addressLine2 ?? null,
+        city: d.city,
+        state: d.state,
+        country: d.country,
+        postalCode: d.postalCode ?? null,
+        gstin: d.gstin ?? null,
+      })),
     });
 
     await tx.saleOrderLine.createMany({
@@ -649,6 +844,11 @@ export async function createDispatchOrder(
       });
     }
 
+    const distributorAuditEntries: DistributorAuditEntry[] = input.distributors.map((g) => {
+      const distributor = distributorById.get(g.distributorId)!;
+      return { distributorId: g.distributorId, code: distributor.code, purchaseMode: distributor.purchaseMode };
+    });
+
     await recordAuditLog(
       {
         actorId: actor.id,
@@ -657,12 +857,12 @@ export async function createDispatchOrder(
         entityId: soId,
         metadata: {
           saleOrderNumber,
-          distributorId: input.distributorId,
+          distributors: distributorAuditEntries,
           factoryId: input.factoryId,
-          destinationCount: input.destinations.length,
+          destinationCount: flattenedDestinations.length,
           lineCount: lineDefs.length,
           totalQuantity: lineDefs.reduce((sum, l) => sum + l.quantity, 0),
-        },
+        } as unknown as Prisma.InputJsonValue,
       },
       tx,
     );
@@ -674,7 +874,15 @@ export async function createDispatchOrder(
 }
 
 // ---------------------------------------------------------------------------
-// updateDispatchOrder — surgical line-level sync (see the Phase 3 plan §2.3)
+// updateDispatchOrder — surgical line-level sync (see the Phase 3 plan §2.3),
+// extended (Correction 8) with a Distributor-group reconciliation layer that
+// sits above it: group add/remove composes naturally with the existing
+// destination reconciliation (a dropped group's destinations simply stop
+// appearing in the flattened input, so they become ordinary destination-
+// delete-candidates already) — the only genuinely new pieces are (1)
+// resolving each destination's saleOrderDistributorId, (2) detecting and
+// guarding destination MOVES between groups, and (3) creating new groups
+// first / deleting emptied groups last.
 // ---------------------------------------------------------------------------
 
 interface LoadedLine {
@@ -684,6 +892,18 @@ interface LoadedLine {
   sizeId: string;
   quantity: number;
   allocations: Array<{ id: string; qaReleaseLineId: string; quantity: number }>;
+}
+
+interface LoadedDestination {
+  id: string;
+  saleOrderDistributorId: string;
+}
+
+interface LoadedGroup {
+  id: string;
+  distributorId: string;
+  purchaseMode: PurchaseMode;
+  code: string;
 }
 
 export async function updateDispatchOrder(
@@ -699,13 +919,14 @@ export async function updateDispatchOrder(
   if (await isDispatchOrderLocked(prisma, id)) {
     throw HttpError.badRequest('This dispatch order is locked: Factory Dispatch has already occurred');
   }
-  if (Boolean(input.destinations) !== Boolean(input.lines)) {
-    throw HttpError.badRequest('destinations and lines must be supplied together, or omitted together');
+  if (Boolean(input.distributors) !== Boolean(input.lines)) {
+    throw HttpError.badRequest('distributors and lines must be supplied together, or omitted together');
   }
+  let flattenedDestinations: FlattenedDestinationInput[] = [];
   if (input.lines) {
     if (input.lines.length === 0) throw HttpError.badRequest('At least one quantity line is required');
-    validateDestinationClientKeys(input.destinations!);
-    validateLinesShape(input.destinations!, input.lines);
+    flattenedDestinations = validateDistributorGroups(input.distributors!);
+    validateLinesShape(flattenedDestinations, input.lines);
     await assertStylesAndSizesExist(
       [...new Set(input.lines.map((l) => l.styleId))],
       [...new Set(input.lines.map((l) => l.sizeId))],
@@ -716,10 +937,9 @@ export async function updateDispatchOrder(
     if (!factory) throw HttpError.badRequest('Factory not found');
     if (factory.status !== 'ACTIVE') throw HttpError.badRequest('Factory is not active');
   }
-  if (input.distributorId) {
-    const distributor = await prisma.distributor.findUnique({ where: { id: input.distributorId } });
-    if (!distributor) throw HttpError.badRequest('Distributor not found');
-    if (distributor.status !== 'ACTIVE') throw HttpError.badRequest('Distributor is not active');
+  let distributorById = new Map<string, DistributorRow>();
+  if (input.distributors) {
+    distributorById = await loadAndValidateDistributors([...new Set(input.distributors.map((g) => g.distributorId))]);
   }
 
   const hash = requestHash(input);
@@ -734,7 +954,9 @@ export async function updateDispatchOrder(
       const order = await tx.saleOrder.findUnique({
         where: { id },
         include: {
-          destinations: true,
+          distributorGroups: {
+            include: { distributor: { select: { code: true } }, destinations: true },
+          },
           lines: { include: { allocations: { where: { status: 'ACTIVE' } } } },
         },
       });
@@ -744,12 +966,25 @@ export async function updateDispatchOrder(
         throw HttpError.badRequest('This dispatch order is locked: Factory Dispatch has already occurred');
       }
 
+      const existingGroups: LoadedGroup[] = order.distributorGroups.map((g) => ({
+        id: g.id,
+        distributorId: g.distributorId,
+        purchaseMode: g.purchaseMode,
+        code: g.distributor.code,
+      }));
+      const existingDestinations: LoadedDestination[] = order.distributorGroups.flatMap((g) =>
+        g.destinations.map((d) => ({ id: d.id, saleOrderDistributorId: g.id })),
+      );
+      const destinationLabelById = new Map(
+        order.distributorGroups.flatMap((g) => g.destinations.map((d) => [d.id, d.label] as const)),
+      );
+
       const before = {
-        distributorId: order.distributorId,
+        distributors: existingGroups.map((g) => ({ distributorId: g.distributorId, code: g.code, purchaseMode: g.purchaseMode })),
         factoryId: order.factoryId,
         soDate: order.soDate.toISOString(),
         remarks: order.remarks,
-        destinationCount: order.destinations.length,
+        destinationCount: existingDestinations.length,
         lineCount: order.lines.length,
         totalQuantity: order.lines.reduce((sum, l) => sum + l.quantity, 0),
       };
@@ -784,6 +1019,18 @@ export async function updateDispatchOrder(
         }
       }
 
+      // Correction 8: destination-move eligibility (canMoveDistributor)
+      // shares the exact same predicate used by the read projection — cross-
+      // group destination moves in this function reuse it below rather than
+      // re-deriving "has this destination been packed" independently. The
+      // order is already confirmed unlocked above, so this reduces to the
+      // zero-cartons check, but it is computed via the one shared function.
+      const canMoveByDestinationId = await computeCanMoveDistributor(
+        tx,
+        id,
+        existingDestinations.map((d) => d.id),
+      );
+
       const loadedLines: LoadedLine[] = order.lines.map((l) => ({
         id: l.id,
         destinationId: l.destinationId,
@@ -800,6 +1047,35 @@ export async function updateDispatchOrder(
 
       let releaseCount = 0;
       let hardDeletedFactoryDispatchIds: string[] = [];
+      const distributorsAdded: DistributorAuditEntry[] = [];
+      const distributorsRemoved: DistributorAuditEntry[] = [];
+      const destinationsMoved: DestinationMoveAuditEntry[] = [];
+
+      // Distributor-group reconciliation — computed once, ahead of the
+      // destination/line reconciliation, so new group ids exist before any
+      // destination create/move references them. Runs identically whether
+      // or not the Factory is also changing.
+      let groupIdByClientKey = new Map<string, string>();
+      let purchaseModeByGroupId = new Map<string, PurchaseMode>();
+      let groupDeleteCandidateIds: string[] = [];
+
+      if (linesChanging) {
+        const reconciled = reconcileDistributorGroups(existingGroups, input.distributors!, distributorById);
+        groupIdByClientKey = reconciled.groupIdByClientKey;
+        groupDeleteCandidateIds = reconciled.groupDeleteCandidateIds;
+        purchaseModeByGroupId = new Map(existingGroups.map((g) => [g.id, g.purchaseMode]));
+
+        if (reconciled.groupCreates.length > 0) {
+          await tx.saleOrderDistributor.createMany({
+            data: reconciled.groupCreates.map((g) => ({ id: g.id, saleOrderId: id, distributorId: g.distributorId, purchaseMode: g.purchaseMode })),
+          });
+          for (const g of reconciled.groupCreates) {
+            purchaseModeByGroupId.set(g.id, g.purchaseMode);
+            const distributor = distributorById.get(g.distributorId)!;
+            distributorsAdded.push({ distributorId: g.distributorId, code: distributor.code, purchaseMode: distributor.purchaseMode });
+          }
+        }
+      }
 
       if (factoryChanging) {
         // §22/§2.3 Factory change: all-or-nothing across the ENTIRE order.
@@ -814,11 +1090,16 @@ export async function updateDispatchOrder(
         // (if lines weren't supplied) the current lines re-reserved as-is
         // at the new factory.
         const desired = linesChanging
-          ? resolveDesiredLinesForFullReplacement(order.destinations, loadedLines, input.destinations!, input.lines!)
+          ? resolveDesiredLinesForFullReplacement(
+              existingDestinations,
+              flattenedDestinations,
+              input.lines!,
+              groupIdByClientKey,
+            )
           : {
               destinationCreates: [] as ReturnType<typeof resolveDesiredLinesForFullReplacement>['destinationCreates'],
-              destinationUpdates: [],
-              destinationDeleteIds: [],
+              destinationUpdates: [] as ReturnType<typeof resolveDesiredLinesForFullReplacement>['destinationUpdates'],
+              destinationDeleteIds: [] as string[],
               lineCreates: loadedLines.map((l) => ({
                 id: l.id,
                 destinationId: l.destinationId,
@@ -829,6 +1110,7 @@ export async function updateDispatchOrder(
               lineFieldUpdates: [],
               lineDeleteIds: [],
               lineMerges: [] as Array<{ losingId: string; survivingId: string }>,
+              destinationMoves: [] as Array<{ destinationId: string; fromGroupId: string; toGroupId: string }>,
             };
 
         // Release every current allocation (all guaranteed unpacked).
@@ -852,16 +1134,37 @@ export async function updateDispatchOrder(
 
         // Apply destination/line structural changes (creates/updates/deletes),
         // but treat EVERY resulting line as needing a fresh full reservation
-        // at the new factory (old allocations are already fully released above).
-        await applyDestinationPlan(tx, id, desired.destinationCreates, desired.destinationUpdates, desired.destinationDeleteIds);
+        // at the new factory (old allocations are already fully released
+        // above). New destinations are created FIRST (a new line may
+        // reference one); destination UPDATES/DELETES run AFTER every line
+        // change so a destination whose only line is being removed in this
+        // same request is never deleted while a sale_order_lines row still
+        // references it (FK RESTRICT) — a destination-with-its-line removal
+        // is exactly what dropping a whole Distributor group produces.
+        await applyDestinationPlan(tx, id, desired.destinationCreates, [], []);
         const finalLineIds = await applyLinePlan(
           tx,
           id,
           desired.lineCreates,
           desired.lineFieldUpdates,
           desired.lineDeleteIds,
-          desired.lineMerges,
         );
+        // Now safe: every line that referenced a doomed destination is gone.
+        await applyDestinationPlan(tx, id, [], desired.destinationUpdates, desired.destinationDeleteIds);
+
+        for (const move of desired.destinationMoves) {
+          const fromMode = purchaseModeByGroupId.get(move.fromGroupId);
+          const toMode = purchaseModeByGroupId.get(move.toGroupId);
+          const fromGroup = existingGroups.find((g) => g.id === move.fromGroupId);
+          destinationsMoved.push({
+            destinationId: move.destinationId,
+            label: destinationLabelById.get(move.destinationId) ?? null,
+            fromDistributorId: fromGroup?.distributorId ?? '',
+            toDistributorId: resolveGroupDistributorId(move.toGroupId, existingGroups, input.distributors!, groupIdByClientKey),
+            fromPurchaseMode: fromMode ?? '',
+            toPurchaseMode: toMode ?? '',
+          });
+        }
 
         const demandByPoolKey = new Map<string, PoolDemandEntry[]>();
         for (const line of finalLineIds) {
@@ -877,10 +1180,12 @@ export async function updateDispatchOrder(
         await tx.saleOrder.update({ where: { id }, data: { factoryId: newFactoryId } });
       } else if (linesChanging) {
         const desired = resolveDesiredLinesForReconciliation(
-          order.destinations,
+          existingDestinations,
           loadedLines,
-          input.destinations!,
+          flattenedDestinations,
           input.lines!,
+          groupIdByClientKey,
+          canMoveByDestinationId,
           packedByAllocation,
           factoryDispatchLinesByAllocation,
           physicalPackedByLine,
@@ -954,8 +1259,26 @@ export async function updateDispatchOrder(
           }
         }
 
-        await applyDestinationPlan(tx, id, desired.destinationCreates, desired.destinationUpdates, desired.destinationDeleteIds);
-        await applyLinePlan(tx, id, desired.lineCreates, desired.lineFieldUpdates, desired.lineDeleteIds, []);
+        // New destinations FIRST (a new line may reference one); destination
+        // UPDATES/DELETES run AFTER line changes so a destination whose only
+        // line is being removed in this same request is never deleted while
+        // a sale_order_lines row still references it (FK RESTRICT) — this is
+        // exactly what dropping a whole Distributor group produces.
+        await applyDestinationPlan(tx, id, desired.destinationCreates, [], []);
+        await applyLinePlan(tx, id, desired.lineCreates, desired.lineFieldUpdates, desired.lineDeleteIds);
+        await applyDestinationPlan(tx, id, [], desired.destinationUpdates, desired.destinationDeleteIds);
+
+        for (const move of desired.destinationMoves) {
+          const fromGroup = existingGroups.find((g) => g.id === move.fromGroupId);
+          destinationsMoved.push({
+            destinationId: move.destinationId,
+            label: destinationLabelById.get(move.destinationId) ?? null,
+            fromDistributorId: fromGroup?.distributorId ?? '',
+            toDistributorId: resolveGroupDistributorId(move.toGroupId, existingGroups, input.distributors!, groupIdByClientKey),
+            fromPurchaseMode: purchaseModeByGroupId.get(move.fromGroupId) ?? '',
+            toPurchaseMode: purchaseModeByGroupId.get(move.toGroupId) ?? '',
+          });
+        }
 
         // Phase 4 carton invalidation: a destination ADDRESS edit or a
         // stable-line DESTINATION MOVE must invalidate the current Packing
@@ -964,9 +1287,9 @@ export async function updateDispatchOrder(
         // actual field change counts — round-tripping the same address
         // value must not invalidate anything.
         const editedDestinationIds = new Set<string>();
-        if (input.destinations) {
-          const existingDestById = new Map(order.destinations.map((d) => [d.id, d]));
-          for (const d of input.destinations) {
+        if (input.distributors) {
+          const existingDestById = new Map(order.distributorGroups.flatMap((g) => g.destinations.map((d) => [d.id, d])));
+          for (const d of flattenedDestinations) {
             if (!d.id) continue;
             const existing = existingDestById.get(d.id);
             if (!existing) continue;
@@ -980,7 +1303,8 @@ export async function updateDispatchOrder(
               d.city !== existing.city ||
               d.state !== existing.state ||
               d.country !== existing.country ||
-              (d.postalCode ?? null) !== existing.postalCode;
+              (d.postalCode ?? null) !== existing.postalCode ||
+              (d.gstin ?? null) !== existing.gstin;
             if (changed) editedDestinationIds.add(d.id);
           }
         }
@@ -1023,10 +1347,23 @@ export async function updateDispatchOrder(
         // Header-only edit: no allocation changes at all.
       }
 
+      // Delete groups no longer referenced — every destination that was
+      // under them has already been either moved elsewhere or deleted above
+      // as part of the ordinary destination reconciliation (a dropped
+      // group's destinations simply stop appearing in the flattened input),
+      // so this is always safe by construction; the composite FK is a real
+      // backstop too. Runs LAST, after every destination write above.
+      if (groupDeleteCandidateIds.length > 0) {
+        for (const groupId of groupDeleteCandidateIds) {
+          const group = existingGroups.find((g) => g.id === groupId)!;
+          distributorsRemoved.push({ distributorId: group.distributorId, code: group.code, purchaseMode: group.purchaseMode });
+        }
+        await tx.saleOrderDistributor.deleteMany({ where: { id: { in: groupDeleteCandidateIds } } });
+      }
+
       await tx.saleOrder.update({
         where: { id },
         data: {
-          distributorId: input.distributorId,
           soDate: input.soDate ? new Date(input.soDate) : undefined,
           remarks: input.remarks !== undefined ? input.remarks : undefined,
           version: { increment: 1 },
@@ -1035,10 +1372,10 @@ export async function updateDispatchOrder(
 
       const after = await tx.saleOrder.findUnique({
         where: { id },
-        include: { destinations: true, lines: true },
+        include: { distributorGroups: { include: { distributor: { select: { code: true } } } }, destinations: true, lines: true },
       });
       const afterSummary = {
-        distributorId: after!.distributorId,
+        distributors: after!.distributorGroups.map((g) => ({ distributorId: g.distributorId, code: g.distributor.code, purchaseMode: g.purchaseMode })),
         factoryId: after!.factoryId,
         soDate: after!.soDate.toISOString(),
         remarks: after!.remarks,
@@ -1058,8 +1395,11 @@ export async function updateDispatchOrder(
             after: afterSummary,
             releasedAllocationCount: releaseCount,
             hardDeletedFactoryDispatchIds,
+            distributorsAdded,
+            distributorsRemoved,
+            destinationsMoved,
             summary: `Total quantity ${before.totalQuantity} -> ${afterSummary.totalQuantity}`,
-          },
+          } as unknown as Prisma.InputJsonValue,
         },
         tx,
       );
@@ -1069,6 +1409,22 @@ export async function updateDispatchOrder(
   );
 
   return getSaleOrderDetail(actor, id);
+}
+
+// Resolves the distributorId a (possibly newly created) group id belongs to
+// — used only for destinationsMoved audit entries, where the target group
+// may be one created earlier in this same request.
+function resolveGroupDistributorId(
+  groupId: string,
+  existingGroups: LoadedGroup[],
+  distributorsInput: DispatchOrderDistributorGroupInput[],
+  groupIdByClientKey: Map<string, string>,
+): string {
+  const existing = existingGroups.find((g) => g.id === groupId);
+  if (existing) return existing.distributorId;
+  const clientKey = [...groupIdByClientKey.entries()].find(([, gid]) => gid === groupId)?.[0];
+  const input = distributorsInput.find((g) => g.clientKey === clientKey);
+  return input?.distributorId ?? '';
 }
 
 // ---------------------------------------------------------------------------
@@ -1170,6 +1526,7 @@ interface DestinationFields {
   state: string;
   country: string;
   postalCode: string | null;
+  gstin: string | null;
 }
 
 function toDestinationFields(d: DispatchOrderDestinationInput): DestinationFields {
@@ -1184,21 +1541,76 @@ function toDestinationFields(d: DispatchOrderDestinationInput): DestinationField
     state: d.state,
     country: d.country,
     postalCode: d.postalCode ?? null,
+    gstin: d.gstin ?? null,
   };
+}
+
+// Distributor-group reconciliation — resolves which groups are new
+// (created here, before any destination references them), which existing
+// groups are kept (an existing group's distributorId is immutable: a
+// request that tries to repoint it is rejected outright rather than
+// silently mutating historical lineage), and which existing groups are no
+// longer referenced at all (candidates for deletion once their
+// destinations have been moved/removed by the destination reconciliation
+// below).
+function reconcileDistributorGroups(
+  existingGroups: LoadedGroup[],
+  distributorsInput: DispatchOrderDistributorGroupInput[],
+  distributorById: Map<string, DistributorRow>,
+): {
+  groupCreates: Array<{ id: string; distributorId: string; purchaseMode: PurchaseMode }>;
+  groupIdByClientKey: Map<string, string>;
+  groupDeleteCandidateIds: string[];
+} {
+  const existingGroupById = new Map(existingGroups.map((g) => [g.id, g]));
+  const groupCreates: Array<{ id: string; distributorId: string; purchaseMode: PurchaseMode }> = [];
+  const groupIdByClientKey = new Map<string, string>();
+  const seenExistingGroupIds = new Set<string>();
+
+  for (const g of distributorsInput) {
+    if (g.id) {
+      const existing = existingGroupById.get(g.id);
+      if (!existing) throw HttpError.badRequest(`Distributor group ${g.id} does not belong to this dispatch order`);
+      if (seenExistingGroupIds.has(g.id)) throw HttpError.badRequest(`Distributor group ${g.id} referenced more than once`);
+      if (existing.distributorId !== g.distributorId) {
+        throw HttpError.badRequest(
+          `Cannot change the Distributor of an existing group (${g.id}) — remove it and add a new one instead`,
+        );
+      }
+      seenExistingGroupIds.add(g.id);
+      groupIdByClientKey.set(g.clientKey, g.id);
+    } else {
+      const newId = createId();
+      const distributor = distributorById.get(g.distributorId)!;
+      groupCreates.push({ id: newId, distributorId: g.distributorId, purchaseMode: distributor.purchaseMode });
+      groupIdByClientKey.set(g.clientKey, newId);
+    }
+  }
+  const groupDeleteCandidateIds = existingGroups.map((g) => g.id).filter((gid) => !seenExistingGroupIds.has(gid));
+
+  return { groupCreates, groupIdByClientKey, groupDeleteCandidateIds };
 }
 
 async function applyDestinationPlan(
   tx: Tx,
   saleOrderId: string,
-  creates: Array<{ id: string; data: DestinationFields }>,
-  updates: Array<{ id: string; data: DestinationFields }>,
+  creates: Array<{ id: string; saleOrderDistributorId: string; data: DestinationFields }>,
+  updates: Array<{ id: string; saleOrderDistributorId?: string; data: DestinationFields }>,
   deleteIds: string[],
 ): Promise<void> {
   for (const create of creates) {
-    await tx.saleOrderDestination.create({ data: { id: create.id, saleOrderId, ...create.data } });
+    await tx.saleOrderDestination.create({
+      data: { id: create.id, saleOrderId, saleOrderDistributorId: create.saleOrderDistributorId, ...create.data },
+    });
   }
   for (const update of updates) {
-    await tx.saleOrderDestination.update({ where: { id: update.id }, data: update.data });
+    await tx.saleOrderDestination.update({
+      where: { id: update.id },
+      data: {
+        ...update.data,
+        ...(update.saleOrderDistributorId ? { saleOrderDistributorId: update.saleOrderDistributorId } : {}),
+      },
+    });
   }
   if (deleteIds.length > 0) {
     await tx.saleOrderDestination.deleteMany({ where: { id: { in: deleteIds } } });
@@ -1211,7 +1623,6 @@ async function applyLinePlan(
   creates: Array<{ id: string; destinationId: string; styleId: string; sizeId: string; quantity: number }>,
   updates: Array<{ id: string; destinationId: string; styleId: string; sizeId: string; quantity: number }>,
   deleteIds: string[],
-  _merges: Array<{ losingId: string; survivingId: string }>,
 ): Promise<Array<{ id: string; destinationId: string; styleId: string; sizeId: string; quantity: number }>> {
   if (deleteIds.length > 0) {
     await tx.saleOrderLine.deleteMany({ where: { id: { in: deleteIds } } });
@@ -1239,33 +1650,40 @@ async function applyLinePlan(
 
 // Used only by the Factory-change path (every current allocation has
 // already been fully released, so this is a plain structural replacement —
-// no packed-floor guards apply here).
+// no packed-floor guards apply here; every destination move is trivially
+// safe since totalPacked === 0 is already guaranteed upstream).
 function resolveDesiredLinesForFullReplacement(
-  existingDestinations: Array<{ id: string }>,
-  _existingLines: LoadedLine[],
-  destinationsInput: DispatchOrderDestinationInput[],
+  existingDestinations: LoadedDestination[],
+  destinationsInput: FlattenedDestinationInput[],
   linesInput: DispatchOrderLineInput[],
+  groupIdByClientKey: Map<string, string>,
 ) {
+  const existingDestById = new Map(existingDestinations.map((d) => [d.id, d]));
   const existingDestIds = new Set(existingDestinations.map((d) => d.id));
-  const destinationCreates: Array<{ id: string; clientKey: string; data: DestinationFields }> = [];
-  const destinationUpdates: Array<{ id: string; data: DestinationFields }> = [];
+  const destinationCreates: Array<{ id: string; saleOrderDistributorId: string; clientKey: string; data: DestinationFields }> = [];
+  const destinationUpdates: Array<{ id: string; saleOrderDistributorId?: string; data: DestinationFields }> = [];
+  const destinationMoves: Array<{ destinationId: string; fromGroupId: string; toGroupId: string }> = [];
   const resolvedDestinationId = new Map<string, string>();
   const seenExistingDestIds = new Set<string>();
 
   for (const d of destinationsInput) {
+    const targetGroupId = groupIdByClientKey.get(d.groupClientKey)!;
     if (d.id) {
       if (!existingDestIds.has(d.id)) throw HttpError.badRequest(`Destination ${d.id} does not belong to this dispatch order`);
       if (seenExistingDestIds.has(d.id)) throw HttpError.badRequest(`Destination ${d.id} referenced more than once`);
       seenExistingDestIds.add(d.id);
-      destinationUpdates.push({ id: d.id, data: toDestinationFields(d) });
+      const existing = existingDestById.get(d.id)!;
+      const isMoving = existing.saleOrderDistributorId !== targetGroupId;
+      if (isMoving) destinationMoves.push({ destinationId: d.id, fromGroupId: existing.saleOrderDistributorId, toGroupId: targetGroupId });
+      destinationUpdates.push({ id: d.id, saleOrderDistributorId: isMoving ? targetGroupId : undefined, data: toDestinationFields(d) });
       resolvedDestinationId.set(d.clientKey, d.id);
     } else {
       const newId = createId();
-      destinationCreates.push({ id: newId, clientKey: d.clientKey, data: toDestinationFields(d) });
+      destinationCreates.push({ id: newId, saleOrderDistributorId: targetGroupId, clientKey: d.clientKey, data: toDestinationFields(d) });
       resolvedDestinationId.set(d.clientKey, newId);
     }
   }
-  const destinationDeleteIds = [...existingDestIds].filter((id) => !seenExistingDestIds.has(id));
+  const destinationDeleteIds = [...existingDestIds].filter((destId) => !seenExistingDestIds.has(destId));
 
   const lineCreates = linesInput.map((line) => ({
     id: createId(),
@@ -1279,6 +1697,7 @@ function resolveDesiredLinesForFullReplacement(
     destinationCreates,
     destinationUpdates,
     destinationDeleteIds,
+    destinationMoves,
     lineCreates,
     lineFieldUpdates: [] as Array<{ id: string; destinationId: string; styleId: string; sizeId: string; quantity: number }>,
     lineDeleteIds: [] as string[],
@@ -1288,15 +1707,19 @@ function resolveDesiredLinesForFullReplacement(
 
 // The full surgical reconciliation planner (no factory change) — see the
 // Phase 3 plan §2.3 Phase B. Validates line/destination identity, computes
-// packed-floor rejections, resolves destination moves and style/size
-// changes on unpacked lines, detects and merges 2-way collisions, and
-// produces the destination/line write plan plus the per-pool-key additional
-// demand needed.
+// packed-floor rejections, resolves destination moves (both style/size
+// changes on unpacked lines AND, per Correction 8, Distributor-group
+// changes on unpacked destinations — the latter gated on zero cartons via
+// the same computeCanMoveDistributor predicate the read projection uses),
+// detects and merges 2-way collisions, and produces the destination/line
+// write plan plus the per-pool-key additional demand needed.
 function resolveDesiredLinesForReconciliation(
-  existingDestinations: Array<{ id: string }>,
+  existingDestinations: LoadedDestination[],
   existingLines: LoadedLine[],
-  destinationsInput: DispatchOrderDestinationInput[],
+  destinationsInput: FlattenedDestinationInput[],
   linesInput: DispatchOrderLineInput[],
+  groupIdByClientKey: Map<string, string>,
+  canMoveByDestinationId: Map<string, boolean>,
   packedByAllocation: Map<string, number>,
   factoryDispatchLinesByAllocation: Map<string, string[]>,
   physicalPackedByLine: Map<string, number>,
@@ -1308,29 +1731,42 @@ function resolveDesiredLinesForReconciliation(
   // total, per the Phase 4 plan §1 correction.
   const packedForAllocation = (allocationId: string): number => packedByAllocation.get(allocationId) ?? 0;
   const packedForLine = (line: LoadedLine): number => physicalPackedByLine.get(line.id) ?? 0;
+  const existingDestById = new Map(existingDestinations.map((d) => [d.id, d]));
   const existingDestIds = new Set(existingDestinations.map((d) => d.id));
   const existingLineById = new Map(existingLines.map((l) => [l.id, l]));
 
   // --- Destinations ---
-  const destinationCreates: Array<{ id: string; clientKey: string; data: DestinationFields }> = [];
-  const destinationUpdates: Array<{ id: string; data: DestinationFields }> = [];
+  const destinationCreates: Array<{ id: string; saleOrderDistributorId: string; clientKey: string; data: DestinationFields }> = [];
+  const destinationUpdates: Array<{ id: string; saleOrderDistributorId?: string; data: DestinationFields }> = [];
+  const destinationMoves: Array<{ destinationId: string; fromGroupId: string; toGroupId: string }> = [];
   const resolvedDestinationId = new Map<string, string>();
   const seenExistingDestIds = new Set<string>();
 
   for (const d of destinationsInput) {
+    const targetGroupId = groupIdByClientKey.get(d.groupClientKey)!;
     if (d.id) {
       if (!existingDestIds.has(d.id)) throw HttpError.badRequest(`Destination ${d.id} does not belong to this dispatch order`);
       if (seenExistingDestIds.has(d.id)) throw HttpError.badRequest(`Destination ${d.id} referenced more than once`);
       seenExistingDestIds.add(d.id);
-      destinationUpdates.push({ id: d.id, data: toDestinationFields(d) });
+      const existing = existingDestById.get(d.id)!;
+      const isMoving = existing.saleOrderDistributorId !== targetGroupId;
+      if (isMoving) {
+        if (!canMoveByDestinationId.get(d.id)) {
+          throw HttpError.badRequest(
+            `Cannot move destination ${d.id} to a different Distributor: cartons have already been packed for it.`,
+          );
+        }
+        destinationMoves.push({ destinationId: d.id, fromGroupId: existing.saleOrderDistributorId, toGroupId: targetGroupId });
+      }
+      destinationUpdates.push({ id: d.id, saleOrderDistributorId: isMoving ? targetGroupId : undefined, data: toDestinationFields(d) });
       resolvedDestinationId.set(d.clientKey, d.id);
     } else {
       const newId = createId();
-      destinationCreates.push({ id: newId, clientKey: d.clientKey, data: toDestinationFields(d) });
+      destinationCreates.push({ id: newId, saleOrderDistributorId: targetGroupId, clientKey: d.clientKey, data: toDestinationFields(d) });
       resolvedDestinationId.set(d.clientKey, newId);
     }
   }
-  const destinationDeleteCandidateIds = [...existingDestIds].filter((id) => !seenExistingDestIds.has(id));
+  const destinationDeleteCandidateIds = [...existingDestIds].filter((destId) => !seenExistingDestIds.has(destId));
 
   // --- Lines: validate ids ---
   const seenExistingLineIds = new Set<string>();
@@ -1522,6 +1958,7 @@ function resolveDesiredLinesForReconciliation(
     destinationCreates,
     destinationUpdates,
     destinationDeleteIds,
+    destinationMoves,
     lineCreates,
     lineFieldUpdates,
     lineDeleteIds,

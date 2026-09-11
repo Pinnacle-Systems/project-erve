@@ -125,15 +125,24 @@ function destinationMatchKeyOf(destination: DestinationAddressFields): string {
 // point before carton membership becomes immutable.
 // ---------------------------------------------------------------------------
 
+// Correction 8: a carton's commercial owner (Distributor) is resolved via
+// its destination's Distributor-group, not via a single order-root value —
+// one Dispatch Order may now span multiple Distributors, so
+// `factoryDispatch.saleOrder.distributorId` no longer exists and would be
+// wrong even if it did.
 const eligibilityCartonInclude = {
-  destination: true,
+  destination: {
+    include: {
+      saleOrderDistributor: { include: { distributor: { select: { id: true, code: true, name: true } } } },
+    },
+  },
   factoryDispatch: {
     select: {
       id: true,
       factoryDispatchNumber: true,
       status: true,
       factory: { select: { id: true, code: true, name: true } },
-      saleOrder: { select: { id: true, saleOrderNumber: true, distributorId: true, distributor: { select: { id: true, code: true, name: true } } } },
+      saleOrder: { select: { id: true, saleOrderNumber: true } },
     },
   },
   lines: { include: { saleOrderLine: { select: { style: { select: { id: true, styleNumber: true, styleName: true } }, size: { select: { id: true, code: true, label: true } } } } } },
@@ -162,11 +171,15 @@ function assertSameCommercialOwner(carton: EligibilityCarton, distributorId: str
   if (cartonMatchKey !== ervePackingListMatchKey) {
     throw HttpError.badRequest(`Carton ${carton.cartonNumber} has a different destination than the other selected cartons`);
   }
-  if (carton.factoryDispatch.saleOrder.distributorId !== distributorId) {
+  if (carton.destination.saleOrderDistributor.distributorId !== distributorId) {
     // Phase 6 plan §15: a matching physical address never implies a matching
     // Distributor. This boundary is intentionally NOT relaxed here — combining
     // cartons for different billing Distributors is a deferred Tax Invoice/
-    // statutory decision, not something this phase may invent.
+    // statutory decision, not something this phase may invent. Correction 8:
+    // the commercial owner is resolved from the carton's own destination's
+    // Distributor-group — a single Dispatch Order may now contain cartons
+    // whose destinations belong to different Distributors, so this can no
+    // longer be read off the order root.
     throw HttpError.conflict(
       `Carton ${carton.cartonNumber} belongs to a different Distributor — cartons for different Distributors cannot be combined into one Erve Dispatch`,
     );
@@ -182,7 +195,7 @@ function toEligibleCartonView(carton: EligibilityCarton) {
     factoryDispatchId: carton.factoryDispatch.id,
     factoryDispatchNumber: carton.factoryDispatch.factoryDispatchNumber,
     saleOrder: carton.factoryDispatch.saleOrder,
-    distributor: carton.factoryDispatch.saleOrder.distributor,
+    distributor: carton.destination.saleOrderDistributor.distributor,
     destination: {
       id: carton.destination.id,
       label: carton.destination.label,
@@ -231,7 +244,7 @@ export async function getEligibleErveCartons(actor: CurrentUser, filters: { erve
     if (carton.lines.length === 0) return false;
     const currentAudit = carton.audits[0];
     if (!currentAudit || currentAudit.cartonVersion !== carton.version) return false;
-    if (distributorId && carton.factoryDispatch.saleOrder.distributorId !== distributorId) return false;
+    if (distributorId && carton.destination.saleOrderDistributor.distributorId !== distributorId) return false;
     if (matchKey && destinationMatchKeyOf(carton.destination) !== matchKey) return false;
     return true;
   });
@@ -461,7 +474,7 @@ async function loadAndValidateCartonsForConsolidation(
     assertCartonEligibleForConsolidation(carton);
 
     const cartonKey = destinationMatchKeyOf(carton.destination);
-    const cartonDistributorId = carton.factoryDispatch.saleOrder.distributorId;
+    const cartonDistributorId = carton.destination.saleOrderDistributor.distributorId;
     if (distributorId === null || matchKey === null) {
       distributorId = cartonDistributorId;
       matchKey = cartonKey;
@@ -755,7 +768,11 @@ async function computeDispatchFinancialBreakdown(erveDispatchId: string, ervePac
         select: {
           style: { select: { styleNumber: true, styleName: true } },
           size: { select: { code: true, label: true } },
-          saleOrder: { select: { distributor: { select: { purchaseMode: true } } } },
+          // Correction 8: purchaseMode is resolved per line via its own
+          // destination's Distributor-group snapshot, not a single
+          // order-level value — a Dispatch Order may mix Distributors/
+          // Purchase Modes.
+          destination: { select: { saleOrderDistributor: { select: { purchaseMode: true } } } },
         },
       },
     },
@@ -779,7 +796,7 @@ async function computeDispatchFinancialBreakdown(erveDispatchId: string, ervePac
     }
     bySaleOrderLine.set(line.saleOrderLineId, {
       quantity: line.quantity,
-      purchaseMode: sol.saleOrder.distributor.purchaseMode,
+      purchaseMode: sol.destination.saleOrderDistributor.purchaseMode,
       styleNumber: sol.style.styleNumber,
       styleName: sol.style.styleName,
       sizeCode: sol.size.code,

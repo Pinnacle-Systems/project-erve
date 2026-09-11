@@ -194,11 +194,14 @@ export async function submitDistributorReturn(actor: CurrentUser, input: SubmitD
       where: { id: { in: [...new Set(input.lines.map((l) => l.saleOrderLineId))] } },
       select: {
         id: true,
-        saleOrder: { select: { distributor: { select: { purchaseMode: true } } } },
+        // Correction 8: purchaseMode is resolved per line via its own
+        // destination's Distributor-group snapshot, never a single
+        // order-level value.
+        destination: { select: { saleOrderDistributor: { select: { purchaseMode: true } } } },
       },
     });
     const modeBySaleOrderLineId = new Map(
-      saleOrderLineModes.map((sol) => [sol.id, sol.saleOrder.distributor.purchaseMode]),
+      saleOrderLineModes.map((sol) => [sol.id, sol.destination.saleOrderDistributor.purchaseMode]),
     );
 
     for (const line of input.lines) {

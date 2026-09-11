@@ -109,12 +109,13 @@ function buildPackingList(overrides: Partial<PackingListView> = {}): PackingList
   return {
     saleOrderId: 'so-1',
     saleOrderNumber: 'EISO/26-27/0001',
-    distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
+    distributors: [{ id: 'dist-1', code: 'D1', name: 'Distributor One' }],
     factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
     factoryDispatch: { id: 'fd-1', factoryDispatchNumber: 'EIFD/26-27/0001', status: 'DRAFT', version: 1, factoryInvoiceId: null },
     destinations: [
       {
         id: 'dest-1',
+        distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
         label: null,
         contactName: null,
         contactEmail: null,
@@ -125,6 +126,8 @@ function buildPackingList(overrides: Partial<PackingListView> = {}): PackingList
         state: 'TN',
         country: 'India',
         postalCode: null,
+        gstin: null,
+        canMoveDistributor: true,
         lines: [
           {
             saleOrderLineId: 'line-1',

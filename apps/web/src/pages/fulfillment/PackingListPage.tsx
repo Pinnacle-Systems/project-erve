@@ -219,7 +219,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
       <style>{PRINT_STYLE}</style>
       <PageHeader
         title={packingList.saleOrderNumber}
-        subtitle={`${packingList.factory.name} · ${packingList.distributor.name}${dispatch ? ` · ${dispatch.factoryDispatchNumber}` : ''}`}
+        subtitle={`${packingList.factory.name} · ${packingList.distributors.map((d) => d.name).join(', ')}${dispatch ? ` · ${dispatch.factoryDispatchNumber}` : ''}`}
         status={
           dispatch ? (
             <StatusBadge
@@ -277,7 +277,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
         {packingList.destinations.map((destination) => (
           <Panel
             key={destination.id}
-            title={destination.label ?? `${destination.city}, ${destination.state}`}
+            title={`${destination.label ?? `${destination.city}, ${destination.state}`} — ${destination.distributor.name}`}
           >
             <div className="space-y-4">
               <DescriptionList columns={3}>
@@ -315,7 +315,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                           <SelectField label="Destination" value={editDestinationId} onValueChange={changeEditDestination} width="fill">
                             {packingList.destinations.map((d) => (
                               <SelectItem key={d.id} value={d.id}>
-                                {d.label ?? `${d.city}, ${d.state}`}
+                                {d.label ?? `${d.city}, ${d.state}`} — {d.distributor.name}
                               </SelectItem>
                             ))}
                           </SelectField>

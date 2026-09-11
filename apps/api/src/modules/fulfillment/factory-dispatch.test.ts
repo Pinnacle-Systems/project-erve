@@ -321,13 +321,18 @@ describe('Factory Packing Cartons', () => {
       .set('Authorization', `Bearer ${merchToken}`)
       .set('Idempotency-Key', createId())
       .send({
-        distributorId: stock.distributorId,
+        distributors: [
+          {
+            clientKey: 'dg1',
+            distributorId: stock.distributorId,
+            destinations: [
+              { clientKey: 'd1', addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
+              { clientKey: 'd2', addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
+            ],
+          },
+        ],
         factoryId: stock.factoryId,
         soDate: '2026-06-30',
-        destinations: [
-          { clientKey: 'd1', addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
-          { clientKey: 'd2', addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
-        ],
         lines: [
           { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 },
           { destinationClientKey: 'd2', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 30 },
@@ -335,12 +340,13 @@ describe('Factory Packing Cartons', () => {
       })
       .expect(201);
     const factoryToken = await createFactoryUserToken(stock.factoryId);
-    const lineD1 = created.body.data.lines.find((l: { destinationId: string }) => l.destinationId === created.body.data.destinations[0].id);
-    const lineD2 = created.body.data.lines.find((l: { destinationId: string }) => l.destinationId === created.body.data.destinations[1].id);
+    const destinations = created.body.data.distributorGroups.flatMap((g: { destinations: Array<{ id: string }> }) => g.destinations);
+    const lineD1 = created.body.data.lines.find((l: { destinationId: string }) => l.destinationId === destinations[0].id);
+    const lineD2 = created.body.data.lines.find((l: { destinationId: string }) => l.destinationId === destinations[1].id);
 
     await createCarton(factoryToken, created.body.data.id, {
       cartonNumber: 'C1',
-      destinationId: created.body.data.destinations[0].id,
+      destinationId: destinations[0].id,
       lines: [
         { saleOrderLineId: lineD1.id, quantity: 5 },
         { saleOrderLineId: lineD2.id, quantity: 5 },
@@ -617,11 +623,23 @@ function patchDispatchOrder(token: string, id: string, body: object) {
     .send(body);
 }
 
-function editBody(saleOrder: { version: number; destinations: Array<Record<string, unknown>> }, lines: object[], version?: number) {
-  const destination = saleOrder.destinations[0]!;
+function editBody(
+  saleOrder: { version: number; distributorGroups: Array<{ id: string; distributor: { id: string }; destinations: Array<Record<string, unknown>> }> },
+  lines: object[],
+  version?: number,
+) {
+  const group = saleOrder.distributorGroups[0]!;
+  const destination = group.destinations[0]!;
   return {
     expectedVersion: version ?? saleOrder.version,
-    destinations: [{ clientKey: destination.id as string, id: destination.id, ...destination }],
+    distributors: [
+      {
+        clientKey: 'dg1',
+        id: group.id,
+        distributorId: group.distributor.id,
+        destinations: [{ clientKey: destination.id as string, id: destination.id, ...destination }],
+      },
+    ],
     lines,
   };
 }
@@ -669,7 +687,7 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
       fixture.merchToken,
       fixture.saleOrder.id,
       editBody(soDetail.body.data, [
-        { id: soDetail.body.data.lines[0].id, destinationClientKey: soDetail.body.data.destinations[0].id, styleId: fixture.stock.styleId, sizeId: fixture.stock.sizeId, quantity: 70 },
+        { id: soDetail.body.data.lines[0].id, destinationClientKey: soDetail.body.data.distributorGroups[0].destinations[0].id, styleId: fixture.stock.styleId, sizeId: fixture.stock.sizeId, quantity: 70 },
       ]),
     );
     const finalizePromise = request(app)
@@ -740,7 +758,7 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
       fixture.merchToken,
       fixture.saleOrder.id,
       editBody(soDetail.body.data, [
-        { id: soDetail.body.data.lines[0].id, destinationClientKey: soDetail.body.data.destinations[0].id, styleId: fixture.stock.styleId, sizeId: fixture.stock.sizeId, quantity: 30 },
+        { id: soDetail.body.data.lines[0].id, destinationClientKey: soDetail.body.data.distributorGroups[0].destinations[0].id, styleId: fixture.stock.styleId, sizeId: fixture.stock.sizeId, quantity: 30 },
       ]),
     );
     const packMorePromise = createCarton(factoryToken, fixture.saleOrder.id, {
@@ -827,13 +845,18 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
       .set('Authorization', `Bearer ${merchToken}`)
       .set('Idempotency-Key', createId())
       .send({
-        distributorId: stock.distributorId,
+        distributors: [
+          {
+            clientKey: 'dg1',
+            distributorId: stock.distributorId,
+            destinations: [
+              { clientKey: 'd1', addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
+              { clientKey: 'd2', addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
+            ],
+          },
+        ],
         factoryId: stock.factoryId,
         soDate: '2026-06-30',
-        destinations: [
-          { clientKey: 'd1', addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
-          { clientKey: 'd2', addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
-        ],
         lines: [
           { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: qtyA },
           { destinationClientKey: 'd2', styleId: stock.styleId, sizeId: stock.sizeId, quantity: qtyB },
@@ -841,7 +864,9 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
       })
       .expect(201);
     const factoryToken = await createFactoryUserToken(stock.factoryId);
-    return { saleOrder: created.body.data, merchToken, factoryToken, stock };
+    const saleOrder = created.body.data;
+    saleOrder.destinations = saleOrder.distributorGroups.flatMap((g: { destinations: unknown[] }) => g.destinations);
+    return { saleOrder, merchToken, factoryToken, stock };
   }
 
   it('a destination ADDRESS edit invalidates only that destination\'s non-retired cartons, not an unrelated destination\'s', async () => {
@@ -870,11 +895,20 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
     await confirmAudit(qaToken, factoryDispatchId, cartonBId).expect(200);
 
     // Edit only destination A's address; destination B is round-tripped unchanged.
+    const groupId = saleOrder.distributorGroups[0].id as string;
+    const distributorId = saleOrder.distributorGroups[0].distributor.id as string;
     await patchDispatchOrder(merchToken, saleOrder.id, {
       expectedVersion: saleOrder.version,
-      destinations: [
-        { clientKey: destA.id, id: destA.id, ...destA, addressLine1: 'New Address Line' },
-        { clientKey: destB.id, id: destB.id, ...destB },
+      distributors: [
+        {
+          clientKey: 'dg1',
+          id: groupId,
+          distributorId,
+          destinations: [
+            { clientKey: destA.id, id: destA.id, ...destA, addressLine1: 'New Address Line' },
+            { clientKey: destB.id, id: destB.id, ...destB },
+          ],
+        },
       ],
       lines: [
         { id: lineA.id, destinationClientKey: destA.id, styleId: lineA.styleId, sizeId: lineA.sizeId, quantity: lineA.quantity },
@@ -915,13 +949,18 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
       .set('Authorization', `Bearer ${merchToken}`)
       .set('Idempotency-Key', createId())
       .send({
-        distributorId: stockA.distributorId,
+        distributors: [
+          {
+            clientKey: 'dg1',
+            distributorId: stockA.distributorId,
+            destinations: [
+              { clientKey: 'd1', addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
+              { clientKey: 'd2', addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
+            ],
+          },
+        ],
         factoryId: stockA.factoryId,
         soDate: '2026-06-30',
-        destinations: [
-          { clientKey: 'd1', addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
-          { clientKey: 'd2', addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
-        ],
         lines: [
           { destinationClientKey: 'd1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 },
           { destinationClientKey: 'd1', styleId: stockKeeperA.styleId, sizeId: stockKeeperA.sizeId, quantity: 1 },
@@ -930,6 +969,7 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
       })
       .expect(201);
     const saleOrder = created.body.data;
+    saleOrder.destinations = saleOrder.distributorGroups.flatMap((g: { destinations: unknown[] }) => g.destinations);
     const factoryToken = await createFactoryUserToken(stockA.factoryId);
     const { token: qaToken } = await createRoleToken('QA_USER');
     const destA = saleOrder.destinations[0];
@@ -954,9 +994,16 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
     // disagrees with its content line's new destination.
     await patchDispatchOrder(merchToken, saleOrder.id, {
       expectedVersion: saleOrder.version,
-      destinations: [
-        { clientKey: destA.id, id: destA.id, ...destA },
-        { clientKey: destB.id, id: destB.id, ...destB },
+      distributors: [
+        {
+          clientKey: 'dg1',
+          id: saleOrder.distributorGroups[0].id,
+          distributorId: saleOrder.distributorGroups[0].distributor.id,
+          destinations: [
+            { clientKey: destA.id, id: destA.id, ...destA },
+            { clientKey: destB.id, id: destB.id, ...destB },
+          ],
+        },
       ],
       lines: [
         { id: lineA.id, destinationClientKey: destB.id, styleId: lineA.styleId, sizeId: lineA.sizeId, quantity: lineA.quantity },

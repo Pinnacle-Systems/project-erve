@@ -381,14 +381,14 @@ model Distributor {
   createdAt    DateTime          @default(now()) @map("created_at")
   updatedAt    DateTime          @updatedAt @map("updated_at")
 
-  userDistributors   UserDistributor[]
-  priceLists         PriceList[]
-  purchaseOrders     DistributorPurchaseOrder[]
-  saleOrders         SaleOrder[]
-  ervePackingLists   ErvePackingList[]
-  erveDispatches     ErveDispatch[]
-  salesReports       DistributorSalesReport[]
-  distributorReturns DistributorReturn[]
+  userDistributors      UserDistributor[]
+  priceLists            PriceList[]
+  purchaseOrders        DistributorPurchaseOrder[]
+  saleOrderDistributors SaleOrderDistributor[]
+  ervePackingLists      ErvePackingList[]
+  erveDispatches        ErveDispatch[]
+  salesReports          DistributorSalesReport[]
+  distributorReturns    DistributorReturn[]
 
   @@index([status])
   @@map("distributors")
@@ -1229,7 +1229,6 @@ enum StockAllocationSource {
 model SaleOrder {
   id              String          @id
   saleOrderNumber String          @unique @map("sale_order_number")
-  distributorId   String          @map("distributor_id")
   factoryId       String          @map("factory_id")
   createdBy       String          @map("created_by")
   soDate          DateTime        @map("so_date") @db.Date
@@ -1244,10 +1243,10 @@ model SaleOrder {
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  distributor        Distributor                  @relation(fields: [distributorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   factory            Factory                      @relation(fields: [factoryId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   creator            User                         @relation("SaleOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: NoAction)
   financialYear      FinancialYear                @relation(fields: [financialYearId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  distributorGroups  SaleOrderDistributor[]
   destinations       SaleOrderDestination[]
   lines              SaleOrderLine[]
   idempotencyRecords SaleOrderIdempotencyRecord[]
@@ -1256,10 +1255,48 @@ model SaleOrder {
   erveDispatches     ErveDispatch[]
 
   @@unique([financialYearId, soSerial])
-  @@index([distributorId])
   @@index([factoryId])
   @@index([status])
   @@map("sale_orders")
+}
+
+// A Distributor's participation in one Dispatch Order (Correction 8) — one
+// row per (SaleOrder, Distributor). Exactly one Factory still backs the
+// whole SaleOrder (SaleOrder.factoryId); a SaleOrder may now own MULTIPLE
+// SaleOrderDistributor rows, each grouping one or more destinations.
+// purchaseMode is a snapshot of Distributor.purchaseMode taken the moment
+// this distributor is attached to this Dispatch Order — safe to treat as
+// permanently correct because Distributor.purchaseMode is immutable after
+// creation (see master-data.validation.ts's updateDistributorSchema, which
+// excludes purchaseMode), mirroring the existing
+// DistributorPurchaseOrder.purchaseMode snapshot precedent. Distributor
+// name/code/GSTIN are deliberately NOT snapshotted here — every other
+// reference to a Distributor's descriptive identity in this codebase is a
+// live FK join, and only purchaseMode has ever been snapshotted (because
+// it's commercially load-bearing for return-eligibility logic); reporting on
+// a historical Dispatch Order intentionally resolves name/code/GSTIN from
+// the current Distributor master, exactly as it already did before this
+// model existed.
+model SaleOrderDistributor {
+  id            String       @id
+  saleOrderId   String       @map("sale_order_id")
+  distributorId String       @map("distributor_id")
+  purchaseMode  PurchaseMode @map("purchase_mode")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  saleOrder    SaleOrder              @relation(fields: [saleOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  distributor  Distributor            @relation(fields: [distributorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  destinations SaleOrderDestination[]
+
+  // (id, saleOrderId) composite unique exists purely so SaleOrderDestination
+  // can hold a composite FK into it, DB-enforcing that a destination's
+  // saleOrderId always matches its distributor group's saleOrderId — id
+  // alone remains the primary key.
+  @@unique([id, saleOrderId])
+  @@unique([saleOrderId, distributorId])
+  @@index([distributorId])
+  @@map("sale_order_distributors")
 }
 
 // Destination address snapshot — no Store/Outlet master exists. Follows the
@@ -1267,28 +1304,40 @@ model SaleOrder {
 // may correct these fields until Factory Dispatch; onDelete: Restrict is
 // deliberate (a destination is only ever removed explicitly by the service
 // after confirming zero lines remain under it, never implicitly cascaded).
+// saleOrderId is kept (denormalized) alongside saleOrderDistributorId so
+// every existing saleOrderId-keyed query/index continues to work unchanged
+// (Correction 8); saleOrderDistributorId is the new Distributor-group
+// lineage anchor, DB-enforced (via the composite FK below) to always belong
+// to the same SaleOrder as this destination's own saleOrderId.
 model SaleOrderDestination {
-  id           String   @id
-  saleOrderId  String   @map("sale_order_id")
-  label        String?
-  contactName  String?  @map("contact_name")
-  contactEmail String?  @map("contact_email")
-  contactPhone String?  @map("contact_phone")
-  addressLine1 String   @map("address_line1")
-  addressLine2 String?  @map("address_line2")
-  city         String
-  state        String
-  country      String
-  postalCode   String?  @map("postal_code")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                     String   @id
+  saleOrderId            String   @map("sale_order_id")
+  saleOrderDistributorId String   @map("sale_order_distributor_id")
+  label                  String?
+  contactName            String?  @map("contact_name")
+  contactEmail           String?  @map("contact_email")
+  contactPhone           String?  @map("contact_phone")
+  addressLine1           String   @map("address_line1")
+  addressLine2           String?  @map("address_line2")
+  city                   String
+  state                  String
+  country                String
+  postalCode             String?  @map("postal_code")
+  // Captured where supplied (real operational Dispatch Order data includes
+  // it per-store); nullable/optional, format-validated only, no tax-
+  // treatment logic attached (see sale-orders.validation.ts).
+  gstin                  String?  @map("gstin")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
 
-  saleOrder SaleOrder              @relation(fields: [saleOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  saleOrder            SaleOrder            @relation(fields: [saleOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  saleOrderDistributor SaleOrderDistributor @relation(fields: [saleOrderDistributorId, saleOrderId], references: [id, saleOrderId], onDelete: Restrict, onUpdate: NoAction)
   lines     SaleOrderLine[]
   cartons   FactoryPackingCarton[]
   ervePackingListOrigins ErvePackingList[]
 
   @@index([saleOrderId])
+  @@index([saleOrderDistributorId])
   @@map("sale_order_destinations")
 }
 
@@ -1858,8 +1907,10 @@ model ErveDispatchDeliveryLine {
 // linkage tied to the physical outward movement, which for GST/accounting
 // purposes happens for consignment (SALE_RETURN) stock too, not just
 // OUTRIGHT. PurchaseMode is NOT stored here — it is resolved on read through
-// the same commercial FK chain (SaleOrderLine -> purchaseOrderLineSize ->
-// purchaseOrderLine -> DistributorPurchaseOrder.purchaseMode) whenever a
+// the destination's Distributor-group lineage (SaleOrderLine -> destination
+// -> saleOrderDistributor.purchaseMode — Correction 8: a Dispatch Order may
+// span multiple Distributors/Purchase Modes, so this resolves per line via
+// its own destination, never via a single order-level value) whenever a
 // mode breakdown is useful for reporting.
 //
 // "Dispatch Sale" is deliberately NOT the same fact as "Actual Sale": for
@@ -1869,12 +1920,14 @@ model ErveDispatchDeliveryLine {
 // InvoiceHandoff — the physical-movement invoice already exists from
 // Dispatch. Do not reintroduce a report-sourced handoff branch here.
 //
-// PurchaseMode itself is never snapshotted: DistributorPurchaseOrder.
-// purchaseMode is only editable in DRAFT (updatePurchaseOrderDraft), and no
-// Sale Order line can exist against a PO before it has left DRAFT for good
-// (job-ordered POs never return to DRAFT) — so by the time a line is
-// financially relevant, its source PO's mode is already frozen and safe to
-// trace through the FK chain instead of duplicating.
+// PurchaseMode IS snapshotted, on SaleOrderDistributor (Correction 8) — a
+// copy of Distributor.purchaseMode taken the moment that Distributor is
+// attached to the Dispatch Order. This is safe/permanent because
+// Distributor.purchaseMode is itself immutable after creation (see
+// master-data.validation.ts), so the snapshot can never diverge from the
+// master. (This replaces an earlier, now-removed DistributorPurchaseOrder-
+// based FK chain that predates Phase 3's pooled-inventory model and no
+// longer exists in this schema.)
 //
 // No amount/tax/GST fields exist here on purpose: Tally computes and owns
 // pricing/tax, this system only stores the resulting reference. Whether one

@@ -1,8 +1,15 @@
-import type { SaleOrderAuditEntry, SaleOrderDestinationView, SaleOrderDetail, SaleOrderLineView } from '@erve/types';
+import type {
+  SaleOrderAuditEntry,
+  SaleOrderDestinationView,
+  SaleOrderDetail,
+  SaleOrderDistributorGroupView,
+  SaleOrderLineView,
+} from '@erve/types';
 export type { SaleOrderStatus, DispatchOrderFulfillmentStage, PooledFactoryInventoryLine } from '@erve/types';
 export type SaleOrder = SaleOrderDetail;
 export type SaleOrderLine = SaleOrderLineView;
 export type SaleOrderDestination = SaleOrderDestinationView;
+export type SaleOrderDistributorGroup = SaleOrderDistributorGroupView;
 export type { SaleOrderAuditEntry };
 
 export interface Distributor {

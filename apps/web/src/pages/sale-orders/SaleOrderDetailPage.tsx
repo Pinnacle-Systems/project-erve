@@ -82,7 +82,7 @@ export function SaleOrderDetailPage() {
     <div className="space-y-5">
       <PageHeader
         title={so.saleOrderNumber}
-        subtitle={`${so.distributor.name} — ${so.factory.name}`}
+        subtitle={`${so.distributors.map((d) => d.name).join(', ')} — ${so.factory.name}`}
         secondaryActions={
           <div className="flex gap-2">
             {canSeeFactoryDispatches && (
@@ -104,8 +104,10 @@ export function SaleOrderDetailPage() {
 
       <Panel title="Header">
         <DescriptionList>
-          <DescriptionList.Item label="Distributor" value={so.distributor.name} />
-          <DescriptionList.Item label="Purchase Mode" value={so.distributor.purchaseMode ?? '—'} />
+          <DescriptionList.Item
+            label={so.distributors.length === 1 ? 'Distributor' : `Distributors (${so.distributors.length})`}
+            value={so.distributors.map((d) => d.name).join(', ') || '—'}
+          />
           <DescriptionList.Item label="Factory" value={so.factory.name} />
           <DescriptionList.Item label="Dispatch Order Date" value={formatDate(so.soDate)} />
           <DescriptionList.Item label="Financial Year" value={so.financialYear.code} />
@@ -129,32 +131,56 @@ export function SaleOrderDetailPage() {
         </DescriptionList>
       </Panel>
 
-      <Panel title="Destinations">
-        <div className="space-y-4">
-          {so.destinations.map((dest) => (
-            <div key={dest.id} className="rounded border border-[var(--erp-border-default)] p-3">
-              <div className="font-medium">{dest.label || dest.city}</div>
-              <div className="text-sm text-[var(--erp-text-muted)]">
-                {[dest.addressLine1, dest.addressLine2, dest.city, dest.state, dest.postalCode, dest.country]
-                  .filter(Boolean)
-                  .join(', ')}
-              </div>
-              {(dest.contactName || dest.contactPhone) && (
-                <div className="text-sm text-[var(--erp-text-muted)]">
-                  {[dest.contactName, dest.contactPhone].filter(Boolean).join(' · ')}
+      <Panel title="Distributors">
+        <div className="space-y-5">
+          {so.distributorGroups.map((group) => {
+            const groupTotal = group.lines.reduce((sum, line) => sum + line.quantity, 0);
+            return (
+              <div key={group.id} className="rounded border border-[var(--erp-border-default)] p-3">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="font-medium">{group.distributor.name}</div>
+                  <div className="flex items-center gap-3 text-sm text-[var(--erp-text-muted)]">
+                    <span>Purchase Mode: {group.purchaseMode}</span>
+                    <span>Total: {groupTotal.toLocaleString()}</span>
+                  </div>
                 </div>
-              )}
-              <DataTable
-                rowKey="id"
-                data={so.lines.filter((line) => line.destinationId === dest.id)}
-                columns={[
-                  { key: 'style', header: 'Style', render: (l) => `${l.styleNumber} — ${l.styleName}` },
-                  { key: 'size', header: 'Size', accessor: 'sizeLabel' },
-                  { key: 'quantity', header: 'Quantity', align: 'right', render: (l) => l.quantity.toLocaleString() },
-                ]}
-              />
-            </div>
-          ))}
+                <div className="space-y-4 pl-3">
+                  {group.destinations.map((dest) => {
+                    const destLines = group.lines.filter((line) => line.destinationId === dest.id);
+                    const destTotal = destLines.reduce((sum, line) => sum + line.quantity, 0);
+                    return (
+                      <div key={dest.id} className="rounded border border-[var(--erp-border-default)] p-3">
+                        <div className="flex items-center justify-between">
+                          <div className="font-medium">{dest.label || dest.city}</div>
+                          <div className="text-sm text-[var(--erp-text-muted)]">Total: {destTotal.toLocaleString()}</div>
+                        </div>
+                        <div className="text-sm text-[var(--erp-text-muted)]">
+                          {[dest.addressLine1, dest.addressLine2, dest.city, dest.state, dest.postalCode, dest.country]
+                            .filter(Boolean)
+                            .join(', ')}
+                        </div>
+                        {(dest.contactName || dest.contactPhone) && (
+                          <div className="text-sm text-[var(--erp-text-muted)]">
+                            {[dest.contactName, dest.contactPhone].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
+                        {dest.gstin && <div className="text-sm text-[var(--erp-text-muted)]">GSTIN: {dest.gstin}</div>}
+                        <DataTable
+                          rowKey="id"
+                          data={destLines}
+                          columns={[
+                            { key: 'style', header: 'Style', render: (l) => `${l.styleNumber} — ${l.styleName}` },
+                            { key: 'size', header: 'Size', accessor: 'sizeLabel' },
+                            { key: 'quantity', header: 'Quantity', align: 'right', render: (l) => l.quantity.toLocaleString() },
+                          ]}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </Panel>
 

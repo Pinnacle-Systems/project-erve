@@ -65,7 +65,7 @@ export function FactoryPackingQueuePage() {
           columns={[
             { key: 'number', header: 'Dispatch #', accessor: 'factoryDispatchNumber' },
             { key: 'saleOrder', header: 'Sale Order', render: (r) => r.saleOrder.saleOrderNumber },
-            { key: 'distributor', header: 'Distributor', render: (r) => r.saleOrder.distributor.name },
+            { key: 'distributor', header: 'Distributors', render: (r) => r.saleOrder.distributors.map((d) => d.name).join(', ') },
             {
               key: 'status',
               header: 'Status',

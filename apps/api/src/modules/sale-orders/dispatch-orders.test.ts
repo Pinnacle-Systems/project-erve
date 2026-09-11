@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { createReleasedQaStock, createTestFactory, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import { createReleasedQaStock, createTestDistributor, createTestFactory, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 
 const app = createApp();
 beforeEach(resetDatabase);
@@ -25,9 +25,28 @@ function destination(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+// One Distributor group per Distributor per Dispatch Order (Correction 8) —
+// the request-body builder every test uses in place of the old flat
+// {distributorId, destinations} shape.
+function distributorGroup(
+  distributorId: string,
+  destinations: object[],
+  overrides: Partial<Record<string, unknown>> = {},
+) {
+  return { clientKey: `dg-${distributorId}`, distributorId, destinations, ...overrides };
+}
+
 function createDispatchOrder(token: string, body: object, idempotencyKey = createId()) {
   return request(app)
     .post('/sale-orders')
+    .set('Authorization', `Bearer ${token}`)
+    .set('Idempotency-Key', idempotencyKey)
+    .send(body);
+}
+
+function patchDispatchOrder(token: string, id: string, body: object, idempotencyKey = createId()) {
+  return request(app)
+    .patch(`/sale-orders/${id}`)
     .set('Authorization', `Bearer ${token}`)
     .set('Idempotency-Key', idempotencyKey)
     .send(body);
@@ -39,10 +58,9 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     const merchToken = await roleToken(['MERCHANDISER']);
 
     const res = await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 }],
     }).expect(201);
 
@@ -50,6 +68,8 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     expect(res.body.data.status).toBe('ACTIVE');
     expect(res.body.data.isLocked).toBe(false);
     expect(res.body.data.totalQuantity).toBe(20);
+    expect(res.body.data.distributors).toHaveLength(1);
+    expect(res.body.data.distributors[0]).toMatchObject({ id: stock.distributorId });
     expect(res.body.data.lines[0]).toMatchObject({ quantity: 20, styleId: stock.styleId, sizeId: stock.sizeId });
 
     const allocations = await prisma.stockAllocation.findMany({ where: { qaReleaseLineId: stock.qaReleaseLineId } });
@@ -62,10 +82,9 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     const merchToken = await roleToken(['MERCHANDISER']);
 
     const res = await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 }],
     }).expect(409);
 
@@ -91,10 +110,14 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     const merchToken = await roleToken(['MERCHANDISER']);
 
     const res = await createDispatchOrder(merchToken, {
-      distributorId: stockA.distributorId,
       factoryId: stockA.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination({ clientKey: 'd1', city: 'Chennai' }), destination({ clientKey: 'd2', city: 'Coimbatore' })],
+      distributors: [
+        distributorGroup(stockA.distributorId, [
+          destination({ clientKey: 'd1', city: 'Chennai' }),
+          destination({ clientKey: 'd2', city: 'Coimbatore' }),
+        ]),
+      ],
       lines: [
         { destinationClientKey: 'd1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 15 },
         { destinationClientKey: 'd2', styleId: stockB.styleId, sizeId: stockB.sizeId, quantity: 25 },
@@ -105,14 +128,139 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     expect(res.body.data.totalQuantity).toBe(40);
   });
 
+  it('supports multiple Distributors, one destination each', async () => {
+    const stockA = await createReleasedQaStock({ quantity: 50 });
+    const stockB = await createReleasedQaStock({ factoryId: stockA.factoryId, quantity: 50 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+
+    const res = await createDispatchOrder(merchToken, {
+      factoryId: stockA.factoryId,
+      soDate: '2026-06-30',
+      distributors: [
+        distributorGroup(stockA.distributorId, [destination({ clientKey: 'a1', city: 'Chennai' })]),
+        distributorGroup(stockB.distributorId, [destination({ clientKey: 'b1', city: 'Coimbatore' })]),
+      ],
+      lines: [
+        { destinationClientKey: 'a1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 12 },
+        { destinationClientKey: 'b1', styleId: stockB.styleId, sizeId: stockB.sizeId, quantity: 18 },
+      ],
+    }).expect(201);
+
+    expect(res.body.data.distributors).toHaveLength(2);
+    expect(res.body.data.distributorGroups).toHaveLength(2);
+    expect(res.body.data.totalQuantity).toBe(30);
+    const distributorIds = res.body.data.distributors.map((d: { id: string }) => d.id).sort();
+    expect(distributorIds).toEqual([stockA.distributorId, stockB.distributorId].sort());
+  });
+
+  it('supports multiple Distributors, each with multiple destinations', async () => {
+    const stockA = await createReleasedQaStock({ quantity: 100 });
+    const stockB = await createReleasedQaStock({ factoryId: stockA.factoryId, quantity: 100 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+
+    const res = await createDispatchOrder(merchToken, {
+      factoryId: stockA.factoryId,
+      soDate: '2026-06-30',
+      distributors: [
+        distributorGroup(stockA.distributorId, [
+          destination({ clientKey: 'a1', city: 'Chennai' }),
+          destination({ clientKey: 'a2', city: 'Madurai' }),
+        ]),
+        distributorGroup(stockB.distributorId, [
+          destination({ clientKey: 'b1', city: 'Coimbatore' }),
+          destination({ clientKey: 'b2', city: 'Salem' }),
+        ]),
+      ],
+      lines: [
+        { destinationClientKey: 'a1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 },
+        { destinationClientKey: 'a2', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 },
+        { destinationClientKey: 'b1', styleId: stockB.styleId, sizeId: stockB.sizeId, quantity: 10 },
+        { destinationClientKey: 'b2', styleId: stockB.styleId, sizeId: stockB.sizeId, quantity: 10 },
+      ],
+    }).expect(201);
+
+    expect(res.body.data.destinationCount).toBe(4);
+    expect(res.body.data.distributorGroups).toHaveLength(2);
+    for (const group of res.body.data.distributorGroups) {
+      expect(group.destinations).toHaveLength(2);
+    }
+  });
+
+  it('a mixed OUTRIGHT/SALE_RETURN Dispatch Order persists each Distributor group\'s own Purchase Mode snapshot', async () => {
+    const outright = await createReleasedQaStock({ purchaseMode: 'OUTRIGHT', quantity: 50 });
+    const saleReturn = await createReleasedQaStock({ factoryId: outright.factoryId, purchaseMode: 'SALE_RETURN', quantity: 50 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+
+    const res = await createDispatchOrder(merchToken, {
+      factoryId: outright.factoryId,
+      soDate: '2026-06-30',
+      distributors: [
+        distributorGroup(outright.distributorId, [destination({ clientKey: 'o1' })]),
+        distributorGroup(saleReturn.distributorId, [destination({ clientKey: 's1', city: 'Coimbatore' })]),
+      ],
+      lines: [
+        { destinationClientKey: 'o1', styleId: outright.styleId, sizeId: outright.sizeId, quantity: 10 },
+        { destinationClientKey: 's1', styleId: saleReturn.styleId, sizeId: saleReturn.sizeId, quantity: 10 },
+      ],
+    }).expect(201);
+
+    const groups = res.body.data.distributorGroups as Array<{ distributor: { id: string }; purchaseMode: string }>;
+    const outrightGroup = groups.find((g) => g.distributor.id === outright.distributorId);
+    const saleReturnGroup = groups.find((g) => g.distributor.id === saleReturn.distributorId);
+    expect(outrightGroup?.purchaseMode).toBe('OUTRIGHT');
+    expect(saleReturnGroup?.purchaseMode).toBe('SALE_RETURN');
+  });
+
+  it('rejects a duplicate Distributor across two groups in the same request', async () => {
+    const stock = await createReleasedQaStock({ quantity: 50 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+    await createDispatchOrder(merchToken, {
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      distributors: [
+        distributorGroup(stock.distributorId, [destination({ clientKey: 'd1' })]),
+        distributorGroup(stock.distributorId, [destination({ clientKey: 'd2', city: 'Madurai' })]),
+      ],
+      lines: [
+        { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 },
+        { destinationClientKey: 'd2', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 },
+      ],
+    }).expect(400);
+  });
+
+  it('rejects an empty distributors array', async () => {
+    const stock = await createReleasedQaStock({ quantity: 20 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+    await createDispatchOrder(merchToken, {
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      distributors: [],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
+    }).expect(400);
+  });
+
+  it('rejects a duplicate destination clientKey reused across two different Distributor groups', async () => {
+    const stockA = await createReleasedQaStock({ quantity: 50 });
+    const stockB = await createReleasedQaStock({ factoryId: stockA.factoryId, quantity: 50 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+    await createDispatchOrder(merchToken, {
+      factoryId: stockA.factoryId,
+      soDate: '2026-06-30',
+      distributors: [
+        distributorGroup(stockA.distributorId, [destination({ clientKey: 'dup' })]),
+        distributorGroup(stockB.distributorId, [destination({ clientKey: 'dup', city: 'Madurai' })]),
+      ],
+      lines: [{ destinationClientKey: 'dup', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 5 }],
+    }).expect(400);
+  });
+
   it('rejects a request supplying a line id at create time', async () => {
     const stock = await createReleasedQaStock({ quantity: 50 });
     const merchToken = await roleToken(['MERCHANDISER']);
     await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ id: 'not-allowed', destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 }],
     }).expect(400);
   });
@@ -121,11 +269,10 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     const stock = await createReleasedQaStock({ quantity: 50 });
     const merchToken = await roleToken(['MERCHANDISER']);
     const res = await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       jobOrderId: 'ignored',
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20, qaReleaseLineId: 'ignored' }],
     }).expect(201);
     expect(JSON.stringify(res.body.data)).not.toContain(stock.qaReleaseLineId);
@@ -135,10 +282,9 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     const stock = await createReleasedQaStock({ quantity: 20 });
     const merchToken = await roleToken(['MERCHANDISER']);
     const body = {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 }],
     };
     const key = createId();
@@ -147,6 +293,22 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     expect(second.body.data.id).toBe(first.body.data.id);
     expect(await prisma.saleOrder.count()).toBe(1);
   });
+
+  it('a newly created Distributor group gets a normal application-generated id, not a migration-style UUID', async () => {
+    const stock = await createReleasedQaStock({ quantity: 20 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+    const res = await createDispatchOrder(merchToken, {
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
+    }).expect(201);
+    const groupId = res.body.data.distributorGroups[0].id as string;
+    // ULIDs are 26 Crockford-base32 chars; UUIDs contain hyphens and are 36
+    // chars — a cheap, precise-enough discriminator for this regression.
+    expect(groupId).toHaveLength(26);
+    expect(groupId).not.toContain('-');
+  });
 });
 
 describe('Dispatch Orders — authorization', () => {
@@ -154,10 +316,9 @@ describe('Dispatch Orders — authorization', () => {
     const stock = await createReleasedQaStock({ quantity: 20 });
     const distributorToken = await roleToken(['DISTRIBUTOR']);
     await createDispatchOrder(distributorToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
     }).expect(403);
     await request(app).get('/sale-orders').set('Authorization', `Bearer ${distributorToken}`).expect(403);
@@ -172,20 +333,18 @@ describe('Dispatch Orders — authorization', () => {
     const stock = await createReleasedQaStock({ quantity: 20 });
     const merchToken = await roleToken(['MERCHANDISER']);
     const created = await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
     }).expect(201);
 
     const smToken = await roleToken(['SENIOR_MANAGEMENT']);
     await request(app).get(`/sale-orders/${created.body.data.id}`).set('Authorization', `Bearer ${smToken}`).expect(200);
     await createDispatchOrder(smToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 1 }],
     }).expect(403);
 
@@ -201,17 +360,15 @@ describe('Dispatch Orders — authorization', () => {
     const merchToken = await roleToken(['MERCHANDISER']);
 
     const orderA = await createDispatchOrder(merchToken, {
-      distributorId: stockA.distributorId,
       factoryId: factoryA.id,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stockA.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 5 }],
     }).expect(201);
     const orderB = await createDispatchOrder(merchToken, {
-      distributorId: stockB.distributorId,
       factoryId: factoryB.id,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stockB.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stockB.styleId, sizeId: stockB.sizeId, quantity: 5 }],
     }).expect(201);
 
@@ -234,14 +391,13 @@ describe('Dispatch Orders — authorization', () => {
 });
 
 describe('Dispatch Orders — audit trail', () => {
-  it('records DISPATCH_ORDER_CREATED with no fake workflow events', async () => {
+  it('records DISPATCH_ORDER_CREATED with no fake workflow events, structured with per-Distributor metadata', async () => {
     const stock = await createReleasedQaStock({ quantity: 20 });
     const merchToken = await roleToken(['MERCHANDISER']);
     const created = await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
     }).expect(201);
 
@@ -250,6 +406,10 @@ describe('Dispatch Orders — audit trail', () => {
       .set('Authorization', `Bearer ${merchToken}`)
       .expect(200);
     expect(audit.body.data.map((e: { action: string }) => e.action)).toEqual(['DISPATCH_ORDER_CREATED']);
+    const raw = await prisma.auditLog.findFirstOrThrow({ where: { entityType: 'SaleOrder', action: 'DISPATCH_ORDER_CREATED' } });
+    const metadata = raw.metadata as { distributors: Array<{ distributorId: string; purchaseMode: string }> };
+    expect(metadata.distributors).toHaveLength(1);
+    expect(metadata.distributors[0]).toMatchObject({ distributorId: stock.distributorId });
   });
 });
 
@@ -259,10 +419,9 @@ describe('Dispatch Orders — validation', () => {
     await prisma.factory.update({ where: { id: stock.factoryId }, data: { status: 'INACTIVE' } });
     const merchToken = await roleToken(['MERCHANDISER']);
     await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
     }).expect(400);
   });
@@ -271,10 +430,11 @@ describe('Dispatch Orders — validation', () => {
     const stock = await createReleasedQaStock({ quantity: 20 });
     const merchToken = await roleToken(['MERCHANDISER']);
     await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination({ clientKey: 'd1' }), destination({ clientKey: 'd2', city: 'Madurai' })],
+      distributors: [
+        distributorGroup(stock.distributorId, [destination({ clientKey: 'd1' }), destination({ clientKey: 'd2', city: 'Madurai' })]),
+      ],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
     }).expect(400);
   });
@@ -283,10 +443,9 @@ describe('Dispatch Orders — validation', () => {
     const stock = await createReleasedQaStock({ quantity: 20 });
     const merchToken = await roleToken(['MERCHANDISER']);
     await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [
         { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 },
         { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 3 },
@@ -299,12 +458,41 @@ describe('Dispatch Orders — validation', () => {
     await prisma.style.update({ where: { id: stock.styleId }, data: { status: 'INACTIVE' } });
     const merchToken = await roleToken(['MERCHANDISER']);
     await createDispatchOrder(merchToken, {
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
     }).expect(201);
+  });
+
+  it('rejects a GSTIN with an invalid format, and accepts a blank one', async () => {
+    const stock = await createReleasedQaStock({ quantity: 20 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+    await createDispatchOrder(merchToken, {
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      distributors: [distributorGroup(stock.distributorId, [destination({ gstin: 'not-a-gstin' })])],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
+    }).expect(400);
+
+    await createDispatchOrder(merchToken, {
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      distributors: [distributorGroup(stock.distributorId, [destination({ gstin: '' })])],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
+    }).expect(201);
+  });
+
+  it('accepts and persists a valid GSTIN on a destination', async () => {
+    const stock = await createReleasedQaStock({ quantity: 20 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+    const res = await createDispatchOrder(merchToken, {
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      distributors: [distributorGroup(stock.distributorId, [destination({ gstin: '27AAAAA0000A1Z5' })])],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
+    }).expect(201);
+    expect(res.body.data.distributorGroups[0].destinations[0].gstin).toBe('27AAAAA0000A1Z5');
   });
 });
 
@@ -313,10 +501,9 @@ describe('Dispatch Orders — concurrency (no overallocation, no deadlock)', () 
     const stock = await createReleasedQaStock({ quantity: 100 });
     const merchToken = await roleToken(['MERCHANDISER']);
     const body = (qty: number) => ({
-      distributorId: stock.distributorId,
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
       lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: qty }],
     });
 
@@ -359,20 +546,18 @@ describe('Dispatch Orders — concurrency (no overallocation, no deadlock)', () 
     // pool-key lock acquisition must serialize these deterministically
     // rather than deadlocking.
     const orderX = {
-      distributorId: styleA.distributorId,
       factoryId: styleA.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(styleA.distributorId, [destination()])],
       lines: [
         { destinationClientKey: 'd1', styleId: styleA.styleId, sizeId: styleA.sizeId, quantity: 10 },
         { destinationClientKey: 'd1', styleId: styleB.styleId, sizeId: styleB.sizeId, quantity: 10 },
       ],
     };
     const orderY = {
-      distributorId: styleA.distributorId,
       factoryId: styleA.factoryId,
       soDate: '2026-06-30',
-      destinations: [destination()],
+      distributors: [distributorGroup(styleA.distributorId, [destination()])],
       lines: [
         { destinationClientKey: 'd1', styleId: styleB.styleId, sizeId: styleB.sizeId, quantity: 15 },
         { destinationClientKey: 'd1', styleId: styleA.styleId, sizeId: styleA.sizeId, quantity: 15 },
@@ -385,5 +570,234 @@ describe('Dispatch Orders — concurrency (no overallocation, no deadlock)', () 
     // timeout), not that either is rejected.
     expect(results.every((r) => r.status === 201)).toBe(true);
   });
+
+  it('pooled demand aggregates across Distributors: combined demand exceeding availability is rejected even when each Distributor alone is within bounds', async () => {
+    // A single Factory+Style+Size pool of 100, and a second, unrelated
+    // Distributor with no stock of its own — both draw from the same pool
+    // in one Dispatch Order. Distributor A requests 60, Distributor B
+    // requests 50; combined 110 > 100 available must fail, even though
+    // each Distributor's own request is individually well within bounds.
+    const stock = await createReleasedQaStock({ quantity: 100 });
+    const otherDistributor = await createTestDistributor();
+    const merchToken = await roleToken(['MERCHANDISER']);
+
+    const res = await createDispatchOrder(merchToken, {
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      distributors: [
+        distributorGroup(stock.distributorId, [destination({ clientKey: 'a1' })]),
+        distributorGroup(otherDistributor.id, [destination({ clientKey: 'b1', city: 'Madurai' })]),
+      ],
+      lines: [
+        { destinationClientKey: 'a1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 60 },
+        { destinationClientKey: 'b1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 50 },
+      ],
+    }).expect(409);
+    expect(res.body.error.message).toMatch(/short by 10 unit\(s\)/);
+  });
 });
 
+describe('Dispatch Orders — editing Distributor groups (Correction 8)', () => {
+  it('adds a Distributor group to an existing order, reserving stock only for the new group', async () => {
+    const stockA = await createReleasedQaStock({ quantity: 50 });
+    const stockB = await createReleasedQaStock({ factoryId: stockA.factoryId, quantity: 50 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+
+    const created = await createDispatchOrder(merchToken, {
+      factoryId: stockA.factoryId,
+      soDate: '2026-06-30',
+      distributors: [distributorGroup(stockA.distributorId, [destination({ clientKey: 'a1' })])],
+      lines: [{ destinationClientKey: 'a1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 }],
+    }).expect(201);
+    const orderId = created.body.data.id as string;
+    const existingGroupId = created.body.data.distributorGroups[0].id as string;
+    const existingDestId = created.body.data.distributorGroups[0].destinations[0].id as string;
+
+    const patched = await patchDispatchOrder(merchToken, orderId, {
+      expectedVersion: created.body.data.version,
+      distributors: [
+        { clientKey: 'existing', id: existingGroupId, distributorId: stockA.distributorId, destinations: [{ ...destination({ clientKey: 'a1' }), id: existingDestId }] },
+        distributorGroup(stockB.distributorId, [destination({ clientKey: 'b1', city: 'Madurai' })]),
+      ],
+      lines: [
+        { id: created.body.data.lines[0].id, destinationClientKey: 'a1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 },
+        { destinationClientKey: 'b1', styleId: stockB.styleId, sizeId: stockB.sizeId, quantity: 15 },
+      ],
+    }).expect(200);
+
+    expect(patched.body.data.distributorGroups).toHaveLength(2);
+    expect(patched.body.data.totalQuantity).toBe(25);
+    const bAllocations = await prisma.stockAllocation.findMany({
+      where: { saleOrderLine: { destination: { saleOrderDistributor: { distributorId: stockB.distributorId } } }, status: 'ACTIVE' },
+    });
+    expect(bAllocations.reduce((sum, a) => sum + a.quantity, 0)).toBe(15);
+  });
+
+  it('removes a Distributor group with unpacked stock, releasing its allocations and deleting the group', async () => {
+    const stockA = await createReleasedQaStock({ quantity: 50 });
+    const stockB = await createReleasedQaStock({ factoryId: stockA.factoryId, quantity: 50 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+
+    const created = await createDispatchOrder(merchToken, {
+      factoryId: stockA.factoryId,
+      soDate: '2026-06-30',
+      distributors: [
+        distributorGroup(stockA.distributorId, [destination({ clientKey: 'a1' })]),
+        distributorGroup(stockB.distributorId, [destination({ clientKey: 'b1', city: 'Madurai' })]),
+      ],
+      lines: [
+        { destinationClientKey: 'a1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 },
+        { destinationClientKey: 'b1', styleId: stockB.styleId, sizeId: stockB.sizeId, quantity: 15 },
+      ],
+    }).expect(201);
+    const orderId = created.body.data.id as string;
+    const groupA = created.body.data.distributorGroups.find((g: { distributor: { id: string } }) => g.distributor.id === stockA.distributorId);
+
+    const patched = await patchDispatchOrder(merchToken, orderId, {
+      expectedVersion: created.body.data.version,
+      distributors: [
+        { clientKey: 'a', id: groupA.id, distributorId: stockA.distributorId, destinations: [{ ...destination({ clientKey: 'a1' }), id: groupA.destinations[0].id }] },
+      ],
+      lines: [{ id: groupA.lines[0].id, destinationClientKey: 'a1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 }],
+    }).expect(200);
+
+    expect(patched.body.data.distributorGroups).toHaveLength(1);
+    expect(await prisma.saleOrderDistributor.count({ where: { saleOrderId: orderId, distributorId: stockB.distributorId } })).toBe(0);
+    const released = await prisma.stockAllocation.findMany({ where: { qaReleaseLineId: stockB.qaReleaseLineId } });
+    expect(released.every((a) => a.status === 'RELEASED')).toBe(true);
+  });
+
+  it('rejects changing an existing Distributor group\'s distributorId', async () => {
+    const stockA = await createReleasedQaStock({ quantity: 50 });
+    const stockB = await createReleasedQaStock({ factoryId: stockA.factoryId, quantity: 50 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+
+    const created = await createDispatchOrder(merchToken, {
+      factoryId: stockA.factoryId,
+      soDate: '2026-06-30',
+      distributors: [distributorGroup(stockA.distributorId, [destination({ clientKey: 'a1' })])],
+      lines: [{ destinationClientKey: 'a1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 }],
+    }).expect(201);
+    const orderId = created.body.data.id as string;
+    const groupId = created.body.data.distributorGroups[0].id as string;
+    const destId = created.body.data.distributorGroups[0].destinations[0].id as string;
+
+    await patchDispatchOrder(merchToken, orderId, {
+      expectedVersion: created.body.data.version,
+      distributors: [
+        { clientKey: 'a', id: groupId, distributorId: stockB.distributorId, destinations: [{ ...destination({ clientKey: 'a1' }), id: destId }] },
+      ],
+      lines: [{ id: created.body.data.lines[0].id, destinationClientKey: 'a1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 }],
+    }).expect(400);
+  });
+
+  it('moves an unpacked destination from an OUTRIGHT Distributor to a SALE_RETURN Distributor in one request — same line ids, StockAllocation untouched, audit records both Purchase Modes', async () => {
+    const outright = await createReleasedQaStock({ purchaseMode: 'OUTRIGHT', quantity: 50 });
+    const saleReturn = await createReleasedQaStock({ factoryId: outright.factoryId, purchaseMode: 'SALE_RETURN', quantity: 50 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+
+    const created = await createDispatchOrder(merchToken, {
+      factoryId: outright.factoryId,
+      soDate: '2026-06-30',
+      distributors: [
+        distributorGroup(outright.distributorId, [destination({ clientKey: 'a1' })]),
+        distributorGroup(saleReturn.distributorId, [destination({ clientKey: 'b1', city: 'Madurai' })]),
+      ],
+      lines: [
+        { destinationClientKey: 'a1', styleId: outright.styleId, sizeId: outright.sizeId, quantity: 10 },
+        { destinationClientKey: 'b1', styleId: saleReturn.styleId, sizeId: saleReturn.sizeId, quantity: 5 },
+      ],
+    }).expect(201);
+    const orderId = created.body.data.id as string;
+    const outrightGroup = created.body.data.distributorGroups.find((g: { distributor: { id: string } }) => g.distributor.id === outright.distributorId);
+    const saleReturnGroup = created.body.data.distributorGroups.find((g: { distributor: { id: string } }) => g.distributor.id === saleReturn.distributorId);
+    const movingDestId = outrightGroup.destinations[0].id as string;
+    const lineId = outrightGroup.lines[0].id as string;
+    const saleReturnLineId = saleReturnGroup.lines[0].id as string;
+
+    const allocationsBefore = await prisma.stockAllocation.findMany({ where: { saleOrderLineId: lineId } });
+
+    const patched = await patchDispatchOrder(merchToken, orderId, {
+      expectedVersion: created.body.data.version,
+      // The outright group is deliberately OMITTED — it becomes empty once
+      // its only destination moves out, and an empty group is invalid
+      // (every group needs >=1 destination); dropping a group from the
+      // request is how a now-empty group gets deleted (see
+      // reconcileDistributorGroups' groupDeleteCandidateIds).
+      distributors: [
+        {
+          clientKey: 'salereturn',
+          id: saleReturnGroup.id,
+          distributorId: saleReturn.distributorId,
+          destinations: [
+            { ...destination({ clientKey: 'b1', city: 'Madurai' }), id: saleReturnGroup.destinations[0].id },
+            { ...destination({ clientKey: 'a1' }), id: movingDestId },
+          ],
+        },
+      ],
+      lines: [
+        { id: lineId, destinationClientKey: 'a1', styleId: outright.styleId, sizeId: outright.sizeId, quantity: 10 },
+        { id: saleReturnLineId, destinationClientKey: 'b1', styleId: saleReturn.styleId, sizeId: saleReturn.sizeId, quantity: 5 },
+      ],
+    }).expect(200);
+
+    const movedGroup = patched.body.data.distributorGroups.find((g: { distributor: { id: string } }) => g.distributor.id === saleReturn.distributorId);
+    expect(movedGroup.destinations.map((d: { id: string }) => d.id)).toContain(movingDestId);
+    const movedLine = patched.body.data.lines.find((l: { id: string }) => l.id === lineId);
+    expect(movedLine.destinationId).toBe(movingDestId);
+
+    // Purchase Mode for this line now resolves to SALE_RETURN — verified via
+    // the group it now belongs to (destination-derived lineage).
+    expect(movedGroup.purchaseMode).toBe('SALE_RETURN');
+
+    // StockAllocation rows are completely untouched by the move — pooled
+    // reservation never depended on Distributor.
+    const allocationsAfter = await prisma.stockAllocation.findMany({ where: { saleOrderLineId: lineId } });
+    expect(allocationsAfter.map((a) => ({ id: a.id, quantity: a.quantity, status: a.status }))).toEqual(
+      allocationsBefore.map((a) => ({ id: a.id, quantity: a.quantity, status: a.status })),
+    );
+
+    const auditRow = await prisma.auditLog.findFirstOrThrow({
+      where: { entityType: 'SaleOrder', entityId: orderId, action: 'DISPATCH_ORDER_UPDATED' },
+    });
+    const metadata = auditRow.metadata as {
+      destinationsMoved: Array<{ destinationId: string; fromPurchaseMode: string; toPurchaseMode: string }>;
+    };
+    const moveEntry = metadata.destinationsMoved.find((m) => m.destinationId === movingDestId);
+    expect(moveEntry).toMatchObject({ fromPurchaseMode: 'OUTRIGHT', toPurchaseMode: 'SALE_RETURN' });
+  });
+
+  it('locked Dispatch Order (post Factory Dispatch) rejects any edit, including Distributor changes', async () => {
+    const stock = await createReleasedQaStock({ quantity: 20 });
+    const merchToken = await roleToken(['MERCHANDISER']);
+    const created = await createDispatchOrder(merchToken, {
+      factoryId: stock.factoryId,
+      soDate: '2026-06-30',
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 }],
+    }).expect(201);
+    const orderId = created.body.data.id as string;
+
+    // Simulate Factory Dispatch reaching READY_FOR_ERVE directly, mirroring
+    // the existing lock-test convention elsewhere in this suite.
+    const financialYear = await prisma.financialYear.findFirstOrThrow();
+    await prisma.factoryDispatch.create({
+      data: {
+        id: createId(),
+        factoryDispatchNumber: `EIFD/LOCK/${createId()}`,
+        factoryId: stock.factoryId,
+        saleOrderId: orderId,
+        status: 'READY_FOR_ERVE',
+        preparedById: (await prisma.user.findFirstOrThrow()).id,
+        financialYearId: financialYear.id,
+        factoryDispatchSerial: 999999,
+      },
+    });
+
+    await patchDispatchOrder(merchToken, orderId, {
+      expectedVersion: created.body.data.version,
+      distributors: [distributorGroup(stock.distributorId, [destination()])],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 5 }],
+    }).expect(400);
+  });
+});

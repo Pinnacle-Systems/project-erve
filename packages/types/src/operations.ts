@@ -148,11 +148,15 @@ export interface PurchaseOrderDetail extends PurchaseOrderSummary {
 // Dispatch Orders (user-facing name; technical model/type names keep the
 // SaleOrder prefix to avoid unnecessary churn — see the Dispatch Order Phase
 // 3 plan). Merchandising allocates pooled Factory+Style+Size QA-passed stock
-// to one Distributor's destinations; creation is the sole allocation point,
-// there is no draft/submit/review/approve workflow, no cancellation, no
-// partial fulfilment. Internal StockAllocation/QaReleaseLine/Job Order
-// traceability is never exposed on these views — see
-// DispatchOrderAuditDetail (ADMIN/MERCHANDISER only) for that.
+// to one or more Distributors' destinations (Correction 8: a Dispatch Order
+// belongs to exactly one Factory but may contain multiple Distributors, each
+// grouping one or more destination snapshots with their own Style/Size/
+// Quantity lines — a DO may legitimately mix Purchase Modes across its
+// Distributors); creation is the sole allocation point, there is no draft/
+// submit/review/approve workflow, no cancellation, no partial fulfilment.
+// Internal StockAllocation/QaReleaseLine/Job Order traceability is never
+// exposed on these views — see DispatchOrderAuditDetail (ADMIN/MERCHANDISER
+// only) for that.
 // ---------------------------------------------------------------------------
 
 // Not a workflow field — kept for filterability/forward-compatibility only;
@@ -177,6 +181,10 @@ export interface SaleOrderDestinationView {
   state: string;
   country: string;
   postalCode: string | null;
+  /** Captured where supplied; nullable/optional, format-validated only — never used to infer Bill-To/Ship-To tax treatment (Correction 8 §7). */
+  gstin: string | null;
+  /** Server-derived (Correction 8): true only while the whole Dispatch Order is still editable AND this destination has zero packed cartons — the exact, shared eligibility the "Move to Distributor" action must reflect. Never infer this client-side from other fields. */
+  canMoveDistributor: boolean;
 }
 
 export interface SaleOrderLineView {
@@ -192,10 +200,20 @@ export interface SaleOrderLineView {
   remarks: string | null;
 }
 
+/** One Distributor's participation in a Dispatch Order (Correction 8) — groups its destinations and the lines under them. purchaseMode is a snapshot taken when this Distributor was attached (Distributor.purchaseMode is immutable after creation, so it can never diverge from the master); name/code are always the CURRENT Distributor master values (live-joined, not snapshotted — see the Correction 8 "Distributor identity snapshot scope" decision). */
+export interface SaleOrderDistributorGroupView {
+  id: string;
+  distributor: { id: string; code: string; name: string };
+  purchaseMode: PurchaseMode;
+  destinations: SaleOrderDestinationView[];
+  lines: SaleOrderLineView[];
+}
+
 export interface SaleOrderSummary extends VersionedResource {
   id: string;
   saleOrderNumber: string;
-  distributor: { id: string; code: string; name: string; purchaseMode: PurchaseMode };
+  /** Every Distributor represented in this Dispatch Order (Correction 8 — replaces the old singular `distributor`, which assumed exactly one Distributor per Dispatch Order). */
+  distributors: Array<{ id: string; code: string; name: string; purchaseMode: PurchaseMode }>;
   factory: { id: string; code: string; name: string };
   financialYear: { id: string; code: string };
   soDate: string;
@@ -210,7 +228,8 @@ export interface SaleOrderSummary extends VersionedResource {
 export interface SaleOrderDetail extends SaleOrderSummary {
   creator: { id: string; name: string; email: string };
   remarks: string | null;
-  destinations: SaleOrderDestinationView[];
+  /** Distributor -> destination -> line hierarchy (Correction 8 — replaces the old flat `destinations`/`lines`). */
+  distributorGroups: SaleOrderDistributorGroupView[];
   lines: SaleOrderLineView[];
   fulfillment: DispatchOrderFulfillmentSummary;
 }
@@ -313,6 +332,8 @@ export interface PackingListLineView {
 }
 
 export interface PackingListDestinationView extends SaleOrderDestinationView {
+  /** Correction 8: which Distributor this destination belongs to — makes the owning Distributor obvious when selecting a destination for a carton (the carton itself never carries a distributor field, only destinationId). */
+  distributor: { id: string; code: string; name: string };
   lines: PackingListLineView[];
   cartons: FactoryPackingCartonView[];
 }
@@ -321,7 +342,8 @@ export interface PackingListDestinationView extends SaleOrderDestinationView {
 export interface PackingListView {
   saleOrderId: string;
   saleOrderNumber: string;
-  distributor: { id: string; code: string; name: string };
+  /** Every Distributor represented in this Dispatch Order (Correction 8 — replaces the old singular `distributor`). Header-level summary only; per-destination ownership is on PackingListDestinationView. One FPL still mirrors the WHOLE Dispatch Order quantitatively, never split per Distributor. */
+  distributors: Array<{ id: string; code: string; name: string }>;
   factory: { id: string; code: string; name: string };
   factoryDispatch:
     | { id: string; factoryDispatchNumber: string; status: FactoryDispatchStatus; version: number; factoryInvoiceId: string | null }
@@ -334,7 +356,7 @@ export interface FactoryDispatchSummary {
   id: string;
   factoryDispatchNumber: string;
   factory: { id: string; code: string; name: string };
-  saleOrder: { id: string; saleOrderNumber: string; distributor: { id: string; code: string; name: string } };
+  saleOrder: { id: string; saleOrderNumber: string; distributors: Array<{ id: string; code: string; name: string }> };
   status: FactoryDispatchStatus;
   version: number;
   preparedAt: string;

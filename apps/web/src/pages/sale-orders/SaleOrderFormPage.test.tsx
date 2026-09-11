@@ -138,7 +138,7 @@ describe('SaleOrderFormPage destination/line repeater', () => {
     // Add a second destination and a second Style/Size line on it, so the
     // page renders two of every destination-level field and two of every
     // line-level field at once.
-    clickButtonByText('+ Add destination');
+    clickButtonByText('+ Add Destination');
     await flush();
     clickButtonByText('+ Add Style/Size line'); // Destination 1's line (first match).
     await flush();
@@ -193,10 +193,22 @@ describe('SaleOrderFormPage edit hydration', () => {
   // just-hydrated state with onValueChange(""). The fix gates the
   // hydration effect on all three queries being ready.
   it('hydrates Distributor and Factory even when the Sale Order resolves before their option lists', async () => {
+    const line1 = {
+      id: 'line-1',
+      destinationId: 'dest-1',
+      styleId: 'style-1',
+      styleNumber: 'ST-001',
+      styleName: 'Classic Tee',
+      sizeId: 'size-1',
+      sizeCode: 'M',
+      sizeLabel: 'Medium',
+      quantity: 25,
+      remarks: null,
+    };
     const so: SaleOrder = {
       id: 'so-1',
       saleOrderNumber: 'EISO/26-27/0001',
-      distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One', purchaseMode: 'OUTRIGHT' },
+      distributors: [{ id: 'dist-1', code: 'D1', name: 'Distributor One', purchaseMode: 'OUTRIGHT' }],
       factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
       financialYear: { id: 'fy-1', code: '2026-27' },
       soDate: '2026-09-08T00:00:00.000Z',
@@ -209,35 +221,32 @@ describe('SaleOrderFormPage edit hydration', () => {
       updatedAt: '2026-09-08T00:00:00.000Z',
       creator: { id: 'user-1', name: 'Admin', email: 'admin@test.local' },
       remarks: null,
-      destinations: [
+      distributorGroups: [
         {
-          id: 'dest-1',
-          label: 'Primary Warehouse',
-          contactName: null,
-          contactEmail: null,
-          contactPhone: null,
-          addressLine1: '123 Test Industrial Estate',
-          addressLine2: null,
-          city: 'Mumbai',
-          state: 'Maharashtra',
-          country: 'India',
-          postalCode: null,
+          id: 'group-1',
+          distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
+          purchaseMode: 'OUTRIGHT',
+          destinations: [
+            {
+              id: 'dest-1',
+              label: 'Primary Warehouse',
+              contactName: null,
+              contactEmail: null,
+              contactPhone: null,
+              addressLine1: '123 Test Industrial Estate',
+              addressLine2: null,
+              city: 'Mumbai',
+              state: 'Maharashtra',
+              country: 'India',
+              postalCode: null,
+              gstin: null,
+              canMoveDistributor: true,
+            },
+          ],
+          lines: [line1],
         },
       ],
-      lines: [
-        {
-          id: 'line-1',
-          destinationId: 'dest-1',
-          styleId: 'style-1',
-          styleNumber: 'ST-001',
-          styleName: 'Classic Tee',
-          sizeId: 'size-1',
-          sizeCode: 'M',
-          sizeLabel: 'Medium',
-          quantity: 25,
-          remarks: null,
-        },
-      ],
+      lines: [line1],
       fulfillment: { stage: 'AWAITING_PACKING', totalQuantity: 25, totalFactoryPackedQuantity: 0 },
     };
 
