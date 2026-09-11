@@ -424,12 +424,15 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
       else {
         if (cfg.remarksRequiredWhen === input.outcome.value && !input.outcome.remarks?.trim())
           add(item, 'remarks', 'Outcome remarks', 'Outcome remarks are required');
-        // Final Inspection (the BATCHED execution multiplicity) must always
-        // record why a batch failed — this is a business rule of the
-        // Final QA batch flow itself, not a per-form config toggle, so it
-        // cannot be silently disabled by editing a quality form's config.
+        // Final Inspection means an attempt against a physical Final Quality
+        // Batch specifically — not merely "BATCHED" multiplicity, which is a
+        // reusable master-data setting any custom Quality activity could
+        // opt into. Gate on the actual batch link (mirroring the UI's own
+        // execution.finalBatch check) so this rule only ever reaches real
+        // Final Quality Batch attempts, and can't be silently disabled by
+        // editing a quality form's config.
         if (
-          execution.processFlowActivity.executionMultiplicity === 'BATCHED' &&
+          execution.finalQualityBatch &&
           input.outcome.value === 'FAIL' &&
           !input.outcome.rejectionReason?.trim()
         )
