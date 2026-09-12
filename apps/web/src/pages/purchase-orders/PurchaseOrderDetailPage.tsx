@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,6 +8,9 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canCreateJobOrders } from '../../auth/permissions.js';
 import type { OrderSheetPlanningState, PurchaseOrder } from './types.js';
@@ -54,6 +57,27 @@ export function PurchaseOrderDetailPage() {
 
   const po = poQuery.data;
 
+  const generateOrderSheetDetailPdf = useCallback(async () => {
+    if (!po) throw new Error('Order Sheet not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateOrderSheetDetailPdfBlob } = await import('./pdf/generateOrderSheetDetailPdf.js');
+    return generateOrderSheetDetailPdfBlob(po, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
+  }, [po, user?.name]);
+
+  const orderSheetDetailPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Order-Sheet', po?.poNumber]),
+    [po?.poNumber],
+  );
+
+  const pdfAction = usePdfAction({
+    generate: generateOrderSheetDetailPdf,
+    filename: orderSheetDetailPdfFilename,
+  });
+
   if (poQuery.isLoading) {
     return <LoadingState label="Loading Order Sheet" />;
   }
@@ -78,6 +102,12 @@ export function PurchaseOrderDetailPage() {
         }
         secondaryActions={
           <>
+          <PdfActionButtons
+            isGenerating={pdfAction.isGenerating}
+            error={pdfAction.error}
+            onDownload={pdfAction.handleDownload}
+            onPrint={pdfAction.handlePrint}
+          />
           {isUnlocked && (
             <Button asChild variant="secondary">
               <Link to={`/purchase-orders/${id}/edit`}>Edit</Link>

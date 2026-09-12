@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
@@ -6,8 +6,16 @@ import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import { FinancialYearSelect, toCompactFinancialYearCode } from '../../lib/financial-years.js';
+import {
+  FinancialYearSelect,
+  toCompactFinancialYearCode,
+  useFinancialYearsQuery,
+} from '../../lib/financial-years.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManagePurchaseOrders as canManageOrderSheets } from '../../auth/permissions.js';
 import type { Distributor, OrderSheetPlanningState, PurchaseMode, PurchaseOrder } from './types.js';
@@ -78,6 +86,35 @@ export function PurchaseOrderListPage() {
     },
   });
 
+  const financialYearsQuery = useFinancialYearsQuery();
+  const distributorName = (distributorsQuery.data ?? []).find((d) => d.id === distributorId)?.name;
+  const financialYearLabel = financialYearId
+    ? toCompactFinancialYearCode(
+        (financialYearsQuery.data ?? []).find((fy) => fy.id === financialYearId)?.code ?? '',
+      )
+    : undefined;
+
+  const generateOrderSheetListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateOrderSheetListPdfBlob } = await import('./pdf/generateOrderSheetListPdf.js');
+    return generateOrderSheetListPdfBlob(
+      params,
+      { search: debouncedSearch, planningState, distributorName, purchaseMode, financialYearLabel },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [params, debouncedSearch, planningState, distributorName, purchaseMode, financialYearLabel, user?.name]);
+
+  const orderSheetListPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Order-Sheets', getLocalDateString()]),
+    [],
+  );
+
+  const pdfAction = usePdfAction({
+    generate: generateOrderSheetListPdf,
+    filename: orderSheetListPdfFilename,
+  });
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -92,69 +129,79 @@ export function PurchaseOrderListPage() {
         }
       />
 
-      <FilterBar
-        searchValue={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search Order Sheet number"
-        statusValue={planningState || 'ALL'}
-        onStatusChange={(value) =>
-          setPlanningState(value === 'ALL' ? '' : (value as OrderSheetPlanningState))
-        }
-        statusOptions={[
-          { label: 'All planning states', value: 'ALL' },
-          ...(Object.keys(PLANNING_STATE_LABELS) as OrderSheetPlanningState[]).map((s) => ({
-            label: PLANNING_STATE_LABELS[s],
-            value: s,
-          })),
-        ]}
-        hasActiveFilters={Boolean(
-          search || planningState || distributorId || purchaseMode || financialYearId,
-        )}
-        onClearFilters={() => {
-          setSearch('');
-          setPlanningState('');
-          setDistributorId('');
-          setPurchaseMode('');
-          setFinancialYearId('');
-        }}
-        actions={
-          <>
-            <FinancialYearSelect
-              aria-label="Financial Year"
-              value={financialYearId}
-              onValueChange={setFinancialYearId}
-              allLabel="All Financial Years"
-            />
-            <SelectField
-              aria-label="Distributor"
-              value={distributorId || 'ALL'}
-              onValueChange={(value) => setDistributorId(value === 'ALL' ? '' : value)}
-              density="compact"
-              width="md"
-            >
-              <SelectItem value="ALL">All distributors</SelectItem>
-              {(distributorsQuery.data ?? []).map((d) => (
-                <SelectItem key={d.id} value={d.id}>
-                  {d.name}
-                </SelectItem>
-              ))}
-            </SelectField>
-            <SelectField
-              aria-label="Purchase mode"
-              value={purchaseMode || 'ALL'}
-              onValueChange={(value) =>
-                setPurchaseMode(value === 'ALL' ? '' : (value as PurchaseMode))
-              }
-              density="compact"
-              width="sm"
-            >
-              <SelectItem value="ALL">All modes</SelectItem>
-              <SelectItem value="OUTRIGHT">Outright</SelectItem>
-              <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
-            </SelectField>
-          </>
-        }
-      />
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <FilterBar
+            searchValue={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search Order Sheet number"
+            statusValue={planningState || 'ALL'}
+            onStatusChange={(value) =>
+              setPlanningState(value === 'ALL' ? '' : (value as OrderSheetPlanningState))
+            }
+            statusOptions={[
+              { label: 'All planning states', value: 'ALL' },
+              ...(Object.keys(PLANNING_STATE_LABELS) as OrderSheetPlanningState[]).map((s) => ({
+                label: PLANNING_STATE_LABELS[s],
+                value: s,
+              })),
+            ]}
+            hasActiveFilters={Boolean(
+              search || planningState || distributorId || purchaseMode || financialYearId,
+            )}
+            onClearFilters={() => {
+              setSearch('');
+              setPlanningState('');
+              setDistributorId('');
+              setPurchaseMode('');
+              setFinancialYearId('');
+            }}
+            actions={
+              <>
+                <FinancialYearSelect
+                  aria-label="Financial Year"
+                  value={financialYearId}
+                  onValueChange={setFinancialYearId}
+                  allLabel="All Financial Years"
+                />
+                <SelectField
+                  aria-label="Distributor"
+                  value={distributorId || 'ALL'}
+                  onValueChange={(value) => setDistributorId(value === 'ALL' ? '' : value)}
+                  density="compact"
+                  width="md"
+                >
+                  <SelectItem value="ALL">All distributors</SelectItem>
+                  {(distributorsQuery.data ?? []).map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.name}
+                    </SelectItem>
+                  ))}
+                </SelectField>
+                <SelectField
+                  aria-label="Purchase mode"
+                  value={purchaseMode || 'ALL'}
+                  onValueChange={(value) =>
+                    setPurchaseMode(value === 'ALL' ? '' : (value as PurchaseMode))
+                  }
+                  density="compact"
+                  width="sm"
+                >
+                  <SelectItem value="ALL">All modes</SelectItem>
+                  <SelectItem value="OUTRIGHT">Outright</SelectItem>
+                  <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
+                </SelectField>
+              </>
+            }
+          />
+        </div>
+        <PdfActionButtons
+          isGenerating={pdfAction.isGenerating}
+          error={pdfAction.error}
+          onDownload={pdfAction.handleDownload}
+          onPrint={pdfAction.handlePrint}
+        />
+      </div>
 
       <DataTable
         columns={[
