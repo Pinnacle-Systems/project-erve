@@ -10,7 +10,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Helvetica',
   },
   pageLandscape: {
-    paddingTop: 62,
+    paddingTop: 72,
     paddingBottom: 40,
     paddingHorizontal: 28,
     fontSize: 9,
