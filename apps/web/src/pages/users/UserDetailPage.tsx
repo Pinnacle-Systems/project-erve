@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -20,6 +20,9 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { AdminUserSummary, DistributorSummary, Factory } from '../master-data/types.js';
 import { PasswordField } from './PasswordField.js';
 
@@ -516,6 +519,24 @@ export function UserDetailPage() {
   });
   const user = userQuery.data;
 
+  const generateUserDetailPdf = useCallback(async () => {
+    if (!user) throw new Error('User not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateUserDetailPdfBlob } = await import('./pdf/generateUserDetailPdf.js');
+    return generateUserDetailPdfBlob(user, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: currentUser?.name,
+    });
+  }, [user, currentUser?.name]);
+
+  const userDetailPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-User', user?.name]),
+    [user?.name],
+  );
+
+  const pdfAction = usePdfAction({ generate: generateUserDetailPdf, filename: userDetailPdfFilename });
+
   const statusMutation = useMutation({
     mutationFn: async (status: 'ACTIVE' | 'INACTIVE') => {
       setStatusError('');
@@ -567,9 +588,17 @@ export function UserDetailPage() {
         subtitle={user.email}
         status={<StatusBadge label={user.status} tone={isActive ? 'success' : 'muted'} />}
         primaryAction={
-          <Button asChild>
-            <Link to={`/master-data/users/${user.id}/edit`}>Edit</Link>
-          </Button>
+          <div className="flex items-start gap-3">
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
+            <Button asChild>
+              <Link to={`/master-data/users/${user.id}/edit`}>Edit</Link>
+            </Button>
+          </div>
         }
         secondaryActions={
           <div className="flex gap-2">

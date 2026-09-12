@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -9,6 +9,9 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
 import { apiClient } from '../../lib/api-client.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { AdminUserSummary, Factory, FactoryUser } from './types.js';
 
 function errorMessage(error: unknown, fallback: string) {
@@ -157,6 +160,29 @@ export function FactoryDetailPage() {
     queryFn: async () =>
       (await apiClient.get<ApiSuccessResponse<Factory>>(`/factories/${id}`)).data.data,
   });
+  const factory = query.data;
+
+  const generateFactoryDetailPdf = useCallback(async () => {
+    if (!factory) throw new Error('Factory not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateFactoryDetailPdfBlob } = await import('./pdf/generateFactoryDetailPdf.js');
+    return generateFactoryDetailPdfBlob(factory, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
+  }, [factory, user?.name]);
+
+  const factoryDetailPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Factory', factory?.code]),
+    [factory?.code],
+  );
+
+  const pdfAction = usePdfAction({
+    generate: generateFactoryDetailPdf,
+    filename: factoryDetailPdfFilename,
+  });
+
   const mutation = useMutation({
     mutationFn: (status: 'ACTIVE' | 'INACTIVE') =>
       apiClient.patch(`/factories/${id}/status`, { status }),
@@ -175,14 +201,13 @@ export function FactoryDetailPage() {
   if (query.isLoading) return <LoadingState label="Loading factory" />;
   if (query.isError)
     return <ErrorState title="Unable to load factory" description={query.error.message} />;
-  if (!query.data)
+  if (!factory)
     return (
       <EmptyState
         title="Factory not found"
         description="The selected factory could not be loaded."
       />
     );
-  const factory = query.data;
   const active = factory.status === 'ACTIVE';
   const fields = [
     ['Code', factory.code],
@@ -205,11 +230,19 @@ export function FactoryDetailPage() {
         subtitle={factory.name}
         status={<StatusBadge label={factory.status} tone={active ? 'success' : 'muted'} />}
         primaryAction={
-          canEdit ? (
-            <Button asChild>
-              <Link to={`/master-data/factories/${factory.id}/edit`}>Edit</Link>
-            </Button>
-          ) : undefined
+          <div className="flex items-start gap-3">
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
+            {canEdit ? (
+              <Button asChild>
+                <Link to={`/master-data/factories/${factory.id}/edit`}>Edit</Link>
+              </Button>
+            ) : null}
+          </div>
         }
         secondaryActions={
           canEdit ? (

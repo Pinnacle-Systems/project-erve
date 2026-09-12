@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -10,6 +10,9 @@ import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-disp
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageDistributorMaster } from '../../auth/permissions.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { AdminUserSummary, Distributor, DistributorUser } from './types.js';
 
 function toErrorMessage(caught: unknown, fallback: string): string {
@@ -225,6 +228,27 @@ export function DistributorDetailPage() {
   });
   const distributor = distributorQuery.data;
 
+  const generateDistributorDetailPdf = useCallback(async () => {
+    if (!distributor) throw new Error('Distributor not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateDistributorDetailPdfBlob } = await import('./pdf/generateDistributorDetailPdf.js');
+    return generateDistributorDetailPdfBlob(distributor, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
+  }, [distributor, user?.name]);
+
+  const distributorDetailPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Distributor', distributor?.code]),
+    [distributor?.code],
+  );
+
+  const pdfAction = usePdfAction({
+    generate: generateDistributorDetailPdf,
+    filename: distributorDetailPdfFilename,
+  });
+
   const statusMutation = useMutation({
     mutationFn: async (status: 'ACTIVE' | 'INACTIVE') => {
       setStatusError('');
@@ -284,11 +308,19 @@ export function DistributorDetailPage() {
         subtitle={distributor.name}
         status={<StatusBadge label={distributor.status} tone={isActive ? 'success' : 'muted'} />}
         primaryAction={
-          canManage ? (
-            <Button asChild>
-              <Link to={`/master-data/distributors/${distributor.id}/edit`}>Edit</Link>
-            </Button>
-          ) : undefined
+          <div className="flex items-start gap-3">
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
+            {canManage ? (
+              <Button asChild>
+                <Link to={`/master-data/distributors/${distributor.id}/edit`}>Edit</Link>
+              </Button>
+            ) : null}
+          </div>
         }
         secondaryActions={
           canManage ? (
