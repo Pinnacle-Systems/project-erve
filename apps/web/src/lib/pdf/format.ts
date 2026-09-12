@@ -40,4 +40,17 @@ export function formatPdfNumber(value: number | null | undefined, decimals = 2):
   return value.toFixed(decimals);
 }
 
+/**
+ * Formats a currency amount with its ISO code prefix (e.g. "INR 249.50"), never a currency
+ * symbol: PDFDocument's Helvetica (one of the PDF spec's base-14 fonts) has no glyph for "₹" —
+ * the app's on-screen `₹` convention (price-list-ui.ts's `formatPrice`) silently renders as a
+ * broken superscript glyph in an actual PDF viewer, so the printed document intentionally
+ * diverges from the screen here. Zero renders as "INR 0.00", never the empty-value dash — only
+ * null/undefined do.
+ */
+export function formatPdfMoney(value: number | null | undefined, currency: string): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return EMPTY_VALUE;
+  return `${currency} ${value.toFixed(2)}`;
+}
+
 export { EMPTY_VALUE as PDF_EMPTY_VALUE };

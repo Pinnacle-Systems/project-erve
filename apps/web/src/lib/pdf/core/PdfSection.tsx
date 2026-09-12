@@ -9,12 +9,19 @@ const styles = StyleSheet.create({
 export interface PdfSectionProps {
   title?: string;
   children: ReactNode;
+  /**
+   * Set true for a section whose content is itself paginated (e.g. a PdfTable that may span many
+   * pages) — the default `false` keeps a section's heading glued to its (typically short) body,
+   * but for unbounded content that same behavior would force the whole section, however long,
+   * onto a single page instead of letting it flow normally across pages.
+   */
+  wrap?: boolean;
 }
 
 /** A titled block that stays together (moves to the next page as a whole rather than orphaning its heading). */
-export function PdfSection({ title, children }: PdfSectionProps) {
+export function PdfSection({ title, children, wrap = false }: PdfSectionProps) {
   return (
-    <View style={styles.container} wrap={false}>
+    <View style={styles.container} wrap={wrap}>
       {title ? <Text style={styles.title}>{title}</Text> : null}
       {children}
     </View>
