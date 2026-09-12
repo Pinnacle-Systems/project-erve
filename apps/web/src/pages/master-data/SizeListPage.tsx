@@ -5,12 +5,18 @@ import { Button, SelectField, SelectItem, TextField } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useAuth } from '../../auth/AuthContext.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { Size } from './types.js';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 export function SizeListPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [form, setForm] = useState({ code: '', label: '', sizeType: 'AGE', sortOrder: '' });
   const sizesQuery = useQuery({
     queryKey: ['sizes'],
@@ -26,6 +32,23 @@ export function SizeListPage() {
       await queryClient.invalidateQueries({ queryKey: ['sizes'] });
     },
   });
+
+  const generateSizeListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateSizeListPdfBlob } = await import('./pdf/generateSizeListPdf.js');
+    return generateSizeListPdfBlob(sizesQuery.data ?? [], {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
+  }, [sizesQuery.data, user?.name]);
+
+  const sizeListPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Sizes', getLocalDateString()]),
+    [],
+  );
+
+  const pdfAction = usePdfAction({ generate: generateSizeListPdf, filename: sizeListPdfFilename });
 
   return (
     <div className="space-y-5">
@@ -76,6 +99,15 @@ export function SizeListPage() {
           </div>
         </form>
       </Panel>
+
+      <div className="flex justify-end">
+        <PdfActionButtons
+          isGenerating={pdfAction.isGenerating}
+          error={pdfAction.error}
+          onDownload={pdfAction.handleDownload}
+          onPrint={pdfAction.handlePrint}
+        />
+      </div>
 
       <DataTable
         columns={[

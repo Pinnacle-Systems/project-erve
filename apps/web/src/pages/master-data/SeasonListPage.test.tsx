@@ -6,6 +6,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { AxiosAdapter, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '../../lib/api-client.js';
+import { AuthProvider } from '../../auth/AuthContext.js';
+import * as generateModule from '../../lib/pdf/generate.js';
+import * as downloadModule from '../../lib/pdf/download.js';
+import * as printModule from '../../lib/pdf/print.js';
 import { SeasonListPage } from './SeasonListPage.js';
 
 function ok<T>(config: InternalAxiosRequestConfig, data: T): AxiosResponse<T> {
@@ -127,13 +131,26 @@ async function renderPage(adapter: AxiosAdapter): Promise<QueryClient> {
     root.render(
       <MemoryRouter>
         <QueryClientProvider client={queryClient}>
-          <SeasonListPage />
+          <AuthProvider>
+            <SeasonListPage />
+          </AuthProvider>
         </QueryClientProvider>
       </MemoryRouter>,
     );
   });
   await flush();
   return queryClient;
+}
+
+// Clicking a PDF action triggers a dynamic import() of the PDF generation code (kept out of the
+// eager bundle), which takes an unpredictable number of extra ticks beyond a single flush() to
+// settle — poll instead (same rationale as StyleListPage.test.tsx).
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    if (predicate()) return;
+    await flush();
+  }
+  throw new Error('Timed out waiting for condition');
 }
 
 describe('SeasonListPage Financial Year integration', () => {
@@ -240,5 +257,65 @@ describe('SeasonListPage Financial Year integration', () => {
     expect(container.textContent).toContain('Season code, name, and Financial Year are required');
     expect(container.querySelector('#field-season-code')?.getAttribute('aria-invalid')).toBe('true');
     expect(container.querySelector('#field-season-name')?.getAttribute('aria-invalid')).toBe('true');
+  });
+});
+
+describe('SeasonListPage PDF actions', () => {
+  it('shows Download PDF and Print actions near the Financial Year filter', async () => {
+    await renderPage(baseAdapter());
+    const buttons = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+    expect(buttons).toContain('Download PDF');
+    expect(buttons).toContain('Print');
+  });
+
+  it('shows an inline error and re-enables the actions if generation fails', async () => {
+    seasons = [{ id: 's1', code: 'SS26', name: 'Summer 26', financialYear: currentFinancialYear, displayName: 'SS26', status: 'ACTIVE' }];
+    await renderPage(baseAdapter());
+    vi.spyOn(generateModule, 'renderPdfBlob').mockRejectedValue(new Error('boom'));
+
+    const printBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Print',
+    )!;
+    await act(async () => printBtn.click());
+    await waitFor(() => container.querySelector('[role="alert"]') !== null);
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'PDF generation failed. Please try again.',
+    );
+    const buttons = Array.from(container.querySelectorAll('button'));
+    expect(buttons.find((b) => b.textContent === 'Print')!.disabled).toBe(false);
+    expect(buttons.find((b) => b.textContent === 'Download PDF')!.disabled).toBe(false);
+  });
+
+  it('downloads the season list PDF under the expected filename', async () => {
+    seasons = [{ id: 's1', code: 'SS26', name: 'Summer 26', financialYear: currentFinancialYear, displayName: 'SS26', status: 'ACTIVE' }];
+    await renderPage(baseAdapter());
+    vi.spyOn(generateModule, 'renderPdfBlob').mockResolvedValue(new Blob(['pdf']));
+    const downloadSpy = vi.spyOn(downloadModule, 'downloadPdfBlob').mockImplementation(() => {});
+
+    const downloadBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Download PDF',
+    )!;
+    await act(async () => downloadBtn.click());
+    await waitFor(() => downloadSpy.mock.calls.length > 0);
+
+    expect(downloadSpy.mock.calls[0]![1]).toMatch(/^ERVE-Seasons-\d{4}-\d{2}-\d{2}\.pdf$/);
+  });
+
+  it('invokes printPdfBlob (not the download path) when Print is clicked', async () => {
+    seasons = [{ id: 's1', code: 'SS26', name: 'Summer 26', financialYear: currentFinancialYear, displayName: 'SS26', status: 'ACTIVE' }];
+    await renderPage(baseAdapter());
+    vi.spyOn(generateModule, 'renderPdfBlob').mockResolvedValue(new Blob(['pdf']));
+    const printSpy = vi.spyOn(printModule, 'printPdfBlob').mockImplementation(() => {});
+    const downloadSpy = vi.spyOn(downloadModule, 'downloadPdfBlob').mockImplementation(() => {});
+
+    const printBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Print',
+    )!;
+    await act(async () => printBtn.click());
+    await waitFor(() => printSpy.mock.calls.length > 0);
+
+    expect(printSpy).toHaveBeenCalledTimes(1);
+    expect(downloadSpy).not.toHaveBeenCalled();
   });
 });

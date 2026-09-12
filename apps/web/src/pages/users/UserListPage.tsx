@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,11 +8,17 @@ import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
+import { useAuth } from '../../auth/AuthContext.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { AdminUserSummary } from '../master-data/types.js';
 
 type UserStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
 
 export function UserListPage() {
+  const { user: currentUser } = useAuth();
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
   const [status, setStatus] = useState<UserStatus | ''>('');
@@ -36,6 +42,24 @@ export function UserListPage() {
     },
   });
 
+  const generateUserListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateUserListPdfBlob } = await import('./pdf/generateUserListPdf.js');
+    return generateUserListPdfBlob(
+      usersQuery.data ?? [],
+      { search: debouncedSearch, status, role },
+      { generatedAt: new Date().toISOString(), generatedBy: currentUser?.name },
+    );
+  }, [usersQuery.data, debouncedSearch, status, role, currentUser?.name]);
+
+  const userListPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Users', getLocalDateString()]),
+    [],
+  );
+
+  const pdfAction = usePdfAction({ generate: generateUserListPdf, filename: userListPdfFilename });
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -48,44 +72,54 @@ export function UserListPage() {
         }
       />
 
-      <FilterBar
-        searchValue={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search by name or email"
-        statusOptions={[
-          { label: 'All statuses', value: 'ALL' },
-          { label: 'Active', value: 'ACTIVE' },
-          { label: 'Inactive', value: 'INACTIVE' },
-          { label: 'Suspended', value: 'SUSPENDED' },
-        ]}
-        statusValue={status || 'ALL'}
-        onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as UserStatus))}
-        hasActiveFilters={Boolean(search || status || role)}
-        onClearFilters={() => {
-          setSearch('');
-          setStatus('');
-          setRole('');
-        }}
-        actions={
-          <SelectField
-            value={role || 'ALL'}
-            onValueChange={(value) =>
-              setRole(value === 'ALL' ? '' : (value as (typeof ROLES)[number]))
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <FilterBar
+            searchValue={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search by name or email"
+            statusOptions={[
+              { label: 'All statuses', value: 'ALL' },
+              { label: 'Active', value: 'ACTIVE' },
+              { label: 'Inactive', value: 'INACTIVE' },
+              { label: 'Suspended', value: 'SUSPENDED' },
+            ]}
+            statusValue={status || 'ALL'}
+            onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as UserStatus))}
+            hasActiveFilters={Boolean(search || status || role)}
+            onClearFilters={() => {
+              setSearch('');
+              setStatus('');
+              setRole('');
+            }}
+            actions={
+              <SelectField
+                value={role || 'ALL'}
+                onValueChange={(value) =>
+                  setRole(value === 'ALL' ? '' : (value as (typeof ROLES)[number]))
+                }
+                placeholder="All roles"
+                density="compact"
+                width="sm"
+                aria-label="Role"
+              >
+                <SelectItem value="ALL">All roles</SelectItem>
+                {ROLES.map((roleName) => (
+                  <SelectItem key={roleName} value={roleName}>
+                    {roleName}
+                  </SelectItem>
+                ))}
+              </SelectField>
             }
-            placeholder="All roles"
-            density="compact"
-            width="sm"
-            aria-label="Role"
-          >
-            <SelectItem value="ALL">All roles</SelectItem>
-            {ROLES.map((roleName) => (
-              <SelectItem key={roleName} value={roleName}>
-                {roleName}
-              </SelectItem>
-            ))}
-          </SelectField>
-        }
-      />
+          />
+        </div>
+        <PdfActionButtons
+          isGenerating={pdfAction.isGenerating}
+          error={pdfAction.error}
+          onDownload={pdfAction.handleDownload}
+          onPrint={pdfAction.handlePrint}
+        />
+      </div>
 
       <DataTable
         columns={[

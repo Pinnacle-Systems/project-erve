@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -9,6 +9,10 @@ import { apiClient } from '../../lib/api-client.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageDistributorMaster } from '../../auth/permissions.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { DistributorSummary, Status } from './types.js';
 
 export function DistributorListPage() {
@@ -33,6 +37,27 @@ export function DistributorListPage() {
     },
   });
 
+  const generateDistributorListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateDistributorListPdfBlob } = await import('./pdf/generateDistributorListPdf.js');
+    return generateDistributorListPdfBlob(
+      distributorsQuery.data ?? [],
+      { search: debouncedSearch, status },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [distributorsQuery.data, debouncedSearch, status, user?.name]);
+
+  const distributorListPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Distributors', getLocalDateString()]),
+    [],
+  );
+
+  const pdfAction = usePdfAction({
+    generate: generateDistributorListPdf,
+    filename: distributorListPdfFilename,
+  });
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -47,23 +72,33 @@ export function DistributorListPage() {
         }
       />
 
-      <FilterBar
-        searchValue={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search distributors"
-        statusOptions={[
-          { label: 'All statuses', value: 'ALL' },
-          { label: 'Active', value: 'ACTIVE' },
-          { label: 'Inactive', value: 'INACTIVE' },
-        ]}
-        statusValue={status || 'ALL'}
-        onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as Status))}
-        hasActiveFilters={Boolean(search || status)}
-        onClearFilters={() => {
-          setSearch('');
-          setStatus('');
-        }}
-      />
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <FilterBar
+            searchValue={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search distributors"
+            statusOptions={[
+              { label: 'All statuses', value: 'ALL' },
+              { label: 'Active', value: 'ACTIVE' },
+              { label: 'Inactive', value: 'INACTIVE' },
+            ]}
+            statusValue={status || 'ALL'}
+            onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as Status))}
+            hasActiveFilters={Boolean(search || status)}
+            onClearFilters={() => {
+              setSearch('');
+              setStatus('');
+            }}
+          />
+        </div>
+        <PdfActionButtons
+          isGenerating={pdfAction.isGenerating}
+          error={pdfAction.error}
+          onDownload={pdfAction.handleDownload}
+          onPrint={pdfAction.handlePrint}
+        />
+      </div>
 
       <DataTable
         columns={[

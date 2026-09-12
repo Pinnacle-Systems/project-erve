@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -7,7 +7,17 @@ import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import { FinancialYearSelect, toCompactFinancialYearCode, useCurrentFinancialYearQuery } from '../../lib/financial-years.js';
+import {
+  FinancialYearSelect,
+  toCompactFinancialYearCode,
+  useCurrentFinancialYearQuery,
+  useFinancialYearsQuery,
+} from '../../lib/financial-years.js';
+import { useAuth } from '../../auth/AuthContext.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { Season } from './types.js';
 
 function errorMessage(error: unknown) {
@@ -17,7 +27,9 @@ function errorMessage(error: unknown) {
 
 export function SeasonListPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const currentFinancialYearQuery = useCurrentFinancialYearQuery();
+  const financialYearsQuery = useFinancialYearsQuery();
   const emptyForm = { code: '', name: '', financialYearId: '' };
   const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState<Season | null>(null);
@@ -38,6 +50,27 @@ export function SeasonListPage() {
         })
       ).data.data,
   });
+  const generateSeasonListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateSeasonListPdfBlob } = await import('./pdf/generateSeasonListPdf.js');
+    const selectedFinancialYear = financialYearsQuery.data?.find(
+      (fy) => fy.id === filterFinancialYearId,
+    );
+    return generateSeasonListPdfBlob(
+      seasonsQuery.data ?? [],
+      { financialYear: selectedFinancialYear ? toCompactFinancialYearCode(selectedFinancialYear.code) : undefined },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [seasonsQuery.data, filterFinancialYearId, financialYearsQuery.data, user?.name]);
+
+  const seasonListPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Seasons', getLocalDateString()]),
+    [],
+  );
+
+  const pdfAction = usePdfAction({ generate: generateSeasonListPdf, filename: seasonListPdfFilename });
+
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['seasons'] });
   const save = useMutation({
     mutationFn: async () => {
@@ -84,12 +117,20 @@ export function SeasonListPage() {
         <div className="flex justify-end gap-2">{editing ? <Button type="button" variant="secondary" onClick={beginAdd}>Cancel</Button> : null}<Button type="submit" loading={save.isPending}>{editing ? 'Save Changes' : 'Add Season'}</Button></div>
       </form>
     </Panel>
-    <FinancialYearSelect
-      aria-label="Filter by Financial Year"
-      value={filterFinancialYearId}
-      onValueChange={setFilterFinancialYearId}
-      allLabel="All Financial Years"
-    />
+    <div className="flex items-start justify-between gap-3">
+      <FinancialYearSelect
+        aria-label="Filter by Financial Year"
+        value={filterFinancialYearId}
+        onValueChange={setFilterFinancialYearId}
+        allLabel="All Financial Years"
+      />
+      <PdfActionButtons
+        isGenerating={pdfAction.isGenerating}
+        error={pdfAction.error}
+        onDownload={pdfAction.handleDownload}
+        onPrint={pdfAction.handlePrint}
+      />
+    </div>
     <DataTable columns={[
       { key: 'code', header: 'Code', accessor: 'code' },
       { key: 'name', header: 'Season name', accessor: 'name' },

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,6 +8,10 @@ import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { Factory } from './types.js';
 
 export function FactoryListPage() {
@@ -36,6 +40,23 @@ export function FactoryListPage() {
       await queryClient.invalidateQueries({ queryKey: ['factories'] });
     },
   });
+
+  const generateFactoryListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateFactoryListPdfBlob } = await import('./pdf/generateFactoryListPdf.js');
+    return generateFactoryListPdfBlob(factoriesQuery.data ?? [], {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
+  }, [factoriesQuery.data, user?.name]);
+
+  const factoryListPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Factories', getLocalDateString()]),
+    [],
+  );
+
+  const pdfAction = usePdfAction({ generate: generateFactoryListPdf, filename: factoryListPdfFilename });
 
   return (
     <div className="space-y-5">
@@ -80,6 +101,14 @@ export function FactoryListPage() {
           </form>
         </Panel>
       ) : null}
+      <div className="flex justify-end">
+        <PdfActionButtons
+          isGenerating={pdfAction.isGenerating}
+          error={pdfAction.error}
+          onDownload={pdfAction.handleDownload}
+          onPrint={pdfAction.handlePrint}
+        />
+      </div>
       <DataTable
         columns={[
           {
