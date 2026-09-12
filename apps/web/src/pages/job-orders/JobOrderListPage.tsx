@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
@@ -6,8 +6,16 @@ import { FilterBar, getQaStatusPresentation, PageHeader, StatusBadge } from '@er
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import { FinancialYearSelect, toCompactFinancialYearCode } from '../../lib/financial-years.js';
+import {
+  FinancialYearSelect,
+  toCompactFinancialYearCode,
+  useFinancialYearsQuery,
+} from '../../lib/financial-years.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { Factory } from '../master-data/types.js';
 import type { JobOrder, JobOrderStatus } from './types.js';
 import {
@@ -89,6 +97,35 @@ export function JobOrderListPage() {
     },
   });
 
+  const financialYearsQuery = useFinancialYearsQuery();
+  const factoryName = (factoriesQuery.data ?? []).find((f) => f.id === effectiveFactoryId)?.name;
+  const financialYearLabel = financialYearId
+    ? toCompactFinancialYearCode(
+        (financialYearsQuery.data ?? []).find((fy) => fy.id === financialYearId)?.code ?? '',
+      )
+    : undefined;
+
+  const generateJobOrderListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateJobOrderListPdfBlob } = await import('./pdf/generateJobOrderListPdf.js');
+    return generateJobOrderListPdfBlob(
+      params,
+      { search: debouncedSearch, status, factoryName, financialYearLabel },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [params, debouncedSearch, status, factoryName, financialYearLabel, user?.name]);
+
+  const jobOrderListPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Job-Orders', getLocalDateString()]),
+    [],
+  );
+
+  const pdfAction = usePdfAction({
+    generate: generateJobOrderListPdf,
+    filename: jobOrderListPdfFilename,
+  });
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -103,55 +140,65 @@ export function JobOrderListPage() {
         }
       />
 
-      <FilterBar
-        searchValue={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search job order or Order Sheet"
-        statusValue={status || 'ALL'}
-        statusAriaLabel="Lifecycle"
-        statusPlaceholder="All lifecycle states"
-        onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as JobOrderStatus))}
-        statusOptions={[
-          { label: 'All lifecycle states', value: 'ALL' },
-          ...(Object.keys(JOB_ORDER_STATUS_LABELS) as JobOrderStatus[]).map((s) => ({
-            label: JOB_ORDER_STATUS_LABELS[s],
-            value: s,
-          })),
-        ]}
-        hasActiveFilters={Boolean(search || status || effectiveFactoryId || financialYearId)}
-        onClearFilters={() => {
-          setSearch('');
-          setStatus('');
-          setFinancialYearId('');
-          handleFactoryChange('');
-        }}
-        actions={
-          <>
-            <FinancialYearSelect
-              aria-label="Financial Year"
-              value={financialYearId}
-              onValueChange={setFinancialYearId}
-              allLabel="All Financial Years"
-            />
-            {mayFilterByFactory ? (
-              <SelectField
-                aria-label="Factory"
-                value={effectiveFactoryId || 'ALL'}
-                onValueChange={handleFactoryChange}
-                density="compact"
-                width="md"
-              >
-                <SelectItem value="ALL">All factories</SelectItem>
-                {(factoriesQuery.data ?? []).map((factory) => (
-                  <SelectItem key={factory.id} value={factory.id}>
-                    {factory.name}
-                  </SelectItem>
-                ))}
-              </SelectField>
-            ) : undefined}
-          </>
-        }
-      />
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <FilterBar
+            searchValue={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search job order or Order Sheet"
+            statusValue={status || 'ALL'}
+            statusAriaLabel="Lifecycle"
+            statusPlaceholder="All lifecycle states"
+            onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as JobOrderStatus))}
+            statusOptions={[
+              { label: 'All lifecycle states', value: 'ALL' },
+              ...(Object.keys(JOB_ORDER_STATUS_LABELS) as JobOrderStatus[]).map((s) => ({
+                label: JOB_ORDER_STATUS_LABELS[s],
+                value: s,
+              })),
+            ]}
+            hasActiveFilters={Boolean(search || status || effectiveFactoryId || financialYearId)}
+            onClearFilters={() => {
+              setSearch('');
+              setStatus('');
+              setFinancialYearId('');
+              handleFactoryChange('');
+            }}
+            actions={
+              <>
+                <FinancialYearSelect
+                  aria-label="Financial Year"
+                  value={financialYearId}
+                  onValueChange={setFinancialYearId}
+                  allLabel="All Financial Years"
+                />
+                {mayFilterByFactory ? (
+                  <SelectField
+                    aria-label="Factory"
+                    value={effectiveFactoryId || 'ALL'}
+                    onValueChange={handleFactoryChange}
+                    density="compact"
+                    width="md"
+                  >
+                    <SelectItem value="ALL">All factories</SelectItem>
+                    {(factoriesQuery.data ?? []).map((factory) => (
+                      <SelectItem key={factory.id} value={factory.id}>
+                        {factory.name}
+                      </SelectItem>
+                    ))}
+                  </SelectField>
+                ) : undefined}
+              </>
+            }
+          />
+        </div>
+        <PdfActionButtons
+          isGenerating={pdfAction.isGenerating}
+          error={pdfAction.error}
+          onDownload={pdfAction.handleDownload}
+          onPrint={pdfAction.handlePrint}
+        />
+      </div>
 
       <DataTable
         columns={[

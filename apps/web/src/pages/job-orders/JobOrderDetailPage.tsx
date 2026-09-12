@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -25,6 +25,9 @@ import { apiClient } from '../../lib/api-client.js';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
 import { canManageJobOrderProduction } from '../../auth/permissions.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { PurchaseOrder } from '../purchase-orders/types.js';
 import type { Style } from '../master-data/types.js';
 import type { JobOrder, JobOrderLineSize } from './types.js';
@@ -458,6 +461,27 @@ export function JobOrderDetailPage() {
     ),
   );
 
+  const generateJobOrderDetailPdf = useCallback(async () => {
+    if (!jobOrder) throw new Error('Job order not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateJobOrderDetailPdfBlob } = await import('./pdf/generateJobOrderDetailPdf.js');
+    return generateJobOrderDetailPdfBlob(jobOrder, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
+  }, [jobOrder, user?.name]);
+
+  const jobOrderDetailPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Job-Order', jobOrder?.jobOrderNumber]),
+    [jobOrder?.jobOrderNumber],
+  );
+
+  const pdfAction = usePdfAction({
+    generate: generateJobOrderDetailPdf,
+    filename: jobOrderDetailPdfFilename,
+  });
+
   if (jobOrderQuery.isLoading) return <LoadingState label="Loading job order" />;
   if (!jobOrder)
     return (
@@ -585,9 +609,17 @@ export function JobOrderDetailPage() {
           </div>
         }
         secondaryActions={
-          <Button asChild variant="secondary">
-            <Link to="/job-orders">Back</Link>
-          </Button>
+          <>
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
+            <Button asChild variant="secondary">
+              <Link to="/job-orders">Back</Link>
+            </Button>
+          </>
         }
         primaryAction={
           <div className="flex flex-wrap gap-2">
