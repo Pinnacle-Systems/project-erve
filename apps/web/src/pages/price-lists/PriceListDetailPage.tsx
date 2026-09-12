@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -9,6 +9,9 @@ import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManagePriceLists } from '../../auth/permissions.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { PriceList, PriceListLine, StyleOption } from './types.js';
 import {
   PRICE_LIST_STATUS_LABELS,
@@ -47,6 +50,27 @@ export function PriceListDetailPage() {
   const priceList = priceListQuery.data;
   const isDraft = priceList?.status === 'DRAFT';
   const canEdit = canManage && isDraft;
+
+  const generatePriceListDetailPdf = useCallback(async () => {
+    if (!priceList) throw new Error('Price list not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generatePriceListDetailPdfBlob } = await import('./pdf/generatePriceListDetailPdf.js');
+    return generatePriceListDetailPdfBlob(priceList, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
+  }, [priceList, user?.name]);
+
+  const priceListDetailPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Price-List', priceList?.code]),
+    [priceList?.code],
+  );
+
+  const pdfAction = usePdfAction({
+    generate: generatePriceListDetailPdf,
+    filename: priceListDetailPdfFilename,
+  });
 
   const stylesQuery = useQuery({
     queryKey: ['styles', 'active'],
@@ -184,6 +208,12 @@ export function PriceListDetailPage() {
         }
         secondaryActions={
           <>
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
             {canEdit && (
               <Button asChild variant="secondary">
                 <Link to={`/price-lists/${id}/edit`}>Edit Details</Link>

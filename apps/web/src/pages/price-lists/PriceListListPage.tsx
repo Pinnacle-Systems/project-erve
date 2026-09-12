@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -9,6 +9,10 @@ import { apiClient } from '../../lib/api-client.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManagePriceLists } from '../../auth/permissions.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { PriceListDistributor, PriceListStatus, PriceListSummary } from './types.js';
 import {
   PRICE_LIST_STATUS_LABELS,
@@ -51,6 +55,31 @@ export function PriceListListPage() {
     },
   });
 
+  const distributorName = (distributorsQuery.data ?? []).find(
+    (distributor) => distributor.id === distributorId,
+  )?.name;
+
+  const generatePriceListListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generatePriceListListPdfBlob } = await import('./pdf/generatePriceListListPdf.js');
+    return generatePriceListListPdfBlob(
+      priceListsQuery.data ?? [],
+      { search: debouncedSearch, status, distributorName },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [priceListsQuery.data, debouncedSearch, status, distributorName, user?.name]);
+
+  const priceListListPdfFilename = useCallback(
+    () => buildPdfFilename(['ERVE-Price-Lists', getLocalDateString()]),
+    [],
+  );
+
+  const pdfAction = usePdfAction({
+    generate: generatePriceListListPdf,
+    filename: priceListListPdfFilename,
+  });
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -65,42 +94,52 @@ export function PriceListListPage() {
         }
       />
 
-      <FilterBar
-        searchValue={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search code or name"
-        statusValue={status || 'ALL'}
-        onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as PriceListStatus))}
-        statusOptions={[
-          { label: 'All statuses', value: 'ALL' },
-          ...(Object.keys(PRICE_LIST_STATUS_LABELS) as PriceListStatus[]).map((value) => ({
-            label: PRICE_LIST_STATUS_LABELS[value],
-            value,
-          })),
-        ]}
-        hasActiveFilters={Boolean(search || status || distributorId)}
-        onClearFilters={() => {
-          setSearch('');
-          setStatus('');
-          setDistributorId('');
-        }}
-        actions={
-          <SelectField
-            aria-label="Distributor"
-            value={distributorId || 'ALL'}
-            onValueChange={(value) => setDistributorId(value === 'ALL' ? '' : value)}
-            density="compact"
-            width="md"
-          >
-            <SelectItem value="ALL">All distributors</SelectItem>
-            {(distributorsQuery.data ?? []).map((distributor) => (
-              <SelectItem key={distributor.id} value={distributor.id}>
-                {distributor.name}
-              </SelectItem>
-            ))}
-          </SelectField>
-        }
-      />
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <FilterBar
+            searchValue={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search code or name"
+            statusValue={status || 'ALL'}
+            onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as PriceListStatus))}
+            statusOptions={[
+              { label: 'All statuses', value: 'ALL' },
+              ...(Object.keys(PRICE_LIST_STATUS_LABELS) as PriceListStatus[]).map((value) => ({
+                label: PRICE_LIST_STATUS_LABELS[value],
+                value,
+              })),
+            ]}
+            hasActiveFilters={Boolean(search || status || distributorId)}
+            onClearFilters={() => {
+              setSearch('');
+              setStatus('');
+              setDistributorId('');
+            }}
+            actions={
+              <SelectField
+                aria-label="Distributor"
+                value={distributorId || 'ALL'}
+                onValueChange={(value) => setDistributorId(value === 'ALL' ? '' : value)}
+                density="compact"
+                width="md"
+              >
+                <SelectItem value="ALL">All distributors</SelectItem>
+                {(distributorsQuery.data ?? []).map((distributor) => (
+                  <SelectItem key={distributor.id} value={distributor.id}>
+                    {distributor.name}
+                  </SelectItem>
+                ))}
+              </SelectField>
+            }
+          />
+        </div>
+        <PdfActionButtons
+          isGenerating={pdfAction.isGenerating}
+          error={pdfAction.error}
+          onDownload={pdfAction.handleDownload}
+          onPrint={pdfAction.handlePrint}
+        />
+      </div>
 
       <DataTable
         columns={[

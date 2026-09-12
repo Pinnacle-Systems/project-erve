@@ -10,6 +10,9 @@ import { ThemeProvider } from '@erve/theme';
 import { apiClient } from '../../lib/api-client.js';
 import { setStoredToken } from '../../auth/token-storage.js';
 import { AuthProvider } from '../../auth/AuthContext.js';
+import * as generateModule from '../../lib/pdf/generate.js';
+import * as downloadModule from '../../lib/pdf/download.js';
+import * as printModule from '../../lib/pdf/print.js';
 import { PriceListDetailPage } from './PriceListDetailPage.js';
 import type { PriceList, PriceListStatus } from './types.js';
 
@@ -51,6 +54,16 @@ afterEach(() => {
 
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    if (predicate()) return;
+    await act(async () => {
+      await flushMicrotasks();
+    });
+  }
+  throw new Error('Timed out waiting for condition');
 }
 
 function buildPriceList(status: PriceListStatus): PriceList {
@@ -189,5 +202,80 @@ describe('PriceListDetailPage — status and role gating', () => {
     expect(container.textContent).not.toContain('Add Style Price');
     expect(container.textContent).not.toContain('Edit Details');
     expect(container.textContent).toContain('₹249.50');
+  });
+});
+
+describe('PriceListDetailPage PDF actions', () => {
+  it('shows Download PDF and Print actions in the header', async () => {
+    await renderDetailPage(['ADMIN'], buildPriceList('ACTIVE'));
+    const buttons = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+    expect(buttons).toContain('Download PDF');
+    expect(buttons).toContain('Print');
+  });
+
+  it('shows PDF actions to a read-only DISTRIBUTOR viewer too', async () => {
+    await renderDetailPage(['DISTRIBUTOR'], buildPriceList('ACTIVE'));
+    const buttons = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+    expect(buttons).toContain('Download PDF');
+    expect(buttons).toContain('Print');
+  });
+
+  it('shows an inline error and re-enables the actions if generation fails', async () => {
+    await renderDetailPage(['ADMIN'], buildPriceList('ACTIVE'));
+    vi.spyOn(generateModule, 'renderPdfBlob').mockRejectedValue(new Error('boom'));
+
+    const downloadBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Download PDF',
+    )!;
+    act(() => downloadBtn.click());
+    await waitFor(() => container.querySelector('[role="alert"]') !== null);
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'PDF generation failed. Please try again.',
+    );
+    const buttons = Array.from(container.querySelectorAll('button'));
+    expect(buttons.find((b) => b.textContent === 'Download PDF')!.disabled).toBe(false);
+    expect(buttons.find((b) => b.textContent === 'Print')!.disabled).toBe(false);
+    // The page itself is unaffected by the failure.
+    expect(container.textContent).toContain('PL-2026-000001');
+  });
+
+  it('downloads the price list PDF under a filename built from its code', async () => {
+    await renderDetailPage(['ADMIN'], buildPriceList('ACTIVE'));
+    vi.spyOn(generateModule, 'renderPdfBlob').mockResolvedValue(new Blob(['pdf']));
+    const downloadSpy = vi.spyOn(downloadModule, 'downloadPdfBlob').mockImplementation(() => {});
+
+    const downloadBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Download PDF',
+    )!;
+    act(() => downloadBtn.click());
+    await waitFor(() => downloadSpy.mock.calls.length > 0);
+
+    expect(downloadSpy).toHaveBeenCalledWith(expect.any(Blob), 'ERVE-Price-List-PL-2026-000001.pdf');
+  });
+
+  it('invokes printPdfBlob (not the download path) when Print is clicked', async () => {
+    await renderDetailPage(['ADMIN'], buildPriceList('ACTIVE'));
+    vi.spyOn(generateModule, 'renderPdfBlob').mockResolvedValue(new Blob(['pdf']));
+    const printSpy = vi.spyOn(printModule, 'printPdfBlob').mockImplementation(() => {});
+    const downloadSpy = vi.spyOn(downloadModule, 'downloadPdfBlob').mockImplementation(() => {});
+
+    const printBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Print',
+    )!;
+    act(() => printBtn.click());
+    await waitFor(() => printSpy.mock.calls.length > 0);
+
+    expect(printSpy).toHaveBeenCalledTimes(1);
+    expect(downloadSpy).not.toHaveBeenCalled();
+  });
+
+  it('leaves existing edit navigation intact alongside the new PDF actions', async () => {
+    await renderDetailPage(['ADMIN'], buildPriceList('DRAFT'));
+    const buttons = Array.from(container.querySelectorAll('button, a')).map((b) => b.textContent);
+    expect(buttons).toContain('Download PDF');
+    expect(buttons).toContain('Print');
+    expect(buttons).toContain('Edit Details');
+    expect(buttons).toContain('Activate');
   });
 });
