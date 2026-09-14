@@ -39,4 +39,33 @@ describe('QualityExecutionPageShell parent navigation', () => {
     expect(link.className).toContain('focus-visible:outline');
     expect(link.querySelector('.truncate')).not.toBeNull();
   });
+
+  it('renders optional page-level actions alongside the back link when provided', () => {
+    act(() =>
+      root.render(
+        <QualityExecutionPageShell
+          jobOrderId="job-1"
+          jobOrderNumber="JO-2026-000001"
+          actions={<button type="button">Download PDF</button>}
+        >
+          <h1>Inline Inspection</h1>
+        </QualityExecutionPageShell>,
+      ),
+    );
+
+    const nav = container.querySelector('nav')!;
+    expect(nav.querySelector('button')?.textContent).toBe('Download PDF');
+  });
+
+  it('omits the actions wrapper entirely when no actions are provided', () => {
+    act(() =>
+      root.render(
+        <QualityExecutionPageShell jobOrderId="job-1" jobOrderNumber="JO-2026-000001">
+          <h1>Inline Inspection</h1>
+        </QualityExecutionPageShell>,
+      ),
+    );
+
+    expect(container.querySelector('nav button')).toBeNull();
+  });
 });

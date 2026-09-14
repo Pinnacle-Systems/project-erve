@@ -8,11 +8,14 @@ export const qualityExecutionTextAreaClass = `${qualityExecutionControlClass} mi
 export interface QualityExecutionPageShellProps extends HTMLAttributes<HTMLElement> {
   jobOrderId: string;
   jobOrderNumber: string;
+  /** Optional page-level actions (e.g. PDF Print/Download) shown alongside the back link. */
+  actions?: ReactNode;
 }
 
 export function QualityExecutionPageShell({
   jobOrderId,
   jobOrderNumber,
+  actions,
   children,
   className,
   ...props
@@ -24,7 +27,10 @@ export function QualityExecutionPageShell({
       {...props}
     >
       <div className="mx-auto max-w-[90rem] space-y-5">
-        <nav aria-label="Quality execution navigation">
+        <nav
+          aria-label="Quality execution navigation"
+          className="flex flex-wrap items-center justify-between gap-3"
+        >
           <a
             href={`/job-orders/${jobOrderId}`}
             aria-label={`Back to Job Order ${jobOrderNumber}`}
@@ -35,6 +41,7 @@ export function QualityExecutionPageShell({
             </span>
             <span className="min-w-0 truncate">Job Order {jobOrderNumber}</span>
           </a>
+          {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
         </nav>
         {children}
       </div>
