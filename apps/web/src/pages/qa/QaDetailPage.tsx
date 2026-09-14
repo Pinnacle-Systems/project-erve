@@ -24,11 +24,15 @@ import {
 import { DataTable } from '@erve/data-display';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
+import { useCallback } from 'react';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { formatJobOrderAuditTitle } from '../job-orders/job-order-audit.js';
 import { formatDateTime, statusTone } from '../job-orders/job-order-ui.js';
 import { QaInspectionForm } from './QaInspectionForm.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 
 const qaTotalLabels: Record<string, string> = {
   prepared: 'Prepared',
@@ -59,6 +63,21 @@ export function QaDetailPage() {
       (await apiClient.get<ApiSuccessResponse<JobOrderAuditEntry[]>>(`/job-orders/${id}/audit`))
         .data.data,
   });
+  const inspectionDetail = query.data;
+  const generatePpSamplePdf = useCallback(async () => {
+    if (!inspectionDetail) throw new Error('QA inspection not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generatePpSamplePdfBlob } = await import('./pdf/pp-sample/generatePpSamplePdf.js');
+    return generatePpSamplePdfBlob(inspectionDetail, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
+  }, [inspectionDetail, user?.name]);
+  const pdfAction = usePdfAction({
+    generate: generatePpSamplePdf,
+    filename: () => buildPdfFilename(['ERVE-PP-Sample', inspectionDetail?.jobOrderNumber]),
+  });
   if (query.isLoading) return <LoadingState label="Loading QA inspection" />;
   if (!query.data || query.isError)
     return (
@@ -77,6 +96,16 @@ export function QaDetailPage() {
   const hasProcessFlowPpSample = Boolean(ppSampleSession);
   const content = (
     <div className="space-y-5">
+      {ppSampleSession ? (
+        <div className="flex justify-end">
+          <PdfActionButtons
+            isGenerating={pdfAction.isGenerating}
+            error={pdfAction.error}
+            onDownload={pdfAction.handleDownload}
+            onPrint={pdfAction.handlePrint}
+          />
+        </div>
+      ) : null}
       {ppSampleSession ? (
         <QualityExecutionHeader
           title="PP Sample Checklist"

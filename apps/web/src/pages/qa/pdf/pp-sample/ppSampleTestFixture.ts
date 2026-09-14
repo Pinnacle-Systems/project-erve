@@ -1,0 +1,81 @@
+import type { QaInspectionDetail } from '@erve/types';
+
+/** Shared fixture builder for PP Sample PDF tests (prepare/build/document). Not itself a test. */
+export function makeQaInspectionDetail(overrides: Partial<QaInspectionDetail> = {}): QaInspectionDetail {
+  return {
+    id: 'jo-1',
+    jobOrderNumber: 'JO-1001',
+    factory: { id: 'factory-1', code: 'F1', name: 'Factory One' },
+    status: 'QA_IN_PROGRESS',
+    totals: {
+      prepared: 200,
+      availableToInspect: 100,
+      accepted: 80,
+      rework: 10,
+      awaitingReinspection: 5,
+      permanentlyRejected: 5,
+      finalApproved: 80,
+    },
+    version: 1,
+    updatedAt: '2026-01-10T12:00:00Z',
+    seasons: [{ code: 'SS27', displayName: 'Spring Summer 27' }],
+    lines: [],
+    sessions: [
+      {
+        id: 'session-1',
+        cycleNumber: 1,
+        status: 'FINALIZED',
+        inspector: { id: 'user-1', name: 'Priya Inspector', email: 'priya@erve.local' },
+        finalizedAt: '2026-01-10T11:00:00Z',
+        reopenedAt: null,
+        reopenReason: null,
+        version: 1,
+        updatedAt: '2026-01-10T11:00:00Z',
+        forms: [
+          {
+            id: 'form-1',
+            status: 'FINALIZED',
+            version: 1,
+            finalizedAt: '2026-01-10T11:00:00Z',
+            reopenedAt: null,
+            reopenReason: null,
+            jobOrderLineSizeId: 'size-1',
+            sourceReworkTaskId: null,
+            styleNumber: 'STY-0001',
+            styleName: 'Basic Tee',
+            colour: 'Navy',
+            sizeCode: 'M',
+            sizeLabel: 'Medium',
+            preparedQuantity: 100,
+            sampleQuantity: 3,
+            checklist: [
+              { itemCode: 'TRIMS_CARD', status: 'YES', remarks: null },
+              { itemCode: 'FABRIC_GSM', status: 'YES', remarks: 'Verified against fabric card' },
+            ],
+            inspectionRemarks: 'All checks passed.',
+            inspectedQuantity: 3,
+            acceptedQuantity: 3,
+            reworkQuantity: 0,
+            permanentlyRejectedQuantity: 0,
+            defectCategory: null,
+            otherDefectDetails: null,
+            defectNotes: null,
+          },
+        ],
+        evidence: [
+          { id: 'evidence-1', inspectionLineId: 'form-1', fileName: 'sample-front.jpg', contentType: 'image/jpeg', sizeBytes: 12345, createdAt: '2026-01-10T10:30:00Z' },
+        ],
+        createdAt: '2026-01-10T09:00:00Z',
+        processFlowPpSample: {
+          executionId: 'execution-1',
+          processFlowActivityId: 'activity-1',
+          qualityFormVersionId: 'version-1',
+          sampleQuantity: 3,
+          decision: 'PASS',
+        },
+      },
+    ],
+    reworkTasks: [],
+    ...overrides,
+  };
+}
