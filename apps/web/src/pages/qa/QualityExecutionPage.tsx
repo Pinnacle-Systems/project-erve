@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -12,11 +12,17 @@ import type {
   FinalQualityBatchView,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
+import { useOptionalAuth } from '../../auth/AuthContext.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { displayQualityActivityName } from './pdf/shared/displayQualityActivityName.js';
 
 export function QualityExecutionPage() {
   const { executionId = '' } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const user = useOptionalAuth()?.user;
   const [message, setMessage] = useState('');
   const [validationErrors, setValidationErrors] = useState<QualityExecutionValidationError[]>([]);
   const query = useQuery({
@@ -109,6 +115,28 @@ export function QualityExecutionPage() {
       );
     },
   });
+  const executionData = query.data;
+  const generateQualityExecutionPdf = useCallback(async () => {
+    if (!executionData) throw new Error('Quality execution not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateQualityExecutionPdfBlob } = await import('./pdf/execution/generateQualityExecutionPdf.js');
+    return generateQualityExecutionPdfBlob(executionData, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
+  }, [executionData, user?.name]);
+  const pdfAction = usePdfAction({
+    generate: generateQualityExecutionPdf,
+    filename: () =>
+      buildPdfFilename([
+        'ERVE-QA',
+        executionData ? displayQualityActivityName(executionData.activityName) : null,
+        executionData?.jobOrderNumber,
+        executionData ? `Attempt-${executionData.attemptNumber}` : null,
+        executionData?.finalBatch ? `Batch-${executionData.finalBatch.batchNumber}` : null,
+      ]),
+  });
   if (query.isLoading)
     return (
       <main className="p-6" role="status">
@@ -125,6 +153,14 @@ export function QualityExecutionPage() {
     <QualityExecutionPageShell
       jobOrderId={query.data.jobOrderId}
       jobOrderNumber={query.data.jobOrderNumber}
+      actions={
+        <PdfActionButtons
+          isGenerating={pdfAction.isGenerating}
+          error={pdfAction.error}
+          onDownload={pdfAction.handleDownload}
+          onPrint={pdfAction.handlePrint}
+        />
+      }
     >
       <QualityExecutionForm
         key={`${query.data.id}:${query.data.version}`}
