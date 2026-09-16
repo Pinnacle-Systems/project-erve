@@ -327,3 +327,31 @@ describe('PackingListPage carton edit (Phase 4)', () => {
     expect(html).not.toMatch(/factoryDispatchLineId/i);
   });
 });
+
+describe('PackingListPage PDF print (Phase 5)', () => {
+  it('no longer renders the legacy "Print Packing List" window.print() button', async () => {
+    await renderPage(buildPackingList());
+    expect(buttonByText('Print Packing List')).toBeNull();
+  });
+
+  it('renders the shared PDF Print/Download action pair instead', async () => {
+    await renderPage(buildPackingList());
+    expect(buttonByText('Print')).not.toBeNull();
+    expect(buttonByText('Download PDF')).not.toBeNull();
+  });
+
+  it('clicking Print never calls the top-level window.print() (the legacy path)', async () => {
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+    await renderPage(buildPackingList());
+
+    buttonByText('Print')!.click();
+    await flush();
+    await flush();
+
+    // The new pipeline prints a real generated PDF Blob through a hidden
+    // iframe's OWN contentWindow.print() (see lib/pdf/print.ts) — it never
+    // calls the top-level window.print(), which is exactly the legacy call
+    // this phase removes from PackingListPage.tsx itself.
+    expect(printSpy).not.toHaveBeenCalled();
+  });
+});

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,16 +8,12 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canMutateFactoryDispatches } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { FactoryPackingCartonView, FinalizeBlockers, PackingListDestinationView, PackingListView } from './types.js';
-
-const PRINT_STYLE = `
-@media print {
-  body * { visibility: hidden; }
-  #factory-packing-list, #factory-packing-list * { visibility: visible; }
-  #factory-packing-list { position: absolute; top: 0; left: 0; width: 100%; }
-}`;
 
 function auditStateBadge(state: PackingListDestinationView['cartons'][number]['auditState']) {
   if (state === 'INSPECTED') return <StatusBadge label="Inspected" tone="approved" />;
@@ -207,6 +203,19 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
     },
   });
 
+  const generateFactoryPackingListPdf = useCallback(async () => {
+    if (!packingList) throw new Error('Packing list not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateFactoryPackingListPdfBlob } = await import('./pdf/factory-packing-list/generateFactoryPackingListPdf.js');
+    return generateFactoryPackingListPdfBlob(packingList, { generatedAt: new Date().toISOString(), generatedBy: user?.name });
+  }, [packingList, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateFactoryPackingListPdf,
+    filename: () => buildPdfFilename(['ERVE-Factory-Packing-List', packingList?.saleOrderNumber, packingList?.factoryDispatch?.factoryDispatchNumber]),
+  });
+
   if (query.isLoading) return <LoadingState label="Loading Packing List" />;
   if (!packingList) return <EmptyState title="Dispatch Order not found" tone="error" />;
 
@@ -216,7 +225,6 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
 
   return (
     <div className="space-y-6">
-      <style>{PRINT_STYLE}</style>
       <PageHeader
         title={packingList.saleOrderNumber}
         subtitle={`${packingList.factory.name} · ${packingList.distributors.map((d) => d.name).join(', ')}${dispatch ? ` · ${dispatch.factoryDispatchNumber}` : ''}`}
@@ -237,9 +245,12 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                 View Factory Invoice
               </Button>
             )}
-            <Button variant="secondary" onClick={() => window.print()}>
-              Print Packing List
-            </Button>
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
             <Button variant="secondary" onClick={() => navigate(backTo)}>
               {backLabel}
             </Button>
@@ -273,7 +284,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
         </ValidationMessage>
       )}
 
-      <div id="factory-packing-list" className="space-y-6">
+      <div className="space-y-6">
         {packingList.destinations.map((destination) => (
           <Panel
             key={destination.id}
