@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,6 +8,9 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { LoadingState, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canMutateInvoiceHandoffs } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { InvoiceHandoffView } from './types.js';
@@ -52,6 +55,19 @@ export function InvoiceHandoffDetailPage() {
     onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to record the Tally invoice reference.')),
   });
 
+  const generateInvoiceHandoffDetailPdf = useCallback(async () => {
+    if (!handoff) throw new Error('Invoice handoff not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateInvoiceHandoffDetailPdfBlob } = await import('./pdf/invoice-handoff/generateInvoiceHandoffDetailPdf.js');
+    return generateInvoiceHandoffDetailPdfBlob(handoff, { generatedAt: new Date().toISOString(), generatedBy: user?.name });
+  }, [handoff, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateInvoiceHandoffDetailPdf,
+    filename: () => buildPdfFilename(['ERVE-Invoice-Handoff', handoff?.erveDispatch.erveDispatchNumber, handoff?.style.styleNumber]),
+  });
+
   if (query.isLoading) return <LoadingState label="Loading invoice handoff" />;
   if (!handoff) return <EmptyState title="Invoice handoff not found" tone="error" />;
 
@@ -70,9 +86,17 @@ export function InvoiceHandoffDetailPage() {
           )
         }
         secondaryActions={
-          <Button variant="secondary" onClick={() => navigate('/fulfillment/invoices')}>
-            Back
-          </Button>
+          <>
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
+            <Button variant="secondary" onClick={() => navigate('/fulfillment/invoices')}>
+              Back
+            </Button>
+          </>
         }
       />
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -6,6 +6,11 @@ import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { useAuth } from '../../auth/AuthContext.js';
 import type { InvoiceHandoffStatus, InvoiceHandoffView, PaginatedResult } from './types.js';
 
 const STATUS_TABS: Array<{ value: InvoiceHandoffStatus | 'ALL'; label: string }> = [
@@ -20,6 +25,7 @@ function modeLabel(item: InvoiceHandoffView) {
 
 export function InvoiceHandoffListPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [status, setStatus] = useState<InvoiceHandoffStatus | 'ALL'>('PENDING_TALLY');
 
   const query = useQuery({
@@ -32,9 +38,35 @@ export function InvoiceHandoffListPage() {
     },
   });
 
+  const generateInvoiceHandoffListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateInvoiceHandoffListPdfBlob } = await import('./pdf/invoice-handoff/generateInvoiceHandoffListPdf.js');
+    return generateInvoiceHandoffListPdfBlob(
+      { status: status === 'ALL' ? undefined : status },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [status, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateInvoiceHandoffListPdf,
+    filename: () => buildPdfFilename(['ERVE-Invoice-Handoffs', getLocalDateString()]),
+  });
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Invoices" subtitle="Physically dispatched quantities (both Outright and Sale-or-Return) awaiting a Tally invoice reference" />
+      <PageHeader
+        title="Invoices"
+        subtitle="Physically dispatched quantities (both Outright and Sale-or-Return) awaiting a Tally invoice reference"
+        secondaryActions={
+          <PdfActionButtons
+            isGenerating={pdfAction.isGenerating}
+            error={pdfAction.error}
+            onDownload={pdfAction.handleDownload}
+            onPrint={pdfAction.handlePrint}
+          />
+        }
+      />
 
       <div className="flex gap-2">
         {STATUS_TABS.map((tab) => (
