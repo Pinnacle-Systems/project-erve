@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -6,6 +7,9 @@ import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canMutateDispatchOrders, canViewDispatchOrderAudit, canViewErveDispatches, canViewFactoryDispatches } from '../../auth/permissions.js';
 import type { ErveDispatchView, FactoryDispatchSummary, PaginatedResult } from '../fulfillment/types.js';
@@ -73,6 +77,27 @@ export function SaleOrderDetailPage() {
     },
   });
 
+  const generateDispatchOrderDetailPdf = useCallback(async () => {
+    if (!so) throw new Error('Dispatch order not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateDispatchOrderDetailPdfBlob } = await import('../fulfillment/pdf/dispatch-order/generateDispatchOrderDetailPdf.js');
+    return generateDispatchOrderDetailPdfBlob(
+      so,
+      {
+        factoryDispatches: canSeeFactoryDispatches ? (factoryDispatchesQuery.data ?? []) : null,
+        erveDispatches: canSeeErveDispatches ? (erveDispatchesQuery.data ?? []) : null,
+        auditTrail: canSeeAudit ? (auditQuery.data ?? []) : null,
+      },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [so, canSeeFactoryDispatches, factoryDispatchesQuery.data, canSeeErveDispatches, erveDispatchesQuery.data, canSeeAudit, auditQuery.data, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateDispatchOrderDetailPdf,
+    filename: () => buildPdfFilename(['ERVE-Dispatch-Order', so?.saleOrderNumber]),
+  });
+
   if (soQuery.isLoading) return <LoadingState label="Loading dispatch order" />;
   if (soQuery.isError || !so) {
     return <EmptyState title="Unable to load this dispatch order" tone="error" />;
@@ -84,7 +109,13 @@ export function SaleOrderDetailPage() {
         title={so.saleOrderNumber}
         subtitle={`${so.distributors.map((d) => d.name).join(', ')} — ${so.factory.name}`}
         secondaryActions={
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
             {canSeeFactoryDispatches && (
               <Button asChild variant="secondary">
                 <Link to={`/sale-orders/${so.id}/packing-list`}>Packing List</Link>

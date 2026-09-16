@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
@@ -8,6 +8,10 @@ import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-disp
 import { apiClient } from '../../lib/api-client.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canFilterDispatchOrders, canMutateDispatchOrders } from '../../auth/permissions.js';
 import type { Distributor, Factory, SaleOrder } from './types.js';
@@ -67,6 +71,25 @@ export function SaleOrderListPage() {
     },
   });
 
+  const distributorName = (distributorsQuery.data ?? []).find((d) => d.id === distributorId)?.name;
+  const factoryName = (factoriesQuery.data ?? []).find((f) => f.id === factoryId)?.name;
+
+  const generateDispatchOrderListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateDispatchOrderListPdfBlob } = await import('../fulfillment/pdf/dispatch-order/generateDispatchOrderListPdf.js');
+    return generateDispatchOrderListPdfBlob(
+      params,
+      { search: debouncedSearch, distributorName, factoryName },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [params, debouncedSearch, distributorName, factoryName, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateDispatchOrderListPdf,
+    filename: () => buildPdfFilename(['ERVE-Dispatch-Orders', getLocalDateString()]),
+  });
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -81,51 +104,61 @@ export function SaleOrderListPage() {
         }
       />
 
-      <FilterBar
-        searchValue={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search Dispatch Order number"
-        hasActiveFilters={Boolean(search || distributorId || factoryId)}
-        onClearFilters={() => {
-          setSearch('');
-          setDistributorId('');
-          setFactoryId('');
-        }}
-        actions={
-          showFilters ? (
-            <div className="flex gap-2">
-              <SelectField
-                aria-label="Distributor"
-                value={distributorId || 'ALL'}
-                onValueChange={(value) => setDistributorId(value === 'ALL' ? '' : value)}
-                density="compact"
-                width="md"
-              >
-                <SelectItem value="ALL">All distributors</SelectItem>
-                {(distributorsQuery.data ?? []).map((d) => (
-                  <SelectItem key={d.id} value={d.id}>
-                    {d.name}
-                  </SelectItem>
-                ))}
-              </SelectField>
-              <SelectField
-                aria-label="Factory"
-                value={factoryId || 'ALL'}
-                onValueChange={(value) => setFactoryId(value === 'ALL' ? '' : value)}
-                density="compact"
-                width="md"
-              >
-                <SelectItem value="ALL">All factories</SelectItem>
-                {(factoriesQuery.data ?? []).map((f) => (
-                  <SelectItem key={f.id} value={f.id}>
-                    {f.name}
-                  </SelectItem>
-                ))}
-              </SelectField>
-            </div>
-          ) : undefined
-        }
-      />
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <FilterBar
+            searchValue={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search Dispatch Order number"
+            hasActiveFilters={Boolean(search || distributorId || factoryId)}
+            onClearFilters={() => {
+              setSearch('');
+              setDistributorId('');
+              setFactoryId('');
+            }}
+            actions={
+              showFilters ? (
+                <div className="flex gap-2">
+                  <SelectField
+                    aria-label="Distributor"
+                    value={distributorId || 'ALL'}
+                    onValueChange={(value) => setDistributorId(value === 'ALL' ? '' : value)}
+                    density="compact"
+                    width="md"
+                  >
+                    <SelectItem value="ALL">All distributors</SelectItem>
+                    {(distributorsQuery.data ?? []).map((d) => (
+                      <SelectItem key={d.id} value={d.id}>
+                        {d.name}
+                      </SelectItem>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    aria-label="Factory"
+                    value={factoryId || 'ALL'}
+                    onValueChange={(value) => setFactoryId(value === 'ALL' ? '' : value)}
+                    density="compact"
+                    width="md"
+                  >
+                    <SelectItem value="ALL">All factories</SelectItem>
+                    {(factoriesQuery.data ?? []).map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.name}
+                      </SelectItem>
+                    ))}
+                  </SelectField>
+                </div>
+              ) : undefined
+            }
+          />
+        </div>
+        <PdfActionButtons
+          isGenerating={pdfAction.isGenerating}
+          error={pdfAction.error}
+          onDownload={pdfAction.handleDownload}
+          onPrint={pdfAction.handlePrint}
+        />
+      </div>
 
       <DataTable
         columns={[
