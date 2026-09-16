@@ -441,6 +441,8 @@ export interface PackingAuditQueueItem extends FactoryPackingCartonView {
   factoryDispatchNumber: string;
   factory: { id: string; code: string; name: string };
   saleOrder: { id: string; saleOrderNumber: string };
+  /** Phase 5: Distributor/Destination context for the Packing Audit PDF — always present, both on the queue and (via `PackingAuditQueueItem & { factoryDispatchId }`) the carton detail endpoint. */
+  destination: { id: string; label: string | null; city: string; state: string; distributor: { id: string; code: string; name: string } };
 }
 
 /** Phase 6: cartons individually selected for Erve consolidation, filterable/groupable client-side by factory/Dispatch Order/destination — never a StockAllocation/Job Order id (Phase 6 plan §7). */

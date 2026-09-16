@@ -576,6 +576,34 @@ describe('Packing Audit', () => {
 
     await confirmAudit(qaToken, factoryDispatchId, cartonId).expect(400);
   });
+
+  it('queue and carton detail both return Distributor/Destination context for a carton (Phase 5 projection)', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+    const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+    const { token: qaToken } = await createRoleToken('QA_USER');
+    const distributorGroup = fixture.saleOrder.distributorGroups[0];
+    const destination = distributorGroup.destinations[0];
+
+    const created = await createCarton(factoryToken, fixture.saleOrder.id, {
+      cartonNumber: 'C1',
+      destinationId: destinationOf(fixture.saleOrder),
+      lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
+    }).expect(200);
+    const cartonId = created.body.data.destinations[0].cartons[0].id;
+
+    const queueRes = await request(app).get('/packing-audit/queue').set('Authorization', `Bearer ${qaToken}`).expect(200);
+    const queueItem = queueRes.body.data.items.find((item: { id: string }) => item.id === cartonId);
+    expect(queueItem.destination).toEqual({
+      id: destination.id,
+      label: destination.label,
+      city: destination.city,
+      state: destination.state,
+      distributor: { id: distributorGroup.distributor.id, code: distributorGroup.distributor.code, name: distributorGroup.distributor.name },
+    });
+
+    const detailRes = await request(app).get(`/packing-audit/cartons/${cartonId}`).set('Authorization', `Bearer ${qaToken}`).expect(200);
+    expect(detailRes.body.data.destination).toEqual(queueItem.destination);
+  });
 });
 
 describe('Retired cartons', () => {

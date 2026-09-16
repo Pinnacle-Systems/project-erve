@@ -181,7 +181,15 @@ export interface PackingListView {
 }
 
 const packingListCartonInclude = {
-  destination: { select: { id: true } },
+  destination: {
+    select: {
+      id: true,
+      label: true,
+      city: true,
+      state: true,
+      saleOrderDistributor: { select: { distributor: { select: { id: true, code: true, name: true } } } },
+    },
+  },
   createdBy: { select: { id: true, name: true } },
   retiredBy: { select: { id: true, name: true } },
   lines: {
@@ -976,6 +984,19 @@ export async function confirmCartonPackingAudit(
 // (Phase 4 plan §6). No StockAllocation/QaReleaseLine/Job Order fields.
 // ---------------------------------------------------------------------------
 
+// Phase 5: Distributor/Destination context for the Packing Audit PDF. Reads
+// packingListCartonInclude's own destination relation (widened above) so the
+// two Packing-Audit call sites below share one shape and can't drift.
+function toPackingAuditDestinationView(carton: CartonRecord) {
+  return {
+    id: carton.destination.id,
+    label: carton.destination.label,
+    city: carton.destination.city,
+    state: carton.destination.state,
+    distributor: carton.destination.saleOrderDistributor.distributor,
+  };
+}
+
 export async function getPackingAuditQueue(actor: CurrentUser, filters: { factoryId?: string; cursor?: string; limit: number }) {
   assertPackingAuditViewAccess(actor);
 
@@ -1010,6 +1031,7 @@ export async function getPackingAuditQueue(actor: CurrentUser, filters: { factor
       factoryDispatchNumber: carton.factoryDispatch.factoryDispatchNumber,
       factory: carton.factoryDispatch.factory,
       saleOrder: carton.factoryDispatch.saleOrder,
+      destination: toPackingAuditDestinationView(carton),
     })),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
@@ -1038,6 +1060,7 @@ export async function getPackingAuditCartonDetail(actor: CurrentUser, cartonId: 
     factoryDispatchNumber: carton.factoryDispatch.factoryDispatchNumber,
     factory: carton.factoryDispatch.factory,
     saleOrder: carton.factoryDispatch.saleOrder,
+    destination: toPackingAuditDestinationView(carton),
   };
 }
 
