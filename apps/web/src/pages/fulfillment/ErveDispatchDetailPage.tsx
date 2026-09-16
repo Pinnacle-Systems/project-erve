@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,6 +8,9 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, LoadingState, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canMutateErveDispatches, canViewInvoiceHandoffs } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { ErveDispatchView } from './types.js';
@@ -71,6 +74,23 @@ export function ErveDispatchDetailPage() {
     onError: (caught) => setDeliveryFormError(getApiErrorMessage(caught, 'Unable to confirm delivery.')),
   });
 
+  const generateErveDispatchDetailPdf = useCallback(async () => {
+    if (!dispatch) throw new Error('Dispatch not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateErveDispatchDetailPdfBlob } = await import('./pdf/erve-dispatch/generateErveDispatchDetailPdf.js');
+    return generateErveDispatchDetailPdfBlob(
+      dispatch,
+      { invoiceHandoffs: canSeeInvoices ? dispatch.invoiceHandoffs : null },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [dispatch, canSeeInvoices, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateErveDispatchDetailPdf,
+    filename: () => buildPdfFilename(['ERVE-Dispatch', dispatch?.erveDispatchNumber]),
+  });
+
   if (query.isLoading) return <LoadingState label="Loading dispatch" />;
   if (!dispatch) return <EmptyState title="Dispatch not found" tone="error" />;
 
@@ -87,9 +107,17 @@ export function ErveDispatchDetailPage() {
           )
         }
         secondaryActions={
-          <Button variant="secondary" onClick={() => navigate('/fulfillment/erve-dispatches')}>
-            Back
-          </Button>
+          <>
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
+            <Button variant="secondary" onClick={() => navigate('/fulfillment/erve-dispatches')}>
+              Back
+            </Button>
+          </>
         }
       />
 

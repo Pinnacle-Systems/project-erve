@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -5,10 +6,16 @@ import { PageHeader } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { useAuth } from '../../auth/AuthContext.js';
 import type { ErveDispatchView, PaginatedResult } from './types.js';
 
 export function ErveDispatchListPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const query = useQuery({
     queryKey: ['erve-dispatches'],
@@ -20,9 +27,32 @@ export function ErveDispatchListPage() {
     },
   });
 
+  const generateErveDispatchListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateErveDispatchListPdfBlob } = await import('./pdf/erve-dispatch/generateErveDispatchListPdf.js');
+    return generateErveDispatchListPdfBlob({ generatedAt: new Date().toISOString(), generatedBy: user?.name });
+  }, [user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateErveDispatchListPdf,
+    filename: () => buildPdfFilename(['ERVE-Dispatches', getLocalDateString()]),
+  });
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Dispatch History" subtitle="Physical goods movement from Erve India to Distributors" />
+      <PageHeader
+        title="Dispatch History"
+        subtitle="Physical goods movement from Erve India to Distributors"
+        secondaryActions={
+          <PdfActionButtons
+            isGenerating={pdfAction.isGenerating}
+            error={pdfAction.error}
+            onDownload={pdfAction.handleDownload}
+            onPrint={pdfAction.handlePrint}
+          />
+        }
+      />
 
       {query.isLoading ? (
         <LoadingState label="Loading dispatch history" />
