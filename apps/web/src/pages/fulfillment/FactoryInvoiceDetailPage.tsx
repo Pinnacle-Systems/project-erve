@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,17 +8,13 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canConfirmFactoryInvoices, canEditFactoryInvoiceFinancials } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { FACTORY_INVOICE_STATUS_LABELS, factoryInvoiceStatusTone, formatMoney } from './factory-invoice-ui.js';
 import type { FactoryInvoiceView } from './types.js';
-
-const PRINT_STYLE = `
-@media print {
-  body * { visibility: hidden; }
-  #factory-invoice-print, #factory-invoice-print * { visibility: visible; }
-  #factory-invoice-print { position: absolute; top: 0; left: 0; width: 100%; }
-}`;
 
 export function FactoryInvoiceDetailPage() {
   const { id } = useParams();
@@ -95,6 +91,19 @@ export function FactoryInvoiceDetailPage() {
     onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to finalize this Factory Invoice.')),
   });
 
+  const generateFactoryInvoiceDetailPdf = useCallback(async () => {
+    if (!invoice) throw new Error('Factory Invoice not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateFactoryInvoiceDetailPdfBlob } = await import('./pdf/factory-invoice/generateFactoryInvoiceDetailPdf.js');
+    return generateFactoryInvoiceDetailPdfBlob(invoice, { generatedAt: new Date().toISOString(), generatedBy: user?.name });
+  }, [invoice, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateFactoryInvoiceDetailPdf,
+    filename: () => buildPdfFilename(['ERVE-Factory-Invoice', invoice?.factoryDispatch.factoryDispatchNumber]),
+  });
+
   if (query.isLoading) return <LoadingState label="Loading Factory Invoice" />;
   if (!invoice) return <EmptyState title="Factory Invoice not found" tone="error" />;
 
@@ -106,16 +115,18 @@ export function FactoryInvoiceDetailPage() {
 
   return (
     <div className="space-y-6">
-      <style>{PRINT_STYLE}</style>
       <PageHeader
         title={invoice.factoryDispatch.factoryDispatchNumber}
         subtitle={`${invoice.factory.name} · ${invoice.saleOrder.saleOrderNumber}`}
         status={<StatusBadge label={FACTORY_INVOICE_STATUS_LABELS[invoice.status]} tone={factoryInvoiceStatusTone(invoice.status)} />}
         secondaryActions={
           <>
-            <Button variant="secondary" onClick={() => window.print()}>
-              Print
-            </Button>
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
             <Button variant="secondary" onClick={() => navigate('/fulfillment/factory-invoices')}>
               Back
             </Button>
@@ -151,7 +162,7 @@ export function FactoryInvoiceDetailPage() {
         </ValidationMessage>
       )}
 
-      <div id="factory-invoice-print" className="space-y-6">
+      <div className="space-y-6">
         <Panel title="Invoice Details">
           <DescriptionList columns={4}>
             <DescriptionList.Item label="Factory" value={invoice.factory.name} />

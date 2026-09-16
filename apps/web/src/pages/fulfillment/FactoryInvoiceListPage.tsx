@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -6,6 +6,11 @@ import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { useAuth } from '../../auth/AuthContext.js';
 import { FACTORY_INVOICE_STATUS_LABELS, factoryInvoiceStatusTone, formatMoney } from './factory-invoice-ui.js';
 import type { FactoryInvoiceStatus, FactoryInvoiceView, PaginatedResult } from './types.js';
 
@@ -18,6 +23,7 @@ const STATUS_TABS: Array<{ value: FactoryInvoiceStatus | 'ALL'; label: string }>
 
 export function FactoryInvoiceListPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [status, setStatus] = useState<FactoryInvoiceStatus | 'ALL'>('GENERATED');
 
   const query = useQuery({
@@ -30,9 +36,35 @@ export function FactoryInvoiceListPage() {
     },
   });
 
+  const generateFactoryInvoiceListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateFactoryInvoiceListPdfBlob } = await import('./pdf/factory-invoice/generateFactoryInvoiceListPdf.js');
+    return generateFactoryInvoiceListPdfBlob(
+      { status: status === 'ALL' ? undefined : status },
+      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
+    );
+  }, [status, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateFactoryInvoiceListPdf,
+    filename: () => buildPdfFilename(['ERVE-Factory-Invoices', getLocalDateString()]),
+  });
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Factory Invoices" subtitle="ERVE-generated payable documents snapshotted from finalized Factory Packing Lists" />
+      <PageHeader
+        title="Factory Invoices"
+        subtitle="ERVE-generated payable documents snapshotted from finalized Factory Packing Lists"
+        secondaryActions={
+          <PdfActionButtons
+            isGenerating={pdfAction.isGenerating}
+            error={pdfAction.error}
+            onDownload={pdfAction.handleDownload}
+            onPrint={pdfAction.handlePrint}
+          />
+        }
+      />
 
       <div className="flex gap-2">
         {STATUS_TABS.map((tab) => (

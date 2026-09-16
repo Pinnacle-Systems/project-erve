@@ -268,3 +268,25 @@ describe('FactoryInvoiceDetailPage — finalized is fully read-only', () => {
     expect(buttonByText('Confirm Factory Invoice')).toBeNull();
   });
 });
+
+describe('FactoryInvoiceDetailPage PDF print (Phase 6)', () => {
+  it('no longer renders the legacy bare "Print" window.print() button label without the PDF action pair', async () => {
+    await renderPage(buildInvoice(), 'ACCOUNTANT');
+    expect(buttonByText('Print')).not.toBeNull();
+    expect(buttonByText('Download PDF')).not.toBeNull();
+  });
+
+  it('clicking Print never calls the top-level window.print() (the legacy path)', async () => {
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+    await renderPage(buildInvoice(), 'ACCOUNTANT');
+
+    buttonByText('Print')!.click();
+    await flush();
+    await flush();
+
+    // The new pipeline prints a real generated PDF Blob through a hidden iframe's OWN
+    // contentWindow.print() (see lib/pdf/print.ts) — it never calls the top-level window.print(),
+    // which is exactly the legacy call this phase removes from FactoryInvoiceDetailPage.tsx itself.
+    expect(printSpy).not.toHaveBeenCalled();
+  });
+});
