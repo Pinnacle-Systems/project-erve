@@ -1,4 +1,10 @@
-import type { FactoryDispatchStatus, PackingAuditState } from '../../types.js';
+import type {
+  ErveDispatchStatus,
+  ErvePackingListStatus,
+  FactoryDispatchStatus,
+  InvoiceHandoffStatus,
+  PackingAuditState,
+} from '../../types.js';
 
 /**
  * Shared label maps for the Phase 5 fulfillment PDFs, mirroring the exact wording the on-screen
@@ -16,4 +22,23 @@ export const PACKING_AUDIT_STATE_LABELS: Record<PackingAuditState, string> = {
 export const FACTORY_DISPATCH_STATUS_LABELS: Record<FactoryDispatchStatus, string> = {
   DRAFT: 'Draft',
   READY_FOR_ERVE: 'Ready for Erve',
+};
+
+/** Mirrors ErvePackingListDetailPage.tsx/ErvePackingListListPage.tsx's STATUS_LABEL. */
+export const ERVE_PACKING_LIST_STATUS_LABELS: Record<ErvePackingListStatus, string> = {
+  OPEN: 'Open',
+  FINALIZED: 'Finalized',
+  DISPATCHED: 'Dispatched',
+};
+
+/** Mirrors ErveDispatchDetailPage.tsx's status badge text. */
+export const ERVE_DISPATCH_STATUS_LABELS: Record<ErveDispatchStatus, string> = {
+  DISPATCHED: 'Dispatched',
+  DELIVERED: 'Delivered',
+};
+
+/** Mirrors InvoiceHandoffListPage.tsx/InvoiceHandoffDetailPage.tsx's status badge text. */
+export const INVOICE_HANDOFF_STATUS_LABELS: Record<InvoiceHandoffStatus, string> = {
+  PENDING_TALLY: 'Pending Tally',
+  INVOICED: 'Invoiced',
 };

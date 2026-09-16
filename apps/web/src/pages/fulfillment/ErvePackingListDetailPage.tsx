@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,14 +8,11 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, LoadingState, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { useAuth } from '../../auth/AuthContext.js';
 import type { EligibleErveCartonView, ErvePackingListDetail } from './types.js';
-
-const PRINT_STYLE = `
-@media print {
-  body * { visibility: hidden; }
-  #erve-packing-list, #erve-packing-list * { visibility: visible; }
-  #erve-packing-list { position: absolute; top: 0; left: 0; width: 100%; }
-}`;
 
 const STATUS_LABEL: Record<ErvePackingListDetail['status'], string> = {
   OPEN: 'Open',
@@ -27,6 +24,7 @@ export function ErvePackingListDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const [dispatchDate, setDispatchDate] = useState(new Date().toISOString().slice(0, 10));
   const [transporter, setTransporter] = useState('');
@@ -114,12 +112,24 @@ export function ErvePackingListDetailPage() {
     [eligibleForAdd, addSelected],
   );
 
+  const generateErvePackingListDetailPdf = useCallback(async () => {
+    if (!packingList) throw new Error('Erve Packing List not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateErvePackingListDetailPdfBlob } = await import('./pdf/erve-packing-list/generateErvePackingListDetailPdf.js');
+    return generateErvePackingListDetailPdfBlob(packingList, { generatedAt: new Date().toISOString(), generatedBy: user?.name });
+  }, [packingList, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateErvePackingListDetailPdf,
+    filename: () => buildPdfFilename(['ERVE-Packing-List', packingList?.ervePackingListNumber]),
+  });
+
   if (query.isLoading) return <LoadingState label="Loading Erve Packing List" />;
   if (!packingList) return <EmptyState title="Erve Packing List not found" tone="error" />;
 
   return (
     <div className="space-y-6">
-      <style>{PRINT_STYLE}</style>
       <PageHeader
         title={packingList.ervePackingListNumber}
         subtitle={`${packingList.distributor?.name ?? '—'} · ${packingList.destination.city ?? '—'}, ${packingList.destination.state ?? ''}`}
@@ -131,9 +141,12 @@ export function ErvePackingListDetailPage() {
         }
         secondaryActions={
           <>
-            <Button variant="secondary" onClick={() => window.print()}>
-              Print Packing List
-            </Button>
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
             <Button variant="secondary" onClick={() => navigate('/fulfillment/erve-packing-lists')}>
               Back
             </Button>
@@ -143,7 +156,7 @@ export function ErvePackingListDetailPage() {
 
       {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
 
-      <div id="erve-packing-list" className="space-y-6">
+      <div className="space-y-6">
         <Panel title="Erve India Consolidated Packing List">
           <DescriptionList columns={4}>
             <DescriptionList.Item label="Distributor" value={packingList.distributor?.name ?? '—'} />

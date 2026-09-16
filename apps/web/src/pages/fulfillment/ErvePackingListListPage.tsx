@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -6,6 +7,10 @@ import { Button } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { getLocalDateString } from '../../lib/dates.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canMutateErveDispatches } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { ErvePackingListSummary, PaginatedResult } from './types.js';
@@ -30,15 +35,35 @@ export function ErvePackingListListPage() {
     },
   });
 
+  const generateErvePackingListListPdf = useCallback(async () => {
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle.
+    const { generateErvePackingListListPdfBlob } = await import('./pdf/erve-packing-list/generateErvePackingListListPdf.js');
+    return generateErvePackingListListPdfBlob({ generatedAt: new Date().toISOString(), generatedBy: user?.name });
+  }, [user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generateErvePackingListListPdf,
+    filename: () => buildPdfFilename(['ERVE-Packing-Lists', getLocalDateString()]),
+  });
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Erve Packing Lists"
         subtitle="Destination-specific consolidation of finalized Factory Packing cartons"
         secondaryActions={
-          canMutateErveDispatches(user) && (
-            <Button onClick={() => navigate('/fulfillment/erve-packing-lists/new')}>Create Erve Packing List</Button>
-          )
+          <>
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
+            {canMutateErveDispatches(user) && (
+              <Button onClick={() => navigate('/fulfillment/erve-packing-lists/new')}>Create Erve Packing List</Button>
+            )}
+          </>
         }
       />
 

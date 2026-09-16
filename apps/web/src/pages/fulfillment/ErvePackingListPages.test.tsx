@@ -244,3 +244,40 @@ describe('ErvePackingListDetailPage', () => {
     expect(buttonByText('Record Dispatch')).toBeNull();
   });
 });
+
+describe('ErvePackingListDetailPage PDF print (Phase 6)', () => {
+  it('no longer renders the legacy "Print Packing List" window.print() button', async () => {
+    mockAuth('MERCHANDISER');
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/erve-packing-lists/epl-1') return { data: { data: buildDetail() } };
+      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    renderAt('/fulfillment/erve-packing-lists/epl-1', '/fulfillment/erve-packing-lists/:id', <ErvePackingListDetailPage />);
+    await flush();
+
+    expect(buttonByText('Print Packing List')).toBeNull();
+    expect(buttonByText('Print')).not.toBeNull();
+    expect(buttonByText('Download PDF')).not.toBeNull();
+  });
+
+  it('clicking Print never calls the top-level window.print() (the legacy path)', async () => {
+    mockAuth('MERCHANDISER');
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/erve-packing-lists/epl-1') return { data: { data: buildDetail() } };
+      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+
+    renderAt('/fulfillment/erve-packing-lists/epl-1', '/fulfillment/erve-packing-lists/:id', <ErvePackingListDetailPage />);
+    await flush();
+
+    buttonByText('Print')!.click();
+    await flush();
+    await flush();
+
+    expect(printSpy).not.toHaveBeenCalled();
+  });
+});
