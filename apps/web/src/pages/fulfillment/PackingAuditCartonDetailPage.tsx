@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,6 +8,9 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canConfirmPackingAudits } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { PackingAuditQueueItem } from './types.js';
@@ -50,6 +53,21 @@ export function PackingAuditCartonDetailPage() {
     onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to confirm this carton as inspected.')),
   });
 
+  const generatePackingAuditCartonDetailPdf = useCallback(async () => {
+    if (!carton) throw new Error('Carton not loaded');
+    // Dynamically imported so @react-pdf/renderer and the document code load only when a user
+    // actually clicks Download/Print, not as part of the app's initial bundle. Only the
+    // server-persisted carton record is passed in — never the local "Confirm Inspected" remarks
+    // draft state, which must never leak into the printed document.
+    const { generatePackingAuditCartonDetailPdfBlob } = await import('./pdf/packing-audit/generatePackingAuditCartonDetailPdf.js');
+    return generatePackingAuditCartonDetailPdfBlob(carton, { generatedAt: new Date().toISOString(), generatedBy: user?.name });
+  }, [carton, user?.name]);
+
+  const pdfAction = usePdfAction({
+    generate: generatePackingAuditCartonDetailPdf,
+    filename: () => buildPdfFilename(['ERVE-Packing-Audit-Carton', carton?.saleOrder.saleOrderNumber, carton?.cartonNumber]),
+  });
+
   if (query.isLoading) return <LoadingState label="Loading carton" />;
   if (!carton) return <EmptyState title="Carton not found" tone="error" />;
 
@@ -70,9 +88,17 @@ export function PackingAuditCartonDetailPage() {
           )
         }
         secondaryActions={
-          <Button variant="secondary" onClick={() => navigate('/fulfillment/packing-audit')}>
-            Back to Queue
-          </Button>
+          <div className="flex items-center gap-2">
+            <PdfActionButtons
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
+            <Button variant="secondary" onClick={() => navigate('/fulfillment/packing-audit')}>
+              Back to Queue
+            </Button>
+          </div>
         }
       />
 
