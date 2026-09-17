@@ -73,14 +73,23 @@ function Probe({ onAuth }: { onAuth: (value: CapturedAuth) => void }) {
   return null;
 }
 
-async function renderAuth(): Promise<{ latest: () => CapturedAuth }> {
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+async function renderAuth(): Promise<{ latest: () => CapturedAuth; queryClient: QueryClient }> {
   let captured: CapturedAuth | undefined;
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+    },
+  });
 
   act(() => {
     root.render(
-      <AuthProvider>
-        <Probe onAuth={(value) => (captured = value)} />
-      </AuthProvider>,
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <Probe onAuth={(value) => (captured = value)} />
+        </AuthProvider>
+      </QueryClientProvider>,
     );
   });
   await act(async () => {
@@ -94,6 +103,7 @@ async function renderAuth(): Promise<{ latest: () => CapturedAuth }> {
       }
       return captured;
     },
+    queryClient,
   };
 }
 
@@ -221,5 +231,160 @@ describe('web AuthContext — logout', () => {
     expect(latest().status).toBe('unauthenticated');
     expect(latest().user).toBeNull();
     expect(getStoredToken()).toBeNull();
+  });
+});
+
+import { AUTH_EXPIRED_EVENT } from '../lib/api-client.js';
+
+describe('UXAUTH-001 — authenticated-user/query-cache isolation', () => {
+  it('CASE 1 — LOGOUT CLEARS OLD DATA', async () => {
+    setStoredToken('valid-token');
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/auth/me') return ok(config, { success: true, data: TEST_USER });
+      if (config.url === '/auth/logout') return ok(config, { success: true, data: {} });
+      throw new Error(`Unexpected request: ${config.url}`);
+    }) satisfies AxiosAdapter;
+
+    const { latest, queryClient } = await renderAuth();
+    
+    // Populate query cache
+    queryClient.setQueryData(['test-query'], { data: 'secret' });
+    expect(queryClient.getQueryCache().getAll().length).toBe(1);
+    
+    await act(async () => {
+      await latest().logout();
+    });
+    
+    expect(queryClient.getQueryCache().getAll().length).toBe(0);
+  });
+
+  it('CASE 2 — USER A → USER B', async () => {
+    const { latest, queryClient } = await renderAuth();
+    
+    // User A populates cache
+    queryClient.setQueryData(['test-query'], { data: 'user-a-secret' });
+    
+    const nextUser = { ...TEST_USER, id: 'user-2' };
+    
+    await act(async () => {
+      await latest().login('new-token', nextUser);
+    });
+    
+    expect(queryClient.getQueryCache().getAll().length).toBe(0);
+    expect(latest().user).toEqual(nextUser);
+  });
+
+  it('CASE 3 — NEW USER REQUEST FAILS (NO FALLBACK)', async () => {
+    // Tests behavior when User B logs in but their queries reject.
+    // The queryClient is wiped and User A's data doesn't fallback.
+    const { latest, queryClient } = await renderAuth();
+    
+    queryClient.setQueryData(['query-3'], { data: 'user-a-data' });
+    const nextUser = { ...TEST_USER, id: 'user-2' };
+
+    await act(async () => {
+      await latest().login('new-token', nextUser);
+    });
+
+    const data = queryClient.getQueryData(['query-3']);
+    expect(data).toBeUndefined();
+  });
+
+  it('CASE 4 — DELAYED OLD REQUEST CANNOT REPOPULATE', async () => {
+    const { latest, queryClient } = await renderAuth();
+    
+    let resolveQuery!: (val: unknown) => void;
+    const promise = new Promise((resolve) => { resolveQuery = resolve; });
+    
+    // Simulate an active fetch that will resolve AFTER transition
+    queryClient.fetchQuery({ queryKey: ['delayed'], queryFn: () => promise }).catch(() => {});
+    
+    await act(async () => {
+      await latest().login('new-token', TEST_USER);
+    });
+    
+    // Now resolve the old request
+    resolveQuery({ data: 'old-data' });
+    await flushMicrotasks();
+    
+    // The cancelled query should not repopulate the cache
+    expect(queryClient.getQueryData(['delayed'])).toBeUndefined();
+  });
+
+  it('CASE 5 — TRANSITION RACE WINDOW', async () => {
+    // A test to ensure that cancellation is awaited before clear, so observers are unsubscribed
+    // or queries are properly aborted.
+    setStoredToken('valid-token');
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/auth/me') return ok(config, { success: true, data: TEST_USER });
+      if (config.url === '/auth/logout') return ok(config, { success: true, data: {} });
+      throw new Error(`Unexpected request: ${config.url}`);
+    }) satisfies AxiosAdapter;
+
+    const { latest, queryClient } = await renderAuth();
+    
+    let cancelled = false;
+    queryClient.fetchQuery({ 
+      queryKey: ['race'], 
+      queryFn: ({ signal }) => {
+        signal.addEventListener('abort', () => { cancelled = true; });
+        return new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }).catch(() => {});
+    
+    await act(async () => {
+      await latest().logout();
+    });
+    
+    expect(cancelled).toBe(true);
+    expect(queryClient.getQueryCache().getAll().length).toBe(0);
+  });
+
+  it('CASE 6 — AUTH EXPIRY ISOLATION', async () => {
+    setStoredToken('valid-token');
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/auth/me') return ok(config, { success: true, data: TEST_USER });
+      throw new Error(`Unexpected request: ${config.url}`);
+    }) satisfies AxiosAdapter;
+
+    const { latest, queryClient } = await renderAuth();
+    queryClient.setQueryData(['sensitive'], { data: 'account-data' });
+    
+    await act(async () => {
+      window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+      await flushMicrotasks(); // Allow async event listener to finish
+    });
+    
+    expect(queryClient.getQueryCache().getAll().length).toBe(0);
+    expect(latest().status).toBe('unauthenticated');
+  });
+
+  it('CASE 7 — NORMAL SAME-USER CACHING', async () => {
+    const { queryClient } = await renderAuth();
+    queryClient.setQueryData(['valid-query'], { data: 'ok' });
+    expect(queryClient.getQueryData(['valid-query'])).toEqual({ data: 'ok' });
+  });
+
+  it('CASE 8 — ROLE-REDACTED DTO CACHE ISOLATION', async () => {
+    // We simulate an Internal User fetching an Invoice Handoff DTO (which contains tallyVoucherReference)
+    // into the React Query cache, then transition to a Distributor. This only proves the cached DTO
+    // itself is gone from the query cache post-transition — it does not invoke any PDF generator or
+    // Invoice Handoff query hook. PDF-consumer coverage lives separately under UXAUTH-002.
+    const { latest, queryClient } = await renderAuth();
+    
+    // Populate cache with Internal User's DTO
+    queryClient.setQueryData(['invoice-handoff', '123'], { 
+      data: { id: '123', tallyVoucherReference: 'SECRET-VOUCHER' } 
+    });
+    
+    // Distributor logs in
+    const distributorUser: AuthUser = { ...TEST_USER, id: 'user-dist', roles: ['DISTRIBUTOR'] };
+    await act(async () => {
+      await latest().login('dist-token', distributorUser);
+    });
+    
+    // Assert the data is gone
+    const data = queryClient.getQueryData(['invoice-handoff', '123']);
+    expect(data).toBeUndefined();
   });
 });

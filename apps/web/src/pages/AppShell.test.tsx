@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { ClipboardList, Hammer, LayoutDashboard } from 'lucide-react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { AuthUser } from '@erve/types';
 import { ThemeProvider } from '@erve/theme';
 import { apiClient } from '../lib/api-client.js';
@@ -97,17 +98,23 @@ async function renderShell(navSections: AppShellNavSection[] = NAV_SECTIONS): Pr
     throw new Error(`Unexpected request: ${config.url}`);
   }) satisfies AxiosAdapter;
 
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
   act(() => {
     root.render(
-      <MemoryRouter initialEntries={['/dashboard']}>
-        <ThemeProvider theme="default" density="comfortable">
-          <AuthProvider>
-            <AppShell navSections={navSections}>
-              <div>Page Content</div>
-            </AppShell>
-          </AuthProvider>
-        </ThemeProvider>
-      </MemoryRouter>,
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/dashboard']}>
+          <ThemeProvider theme="default" density="comfortable">
+            <AuthProvider>
+              <AppShell navSections={navSections}>
+                <div>Page Content</div>
+              </AppShell>
+            </AuthProvider>
+          </ThemeProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
   });
   await act(async () => {

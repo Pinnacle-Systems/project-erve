@@ -225,6 +225,22 @@ function assertJobOrderViewAccess(
   throw HttpError.forbidden('You do not have access to this job order');
 }
 
+export function getJobOrderVisibilityWhere(user: CurrentUser): Prisma.JobOrderWhereInput {
+  if (canViewAllJobOrders(user)) return {};
+  if (canPerformQaOperation(user)) return {};
+
+  if (user.roles.includes('FACTORY_USER')) {
+    const factoryId = getSoleFactoryId(user);
+    return {
+      factoryId,
+      status: { not: 'DRAFT' },
+    };
+  }
+
+  // Fallback for roles that shouldn't see anything at all
+  return { id: 'none' };
+}
+
 // Ordinary role authorization for mutating an existing job order's
 // factory-side workflow (confirm / complete-stage / update-prepared-quantity):
 // admins and merchandisers may always act, in line with their normal
@@ -841,23 +857,25 @@ export async function getJobOrderList(
   }
 
   const where: Prisma.JobOrderWhereInput = {
-    status: filters.status,
-    factoryId:
-      canViewAllJobOrders(user) || canPerformQaOperation(user)
-        ? filters.factoryId
-        : { in: user.factoryIds },
-    // This JO's own Financial Year — never any source Order Sheet's.
-    financialYearId: filters.financialYearId,
-    // Order Sheet number search stays available to every viewer who can
-    // list job orders — it's a filter predicate, not response data, so it
-    // carries no provenance leak even for Factory/QA (see
-    // canViewOrderSheetProvenance, which gates response *content* only).
-    OR: filters.search
-      ? [
-          { jobOrderNumber: { contains: filters.search, mode: 'insensitive' } },
-          { orderSheets: { some: { poNumber: { contains: filters.search, mode: 'insensitive' } } } },
-        ]
-      : undefined,
+    AND: [
+      getJobOrderVisibilityWhere(user),
+      {
+        status: filters.status,
+        factoryId: filters.factoryId,
+        // This JO's own Financial Year — never any source Order Sheet's.
+        financialYearId: filters.financialYearId,
+        // Order Sheet number search stays available to every viewer who can
+        // list job orders — it's a filter predicate, not response data, so it
+        // carries no provenance leak even for Factory/QA (see
+        // canViewOrderSheetProvenance, which gates response *content* only).
+        OR: filters.search
+          ? [
+              { jobOrderNumber: { contains: filters.search, mode: 'insensitive' } },
+              { orderSheets: { some: { poNumber: { contains: filters.search, mode: 'insensitive' } } } },
+            ]
+          : undefined,
+      },
+    ],
   };
 
   const jobOrders = await prisma.jobOrder.findMany({

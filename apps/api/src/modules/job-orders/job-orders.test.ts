@@ -3473,3 +3473,144 @@ describe('Job Order delay indicator (Correction 6)', () => {
       }),
   );
 });
+describe('UXAUTH-002: Factory User Job Order List Scope', () => {
+  it('enforces Factory User visibility boundaries (Cases 1-6)', async () => {
+    const graph = await createSeedGraph();
+    
+    // Create users
+    const factoryUser = await createTestUserAndToken({ email: 'factory-1@test.local', password: 'pass', roles: ['FACTORY_USER'] });
+    await prisma.userFactory.create({ data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id } });
+    
+    const foreignFactoryUser = await createTestUserAndToken({ email: 'factory-2@test.local', password: 'pass', roles: ['FACTORY_USER'] });
+    await prisma.userFactory.create({ data: { id: createId(), userId: foreignFactoryUser.userId, factoryId: graph.otherFactory.id } });
+    
+    // Case 5: Zero mapping user - simply doesn't have a userFactory row
+    const zeroMappingUser = await createTestUserAndToken({ email: 'zero@test.local', password: 'pass', roles: ['FACTORY_USER'] });
+    
+
+
+    // Create DRAFT job order for primary factory
+    const draftRes = await createJobOrder(graph.admin.token, graph, 1);
+    const draftId = draftRes.body.data.id;
+    
+    // To create a second JO, we need a second Order Sheet
+    const secondPoRes = await request(app)
+      .post('/purchase-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        distributorId: graph.distributor.id,
+        poDate: '2026-06-30',
+        lines: [{ styleId: graph.style.id, sizes: [{ sizeId: graph.sizeAId, orderedQuantity: 5 }] }],
+      });
+      
+    // Create OPERATIONAL job order for primary factory using the second PO
+    const operationalRes = await request(app)
+        .post('/job-orders')
+        .set('Authorization', `Bearer ${graph.admin.token}`)
+        .send({
+          orderSheetIds: [secondPoRes.body.data.id],
+          sizes: [{ sizeId: graph.sizeAId, quantity: 1 }],
+          factoryId: graph.factory.id,
+          processFlowVersionId: graph.processFlowVersionId,
+          unitPrice: '199.50',
+          disclaimerText: 'Factory commercial terms apply.',
+        });
+    const operationalId = operationalRes.body.data.id;
+    
+    await request(app).post(`/job-orders/${operationalId}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'test-send')
+      .send({ expectedVersion: operationalRes.body.data.version });
+
+    // CASE 1: OWN FACTORY OPERATIONAL (Should see operationalId)
+    // CASE 2: OWN FACTORY DRAFT (Should NOT see draftId)
+    const listRes = await request(app).get('/job-orders').set('Authorization', `Bearer ${factoryUser.token}`);
+    expect(listRes.status).toBe(200);
+    const itemIds = listRes.body.data.items.map((i: { id: string }) => i.id);
+    expect(itemIds).toContain(operationalId); // Case 1
+    expect(itemIds).not.toContain(draftId);   // Case 2
+
+    // CASE 3: EXPLICIT DRAFT FILTER (Should return 0 items instead of draftId)
+    const draftFilterRes = await request(app).get('/job-orders?status=DRAFT').set('Authorization', `Bearer ${factoryUser.token}`);
+    expect(draftFilterRes.status).toBe(200);
+    expect(draftFilterRes.body.data.items.length).toBe(0);
+
+    // CASE 4: FOREIGN FACTORY (Should NOT see any of primary factory's orders)
+    const foreignRes = await request(app).get('/job-orders').set('Authorization', `Bearer ${foreignFactoryUser.token}`);
+    expect(foreignRes.status).toBe(200);
+    expect(foreignRes.body.data.items.map((i: { id: string }) => i.id)).not.toContain(operationalId);
+    
+    // CASE 5: ZERO MAPPINGS (Fails closed)
+    const zeroRes = await request(app).get('/job-orders').set('Authorization', `Bearer ${zeroMappingUser.token}`);
+    expect(zeroRes.status).toBe(403);
+    expect(zeroRes.body.error.code).toBe('FACTORY_MAPPING_REQUIRED');
+    
+    // CASE 6: MULTIPLE MAPPINGS (Fails closed) - REMOVED because DB schema enforces unique user, making this unreachable
+  });
+
+  it('CASE 7 — NON-FACTORY READER REGRESSION', async () => {
+    const graph = await createSeedGraph();
+    const admin = graph.admin;
+    const merchandiser = await createTestUserAndToken({ email: 'merch@test.local', password: 'pass', roles: ['MERCHANDISER'] });
+    const qaUser = await createTestUserAndToken({ email: 'qa@test.local', password: 'pass', roles: ['QA_USER'] });
+    const seniorManager = await createTestUserAndToken({ email: 'senior@test.local', password: 'pass', roles: ['SENIOR_MANAGEMENT'] });
+    
+    const draftRes = await createJobOrder(graph.admin.token, graph, 1);
+    const draftId = draftRes.body.data.id;
+
+    for (const token of [admin.token, merchandiser.token, qaUser.token, seniorManager.token]) {
+      const listRes = await request(app).get('/job-orders').set('Authorization', `Bearer ${token}`);
+      expect(listRes.status).toBe(200);
+      expect(listRes.body.data.items.map((i: { id: string }) => i.id)).toContain(draftId);
+    }
+  });
+
+  it('CASE 8 — LIST / DETAIL BEHAVIOR CONSISTENCY', async () => {
+    const graph = await createSeedGraph();
+    const factoryUser = await createTestUserAndToken({ email: 'factory-consist@test.local', password: 'pass', roles: ['FACTORY_USER'] });
+    await prisma.userFactory.create({ data: { id: createId(), userId: factoryUser.userId, factoryId: graph.factory.id } });
+
+    // Create DRAFT, OPERATIONAL, FOREIGN
+    await createJobOrder(graph.admin.token, graph, 1); // Draft
+    
+    const secondPoRes = await request(app)
+      .post('/purchase-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        distributorId: graph.distributor.id,
+        poDate: '2026-06-30',
+        lines: [{ styleId: graph.style.id, sizes: [{ sizeId: graph.sizeAId, orderedQuantity: 5 }] }],
+      });
+      
+    const operationalRes = await request(app)
+        .post('/job-orders')
+        .set('Authorization', `Bearer ${graph.admin.token}`)
+        .send({
+          orderSheetIds: [secondPoRes.body.data.id],
+          sizes: [{ sizeId: graph.sizeAId, quantity: 1 }],
+          factoryId: graph.factory.id,
+          processFlowVersionId: graph.processFlowVersionId,
+          unitPrice: '199.50',
+          disclaimerText: 'Factory commercial terms apply.',
+        });
+    await request(app).post(`/job-orders/${operationalRes.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'test-send-case8')
+      .send({ expectedVersion: operationalRes.body.data.version });
+
+    // 1. Call list
+    const listRes = await request(app).get('/job-orders').set('Authorization', `Bearer ${factoryUser.token}`);
+    expect(listRes.status).toBe(200);
+    const items = listRes.body.data.items;
+    
+    // 2. For every returned row, call getJobOrderDetail
+    for (const item of items) {
+      const detailRes = await request(app).get(`/job-orders/${item.id}`).set('Authorization', `Bearer ${factoryUser.token}`);
+      expect(detailRes.status).toBe(200); // 3. Assert readable in detail
+    }
+    
+    // 4. Assert known forbidden fixtures (DRAFT) never appear in the list
+    const draftItem = items.find((i: { status: string }) => i.status === "DRAFT");
+    expect(draftItem).toBeUndefined();
+  });
+});

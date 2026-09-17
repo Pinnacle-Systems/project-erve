@@ -59,7 +59,7 @@ function apiResponse(items: JobOrder[], pageInfo: { limit: number; hasMore: bool
 }
 
 describe('prepareJobOrderListPdfData', () => {
-  it('returns all items from a single-page response with the requested filters and export page size', async () => {
+  it('CASE 9 - JOB ORDER PDF FETCH PATH: calls the standard secured paginated /job-orders API instead of an unscoped source', async () => {
     getMock.mockResolvedValue(apiResponse([makeJobOrder()], { limit: 100, hasMore: false, nextCursor: null }));
 
     const result = await prepareJobOrderListPdfData({ search: 'EIJO', factoryId: 'f1' });
@@ -70,7 +70,7 @@ describe('prepareJobOrderListPdfData', () => {
     });
   });
 
-  it('fetches every remaining page using identical filters and preserves order', async () => {
+  it('CASE 9 (Cont) - JOB ORDER PDF FETCH PATH: all-page fetching continues through that same secured endpoint', async () => {
     const jobOrderA = makeJobOrder({ id: 'jo-1', jobOrderNumber: 'EIJO/26-27/0001' });
     const jobOrderB = makeJobOrder({ id: 'jo-2', jobOrderNumber: 'EIJO/26-27/0002' });
     getMock

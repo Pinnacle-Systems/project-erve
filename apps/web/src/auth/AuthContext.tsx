@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ApiSuccessResponse, AuthUser } from '@erve/types';
+import { useQueryClient } from '@tanstack/react-query';
 import { AUTH_EXPIRED_EVENT, apiClient, logoutSession } from '../lib/api-client.js';
 import { clearStoredToken, getStoredToken, setStoredToken } from './token-storage.js';
 
@@ -8,13 +9,14 @@ type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 interface AuthContextValue {
   user: AuthUser | null;
   status: AuthStatus;
-  login: (accessToken: string, user: AuthUser) => void;
+  login: (accessToken: string, user: AuthUser) => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
 
@@ -62,7 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const handleAuthExpired = () => {
+    const handleAuthExpired = async () => {
+      await queryClient.cancelQueries();
+      queryClient.clear();
       clearStoredToken();
       setUser(null);
       setStatus('unauthenticated');
@@ -70,24 +74,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
-  }, []);
+  }, [queryClient]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
       status,
-      login: (accessToken, nextUser) => {
+      login: async (accessToken, nextUser) => {
+        await queryClient.cancelQueries();
+        queryClient.clear();
         setStoredToken(accessToken);
         setUser(nextUser);
         setStatus('authenticated');
       },
       logout: async () => {
         await logoutSession();
+        await queryClient.cancelQueries();
+        queryClient.clear();
         setUser(null);
         setStatus('unauthenticated');
       },
     }),
-    [user, status],
+    [user, status, queryClient],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
