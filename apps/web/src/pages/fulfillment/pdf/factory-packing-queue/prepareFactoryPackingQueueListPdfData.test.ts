@@ -66,4 +66,40 @@ describe('prepareFactoryPackingQueueListPdfData', () => {
 
     await expect(prepareFactoryPackingQueueListPdfData()).rejects.toThrow('network error');
   });
+
+  // UXAUTH-005: this export's "Your Factory Dispatches" half previously
+  // ignored the on-screen Factory selection entirely (always fetched every
+  // Factory). It must now carry the exact same Factory context the screen
+  // is showing.
+  it('passes a given factoryId through to every page request', async () => {
+    const fdA = makeDispatch({ id: 'fd-1' });
+    const fdB = makeDispatch({ id: 'fd-2' });
+    getMock
+      .mockResolvedValueOnce(apiResponse([fdA], { limit: 100, hasMore: true, nextCursor: 'fd-1' }))
+      .mockResolvedValueOnce(apiResponse([fdB], { limit: 100, hasMore: false, nextCursor: null }));
+
+    const result = await prepareFactoryPackingQueueListPdfData('factory-B');
+
+    expect(result).toEqual([fdA, fdB]);
+    expect(getMock).toHaveBeenNthCalledWith(1, '/factory-dispatches', { params: { cursor: undefined, limit: 100, factoryId: 'factory-B' } });
+    expect(getMock).toHaveBeenNthCalledWith(2, '/factory-dispatches', { params: { cursor: 'fd-1', limit: 100, factoryId: 'factory-B' } });
+  });
+
+  it('switching the requested Factory changes every subsequent request — never mixes a previous Factory\'s scope into a new export', async () => {
+    getMock.mockResolvedValue(apiResponse([makeDispatch({ id: 'fd-a' })], { limit: 100, hasMore: false, nextCursor: null }));
+    await prepareFactoryPackingQueueListPdfData('factory-A');
+    expect(getMock).toHaveBeenLastCalledWith('/factory-dispatches', { params: { cursor: undefined, limit: 100, factoryId: 'factory-A' } });
+
+    getMock.mockReset();
+    getMock.mockResolvedValue(apiResponse([makeDispatch({ id: 'fd-b' })], { limit: 100, hasMore: false, nextCursor: null }));
+    await prepareFactoryPackingQueueListPdfData('factory-B');
+    expect(getMock).toHaveBeenLastCalledWith('/factory-dispatches', { params: { cursor: undefined, limit: 100, factoryId: 'factory-B' } });
+  });
+
+  it('omits factoryId (server-scoped FACTORY_USER) when none is given', async () => {
+    getMock.mockResolvedValue(apiResponse([], { limit: 100, hasMore: false, nextCursor: null }));
+    await prepareFactoryPackingQueueListPdfData();
+    const [, config] = getMock.mock.calls[0]!;
+    expect((config as { params: Record<string, unknown> }).params.factoryId).toBeUndefined();
+  });
 });

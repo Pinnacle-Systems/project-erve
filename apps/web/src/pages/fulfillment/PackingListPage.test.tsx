@@ -355,3 +355,35 @@ describe('PackingListPage PDF print (Phase 5)', () => {
     expect(printSpy).not.toHaveBeenCalled();
   });
 });
+
+// UXAUTH-003/004: MERCHANDISER and SENIOR_MANAGEMENT now reach this page via
+// the newly-unblocked Factory Packing queue (and already could via the
+// Dispatch Order route). This page's mutation gating (canMutateFactoryDispatches)
+// was already correct before this batch — these are regression-confirmation
+// tests proving broadened READ access did not broaden WRITE access, not a
+// behavior change. Note: Known UXAUTH-012 (M/S -> "View Factory Invoice" ->
+// Forbidden) is intentionally NOT asserted or changed here — out of scope
+// for Batch 2.
+describe('PackingListPage read-only regression — MERCHANDISER/SENIOR_MANAGEMENT (UXAUTH-003/004)', () => {
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    '%s sees no Factory Packing mutation controls on an active DRAFT Factory Dispatch',
+    async (role) => {
+      await renderPage(buildPackingList(), role);
+      expect(buttonByText('Edit')).toBeNull();
+      expect(buttonByText('Retire')).toBeNull();
+      expect(buttonByText('Delete')).toBeNull();
+      expect(buttonByText('Add Carton')).toBeNull();
+      expect(buttonByText('Finalize (Ready for Erve)')).toBeNull();
+      expect(buttonByText('Abandon')).toBeNull();
+    },
+  );
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    '%s still sees the read-only Print/Download PDF actions',
+    async (role) => {
+      await renderPage(buildPackingList(), role);
+      expect(buttonByText('Print')).not.toBeNull();
+      expect(buttonByText('Download PDF')).not.toBeNull();
+    },
+  );
+});

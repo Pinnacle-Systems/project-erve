@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { createId } from '@erve/shared';
+import { createId, FACTORY_DISPATCH_BROAD_READ_ROLES, FACTORY_DISPATCH_MUTATION_ROLES } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import { createReleasedQaStock, resetDatabase } from '../../test/helpers.js';
@@ -127,6 +127,291 @@ describe('Factory Packing Queue — Stage 1 scoping/authorization', () => {
       destinationId: destinationOf(fixture.saleOrder),
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 5 }],
     }).expect(403);
+  });
+});
+
+function listFactoryDispatches(token: string, params: Record<string, string | number | boolean> = {}) {
+  return request(app).get('/factory-dispatches').query(params).set('Authorization', `Bearer ${token}`);
+}
+
+function getFactoryDispatch(token: string, id: string) {
+  return request(app).get(`/factory-dispatches/${id}`).set('Authorization', `Bearer ${token}`);
+}
+
+function factoryOptions(token: string) {
+  return request(app).get('/factory-dispatches/factory-options').set('Authorization', `Bearer ${token}`);
+}
+
+describe('UXAUTH-004 — Factory Dispatch broad-read scope (MERCHANDISER/SENIOR_MANAGEMENT)', () => {
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    '%s can read the packing queue for an explicit Factory despite having no Factory mapping of its own',
+    async (role) => {
+      const fixture = await createSingleFactoryApprovedSaleOrder(app, 25);
+      const { token } = await createRoleToken(role);
+
+      const res = await packingQueue(token, fixture.stock.factoryId).expect(200);
+      expect(res.body.data).toHaveLength(1);
+      expect(res.body.data[0].saleOrderLineId).toBe(fixture.saleOrderLineId);
+    },
+  );
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    '%s without an explicit factoryId gets 400 (context required), not a 403 factory-mapping error',
+    async (role) => {
+      const { token } = await createRoleToken(role);
+      await packingQueue(token).expect(400);
+    },
+  );
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    '%s can list Factory Dispatches across Factories without a Factory mapping',
+    async (role) => {
+      const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
+      const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+      await createCarton(factoryToken, fixture.saleOrder.id, {
+        cartonNumber: 'C1',
+        destinationId: destinationOf(fixture.saleOrder),
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }],
+      }).expect(200);
+
+      const { token } = await createRoleToken(role);
+      const res = await listFactoryDispatches(token).expect(200);
+      expect(
+        res.body.data.items.some((d: { saleOrder: { id: string } }) => d.saleOrder.id === fixture.saleOrder.id),
+      ).toBe(true);
+    },
+  );
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    '%s can read a Factory Dispatch detail for a Factory it has no mapping to',
+    async (role) => {
+      const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
+      const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+      const created = await createCarton(factoryToken, fixture.saleOrder.id, {
+        cartonNumber: 'C1',
+        destinationId: destinationOf(fixture.saleOrder),
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }],
+      }).expect(200);
+
+      const { token } = await createRoleToken(role);
+      await getFactoryDispatch(token, created.body.data.factoryDispatch.id).expect(200);
+    },
+  );
+
+  it('ADMIN without a sole Factory mapping still gets 400 factoryId is required for the packing queue (unchanged)', async () => {
+    const { token } = await createRoleToken('ADMIN');
+    await packingQueue(token).expect(400);
+  });
+
+  it('a FACTORY_USER with no Factory mapping still fails closed on the packing queue (unchanged)', async () => {
+    const { token } = await createRoleToken('FACTORY_USER');
+    await packingQueue(token).expect(403);
+  });
+
+  it.each(['QA_USER', 'ACCOUNTANT'] as const)('%s cannot read the packing queue', async (role) => {
+    const { token } = await createRoleToken(role);
+    await packingQueue(token).expect(403);
+  });
+
+  it.each(['QA_USER', 'ACCOUNTANT', 'DISTRIBUTOR'] as const)('%s cannot list Factory Dispatches', async (role) => {
+    const { token } = await createRoleToken(role);
+    await listFactoryDispatches(token).expect(403);
+  });
+});
+
+describe('UXAUTH-004 — mixed-role precedence (additive broad-read)', () => {
+  it('FACTORY_USER + DISTRIBUTOR remains Factory-scoped even when a foreign factoryId is explicitly requested', async () => {
+    const orderA = await createSingleFactoryApprovedSaleOrder(app, 30);
+    const orderB = await createSingleFactoryApprovedSaleOrder(app, 20);
+    const token = await createFactoryUserToken(orderA.stock.factoryId, ['DISTRIBUTOR']);
+
+    const res = await packingQueue(token, orderB.stock.factoryId).expect(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].saleOrderLineId).toBe(orderA.saleOrderLineId);
+  });
+
+  it('FACTORY_USER + QA_USER remains Factory-scoped', async () => {
+    const orderA = await createSingleFactoryApprovedSaleOrder(app, 30);
+    const token = await createFactoryUserToken(orderA.stock.factoryId, ['QA_USER']);
+    const res = await packingQueue(token).expect(200);
+    expect(res.body.data).toHaveLength(1);
+  });
+
+  it.each(['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    'FACTORY_USER + %s becomes a broad reader (can read another Factory explicitly via the packing queue)',
+    async (extraRole) => {
+      const orderA = await createSingleFactoryApprovedSaleOrder(app, 30);
+      const orderB = await createSingleFactoryApprovedSaleOrder(app, 20);
+      const token = await createFactoryUserToken(orderA.stock.factoryId, [extraRole]);
+
+      const res = await packingQueue(token, orderB.stock.factoryId).expect(200);
+      expect(res.body.data).toHaveLength(1);
+      expect(res.body.data[0].saleOrderLineId).toBe(orderB.saleOrderLineId);
+    },
+  );
+
+  it('FACTORY_USER + MERCHANDISER can read another Factory\'s Dispatch detail (resolveActorFactoryScope broad path)', async () => {
+    const orderA = await createSingleFactoryApprovedSaleOrder(app, 20);
+    const orderB = await createSingleFactoryApprovedSaleOrder(app, 15);
+    const factoryBUserToken = await createFactoryUserToken(orderB.stock.factoryId);
+    const created = await createCarton(factoryBUserToken, orderB.saleOrder.id, {
+      cartonNumber: 'C1',
+      destinationId: destinationOf(orderB.saleOrder),
+      lines: [{ saleOrderLineId: orderB.saleOrderLineId, quantity: 15 }],
+    }).expect(200);
+
+    const mixedToken = await createFactoryUserToken(orderA.stock.factoryId, ['MERCHANDISER']);
+    await getFactoryDispatch(mixedToken, created.body.data.factoryDispatch.id).expect(200);
+  });
+
+  it('FACTORY_USER + DISTRIBUTOR cannot read another Factory\'s Dispatch detail', async () => {
+    const orderA = await createSingleFactoryApprovedSaleOrder(app, 20);
+    const orderB = await createSingleFactoryApprovedSaleOrder(app, 15);
+    const factoryBUserToken = await createFactoryUserToken(orderB.stock.factoryId);
+    const created = await createCarton(factoryBUserToken, orderB.saleOrder.id, {
+      cartonNumber: 'C1',
+      destinationId: destinationOf(orderB.saleOrder),
+      lines: [{ saleOrderLineId: orderB.saleOrderLineId, quantity: 15 }],
+    }).expect(200);
+
+    const mixedToken = await createFactoryUserToken(orderA.stock.factoryId, ['DISTRIBUTOR']);
+    await getFactoryDispatch(mixedToken, created.body.data.factoryDispatch.id).expect(403);
+  });
+
+  it('FACTORY_USER + MERCHANDISER can still pack (create a carton) for its own mapped Factory — mutation rights are additive, not withdrawn by holding MERCHANDISER too', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
+    const token = await createFactoryUserToken(fixture.stock.factoryId, ['MERCHANDISER']);
+    await createCarton(token, fixture.saleOrder.id, {
+      cartonNumber: 'C1',
+      destinationId: destinationOf(fixture.saleOrder),
+      lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 5 }],
+    }).expect(200);
+  });
+});
+
+describe('FACTORY_DISPATCH_BROAD_READ_ROLES — anti-drift pin (UXAUTH-004)', () => {
+  it('is exactly FACTORY_DISPATCH_VIEW_ROLES minus FACTORY_USER', () => {
+    expect(FACTORY_DISPATCH_BROAD_READ_ROLES).toEqual(['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT']);
+  });
+
+  it('never changes Factory Dispatch mutation roles', () => {
+    expect(FACTORY_DISPATCH_MUTATION_ROLES).toEqual(['ADMIN', 'FACTORY_USER']);
+  });
+});
+
+describe('Mutation boundary — broadened READ must not broaden WRITE (UXAUTH-003/004)', () => {
+  async function draftDispatch(quantity = 20) {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, quantity);
+    const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+    const created = await createCarton(factoryToken, fixture.saleOrder.id, {
+      cartonNumber: 'C1',
+      destinationId: destinationOf(fixture.saleOrder),
+      lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity }],
+    }).expect(200);
+    return {
+      fixture,
+      factoryToken,
+      factoryDispatchId: created.body.data.factoryDispatch.id as string,
+      cartonId: created.body.data.destinations[0].cartons[0].id as string,
+      version: created.body.data.factoryDispatch.version as number,
+    };
+  }
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)('%s cannot create a carton', async (role) => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
+    const { token } = await createRoleToken(role);
+    await createCarton(token, fixture.saleOrder.id, {
+      cartonNumber: 'C1',
+      destinationId: destinationOf(fixture.saleOrder),
+      lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 5 }],
+    }).expect(403);
+  });
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)('%s cannot abandon (delete) a Factory Dispatch', async (role) => {
+    const { factoryDispatchId, version } = await draftDispatch();
+    const { token } = await createRoleToken(role);
+    await request(app)
+      .delete(`/factory-dispatches/${factoryDispatchId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ expectedVersion: version })
+      .expect(403);
+  });
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)('%s cannot edit a carton', async (role) => {
+    const { fixture, factoryDispatchId, cartonId } = await draftDispatch();
+    const { token } = await createRoleToken(role);
+    await updateCarton(token, factoryDispatchId, cartonId, {
+      expectedVersion: 1,
+      destinationId: destinationOf(fixture.saleOrder),
+      lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 5 }],
+    }).expect(403);
+  });
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)('%s cannot remove/retire a carton', async (role) => {
+    const { factoryDispatchId, cartonId } = await draftDispatch();
+    const { token } = await createRoleToken(role);
+    await removeCarton(token, factoryDispatchId, cartonId, 1).expect(403);
+  });
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)('%s cannot confirm a Packing Audit', async (role) => {
+    const { factoryDispatchId, cartonId } = await draftDispatch();
+    const { token } = await createRoleToken(role);
+    await confirmAudit(token, factoryDispatchId, cartonId).expect(403);
+  });
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)('%s cannot finalize a Factory Dispatch', async (role) => {
+    const { factoryDispatchId, version } = await draftDispatch();
+    const { token } = await createRoleToken(role);
+    await request(app)
+      .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ expectedVersion: version })
+      .expect(403);
+  });
+});
+
+describe('GET /factory-dispatches/factory-options (UXAUTH-005 selector lookup)', () => {
+  it.each([
+    ['ADMIN', 200],
+    ['MERCHANDISER', 200],
+    ['SENIOR_MANAGEMENT', 200],
+    ['FACTORY_USER', 403],
+    ['QA_USER', 403],
+    ['ACCOUNTANT', 403],
+    ['DISTRIBUTOR', 403],
+  ] as const)('%s -> %s', async (role, status) => {
+    const { token } = await createRoleToken(role);
+    await factoryOptions(token).expect(status);
+  });
+
+  it('returns only { id, code, name, status } — no Factory master contact/address/audit fields', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+    const { token } = await createRoleToken('ADMIN');
+    const res = await factoryOptions(token).expect(200);
+    const option = res.body.data.find((f: { id: string }) => f.id === fixture.stock.factoryId);
+    expect(option).toBeDefined();
+    expect(Object.keys(option).sort()).toEqual(['code', 'id', 'name', 'status']);
+    expect(option).not.toHaveProperty('contactEmail');
+    expect(option).not.toHaveProperty('contactPhone');
+    expect(option).not.toHaveProperty('addressLine1');
+    expect(option).not.toHaveProperty('createdAt');
+    expect(option).not.toHaveProperty('updatedAt');
+  });
+
+  it('includes an INACTIVE Factory (historical Factory Dispatch access is preserved)', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+    await prisma.factory.update({ where: { id: fixture.stock.factoryId }, data: { status: 'INACTIVE' } });
+    const { token } = await createRoleToken('MERCHANDISER');
+    const res = await factoryOptions(token).expect(200);
+    const option = res.body.data.find((f: { id: string }) => f.id === fixture.stock.factoryId);
+    expect(option).toBeDefined();
+    expect(option.status).toBe('INACTIVE');
+  });
+
+  it('is reachable at its own literal path, not swallowed by GET /factory-dispatches/:id', async () => {
+    const { token } = await createRoleToken('ADMIN');
+    const res = await factoryOptions(token).expect(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
   });
 });
 

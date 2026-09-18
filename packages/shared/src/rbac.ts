@@ -141,6 +141,33 @@ export function canViewFactoryDispatch(user: RoleHolder): boolean {
 }
 
 /**
+ * The subset of FACTORY_DISPATCH_VIEW_ROLES that is scoped to a single mapped
+ * Factory (via getSoleFactoryId) rather than reading broadly. FACTORY_USER is
+ * currently the sole such role.
+ */
+export const FACTORY_DISPATCH_FACTORY_SCOPED_ROLES = ['FACTORY_USER'] as const satisfies readonly Role[];
+
+/**
+ * Roles within FACTORY_DISPATCH_VIEW_ROLES that read broadly across Factories
+ * rather than being scoped to a single mapped Factory (UXAUTH-004). Derived
+ * from FACTORY_DISPATCH_VIEW_ROLES rather than restated, so this cannot
+ * silently drift from it the way the UXAUTH-003/004 route/service mismatch
+ * did — ADMIN, MERCHANDISER and SENIOR_MANAGEMENT are broad readers today;
+ * FACTORY_USER is the sole Factory-scoped exception (see
+ * FACTORY_DISPATCH_FACTORY_SCOPED_ROLES). Read scope is independent of
+ * mutation scope — see FACTORY_DISPATCH_MUTATION_ROLES above, which is not
+ * affected by this list and additively includes FACTORY_USER regardless of
+ * any other role a given account also holds.
+ */
+export const FACTORY_DISPATCH_BROAD_READ_ROLES = FACTORY_DISPATCH_VIEW_ROLES.filter(
+  (role) => !FACTORY_DISPATCH_FACTORY_SCOPED_ROLES.includes(role as 'FACTORY_USER'),
+) as Array<Exclude<(typeof FACTORY_DISPATCH_VIEW_ROLES)[number], 'FACTORY_USER'>>;
+
+export function canReadFactoryDispatchBroadly(user: RoleHolder): boolean {
+  return hasAnyRole(user, FACTORY_DISPATCH_BROAD_READ_ROLES);
+}
+
+/**
  * Packing Audit (carton inspection sign-off) is a separate authority from
  * packing itself — QA_USER is the sole confirming role (segregation of
  * duties: FACTORY_USER packs, QA_USER audits). ADMIN may VIEW audit state

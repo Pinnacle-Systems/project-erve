@@ -20,6 +20,7 @@ import {
   canSubmitDistributorReturn,
   canApproveDistributorReturn,
   canReceiveDistributorReturn,
+  canReadFactoryDispatchBroadly,
   DISPATCH_ORDER_VIEW_ROLES,
   DISPATCH_ORDER_AUDIT_VIEW_ROLES,
   DISPATCH_ORDER_MUTATION_ROLES,
@@ -239,6 +240,15 @@ export const canMutateDispatchOrders = (user: AuthUser | null | undefined) =>
 
 export const canViewFactoryDispatches = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewFactoryDispatch(user));
+
+// UXAUTH-005: whether the Factory Packing queue page must ask the user to
+// pick an explicit Factory context, i.e. whether this account reads broadly
+// (ADMIN/MERCHANDISER/SENIOR_MANAGEMENT) rather than being scoped to a single
+// mapped Factory (FACTORY_USER). Reuses the exact same shared capability the
+// API's resolveActorFactoryScope uses, so Web and API cannot disagree about
+// which accounts need the selector (see @erve/shared's rbac.ts).
+export const needsFactoryDispatchFactorySelector = (user: AuthUser | null | undefined) =>
+  Boolean(user && canReadFactoryDispatchBroadly(user));
 
 export const canMutateFactoryDispatches = (user: AuthUser | null | undefined) =>
   Boolean(user && canMutateFactoryDispatch(user));

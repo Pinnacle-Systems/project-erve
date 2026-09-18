@@ -16,12 +16,18 @@ import type { FactoryPackingQueueLine } from '../../types.js';
  * The "Awaiting Packing" half is passed in already-loaded (its own endpoint is unbounded); the
  * "Your Factory Dispatches" half is fetched here across every page so the PDF never inherits the
  * screen's own hardcoded `limit: 25`.
+ *
+ * UXAUTH-005: `meta.factoryId` (the same Factory context selected on screen —
+ * undefined for a FACTORY_USER) is threaded into the "Your Factory
+ * Dispatches" re-fetch so a broad reader's export always matches the
+ * Factory currently on screen, never every Factory or a previously selected
+ * one.
  */
 export async function generateFactoryPackingQueueListPdfBlob(
   awaitingPacking: FactoryPackingQueueLine[],
   meta: FactoryPackingQueueListPdfMeta,
 ): Promise<Blob> {
-  const factoryDispatches = await prepareFactoryPackingQueueListPdfData();
+  const factoryDispatches = await prepareFactoryPackingQueueListPdfData(meta.factoryId);
   const viewModel = buildFactoryPackingQueueListViewModel(awaitingPacking, factoryDispatches, meta);
   return renderPdfBlob(<FactoryPackingQueueListDocument viewModel={viewModel} />);
 }

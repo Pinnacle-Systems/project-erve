@@ -59,6 +59,9 @@ vi.mock('../pages/sale-orders/SaleOrderDetailPage.js', () => ({
 vi.mock('../pages/sale-orders/SaleOrderFormPage.js', () => ({
   SaleOrderFormPage: () => <div>SaleOrderFormPage</div>,
 }));
+vi.mock('../pages/fulfillment/FactoryPackingQueuePage.js', () => ({
+  FactoryPackingQueuePage: () => <div>FactoryPackingQueuePage</div>,
+}));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -285,6 +288,21 @@ describe('AppRoutes Permissions', () => {
       await renderRoutes('QA_USER', '/qa');
       expect(getPageContent()).toContain('JobOrderListPage');
       expect(getPageContent()).not.toContain('QaQueuePage');
+    });
+  });
+
+  describe('Factory Packing (UXAUTH-003)', () => {
+    it.each([
+      ['ADMIN', true],
+      ['MERCHANDISER', true],
+      ['FACTORY_USER', true],
+      ['SENIOR_MANAGEMENT', true],
+      ['QA_USER', false],
+      ['ACCOUNTANT', false],
+      ['DISTRIBUTOR', false],
+    ] as const)('factory packing queue route for %s = %s', async (role, allowed) => {
+      await renderRoutes(role, '/fulfillment/factory-dispatches');
+      expect(getPageContent()).toContain(allowed ? 'FactoryPackingQueuePage' : 'ForbiddenPage');
     });
   });
 });

@@ -84,7 +84,6 @@ import {
   USER_MANAGE_ROLES,
 } from '../auth/permissions.js';
 import {
-  FACTORY_DISPATCH_MUTATION_ROLES,
   FACTORY_DISPATCH_VIEW_ROLES,
   FACTORY_INVOICE_VIEW_ROLES,
   PACKING_AUDIT_VIEW_ROLES,
@@ -466,14 +465,7 @@ export function AppRoutes() {
           </RoleRoute>
         }
       >
-        <Route
-          index
-          element={
-            <RoleRoute allowed={FACTORY_DISPATCH_MUTATION_ROLES}>
-              <FactoryPackingQueuePage />
-            </RoleRoute>
-          }
-        />
+        <Route index element={<FactoryPackingQueuePage />} />
         <Route path=":id" element={<FactoryDispatchDetailPage />} />
       </Route>
       <Route

@@ -45,11 +45,17 @@ export async function confirmErveDispatchDelivery(
     .expect(200);
 }
 
-export async function createFactoryUserToken(factoryId: string) {
+/**
+ * `extraRoles` supports the UXAUTH-004 mixed-role read-scope matrix (e.g. a
+ * FACTORY_USER account that is ALSO MERCHANDISER/ADMIN/SENIOR_MANAGEMENT, or
+ * also a non-broad role like DISTRIBUTOR/QA_USER) without touching any
+ * existing single-role caller of this helper.
+ */
+export async function createFactoryUserToken(factoryId: string, extraRoles: Role[] = []) {
   const { userId, token } = await createTestUserAndToken({
     email: `factory-${createId()}@test.local`,
     password: 'pass',
-    roles: ['FACTORY_USER'],
+    roles: ['FACTORY_USER', ...extraRoles],
   });
   await prisma.userFactory.create({ data: { id: createId(), userId, factoryId } });
   return token;

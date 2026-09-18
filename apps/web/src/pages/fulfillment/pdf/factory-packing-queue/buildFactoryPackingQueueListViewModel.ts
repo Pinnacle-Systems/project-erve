@@ -4,6 +4,12 @@ import { FACTORY_DISPATCH_STATUS_LABELS } from '../shared/fulfillmentPdfLabels.j
 export interface FactoryPackingQueueListPdfMeta {
   generatedAt: string;
   generatedBy?: string | null;
+  // UXAUTH-005: the Factory context selected on screen by a broad reader
+  // (ADMIN/MERCHANDISER/SENIOR_MANAGEMENT); undefined for FACTORY_USER, who
+  // is scoped server-side regardless of this field. Not rendered into the
+  // document itself — only used to scope the "Your Factory Dispatches"
+  // re-fetch in generateFactoryPackingQueueListPdf.tsx to the same Factory.
+  factoryId?: string;
 }
 
 export interface FactoryPackingQueueAwaitingRow {

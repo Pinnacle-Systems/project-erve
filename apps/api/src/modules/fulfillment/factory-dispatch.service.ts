@@ -4,6 +4,7 @@ import {
   canMutateFactoryDispatch,
   canViewFactoryDispatch,
   canViewPackingAudit,
+  canReadFactoryDispatchBroadly,
 } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { getSoleFactoryId } from '../../auth/access.js';
@@ -15,6 +16,7 @@ import { allocateDocumentSerial } from '../master-data/document-sequence.service
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { getPhysicalPackedQuantitiesForLines, reconcileFactoryDispatchLineAttribution } from './packing-reconciliation.js';
 import { generateFactoryInvoiceForFinalizedDispatch } from './factory-invoice.service.js';
+import { listFactories } from '../master-data/master-data.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -34,10 +36,17 @@ function assertViewAccess(actor: CurrentUser): void {
   }
 }
 
-// null means "no restriction" (ADMIN) — every other mutating role is scoped
-// to its own single mapped Factory.
+// null means "no restriction" — ADMIN/MERCHANDISER/SENIOR_MANAGEMENT read
+// broadly (UXAUTH-004; see canReadFactoryDispatchBroadly/
+// FACTORY_DISPATCH_BROAD_READ_ROLES, the single shared definition of "broad"
+// also consumed by the Web selector-visibility check and by
+// getFactoryPackingQueue below). Every other view role — currently just
+// FACTORY_USER — is scoped to its own single mapped Factory. This is a READ
+// scope only; mutation authority is governed independently by
+// assertMutationAccess/canMutateFactoryDispatch, which additively includes
+// FACTORY_USER regardless of what other roles an account also holds.
 function resolveActorFactoryScope(actor: CurrentUser): string | null {
-  if (actor.roles.includes('ADMIN')) return null;
+  if (canReadFactoryDispatchBroadly(actor)) return null;
   return getSoleFactoryId(actor);
 }
 
@@ -460,7 +469,7 @@ export async function getFactoryPackingQueue(actor: CurrentUser, requestedFactor
   assertViewAccess(actor);
 
   let factoryId: string;
-  if (actor.roles.includes('ADMIN')) {
+  if (canReadFactoryDispatchBroadly(actor)) {
     if (requestedFactoryId) factoryId = requestedFactoryId;
     else if (actor.factoryIds.length === 1) factoryId = actor.factoryIds[0]!;
     else throw HttpError.badRequest('factoryId is required');
@@ -510,6 +519,42 @@ export async function getFactoryPackingQueue(actor: CurrentUser, requestedFactor
       };
     })
     .filter((row) => row.remainingQuantity > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Factory options — the minimal lookup that backs the Web Factory context
+// selector for broad readers (UXAUTH-005). Deliberately NOT the same
+// endpoint as GET /factories (master-data.routes.ts's canViewFactories),
+// which is gated ADMIN/MERCHANDISER only and would 403 for
+// SENIOR_MANAGEMENT — this route instead reuses FACTORY_DISPATCH_BROAD_READ_
+// ROLES, the same capability that already governs Factory Dispatch reads, so
+// the selector's own data source can never fall out of step with who is
+// allowed to use it. FACTORY_USER never calls this — it doesn't use the
+// selector — so it is intentionally excluded from this route's guard.
+// ---------------------------------------------------------------------------
+
+export interface FactoryOption {
+  id: string;
+  code: string;
+  name: string;
+  status: 'ACTIVE' | 'INACTIVE';
+}
+
+function assertBroadFactoryReadAccess(actor: CurrentUser): void {
+  if (!canReadFactoryDispatchBroadly(actor)) {
+    throw HttpError.forbidden('You do not have permission to list Factories for the packing context selector');
+  }
+}
+
+export async function getFactoryOptions(actor: CurrentUser): Promise<FactoryOption[]> {
+  assertBroadFactoryReadAccess(actor);
+  // Deliberately no status filter — broad readers need to keep selecting a
+  // Factory that has since been made INACTIVE to reach its historical
+  // Factory Dispatches (INACTIVE only blocks new creation elsewhere in this
+  // codebase, e.g. sale-orders.service.ts's "Factory is not active" check —
+  // it has never gated a read).
+  const factories = await listFactories(actor, {});
+  return factories.map(({ id, code, name, status }) => ({ id, code, name, status }));
 }
 
 // ---------------------------------------------------------------------------

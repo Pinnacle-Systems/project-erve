@@ -1,5 +1,10 @@
 import { Router } from 'express';
-import { FACTORY_DISPATCH_MUTATION_ROLES, FACTORY_DISPATCH_VIEW_ROLES, PACKING_AUDIT_MUTATION_ROLES } from '@erve/shared';
+import {
+  FACTORY_DISPATCH_BROAD_READ_ROLES,
+  FACTORY_DISPATCH_MUTATION_ROLES,
+  FACTORY_DISPATCH_VIEW_ROLES,
+  PACKING_AUDIT_MUTATION_ROLES,
+} from '@erve/shared';
 import { requireAuth } from '../../auth/auth.middleware.js';
 import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
@@ -17,6 +22,7 @@ export const factoryDispatchesRouter = Router();
 factoryDispatchesRouter.use(requireAuth);
 
 const canView = requireRoles(...FACTORY_DISPATCH_VIEW_ROLES);
+const canReadFactoryOptions = requireRoles(...FACTORY_DISPATCH_BROAD_READ_ROLES);
 const canMutate = requireRoles(...FACTORY_DISPATCH_MUTATION_ROLES);
 const canAudit = requireRoles(...PACKING_AUDIT_MUTATION_ROLES);
 
@@ -30,6 +36,19 @@ factoryDispatchesRouter.get(
     const query = packingQueueQuerySchema.parse(req.query);
     const queue = await factoryDispatchService.getFactoryPackingQueue(req.user!, query.factoryId);
     res.status(200).json(successResponse(queue));
+  }),
+);
+
+// UXAUTH-005: the Factory Packing context selector's lookup. Gated to
+// FACTORY_DISPATCH_BROAD_READ_ROLES (not the wider canView) — FACTORY_USER
+// never needs this, it never sees the selector. Must stay registered before
+// `/:id` so the literal path "factory-options" is never captured as an id.
+factoryDispatchesRouter.get(
+  '/factory-options',
+  canReadFactoryOptions,
+  asyncHandler(async (req, res) => {
+    const options = await factoryDispatchService.getFactoryOptions(req.user!);
+    res.status(200).json(successResponse(options));
   }),
 );
 
