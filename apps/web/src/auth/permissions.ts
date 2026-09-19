@@ -286,6 +286,22 @@ export const canEditFactoryInvoiceFinancials = (user: AuthUser | null | undefine
 export const canViewSaleOrReturnPositions = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewSaleOrReturnPosition(user));
 
+// UXAUTH-016: the only role that both reads Sale-or-Return positions broadly
+// across every Distributor (isBroadViewer in distributor-sales-report /
+// distributor-return .service.ts) AND may submit a Sales Report or Return
+// (DISTRIBUTOR_SALES_REPORT_SUBMIT_ROLES / DISTRIBUTOR_RETURN_SUBMIT_ROLES)
+// is ADMIN — DISTRIBUTOR also submits but is hard-scoped server-side to its
+// own single mapped Distributor (getSoleDistributorId), so it never needs to
+// choose one. MERCHANDISER/SENIOR_MANAGEMENT/ACCOUNTANT read broadly too but
+// cannot submit at all, so their existing unfiltered browsing view is left
+// unchanged. Centralized here so the page never derives a submission
+// Distributor from row order/first-loaded-row (see
+// SaleOrReturnPositionListPage.tsx).
+export const SALE_OR_RETURN_POSITION_DISTRIBUTOR_SELECTOR_ROLES = ['ADMIN'] as const satisfies readonly Role[];
+
+export const needsSaleOrReturnPositionDistributorSelector = (user: AuthUser | null | undefined) =>
+  hasRole(user, SALE_OR_RETURN_POSITION_DISTRIBUTOR_SELECTOR_ROLES);
+
 export const canViewDistributorSalesReports = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewDistributorSalesReport(user));
 

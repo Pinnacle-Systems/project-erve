@@ -211,6 +211,55 @@ describe('Distributor Return — eligibility', () => {
     await submitReturn(otherToken, otherDistributor.id, dispatch.id, fixture.saleOrderLineId, 5).expect(403);
   });
 
+  // UXAUTH-016: ADMIN is the only actor whose input.distributorId is trusted
+  // directly (see submitDistributorReturn) rather than resolved from
+  // getSoleDistributorId — so it is the only actor for whom a client bug
+  // deriving distributorId from something other than the actually-submitted
+  // lines (e.g. the historical `rows[0]?.distributor.id`) could ever produce
+  // a request whose lines don't all belong to the submitted distributorId.
+  // These two tests prove the existing per-line
+  // `dispatch.distributorId !== input.distributorId` guard already covers
+  // that ADMIN path atomically, and were previously untested.
+  it('lets ADMIN submit a return when every line belongs to the submitted distributorId', async () => {
+    const { fixture, dispatch } = await deliveredSaleReturnFixture(50);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    await request(app)
+      .post('/distributor-returns')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        distributorId: fixture.stock.distributorId,
+        returnDate: '2026-09-01',
+        returnReason: 'End of season unsold stock',
+        lines: [{ erveDispatchId: dispatch.id, saleOrderLineId: fixture.saleOrderLineId, requestedQuantity: 5 }],
+      })
+      .expect(201);
+  });
+
+  it('rejects an ADMIN submission mixing lines from two Distributors under one distributorId, atomically (no return is created)', async () => {
+    const { fixture: fixtureA, dispatch: dispatchA } = await deliveredSaleReturnFixture(50);
+    const { fixture: fixtureB, dispatch: dispatchB } = await deliveredSaleReturnFixture(50);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+
+    await request(app)
+      .post('/distributor-returns')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        distributorId: fixtureA.stock.distributorId,
+        returnDate: '2026-09-01',
+        returnReason: 'End of season unsold stock',
+        lines: [
+          { erveDispatchId: dispatchA.id, saleOrderLineId: fixtureA.saleOrderLineId, requestedQuantity: 5 },
+          { erveDispatchId: dispatchB.id, saleOrderLineId: fixtureB.saleOrderLineId, requestedQuantity: 5 },
+        ],
+      })
+      .expect(403);
+
+    const returns = await prisma.distributorReturn.findMany({
+      where: { distributorId: { in: [fixtureA.stock.distributorId, fixtureB.stock.distributorId] } },
+    });
+    expect(returns).toHaveLength(0);
+  });
+
   it('rejects a requested quantity exceeding the returnable quantity', async () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(50);
     await reportActualSale(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 40).expect(201);

@@ -86,6 +86,13 @@ export type {
   SaleOrReturnPositionRow,
 };
 
+export interface Distributor {
+  id: string;
+  code: string;
+  name: string;
+  status: 'ACTIVE' | 'INACTIVE';
+}
+
 export interface PageInfo {
   limit: number;
   hasMore: boolean;
