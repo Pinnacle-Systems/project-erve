@@ -10,6 +10,7 @@ import {
   confirmJobOrderSchema,
   assignedTasksQuerySchema,
   createJobOrderSchema,
+  jobOrderFactoryOptionsQuerySchema,
   listJobOrdersQuerySchema,
   updatePreparedQuantitySchema,
   updateJobOrderDisclaimerSchema,
@@ -21,7 +22,7 @@ import {
 import * as jobOrdersService from './job-orders.service.js';
 import * as qualityExecutionsService from '../quality-executions/quality-executions.service.js';
 import { startQualityExecutionSchema } from '../quality-executions/quality-executions.validation.js';
-import { JOB_ORDER_PRODUCTION_MUTATION_ROLES } from '@erve/shared';
+import { JOB_ORDER_FACTORY_FILTER_ROLES, JOB_ORDER_PRODUCTION_MUTATION_ROLES } from '@erve/shared';
 import { getPooledFactoryInventory } from './pooled-inventory.service.js';
 import { prisma } from '../../db/prisma.js';
 import { pooledInventoryQuerySchema } from './job-orders.validation.js';
@@ -38,6 +39,7 @@ const canViewJobOrders = requireRoles(
 );
 const canCreateJobOrders = requireRoles('ADMIN', 'MERCHANDISER');
 const canWorkflowJobOrders = requireRoles(...JOB_ORDER_PRODUCTION_MUTATION_ROLES);
+const canFilterJobOrdersByFactory = requireRoles(...JOB_ORDER_FACTORY_FILTER_ROLES);
 
 function idempotencyKey(req: { get(name: string): string | undefined }): string {
   const key = req.get('Idempotency-Key')?.trim();
@@ -170,6 +172,23 @@ jobOrdersRouter.get(
     res
       .status(200)
       .json(successResponse(await jobOrdersService.getProcessFlowQualityWork(req.user!)));
+  }),
+);
+
+// UXAUTH-014: the Job Order Factory filter's minimal lookup. QA_USER and
+// SENIOR_MANAGEMENT can list Job Orders but are denied on the broad Factory
+// master (master-data.routes.ts's canViewFactories is ADMIN/MERCHANDISER
+// only) — this route instead reuses JOB_ORDER_FACTORY_FILTER_ROLES, the
+// exact list that governs the Factory filter's visibility on Web, so the two
+// can never drift. Must stay registered before `/:id` so the literal path
+// "factory-options" is never captured as an id.
+jobOrdersRouter.get(
+  '/factory-options',
+  canFilterJobOrdersByFactory,
+  asyncHandler(async (req, res) => {
+    const filters = jobOrderFactoryOptionsQuerySchema.parse(req.query);
+    const options = await jobOrdersService.listFactoryOptionsForJobOrders(filters);
+    res.status(200).json(successResponse(options));
   }),
 );
 

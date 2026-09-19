@@ -3614,3 +3614,91 @@ describe('UXAUTH-002: Factory User Job Order List Scope', () => {
     expect(draftItem).toBeUndefined();
   });
 });
+
+describe('GET /job-orders/factory-options (UXAUTH-014 filter lookup)', () => {
+  it.each([
+    ['ADMIN', 200],
+    ['MERCHANDISER', 200],
+    ['SENIOR_MANAGEMENT', 200],
+    ['QA_USER', 200],
+    ['FACTORY_USER', 403],
+    ['ACCOUNTANT', 403],
+    ['DISTRIBUTOR', 403],
+  ] as const)('applies the Job Order Factory-filter authorization matrix for %s -> %s', async (role, expectedStatus) => {
+    const { token } = await createTestUserAndToken({
+      email: `${role.toLowerCase()}-jo-options@test.local`,
+      password: 'test-password',
+      roles: [role],
+    });
+
+    const res = await request(app)
+      .get('/job-orders/factory-options')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(expectedStatus);
+  });
+
+  it('lets QA_USER and SENIOR_MANAGEMENT fetch factory options while still denying the broad Factory master', async () => {
+    await createTestFactory({ code: 'FAC-OPT', name: 'Option Factory' });
+
+    for (const role of ['QA_USER', 'SENIOR_MANAGEMENT'] as const) {
+      const { token } = await createTestUserAndToken({
+        email: `${role.toLowerCase()}-jo-options-master@test.local`,
+        password: 'test-password',
+        roles: [role],
+      });
+
+      const options = await request(app).get('/job-orders/factory-options').set('Authorization', `Bearer ${token}`);
+      const directFactories = await request(app).get('/factories').set('Authorization', `Bearer ${token}`);
+
+      expect(options.status).toBe(200);
+      expect(options.body.data.length).toBeGreaterThan(0);
+      expect(directFactories.status).toBe(403);
+    }
+  });
+
+  it('returns only { id, code, name, status } — no Factory master contact/address/audit fields', async () => {
+    await createTestFactory({ code: 'FAC-MIN', name: 'Minimal Factory' });
+    const { token } = await createTestUserAndToken({
+      email: 'admin-jo-options-min@test.local',
+      password: 'test-password',
+      roles: ['ADMIN'],
+    });
+
+    const res = await request(app).get('/job-orders/factory-options').set('Authorization', `Bearer ${token}`);
+
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'status'].sort());
+  });
+
+  it('includes inactive factories unless a status filter is passed (historical read access, not a union of visible-record factories)', async () => {
+    const inactiveFactory = await createTestFactory({ code: 'FAC-INA', name: 'Inactive Factory' });
+    await prisma.factory.update({ where: { id: inactiveFactory.id }, data: { status: 'INACTIVE' } });
+    const { token } = await createTestUserAndToken({
+      email: 'admin-jo-options-inactive@test.local',
+      password: 'test-password',
+      roles: ['ADMIN'],
+    });
+
+    const all = await request(app).get('/job-orders/factory-options').set('Authorization', `Bearer ${token}`);
+    const active = await request(app)
+      .get('/job-orders/factory-options')
+      .query({ status: 'ACTIVE' })
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(all.body.data.map((f: { id: string }) => f.id)).toContain(inactiveFactory.id);
+    expect(active.body.data.map((f: { id: string }) => f.id)).not.toContain(inactiveFactory.id);
+  });
+
+  it("is not swallowed by the '/:id' route", async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin-jo-options-route@test.local',
+      password: 'test-password',
+      roles: ['ADMIN'],
+    });
+
+    const res = await request(app).get('/job-orders/factory-options').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+  });
+});

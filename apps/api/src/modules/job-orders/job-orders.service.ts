@@ -10,7 +10,7 @@ import {
   type PaginatedResponse,
 } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
-import type { JobOrderStatus } from '../../db/prisma.js';
+import type { FactoryStatus, JobOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { getSoleFactoryId } from '../../auth/access.js';
@@ -893,6 +893,20 @@ export async function getJobOrderList(
     items: page.map((record) => toJobOrderView(record, { includeSourceOrderSheets })),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
+}
+
+// UXAUTH-014: the minimal fields the Job Order Factory filter needs, gated
+// by JOB_ORDER_FACTORY_FILTER_ROLES rather than the broad Factory master
+// view permission — see job-orders.routes.ts. No status filter is applied
+// unless the caller passes one: Job Order list is historical, so a Factory
+// that has since gone INACTIVE must remain selectable to keep filtering its
+// past Job Orders, not just visible in the unfiltered table.
+export async function listFactoryOptionsForJobOrders(filters: { status?: FactoryStatus }) {
+  return prisma.factory.findMany({
+    where: { status: filters.status },
+    orderBy: { name: 'asc' },
+    select: { id: true, code: true, name: true, status: true },
+  });
 }
 
 export async function getAssignedFactoryTasks(

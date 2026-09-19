@@ -24,6 +24,8 @@ import {
   DISPATCH_ORDER_VIEW_ROLES,
   DISPATCH_ORDER_AUDIT_VIEW_ROLES,
   DISPATCH_ORDER_MUTATION_ROLES,
+  DISPATCH_ORDER_FILTER_ROLES,
+  JOB_ORDER_FACTORY_FILTER_ROLES,
 } from '@erve/shared';
 
 export const MASTER_DATA_DASHBOARD_SHORTCUT_ROLES = [
@@ -124,12 +126,11 @@ export const JOB_ORDER_NAVIGATION_ROLES = [
 
 export const JOB_ORDER_CREATE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
-export const JOB_ORDER_FACTORY_FILTER_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-  'SENIOR_MANAGEMENT',
-  'QA_USER',
-] as const satisfies readonly Role[];
+// UXAUTH-014: role list now lives in @erve/shared's rbac.ts (the single
+// source of truth also used by apps/api's /job-orders/factory-options route
+// guard) — re-exported here so this file's own hasRole() wrapper below and
+// any existing import sites don't need to change.
+export { JOB_ORDER_FACTORY_FILTER_ROLES };
 
 export const QA_VIEW_ROLES = [
   'ADMIN',
@@ -143,18 +144,11 @@ export const QA_VIEW_ROLES = [
 // here so AppRoutes.tsx's existing import site doesn't need to change.
 export { DISPATCH_ORDER_VIEW_ROLES, DISPATCH_ORDER_AUDIT_VIEW_ROLES, DISPATCH_ORDER_MUTATION_ROLES };
 
-// Web-only UI-visibility concern (mirrors JOB_ORDER_FACTORY_FILTER_ROLES
-// above) — not a server permission, since the backend already scopes
-// FACTORY_USER's list to its own Factory regardless of filter params sent.
-// FACTORY_USER is excluded: it is read-only, hard-scoped to a single
-// Factory server-side, so a Factory filter is meaningless and a Distributor
-// filter is a merchandiser-oriented control it has no operational need for.
-export const DISPATCH_ORDER_FILTER_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-  'SENIOR_MANAGEMENT',
-  'ACCOUNTANT',
-] as const satisfies readonly Role[];
+// UXAUTH-015: role list now lives in @erve/shared's rbac.ts (the single
+// source of truth also used by apps/api's /sale-orders/factory-options and
+// /sale-orders/distributor-options route guards) — re-exported here so this
+// file's own hasRole() wrapper below doesn't need to change.
+export { DISPATCH_ORDER_FILTER_ROLES };
 
 function hasRole(user: AuthUser | null | undefined, roles: readonly Role[]): boolean {
   if (!user) return false;

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem } from '@erve/primitives';
+import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
@@ -51,22 +51,27 @@ export function SaleOrderListPage() {
     },
   });
 
+  // UXAUTH-015: Dispatch-Order-specific option lookups — ACCOUNTANT is
+  // denied on both broad masters (/distributors and /factories), and
+  // SENIOR_MANAGEMENT on /factories, so these filters must not depend on
+  // them. No status filter is passed: Dispatch Order list is historical, and
+  // a Distributor/Factory that has since gone INACTIVE must remain
+  // selectable so its past Dispatch Orders stay filterable, not just visible
+  // in the unfiltered table.
   const distributorsQuery = useQuery({
-    queryKey: ['distributors', 'active'],
+    queryKey: ['dispatch-order-distributor-options'],
     enabled: showFilters,
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Distributor[]>>('/distributors', {
-        params: { status: 'ACTIVE' },
-      });
+      const res = await apiClient.get<ApiSuccessResponse<Distributor[]>>('/sale-orders/distributor-options');
       return res.data.data;
     },
   });
 
   const factoriesQuery = useQuery({
-    queryKey: ['factories', 'active'],
+    queryKey: ['dispatch-order-factory-options'],
     enabled: showFilters,
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', { params: { status: 'ACTIVE' } });
+      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/sale-orders/factory-options');
       return res.data.data;
     },
   });
@@ -127,9 +132,20 @@ export function SaleOrderListPage() {
                     width="md"
                   >
                     <SelectItem value="ALL">All distributors</SelectItem>
+                    {distributorsQuery.isLoading && (
+                      <SelectItem value="LOADING" disabled>
+                        Loading distributors…
+                      </SelectItem>
+                    )}
+                    {distributorsQuery.isError && (
+                      <SelectItem value="ERROR" disabled>
+                        Unable to load distributors
+                      </SelectItem>
+                    )}
                     {(distributorsQuery.data ?? []).map((d) => (
                       <SelectItem key={d.id} value={d.id}>
                         {d.name}
+                        {d.status === 'INACTIVE' ? ' (inactive)' : ''}
                       </SelectItem>
                     ))}
                   </SelectField>
@@ -141,9 +157,20 @@ export function SaleOrderListPage() {
                     width="md"
                   >
                     <SelectItem value="ALL">All factories</SelectItem>
+                    {factoriesQuery.isLoading && (
+                      <SelectItem value="LOADING" disabled>
+                        Loading factories…
+                      </SelectItem>
+                    )}
+                    {factoriesQuery.isError && (
+                      <SelectItem value="ERROR" disabled>
+                        Unable to load factories
+                      </SelectItem>
+                    )}
                     {(factoriesQuery.data ?? []).map((f) => (
                       <SelectItem key={f.id} value={f.id}>
                         {f.name}
+                        {f.status === 'INACTIVE' ? ' (inactive)' : ''}
                       </SelectItem>
                     ))}
                   </SelectField>
@@ -151,6 +178,15 @@ export function SaleOrderListPage() {
               ) : undefined
             }
           />
+          {showFilters && (distributorsQuery.isError || factoriesQuery.isError) ? (
+            <ValidationMessage tone="error" className="mt-2">
+              {distributorsQuery.isError && factoriesQuery.isError
+                ? 'Unable to load distributors or factories for filtering. Try again.'
+                : distributorsQuery.isError
+                  ? 'Unable to load distributors for filtering. Try again.'
+                  : 'Unable to load factories for filtering. Try again.'}
+            </ValidationMessage>
+          ) : null}
         </div>
         <PdfActionButtons
           isGenerating={pdfAction.isGenerating}

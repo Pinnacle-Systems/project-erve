@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { factoryStatusSchema } from '../master-data/master-data.validation.js';
 
 export const MAX_JOB_ORDER_DISCLAIMER_LENGTH = 10_000;
 
@@ -105,6 +106,14 @@ export const listJobOrdersQuerySchema = z.object({
   financialYearId: z.string().trim().optional(),
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+// UXAUTH-014: the Job Order Factory filter's minimal lookup. No status
+// filter is required — Job Order list is historical, so a caller may
+// deliberately omit it to keep selecting a Factory that has since gone
+// INACTIVE.
+export const jobOrderFactoryOptionsQuerySchema = z.object({
+  status: factoryStatusSchema.optional(),
 });
 
 export const assignedTasksQuerySchema = z.object({

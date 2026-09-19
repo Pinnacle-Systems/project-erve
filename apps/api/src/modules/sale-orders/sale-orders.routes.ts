@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   DISPATCH_ORDER_AUDIT_VIEW_ROLES,
+  DISPATCH_ORDER_FILTER_ROLES,
   DISPATCH_ORDER_MUTATION_ROLES,
   DISPATCH_ORDER_VIEW_ROLES,
   FACTORY_DISPATCH_MUTATION_ROLES,
@@ -10,7 +11,13 @@ import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { HttpError } from '../../errors/http-error.js';
 import { successResponse } from '../../utils/response.js';
-import { createDispatchOrderSchema, listDispatchOrdersQuerySchema, updateDispatchOrderSchema } from './sale-orders.validation.js';
+import {
+  createDispatchOrderSchema,
+  dispatchOrderDistributorOptionsQuerySchema,
+  dispatchOrderFactoryOptionsQuerySchema,
+  listDispatchOrdersQuerySchema,
+  updateDispatchOrderSchema,
+} from './sale-orders.validation.js';
 import { createCartonSchema } from '../fulfillment/factory-dispatch.validation.js';
 import * as saleOrdersService from './sale-orders.service.js';
 import * as factoryDispatchService from '../fulfillment/factory-dispatch.service.js';
@@ -38,6 +45,7 @@ const canMutate = requireRoles(...DISPATCH_ORDER_MUTATION_ROLES);
 // creation is keyed by the Dispatch Order (Phase 4 plan §2/§5), not a
 // FactoryDispatch id which may not exist yet.
 const canCreateCarton = requireRoles(...FACTORY_DISPATCH_MUTATION_ROLES);
+const canFilterDispatchOrders = requireRoles(...DISPATCH_ORDER_FILTER_ROLES);
 
 function idempotencyKey(req: { get(name: string): string | undefined }): string {
   const key = req.get('Idempotency-Key')?.trim();
@@ -66,6 +74,34 @@ saleOrdersRouter.post(
     const input = createDispatchOrderSchema.parse(req.body);
     const order = await saleOrdersService.createDispatchOrder(req.user!, input, idempotencyKey(req));
     res.status(201).json(successResponse(order));
+  }),
+);
+
+// UXAUTH-015: the Dispatch Order Factory/Distributor filters' minimal
+// lookups. ACCOUNTANT and SENIOR_MANAGEMENT can list Dispatch Orders but are
+// denied on the broad Factory/Distributor masters (master-data.routes.ts's
+// canViewFactories is ADMIN/MERCHANDISER only, and canViewDistributors omits
+// ACCOUNTANT) — these routes instead reuse DISPATCH_ORDER_FILTER_ROLES, the
+// exact list that governs the filters' visibility on Web, so the two can
+// never drift. Must stay registered before `/:id` so the literal path
+// segments are never captured as an id.
+saleOrdersRouter.get(
+  '/factory-options',
+  canFilterDispatchOrders,
+  asyncHandler(async (req, res) => {
+    const filters = dispatchOrderFactoryOptionsQuerySchema.parse(req.query);
+    const options = await saleOrdersService.listFactoryOptionsForDispatchOrders(filters);
+    res.status(200).json(successResponse(options));
+  }),
+);
+
+saleOrdersRouter.get(
+  '/distributor-options',
+  canFilterDispatchOrders,
+  asyncHandler(async (req, res) => {
+    const filters = dispatchOrderDistributorOptionsQuerySchema.parse(req.query);
+    const options = await saleOrdersService.listDistributorOptionsForDispatchOrders(filters);
+    res.status(200).json(successResponse(options));
   }),
 );
 

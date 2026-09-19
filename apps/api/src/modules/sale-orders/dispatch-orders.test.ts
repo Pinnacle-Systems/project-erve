@@ -801,3 +801,114 @@ describe('Dispatch Orders — editing Distributor groups (Correction 8)', () => 
     }).expect(400);
   });
 });
+
+describe('GET /sale-orders/factory-options & /sale-orders/distributor-options (UXAUTH-015 filter lookups)', () => {
+  it.each([
+    ['ADMIN', 200],
+    ['MERCHANDISER', 200],
+    ['SENIOR_MANAGEMENT', 200],
+    ['ACCOUNTANT', 200],
+    ['FACTORY_USER', 403],
+    ['QA_USER', 403],
+    ['DISTRIBUTOR', 403],
+  ] as const)('applies the Dispatch Order filter authorization matrix for %s -> %s', async (role, expectedStatus) => {
+    const token = await roleToken([role]);
+
+    const factoryOptions = await request(app).get('/sale-orders/factory-options').set('Authorization', `Bearer ${token}`);
+    const distributorOptions = await request(app)
+      .get('/sale-orders/distributor-options')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(factoryOptions.status).toBe(expectedStatus);
+    expect(distributorOptions.status).toBe(expectedStatus);
+  });
+
+  it('lets ACCOUNTANT fetch factory and distributor options while still denying both broad masters', async () => {
+    await createTestFactory({ code: 'FAC-DOPT', name: 'Dispatch Option Factory' });
+    await createTestDistributor({ code: 'DIST-DOPT', name: 'Dispatch Option Distributor' });
+    const token = await roleToken(['ACCOUNTANT']);
+
+    const factoryOptions = await request(app).get('/sale-orders/factory-options').set('Authorization', `Bearer ${token}`);
+    const distributorOptions = await request(app)
+      .get('/sale-orders/distributor-options')
+      .set('Authorization', `Bearer ${token}`);
+    const directFactories = await request(app).get('/factories').set('Authorization', `Bearer ${token}`);
+    const directDistributors = await request(app).get('/distributors').set('Authorization', `Bearer ${token}`);
+
+    expect(factoryOptions.status).toBe(200);
+    expect(distributorOptions.status).toBe(200);
+    expect(factoryOptions.body.data.length).toBeGreaterThan(0);
+    expect(distributorOptions.body.data.length).toBeGreaterThan(0);
+    expect(directFactories.status).toBe(403);
+    expect(directDistributors.status).toBe(403);
+  });
+
+  it('lets SENIOR_MANAGEMENT fetch factory options through the transaction-specific endpoint (broad master already denies it)', async () => {
+    await createTestFactory({ code: 'FAC-SM', name: 'Senior Management Factory' });
+    const token = await roleToken(['SENIOR_MANAGEMENT']);
+
+    const factoryOptions = await request(app).get('/sale-orders/factory-options').set('Authorization', `Bearer ${token}`);
+    const directFactories = await request(app).get('/factories').set('Authorization', `Bearer ${token}`);
+
+    expect(factoryOptions.status).toBe(200);
+    expect(factoryOptions.body.data.length).toBeGreaterThan(0);
+    expect(directFactories.status).toBe(403);
+  });
+
+  it('returns only { id, code, name, status } for each — no Factory/Distributor master contact/address/audit fields', async () => {
+    await createTestFactory({ code: 'FAC-DMIN', name: 'Minimal Dispatch Factory' });
+    await createTestDistributor({ code: 'DIST-DMIN', name: 'Minimal Dispatch Distributor' });
+    const token = await roleToken(['ADMIN']);
+
+    const factoryOptions = await request(app).get('/sale-orders/factory-options').set('Authorization', `Bearer ${token}`);
+    const distributorOptions = await request(app)
+      .get('/sale-orders/distributor-options')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(Object.keys(factoryOptions.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'status'].sort());
+    expect(Object.keys(distributorOptions.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'status'].sort());
+  });
+
+  it('includes inactive factories/distributors unless a status filter is passed (historical read access, not a union of visible-record values)', async () => {
+    const inactiveFactory = await createTestFactory({ code: 'FAC-DINA', name: 'Inactive Dispatch Factory' });
+    await prisma.factory.update({ where: { id: inactiveFactory.id }, data: { status: 'INACTIVE' } });
+    const inactiveDistributor = await createTestDistributor({
+      code: 'DIST-DINA',
+      name: 'Inactive Dispatch Distributor',
+      status: 'INACTIVE',
+    });
+    const token = await roleToken(['ADMIN']);
+
+    const allFactories = await request(app).get('/sale-orders/factory-options').set('Authorization', `Bearer ${token}`);
+    const activeFactories = await request(app)
+      .get('/sale-orders/factory-options')
+      .query({ status: 'ACTIVE' })
+      .set('Authorization', `Bearer ${token}`);
+    const allDistributors = await request(app)
+      .get('/sale-orders/distributor-options')
+      .set('Authorization', `Bearer ${token}`);
+    const activeDistributors = await request(app)
+      .get('/sale-orders/distributor-options')
+      .query({ status: 'ACTIVE' })
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(allFactories.body.data.map((f: { id: string }) => f.id)).toContain(inactiveFactory.id);
+    expect(activeFactories.body.data.map((f: { id: string }) => f.id)).not.toContain(inactiveFactory.id);
+    expect(allDistributors.body.data.map((d: { id: string }) => d.id)).toContain(inactiveDistributor.id);
+    expect(activeDistributors.body.data.map((d: { id: string }) => d.id)).not.toContain(inactiveDistributor.id);
+  });
+
+  it("is not swallowed by the '/:id' route", async () => {
+    const token = await roleToken(['ADMIN']);
+
+    const factoryOptions = await request(app).get('/sale-orders/factory-options').set('Authorization', `Bearer ${token}`);
+    const distributorOptions = await request(app)
+      .get('/sale-orders/distributor-options')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(factoryOptions.status).toBe(200);
+    expect(Array.isArray(factoryOptions.body.data)).toBe(true);
+    expect(distributorOptions.status).toBe(200);
+    expect(Array.isArray(distributorOptions.body.data)).toBe(true);
+  });
+});

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
 import { FilterBar, getQaStatusPresentation, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem } from '@erve/primitives';
+import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import {
@@ -16,8 +16,7 @@ import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import type { Factory } from '../master-data/types.js';
-import type { JobOrder, JobOrderStatus } from './types.js';
+import type { JobOrder, JobOrderFactoryOption, JobOrderStatus } from './types.js';
 import {
   CONFIRMATION_LABELS,
   JOB_ORDER_STATUS_LABELS,
@@ -86,13 +85,19 @@ export function JobOrderListPage() {
     },
   });
 
+  // UXAUTH-014: Job-Order-specific option lookup — QA_USER/SENIOR_MANAGEMENT
+  // can list Job Orders but are denied on the broad Factory master
+  // (/factories is ADMIN/MERCHANDISER only), so this filter must not depend
+  // on it. No status filter is passed: Job Order list is historical, and a
+  // Factory that has since gone INACTIVE must remain selectable so its past
+  // Job Orders stay filterable, not just visible in the unfiltered table.
   const factoriesQuery = useQuery({
-    queryKey: ['factories', 'active'],
+    queryKey: ['job-order-factory-options'],
     enabled: mayFilterByFactory,
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
-        params: { status: 'ACTIVE' },
-      });
+      const res = await apiClient.get<ApiSuccessResponse<JobOrderFactoryOption[]>>(
+        '/job-orders/factory-options',
+      );
       return res.data.data;
     },
   });
@@ -181,9 +186,20 @@ export function JobOrderListPage() {
                     width="md"
                   >
                     <SelectItem value="ALL">All factories</SelectItem>
+                    {factoriesQuery.isLoading && (
+                      <SelectItem value="LOADING" disabled>
+                        Loading factories…
+                      </SelectItem>
+                    )}
+                    {factoriesQuery.isError && (
+                      <SelectItem value="ERROR" disabled>
+                        Unable to load factories
+                      </SelectItem>
+                    )}
                     {(factoriesQuery.data ?? []).map((factory) => (
                       <SelectItem key={factory.id} value={factory.id}>
                         {factory.name}
+                        {factory.status === 'INACTIVE' ? ' (inactive)' : ''}
                       </SelectItem>
                     ))}
                   </SelectField>
@@ -191,6 +207,11 @@ export function JobOrderListPage() {
               </>
             }
           />
+          {mayFilterByFactory && factoriesQuery.isError ? (
+            <ValidationMessage tone="error" className="mt-2">
+              Unable to load factories for filtering. Try again.
+            </ValidationMessage>
+          ) : null}
         </div>
         <PdfActionButtons
           isGenerating={pdfAction.isGenerating}
