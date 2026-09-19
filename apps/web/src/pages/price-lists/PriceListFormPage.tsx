@@ -31,13 +31,18 @@ export function PriceListFormPage() {
     },
   });
 
-  const distributorsQuery = useQuery({
-    queryKey: ['distributors', 'active'],
+  // Price-List-specific option lookup: ACCOUNTANT can create Price Lists but
+  // is denied on the broad /distributors master endpoint, so the picker must
+  // not depend on it. Edit mode never queries this — the distributor field is
+  // disabled post-creation and hydrated straight from the loaded price list.
+  const distributorOptionsQuery = useQuery({
+    queryKey: ['price-list-distributor-options', 'ACTIVE'],
     enabled: !isEdit,
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PriceListDistributor[]>>('/distributors', {
-        params: { status: 'ACTIVE' },
-      });
+      const res = await apiClient.get<ApiSuccessResponse<PriceListDistributor[]>>(
+        '/price-lists/distributor-options',
+        { params: { status: 'ACTIVE' } },
+      );
       return res.data.data;
     },
   });
@@ -134,26 +139,45 @@ export function PriceListFormPage() {
         >
           <FormSection title="Price List Details">
             <FormGrid layout="content">
-              <SelectField
-                label="Distributor *"
-                value={distributorId || 'NONE'}
-                disabled={isEdit}
-                onValueChange={(value) => setDistributorId(value === 'NONE' ? '' : value)}
-                width="md"
-              >
-                <SelectItem value="NONE">Select distributor</SelectItem>
-                {isEdit && priceListQuery.data ? (
-                  <SelectItem value={priceListQuery.data.distributor.id}>
-                    {priceListQuery.data.distributor.name}
-                  </SelectItem>
-                ) : (
-                  (distributorsQuery.data ?? []).map((distributor) => (
-                    <SelectItem key={distributor.id} value={distributor.id}>
-                      {distributor.name}
+              <div className="flex flex-col gap-1.5">
+                <SelectField
+                  label="Distributor *"
+                  value={distributorId || 'NONE'}
+                  disabled={isEdit}
+                  onValueChange={(value) => setDistributorId(value === 'NONE' ? '' : value)}
+                  width="md"
+                >
+                  <SelectItem value="NONE">Select distributor</SelectItem>
+                  {isEdit && priceListQuery.data ? (
+                    <SelectItem value={priceListQuery.data.distributor.id}>
+                      {priceListQuery.data.distributor.name}
                     </SelectItem>
-                  ))
-                )}
-              </SelectField>
+                  ) : (
+                    <>
+                      {distributorOptionsQuery.isLoading && (
+                        <SelectItem value="LOADING" disabled>
+                          Loading distributors…
+                        </SelectItem>
+                      )}
+                      {distributorOptionsQuery.isError && (
+                        <SelectItem value="ERROR" disabled>
+                          Unable to load distributors
+                        </SelectItem>
+                      )}
+                      {(distributorOptionsQuery.data ?? []).map((distributor) => (
+                        <SelectItem key={distributor.id} value={distributor.id}>
+                          {distributor.name}
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
+                </SelectField>
+                {!isEdit && distributorOptionsQuery.isError ? (
+                  <ValidationMessage tone="error">
+                    {apiErrorMessage(distributorOptionsQuery.error, 'Unable to load distributors')}
+                  </ValidationMessage>
+                ) : null}
+              </div>
 
               <TextField
                 label="Name *"

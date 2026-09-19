@@ -72,11 +72,14 @@ export function PriceListDetailPage() {
     filename: priceListDetailPdfFilename,
   });
 
-  const stylesQuery = useQuery({
-    queryKey: ['styles', 'active'],
+  // Price-List-specific option lookup: ACCOUNTANT can edit a DRAFT price
+  // list's lines but is denied on the broad /styles master endpoint, so the
+  // "Add Style Price" picker must not depend on it.
+  const styleOptionsQuery = useQuery({
+    queryKey: ['price-list-style-options', 'ACTIVE'],
     enabled: canEdit,
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<StyleOption[]>>('/styles', {
+      const res = await apiClient.get<ApiSuccessResponse<StyleOption[]>>('/price-lists/style-options', {
         params: { status: 'ACTIVE' },
       });
       return res.data.data;
@@ -193,7 +196,7 @@ export function PriceListDetailPage() {
   }
 
   const pricedStyleIds = new Set(priceList.lines.map((line) => line.styleId));
-  const availableStyles = (stylesQuery.data ?? []).filter((style) => !pricedStyleIds.has(style.id));
+  const availableStyles = (styleOptionsQuery.data ?? []).filter((style) => !pricedStyleIds.has(style.id));
 
   return (
     <div className="space-y-6">
@@ -284,12 +287,32 @@ export function PriceListDetailPage() {
                 width="fill"
               >
                 <SelectItem value="NONE">Select style</SelectItem>
+                {styleOptionsQuery.isLoading && (
+                  <SelectItem value="LOADING" disabled>
+                    Loading styles…
+                  </SelectItem>
+                )}
+                {styleOptionsQuery.isError && (
+                  <SelectItem value="ERROR" disabled>
+                    Unable to load styles
+                  </SelectItem>
+                )}
+                {styleOptionsQuery.isSuccess && availableStyles.length === 0 && (
+                  <SelectItem value="EMPTY" disabled>
+                    No styles available to price
+                  </SelectItem>
+                )}
                 {availableStyles.map((style) => (
                   <SelectItem key={style.id} value={style.id}>
                     {style.styleNumber} - {style.styleName}
                   </SelectItem>
                 ))}
               </SelectField>
+              {styleOptionsQuery.isError ? (
+                <ValidationMessage tone="error" className="mt-1.5">
+                  {apiErrorMessage(styleOptionsQuery.error, 'Unable to load styles')}
+                </ValidationMessage>
+              ) : null}
             </div>
             <TextField
               label="Unit Price (INR)"

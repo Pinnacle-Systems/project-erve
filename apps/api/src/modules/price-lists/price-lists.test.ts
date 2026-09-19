@@ -920,4 +920,147 @@ describe('price lists API', () => {
       expect(mutate.body.data.name).toBe('X');
     });
   });
+
+  // UXAUTH-013: ACCOUNTANT can manage Price Lists but is denied on the broad
+  // Style/Distributor masters. These endpoints give ACCOUNTANT (and the other
+  // Price-List-capable roles) the minimal option data the Price List
+  // Distributor/Style selectors need, without granting master-data browsing.
+  describe('GET /price-lists/distributor-options & /price-lists/style-options (UXAUTH-013)', () => {
+    it.each([
+      ['ADMIN', 200],
+      ['MERCHANDISER', 200],
+      ['SENIOR_MANAGEMENT', 200],
+      ['ACCOUNTANT', 200],
+      ['FACTORY_USER', 403],
+      ['QA_USER', 403],
+      ['DISTRIBUTOR', 403],
+    ] as const)('applies the Price List read authorization matrix for %s', async (role, expectedStatus) => {
+      const { token } = await createTestUserAndToken({
+        email: `${role.toLowerCase()}-pl-options@test.local`,
+        password: 'test-password',
+        roles: [role],
+      });
+
+      const distributorOptions = await request(app)
+        .get('/price-lists/distributor-options')
+        .set('Authorization', `Bearer ${token}`);
+      const styleOptions = await request(app)
+        .get('/price-lists/style-options')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(distributorOptions.status).toBe(expectedStatus);
+      expect(styleOptions.status).toBe(expectedStatus);
+    });
+
+    it('lets ACCOUNTANT fetch distributor and style options while still denying the broad masters', async () => {
+      await createTestDistributor({ code: 'DIST-OPT', name: 'Option Distributors' });
+      await createStyle();
+
+      const { token } = await createTestUserAndToken({
+        email: 'accountant-options@test.local',
+        password: 'test-password',
+        roles: ['ACCOUNTANT'],
+      });
+
+      const distributorOptions = await request(app)
+        .get('/price-lists/distributor-options')
+        .set('Authorization', `Bearer ${token}`);
+      const styleOptions = await request(app)
+        .get('/price-lists/style-options')
+        .set('Authorization', `Bearer ${token}`);
+      const directDistributors = await request(app)
+        .get('/distributors')
+        .set('Authorization', `Bearer ${token}`);
+      const directStyles = await request(app)
+        .get('/styles')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(distributorOptions.status).toBe(200);
+      expect(styleOptions.status).toBe(200);
+      expect(distributorOptions.body.data.length).toBeGreaterThan(0);
+      expect(styleOptions.body.data.length).toBeGreaterThan(0);
+      expect(directDistributors.status).toBe(403);
+      expect(directStyles.status).toBe(403);
+    });
+
+    it('returns only the minimal DTO fields, not the full master record', async () => {
+      await createTestDistributor({ code: 'DIST-MIN', name: 'Minimal Distributors' });
+      await createStyle();
+      const token = await adminToken();
+
+      const distributorOptions = await request(app)
+        .get('/price-lists/distributor-options')
+        .set('Authorization', `Bearer ${token}`);
+      const styleOptions = await request(app)
+        .get('/price-lists/style-options')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(Object.keys(distributorOptions.body.data[0]).sort()).toEqual(
+        ['code', 'id', 'name', 'status'].sort(),
+      );
+      expect(Object.keys(styleOptions.body.data[0]).sort()).toEqual(
+        ['id', 'status', 'styleName', 'styleNumber'].sort(),
+      );
+    });
+
+    it('includes inactive distributors and styles unless a status filter is passed (historical read access)', async () => {
+      const inactiveDist = await createTestDistributor({
+        code: 'DIST-INA',
+        name: 'Inactive Distributors',
+        status: 'INACTIVE',
+      });
+      const inactiveStyle = await createStyle({ status: 'INACTIVE' });
+      const token = await adminToken();
+
+      const allDistributors = await request(app)
+        .get('/price-lists/distributor-options')
+        .set('Authorization', `Bearer ${token}`);
+      const activeDistributors = await request(app)
+        .get('/price-lists/distributor-options')
+        .query({ status: 'ACTIVE' })
+        .set('Authorization', `Bearer ${token}`);
+      const allStyles = await request(app)
+        .get('/price-lists/style-options')
+        .set('Authorization', `Bearer ${token}`);
+      const activeStyles = await request(app)
+        .get('/price-lists/style-options')
+        .query({ status: 'ACTIVE' })
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(allDistributors.body.data.map((d: { id: string }) => d.id)).toContain(inactiveDist.id);
+      expect(activeDistributors.body.data.map((d: { id: string }) => d.id)).not.toContain(inactiveDist.id);
+      expect(allStyles.body.data.map((s: { id: string }) => s.id)).toContain(inactiveStyle.id);
+      expect(activeStyles.body.data.map((s: { id: string }) => s.id)).not.toContain(inactiveStyle.id);
+    });
+
+    it('returns the complete option set, not just a first page', async () => {
+      const token = await adminToken();
+      const created = await Promise.all(
+        Array.from({ length: 25 }, (_, i) => createTestDistributor({ code: `DIST-BULK-${i}`, name: `Bulk Distributor ${i}` })),
+      );
+
+      const res = await request(app)
+        .get('/price-lists/distributor-options')
+        .set('Authorization', `Bearer ${token}`);
+
+      const returnedIds = new Set(res.body.data.map((d: { id: string }) => d.id));
+      expect(created.every((d) => returnedIds.has(d.id))).toBe(true);
+    });
+
+    it("is not swallowed by the '/:id' route", async () => {
+      const token = await adminToken();
+
+      const distributorOptions = await request(app)
+        .get('/price-lists/distributor-options')
+        .set('Authorization', `Bearer ${token}`);
+      const styleOptions = await request(app)
+        .get('/price-lists/style-options')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(distributorOptions.status).toBe(200);
+      expect(Array.isArray(distributorOptions.body.data)).toBe(true);
+      expect(styleOptions.status).toBe(200);
+      expect(Array.isArray(styleOptions.body.data)).toBe(true);
+    });
+  });
 });

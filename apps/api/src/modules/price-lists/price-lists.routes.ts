@@ -7,6 +7,8 @@ import {
   createPriceListLineSchema,
   createPriceListSchema,
   listPriceListsQuerySchema,
+  priceListDistributorOptionsQuerySchema,
+  priceListStyleOptionsQuerySchema,
   priceLookupQuerySchema,
   updatePriceListLineSchema,
   updatePriceListSchema,
@@ -54,6 +56,30 @@ priceListsRouter.get(
     const input = priceLookupQuerySchema.parse(req.query);
     const result = await priceListsService.lookupPriceForActor(req.user!, input);
     res.status(200).json(successResponse(result));
+  }),
+);
+
+// Registered before '/:id' for the same reason as '/lookup': these serve the
+// Price List Distributor/Style selectors under the Price List permission, so
+// ACCOUNTANT (permitted here, denied on the broad Style/Distributor masters)
+// isn't blocked from picking a distributor/style while working a price list.
+priceListsRouter.get(
+  '/distributor-options',
+  canViewPriceLists,
+  asyncHandler(async (req, res) => {
+    const filters = priceListDistributorOptionsQuerySchema.parse(req.query);
+    const options = await priceListsService.listDistributorOptionsForPriceLists(filters);
+    res.status(200).json(successResponse(options));
+  }),
+);
+
+priceListsRouter.get(
+  '/style-options',
+  canViewPriceLists,
+  asyncHandler(async (req, res) => {
+    const filters = priceListStyleOptionsQuerySchema.parse(req.query);
+    const options = await priceListsService.listStyleOptionsForPriceLists(filters);
+    res.status(200).json(successResponse(options));
   }),
 );
 

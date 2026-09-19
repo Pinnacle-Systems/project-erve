@@ -1,6 +1,6 @@
 import { createId } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
-import type { PriceListStatus } from '../../db/prisma.js';
+import type { DistributorStatus, PriceListStatus, StyleStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -244,6 +244,34 @@ export async function lookupPriceForActor(
     throw HttpError.forbidden('You do not have access to this distributor');
   }
   return lookupDistributorPrice(input);
+}
+
+// ---------------------------------------------------------------------------
+// Option lookups (Price List Distributor/Style selectors)
+// ---------------------------------------------------------------------------
+
+// These return the minimal fields the Price List Distributor/Style selectors
+// need, gated by the Price List permission rather than the broad master-data
+// view permission — see price-lists.routes.ts. No status filter is applied
+// unless the caller passes one: the underlying master reads are unpaginated,
+// so omitting the filter (as a historical/editing screen might) returns the
+// complete option set, active and inactive alike, rather than silently
+// hiding an inactive entity a caller still needs to see.
+
+export async function listDistributorOptionsForPriceLists(filters: { status?: DistributorStatus }) {
+  return prisma.distributor.findMany({
+    where: { status: filters.status },
+    orderBy: { name: 'asc' },
+    select: { id: true, code: true, name: true, status: true },
+  });
+}
+
+export async function listStyleOptionsForPriceLists(filters: { status?: StyleStatus }) {
+  return prisma.style.findMany({
+    where: { status: filters.status },
+    orderBy: { styleNumber: 'asc' },
+    select: { id: true, styleNumber: true, styleName: true, status: true },
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem } from '@erve/primitives';
+import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
@@ -45,17 +45,22 @@ export function PriceListListPage() {
     },
   });
 
-  const distributorsQuery = useQuery({
-    queryKey: ['distributors', 'active'],
+  // Price-List-specific option lookup: ACCOUNTANT can manage Price Lists but
+  // is denied on the broad /distributors master endpoint, so this filter must
+  // not depend on it. No status filter is passed — unlike the create form,
+  // this filter browses historical Price Lists too, and a distributor that
+  // has since gone INACTIVE must remain selectable so its price lists stay
+  // filterable, not just visible in the unfiltered table.
+  const distributorOptionsQuery = useQuery({
+    queryKey: ['price-list-distributor-options'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PriceListDistributor[]>>('/distributors', {
-        params: { status: 'ACTIVE' },
-      });
+      const res =
+        await apiClient.get<ApiSuccessResponse<PriceListDistributor[]>>('/price-lists/distributor-options');
       return res.data.data;
     },
   });
 
-  const distributorName = (distributorsQuery.data ?? []).find(
+  const distributorName = (distributorOptionsQuery.data ?? []).find(
     (distributor) => distributor.id === distributorId,
   )?.name;
 
@@ -124,14 +129,30 @@ export function PriceListListPage() {
                 width="md"
               >
                 <SelectItem value="ALL">All distributors</SelectItem>
-                {(distributorsQuery.data ?? []).map((distributor) => (
+                {distributorOptionsQuery.isLoading && (
+                  <SelectItem value="LOADING" disabled>
+                    Loading distributors…
+                  </SelectItem>
+                )}
+                {distributorOptionsQuery.isError && (
+                  <SelectItem value="ERROR" disabled>
+                    Unable to load distributors
+                  </SelectItem>
+                )}
+                {(distributorOptionsQuery.data ?? []).map((distributor) => (
                   <SelectItem key={distributor.id} value={distributor.id}>
                     {distributor.name}
+                    {distributor.status === 'INACTIVE' ? ' (inactive)' : ''}
                   </SelectItem>
                 ))}
               </SelectField>
             }
           />
+          {distributorOptionsQuery.isError ? (
+            <ValidationMessage tone="error" className="mt-2">
+              Unable to load distributors for filtering. Try again.
+            </ValidationMessage>
+          ) : null}
         </div>
         <PdfActionButtons
           isGenerating={pdfAction.isGenerating}

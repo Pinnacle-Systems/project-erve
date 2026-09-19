@@ -196,6 +196,39 @@ describe('styles API', () => {
     expect(removed.status).toBe(200);
     expect(removed.body.data.factories).toHaveLength(0);
   });
+
+  // UXAUTH-013 regression: the Price List option-lookup endpoints exist so
+  // ACCOUNTANT never needs direct access to this master. That fix only holds
+  // if this denial actually stays in place, so lock it in here.
+  it.each([
+    ['ADMIN', 200],
+    ['MERCHANDISER', 200],
+    ['SENIOR_MANAGEMENT', 200],
+    ['FACTORY_USER', 403],
+    ['QA_USER', 403],
+    ['ACCOUNTANT', 403],
+  ] as const)('applies the Style master read authorization matrix for %s', async (role, expectedStatus) => {
+    const { token: adminToken } = await createTestUserAndToken({
+      email: 'style-read-admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const style = await createStyle(adminToken).then((res) => res.body.data);
+
+    const { token } = await createTestUserAndToken({
+      email: `${role.toLowerCase()}-style-read@test.local`,
+      password: 'test-password',
+      roles: [role],
+    });
+
+    const list = await request(app).get('/styles').set('Authorization', `Bearer ${token}`);
+    const detail = await request(app)
+      .get(`/styles/${style.id}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(list.status).toBe(expectedStatus);
+    expect(detail.status).toBe(expectedStatus);
+  });
 });
 
 describe('seasons API', () => {
@@ -1164,6 +1197,39 @@ describe('distributors API', () => {
       expect(created.status).toBe(expectedCreateStatus);
       expect(updated.status).toBe(expectedUpdateStatus);
       expect(statusChanged.status).toBe(expectedUpdateStatus);
+    },
+  );
+
+  // UXAUTH-013 regression: the Price List option-lookup endpoints exist so
+  // ACCOUNTANT never needs direct access to this master. That fix only holds
+  // if this denial actually stays in place, so lock it in here. DISTRIBUTOR
+  // is excluded — it is self-scoped to its own mapped record rather than
+  // uniformly allowed or denied, and is covered by the dedicated
+  // distributor-scoping tests elsewhere in this file.
+  it.each([
+    ['ADMIN', 200],
+    ['MERCHANDISER', 200],
+    ['SENIOR_MANAGEMENT', 200],
+    ['FACTORY_USER', 403],
+    ['QA_USER', 403],
+    ['ACCOUNTANT', 403],
+  ] as const)(
+    'applies the Distributor master read authorization matrix for %s',
+    async (role, expectedStatus) => {
+      const distributor = await createTestDistributor();
+      const { token } = await createTestUserAndToken({
+        email: `${role.toLowerCase()}-distributor-read@test.local`,
+        password: 'test-password',
+        roles: [role],
+      });
+
+      const list = await request(app).get('/distributors').set('Authorization', `Bearer ${token}`);
+      const detail = await request(app)
+        .get(`/distributors/${distributor.id}`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(list.status).toBe(expectedStatus);
+      expect(detail.status).toBe(expectedStatus);
     },
   );
 

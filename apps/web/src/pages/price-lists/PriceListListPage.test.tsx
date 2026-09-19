@@ -13,10 +13,21 @@ import * as printModule from '../../lib/pdf/print.js';
 import { PriceListListPage } from './PriceListListPage.js';
 import type { PriceListSummary } from './types.js';
 
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -43,6 +54,7 @@ afterEach(() => {
   container.remove();
   vi.restoreAllMocks();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function flushMicrotasks(): Promise<void> {
@@ -93,7 +105,7 @@ function makePriceList(overrides: Partial<PriceListSummary> = {}): PriceListSumm
 
 async function renderPage(priceLists: PriceListSummary[] = []) {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/distributors') {
+    if (url === '/price-lists/distributor-options') {
       return { data: { data: [{ id: 'dist-1', code: 'DIST-1', name: 'Acme Distributors', status: 'ACTIVE' }] } };
     }
     if (url === '/price-lists') return { data: { data: priceLists } };
@@ -113,6 +125,126 @@ async function renderPage(priceLists: PriceListSummary[] = []) {
     await flushMicrotasks();
   });
 }
+
+function mockAuthUser(roles: AuthUser['roles']): AuthUser {
+  return { id: 'user-1', email: 'user@test.local', mobile: null, name: 'Test User', roles };
+}
+
+function stubAuth(user: AuthUser): void {
+  vi.spyOn(AuthContext, 'useAuth').mockReturnValue({
+    user,
+    token: 'valid-token',
+    login: vi.fn(),
+    logout: vi.fn(),
+    refreshUser: vi.fn(),
+    isInitializing: false,
+  } as unknown as ReturnType<typeof AuthContext.useAuth>);
+}
+
+describe('PriceListListPage — ACCOUNTANT distributor lookup (UXAUTH-013)', () => {
+  it('populates the distributor filter for ACCOUNTANT via the Price-List-specific lookup, not the broad master', async () => {
+    stubAuth(mockAuthUser(['ACCOUNTANT']));
+
+    await renderPage([makePriceList()]);
+
+    const optionCalls = vi
+      .mocked(apiClient.get)
+      .mock.calls.filter((call) => call[0] === '/price-lists/distributor-options');
+    const masterCalls = vi.mocked(apiClient.get).mock.calls.filter((call) => call[0] === '/distributors');
+    expect(optionCalls.length).toBeGreaterThan(0);
+    expect(masterCalls.length).toBe(0);
+
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Distributor"]')!;
+    await act(async () => trigger.click());
+    await waitFor(
+      () => document.body.querySelectorAll('[role="option"]').length > 0,
+    );
+    const options = Array.from(document.body.querySelectorAll('[role="option"]')).map((el) =>
+      el.textContent?.trim(),
+    );
+    expect(options).toContain('Acme Distributors');
+  });
+
+  it('shows a truthful error instead of an empty distributor filter when the lookup fails for ACCOUNTANT', async () => {
+    stubAuth(mockAuthUser(['ACCOUNTANT']));
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/price-lists/distributor-options') {
+        const error = new Error('Forbidden') as Error & { isAxiosError: boolean; response: unknown };
+        error.isAxiosError = true;
+        error.response = { status: 403, data: { error: { message: 'Forbidden' } } };
+        throw error;
+      }
+      if (url === '/price-lists') return { data: { data: [] } };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter>
+            <PriceListListPage />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await waitFor(
+      () => container.textContent?.includes('Unable to load distributors for filtering') ?? false,
+    );
+
+    expect(container.textContent).toContain('Unable to load distributors for filtering');
+  });
+
+  it('requests the full distributor option set (no status filter) so an inactive distributor stays filterable', async () => {
+    stubAuth(mockAuthUser(['ACCOUNTANT']));
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/price-lists/distributor-options') {
+        return {
+          data: {
+            data: [
+              { id: 'dist-1', code: 'DIST-1', name: 'Acme Distributors', status: 'ACTIVE' },
+              { id: 'dist-2', code: 'DIST-2', name: 'Old Traders', status: 'INACTIVE' },
+            ],
+          },
+        };
+      }
+      if (url === '/price-lists') return { data: { data: [] } };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter>
+            <PriceListListPage />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    // The list-page filter browses historical Price Lists, so it must not
+    // scope itself to ACTIVE-only the way the create form and the style
+    // picker do — a Price List belonging to a now-inactive Distributor would
+    // otherwise become impossible to filter by.
+    const optionCall = vi
+      .mocked(apiClient.get)
+      .mock.calls.find((call) => call[0] === '/price-lists/distributor-options');
+    expect(optionCall?.[1]).toBeUndefined();
+
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Distributor"]')!;
+    await act(async () => trigger.click());
+    await waitFor(() => document.body.querySelectorAll('[role="option"]').length > 0);
+    const options = Array.from(document.body.querySelectorAll('[role="option"]')).map((el) =>
+      el.textContent?.trim(),
+    );
+    expect(options).toContain('Acme Distributors');
+    expect(options).toContain('Old Traders (inactive)');
+  });
+});
 
 describe('PriceListListPage search debounce', () => {
   it('debounces the price list search so rapid typing issues only the final request', async () => {

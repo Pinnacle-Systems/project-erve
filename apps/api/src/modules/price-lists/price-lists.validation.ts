@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { distributorStatusSchema, styleStatusSchema } from '../master-data/master-data.validation.js';
 
 // Price-list effective dates are day-granular (the columns are @db.Date), so
 // inputs are plain YYYY-MM-DD strings — accepting full timestamps here would
@@ -47,4 +48,17 @@ export const priceLookupQuerySchema = z.object({
   distributorId: z.string().trim().min(1),
   styleId: z.string().trim().min(1),
   date: dateOnly,
+});
+
+// Minimal option lookups for the Price List Distributor/Style selectors.
+// Deliberately reuses the master-data status enums (not the broad master
+// endpoints themselves) so ACCOUNTANT — permitted on Price Lists but not on
+// the Style/Distributor masters — can populate these selectors without a
+// grant to browse either master.
+export const priceListDistributorOptionsQuerySchema = z.object({
+  status: distributorStatusSchema.optional(),
+});
+
+export const priceListStyleOptionsQuerySchema = z.object({
+  status: styleStatusSchema.optional(),
 });
