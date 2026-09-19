@@ -1,7 +1,7 @@
 import { createId } from '@erve/shared';
 import { createHash } from 'node:crypto';
 import { Prisma, prisma } from '../../db/prisma.js';
-import type { PurchaseMode } from '../../db/prisma.js';
+import type { DistributorStatus, FactoryStatus, PurchaseMode } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleFactoryId, requireFactoryAccess } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -588,6 +588,29 @@ export async function getSaleOrderList(
     items: await Promise.all(page.map((order) => toSaleOrderView(order))),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
+}
+
+// UXAUTH-015: the minimal fields the Dispatch Order Factory/Distributor
+// filters need, gated by DISPATCH_ORDER_FILTER_ROLES rather than the broad
+// Factory/Distributor master view permissions — see sale-orders.routes.ts.
+// No status filter is applied unless the caller passes one: Dispatch Order
+// list is historical, so a Factory/Distributor that has since gone INACTIVE
+// must remain selectable to keep filtering its past Dispatch Orders, not
+// just visible in the unfiltered table.
+export async function listFactoryOptionsForDispatchOrders(filters: { status?: FactoryStatus }) {
+  return prisma.factory.findMany({
+    where: { status: filters.status },
+    orderBy: { name: 'asc' },
+    select: { id: true, code: true, name: true, status: true },
+  });
+}
+
+export async function listDistributorOptionsForDispatchOrders(filters: { status?: DistributorStatus }) {
+  return prisma.distributor.findMany({
+    where: { status: filters.status },
+    orderBy: { name: 'asc' },
+    select: { id: true, code: true, name: true, status: true },
+  });
 }
 
 export async function getSaleOrderDetail(user: CurrentUser, id: string) {

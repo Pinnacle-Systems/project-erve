@@ -10,17 +10,30 @@ import * as AuthContext from '../../auth/AuthContext.js';
 
 import { apiClient } from '../../lib/api-client.js';
 
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
 let container: HTMLDivElement;
 let root: Root;
 let jobOrderItems: unknown[];
 
 beforeEach(() => {
+  // Radix Select needs these for its open/positioning logic in jsdom (see
+  // PriceListListPage.test.tsx's precedent).
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   jobOrderItems = [];
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url.includes('/factories')) {
+    if (url === '/job-orders/factory-options') {
       return { data: { data: [] } };
     }
     if (url.includes('/financial-years')) {
@@ -44,10 +57,21 @@ afterEach(() => {
   container.remove();
   vi.restoreAllMocks();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    if (predicate()) return;
+    await act(async () => {
+      await flushMicrotasks();
+    });
+  }
+  throw new Error('Timed out waiting for condition');
 }
 
 // React's controlled inputs track the native value setter, so a plain
@@ -299,5 +323,71 @@ describe('JobOrderListPage Permissions', () => {
     const searches = jobOrderSearchCalls();
     expect(searches.length).toBe(requestsBeforeTyping + 1);
     expect(searches.at(-1)).toBe('JO-001');
+  });
+
+  // UXAUTH-014: QA_USER/SENIOR_MANAGEMENT can list Job Orders but are denied
+  // on the broad Factory master — the filter must source its options from
+  // /job-orders/factory-options, never /factories directly.
+  it.each(['QA_USER', 'SENIOR_MANAGEMENT'] as const)(
+    '%s sees the factory filter, sourced from /job-orders/factory-options',
+    async (role) => {
+      await renderJobOrderListPage(role);
+      expect(hasFactoryFilter()).toBe(true);
+      expect(apiClient.get).toHaveBeenCalledWith('/job-orders/factory-options');
+      expect(apiClient.get).not.toHaveBeenCalledWith('/factories', expect.anything());
+    },
+  );
+
+  it('shows a visible error, not a silently empty dropdown, when the factory-options request fails', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/job-orders/factory-options') {
+        throw new Error('Request failed');
+      }
+      if (url.includes('/financial-years')) {
+        return { data: { data: [] } };
+      }
+      return { data: { data: { items: jobOrderItems, pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+    });
+
+    await renderJobOrderListPage('ADMIN');
+    await vi.waitFor(() => expect(getPageContent()).toContain('Unable to load factories for filtering'));
+    expect(hasFactoryFilter()).toBe(true);
+  });
+
+  it('labels an inactive factory option "(inactive)" and keeps it selectable, without an ACTIVE-only status filter', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/job-orders/factory-options') {
+        return {
+          data: {
+            data: [
+              { id: 'fac-active', code: 'FAC-A', name: 'Active Factory', status: 'ACTIVE' },
+              { id: 'fac-inactive', code: 'FAC-I', name: 'Inactive Factory', status: 'INACTIVE' },
+            ],
+          },
+        };
+      }
+      if (url.includes('/financial-years')) {
+        return { data: { data: [] } };
+      }
+      return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+    });
+
+    await renderJobOrderListPage('ADMIN');
+
+    const optionCall = vi.mocked(apiClient.get).mock.calls.find((call) => call[0] === '/job-orders/factory-options');
+    expect(optionCall?.[1]).toBeUndefined();
+
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Factory"]')!;
+    await act(async () => trigger.click());
+    await waitFor(() => document.body.querySelectorAll('[role="option"]').length > 0);
+
+    const options = Array.from(document.body.querySelectorAll('[role="option"]')).map((el) => el.textContent?.trim());
+    expect(options).toContain('Active Factory');
+    expect(options).toContain('Inactive Factory (inactive)');
+
+    const inactiveOption = Array.from(document.body.querySelectorAll('[role="option"]')).find((el) =>
+      el.textContent?.includes('Inactive Factory'),
+    );
+    expect(inactiveOption?.getAttribute('aria-disabled')).not.toBe('true');
   });
 });

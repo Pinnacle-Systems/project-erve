@@ -49,6 +49,25 @@ export function canMarkJobOrderProductionComplete(user: RoleHolder): boolean {
 }
 
 /**
+ * Job Order Factory filter visibility, and the authorization gate for the
+ * GET /job-orders/factory-options lookup that backs it (UXAUTH-014) — one
+ * list so Web and API cannot drift on who may use the filter. Deliberately
+ * narrower than the API's own Job Order list/read role set: FACTORY_USER can
+ * read Job Orders but is hard-scoped server-side to its own single Factory,
+ * so a Factory filter is meaningless for it.
+ */
+export const JOB_ORDER_FACTORY_FILTER_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'QA_USER',
+] as const satisfies readonly Role[];
+
+export function canFilterJobOrdersByFactory(user: RoleHolder): boolean {
+  return hasAnyRole(user, JOB_ORDER_FACTORY_FILTER_ROLES);
+}
+
+/**
  * Financial Year reference data (a code + two dates) is low-sensitivity and
  * needed by every role that touches a dated document or Season — not just
  * master-data managers — so it's a dedicated, deliberately broad capability
@@ -110,6 +129,27 @@ export const DISPATCH_ORDER_MUTATION_ROLES = ['ADMIN', 'MERCHANDISER'] as const 
 
 export function canMutateDispatchOrders(user: RoleHolder): boolean {
   return hasAnyRole(user, DISPATCH_ORDER_MUTATION_ROLES);
+}
+
+/**
+ * Dispatch Order Factory/Distributor filter visibility, and the
+ * authorization gate for the GET /sale-orders/factory-options and
+ * /sale-orders/distributor-options lookups (UXAUTH-015) — one list so Web
+ * and API cannot drift. Deliberately narrower than DISPATCH_ORDER_VIEW_ROLES
+ * above: FACTORY_USER can read Dispatch Orders but is hard-scoped
+ * server-side to its own single mapped Factory, so a Factory filter is
+ * meaningless for it and a Distributor filter is a merchandiser-oriented
+ * control it has no operational need for.
+ */
+export const DISPATCH_ORDER_FILTER_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'ACCOUNTANT',
+] as const satisfies readonly Role[];
+
+export function canFilterDispatchOrders(user: RoleHolder): boolean {
+  return hasAnyRole(user, DISPATCH_ORDER_FILTER_ROLES);
 }
 
 /**

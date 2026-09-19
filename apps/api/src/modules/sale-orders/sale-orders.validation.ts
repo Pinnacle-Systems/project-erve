@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GSTIN_REGEX } from '../master-data/master-data.validation.js';
+import { distributorStatusSchema, factoryStatusSchema, GSTIN_REGEX } from '../master-data/master-data.validation.js';
 
 // Blank/whitespace-only input is treated as absent before format-checking —
 // forms commonly submit a blank optional field as "" rather than
@@ -106,4 +106,16 @@ export const listDispatchOrdersQuerySchema = z.object({
   financialYearId: z.string().trim().min(1).optional(),
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+// UXAUTH-015: the Dispatch Order Factory/Distributor filters' minimal
+// lookups. No status filter is required — Dispatch Order list is
+// historical, so a caller may deliberately omit it to keep selecting a
+// Factory/Distributor that has since gone INACTIVE.
+export const dispatchOrderFactoryOptionsQuerySchema = z.object({
+  status: factoryStatusSchema.optional(),
+});
+
+export const dispatchOrderDistributorOptionsQuerySchema = z.object({
+  status: distributorStatusSchema.optional(),
 });

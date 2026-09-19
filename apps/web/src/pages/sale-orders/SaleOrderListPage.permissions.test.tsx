@@ -9,16 +9,29 @@ import { SaleOrderListPage } from './SaleOrderListPage.js';
 import * as AuthContext from '../../auth/AuthContext.js';
 import { apiClient } from '../../lib/api-client.js';
 
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  // Radix Select needs these for its open/positioning logic in jsdom (see
+  // PriceListListPage.test.tsx's precedent).
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/distributors') return { data: { data: [] } };
-    if (url === '/factories') return { data: { data: [] } };
+    if (url === '/sale-orders/distributor-options') return { data: { data: [] } };
+    if (url === '/sale-orders/factory-options') return { data: { data: [] } };
     if (url === '/sale-orders') {
       return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
     }
@@ -30,10 +43,21 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    if (predicate()) return;
+    await act(async () => {
+      await flushMicrotasks();
+    });
+  }
+  throw new Error('Timed out waiting for condition');
 }
 
 const renderSaleOrderListPage = async (role: Role) => {
@@ -105,5 +129,105 @@ describe('SaleOrderListPage Permissions', () => {
   it('FACTORY_USER does not see the Distributor/Factory filter pickers', async () => {
     await renderSaleOrderListPage('FACTORY_USER');
     expect(hasDistributorFilter()).toBe(false);
+  });
+
+  // UXAUTH-015: ACCOUNTANT is denied on both broad masters, SENIOR_MANAGEMENT
+  // on the Factory master — the filters must source their options from the
+  // Dispatch-Order-specific lookups, never /distributors or /factories
+  // directly, and both roles must get both filters through the same
+  // transaction-specific endpoints rather than a mix of master/transaction
+  // sources.
+  it.each(['ACCOUNTANT', 'SENIOR_MANAGEMENT'] as const)(
+    '%s sees both filters, sourced from /sale-orders/factory-options and /sale-orders/distributor-options',
+    async (role) => {
+      await renderSaleOrderListPage(role);
+      expect(hasDistributorFilter()).toBe(true);
+      expect(apiClient.get).toHaveBeenCalledWith('/sale-orders/factory-options');
+      expect(apiClient.get).toHaveBeenCalledWith('/sale-orders/distributor-options');
+      expect(apiClient.get).not.toHaveBeenCalledWith('/factories', expect.anything());
+      expect(apiClient.get).not.toHaveBeenCalledWith('/distributors', expect.anything());
+    },
+  );
+
+  it('shows a visible error for the Factory filter, not a silently empty dropdown, when factory-options fails', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/sale-orders/factory-options') throw new Error('Request failed');
+      if (url === '/sale-orders/distributor-options') return { data: { data: [] } };
+      if (url === '/sale-orders') {
+        return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await renderSaleOrderListPage('ACCOUNTANT');
+    await vi.waitFor(() => expect(getPageContent()).toContain('Unable to load factories for filtering'));
+  });
+
+  it('shows a visible error for the Distributor filter, not a silently empty dropdown, when distributor-options fails', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/sale-orders/distributor-options') throw new Error('Request failed');
+      if (url === '/sale-orders/factory-options') return { data: { data: [] } };
+      if (url === '/sale-orders') {
+        return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await renderSaleOrderListPage('ACCOUNTANT');
+    await vi.waitFor(() => expect(getPageContent()).toContain('Unable to load distributors for filtering'));
+  });
+
+  it('labels inactive Factory/Distributor options "(inactive)" and keeps them selectable, without an ACTIVE-only status filter', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/sale-orders/factory-options') {
+        return {
+          data: {
+            data: [
+              { id: 'fac-active', code: 'FAC-A', name: 'Active Factory', status: 'ACTIVE' },
+              { id: 'fac-inactive', code: 'FAC-I', name: 'Inactive Factory', status: 'INACTIVE' },
+            ],
+          },
+        };
+      }
+      if (url === '/sale-orders/distributor-options') {
+        return {
+          data: {
+            data: [
+              { id: 'dist-active', code: 'DIST-A', name: 'Active Distributor', status: 'ACTIVE' },
+              { id: 'dist-inactive', code: 'DIST-I', name: 'Old Traders', status: 'INACTIVE' },
+            ],
+          },
+        };
+      }
+      if (url === '/sale-orders') {
+        return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await renderSaleOrderListPage('ACCOUNTANT');
+
+    const factoryOptionCall = vi.mocked(apiClient.get).mock.calls.find((call) => call[0] === '/sale-orders/factory-options');
+    const distributorOptionCall = vi
+      .mocked(apiClient.get)
+      .mock.calls.find((call) => call[0] === '/sale-orders/distributor-options');
+    expect(factoryOptionCall?.[1]).toBeUndefined();
+    expect(distributorOptionCall?.[1]).toBeUndefined();
+
+    const factoryTrigger = container.querySelector<HTMLButtonElement>('button[aria-label="Factory"]')!;
+    await act(async () => factoryTrigger.click());
+    await waitFor(() => document.body.querySelectorAll('[role="option"]').length > 0);
+    let options = Array.from(document.body.querySelectorAll('[role="option"]')).map((el) => el.textContent?.trim());
+    expect(options).toContain('Active Factory');
+    expect(options).toContain('Inactive Factory (inactive)');
+
+    await act(async () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+
+    const distributorTrigger = container.querySelector<HTMLButtonElement>('button[aria-label="Distributor"]')!;
+    await act(async () => distributorTrigger.click());
+    await waitFor(() => document.body.querySelectorAll('[role="option"]').length > 0);
+    options = Array.from(document.body.querySelectorAll('[role="option"]')).map((el) => el.textContent?.trim());
+    expect(options).toContain('Active Distributor');
+    expect(options).toContain('Old Traders (inactive)');
   });
 });
