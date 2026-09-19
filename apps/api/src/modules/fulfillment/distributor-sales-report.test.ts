@@ -312,6 +312,53 @@ describe('Distributor Sales Reporting — authorization', () => {
       .expect(403);
   });
 
+  // UXAUTH-016: ADMIN is the only actor whose input.distributorId is trusted
+  // directly (see submitDistributorSalesReport) rather than resolved from
+  // getSoleDistributorId — so it is the only actor for whom a client bug
+  // deriving distributorId from something other than the actually-submitted
+  // lines (e.g. the historical `rows[0]?.distributor.id`) could ever produce
+  // a request whose lines don't all belong to the submitted distributorId.
+  // These two tests prove the existing per-line
+  // `dispatch.distributorId !== input.distributorId` guard already covers
+  // that ADMIN path atomically, and were previously untested.
+  it('lets ADMIN submit a report when every line belongs to the submitted distributorId', async () => {
+    const { fixture, dispatch } = await saleReturnDispatchFixture(100);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    await request(app)
+      .post('/distributor-sales-reports')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        distributorId: fixture.stock.distributorId,
+        reportDate: '2026-08-01',
+        lines: [{ erveDispatchId: dispatch.id, saleOrderLineId: fixture.saleOrderLineId, quantitySold: 5 }],
+      })
+      .expect(201);
+  });
+
+  it('rejects an ADMIN submission mixing lines from two Distributors under one distributorId, atomically (no report is created)', async () => {
+    const { fixture: fixtureA, dispatch: dispatchA } = await saleReturnDispatchFixture(100);
+    const { fixture: fixtureB, dispatch: dispatchB } = await saleReturnDispatchFixture(100);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+
+    await request(app)
+      .post('/distributor-sales-reports')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        distributorId: fixtureA.stock.distributorId,
+        reportDate: '2026-08-01',
+        lines: [
+          { erveDispatchId: dispatchA.id, saleOrderLineId: fixtureA.saleOrderLineId, quantitySold: 5 },
+          { erveDispatchId: dispatchB.id, saleOrderLineId: fixtureB.saleOrderLineId, quantitySold: 5 },
+        ],
+      })
+      .expect(403);
+
+    const reports = await prisma.distributorSalesReport.findMany({
+      where: { distributorId: { in: [fixtureA.stock.distributorId, fixtureB.stock.distributorId] } },
+    });
+    expect(reports).toHaveLength(0);
+  });
+
   it('forbids Merchandiser from submitting a Distributor Sales Report', async () => {
     const { fixture, dispatch } = await saleReturnDispatchFixture(100);
     await request(app)
