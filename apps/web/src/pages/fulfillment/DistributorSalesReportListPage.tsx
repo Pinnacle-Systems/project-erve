@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { DistributorSalesReportView, PaginatedResult } from './types.js';
 
@@ -33,6 +33,11 @@ export function DistributorSalesReportListPage() {
             data={query.data ?? []}
             onRowClick={(row) => navigate(`/fulfillment/distributor-sales-reports/${row.id}`)}
             emptyState={<EmptyState title="No sales reports yet" />}
+            error={
+              query.isError ? (
+                <ErrorState title="Unable to load sales reports" description={query.error.message} />
+              ) : undefined
+            }
             columns={[
               { key: 'date', header: 'Report Date', render: (r) => new Date(r.reportDate).toLocaleDateString() },
               { key: 'distributor', header: 'Distributor', render: (r) => r.distributor.name },

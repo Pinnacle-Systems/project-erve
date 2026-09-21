@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -90,6 +90,11 @@ export function FactoryInvoiceListPage() {
             data={query.data ?? []}
             onRowClick={(row) => navigate(`/fulfillment/factory-invoices/${row.id}`)}
             emptyState={<EmptyState title="Nothing here" description="No Factory Invoices match this filter." />}
+            error={
+              query.isError ? (
+                <ErrorState title="Unable to load Factory Invoices" description={query.error.message} />
+              ) : undefined
+            }
             columns={[
               { key: 'factory', header: 'Factory', render: (r) => r.factory.name },
               { key: 'dispatch', header: 'Dispatch Order #', render: (r) => r.factoryDispatch.factoryDispatchNumber },

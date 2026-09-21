@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { DistributorReturnStatus, DistributorReturnView, PaginatedResult } from './types.js';
 
@@ -49,6 +49,11 @@ export function DistributorReturnListPage() {
             data={query.data ?? []}
             onRowClick={(row) => navigate(`/fulfillment/distributor-returns/${row.id}`)}
             emptyState={<EmptyState title="No returns yet" />}
+            error={
+              query.isError ? (
+                <ErrorState title="Unable to load returns" description={query.error.message} />
+              ) : undefined
+            }
             columns={[
               { key: 'returnNumber', header: 'Return #', render: (r) => r.returnNumber },
               { key: 'date', header: 'Return Date', render: (r) => new Date(r.returnDate).toLocaleDateString() },

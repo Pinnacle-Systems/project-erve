@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import {
@@ -143,6 +143,8 @@ export function DistributorReturnDetailPage() {
   });
 
   if (query.isLoading) return <LoadingState label="Loading return" />;
+  if (query.isError)
+    return <ErrorState title="Unable to load return" description={query.error.message} />;
   if (!record) return <EmptyState title="Distributor Return not found" tone="error" />;
 
   const hasCreditNote = Boolean(record.creditNoteReference);

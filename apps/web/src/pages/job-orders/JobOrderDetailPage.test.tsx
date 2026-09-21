@@ -1334,3 +1334,34 @@ describe('JobOrderDetailPage QA/inspection cross-link (UXAUTH-011)', () => {
     expect(link).not.toBeUndefined();
   });
 });
+
+// UXAUTH-018: a failed fetch (403/500/network error) must render the real
+// ErrorState, not fall through to the "Job order not found" EmptyState —
+// that EmptyState is reserved for a genuine no-such-record response.
+describe('JobOrderDetailPage load error handling (UXAUTH-018)', () => {
+  it('shows an error state, not a not-found/empty state, when the request fails', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/audit')) return { data: { data: [] } };
+      throw new Error('Request failed with status code 500');
+    });
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/job-orders/jo-1']}>
+            <Routes>
+              <Route path="/job-orders/:id" element={<JobOrderDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(content()).not.toContain('Loading job order'));
+
+    expect(content()).not.toContain('Job order not found');
+    expect(content()).toContain('Unable to load job order');
+    expect(content()).toContain('Request failed with status code 500');
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+});

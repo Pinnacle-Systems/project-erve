@@ -1,18 +1,20 @@
+import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
-import { Button } from '@erve/primitives';
+import { Button, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { QualityForm, QualityFormVersion } from './types.js';
-import { componentLabel } from './quality-form-ui.js';
+import { componentLabel, qualityFormError } from './quality-form-ui.js';
 
 export function QualityFormDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const client = useQueryClient();
+  const [error, setError] = useState('');
   const query = useQuery({
     queryKey: ['quality-form', id],
     queryFn: async () =>
@@ -30,33 +32,44 @@ export function QualityFormDetailPage() {
       ).data.data,
   });
   const createVersion = useMutation({
-    mutationFn: async () =>
-      (
+    mutationFn: async () => {
+      setError('');
+      return (
         await apiClient.post<ApiSuccessResponse<QualityFormVersion>>(
           `/quality-forms/${id}/versions`,
           { copyFromVersionId: versionId },
         )
-      ).data.data,
+      ).data.data;
+    },
     onSuccess: async (version) => {
       await client.invalidateQueries({ queryKey: ['quality-form', id] });
       navigate(`/master-data/quality-form-versions/${version.id}/edit`);
     },
+    onError: (caught) => setError(qualityFormError(caught, 'Unable to create a new draft')),
   });
   const publish = useMutation({
-    mutationFn: async () =>
-      (await apiClient.post(`/quality-form-versions/${versionId}/publish`)).data,
+    mutationFn: async () => {
+      setError('');
+      return (await apiClient.post(`/quality-form-versions/${versionId}/publish`)).data;
+    },
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ['quality-form', id] });
       await client.invalidateQueries({ queryKey: ['quality-form-version', versionId] });
     },
+    onError: (caught) => setError(qualityFormError(caught, 'Unable to publish this version')),
   });
   const toggle = useMutation({
-    mutationFn: async () =>
-      apiClient.patch(`/quality-forms/${id}/status`, {
+    mutationFn: async () => {
+      setError('');
+      return apiClient.patch(`/quality-forms/${id}/status`, {
         status: query.data?.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE',
-      }),
+      });
+    },
     onSuccess: async () => client.invalidateQueries({ queryKey: ['quality-form', id] }),
+    onError: (caught) => setError(qualityFormError(caught, 'Unable to update status')),
   });
+  const lifecycleMutationPending =
+    createVersion.isPending || publish.isPending || toggle.isPending;
   if (query.isLoading) return <LoadingState label="Loading Quality Form" />;
   if (query.isError)
     return <ErrorState title="Unable to load Quality Form" description={query.error.message} />;
@@ -76,12 +89,18 @@ export function QualityFormDetailPage() {
             <Button asChild variant="secondary">
               <Link to={`/master-data/quality-forms/${form.id}/edit`}>Edit</Link>
             </Button>
-            <Button variant="secondary" onClick={() => toggle.mutate()}>
+            <Button
+              variant="secondary"
+              loading={toggle.isPending}
+              disabled={lifecycleMutationPending && !toggle.isPending}
+              onClick={() => toggle.mutate()}
+            >
               {form.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
             </Button>
           </div>
         }
       />
+      {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
       <Panel title="Form details">
         <dl className="grid gap-4 md:grid-cols-3">
           <div>
@@ -135,12 +154,23 @@ export function QualityFormDetailPage() {
                     </Link>
                   </Button>
                 ) : (
-                  <Button variant="secondary" onClick={() => createVersion.mutate()}>
+                  <Button
+                    variant="secondary"
+                    loading={createVersion.isPending}
+                    disabled={lifecycleMutationPending && !createVersion.isPending}
+                    onClick={() => createVersion.mutate()}
+                  >
                     Create New Draft
                   </Button>
                 )}
                 {version.status === 'DRAFT' ? (
-                  <Button onClick={() => publish.mutate()}>Publish Version</Button>
+                  <Button
+                    loading={publish.isPending}
+                    disabled={lifecycleMutationPending && !publish.isPending}
+                    onClick={() => publish.mutate()}
+                  >
+                    Publish Version
+                  </Button>
                 ) : null}
               </div>
               {version.sections.map((section) => (

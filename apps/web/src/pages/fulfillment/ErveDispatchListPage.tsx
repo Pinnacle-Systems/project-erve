@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -63,6 +63,11 @@ export function ErveDispatchListPage() {
             data={query.data ?? []}
             onRowClick={(row) => navigate(`/fulfillment/erve-dispatches/${row.id}`)}
             emptyState={<EmptyState title="No dispatches yet" />}
+            error={
+              query.isError ? (
+                <ErrorState title="Unable to load dispatch history" description={query.error.message} />
+              ) : undefined
+            }
             columns={[
               { key: 'number', header: 'Dispatch #', accessor: 'erveDispatchNumber' },
               { key: 'saleOrder', header: 'Sale Order', render: (r) => r.saleOrder?.saleOrderNumber ?? 'Multiple' },

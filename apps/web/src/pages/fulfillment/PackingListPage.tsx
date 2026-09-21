@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -217,6 +217,8 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
   });
 
   if (query.isLoading) return <LoadingState label="Loading Packing List" />;
+  if (query.isError)
+    return <ErrorState title="Unable to load Packing List" description={query.error.message} />;
   if (!packingList) return <EmptyState title="Dispatch Order not found" tone="error" />;
 
   const dispatch = packingList.factoryDispatch;

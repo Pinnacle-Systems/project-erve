@@ -180,3 +180,35 @@ describe('ErvePackingListDetailPage mutation gating (UXAUTH-007)', () => {
     expect(buttonByText('Record Dispatch')).not.toBeNull();
   });
 });
+
+// UXAUTH-018: a failed fetch (403/500/network error) must render the real
+// ErrorState, not fall through to the "Erve Packing List not found"
+// EmptyState — that EmptyState is reserved for a genuine no-such-record
+// response.
+describe('ErvePackingListDetailPage load error handling (UXAUTH-018)', () => {
+  it('shows an error state, not a not-found/empty state, when the request fails', async () => {
+    mockAuth('ADMIN');
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/erve-packing-lists/epl-1') throw new Error('Request failed with status code 500');
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/fulfillment/erve-packing-lists/epl-1']}>
+            <Routes>
+              <Route path="/fulfillment/erve-packing-lists/:id" element={<ErvePackingListDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(content()).not.toContain('Loading Erve Packing List'));
+
+    expect(content()).not.toContain('Erve Packing List not found');
+    expect(content()).toContain('Unable to load Erve Packing List');
+    expect(content()).toContain('Request failed with status code 500');
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+});

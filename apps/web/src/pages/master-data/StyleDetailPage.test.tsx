@@ -220,3 +220,39 @@ describe('StyleDetailPage Edit visibility (UXAUTH-009)', () => {
 function content(): string {
   return container.textContent ?? '';
 }
+
+// UXAUTH-018: a failed fetch (403/500/network error) must render the real
+// ErrorState, not fall through to the "Style not found" EmptyState — that
+// EmptyState is reserved for a genuine no-such-record response.
+describe('StyleDetailPage load error handling (UXAUTH-018)', () => {
+  async function renderWithFailedFetch(message: string): Promise<void> {
+    vi.spyOn(apiClient, 'get').mockRejectedValue(new Error(message));
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/master-data/styles/style-1']}>
+            <AuthProvider>
+              <Routes>
+                <Route path="/master-data/styles/:id" element={<StyleDetailPage />} />
+              </Routes>
+            </AuthProvider>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await flushMicrotasks();
+    });
+    await waitForLoaded();
+  }
+
+  it('shows an error state, not a not-found/empty state, when the request fails', async () => {
+    await renderWithFailedFetch('Request failed with status code 500');
+
+    expect(content()).not.toContain('Style not found');
+    expect(content()).toContain('Unable to load style');
+    expect(content()).toContain('Request failed with status code 500');
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+});

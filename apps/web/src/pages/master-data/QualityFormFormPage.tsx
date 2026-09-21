@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
-import { LoadingState } from '@erve/data-display';
+import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { QualityForm, QualityFormSection } from './types.js';
 import { emptyDefinition, qualityFormError } from './quality-form-ui.js';
@@ -62,6 +62,8 @@ export function QualityFormFormPage() {
     onError: (caught) => setError(qualityFormError(caught, 'Unable to save Quality Form')),
   });
   if (query.isLoading) return <LoadingState label="Loading Quality Form" />;
+  if (query.isError)
+    return <ErrorState title="Unable to load Quality Form" description={query.error.message} />;
   return (
     <div className="space-y-5">
       <PageHeader

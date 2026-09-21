@@ -20,7 +20,7 @@ import {
 } from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
@@ -483,6 +483,10 @@ export function JobOrderDetailPage() {
   });
 
   if (jobOrderQuery.isLoading) return <LoadingState label="Loading job order" />;
+  if (jobOrderQuery.isError)
+    return (
+      <ErrorState title="Unable to load job order" description={jobOrderQuery.error.message} />
+    );
   if (!jobOrder)
     return (
       <EmptyState

@@ -326,3 +326,34 @@ describe('PurchaseOrderDetailPage Create Job Order visibility', () => {
     expect(createJobOrderLink()).toBeNull();
   });
 });
+
+// UXAUTH-018: a failed fetch (403/500/network error) must render the real
+// ErrorState, not fall through to the "Order Sheet not found" EmptyState —
+// that EmptyState is reserved for a genuine no-such-record response.
+describe('PurchaseOrderDetailPage load error handling (UXAUTH-018)', () => {
+  it('shows an error state, not a not-found/empty state, when the request fails', async () => {
+    mockAuth('ADMIN');
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/purchase-orders/po-1') throw new Error('Request failed with status code 500');
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/purchase-orders/po-1']}>
+            <Routes>
+              <Route path="/purchase-orders/:id" element={<PurchaseOrderDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(content()).not.toContain('Loading Order Sheet'));
+
+    expect(content()).not.toContain('Order Sheet not found');
+    expect(content()).toContain('Unable to load Order Sheet');
+    expect(content()).toContain('Request failed with status code 500');
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+});

@@ -428,3 +428,34 @@ describe('PackingListPage Factory Invoice cross-link (UXAUTH-012)', () => {
     expect(buttonByText('View Factory Invoice')).toBeNull();
   });
 });
+
+// UXAUTH-018: a failed fetch (403/500/network error) must render the real
+// ErrorState, not fall through to the "Dispatch Order not found" EmptyState
+// — that EmptyState is reserved for a genuine no-such-record response.
+describe('PackingListPage load error handling (UXAUTH-018)', () => {
+  it('shows an error state, not a not-found/empty state, when the request fails', async () => {
+    mockAuth('FACTORY_USER');
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/sale-orders/so-1/packing-list') throw new Error('Request failed with status code 500');
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/sale-orders/so-1/packing-list']}>
+            <Routes>
+              <Route path="/sale-orders/:id/packing-list" element={<PackingListPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(content()).not.toContain('Loading Packing List'));
+
+    expect(content()).not.toContain('Dispatch Order not found');
+    expect(content()).toContain('Unable to load Packing List');
+    expect(content()).toContain('Request failed with status code 500');
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+});

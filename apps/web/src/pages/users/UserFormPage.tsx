@@ -14,7 +14,7 @@ import {
   ValidationMessage,
 } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
-import { LoadingState } from '@erve/data-display';
+import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { AdminUserSummary, Factory } from '../master-data/types.js';
 import { PasswordField } from './PasswordField.js';
@@ -120,6 +120,9 @@ export function UserFormPage() {
 
   if (isEdit && userQuery.isLoading) {
     return <LoadingState label="Loading user" />;
+  }
+  if (isEdit && userQuery.isError) {
+    return <ErrorState title="Unable to load user" description={userQuery.error.message} />;
   }
 
   return (
