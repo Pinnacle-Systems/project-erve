@@ -260,6 +260,42 @@ describe('PurchaseOrderDetailPage lock behaviour', () => {
   });
 });
 
+// UXAUTH-010: Edit/Cancel Order Sheet must reflect BOTH the actor's
+// PURCHASE_ORDER_MANAGE_ROLES mutation capability (matching the API's
+// purchase-orders.routes.ts canManagePOs guard on PATCH /:id and
+// POST /:id/actions/cancel) AND the existing document-state lock —
+// SENIOR_MANAGEMENT can read Order Sheets (PURCHASE_ORDER_VIEW_ROLES) but
+// must never see Edit/Cancel, even while unlocked. These tests must not
+// weaken the pre-existing lock-state tests above (still passing with ADMIN).
+describe('PurchaseOrderDetailPage role-gated Edit/Cancel (UXAUTH-010)', () => {
+  it('hides Edit and Cancel Order Sheet for SENIOR_MANAGEMENT even while unlocked', async () => {
+    await renderPage(buildPO({ status: 'SUBMITTED', jobOrderId: null }), 'SENIOR_MANAGEMENT');
+    expect(editLink()).toBeNull();
+    expect(cancelButton()).toBeNull();
+    // Read-only content remains available.
+    expect(content()).toContain('Available for Job Order');
+  });
+
+  it('shows Edit and Cancel Order Sheet for MERCHANDISER (an authorized mutation role) while unlocked', async () => {
+    await renderPage(buildPO({ status: 'SUBMITTED', jobOrderId: null }), 'MERCHANDISER');
+    expect(editLink()).not.toBeNull();
+    expect(cancelButton()).not.toBeNull();
+  });
+
+  it('still hides Edit and Cancel Order Sheet for an authorized MERCHANDISER once locked by a Job Order', async () => {
+    await renderPage(
+      buildPO({
+        status: 'SUBMITTED',
+        jobOrderId: 'jo-1',
+        lockedByJobOrder: { id: 'jo-1', jobOrderNumber: 'EIJO/25-26/0001', status: 'DRAFT' },
+      }),
+      'MERCHANDISER',
+    );
+    expect(editLink()).toBeNull();
+    expect(cancelButton()).toBeNull();
+  });
+});
+
 describe('PurchaseOrderDetailPage Create Job Order visibility', () => {
   it('shows Create Job Order for an authorized user while unlocked', async () => {
     await renderPage(buildPO({ status: 'SUBMITTED', jobOrderId: null }), 'ADMIN');

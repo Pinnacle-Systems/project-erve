@@ -1282,3 +1282,55 @@ describe('JobOrderDetailPage Production Plan (Phase 2.1)', () => {
     expect(JSON.stringify(body)).not.toContain('sizes');
   });
 });
+
+// UXAUTH-011: the View/Continue Inspection cross-link navigates to either
+// /qa/:jobOrderId (SIZE scope) or /quality-executions/:executionId (JOB_ORDER
+// scope) — both routes share the exact same allowed-role set (QA_VIEW_ROLES:
+// ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, QA_USER). FACTORY_USER can view
+// this Job Order and its Quality activities status/history, but is in
+// neither route's guard, so the button itself must not render for it.
+describe('JobOrderDetailPage QA/inspection cross-link (UXAUTH-011)', () => {
+  const activityWithExecution = () =>
+    finalQualityActivity({
+      status: 'IN_PROGRESS',
+      execution: { id: 'execution-1' },
+    });
+
+  it('does not render the View/Continue Inspection cross-link for FACTORY_USER', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderPage('IN_PRODUCTION', standardStages, [], {
+      qualityActivities: [activityWithExecution()],
+    });
+    // Status information remains visible.
+    expect(content()).toContain('Final Inspection');
+    const link = [...container.querySelectorAll('button')].find(
+      (button) =>
+        button.textContent === 'Continue Inspection' || button.textContent === 'View Inspection',
+    );
+    expect(link).toBeUndefined();
+  });
+
+  it('still renders Continue Inspection for MERCHANDISER (an authorized QA_VIEW_ROLES member)', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderPage('IN_PRODUCTION', standardStages, [], {
+      qualityActivities: [activityWithExecution()],
+    });
+    const link = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Continue Inspection',
+    );
+    expect(link).not.toBeUndefined();
+  });
+
+  it('still renders View Inspection for QA_USER once the activity is COMPLETED', async () => {
+    authState.roles = ['QA_USER'];
+    await renderPage('IN_PRODUCTION', standardStages, [], {
+      qualityActivities: [
+        finalQualityActivity({ status: 'COMPLETED', execution: { id: 'execution-1' } }),
+      ],
+    });
+    const link = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'View Inspection',
+    );
+    expect(link).not.toBeUndefined();
+  });
+});

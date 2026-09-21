@@ -4,8 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AuthUser, Role } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { AuthProvider } from '../../auth/AuthContext.js';
+import * as AuthContext from '../../auth/AuthContext.js';
 import * as generateModule from '../../lib/pdf/generate.js';
 import * as downloadModule from '../../lib/pdf/download.js';
 import * as printModule from '../../lib/pdf/print.js';
@@ -259,5 +261,57 @@ describe('StyleListPage PDF actions and thumbnails', () => {
 
     expect(printSpy).toHaveBeenCalledTimes(1);
     expect(downloadSpy).not.toHaveBeenCalled();
+  });
+});
+
+// UXAUTH-009: Create Style must reflect the actual STYLE_MANAGE_ROLES
+// mutation capability, not just STYLE_VIEW_ROLES read access.
+// SENIOR_MANAGEMENT is a read-only Style viewer and must not see it.
+function mockAuth(role: Role) {
+  const user: AuthUser = { id: 'user-1', email: 'user@test.local', mobile: null, name: 'Test User', roles: [role] };
+  vi.spyOn(AuthContext, 'useAuth').mockReturnValue({
+    user,
+    token: 'valid-token',
+    login: vi.fn(),
+    logout: vi.fn(),
+    refreshUser: vi.fn(),
+    isInitializing: false,
+  } as unknown as ReturnType<typeof AuthContext.useAuth>);
+}
+
+async function renderPageAsRole(role: Role) {
+  mockAuth(role);
+  vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    if (url === '/styles') return { data: { data: [] } };
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  act(() => {
+    root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <StyleListPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  });
+  await act(async () => {
+    await flushMicrotasks();
+  });
+}
+
+describe('StyleListPage Create Style visibility (UXAUTH-009)', () => {
+  it('shows Create Style for ADMIN and MERCHANDISER (STYLE_MANAGE_ROLES)', async () => {
+    for (const role of ['ADMIN', 'MERCHANDISER'] as const) {
+      await renderPageAsRole(role);
+      const link = Array.from(container.querySelectorAll('a')).find((a) => a.textContent === 'Create Style');
+      expect(link, `expected Create Style for ${role}`).not.toBeUndefined();
+    }
+  });
+
+  it('hides Create Style for SENIOR_MANAGEMENT (read-only Style viewer)', async () => {
+    await renderPageAsRole('SENIOR_MANAGEMENT');
+    const link = Array.from(container.querySelectorAll('a')).find((a) => a.textContent === 'Create Style');
+    expect(link).toBeUndefined();
   });
 });

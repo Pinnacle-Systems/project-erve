@@ -13,6 +13,7 @@ import type {
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
+import { canMutateQualityExecution } from '../../auth/permissions.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -168,6 +169,7 @@ export function QualityExecutionPage() {
         busy={mutation.isPending || batchMutation.isPending}
         error={message}
         validationErrors={validationErrors}
+        canMutate={canMutateQualityExecution(user)}
         onSave={(payload) =>
           mutation.mutateAsync({ payload, finalize: false }).then(() => undefined)
         }

@@ -2,12 +2,12 @@ import { useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { hasAnyRole } from '@erve/shared';
 import { AuditTrail, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { EmptyState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
+import { canManageStyles } from '../../auth/permissions.js';
 import { apiClient } from '../../lib/api-client.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
@@ -89,9 +89,11 @@ export function StyleDetailPage() {
               onDownload={pdfAction.handleDownload}
               onPrint={pdfAction.handlePrint}
             />
-            <Button asChild>
-              <Link to={`/master-data/styles/${style.id}/edit`}>Edit</Link>
-            </Button>
+            {canManageStyles(user) ? (
+              <Button asChild>
+                <Link to={`/master-data/styles/${style.id}/edit`}>Edit</Link>
+              </Button>
+            ) : null}
           </div>
         }
       />
@@ -114,7 +116,7 @@ export function StyleDetailPage() {
       <StyleImagesPanel
         styleId={style.id}
         images={style.images}
-        canManage={Boolean(user && hasAnyRole(user, ['ADMIN', 'MERCHANDISER']))}
+        canManage={canManageStyles(user)}
       />
 
       <div className="grid gap-5 lg:grid-cols-2">

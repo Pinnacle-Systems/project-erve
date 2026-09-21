@@ -11,7 +11,7 @@ import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import { canMutateFactoryDispatches } from '../../auth/permissions.js';
+import { canMutateFactoryDispatches, canViewFactoryInvoices } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { FactoryPackingCartonView, FinalizeBlockers, PackingListDestinationView, PackingListView } from './types.js';
 
@@ -240,7 +240,12 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
         }
         secondaryActions={
           <>
-            {dispatch?.factoryInvoiceId && (
+            {/* UXAUTH-012: an invoice existing is not enough — the target
+                route (/fulfillment/factory-invoices/:id) is guarded by the
+                narrower FACTORY_INVOICE_VIEW_ROLES, which excludes
+                MERCHANDISER/SENIOR_MANAGEMENT even though they can read this
+                Packing List (FACTORY_DISPATCH_VIEW_ROLES). */}
+            {dispatch?.factoryInvoiceId && canViewFactoryInvoices(user) && (
               <Button variant="secondary" onClick={() => navigate(`/fulfillment/factory-invoices/${dispatch.factoryInvoiceId}`)}>
                 View Factory Invoice
               </Button>

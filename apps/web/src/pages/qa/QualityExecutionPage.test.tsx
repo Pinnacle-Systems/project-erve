@@ -4,8 +4,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { QualityExecutionView } from '@erve/types';
+import type { AuthUser, QualityExecutionView, Role } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
+import * as AuthContext from '../../auth/AuthContext.js';
 import { QualityExecutionPage } from './QualityExecutionPage.js';
 
 let container: HTMLDivElement;
@@ -144,6 +145,20 @@ describe('web Quality execution workflow', () => {
   });
 
   it('renders the draft and saves through the optimistic-version endpoint', async () => {
+    // UXAUTH-006: mutating now requires an actual mutation-capable caller
+    // (canMutateQualityExecution) — the real route guard already ensures
+    // only ADMIN/QA_USER/MERCHANDISER/SENIOR_MANAGEMENT ever reach this page,
+    // and only ADMIN/QA_USER may mutate, so this Save-flow test mocks a
+    // QA_USER the same way production always has one by the time this page
+    // mounts.
+    vi.spyOn(AuthContext, 'useOptionalAuth').mockReturnValue({
+      user: { id: 'user-1', email: 'qa@test.local', mobile: null, name: 'QA User', roles: ['QA_USER'] },
+      token: 'valid-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      refreshUser: vi.fn(),
+      isInitializing: false,
+    } as unknown as ReturnType<typeof AuthContext.useOptionalAuth>);
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: view } });
     const put = vi
       .spyOn(apiClient, 'request')
@@ -181,6 +196,17 @@ describe('web Quality execution workflow', () => {
   });
 
   it('shows immutable physical-batch history and starts reinspection without new quantities', async () => {
+    // UXAUTH-006: reinspection is a mutation action (QA_OPERATION_ROLES) —
+    // mock a QA_USER the same way production always has one by the time this
+    // page mounts (see the Save-flow test above).
+    vi.spyOn(AuthContext, 'useOptionalAuth').mockReturnValue({
+      user: { id: 'user-1', email: 'qa@test.local', mobile: null, name: 'QA User', roles: ['QA_USER'] },
+      token: 'valid-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      refreshUser: vi.fn(),
+      isInitializing: false,
+    } as unknown as ReturnType<typeof AuthContext.useOptionalAuth>);
     const failed: QualityExecutionView = {
       ...view,
       status: 'FINALIZED',
@@ -257,4 +283,67 @@ describe('web Quality execution workflow', () => {
       undefined,
     );
   });
+});
+
+// UXAUTH-006: MERCHANDISER/SENIOR_MANAGEMENT can read a generic
+// QualityExecution (GET is allowed for both — see
+// apps/api/src/modules/quality-executions/quality-executions.routes.ts) but
+// every mutation endpoint (PUT save, POST finalize/attachments,
+// DELETE attachments, POST final-batches/.../reinspect|cancel|permanently-reject)
+// is restricted to ADMIN/QA_USER only. This page must wire canMutate from the
+// real caller's role so the read-only roles never see Save/Finalize.
+describe('web Quality execution role-gated mutation controls (UXAUTH-006)', () => {
+  function mockUser(role: Role) {
+    const user: AuthUser = { id: 'user-1', email: 'user@test.local', mobile: null, name: 'Test User', roles: [role] };
+    vi.spyOn(AuthContext, 'useOptionalAuth').mockReturnValue({
+      user,
+      token: 'valid-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      refreshUser: vi.fn(),
+      isInitializing: false,
+    } as unknown as ReturnType<typeof AuthContext.useOptionalAuth>);
+  }
+
+  async function renderAs(role: Role) {
+    mockUser(role);
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: view } });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <MemoryRouter initialEntries={['/quality-executions/e1']}>
+            <Routes>
+              <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    '%s can read the execution but sees no mutation control',
+    async (role) => {
+      await renderAs(role);
+      expect(container.textContent).toContain('Inline Inspection Report');
+      const buttons = [...container.querySelectorAll('button')].map((b) => b.textContent);
+      expect(buttons).not.toContain('Save draft');
+      expect(buttons).not.toContain('Finalize');
+    },
+  );
+
+  it.each(['ADMIN', 'QA_USER'] as const)(
+    '%s (a generic execution mutation role) still sees Save/Finalize',
+    async (role) => {
+      await renderAs(role);
+      const buttons = [...container.querySelectorAll('button')].map((b) => b.textContent);
+      expect(buttons).toContain('Save draft');
+      expect(buttons).toContain('Finalize');
+    },
+  );
 });

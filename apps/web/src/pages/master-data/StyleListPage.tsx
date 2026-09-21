@@ -8,6 +8,7 @@ import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-disp
 import { apiClient } from '../../lib/api-client.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { canManageStyles } from '../../auth/permissions.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
@@ -57,9 +58,11 @@ export function StyleListPage() {
         title="Styles"
         subtitle="Item master records"
         primaryAction={
-          <Button asChild variant="default">
-            <Link to="/master-data/styles/new">Create Style</Link>
-          </Button>
+          canManageStyles(user) ? (
+            <Button asChild variant="default">
+              <Link to="/master-data/styles/new">Create Style</Link>
+            </Button>
+          ) : undefined
         }
       />
 

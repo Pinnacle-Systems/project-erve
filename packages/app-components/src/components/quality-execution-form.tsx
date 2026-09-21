@@ -79,10 +79,27 @@ export interface QualityExecutionFormProps {
   busy?: boolean;
   error?: string;
   validationErrors?: QualityExecutionValidationError[];
+  /**
+   * UXAUTH-006: whether the current caller may mutate this execution at all
+   * (independent of the execution.status DRAFT/FINALIZED lifecycle gate
+   * already enforced below). Defaults to true so existing callers (mobile,
+   * and every pre-existing web/unit test) that don't pass this prop keep
+   * their current behavior unchanged — only the web QualityExecutionPage
+   * passes an explicit role-derived value. When false, every mutation
+   * control (Save/Finalize/Cancel/Reinspect/Permanently reject, evidence
+   * add/remove, and every repeating-row Add/Remove) is omitted and each
+   * component renders its read-only presentation, exactly as it already does
+   * for a FINALIZED execution.
+   */
+  canMutate?: boolean;
 }
 
 export function QualityExecutionForm(props: QualityExecutionFormProps) {
   const { execution, busy, error } = props;
+  const canMutate = props.canMutate ?? true;
+  // Read-only roles see the same clean read-only presentation a FINALIZED
+  // execution already gets — never an editable-looking, greyed-out draft.
+  const readOnlyView = execution.status === 'FINALIZED' || !canMutate;
   const [draft, setDraft] = useState<QualityExecutionPayload>(execution.responses);
   const [actionRowKeys, setActionRowKeys] = useState(() =>
     execution.responses.actions.map(() => nextRowKey()),
@@ -127,7 +144,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
     key: K,
     value: QualityExecutionPayload[K],
   ) => setDraft((current) => ({ ...current, [key]: value }));
-  const disabled = execution.status !== 'DRAFT' || busy;
+  const disabled = execution.status !== 'DRAFT' || busy || !canMutate;
   const hasOutcomeComponent = execution.sections.some((section) =>
     section.components.some((component) => component.type === 'INSPECTION_OUTCOME'),
   );
@@ -249,7 +266,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                       data-component-id={component.id}
                       data-component-type={component.type}
                       disabled={disabled}
-                      readOnly={execution.status === 'FINALIZED'}
+                      readOnly={readOnlyView}
                       title={
                         component.type === 'PRODUCTION_PROGRESS'
                           ? 'Production context'
@@ -291,7 +308,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                         />
                       )}
                       {component.type === 'FIELD_GROUP' &&
-                        (execution.status === 'FINALIZED' ? (
+                        (readOnlyView ? (
                           <QualityReadOnlyGrid>
                             {rows(config.fields).map((field) => {
                               const fieldKey = text(field.key);
@@ -456,7 +473,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                           </QualityFieldGrid>
                         ))}
                       {component.type === 'ATTENDEE_LIST' &&
-                        (execution.status === 'FINALIZED' ? (
+                        (readOnlyView ? (
                           <QualityReadOnlyGrid>
                             {(Array.isArray(config.roles) ? config.roles : []).map((role) => {
                               const roleConfig =
@@ -550,7 +567,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                               No follow-up actions added.
                             </p>
                           ) : null}
-                          {execution.status === 'DRAFT' ? (
+                          {execution.status === 'DRAFT' && canMutate ? (
                             <div className="flex justify-end">
                               <Button
                                 type="button"
@@ -575,7 +592,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                               .filter((candidate) => candidate.componentId === component.id).length;
                             return (
                               <QualityRepeatingRow key={actionRowKeys[index]}>
-                                {execution.status === 'FINALIZED' ? (
+                                {readOnlyView ? (
                                   <QualityReadOnlyGrid>
                                     {rows(config.columns).map((column) => {
                                       const columnKey = text(column.key);
@@ -688,7 +705,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                     })}
                                   </QualityFieldGrid>
                                 )}
-                                {execution.status === 'DRAFT' ? (
+                                {execution.status === 'DRAFT' && canMutate ? (
                                   <div className="mt-3 flex justify-end">
                                     <Button
                                       type="button"
@@ -741,7 +758,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                 label={label}
                                 required
                                 control={
-                                  execution.status === 'FINALIZED' ? (
+                                  readOnlyView ? (
                                     <QualityChecklistResult
                                       label={label}
                                       choices={choices}
@@ -817,7 +834,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                             );
                           return (
                             <QualityRepeatingRow key={severity} className="mb-2 last:mb-0">
-                              {execution.status === 'FINALIZED' ? (
+                              {readOnlyView ? (
                                 <QualityReadOnlyGrid>
                                   <QualityReadOnlyValue
                                     label="Classification"
@@ -893,7 +910,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                           {!draft.defects.some((defect) => defect.componentId === component.id) ? (
                             <p className="text-sm text-muted-foreground">No defects recorded.</p>
                           ) : null}
-                          {execution.status === 'DRAFT' ? (
+                          {execution.status === 'DRAFT' && canMutate ? (
                             <div className="flex justify-end">
                               <Button
                                 type="button"
@@ -921,7 +938,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                             (defect, index) =>
                               defect.componentId === component.id && (
                                 <QualityRepeatingRow key={index}>
-                                  {execution.status === 'FINALIZED' ? (
+                                  {readOnlyView ? (
                                     <QualityReadOnlyGrid>
                                       <QualityReadOnlyValue
                                         className="sm:col-span-2"
@@ -1034,7 +1051,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                               No corrective actions added.
                             </p>
                           ) : null}
-                          {execution.status === 'DRAFT' ? (
+                          {execution.status === 'DRAFT' && canMutate ? (
                             <div className="flex justify-end">
                               <Button
                                 type="button"
@@ -1058,7 +1075,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                               .filter((candidate) => candidate.componentId === component.id).length;
                             return (
                               <QualityRepeatingRow key={index}>
-                                {execution.status === 'FINALIZED' ? (
+                                {readOnlyView ? (
                                   <QualityReadOnlyGrid>
                                     {rows(config.columns).map((column) => (
                                       <QualityReadOnlyValue
@@ -1108,7 +1125,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                     })}
                                   </QualityFieldGrid>
                                 )}
-                                {execution.status === 'DRAFT' ? (
+                                {execution.status === 'DRAFT' && canMutate ? (
                                   <div className="mt-2 flex justify-end">
                                     <Button
                                       type="button"
@@ -1153,7 +1170,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                 label={label}
                                 required
                                 control={
-                                  execution.status === 'FINALIZED' ? (
+                                  readOnlyView ? (
                                     <QualityChecklistResult
                                       label={label}
                                       choices={choices}
@@ -1196,7 +1213,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                       )}
                       {component.type === 'QUANTITY_RECONCILIATION' && (
                         <div className="space-y-4" data-quality-quantity-reconciliation="true">
-                          {execution.status === 'FINALIZED' ? (
+                          {readOnlyView ? (
                             <QualityReadOnlyGrid columns={2} className="lg:grid-cols-4">
                               {rows(config.fields).map((field) => {
                                 const fieldKey = text(field.key);
@@ -1374,7 +1391,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                         </div>
                       )}
                       {component.type === 'COMMENTS' &&
-                        (execution.status === 'FINALIZED' ? (
+                        (readOnlyView ? (
                           <p
                             data-quality-read-only-value="true"
                             className="min-h-8 whitespace-pre-wrap break-words text-sm text-foreground"
@@ -1438,7 +1455,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                           </div>
                         ))}
                       {component.type === 'SIGNATURES' &&
-                        (execution.status === 'FINALIZED' ? (
+                        (readOnlyView ? (
                           <QualityReadOnlyGrid>
                             {rows(config.roles).map((role) => (
                               <QualityReadOnlyValue
@@ -1508,7 +1525,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                         ))}
                       {component.type === 'INSPECTION_OUTCOME' && (
                         <div data-quality-inspection-outcome="true" className="w-full min-w-0">
-                          {execution.status === 'FINALIZED' ? (
+                          {readOnlyView ? (
                             <div className="space-y-3">
                               <QualityChecklistResult
                                 label={component.title}
@@ -1671,7 +1688,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                     </span>
                                   ) : null}
                                 </p>
-                                {execution.status === 'DRAFT' && props.onUpload ? (
+                                {execution.status === 'DRAFT' && canMutate && props.onUpload ? (
                                   <label className="relative cursor-pointer">
                                     <input
                                       id={controlId(component.id, requirementKey)}
@@ -1730,7 +1747,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                           Uploaded · {formatFileSize(item.sizeBytes)}
                                         </p>
                                       </div>
-                                      {execution.status === 'DRAFT' && props.onRemoveAttachment ? (
+                                      {execution.status === 'DRAFT' && canMutate && props.onRemoveAttachment ? (
                                         <Button
                                           type="button"
                                           variant="ghost"
@@ -1783,7 +1800,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
           {error}
         </p>
       ) : null}
-      {execution.status === 'DRAFT' && (
+      {execution.status === 'DRAFT' && canMutate && (
         <div className="space-y-3">
           {execution.finalBatch && props.onCancelBatch ? (
             <TextField
@@ -1819,6 +1836,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
         </div>
       )}
       {execution.status === 'FINALIZED' &&
+      canMutate &&
       execution.finalBatch?.disposition === 'AWAITING_REINSPECTION' ? (
         <div className="space-y-3 rounded-md border border-border bg-surface-muted p-4">
           <p className="text-sm text-muted-foreground">
