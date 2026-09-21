@@ -6,7 +6,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
-import { LoadingState } from '@erve/data-display';
+import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { Distributor, Status } from './types.js';
 
@@ -140,6 +140,11 @@ export function DistributorFormPage() {
 
   if (isEdit && distributorQuery.isLoading) {
     return <LoadingState label="Loading distributor" />;
+  }
+  if (isEdit && distributorQuery.isError) {
+    return (
+      <ErrorState title="Unable to load distributor" description={distributorQuery.error.message} />
+    );
   }
 
   return (

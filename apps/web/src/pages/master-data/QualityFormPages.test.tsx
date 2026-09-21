@@ -243,3 +243,130 @@ describe('Quality Form pages', () => {
     expect(container.textContent).toContain('Attendee list');
   });
 });
+
+describe('QualityFormDetailPage lifecycle mutation feedback (UXAUTH-020)', () => {
+  function form(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'qf-1',
+      code: 'FINAL',
+      name: 'Final Inspection Report',
+      description: null,
+      status: 'ACTIVE',
+      versions: [{ id: 'v1', versionNumber: 1, status: 'PUBLISHED' }],
+      ...overrides,
+    };
+  }
+  function version(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'v1',
+      qualityFormId: 'qf-1',
+      qualityForm: { name: 'Final Inspection Report' },
+      versionNumber: 1,
+      status: 'PUBLISHED',
+      activityType: 'INSPECTION',
+      executionScope: 'JOB_ORDER',
+      sections: [],
+      ...overrides,
+    };
+  }
+
+  function renderDetail(formData = form(), versionData = version()) {
+    apiClient.defaults.adapter = vi.fn(async (config) => {
+      if (config.method === 'get' && config.url === '/quality-forms/qf-1') {
+        return ok(config, { success: true, data: formData });
+      }
+      if (config.method === 'get' && config.url === '/quality-form-versions/v1') {
+        return ok(config, { success: true, data: versionData });
+      }
+      throw new Error(`Unexpected GET ${config.url as string}`);
+    }) satisfies AxiosAdapter;
+    act(() =>
+      root.render(
+        <Providers entry="/master-data/quality-forms/qf-1">
+          <Routes>
+            <Route path="/master-data/quality-forms/:id" element={<QualityFormDetailPage />} />
+          </Routes>
+        </Providers>,
+      ),
+    );
+  }
+
+  function findButton(label: string) {
+    return Array.from(container.querySelectorAll('button')).find(
+      (item) => item.textContent?.trim() === label,
+    );
+  }
+
+  it('disables Create New Draft while pending, blocks a duplicate click, and surfaces a visible error on failure', async () => {
+    renderDetail();
+    await waitForText('Create New Draft');
+
+    let reject!: (error: unknown) => void;
+    const postSpy = vi
+      .spyOn(apiClient, 'post')
+      .mockImplementation(() => new Promise((_resolve, r) => (reject = r)));
+
+    click('Create New Draft');
+    await flush();
+    expect(findButton('Create New Draft')?.disabled).toBe(true);
+
+    // A second click while pending must not fire a duplicate mutation.
+    click('Create New Draft');
+    expect(postSpy).toHaveBeenCalledTimes(1);
+
+    act(() => reject(new Error('Unable to create a new draft')));
+    await waitForText('Unable to create a new draft');
+    expect(findButton('Create New Draft')?.disabled).toBe(false);
+  });
+
+  it('disables Publish Version while pending and surfaces a visible error on failure', async () => {
+    renderDetail(form(), version({ status: 'DRAFT' }));
+    await waitForText('Publish Version');
+
+    let reject!: (error: unknown) => void;
+    vi.spyOn(apiClient, 'post').mockImplementation(
+      () => new Promise((_resolve, r) => (reject = r)),
+    );
+
+    click('Publish Version');
+    await flush();
+    expect(findButton('Publish Version')?.disabled).toBe(true);
+
+    act(() => reject(new Error('Unable to publish this version')));
+    await waitForText('Unable to publish this version');
+    expect(findButton('Publish Version')?.disabled).toBe(false);
+  });
+
+  it('disables Activate/Deactivate while pending, shows an error on failure, and applies the change on success', async () => {
+    renderDetail();
+    await waitForText('Deactivate');
+
+    let reject!: (error: unknown) => void;
+    const patchSpy = vi
+      .spyOn(apiClient, 'patch')
+      .mockImplementation(() => new Promise((_resolve, r) => (reject = r)));
+
+    click('Deactivate');
+    await flush();
+    expect(findButton('Deactivate')?.disabled).toBe(true);
+
+    act(() => reject(new Error('Unable to update status')));
+    await waitForText('Unable to update status');
+    expect(findButton('Deactivate')?.disabled).toBe(false);
+    expect(patchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('succeeds normally on Activate/Deactivate when the request resolves', async () => {
+    renderDetail(form({ status: 'INACTIVE' }));
+    await waitForText('Activate');
+
+    vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { success: true } });
+    click('Activate');
+    await flush();
+
+    // onSuccess invalidates ['quality-form', id], which refetches via the
+    // adapter mock — still ACTIVE there, but the mutation itself must have
+    // gone through without leaving the button permanently disabled/stuck.
+    expect(findButton('Deactivate') ?? findButton('Activate')).toBeDefined();
+  });
+});

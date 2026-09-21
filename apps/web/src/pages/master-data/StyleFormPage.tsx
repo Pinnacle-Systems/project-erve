@@ -12,6 +12,7 @@ import {
   ValidationMessage,
 } from '@erve/primitives';
 import { FormGrid, FormSection, Panel, Stack } from '@erve/layout';
+import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import {
   IMAGE_GUIDANCE,
@@ -282,6 +283,13 @@ export function StyleFormPage() {
   });
 
   const availableFactories = useMemo(() => factoriesQuery.data ?? [], [factoriesQuery.data]);
+
+  if (isEdit && styleQuery.isLoading) {
+    return <LoadingState label="Loading style" />;
+  }
+  if (isEdit && styleQuery.isError) {
+    return <ErrorState title="Unable to load style" description={styleQuery.error.message} />;
+  }
 
   return (
     <div className="space-y-5">

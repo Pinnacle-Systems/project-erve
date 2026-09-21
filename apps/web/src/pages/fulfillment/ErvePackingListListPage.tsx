@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -76,6 +76,11 @@ export function ErvePackingListListPage() {
             data={query.data ?? []}
             onRowClick={(row) => navigate(`/fulfillment/erve-packing-lists/${row.id}`)}
             emptyState={<EmptyState title="No Erve Packing Lists yet" />}
+            error={
+              query.isError ? (
+                <ErrorState title="Unable to load Erve Packing Lists" description={query.error.message} />
+              ) : undefined
+            }
             columns={[
               { key: 'number', header: 'Packing List #', accessor: 'ervePackingListNumber' },
               { key: 'distributor', header: 'Distributor', render: (r) => r.distributor?.name ?? '—' },

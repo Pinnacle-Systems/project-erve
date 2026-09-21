@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -70,6 +70,11 @@ export function PackingAuditQueuePage() {
           rowKey="id"
           data={query.data ?? []}
           emptyState={<EmptyState title="Nothing to inspect" description="No open cartons are currently awaiting Packing Audit." />}
+          error={
+            query.isError ? (
+              <ErrorState title="Unable to load Packing Audit queue" description={query.error.message} />
+            ) : undefined
+          }
           onRowClick={(row) => navigate(`/fulfillment/packing-audit/cartons/${row.id}`)}
           columns={[
             { key: 'saleOrder', header: 'Sale Order', render: (r) => r.saleOrder.saleOrderNumber },

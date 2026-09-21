@@ -290,3 +290,34 @@ describe('FactoryInvoiceDetailPage PDF print (Phase 6)', () => {
     expect(printSpy).not.toHaveBeenCalled();
   });
 });
+
+// UXAUTH-018: a failed fetch (403/500/network error) must render the real
+// ErrorState, not fall through to the "Factory Invoice not found" EmptyState
+// — that EmptyState is reserved for a genuine no-such-record response.
+describe('FactoryInvoiceDetailPage load error handling (UXAUTH-018)', () => {
+  it('shows an error state, not a not-found/empty state, when the request fails', async () => {
+    mockAuth('ACCOUNTANT');
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/factory-invoices/inv-1') throw new Error('Request failed with status code 500');
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/fulfillment/factory-invoices/inv-1']}>
+            <Routes>
+              <Route path="/fulfillment/factory-invoices/:id" element={<FactoryInvoiceDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(content()).not.toContain('Loading Factory Invoice'));
+
+    expect(content()).not.toContain('Factory Invoice not found');
+    expect(content()).toContain('Unable to load Factory Invoice');
+    expect(content()).toContain('Request failed with status code 500');
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+});

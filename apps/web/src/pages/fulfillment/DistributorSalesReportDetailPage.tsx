@@ -4,7 +4,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { DistributorSalesReportView } from './types.js';
 
@@ -22,6 +22,8 @@ export function DistributorSalesReportDetailPage() {
   const report = query.data;
 
   if (query.isLoading) return <LoadingState label="Loading sales report" />;
+  if (query.isError)
+    return <ErrorState title="Unable to load sales report" description={query.error.message} />;
   if (!report) return <EmptyState title="Sales report not found" tone="error" />;
 
   return (

@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { LoadingState, EmptyState } from '@erve/data-display';
+import { LoadingState, EmptyState, ErrorState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -69,6 +69,8 @@ export function InvoiceHandoffDetailPage() {
   });
 
   if (query.isLoading) return <LoadingState label="Loading invoice handoff" />;
+  if (query.isError)
+    return <ErrorState title="Unable to load invoice handoff" description={query.error.message} />;
   if (!handoff) return <EmptyState title="Invoice handoff not found" tone="error" />;
 
   const modeLabel = handoff.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale-or-Return';

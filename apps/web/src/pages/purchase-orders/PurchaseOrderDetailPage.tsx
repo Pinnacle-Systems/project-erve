@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -80,6 +80,9 @@ export function PurchaseOrderDetailPage() {
 
   if (poQuery.isLoading) {
     return <LoadingState label="Loading Order Sheet" />;
+  }
+  if (poQuery.isError) {
+    return <ErrorState title="Unable to load Order Sheet" description={poQuery.error.message} />;
   }
   if (!po) {
     return <EmptyState title="Order Sheet not found" description="The selected Order Sheet could not be loaded." tone="error" />;

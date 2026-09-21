@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -69,6 +69,8 @@ export function PackingAuditCartonDetailPage() {
   });
 
   if (query.isLoading) return <LoadingState label="Loading carton" />;
+  if (query.isError)
+    return <ErrorState title="Unable to load carton" description={query.error.message} />;
   if (!carton) return <EmptyState title="Carton not found" tone="error" />;
 
   const isCurrent = carton.auditState === 'INSPECTED';

@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, LoadingState, EmptyState } from '@erve/data-display';
+import { DataTable, LoadingState, EmptyState, ErrorState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -92,6 +92,8 @@ export function ErveDispatchDetailPage() {
   });
 
   if (query.isLoading) return <LoadingState label="Loading dispatch" />;
+  if (query.isError)
+    return <ErrorState title="Unable to load dispatch" description={query.error.message} />;
   if (!dispatch) return <EmptyState title="Dispatch not found" tone="error" />;
 
   return (

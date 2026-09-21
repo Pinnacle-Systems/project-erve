@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { AuditTrail, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { EmptyState, LoadingState } from '@erve/data-display';
+import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageStyles } from '../../auth/permissions.js';
 import { apiClient } from '../../lib/api-client.js';
@@ -47,6 +47,9 @@ export function StyleDetailPage() {
 
   if (styleQuery.isLoading) {
     return <LoadingState label="Loading style" />;
+  }
+  if (styleQuery.isError) {
+    return <ErrorState title="Unable to load style" description={styleQuery.error.message} />;
   }
   if (!style) {
     return (
