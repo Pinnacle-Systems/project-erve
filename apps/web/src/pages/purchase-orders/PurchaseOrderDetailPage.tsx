@@ -12,7 +12,7 @@ import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import { canCreateJobOrders } from '../../auth/permissions.js';
+import { canCreateJobOrders, canManagePurchaseOrders } from '../../auth/permissions.js';
 import type { OrderSheetPlanningState, PurchaseOrder } from './types.js';
 import { getOrderSheetPlanningState } from './types.js';
 
@@ -91,6 +91,13 @@ export function PurchaseOrderDetailPage() {
   // override, regardless of the linked Job Order's own later status.
   const isUnlocked = planningState === 'AVAILABLE';
   const canCreateJobOrder = canCreateJobOrders(user) && isUnlocked;
+  // UXAUTH-010: Edit/Cancel must reflect BOTH the actor's mutation capability
+  // (reusing the exact same shared role list the API's purchase-orders.routes.ts
+  // canManagePOs guard already enforces for PATCH /:id and POST
+  // /:id/actions/cancel) and the existing document-state lock — neither check
+  // alone is sufficient, and this fix must not weaken the pre-existing
+  // isUnlocked lock behavior for roles that already could manage this record.
+  const canMutateOrderSheet = canManagePurchaseOrders(user) && isUnlocked;
 
   return (
     <div className="space-y-6">
@@ -108,7 +115,7 @@ export function PurchaseOrderDetailPage() {
             onDownload={pdfAction.handleDownload}
             onPrint={pdfAction.handlePrint}
           />
-          {isUnlocked && (
+          {canMutateOrderSheet && (
             <Button asChild variant="secondary">
               <Link to={`/purchase-orders/${id}/edit`}>Edit</Link>
             </Button>
@@ -125,7 +132,7 @@ export function PurchaseOrderDetailPage() {
               <Link to={`/job-orders/new?purchaseOrderId=${po.id}`}>Create Job Order</Link>
             </Button>
           )}
-          {isUnlocked && (
+          {canMutateOrderSheet && (
             <Button
               variant="destructive"
               onClick={() => setCancelDialogOpen(true)}

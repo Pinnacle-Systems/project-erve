@@ -21,6 +21,7 @@ import {
   canApproveDistributorReturn,
   canReceiveDistributorReturn,
   canReadFactoryDispatchBroadly,
+  canPerformQaOperation,
   DISPATCH_ORDER_VIEW_ROLES,
   DISPATCH_ORDER_AUDIT_VIEW_ROLES,
   DISPATCH_ORDER_MUTATION_ROLES,
@@ -160,6 +161,16 @@ export const canViewMasterDataDashboardShortcut = (user: AuthUser | null | undef
 
 export const canViewStyles = (user: AuthUser | null | undefined) => hasRole(user, STYLE_VIEW_ROLES);
 
+// UXAUTH-009: Style mutation gate (Create on the list, Edit on the detail
+// page, plus the image-management controls on StyleDetailPage, which already
+// checked this exact role set inline). STYLE_VIEW_ROLES above is
+// deliberately broader — it additionally includes SENIOR_MANAGEMENT, a
+// read-only viewer for Style — so this wrapper exists to keep every Style
+// mutation surface (route guard and page CTA) reading from the one shared
+// STYLE_MANAGE_ROLES list rather than each re-deriving its own.
+export const canManageStyles = (user: AuthUser | null | undefined) =>
+  hasRole(user, STYLE_MANAGE_ROLES);
+
 export const canManageSizes = (user: AuthUser | null | undefined) =>
   hasRole(user, SIZE_MANAGE_ROLES);
 export const canManageSeasons = (user: AuthUser | null | undefined) =>
@@ -213,6 +224,16 @@ export const canFilterJobOrdersByFactory = (user: AuthUser | null | undefined) =
   hasRole(user, JOB_ORDER_FACTORY_FILTER_ROLES);
 
 export const canViewQa = (user: AuthUser | null | undefined) => hasRole(user, QA_VIEW_ROLES);
+
+// UXAUTH-006: generic QualityExecution mutation gate. Reuses @erve/shared's
+// QA_OPERATION_ROLES/canPerformQaOperation — the exact same role set the
+// API's quality-executions.routes.ts already enforces for every mutation
+// (save draft, finalize, evidence add/remove, reinspect/cancel/permanently
+// reject a Final batch). QA_VIEW_ROLES above is deliberately broader
+// (adds MERCHANDISER/SENIOR_MANAGEMENT, who may read but not mutate) — this
+// wrapper exists so the page never re-derives its own role list.
+export const canMutateQualityExecution = (user: AuthUser | null | undefined) =>
+  Boolean(user && canPerformQaOperation(user));
 
 export const canViewDispatchOrders = (user: AuthUser | null | undefined) =>
   hasRole(user, DISPATCH_ORDER_VIEW_ROLES);

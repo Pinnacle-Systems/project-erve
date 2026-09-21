@@ -24,7 +24,7 @@ import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
-import { canManageJobOrderProduction } from '../../auth/permissions.js';
+import { canManageJobOrderProduction, canViewQa } from '../../auth/permissions.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
@@ -1392,20 +1392,28 @@ export function JobOrderDetailPage() {
                   )}
                 {activity.execution ? (
                   <div className="mt-4 space-y-3">
-                    <Button
-                      variant="secondary"
-                      onClick={() =>
-                        navigate(
-                          activity.qualityForm.executionScope === 'SIZE'
-                            ? `/qa/${jobOrder.id}`
-                            : `/quality-executions/${activity.execution!.id}`,
-                        )
-                      }
-                    >
-                      {activity.status === 'COMPLETED' || activity.status === 'FAILED'
-                        ? 'View Inspection'
-                        : 'Continue Inspection'}
-                    </Button>
+                    {/* UXAUTH-011: both cross-link targets here (`/qa/:id` and
+                        `/quality-executions/:id`) share the exact same
+                        allowed-role set (QA_VIEW_ROLES) — FACTORY_USER can
+                        view this Job Order and its QA status/history above,
+                        but is in neither route's guard, so the navigation
+                        button itself must not render for it. */}
+                    {canViewQa(user) && (
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          navigate(
+                            activity.qualityForm.executionScope === 'SIZE'
+                              ? `/qa/${jobOrder.id}`
+                              : `/quality-executions/${activity.execution!.id}`,
+                          )
+                        }
+                      >
+                        {activity.status === 'COMPLETED' || activity.status === 'FAILED'
+                          ? 'View Inspection'
+                          : 'Continue Inspection'}
+                      </Button>
+                    )}
                     {activity.status === 'FAILED' &&
                       activity.eligible &&
                       activity.qualityForm.executionScope === 'SIZE' &&

@@ -4,8 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AuthUser, Role } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { AuthProvider } from '../../auth/AuthContext.js';
+import * as AuthContext from '../../auth/AuthContext.js';
 import * as generateModule from '../../lib/pdf/generate.js';
 import * as downloadModule from '../../lib/pdf/download.js';
 import { StyleDetailPage } from './StyleDetailPage.js';
@@ -153,3 +155,68 @@ describe('StyleDetailPage PDF actions', () => {
     expect(downloadSpy).toHaveBeenCalledWith(expect.any(Blob), 'ERVE-Style-STY-0001.pdf');
   });
 });
+
+// UXAUTH-009: Edit must reflect the actual STYLE_MANAGE_ROLES mutation
+// capability, not just STYLE_VIEW_ROLES read access. SENIOR_MANAGEMENT is a
+// read-only Style viewer and must not see it.
+function mockAuth(role: Role) {
+  const user: AuthUser = { id: 'user-1', email: 'user@test.local', mobile: null, name: 'Test User', roles: [role] };
+  vi.spyOn(AuthContext, 'useAuth').mockReturnValue({
+    user,
+    token: 'valid-token',
+    login: vi.fn(),
+    logout: vi.fn(),
+    refreshUser: vi.fn(),
+    isInitializing: false,
+  } as unknown as ReturnType<typeof AuthContext.useAuth>);
+}
+
+async function renderPageAsRole(style: Style, role: Role) {
+  mockAuth(role);
+  vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    if (url === `/styles/${style.id}`) return { data: { data: style } };
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  act(() => {
+    root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={[`/master-data/styles/${style.id}`]}>
+          <Routes>
+            <Route path="/master-data/styles/:id" element={<StyleDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  });
+  await act(async () => {
+    await flushMicrotasks();
+  });
+  await waitForLoaded();
+}
+
+function editLink(): HTMLAnchorElement | undefined {
+  return Array.from(container.querySelectorAll('a')).find((a) => a.textContent === 'Edit') as
+    | HTMLAnchorElement
+    | undefined;
+}
+
+describe('StyleDetailPage Edit visibility (UXAUTH-009)', () => {
+  it('shows Edit for ADMIN and MERCHANDISER (STYLE_MANAGE_ROLES)', async () => {
+    for (const role of ['ADMIN', 'MERCHANDISER'] as const) {
+      await renderPageAsRole(makeStyle(), role);
+      expect(editLink(), `expected Edit for ${role}`).not.toBeUndefined();
+    }
+  });
+
+  it('hides Edit for SENIOR_MANAGEMENT (read-only Style viewer) while retaining read content', async () => {
+    await renderPageAsRole(makeStyle(), 'SENIOR_MANAGEMENT');
+    expect(editLink()).toBeUndefined();
+    expect(content()).toContain('STY-0001');
+    expect(content()).toContain('Basic Tee');
+  });
+});
+
+function content(): string {
+  return container.textContent ?? '';
+}

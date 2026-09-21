@@ -6,6 +6,7 @@ import { MemoryRouter, Outlet } from 'react-router-dom';
 import type { AuthUser, Role } from '@erve/types';
 import { AppRoutes } from './AppRoutes.js';
 import * as AuthContext from '../auth/AuthContext.js';
+import { apiClient } from '../lib/api-client.js';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock components to simplify route testing
@@ -304,5 +305,87 @@ describe('AppRoutes Permissions', () => {
       await renderRoutes(role, '/fulfillment/factory-dispatches');
       expect(getPageContent()).toContain(allowed ? 'FactoryPackingQueuePage' : 'ForbiddenPage');
     });
+  });
+
+  // UXAUTH-008: /fulfillment/erve-packing-lists/new previously had no route
+  // guard of its own and inherited only the broad
+  // ERVE_PACKING_LIST_VIEW_ROLES parent guard — SENIOR_MANAGEMENT could
+  // directly navigate to it and mount the real create page, which fires the
+  // create-only eligible-cartons GET, even though creation
+  // (ERVE_DISPATCH_MUTATION_ROLES: ADMIN, MERCHANDISER only) is narrower than
+  // view. This uses the REAL ErvePackingListCreatePage component (not
+  // mocked) so the assertions prove the component never mounts and never
+  // calls its data-fetching endpoint for the forbidden role.
+  describe('EIPL /new route guard (UXAUTH-008)', () => {
+    it('SENIOR_MANAGEMENT is forbidden from /fulfillment/erve-packing-lists/new — the create component never mounts and its query never fires', async () => {
+      const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
+      await renderRoutes('SENIOR_MANAGEMENT', '/fulfillment/erve-packing-lists/new');
+
+      expect(getPageContent()).toContain('ForbiddenPage');
+      expect(getPageContent()).not.toContain('Create Erve Packing List');
+      expect(
+        get.mock.calls.some((call) => call[0] === '/erve-packing-lists/eligible-cartons'),
+      ).toBe(false);
+    });
+
+    it.each(['ADMIN', 'MERCHANDISER'] as const)(
+      '%s (an authorized create role) reaches the real create page and its query fires',
+      async (role) => {
+        const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
+        await renderRoutes(role, '/fulfillment/erve-packing-lists/new');
+        await vi.waitFor(() => expect(getPageContent()).toContain('Create Erve Packing List'));
+
+        expect(getPageContent()).not.toContain('ForbiddenPage');
+        expect(
+          get.mock.calls.some((call) => call[0] === '/erve-packing-lists/eligible-cartons'),
+        ).toBe(true);
+      },
+    );
+  });
+
+  // UXAUTH-017: FACTORY_USER has no authorized master-data destination at
+  // all (Style/Season/Size/Factory/Distributor/Users/Process
+  // Flow/Quality Form are every one ADMIN/MERCHANDISER(/SENIOR_MANAGEMENT)
+  // only) — the "Master Data" nav shortcut already reflected that, but the
+  // Style list/detail routes had no RoleRoute guard of their own (unlike
+  // every sibling master resource) and the broad parent
+  // MASTER_DATA_ROUTE_ROLES list still included FACTORY_USER, so a direct
+  // URL could mount the real Style page and fire its API request. These use
+  // the REAL StyleListPage/StyleDetailPage components (not mocked).
+  describe('FACTORY_USER Style route direct-URL guard (UXAUTH-017)', () => {
+    it('FACTORY_USER is forbidden from /master-data — never redirected into Styles, and no Style component mounts', async () => {
+      const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
+      await renderRoutes('FACTORY_USER', '/master-data');
+
+      expect(getPageContent()).toContain('ForbiddenPage');
+      expect(get.mock.calls.some((call) => call[0] === '/styles')).toBe(false);
+    });
+
+    it('FACTORY_USER direct-navigating to /master-data/styles is forbidden — the Style list never mounts and /styles is never called', async () => {
+      const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
+      await renderRoutes('FACTORY_USER', '/master-data/styles');
+
+      expect(getPageContent()).toContain('ForbiddenPage');
+      expect(get.mock.calls.some((call) => call[0] === '/styles')).toBe(false);
+    });
+
+    it('FACTORY_USER direct-navigating to a Style detail URL is forbidden — the Style detail never mounts and its API is never called', async () => {
+      const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
+      await renderRoutes('FACTORY_USER', '/master-data/styles/style-1');
+
+      expect(getPageContent()).toContain('ForbiddenPage');
+      expect(get.mock.calls.some((call) => call[0] === '/styles/style-1')).toBe(false);
+    });
+
+    it.each(['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+      '%s (a Style-authorized role) still reaches the real Style list, whose API is called',
+      async (role) => {
+        const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
+        await renderRoutes(role, '/master-data/styles');
+
+        expect(getPageContent()).not.toContain('ForbiddenPage');
+        expect(get.mock.calls.some((call) => call[0] === '/styles')).toBe(true);
+      },
+    );
   });
 });

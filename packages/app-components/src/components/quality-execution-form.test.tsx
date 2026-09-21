@@ -1226,6 +1226,107 @@ function setTextareaValue(textarea: HTMLTextAreaElement, value: string): void {
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+// UXAUTH-006: a caller with read-only capability (canMutate={false}) must see
+// exactly the same clean read-only presentation a FINALIZED execution
+// already gets — regardless of the execution's own DRAFT/FINALIZED status —
+// with every mutation control (Save/Finalize, evidence add/remove, every
+// repeating-row Add/Remove) absent. canMutate defaults to true when omitted,
+// which is exactly what every other test in this file (and mobile, which
+// never passes it) relies on.
+describe('QualityExecutionForm read-only capability gating (UXAUTH-006)', () => {
+  it('renders a DRAFT execution read-only when canMutate is false, hiding every mutation control', () => {
+    const item = execution();
+    item.responses.checklistResponses = [{ componentId: 'check', itemKey: 'work', response: 'PASSED' }];
+    act(() =>
+      root.render(
+        <QualityExecutionForm
+          execution={item}
+          onSave={vi.fn()}
+          onFinalize={vi.fn()}
+          onUpload={vi.fn()}
+          onRemoveAttachment={vi.fn()}
+          canMutate={false}
+        />,
+      ),
+    );
+
+    // Read-only content remains visible.
+    expect(container.textContent).toContain('Inline Inspection Report');
+    expect(container.querySelector('[data-quality-checklist-result="true"]')).not.toBeNull();
+
+    // Every mutation control is absent.
+    expect(container.textContent).not.toContain('Save draft');
+    expect(container.textContent).not.toContain('Finalize');
+    expect(container.textContent).not.toContain('Add defect');
+    expect(container.textContent).not.toContain('Add corrective action');
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    expect([...container.querySelectorAll('fieldset')].every((fieldset) => fieldset.disabled)).toBe(
+      true,
+    );
+  });
+
+  it('renders every follow-up/defect/corrective-action row read-only, with no Add/Remove controls, when canMutate is false', () => {
+    const item = ppmExecution();
+    item.responses.actions = [
+      { componentId: 'follow-up', values: { action: 'Approve trims', owner: 'Ravi', targetDate: '2026-08-24' } },
+    ];
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={vi.fn()} canMutate={false} />,
+      ),
+    );
+    expect(container.textContent).toContain('Approve trims');
+    expect(container.textContent).not.toContain('Add follow-up');
+    expect(container.textContent).not.toContain('Remove item');
+    expect(container.querySelector('#quality-follow-up-row-0-action')).toBeNull();
+  });
+
+  it('offers no reinspection/permanently-reject controls when canMutate is false, even on an AWAITING_REINSPECTION batch', () => {
+    const item = finalExecution('FINALIZED');
+    item.finalBatch = {
+      id: 'batch-2',
+      batchNumber: 2,
+      physicalQuantity: 25,
+      disposition: 'AWAITING_REINSPECTION',
+      allocations: [{ jobOrderLineSizeId: 'size-1', sizeCode: 'M', sizeLabel: 'M', quantity: 25 }],
+      attempts: [],
+      release: null,
+    };
+    act(() =>
+      root.render(
+        <QualityExecutionForm
+          execution={item}
+          onSave={vi.fn()}
+          onFinalize={vi.fn()}
+          onStartReinspection={vi.fn()}
+          onPermanentlyReject={vi.fn()}
+          canMutate={false}
+        />,
+      ),
+    );
+    expect(container.textContent).not.toContain('Start reinspection');
+    expect(container.textContent).not.toContain('Mark permanently rejected');
+  });
+
+  it('keeps every mutation control for a DRAFT execution when canMutate is true (explicit) or omitted (default)', () => {
+    for (const canMutate of [true, undefined] as const) {
+      act(() =>
+        root.render(
+          <QualityExecutionForm
+            execution={execution()}
+            onSave={vi.fn()}
+            onFinalize={vi.fn()}
+            {...(canMutate === undefined ? {} : { canMutate })}
+          />,
+        ),
+      );
+      expect(container.textContent).toContain('Save draft');
+      expect(container.textContent).toContain('Finalize');
+      expect(container.textContent).toContain('Add defect');
+    }
+  });
+});
+
 describe('Final Inspection mandatory rejection reason on FAIL', () => {
   const withFinalBatch = (status: 'DRAFT' | 'FINALIZED' = 'DRAFT'): QualityExecutionView => {
     const item = finalExecution(status);

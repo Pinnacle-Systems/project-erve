@@ -361,9 +361,8 @@ describe('PackingListPage PDF print (Phase 5)', () => {
 // Dispatch Order route). This page's mutation gating (canMutateFactoryDispatches)
 // was already correct before this batch — these are regression-confirmation
 // tests proving broadened READ access did not broaden WRITE access, not a
-// behavior change. Note: Known UXAUTH-012 (M/S -> "View Factory Invoice" ->
-// Forbidden) is intentionally NOT asserted or changed here — out of scope
-// for Batch 2.
+// behavior change. UXAUTH-012 (M/S -> "View Factory Invoice" -> Forbidden,
+// once out of scope for Batch 2) is now fixed and covered below.
 describe('PackingListPage read-only regression — MERCHANDISER/SENIOR_MANAGEMENT (UXAUTH-003/004)', () => {
   it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
     '%s sees no Factory Packing mutation controls on an active DRAFT Factory Dispatch',
@@ -386,4 +385,46 @@ describe('PackingListPage read-only regression — MERCHANDISER/SENIOR_MANAGEMEN
       expect(buttonByText('Download PDF')).not.toBeNull();
     },
   );
+});
+
+// UXAUTH-012: an invoice existing on the Factory Dispatch is not enough to
+// show "View Factory Invoice" — the target route
+// (/fulfillment/factory-invoices/:id) is guarded by FACTORY_INVOICE_VIEW_ROLES
+// (ADMIN, ACCOUNTANT, FACTORY_USER), which is narrower than the roles that
+// can read this Packing List (FACTORY_DISPATCH_VIEW_ROLES, which additionally
+// includes MERCHANDISER/SENIOR_MANAGEMENT). Before this fix the button
+// rendered for every viewer whenever factoryInvoiceId was set, regardless of
+// role, sending MERCHANDISER/SENIOR_MANAGEMENT to a route they cannot enter.
+describe('PackingListPage Factory Invoice cross-link (UXAUTH-012)', () => {
+  const withInvoice = () =>
+    buildPackingList({
+      factoryDispatch: {
+        id: 'fd-1',
+        factoryDispatchNumber: 'EIFD/26-27/0001',
+        status: 'READY_FOR_ERVE',
+        version: 2,
+        factoryInvoiceId: 'inv-1',
+      },
+    });
+
+  it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
+    '%s does not see View Factory Invoice even though an invoice exists',
+    async (role) => {
+      await renderPage(withInvoice(), role);
+      expect(buttonByText('View Factory Invoice')).toBeNull();
+    },
+  );
+
+  it.each(['ADMIN', 'FACTORY_USER'] as const)(
+    '%s (a Factory Invoice viewer) still sees View Factory Invoice when an invoice exists',
+    async (role) => {
+      await renderPage(withInvoice(), role);
+      expect(buttonByText('View Factory Invoice')).not.toBeNull();
+    },
+  );
+
+  it('does not render View Factory Invoice for any role when no invoice exists yet', async () => {
+    await renderPage(buildPackingList(), 'ADMIN');
+    expect(buttonByText('View Factory Invoice')).toBeNull();
+  });
 });

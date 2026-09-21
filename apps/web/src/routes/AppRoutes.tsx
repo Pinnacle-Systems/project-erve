@@ -81,6 +81,7 @@ import {
   SIZE_MANAGE_ROLES,
   SEASON_MANAGE_ROLES,
   STYLE_MANAGE_ROLES,
+  STYLE_VIEW_ROLES,
   USER_MANAGE_ROLES,
 } from '../auth/permissions.js';
 import {
@@ -88,18 +89,26 @@ import {
   FACTORY_INVOICE_VIEW_ROLES,
   PACKING_AUDIT_VIEW_ROLES,
   ERVE_DISPATCH_VIEW_ROLES,
+  ERVE_DISPATCH_MUTATION_ROLES,
   ERVE_PACKING_LIST_VIEW_ROLES,
   INVOICE_HANDOFF_VIEW_ROLES,
   SALE_OR_RETURN_POSITION_VIEW_ROLES,
   DISTRIBUTOR_SALES_REPORT_VIEW_ROLES,
 } from '@erve/shared';
 
-const MASTER_DATA_ROUTE_ROLES = [
-  'ADMIN',
-  'MERCHANDISER',
-  'SENIOR_MANAGEMENT',
-  'FACTORY_USER',
-] as const;
+// UXAUTH-017: FACTORY_USER has no authorized master-data child page at all —
+// Styles/Seasons/Sizes/Factories/Distributors/Users/Process Flows/Quality
+// Forms are every one of them ADMIN/MERCHANDISER(/SENIOR_MANAGEMENT)-only
+// (see STYLE_VIEW_ROLES and friends below/in permissions.ts), and the "Master
+// Data" nav shortcut already reflects that (MASTER_DATA_DASHBOARD_SHORTCUT_ROLES
+// excludes FACTORY_USER). It was still listed here, which let it pass this
+// parent guard, land on the /master-data index redirect, and (until the
+// styles/styles/:id routes below gained their own nested RoleRoute) mount the
+// real Style list/detail page and fire its API request. Excluded here to
+// match DISTRIBUTOR's existing precedent for a role with no master
+// destination: denied at the parent, before any redirect or child route is
+// even considered.
+const MASTER_DATA_ROUTE_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'] as const;
 
 export function AppRoutes() {
   return (
@@ -125,7 +134,14 @@ export function AppRoutes() {
         }
       >
         <Route index element={<Navigate to="/master-data/styles" replace />} />
-        <Route path="styles" element={<StyleListPage />} />
+        <Route
+          path="styles"
+          element={
+            <RoleRoute allowed={STYLE_VIEW_ROLES}>
+              <StyleListPage />
+            </RoleRoute>
+          }
+        />
         <Route
           path="styles/new"
           element={
@@ -134,7 +150,14 @@ export function AppRoutes() {
             </RoleRoute>
           }
         />
-        <Route path="styles/:id" element={<StyleDetailPage />} />
+        <Route
+          path="styles/:id"
+          element={
+            <RoleRoute allowed={STYLE_VIEW_ROLES}>
+              <StyleDetailPage />
+            </RoleRoute>
+          }
+        />
         <Route
           path="styles/:id/edit"
           element={
@@ -499,7 +522,14 @@ export function AppRoutes() {
         }
       >
         <Route index element={<ErvePackingListListPage />} />
-        <Route path="new" element={<ErvePackingListCreatePage />} />
+        <Route
+          path="new"
+          element={
+            <RoleRoute allowed={ERVE_DISPATCH_MUTATION_ROLES}>
+              <ErvePackingListCreatePage />
+            </RoleRoute>
+          }
+        />
         <Route path=":id" element={<ErvePackingListDetailPage />} />
       </Route>
       <Route

@@ -12,6 +12,7 @@ import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { canMutateErveDispatches } from '../../auth/permissions.js';
 import type { EligibleErveCartonView, ErvePackingListDetail } from './types.js';
 
 const STATUS_LABEL: Record<ErvePackingListDetail['status'], string> = {
@@ -25,6 +26,13 @@ export function ErvePackingListDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  // UXAUTH-007: SENIOR_MANAGEMENT (and any other ERVE_PACKING_LIST_VIEW_ROLES
+  // member outside ERVE_DISPATCH_MUTATION_ROLES) may read this detail but not
+  // mutate it — reuses the same shared capability the API's
+  // erve-dispatch.routes.ts already enforces for every mutation endpoint
+  // below (add/remove carton, finalize, record dispatch), so this page can
+  // never drift from the backend's real authorization.
+  const canMutate = canMutateErveDispatches(user);
 
   const [dispatchDate, setDispatchDate] = useState(new Date().toISOString().slice(0, 10));
   const [transporter, setTransporter] = useState('');
@@ -45,7 +53,7 @@ export function ErvePackingListDetailPage() {
   const isOpen = packingList?.status === 'OPEN';
 
   const eligibleQuery = useQuery({
-    enabled: isOpen,
+    enabled: isOpen && canMutate,
     queryKey: ['erve-packing-lists', 'eligible-cartons', id],
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<EligibleErveCartonView[]>>('/erve-packing-lists/eligible-cartons', {
@@ -187,7 +195,7 @@ export function ErvePackingListDetailPage() {
               { key: 'factoryDispatch', header: 'Factory Packing List', accessor: 'factoryDispatchNumber' },
               { key: 'lines', header: 'Contents', render: (r) => r.lines.map((l) => `${l.styleNumber}/${l.sizeCode}: ${l.quantity}`).join(', ') },
               { key: 'qty', header: 'Total Qty', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },
-              ...(isOpen
+              ...(isOpen && canMutate
                 ? [
                     {
                       key: 'remove',
@@ -219,7 +227,7 @@ export function ErvePackingListDetailPage() {
         )}
       </div>
 
-      {isOpen && (
+      {isOpen && canMutate && (
         <Panel title="Add Cartons">
           {eligibleQuery.isLoading ? (
             <LoadingState label="Loading eligible cartons" />
@@ -267,7 +275,7 @@ export function ErvePackingListDetailPage() {
         </Panel>
       )}
 
-      {isOpen && (
+      {isOpen && canMutate && (
         <div className="flex justify-end">
           <Button onClick={() => finalizeMutation.mutate()} disabled={packingList.cartonCount === 0} loading={finalizeMutation.isPending}>
             Finalize Packing List
@@ -275,7 +283,7 @@ export function ErvePackingListDetailPage() {
         </div>
       )}
 
-      {packingList.status === 'FINALIZED' && (
+      {packingList.status === 'FINALIZED' && canMutate && (
         <Panel title="Record Erve Dispatch">
           <div className="flex flex-wrap gap-3">
             <TextField label="Dispatch Date" type="date" value={dispatchDate} onChange={(e) => setDispatchDate(e.target.value)} />
