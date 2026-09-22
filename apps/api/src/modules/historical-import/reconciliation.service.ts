@@ -14,6 +14,7 @@ import { Prisma, prisma } from '../../db/prisma.js';
 import type { ExtractedImageCandidate, ImageExtractionMethod } from './style-image-extractor.js';
 import type { ParsedPurchaseOrderRecord } from './po-pdf-parser.types.js';
 import { resolveApprovedFactoryMapping, type FactoryMappingRow } from './factory-mapping.js';
+import { resolveApprovedSizeMapping, type SizeMappingRow } from './size-mapping.js';
 
 type Client = Prisma.TransactionClient | typeof prisma;
 
@@ -142,14 +143,30 @@ export async function reconcileStyle(
   return { status: 'MATCHED', styleId: matches[0]!.id, sourceLmix: params.lmix, reason: null };
 }
 
+/**
+ * `approvedSizeMappings` (H2A continuation §3) is an optional, explicit,
+ * human-reviewed list of source-Size-code -> current Size.code rows,
+ * consulted ONLY after the normal exact-code match fails, and itself
+ * resolved by exact string match (see resolveApprovedSizeMapping) — never
+ * fuzzy, never a partial/contains match, and never used unless the mapping
+ * row's own status is APPROVED. Historical-import-specific; passing it
+ * never changes behavior for any other caller of ordinary Size lookup.
+ */
 export async function reconcileSizes(
   client: Client,
   styleId: string | null,
   sizeQuantities: ParsedPurchaseOrderRecord['sizeQuantities'],
+  approvedSizeMappings?: SizeMappingRow[],
 ): Promise<SizeReconciliation[]> {
   return Promise.all(
     sizeQuantities.map(async (sq): Promise<SizeReconciliation> => {
-      const sizeMatches = await client.size.findMany({ where: { code: sq.sizeCode }, select: { id: true } });
+      let sizeMatches = await client.size.findMany({ where: { code: sq.sizeCode }, select: { id: true } });
+      if (sizeMatches.length === 0 && approvedSizeMappings && approvedSizeMappings.length > 0) {
+        const mappedTargetCode = resolveApprovedSizeMapping(approvedSizeMappings, sq.sizeCode);
+        if (mappedTargetCode) {
+          sizeMatches = await client.size.findMany({ where: { code: mappedTargetCode }, select: { id: true } });
+        }
+      }
       if (sizeMatches.length === 0) {
         return { sizeCode: sq.sizeCode, quantity: sq.quantity, status: 'UNMATCHED', sizeId: null, reason: `No Size with code "${sq.sizeCode}"` };
       }
@@ -276,6 +293,7 @@ export async function reconcileBatch(
   client: Client,
   items: ReconcileBatchItem[],
   approvedFactoryMappings?: FactoryMappingRow[],
+  approvedSizeMappings?: SizeMappingRow[],
 ): Promise<ReconciledRecord[]> {
   const duplicateInfos = await detectDuplicateLegacyReferences(
     client,
@@ -288,7 +306,7 @@ export async function reconcileBatch(
     const season = await reconcileSeason(client, parsed.documentSeason.value);
     const factory = await reconcileFactory(client, parsed.factoryName.value, approvedFactoryMappings);
     const style = await reconcileStyle(client, { lmix: parsed.licenseStyleLmix.value, seasonId: season.seasonId });
-    const sizes = await reconcileSizes(client, style.styleId, parsed.sizeQuantities);
+    const sizes = await reconcileSizes(client, style.styleId, parsed.sizeQuantities, approvedSizeMappings);
     const imageReconciliation = await reconcileImage(client, image, style.styleId);
     const duplicate = duplicateInfos[i]!;
 

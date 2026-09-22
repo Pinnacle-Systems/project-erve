@@ -21,6 +21,7 @@ function parseArgs(argv: string[]): {
   stagingFilePath: string;
   processFlowVersionId?: string;
   factoryMappingFilePath?: string;
+  sizeMappingFilePath?: string;
   sourceOverridesFilePath?: string;
 } {
   const get = (flag: string): string | undefined => {
@@ -31,10 +32,11 @@ function parseArgs(argv: string[]): {
   const stagingFilePath = get('--input');
   const processFlowVersionId = get('--process-flow-version-id');
   const factoryMappingFilePath = get('--factory-mapping');
+  const sizeMappingFilePath = get('--size-mapping');
   const sourceOverridesFilePath = get('--source-overrides');
   if (!batchLabel) throw new HistoricalImportDryRunError('--batch is required, e.g. --batch AW25-SS26');
   if (!stagingFilePath) throw new HistoricalImportDryRunError('--input is required (path to source-staging.json from historical-import:prepare)');
-  return { batchLabel, stagingFilePath, processFlowVersionId, factoryMappingFilePath, sourceOverridesFilePath };
+  return { batchLabel, stagingFilePath, processFlowVersionId, factoryMappingFilePath, sizeMappingFilePath, sourceOverridesFilePath };
 }
 
 async function main(): Promise<void> {

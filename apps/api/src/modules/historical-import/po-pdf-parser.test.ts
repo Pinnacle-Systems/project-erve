@@ -167,12 +167,62 @@ describe('parsePurchaseOrderBuffer — AW25/SS26 template', () => {
     expect(result.orderDate.value).toBe('2025-08-15');
   });
 
-  it('falls back to the table Artwork column for the LMIX code when the "License Style" label is entirely absent', async () => {
+  it('falls back to the table Artwork column for the LMIX code when the "License Style" label AND the header value are both entirely absent', async () => {
+    // Removes the label item AND the header-grid's own LMIX value item —
+    // genuinely nothing left in the header region, so this must fall all
+    // the way through to the table's Artwork-column copy.
     const runs = baseRuns().filter((r) => r.text !== 'License Style' && r.text !== 'LMIX29524002');
-    // The table's own Artwork-column LMIX value (present on every real
-    // document) still carries it.
     runs.push({ text: 'LMIX29524002', x: 279, y: 332, fontSize: FIXTURE_FONT_SIZE });
     const result = await parse(runs);
+    expect(result.licenseStyleLmix.value).toBe('LMIX29524002');
+  });
+
+  it('uses the header\'s own standalone (unlabeled) LMIX value when the "License Style" label is absent but the value itself is still present — H2A regression for the EI26041-EI26050 template variant', async () => {
+    // Real AW25/SS26 template variant (H2A finding): on a contiguous block
+    // of real SS26 documents, "License Style" never appears as label text
+    // anywhere in the content stream, but the header grid's own LMIX value
+    // item is still there, unanchored to any label. Removing only the label
+    // item (keeping the value item at its real header-row position)
+    // reproduces that exactly.
+    const runs = baseRuns().filter((r) => r.text !== 'License Style');
+    const result = await parse(runs);
+    expect(result.licenseStyleLmix.value).toBe('LMIX29524002');
+  });
+
+  it('prefers the header\'s own standalone LMIX value over a DIFFERENT, stale Artwork-column copy — H2A regression for the EI26042 numbering anomaly', async () => {
+    // Reproduces the real EI26042.pdf defect: the header grid's own LMIX
+    // value is correct and present (just unlabeled), but the table's
+    // Artwork-column copy is stale — a copy/paste carry-over from a
+    // neighboring order — and reads a DIFFERENT code. The header's own
+    // value must win; the parser must never prefer the Artwork fallback
+    // when a valid header value is genuinely present.
+    const runs = baseRuns().filter((r) => r.text !== 'License Style' && r.text !== 'LMIX29524002');
+    runs.push(
+      // Header grid's own value — correct, unlabeled.
+      { text: 'LMIX42026010', x: 601, y: 542, fontSize: FIXTURE_FONT_SIZE },
+      // Table Artwork column — stale/wrong (a different order's code).
+      { text: 'LMIX42026007', x: 279, y: 332, fontSize: FIXTURE_FONT_SIZE },
+    );
+    const result = await parse(runs);
+    expect(result.licenseStyleLmix.value).toBe('LMIX42026010');
+  });
+
+  it('prefers the label-anchored header LMIX over the table Artwork column even when they disagree', async () => {
+    // The ordinary (label-anchored) path must remain authoritative over
+    // Artwork too, not just the new standalone-header fallback path.
+    const runs = baseRuns().map((r) => (r.text === 'LMIX29524002' && r.y === 332 ? { ...r, text: 'LMIX_WRONG_ARTWORK_COPY' } : r));
+    const result = await parse(runs);
+    expect(result.licenseStyleLmix.value).toBe('LMIX29524002');
+  });
+
+  it('does not guess when more than one distinct standalone LMIX-shaped value appears in the header region', async () => {
+    const runs = baseRuns().filter((r) => r.text !== 'License Style');
+    // A second, different standalone LMIX-shaped item elsewhere in the
+    // header region — genuinely ambiguous, must not pick either one.
+    runs.push({ text: 'LMIX99999999', x: 700, y: 542, fontSize: FIXTURE_FONT_SIZE });
+    const result = await parse(runs);
+    // Falls through past the (now-ambiguous) standalone-header check to the
+    // table's Artwork column, which is still unambiguous in this fixture.
     expect(result.licenseStyleLmix.value).toBe('LMIX29524002');
   });
 
