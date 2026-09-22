@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
+import { ErrorState, LoadingState } from '@erve/data-display';
 import { Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
@@ -60,8 +61,13 @@ export function PurchaseOrderFormPage() {
     },
   });
 
+  // Only needed to populate the CREATE-mode dropdown. Edit mode shows the
+  // Order Sheet's own (immutable) distributor from poQuery.data instead —
+  // fetching this list on edit was never necessary and, worse, raced with
+  // the po hydration effect (see the Distributor field below).
   const distributorsQuery = useQuery({
     queryKey: ['distributors', 'active'],
+    enabled: !isEdit,
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<Distributor[]>>('/distributors', {
         params: { status: 'ACTIVE' },
@@ -80,32 +86,60 @@ export function PurchaseOrderFormPage() {
     },
   });
 
+  // The loading guard below keeps the Style <SelectField> unmounted until
+  // poQuery resolves, so — unlike Distributor, which is read-only on edit —
+  // its <SelectItem>s mount in the very same commit as the hydrated styleId.
+  // Radix's SelectBubbleInput syncs a hidden native <select> to the
+  // controlled value in a useEffect; when that races the sibling
+  // SelectItems' own registration into Radix's internal options collection,
+  // the browser finds no matching <option> yet, coerces the native value
+  // back to "", and Radix's onChange silently resets styleId to "" right
+  // after hydration set it. Confirmed via instrumented repro: hydrating
+  // synchronously (or even one React commit later) still raced; only
+  // deferring to a fresh macrotask reliably lands after Radix's internal
+  // registration settles. This does not occur pre-load-guard, where the
+  // form (and its Style options) already mount well before poQuery resolves.
+  //
+  // hydratedRef makes this initial-load hydration only, run at most once:
+  // poQuery has no staleTime override and refetchOnReconnect defaults to
+  // true, so a network reconnect while the user is mid-edit would otherwise
+  // hand this effect a new poQuery.data reference and silently clobber
+  // whatever the user has already changed. The flag is set only once the
+  // deferred hydration actually runs (not when merely scheduled), so if a
+  // dependency changes and cancels an in-flight (not-yet-fired) attempt, the
+  // next effect run still retries with the latest data — hydration is
+  // guaranteed to happen exactly once, never skipped and never repeated.
+  const hydratedRef = useRef(false);
   useEffect(() => {
-    if (!poQuery.data) return;
+    if (hydratedRef.current || !poQuery.data || !stylesQuery.data) return;
     const po = poQuery.data;
-    const firstLine = po.lines[0];
-    // Hydrates the edit form from an async-loaded record; the data isn't available
-    // for a lazy initial-state computation, so this can't be done without an effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDistributorId(po.distributor.id);
-    setPoDate(po.poDate.slice(0, 10));
-    setRequiredDeliveryDate(po.requiredDeliveryDate?.slice(0, 10) ?? '');
-    setRemarks(po.remarks ?? '');
-    setLine(
-      firstLine
-        ? {
-            styleId: firstLine.styleId,
-            remarks: firstLine.remarks ?? '',
-            sizes: firstLine.sizes.map((sz) => ({
-              sizeId: sz.sizeId,
-              sizeCode: sz.sizeCode,
-              sizeLabel: sz.sizeLabel,
-              orderedQuantity: String(sz.orderedQuantity),
-            })),
-          }
-        : emptyLine(),
-    );
-  }, [poQuery.data]);
+    const timer = setTimeout(() => {
+      hydratedRef.current = true;
+      const firstLine = po.lines[0];
+      // Hydrates the edit form from an async-loaded record; the data isn't
+      // available for a lazy initial-state computation, so this can't be
+      // done without an effect.
+      setDistributorId(po.distributor.id);
+      setPoDate(po.poDate.slice(0, 10));
+      setRequiredDeliveryDate(po.requiredDeliveryDate?.slice(0, 10) ?? '');
+      setRemarks(po.remarks ?? '');
+      setLine(
+        firstLine
+          ? {
+              styleId: firstLine.styleId,
+              remarks: firstLine.remarks ?? '',
+              sizes: firstLine.sizes.map((sz) => ({
+                sizeId: sz.sizeId,
+                sizeCode: sz.sizeCode,
+                sizeLabel: sz.sizeLabel,
+                orderedQuantity: String(sz.orderedQuantity),
+              })),
+            }
+          : emptyLine(),
+      );
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [poQuery.data, stylesQuery.data]);
 
   function getStyleSizes(styleId: string): StyleOption['sizes'] {
     const style = stylesQuery.data?.find((s) => s.id === styleId);
@@ -128,7 +162,13 @@ export function PurchaseOrderFormPage() {
     }));
   }
 
+  // Edit mode reads Purchase Mode straight off the Order Sheet record
+  // (PurchaseOrderSummary already carries its own purchaseMode) rather than
+  // looking it up from distributorsQuery — that list isn't fetched on edit.
   const selectedDistributor = distributorsQuery.data?.find((d) => d.id === distributorId);
+  const purchaseModeCode = isEdit ? poQuery.data?.purchaseMode : selectedDistributor?.purchaseMode;
+  const purchaseModeLabel =
+    purchaseModeCode === 'OUTRIGHT' ? 'Outright' : purchaseModeCode === 'SALE_RETURN' ? 'Sale or Return' : '';
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -170,6 +210,21 @@ export function PurchaseOrderFormPage() {
     onError: (caught) => setError(getApiErrorMessage(caught, 'Unable to save the Order Sheet. Please try again.')),
   });
 
+  if (isEdit && poQuery.isLoading) {
+    return <LoadingState label="Loading Order Sheet" />;
+  }
+  if (isEdit && (poQuery.isError || !poQuery.data)) {
+    // Without this guard, a slow or failed GET fell through to the same
+    // writable default form CREATE renders — an authorized actor could
+    // submit those defaults and PATCH the existing Order Sheet incorrectly.
+    return (
+      <ErrorState
+        title="Unable to load Order Sheet"
+        description={poQuery.isError ? poQuery.error.message : 'The selected Order Sheet could not be loaded.'}
+      />
+    );
+  }
+
   const availableStyles = stylesQuery.data?.filter((s) => s.status === 'ACTIVE') ?? [];
   const sizesForStyle = getStyleSizes(line.styleId);
 
@@ -195,31 +250,27 @@ export function PurchaseOrderFormPage() {
         >
           <FormSection title="Order Sheet Header">
             <FormGrid layout="content">
-              <SelectField
-                label="Distributor *"
-                value={distributorId || 'NONE'}
-                disabled={isEdit}
-                onValueChange={(value) => setDistributorId(value === 'NONE' ? '' : value)}
-                width="md"
-              >
-                <SelectItem value="NONE">Select distributor</SelectItem>
-                {(distributorsQuery.data ?? []).map((d) => (
-                  <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                ))}
-              </SelectField>
+              {isEdit ? (
+                // Distributor is immutable on edit; read-only text avoids the
+                // interactive Radix Select (and its BubbleSelect hydration
+                // race) entirely, mirroring the fix already applied to Sale
+                // Order's Distributor field for the identical bug.
+                <TextField label="Distributor *" value={poQuery.data!.distributor.name} disabled width="md" />
+              ) : (
+                <SelectField
+                  label="Distributor *"
+                  value={distributorId || 'NONE'}
+                  onValueChange={(value) => setDistributorId(value === 'NONE' ? '' : value)}
+                  width="md"
+                >
+                  <SelectItem value="NONE">Select distributor</SelectItem>
+                  {(distributorsQuery.data ?? []).map((d) => (
+                    <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                  ))}
+                </SelectField>
+              )}
 
-              <TextField
-                label="Purchase Mode"
-                value={
-                  selectedDistributor
-                    ? selectedDistributor.purchaseMode === 'OUTRIGHT'
-                      ? 'Outright'
-                      : 'Sale or Return'
-                    : ''
-                }
-                disabled
-                width="sm"
-              />
+              <TextField label="Purchase Mode" value={purchaseModeLabel} disabled width="sm" />
 
               <DatePicker
                 label="Order Sheet Date *"

@@ -18,7 +18,7 @@ Audit date: 2026-08-04. This is an inventory of implemented routes; modules not 
 | JO-W         | ADMIN, MERCHANDISER, FACTORY_USER                               | mapped active factory; transition status/version         | 403/409        |
 | QA-V         | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, QA_USER                 | QA global visibility                                     | 403            |
 | QA-O         | ADMIN, QA_USER, MERCHANDISER                                    | inspection/job-order eligibility and version             | 403/409        |
-| QA-R         | ADMIN, MERCHANDISER, FACTORY_USER                               | mapped factory; rework status/version                    | 403/409        |
+| QA-R         | ADMIN, QA_USER, MERCHANDISER                                    | no factory mapping; QA-owned rework status/version       | 403/409        |
 | QA-E         | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, QA_USER, FACTORY_USER   | evidence inherits its inspection/job-order factory scope | 403            |
 | STYLE-R      | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT                          | global style/image read                                  | 403            |
 | FACTORY-TASK | FACTORY_USER                                                    | exactly one mapped factory                               | 403            |
@@ -54,7 +54,7 @@ Every non-public row runs through `requireAuth`, reloading active status, roles,
 | QA                   | queue/job-order detail                                             | QA-V                                                          | router + visibility service               | matching routes      | reviewed          |
 | QA                   | inspection/evidence/approve/finalize                               | QA-O                                                          | router + eligibility/version service      | matching controls    | reviewed          |
 | QA                   | reopen                                                             | ADMIN, MERCHANDISER                                           | router + status/version service           | web controls         | reviewed          |
-| QA                   | rework queue/acknowledge/ready                                     | QA-R                                                          | router + factory/status/version service   | mobile controls      | reviewed          |
+| QA                   | rework queue/acknowledge/ready                                     | QA-R                                                          | router + status/version service           | web/mobile controls  | reviewed          |
 | QA                   | evidence content                                                   | ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, QA_USER, FACTORY_USER | router + evidence-parent scope            | contextual           | reviewed          |
 
 ## Findings and remediation plan

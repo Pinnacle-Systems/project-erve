@@ -9,7 +9,6 @@ import type {
 } from '@erve/types';
 import { QA_INSPECTION_START_STATUSES, QA_QUEUE_STATUSES } from '@erve/types';
 import type { CurrentUser } from '../../auth/current-user.js';
-import { getSoleFactoryId } from '../../auth/access.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { HttpError } from '../../errors/http-error.js';
 import { Prisma, prisma } from '../../db/prisma.js';
@@ -30,16 +29,6 @@ function assertQaView(user: CurrentUser, _factoryId: string) {
   if (isReadSupervisor(user)) return;
   if (canPerformQaOperation(user)) return;
   throw HttpError.forbidden('You cannot view this QA record');
-}
-function assertFactoryMutation(user: CurrentUser, factoryId: string) {
-  if (isSupervisor(user)) return;
-  if (
-    !user.roles.includes('FACTORY_USER') ||
-    user.factoryIds.length !== 1 ||
-    user.factoryIds[0] !== factoryId
-  ) {
-    throw HttpError.forbidden('You cannot update this rework task');
-  }
 }
 function hash(value: unknown) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -1030,9 +1019,7 @@ export async function updateRework(
       where: { id: taskId },
       include: { jobOrder: { include: { factory: true } } },
     });
-    assertFactoryMutation(user, task.jobOrder.factoryId);
-    if (!isSupervisor(user) && task.jobOrder.factory.status !== 'ACTIVE')
-      throw HttpError.conflict('This factory is inactive and cannot perform rework actions');
+    assertQaMutation(user, task.jobOrder.factoryId);
     if (task.version !== input.expectedVersion) throw HttpError.staleVersion(task.version);
     const expected = action === 'ACKNOWLEDGE' ? 'REWORK_REQUIRED' : 'ACKNOWLEDGED';
     if (
@@ -1106,15 +1093,10 @@ export async function updateRework(
   return toDetail(await load(jobOrderId));
 }
 
-export async function getFactoryReworkQueue(user: CurrentUser) {
-  const factoryId = user.roles.includes('FACTORY_USER') ? getSoleFactoryId(user) : null;
-  if (!factoryId && !isSupervisor(user))
-    throw HttpError.forbidden('You cannot view factory rework');
+export async function getReworkQueue(user: CurrentUser) {
+  if (!isSupervisor(user)) throw HttpError.forbidden('You cannot view rework');
   const jobs = await prisma.jobOrder.findMany({
-    where: {
-      factoryId: factoryId ?? undefined,
-      qaReworkTasks: { some: { status: { not: 'REINSPECTED' } } },
-    },
+    where: { qaReworkTasks: { some: { status: { not: 'REINSPECTED' } } } },
     include: detailInclude,
   });
   return jobs.flatMap((job) =>

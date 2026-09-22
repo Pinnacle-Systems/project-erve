@@ -15,7 +15,7 @@ const lifecycleLabels: Record<JobOrderStatus, string> = {
   PRODUCTION_COMPLETE: 'Production Complete',
   READY_FOR_QA: 'Ready for QA',
   QA_IN_PROGRESS: 'QA in Progress',
-  REWORK_REQUIRED: 'Rework Required',
+  REWORK_REQUIRED: 'Correction Required',
   READY_FOR_REINSPECTION: 'Ready for Reinspection',
   QA_APPROVED: 'QA Approved',
   QA_PASSED: 'QA Passed',

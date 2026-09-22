@@ -451,42 +451,46 @@ describe('JobOrderDetailPage workflow rendering', () => {
     expect(content()).not.toContain('Historical progress not captured');
   });
 
-  it('shows size-level rework inside the original Job Order and performs factory actions', async () => {
+  const reworkTaskFixture = {
+    id: 'rework-1',
+    jobOrderId: 'jo-1',
+    jobOrderNumber: 'JO-001',
+    jobOrderLineSizeId: 'size-m',
+    styleNumber: 'ST-101',
+    styleName: 'Oxford Shirt',
+    sizeCode: 'M',
+    sizeLabel: 'Medium',
+    assignedQuantity: 4,
+    attemptNumber: 1,
+    status: 'REWORK_REQUIRED',
+    defectCategory: 'STITCHING',
+    otherDefectDetails: null,
+    defectNotes: 'Loose cuff seam',
+    qaRemarks: 'Repair the cuff and present all four units.',
+    qaEvidence: [],
+    requestedBy: { id: 'qa-1', name: 'QA Inspector', email: 'qa@test.local' },
+    requestedAt: '2026-08-09T10:00:00Z',
+    factoryNotes: null,
+    acknowledgedBy: null,
+    acknowledgedAt: null,
+    readyBy: null,
+    readyAt: null,
+    reinspectedAt: null,
+    version: 1,
+    updatedAt: '2026-08-09T10:00:00Z',
+  };
+
+  // NEW-AUTH-003: there is no ERVE-managed Factory rework lifecycle — QA (not
+  // Factory) acknowledges/readies rework in ERVE once the physical correction
+  // is confirmed offline.
+  it('shows size-level corrections inside the original Job Order and performs QA actions', async () => {
+    authState.roles = ['QA_USER'];
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: {} } });
     await renderPage('REWORK_REQUIRED', standardStages, [], {
-      reworkTasks: [
-        {
-          id: 'rework-1',
-          jobOrderId: 'jo-1',
-          jobOrderNumber: 'JO-001',
-          jobOrderLineSizeId: 'size-m',
-          styleNumber: 'ST-101',
-          styleName: 'Oxford Shirt',
-          sizeCode: 'M',
-          sizeLabel: 'Medium',
-          assignedQuantity: 4,
-          attemptNumber: 1,
-          status: 'REWORK_REQUIRED',
-          defectCategory: 'STITCHING',
-          otherDefectDetails: null,
-          defectNotes: 'Loose cuff seam',
-          qaRemarks: 'Repair the cuff and present all four units.',
-          qaEvidence: [],
-          requestedBy: { id: 'qa-1', name: 'QA Inspector', email: 'qa@test.local' },
-          requestedAt: '2026-08-09T10:00:00Z',
-          factoryNotes: null,
-          acknowledgedBy: null,
-          acknowledgedAt: null,
-          readyBy: null,
-          readyAt: null,
-          reinspectedAt: null,
-          version: 1,
-          updatedAt: '2026-08-09T10:00:00Z',
-        },
-      ],
+      reworkTasks: [reworkTaskFixture],
     });
 
-    expect(content()).toContain('Current open rework');
+    expect(content()).toContain('Open corrections');
     expect(content()).toContain('JO-001 · ST-101 Oxford Shirt · Size Medium');
     expect(content()).toContain('Requested quantity4');
     expect(content()).toContain('Loose cuff seam');
@@ -494,7 +498,7 @@ describe('JobOrderDetailPage workflow rendering', () => {
     expect(content()).not.toContain('rework-1');
 
     const acknowledge = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Acknowledge rework',
+      (button) => button.textContent === 'Acknowledge Correction',
     ) as HTMLButtonElement;
     await act(async () => acknowledge.click());
     expect(post).toHaveBeenCalledWith(
@@ -502,6 +506,23 @@ describe('JobOrderDetailPage workflow rendering', () => {
       { expectedVersion: 1, notes: null },
       expect.objectContaining({ headers: expect.any(Object) }),
     );
+  });
+
+  it('shows FACTORY_USER read-only correction details with no reinspection-handoff controls', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderPage('REWORK_REQUIRED', standardStages, [], {
+      reworkTasks: [reworkTaskFixture],
+    });
+
+    expect(content()).toContain('Open corrections');
+    expect(content()).toContain('Loose cuff seam');
+    expect(content()).toContain('Repair the cuff and present all four units.');
+    const buttons = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+    expect(buttons).not.toContain('Acknowledge Correction');
+    expect(buttons).not.toContain('Save notes');
+    expect(buttons).not.toContain('Mark Ready for Reinspection');
+    const notes = container.querySelector('textarea') as HTMLTextAreaElement;
+    expect(notes.readOnly).toBe(true);
   });
 
   it('renders the draft notice without production controls', async () => {

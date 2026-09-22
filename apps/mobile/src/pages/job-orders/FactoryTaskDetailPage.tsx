@@ -35,6 +35,16 @@ function mutationMessage(error: unknown): string {
   return error.response.data.error.message;
 }
 
+// User-facing labels only — "rework" is deliberately avoided here since
+// physical correction happens offline at the Factory; QA never performs it.
+// The underlying QaReworkTask entity/statuses are unchanged (NEW-AUTH-003).
+const REWORK_STATUS_LABELS: Record<QaReworkTaskView['status'], string> = {
+  REWORK_REQUIRED: 'Correction required',
+  ACKNOWLEDGED: 'Acknowledged',
+  READY_FOR_REINSPECTION: 'Ready for reinspection',
+  REINSPECTED: 'Reinspected',
+};
+
 function finalBatchStartError(error: unknown): string {
   if (!isAxiosError<ApiErrorResponse>(error))
     return 'Unable to create the Final batch. Review its size allocation and try again.';
@@ -196,6 +206,11 @@ export function FactoryTaskDetailPage() {
     (entry) => entry.isError,
   );
   const canFactoryAcknowledge = Boolean(user?.roles.includes('FACTORY_USER'));
+  // NEW-AUTH-003: there is no ERVE-managed Factory rework lifecycle — physical
+  // rework happens offline, and QA (not Factory) acknowledges/readies it here
+  // once told the correction is done. FACTORY_USER keeps read-only visibility
+  // into reworkTasks below (rendered regardless of this flag).
+  const canPerformQaRework = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER'));
 
   if (task.isLoading)
     return (
@@ -277,9 +292,10 @@ export function FactoryTaskDetailPage() {
 
       {job.reworkTasks.length > 0 && (
         <section className="rounded-xl border border-border bg-surface p-4">
-          <h2 className="font-semibold">Rework on this Job Order</h2>
+          <h2 className="font-semibold">Reinspection Handoff</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Each entry is tied to its original QA size form and inspection cycle.
+            Physical correction happens offline at the factory. Each entry is tied to its original
+            QA size form and inspection cycle.
           </p>
           <div className="mt-3 space-y-4">
             {job.reworkTasks.map((item) => {
@@ -291,8 +307,8 @@ export function FactoryTaskDetailPage() {
                     {item.styleNumber} {item.styleName} · Size {item.sizeLabel}
                   </p>
                   <p className="mt-1 text-sm">
-                    Quantity {item.assignedQuantity} · cycle {item.attemptNumber} ·{' '}
-                    {item.status.replaceAll('_', ' ')}
+                    Quantity {item.assignedQuantity} · correction cycle {item.attemptNumber} ·{' '}
+                    {REWORK_STATUS_LABELS[item.status]}
                   </p>
                   <p className="mt-2 text-sm text-muted-foreground">
                     {item.defectCategory?.replaceAll('_', ' ') ?? 'Defect'} ·{' '}
@@ -304,10 +320,10 @@ export function FactoryTaskDetailPage() {
                     {item.qaEvidence.map((evidence) => evidence.fileName).join(', ') ||
                       'None attached'}
                   </p>
-                  {open && canFactoryAcknowledge && (
+                  {open && canPerformQaRework && (
                     <>
                       <label className="mt-3 block text-sm font-medium">
-                        Factory rework notes
+                        Correction notes
                         <textarea
                           className="mt-1 min-h-24 w-full rounded-md border border-border bg-background p-3 font-normal"
                           maxLength={1000}
@@ -335,7 +351,7 @@ export function FactoryTaskDetailPage() {
                             rework.mutate({ task: item, action: 'acknowledge', notes })
                           }
                         >
-                          Acknowledge rework
+                          Acknowledge Correction
                         </button>
                       )}
                       {item.status === 'ACKNOWLEDGED' && (
@@ -344,7 +360,7 @@ export function FactoryTaskDetailPage() {
                           disabled={rework.isPending}
                           onClick={() => rework.mutate({ task: item, action: 'ready', notes })}
                         >
-                          Mark complete quantity ready for reinspection
+                          Mark Ready for Reinspection
                         </button>
                       )}
                     </>

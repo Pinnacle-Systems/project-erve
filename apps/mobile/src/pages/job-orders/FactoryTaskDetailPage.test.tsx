@@ -297,3 +297,70 @@ describe('FactoryTaskDetailPage production stages', () => {
     expect(container.textContent).not.toContain('50%');
   });
 });
+
+// NEW-AUTH-003: there is no ERVE-managed Factory rework lifecycle — QA (not
+// Factory) acknowledges/readies rework in ERVE once the physical correction
+// is confirmed offline. This page is shared by FACTORY_USER (/factory-tasks/:id)
+// and ADMIN/MERCHANDISER/QA_USER (/job-orders/:id).
+describe('FactoryTaskDetailPage rework', () => {
+  const reworkTask = {
+    id: 'rework-1',
+    jobOrderId: 'job-1',
+    jobOrderNumber: 'JO-001',
+    jobOrderLineSizeId: 'line-size-m',
+    styleNumber: 'ST-101',
+    styleName: 'Oxford Shirt',
+    sizeCode: 'M',
+    sizeLabel: 'M',
+    assignedQuantity: 4,
+    attemptNumber: 1,
+    status: 'REWORK_REQUIRED' as const,
+    defectCategory: 'STITCHING' as const,
+    otherDefectDetails: null,
+    defectNotes: 'Loose cuff seam',
+    qaRemarks: 'Repair the cuff and present all four units.',
+    qaEvidence: [],
+    requestedBy: { id: 'qa-1', name: 'QA Inspector', email: 'qa@test.local' },
+    requestedAt: '2026-08-09T10:00:00Z',
+    factoryNotes: null,
+    acknowledgedBy: null,
+    acknowledgedAt: null,
+    readyBy: null,
+    readyAt: null,
+    reinspectedAt: null,
+    version: 1,
+    updatedAt: '2026-08-09T10:00:00Z',
+  };
+
+  it('lets QA_USER acknowledge the correction', async () => {
+    authState.roles = ['QA_USER'];
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true, data: {} } });
+    await renderTask(job({ status: 'REWORK_REQUIRED', reworkTasks: [reworkTask] }));
+
+    expect(container.textContent).toContain('Reinspection Handoff');
+    expect(container.textContent).toContain('Loose cuff seam');
+    const acknowledge = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Acknowledge Correction',
+    ) as HTMLButtonElement;
+    expect(acknowledge).toBeDefined();
+    await act(async () => acknowledge.click());
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/qa/rework/rework-1/acknowledge',
+      { expectedVersion: 1, notes: null },
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+  });
+
+  it('shows FACTORY_USER read-only correction details with no reinspection-handoff controls', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderTask(job({ status: 'REWORK_REQUIRED', reworkTasks: [reworkTask] }));
+
+    expect(container.textContent).toContain('Reinspection Handoff');
+    expect(container.textContent).toContain('Loose cuff seam');
+    const buttonLabels = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+    expect(buttonLabels).not.toContain('Acknowledge Correction');
+    expect(buttonLabels).not.toContain('Save notes');
+    expect(buttonLabels).not.toContain('Mark Ready for Reinspection');
+    expect(container.querySelector('textarea')).toBeNull();
+  });
+});

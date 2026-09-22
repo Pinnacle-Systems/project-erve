@@ -127,3 +127,47 @@ describe('PackingAuditCartonDetailPage load error handling (UXAUTH-018)', () => 
     expect(content()).not.toContain('Unable to load carton');
   });
 });
+
+// NEW-AUTH: role-parametrized coverage for the Confirm Inspected mutation
+// CTA (canConfirmPackingAudits — PACKING_AUDIT_MUTATION_ROLES, QA_USER
+// only). Only ADMIN and QA_USER can even reach this page (route-level
+// PACKING_AUDIT_VIEW_ROLES), and ADMIN is *deliberately excluded* from
+// confirming — a segregation-of-duties choice ("FACTORY_USER packs, QA_USER
+// audits") that's the opposite of this codebase's usual ADMIN-can-do-
+// anything pattern, so it's tested explicitly rather than assumed. No
+// runtime change: gating was already correct.
+describe('PackingAuditCartonDetailPage Confirm Inspected mutation visibility by role', () => {
+  async function renderCarton(role: Role, overrides: Partial<Parameters<typeof buildCarton>[0]> = {}) {
+    const carton = buildCarton(overrides);
+    await renderPage(async (url: string) => {
+      if (url === '/packing-audit/cartons/carton-1') return { data: { data: carton } };
+      throw new Error(`Unexpected GET: ${url}`);
+    }, role);
+  }
+
+  it('QA_USER sees Confirm Inspected on a NOT_INSPECTED, non-retired carton', async () => {
+    await renderCarton('QA_USER', { auditState: 'NOT_INSPECTED', retired: false });
+    expect(content()).toContain('Confirm Inspected');
+  });
+
+  it('QA_USER sees Confirm Inspected on a NEEDS_REINSPECTION carton', async () => {
+    await renderCarton('QA_USER', { auditState: 'NEEDS_REINSPECTION', retired: false });
+    expect(content()).toContain('Confirm Inspected');
+  });
+
+  it('ADMIN can read the carton but never sees Confirm Inspected, even though ADMIN can view the queue', async () => {
+    await renderCarton('ADMIN', { auditState: 'NOT_INSPECTED', retired: false });
+    expect(content()).toContain('Carton C1');
+    expect(content()).not.toContain('Confirm Inspected');
+  });
+
+  it('document-state gating: QA_USER loses Confirm Inspected once the carton is already INSPECTED (current state)', async () => {
+    await renderCarton('QA_USER', { auditState: 'INSPECTED', retired: false });
+    expect(content()).not.toContain('Confirm Inspected');
+  });
+
+  it('document-state gating: QA_USER loses Confirm Inspected on a retired carton', async () => {
+    await renderCarton('QA_USER', { auditState: 'NOT_INSPECTED', retired: true, retiredAt: '2026-09-02T00:00:00.000Z' });
+    expect(content()).not.toContain('Confirm Inspected');
+  });
+});

@@ -28,6 +28,7 @@ import { useCallback } from 'react';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { formatJobOrderAuditTitle } from '../job-orders/job-order-audit.js';
+import { REWORK_STATUS_LABELS } from '../job-orders/job-order-ui.js';
 import { formatDateTime, statusTone } from '../job-orders/job-order-ui.js';
 import { QaInspectionForm } from './QaInspectionForm.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
@@ -329,9 +330,9 @@ export function QaDetailPage() {
           ) : null}
         </div>
       </Panel>
-      <Panel title="Rework status">
+      <Panel title="Reinspection Handoff">
         {data.reworkTasks.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No rework.</p>
+          <p className="text-sm text-muted-foreground">No open corrections.</p>
         ) : (
           <DataTable
             density="compact"
@@ -348,14 +349,14 @@ export function QaDetailPage() {
               },
               {
                 key: 'attemptNumber',
-                header: 'Attempt',
+                header: 'Correction cycle',
                 accessor: 'attemptNumber',
                 align: 'right',
               },
               {
                 key: 'status',
                 header: 'Status',
-                render: (task) => task.status.replaceAll('_', ' '),
+                render: (task) => REWORK_STATUS_LABELS[task.status],
               },
             ]}
           />

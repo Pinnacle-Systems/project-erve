@@ -156,6 +156,74 @@ async function renderPage(adapter: AxiosAdapter): Promise<void> {
   await flush();
 }
 
+async function renderEditPage(adapter: AxiosAdapter): Promise<QueryClient> {
+  apiClient.defaults.adapter = adapter;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  await act(async () => {
+    root.render(
+      <MemoryRouter initialEntries={['/purchase-orders/po-1/edit']}>
+        <QueryClientProvider client={queryClient}>
+          <Routes>
+            <Route path="/purchase-orders/:id/edit" element={<PurchaseOrderFormPage />} />
+            <Route path="/purchase-orders/:id" element={<div>Purchase Order Detail Page</div>} />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  });
+  return queryClient;
+}
+
+const existingPO = {
+  id: 'po-1',
+  poNumber: 'EIPO/26-27/0001',
+  distributor,
+  purchaseMode: 'OUTRIGHT',
+  poDate: '2026-09-01T00:00:00.000Z',
+  requiredDeliveryDate: null,
+  remarks: 'existing remarks',
+  status: 'DRAFT',
+  lines: [
+    {
+      styleId: 'style-1',
+      remarks: '',
+      sizes: [{ sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', orderedQuantity: 12 }],
+    },
+  ],
+};
+
+interface EditAdapterOverrides {
+  getPO?: AxiosAdapter;
+  patchPO?: AxiosAdapter;
+}
+
+function editAdapter(styles: unknown[], overrides: EditAdapterOverrides = {}): AxiosAdapter {
+  return (async (config: InternalAxiosRequestConfig) => {
+    if (config.url === '/purchase-orders/po-1' && config.method === 'get') {
+      return overrides.getPO ? overrides.getPO(config) : ok(config, { success: true, data: existingPO });
+    }
+    if (config.url === '/distributors' && config.method === 'get') {
+      return ok(config, { success: true, data: [distributor] });
+    }
+    if (config.url === '/styles' && config.method === 'get') {
+      return ok(config, { success: true, data: styles });
+    }
+    if (config.url === '/financial-years/resolve' && config.method === 'get') {
+      return ok(config, { success: true, data: { code: '2026-27' } });
+    }
+    if (config.url === '/purchase-orders/po-1' && config.method === 'patch') {
+      return overrides.patchPO ? overrides.patchPO(config) : ok(config, { success: true, data: { id: 'po-1' } });
+    }
+    throw new Error(`Unexpected request: ${config.method} ${config.url}`);
+  }) as AxiosAdapter;
+}
+
+function saveButton(): HTMLButtonElement | null {
+  return Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Save') ?? null;
+}
+
 async function fillValidStyleLine(styleOption: string, sizeLabel: string): Promise<void> {
   await selectOption('Distributor *', 'Acme Distribution');
   await flush();
@@ -217,5 +285,135 @@ describe('PurchaseOrderFormPage save error handling', () => {
 
     expect(container.textContent).toContain('Purchase Order Detail Page');
     expect(container.textContent).not.toContain('Unable to save');
+  });
+});
+
+// NEW-AUTH-001: an EDIT-mode load that is still pending, or that fails, must
+// never fall through to the same writable default form CREATE renders — an
+// authorized actor could otherwise submit those defaults and PATCH the
+// existing Order Sheet incorrectly.
+describe('PurchaseOrderFormPage edit-load safety (NEW-AUTH-001)', () => {
+  it('CREATE mode renders the blank form immediately, with no loading/error state', async () => {
+    await renderPage(baseAdapter([testStyle]));
+
+    expect(container.textContent).not.toContain('Loading Order Sheet');
+    expect(container.textContent).not.toContain('Unable to load Order Sheet');
+    expect(submitButton()).not.toBeNull();
+  });
+
+  it('EDIT + pending GET shows LoadingState, not the writable form, and no Save action', async () => {
+    let resolveGet!: (value: AxiosResponse<unknown>) => void;
+    const pending = new Promise<AxiosResponse<unknown>>((resolve) => {
+      resolveGet = resolve;
+    });
+    let patchCalled = false;
+    await renderEditPage(
+      editAdapter([testStyle], {
+        getPO: async () => pending,
+        patchPO: async (config) => {
+          patchCalled = true;
+          return ok(config, { success: true, data: { id: 'po-1' } });
+        },
+      }),
+    );
+
+    expect(container.textContent).toContain('Loading Order Sheet');
+    expect(container.textContent).not.toContain('existing remarks');
+    expect(container.querySelector('form')).toBeNull();
+    expect(saveButton()).toBeNull();
+    expect(patchCalled).toBe(false);
+
+    // Resolve after assertions so the pending promise doesn't leak across tests.
+    resolveGet!(ok({} as InternalAxiosRequestConfig, { success: true, data: existingPO }));
+    await flush();
+  });
+
+  it('EDIT + failed GET shows ErrorState, not the writable form, and no Save action', async () => {
+    let patchCalled = false;
+    await renderEditPage(
+      editAdapter([testStyle], {
+        getPO: async (config) => fail(config, 500, { success: false, error: { code: 'INTERNAL', message: 'boom' } }),
+        patchPO: async (config) => {
+          patchCalled = true;
+          return ok(config, { success: true, data: { id: 'po-1' } });
+        },
+      }),
+    );
+    await flush();
+
+    expect(container.textContent).toContain('Unable to load Order Sheet');
+    expect(container.textContent).not.toContain('existing remarks');
+    expect(container.querySelector('form')).toBeNull();
+    expect(saveButton()).toBeNull();
+    expect(patchCalled).toBe(false);
+  });
+
+  it('EDIT + successful GET hydrates the existing Order Sheet into a writable form', async () => {
+    await renderEditPage(editAdapter([testStyle]));
+    // Two independent queries (Order Sheet GET, active Styles GET) must both
+    // resolve, plus the deferred hydration macrotask, before the form
+    // reflects the loaded Order Sheet.
+    await flush();
+    await flush();
+
+    expect(container.textContent).not.toContain('Loading Order Sheet');
+    expect(container.textContent).not.toContain('Unable to load Order Sheet');
+    expect(container.querySelector('form')).not.toBeNull();
+
+    const remarksInputs = Array.from(container.querySelectorAll('input')).filter(
+      (i) => (i as HTMLInputElement).value === 'existing remarks',
+    );
+    expect(remarksInputs.length).toBeGreaterThan(0);
+    const qtyInput = document.getElementById('field-m') as HTMLInputElement | null;
+    expect(qtyInput?.value).toBe('12');
+    expect((document.getElementById('field-distributor-*') as HTMLInputElement | null)?.value).toBe(
+      'Acme Distribution',
+    );
+    expect((document.getElementById('field-purchase-mode') as HTMLInputElement | null)?.value).toBe('Outright');
+    expect(document.getElementById('select-style-*')?.textContent).toContain('Classic Tee');
+
+    const save = saveButton();
+    expect(save).not.toBeNull();
+    await act(async () => save!.click());
+    await flush();
+
+    expect(container.textContent).toContain('Purchase Order Detail Page');
+  });
+
+  it('does not re-hydrate and clobber an in-progress edit when poQuery refetches in the background (e.g. a reconnect)', async () => {
+    let getCallCount = 0;
+    const queryClient = await renderEditPage(
+      editAdapter([testStyle], {
+        getPO: async (config) => {
+          getCallCount += 1;
+          // The background refetch returns genuinely different content —
+          // TanStack Query's structural sharing would otherwise keep the old
+          // data reference (and never re-run the hydration effect at all) if
+          // the refetched payload were merely an identical clone.
+          const data = getCallCount === 1 ? existingPO : { ...existingPO, remarks: 'server-side changed remarks' };
+          return ok(config, { success: true, data });
+        },
+      }),
+    );
+    await flush();
+    await flush();
+
+    const remarksInput = document.getElementById('field-remarks') as HTMLInputElement | null;
+    expect(remarksInput?.value).toBe('existing remarks');
+
+    // User edits the header Remarks field locally, without saving yet.
+    setInputValue(remarksInput!, 'user edited remarks');
+    expect(remarksInput!.value).toBe('user edited remarks');
+
+    // Simulate a background refetch of the same query (e.g. refetchOnReconnect).
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: ['purchase-order', 'po-1'] });
+    });
+    await flush();
+    await flush();
+
+    expect(remarksInput!.value).toBe('user edited remarks');
+    expect(container.textContent).not.toContain('server-side changed remarks');
+    expect(getCallCount).toBe(2);
   });
 });

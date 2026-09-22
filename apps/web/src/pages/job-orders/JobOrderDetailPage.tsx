@@ -24,7 +24,11 @@ import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-disp
 import { apiClient } from '../../lib/api-client.js';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
-import { canManageJobOrderProduction, canViewQa } from '../../auth/permissions.js';
+import {
+  canManageJobOrderProduction,
+  canMutateQualityExecution,
+  canViewQa,
+} from '../../auth/permissions.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
@@ -38,6 +42,7 @@ import {
   CONFIRMATION_LABELS,
   JOB_ORDER_STATUS_LABELS,
   QUALITY_RUNTIME_STATUS_LABELS,
+  REWORK_STATUS_LABELS,
   STAGE_LABELS,
   confirmationTone,
   formatDateTime,
@@ -65,13 +70,6 @@ function finalBatchStartError(error: unknown): string {
   const response = error.response?.data.error;
   return response?.message ?? 'Unable to create the Final batch. Review its size allocation.';
 }
-
-const REWORK_STATUS_LABELS: Record<QaReworkTaskView['status'], string> = {
-  REWORK_REQUIRED: 'Rework required',
-  ACKNOWLEDGED: 'Acknowledged',
-  READY_FOR_REINSPECTION: 'Ready for reinspection',
-  REINSPECTED: 'Reinspected',
-};
 
 function QaEvidenceLink({ evidence }: { evidence: QaReworkTaskView['qaEvidence'][number] }) {
   const image = useAuthedImage(`/qa/evidence/${evidence.id}/content`, evidence.createdAt);
@@ -512,7 +510,11 @@ export function JobOrderDetailPage() {
   const isPreparedQuantitiesUnlocked =
     jobOrder.preparedQuantityEntry?.available ?? jobOrder.status === 'PRODUCTION_COMPLETE';
   const canUpdatePrepared = canMutateProduction && isPreparedQuantitiesUnlocked;
-  const canPerformFactoryRework = Boolean(user?.roles.includes('FACTORY_USER'));
+  // NEW-AUTH-003: there is no ERVE-managed Factory rework lifecycle — physical
+  // rework happens offline, and QA (not Factory) acknowledges/readies it here
+  // once told the correction is done. FACTORY_USER keeps read-only visibility
+  // into reworkTasks below (rendered regardless of this flag).
+  const canPerformQaRework = canMutateQualityExecution(user);
   const openRework = jobOrder.reworkTasks.filter((task) => task.status !== 'REINSPECTED');
   const historicalRework = jobOrder.reworkTasks.filter((task) => task.status === 'REINSPECTED');
   const hasProductionStarted = [
@@ -913,13 +915,13 @@ export function JobOrderDetailPage() {
 
       {jobOrder.reworkTasks.length > 0 && (
         <Panel
-          title="Rework"
-          description="QA rework remains part of this original Job Order and is tracked separately by size and inspection cycle."
+          title="Reinspection Handoff"
+          description="Physical correction happens offline at the factory. QA tracks each correction here — by size and inspection cycle — through to reinspection."
         >
           <div className="space-y-5">
             {openRework.length > 0 && (
-              <section className="space-y-3" aria-label="Open rework cycles">
-                <h3 className="text-sm font-semibold">Current open rework</h3>
+              <section className="space-y-3" aria-label="Open corrections">
+                <h3 className="text-sm font-semibold">Open corrections</h3>
                 {openRework.map((task) => {
                   const notes = reworkNotesDrafts[task.id] ?? task.factoryNotes ?? '';
                   return (
@@ -934,7 +936,7 @@ export function JobOrderDetailPage() {
                             {task.sizeLabel}
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            Rework cycle {task.attemptNumber} · Requested{' '}
+                            Correction cycle {task.attemptNumber} · Requested{' '}
                             {formatDateTime(task.requestedAt)} by {task.requestedBy.name}
                           </p>
                         </div>
@@ -964,15 +966,15 @@ export function JobOrderDetailPage() {
                           label="Acknowledged"
                           value={
                             task.acknowledgedAt
-                              ? `${formatDateTime(task.acknowledgedAt)} by ${task.acknowledgedBy?.name ?? 'Factory'}`
+                              ? `${formatDateTime(task.acknowledgedAt)} by ${task.acknowledgedBy?.name ?? 'QA'}`
                               : 'Not yet'
                           }
                         />
                         <DescriptionList.Item
-                          label="Ready"
+                          label="Ready for reinspection"
                           value={
                             task.readyAt
-                              ? `${formatDateTime(task.readyAt)} by ${task.readyBy?.name ?? 'Factory'}`
+                              ? `${formatDateTime(task.readyAt)} by ${task.readyBy?.name ?? 'QA'}`
                               : 'Not yet'
                           }
                         />
@@ -990,11 +992,11 @@ export function JobOrderDetailPage() {
                         )}
                       </div>
                       <label className="block text-sm font-medium">
-                        Factory rework notes
+                        Correction notes
                         <textarea
                           className="mt-1 min-h-24 w-full rounded-control border border-border bg-surface-raised px-3 py-2 font-normal"
                           maxLength={1000}
-                          readOnly={!canPerformFactoryRework}
+                          readOnly={!canPerformQaRework}
                           value={notes}
                           onChange={(event) =>
                             setReworkNotesDrafts((current) => ({
@@ -1004,7 +1006,7 @@ export function JobOrderDetailPage() {
                           }
                         />
                       </label>
-                      {canPerformFactoryRework && (
+                      {canPerformQaRework && (
                         <div className="flex flex-wrap gap-2">
                           <Button
                             variant="secondary"
@@ -1020,7 +1022,7 @@ export function JobOrderDetailPage() {
                                 reworkMutation.mutate({ task, action: 'acknowledge', notes })
                               }
                             >
-                              Acknowledge rework
+                              Acknowledge Correction
                             </Button>
                           )}
                           {task.status === 'ACKNOWLEDGED' && (
@@ -1030,7 +1032,7 @@ export function JobOrderDetailPage() {
                                 reworkMutation.mutate({ task, action: 'ready', notes })
                               }
                             >
-                              Mark complete quantity ready for reinspection
+                              Mark Ready for Reinspection
                             </Button>
                           )}
                         </div>
@@ -1041,12 +1043,13 @@ export function JobOrderDetailPage() {
               </section>
             )}
             {historicalRework.length > 0 && (
-              <section className="space-y-2" aria-label="Previous rework cycles">
-                <h3 className="text-sm font-semibold">Previous rework cycles</h3>
+              <section className="space-y-2" aria-label="Reinspection history">
+                <h3 className="text-sm font-semibold">Reinspection history</h3>
                 {historicalRework.map((task) => (
                   <div key={task.id} className="rounded-md border border-border p-3 text-sm">
                     <p className="font-medium">
-                      {task.styleNumber} · Size {task.sizeLabel} · cycle {task.attemptNumber}
+                      {task.styleNumber} · Size {task.sizeLabel} · correction cycle{' '}
+                      {task.attemptNumber}
                     </p>
                     <p className="text-muted-foreground">
                       {task.assignedQuantity} units · Reinspected{' '}
@@ -1060,7 +1063,7 @@ export function JobOrderDetailPage() {
               <ValidationMessage tone="error">
                 {mutationErrorMessage(
                   reworkMutation.error,
-                  'Unable to update rework. Refresh and try again.',
+                  'Unable to update the reinspection handoff. Refresh and try again.',
                 )}
               </ValidationMessage>
             )}

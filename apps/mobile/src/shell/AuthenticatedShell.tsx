@@ -23,27 +23,27 @@ export function AuthenticatedShell() {
             Erve
           </Link>
           {user?.roles.includes('FACTORY_USER') && (
+            <Link
+              to="/factory-tasks"
+              className="min-h-11 content-center text-sm text-[var(--erp-text-link)]"
+            >
+              My tasks
+            </Link>
+          )}
+          {user?.roles.some((role) =>
+            QA_ROUTE_ROLES.some((allowedRole) => allowedRole === role),
+          ) && (
             <>
-              <Link
-                to="/factory-tasks"
-                className="min-h-11 content-center text-sm text-[var(--erp-text-link)]"
-              >
-                My tasks
+              <Link to="/qa" className="min-h-11 content-center text-sm text-[var(--erp-text-link)]">
+                QA
               </Link>
               <Link
                 to="/factory-rework"
                 className="min-h-11 content-center text-sm text-[var(--erp-text-link)]"
               >
-                QA rework
+                Reinspection Handoff
               </Link>
             </>
-          )}
-          {user?.roles.some((role) =>
-            QA_ROUTE_ROLES.some((allowedRole) => allowedRole === role),
-          ) && (
-            <Link to="/qa" className="min-h-11 content-center text-sm text-[var(--erp-text-link)]">
-              QA
-            </Link>
           )}
         </div>
         <AccountMenu />

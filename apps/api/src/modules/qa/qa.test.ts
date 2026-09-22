@@ -948,10 +948,13 @@ describe('per-size QA form lifecycle', () => {
       .set('Idempotency-Key', 'wrong-factory-ack')
       .send({ expectedVersion: task.version })
       .expect(403);
+    // Factory no longer manages an in-system rework lifecycle: FACTORY_USER can
+    // still read reworkTasks (asserted via factoryDetail above), but the
+    // acknowledge/ready/notes mutations below are QA_USER's alone.
     await request(app)
       .post(`/qa/rework/${task.id}/acknowledge`)
-      .set(auth(f.qa.token))
-      .set('Idempotency-Key', 'qa-cannot-ack')
+      .set(auth(factoryUser.token))
+      .set('Idempotency-Key', 'factory-cannot-ack')
       .send({ expectedVersion: task.version })
       .expect(403);
     expect(
@@ -968,25 +971,25 @@ describe('per-size QA form lifecycle', () => {
     expect(await prisma.qaReworkTask.count({ where: { jobOrderId: f.jobOrderId } })).toBe(1);
     await request(app)
       .post(`/qa/rework/${task.id}/acknowledge`)
-      .set(auth(factoryUser.token))
+      .set(auth(f.qa.token))
       .set('Idempotency-Key', 'ack-b')
-      .send({ expectedVersion: task.version, notes: 'Rework accepted by the line supervisor' })
+      .send({ expectedVersion: task.version, notes: 'Rework accepted after offline correction' })
       .expect(200);
     const acknowledged = await prisma.qaReworkTask.findUniqueOrThrow({ where: { id: task.id } });
     expect(acknowledged).toMatchObject({
       status: 'ACKNOWLEDGED',
-      acknowledgedById: factoryUser.userId,
-      notes: 'Rework accepted by the line supervisor',
+      acknowledgedById: f.qa.userId,
+      notes: 'Rework accepted after offline correction',
     });
     await request(app)
       .post(`/qa/rework/${task.id}/acknowledge`)
-      .set(auth(factoryUser.token))
+      .set(auth(f.qa.token))
       .set('Idempotency-Key', 'ack-b-duplicate')
       .send({ expectedVersion: task.version })
       .expect(409);
     await request(app)
       .patch(`/qa/rework/${task.id}/notes`)
-      .set(auth(factoryUser.token))
+      .set(auth(f.qa.token))
       .set('Idempotency-Key', 'notes-b')
       .send({ expectedVersion: acknowledged.version, notes: 'Seams corrected and checked' })
       .expect(200);
@@ -994,13 +997,13 @@ describe('per-size QA form lifecycle', () => {
     expect(noted.notes).toBe('Seams corrected and checked');
     const ready = await request(app)
       .post(`/qa/rework/${task.id}/ready`)
-      .set(auth(factoryUser.token))
+      .set(auth(f.qa.token))
       .set('Idempotency-Key', 'ready-b')
       .send({ expectedVersion: noted.version })
       .expect(200);
     await request(app)
       .post(`/qa/rework/${task.id}/ready`)
-      .set(auth(factoryUser.token))
+      .set(auth(f.qa.token))
       .set('Idempotency-Key', 'ready-b-duplicate')
       .send({ expectedVersion: noted.version })
       .expect(409);

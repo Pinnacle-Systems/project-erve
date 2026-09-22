@@ -158,9 +158,9 @@ export function PpSampleDocument({ viewModel }: PpSampleDocumentProps) {
         viewModel.sessions.map((session) => <SessionBlock key={session.id} session={session} />)
       )}
 
-      <PdfSection title="Rework Status" wrap>
+      <PdfSection title="Reinspection Handoff" wrap>
         {viewModel.reworkTasks.length === 0 ? (
-          <Text style={styles.emptyText}>No rework.</Text>
+          <Text style={styles.emptyText}>No open corrections.</Text>
         ) : (
           <PdfTable columns={reworkColumns} rows={viewModel.reworkTasks} rowKey={(row) => row.id} />
         )}
