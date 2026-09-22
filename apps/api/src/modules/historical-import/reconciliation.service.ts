@@ -13,6 +13,7 @@
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { ExtractedImageCandidate, ImageExtractionMethod } from './style-image-extractor.js';
 import type { ParsedPurchaseOrderRecord } from './po-pdf-parser.types.js';
+import { resolveApprovedFactoryMapping, type FactoryMappingRow } from './factory-mapping.js';
 
 type Client = Prisma.TransactionClient | typeof prisma;
 
@@ -73,7 +74,21 @@ export async function reconcileSeason(client: Client, seasonCode: string | null)
   return { status: 'MATCHED', seasonId: matches[0]!.id, sourceValue: seasonCode };
 }
 
-export async function reconcileFactory(client: Client, factoryName: string | null): Promise<FactoryReconciliation> {
+/**
+ * `approvedFactoryMappings` (H2A plan §10/§11) is an optional, explicit,
+ * human-reviewed list of source-Factory-string -> target-Factory-name rows.
+ * It is consulted ONLY after the normal exact-name match fails to resolve
+ * anything, and is itself resolved by exact string match (see
+ * resolveApprovedFactoryMapping) — never fuzzy, never a partial/contains
+ * match, and never used unless the mapping row's own status is APPROVED.
+ * This parameter is historical-import-specific; passing it never changes
+ * behavior for any other caller of ordinary Factory lookup.
+ */
+export async function reconcileFactory(
+  client: Client,
+  factoryName: string | null,
+  approvedFactoryMappings?: FactoryMappingRow[],
+): Promise<FactoryReconciliation> {
   if (!factoryName) return { status: 'UNMATCHED', factoryId: null, sourceValue: null };
   const normalized = factoryName.trim().toLowerCase();
   // Exact, normalized (trim + case-insensitive) match only — no fuzzy
@@ -81,9 +96,24 @@ export async function reconcileFactory(client: Client, factoryName: string | nul
   // an ambiguous/approximate Factory match.
   const candidates = await client.factory.findMany({ select: { id: true, name: true } });
   const matches = candidates.filter((f) => f.name.trim().toLowerCase() === normalized);
-  if (matches.length === 0) return { status: 'UNMATCHED', factoryId: null, sourceValue: factoryName };
+  if (matches.length === 1) return { status: 'MATCHED', factoryId: matches[0]!.id, sourceValue: factoryName };
   if (matches.length > 1) return { status: 'AMBIGUOUS', factoryId: null, sourceValue: factoryName };
-  return { status: 'MATCHED', factoryId: matches[0]!.id, sourceValue: factoryName };
+
+  // No exact match — consult an approved explicit mapping, if one was
+  // supplied. Still exact-string only; a mapping row that isn't APPROVED,
+  // or that points at a target Factory name absent from this Dev DB, never
+  // resolves anything (falls through to UNMATCHED, same as no mapping).
+  if (approvedFactoryMappings && approvedFactoryMappings.length > 0) {
+    const mappedTargetName = resolveApprovedFactoryMapping(approvedFactoryMappings, factoryName);
+    if (mappedTargetName) {
+      const mappedNormalized = mappedTargetName.trim().toLowerCase();
+      const mappedMatches = candidates.filter((f) => f.name.trim().toLowerCase() === mappedNormalized);
+      if (mappedMatches.length === 1) return { status: 'MATCHED', factoryId: mappedMatches[0]!.id, sourceValue: factoryName };
+      if (mappedMatches.length > 1) return { status: 'AMBIGUOUS', factoryId: null, sourceValue: factoryName };
+    }
+  }
+
+  return { status: 'UNMATCHED', factoryId: null, sourceValue: factoryName };
 }
 
 export async function reconcileStyle(
@@ -242,7 +272,11 @@ export interface ReconcileBatchItem {
   image: ExtractedImageCandidate;
 }
 
-export async function reconcileBatch(client: Client, items: ReconcileBatchItem[]): Promise<ReconciledRecord[]> {
+export async function reconcileBatch(
+  client: Client,
+  items: ReconcileBatchItem[],
+  approvedFactoryMappings?: FactoryMappingRow[],
+): Promise<ReconciledRecord[]> {
   const duplicateInfos = await detectDuplicateLegacyReferences(
     client,
     items.map((item) => item.parsed.legacyReferenceNumber.value),
@@ -252,7 +286,7 @@ export async function reconcileBatch(client: Client, items: ReconcileBatchItem[]
   for (let i = 0; i < items.length; i++) {
     const { parsed, image } = items[i]!;
     const season = await reconcileSeason(client, parsed.documentSeason.value);
-    const factory = await reconcileFactory(client, parsed.factoryName.value);
+    const factory = await reconcileFactory(client, parsed.factoryName.value, approvedFactoryMappings);
     const style = await reconcileStyle(client, { lmix: parsed.licenseStyleLmix.value, seasonId: season.seasonId });
     const sizes = await reconcileSizes(client, style.styleId, parsed.sizeQuantities);
     const imageReconciliation = await reconcileImage(client, image, style.styleId);

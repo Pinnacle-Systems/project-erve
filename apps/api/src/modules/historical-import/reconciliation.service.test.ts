@@ -88,6 +88,31 @@ describe('reconcileFactory', () => {
     // A real-world near-miss (seed data often abbreviates) must NOT match.
     await expect(reconcileFactory(prisma, 'Clifton')).resolves.toMatchObject({ status: 'UNMATCHED' });
   });
+
+  it('resolves an APPROVED explicit factory mapping when the exact name does not match (H2A §11)', async () => {
+    const factory = await createTestFactory({ code: 'CLIFTON', name: 'Clifton' });
+    const mappings = [{ sourceFactoryName: 'Clifton export Pvt Ltd', targetFactoryName: 'Clifton', status: 'APPROVED' as const }];
+    await expect(reconcileFactory(prisma, 'Clifton export Pvt Ltd', mappings)).resolves.toMatchObject({ status: 'MATCHED', factoryId: factory.id });
+  });
+
+  it('does not resolve via a mapping row that is not APPROVED', async () => {
+    await createTestFactory({ code: 'CLIFTON', name: 'Clifton' });
+    const mappings = [{ sourceFactoryName: 'Clifton export Pvt Ltd', targetFactoryName: 'Clifton', status: 'REVIEW_REQUIRED' as const }];
+    await expect(reconcileFactory(prisma, 'Clifton export Pvt Ltd', mappings)).resolves.toMatchObject({ status: 'UNMATCHED' });
+  });
+
+  it('leaves an unknown source name with no mapping row UNMATCHED, never guessed', async () => {
+    await createTestFactory({ code: 'CLIFTON', name: 'Clifton' });
+    const mappings = [{ sourceFactoryName: 'Clifton export Pvt Ltd', targetFactoryName: 'Clifton', status: 'APPROVED' as const }];
+    await expect(reconcileFactory(prisma, 'Some Totally Different Supplier', mappings)).resolves.toMatchObject({ status: 'UNMATCHED' });
+  });
+
+  it('an approved mapping still never does a fuzzy/partial match on the source side', async () => {
+    await createTestFactory({ code: 'CLIFTON', name: 'Clifton' });
+    const mappings = [{ sourceFactoryName: 'Clifton export Pvt Ltd', targetFactoryName: 'Clifton', status: 'APPROVED' as const }];
+    // A near-miss of the MAPPING's source string (not the target) must not resolve either.
+    await expect(reconcileFactory(prisma, 'Clifton export Pvt', mappings)).resolves.toMatchObject({ status: 'UNMATCHED' });
+  });
 });
 
 describe('reconcileStyle', () => {

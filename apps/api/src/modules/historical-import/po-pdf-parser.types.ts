@@ -3,7 +3,11 @@
 // classification: SOURCE_DOCUMENT = read verbatim off the PDF,
 // DERIVED = computed from other source fields (e.g. a validation check),
 // UNKNOWN = not confidently extracted — never silently inferred/guessed.
-export type FieldProvenance = 'SOURCE_DOCUMENT' | 'DERIVED' | 'UNKNOWN';
+// OVERRIDE (added in H2A, see source-overrides.ts) = replaced by a reviewed,
+// APPROVED source-override entry rather than read directly off the PDF —
+// applied only in-memory to an effective record, never written back into
+// the immutable source-staging.json.
+export type FieldProvenance = 'SOURCE_DOCUMENT' | 'DERIVED' | 'UNKNOWN' | 'OVERRIDE';
 
 export interface ParsedField<T> {
   value: T | null;

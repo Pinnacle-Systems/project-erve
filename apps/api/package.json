@@ -24,7 +24,8 @@
     "document-sequence:set-baseline": "tsx src/cli/document-sequence-baseline.cli.ts",
     "historical-import:dev-migrate": "tsx src/cli/historical-import-dev-migrate.cli.ts",
     "historical-import:prepare": "tsx src/cli/historical-import-prepare.cli.ts",
-    "historical-import:dry-run": "tsx src/cli/historical-import.cli.ts"
+    "historical-import:dry-run": "tsx src/cli/historical-import.cli.ts",
+    "historical-import:master-prep": "tsx src/cli/historical-import-master-prep.cli.ts"
   },
   "dependencies": {
     "@erve/shared": "workspace:*",

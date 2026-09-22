@@ -13,6 +13,13 @@ import { reconcileBatch, type ReconciledRecord } from '../modules/historical-imp
 import { analyzeLegacyNumbering } from '../modules/historical-import/numbering-analysis.js';
 import { buildSourceManifest } from '../modules/historical-import/source-manifest.js';
 import { writeDryRunOutputs } from '../modules/historical-import/dry-run-report.service.js';
+import { parseFactoryMappingArtifact, type FactoryMappingRow } from '../modules/historical-import/factory-mapping.js';
+import {
+  parseSourceOverridesArtifact,
+  resolveApprovedOverridesForRecord,
+  applyApprovedOverrides,
+  type SourceOverrideEntry,
+} from '../modules/historical-import/source-overrides.js';
 import type { SourceStagingRecord } from '../modules/historical-import/staging.service.js';
 import type { ParsedPurchaseOrderRecord } from '../modules/historical-import/po-pdf-parser.types.js';
 import type { ExtractedImageCandidate } from '../modules/historical-import/style-image-extractor.js';
@@ -48,6 +55,10 @@ export interface RunHistoricalImportDryRunOptions {
   batchLabel: string;
   stagingFilePath: string;
   processFlowVersionId?: string;
+  /** H2A plan §11: optional path to a human-reviewed factory-mapping.json. Consulted only after exact Factory-name matching fails; never fuzzy. */
+  factoryMappingFilePath?: string;
+  /** H2A plan §8: optional path to a human-reviewed source-overrides.json. Only APPROVED overrides bound to a matching sourceSha256 are ever applied, and only in-memory — source-staging.json is never modified. */
+  sourceOverridesFilePath?: string;
 }
 
 export interface HistoricalImportDryRunResult {
@@ -88,8 +99,30 @@ export async function runHistoricalImportDryRun(options: RunHistoricalImportDryR
     throw error;
   }
 
-  const items = stagingRecords.map((staging) => ({ parsed: stagingToParsedRecord(staging), image: stagingToImageCandidate(staging) }));
-  const reconciledRecords = await reconcileBatch(prisma, items);
+  let factoryMappings: FactoryMappingRow[] | undefined;
+  if (options.factoryMappingFilePath) {
+    const raw = JSON.parse(await readFile(options.factoryMappingFilePath, 'utf8'));
+    factoryMappings = parseFactoryMappingArtifact(raw);
+  }
+
+  let overrideEntries: SourceOverrideEntry[] = [];
+  if (options.sourceOverridesFilePath) {
+    const raw = JSON.parse(await readFile(options.sourceOverridesFilePath, 'utf8'));
+    overrideEntries = parseSourceOverridesArtifact(raw);
+  }
+
+  const appliedOverridesByFile: Record<string, string[]> = {};
+  const items = stagingRecords.map((staging) => {
+    const parsed = stagingToParsedRecord(staging);
+    const approvedOverrides = resolveApprovedOverridesForRecord(overrideEntries, {
+      sourceFileName: staging.sourceFileName,
+      sourceChecksumSha256: staging.sourceChecksumSha256,
+    });
+    const { record, appliedFields } = applyApprovedOverrides(parsed, approvedOverrides);
+    if (appliedFields.length > 0) appliedOverridesByFile[staging.sourceFileName] = appliedFields;
+    return { parsed: record, image: stagingToImageCandidate(staging) };
+  });
+  const reconciledRecords = await reconcileBatch(prisma, items, factoryMappings);
   const numbering = analyzeLegacyNumbering(
     stagingRecords.map((s) => ({ sourceFileName: s.sourceFileName, sourceSeasonFolder: s.sourceSeasonFolder, legacyReferenceNumber: s.fields.legacyReferenceNumber.value })),
   );
@@ -103,6 +136,45 @@ export async function runHistoricalImportDryRun(options: RunHistoricalImportDryR
     manifest,
     numbering,
     devTargetDatabase: target.actualDatabase,
+    factoryMappingFilePath: options.factoryMappingFilePath,
+    sourceOverridesFilePath: options.sourceOverridesFilePath,
+    appliedOverridesByFile,
+    h2aApprovals: {
+      processFlowVersion: {
+        status: 'APPROVED',
+        rationale:
+          "Verified logically: ERVE_PRODUCTION_QUALITY v3 is the only ACTIVE version of the named apparel production+quality flow (v1/v2 are RETIRED); its 8 stages (PP Sample, PPM, Cutting, Printing, Sewing, Inline Inspection, Finishing, Final Inspection) match ERVE's documented quality-gated apparel process. The competing ACTIVE flow, DEFAULT_PRODUCTION v1, has only 4 bare production stages with no quality gates and no stage codes — a minimal seed/bootstrap flow, not the intended historical apparel flow. Fingerprint is deterministic/reproducible across repeated resolution and excludes all environment-specific DB ids.",
+      },
+      pendingUserApprovals: [
+        {
+          topic: 'EI26031/EI26032 legacyReferenceNumber identity conflict',
+          recommendation: "EI26032.pdf's printed order number (EI26031) is very likely a source-document numbering error; recommended effective legacyReferenceNumber for EI26032.pdf is EI26032.",
+          evidenceFile: 'h2a/ei26031-ei26032-investigation.md',
+        },
+        {
+          topic: 'EI26002 truncated order date',
+          recommendation: 'orderDate for EI26002.pdf is truncated in the source PDF itself (19/02/202); recommended value 2026-02-19, inferred from the adjacent shipment date and season, not read directly.',
+          evidenceFile: 'h2a/partial-record-investigation.md',
+        },
+        {
+          topic: 'EI26042 licenseStyleLmix source anomaly',
+          recommendation: "EI26042.pdf's Artwork-table fallback value (LMIX42026007) is very likely a copy/paste carryover from the preceding order EI26041; recommended effective licenseStyleLmix is LMIX42026010, matching the document's own orphaned header value and its filename.",
+          evidenceFile: 'h2a/lmix42026007-lmix42026010-investigation.md',
+        },
+        {
+          topic: 'Style.finalMrp has no source equivalent',
+          recommendation:
+            'Every one of the 90 unique Season+LMIX Style identities is blocked on this required field. Source PDFs give a supplier ex-factory rate, not a consumer MRP, and no documented conversion convention exists. Needs an explicit business decision (a real historical MRP list, or an approved placeholder/default convention) before any historical Style can be created.',
+          evidenceFile: 'h2a/master-readiness-plan.json',
+        },
+        {
+          topic: 'Size-code naming convention (source bare digits vs Dev AGE_<n>)',
+          recommendation:
+            'All 12 source Size codes ("3".."14") fail an exact match against Dev Size.code ("AGE_3".."AGE_14"), even though Dev Size.label already equals the source code exactly. Recommend extending the same explicit-mapping approach used for Factory (map "3"->"AGE_3", etc.) rather than creating duplicate Size masters — needs explicit approval before implementation.',
+          evidenceFile: 'h2a/master-readiness-plan.json',
+        },
+      ],
+    },
   });
 
   return {

@@ -94,6 +94,15 @@ export interface WriteDryRunOutputsOptions {
   manifest: SourceManifest;
   numbering: NumberingAnalysisResult;
   devTargetDatabase: string;
+  /** H2A plan §10/§11/§24: traceability only — which reviewed mapping/override artifacts (if any) fed this run, and which per-file fields an APPROVED override actually changed. */
+  factoryMappingFilePath?: string;
+  sourceOverridesFilePath?: string;
+  appliedOverridesByFile?: Record<string, string[]>;
+  /** H2A plan §18/§20/§21: explicit gate status for decisions this story is allowed to resolve itself (Process Flow) vs. must leave for the user (EI26031/32 identity, the truncated order-date, the EI26042 LMIX anomaly). Never marks a business-identity decision APPROVED on the tool's own authority. */
+  h2aApprovals?: {
+    processFlowVersion: { status: 'APPROVED' | 'UNRESOLVED'; rationale: string };
+    pendingUserApprovals: Array<{ topic: string; recommendation: string; evidenceFile: string }>;
+  };
 }
 
 function humanReviewBlock(staging: SourceStagingRecord, reconciled: ReconciledRecord): string {
@@ -150,6 +159,10 @@ export async function writeDryRunOutputs(options: WriteDryRunOutputsOptions): Pr
         historicalIdentityRecommendation: identity,
         summary,
         numbering: options.numbering,
+        factoryMappingArtifact: options.factoryMappingFilePath ?? null,
+        sourceOverridesArtifact: options.sourceOverridesFilePath ?? null,
+        appliedOverridesByFile: options.appliedOverridesByFile ?? {},
+        h2aApprovals: options.h2aApprovals ?? null,
       },
       null,
       2,
