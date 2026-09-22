@@ -21,6 +21,11 @@ coverage/
 # Local development upload storage (apps/api FILE_STORAGE_DIR default)
 .data/
 
+# Historical-import generated artifacts (staging JSON/CSV, extracted
+# images, manifests, dry-run reports) — never committed. Real source
+# PDFs/images/business data stay local only (H1 plan §19).
+.artifacts/
+
 # Mobile / Capacitor
 apps/mobile/android/
 apps/mobile/ios/
