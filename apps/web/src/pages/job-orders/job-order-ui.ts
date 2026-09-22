@@ -1,4 +1,4 @@
-import type { QualityRuntimeStatus } from '@erve/types';
+import type { QaReworkTaskView, QualityRuntimeStatus } from '@erve/types';
 import type { FactoryConfirmationStatus, JobOrderStatus, ProductionStageStatus } from './types.js';
 
 export const JOB_ORDER_STATUS_LABELS: Record<JobOrderStatus, string> = {
@@ -9,7 +9,7 @@ export const JOB_ORDER_STATUS_LABELS: Record<JobOrderStatus, string> = {
   PRODUCTION_COMPLETE: 'Production Complete',
   READY_FOR_QA: 'Ready for QA',
   QA_IN_PROGRESS: 'QA in Progress',
-  REWORK_REQUIRED: 'Rework Required',
+  REWORK_REQUIRED: 'Correction Required',
   READY_FOR_REINSPECTION: 'Ready for Reinspection',
   QA_APPROVED: 'QA Approved',
   QA_PASSED: 'QA Passed',
@@ -28,6 +28,16 @@ export const STAGE_LABELS: Record<ProductionStageStatus, string> = {
   NOT_STARTED: 'Not Started',
   IN_PROGRESS: 'In Progress',
   COMPLETED: 'Completed',
+};
+
+// User-facing labels only — "rework" is deliberately avoided here since
+// physical correction happens offline at the Factory; QA never performs it.
+// The underlying QaReworkTask entity/statuses are unchanged (NEW-AUTH-003).
+export const REWORK_STATUS_LABELS: Record<QaReworkTaskView['status'], string> = {
+  REWORK_REQUIRED: 'Correction required',
+  ACKNOWLEDGED: 'Acknowledged',
+  READY_FOR_REINSPECTION: 'Ready for reinspection',
+  REINSPECTED: 'Reinspected',
 };
 
 export const QUALITY_RUNTIME_STATUS_LABELS: Record<QualityRuntimeStatus, string> = {

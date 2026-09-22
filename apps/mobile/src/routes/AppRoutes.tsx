@@ -68,7 +68,7 @@ export function AppRoutes() {
         <Route
           path="/factory-rework"
           element={
-            <RoleRoute allowed={['FACTORY_USER', 'ADMIN', 'MERCHANDISER']}>
+            <RoleRoute allowed={QA_ROUTE_ROLES}>
               <FactoryReworkPage />
             </RoleRoute>
           }

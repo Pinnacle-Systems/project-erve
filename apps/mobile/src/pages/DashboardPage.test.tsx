@@ -65,12 +65,23 @@ afterEach(() => {
 });
 
 describe('mobile role-aware dashboard', () => {
-  it('shows factory production and rework entry points to a factory user', async () => {
+  it('shows factory production entry points to a factory user but no in-system rework lifecycle', async () => {
+    // NEW-AUTH-003: there is no ERVE-managed Factory rework lifecycle — rework
+    // acknowledge/ready is QA's, not Factory's, so a factory-only user gets no
+    // /factory-rework entry point.
     await renderDashboard(['FACTORY_USER']);
 
     expect(container.querySelector('a[href="/factory-tasks"]')).not.toBeNull();
-    expect(container.querySelector('a[href="/factory-rework"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/factory-rework"]')).toBeNull();
     expect(container.querySelector('a[href="/qa"]')).toBeNull();
+  });
+
+  it('shows the QA rework entry point to a QA user', async () => {
+    await renderDashboard(['QA_USER']);
+
+    expect(container.querySelector('a[href="/factory-tasks"]')).toBeNull();
+    expect(container.querySelector('a[href="/qa"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/factory-rework"]')).not.toBeNull();
   });
 
   it('shows operational monitoring and approval entry points to an administrator', async () => {

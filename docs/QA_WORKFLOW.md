@@ -19,7 +19,7 @@
 - Approval aggregates finalized size forms by disposition: first-pass forms establish prepared-quantity coverage, and a reinspection resolves only its linked rework quantity. A first-pass rework quantity is therefore not an additional terminal quantity; terminal accepted plus permanently rejected quantities across the finalized form history must reconcile to prepared quantity exactly once.
 - Defects use the controlled `QaDefectCategory` enum. Defect category is required for rework or permanent rejection; notes remain optional. Permanent rejection requires photo evidence, an established pre-ERVE-015 rule. Evidence is optional at session scope but, when used to satisfy permanent rejection, is attached to the exact rejected size form; one attachment therefore does not silently satisfy another size's rejection. Rework alone does not require evidence.
 - All defect categories are rework-eligible in this slice. QA chooses rework versus permanent rejection. This policy is intentionally data-extensible; a future defect master can narrow eligibility without changing historical rows.
-- A rework task is created from a finalized line, for exactly its rework quantity. Factory may acknowledge it and mark that same quantity ready. Reinspection cannot exceed the task quantity. A later reinspection may accept, rework again, or permanently reject it.
+- A rework task is created from a finalized line, for exactly its rework quantity. Physical rework is performed by the Factory operationally/offline; QA (acting on that offline confirmation) acknowledges the task in ERVE and marks that same quantity ready. Reinspection cannot exceed the task quantity. A later reinspection may accept, rework again, or permanently reject it. There is no ERVE-managed Factory rework lifecycle — Factory is never a rework mutation actor in-system.
 - A finalized session may be reopened only by admin or merchandiser, before job approval, and only if it did not generate rework. Reopening preserves the original session as `REOPENED`; replacement is recorded in a new session. An approved job cannot be reopened because its quantity has been released as an external contract. A future explicit downstream reversal workflow is required for that case.
 - Evidence uses the existing production `FileStorage` adapter. JPEG, PNG and WebP signatures and maximum size are checked server-side. Server-generated keys and checksums avoid trusting names. Duplicate content in a session returns the existing record. Upload is a separate draft attachment action, so quantity finalization never commits while a fragile upload is in flight.
 - Android draft entries are stored locally per job order until successful finalization. Submitted requests are retried with an unchanged idempotency key by the mutation retry control; server state always wins after a stale-version response. This is intentionally not a general offline-sync subsystem.
@@ -30,7 +30,7 @@
 READY_FOR_QA
   -> QA_IN_PROGRESS                 start/save partial inspection
   -> REWORK_REQUIRED                finalized outcome contains rework
-  -> READY_FOR_REINSPECTION         factory marks rework ready
+  -> READY_FOR_REINSPECTION         QA marks rework ready (after offline factory correction)
   -> QA_IN_PROGRESS                 QA starts reinspection
   -> QA_APPROVED                    all prepared quantity reaches a terminal outcome
 ```
@@ -72,7 +72,7 @@ The former session-wide routes are intentionally absent. Test migration must ret
 - `POST /qa/job-orders/:id/approve` — publish authoritative final quantity.
 - `POST /qa/inspections/:sessionId/forms/:formId/reopen` — admin/merchandiser exception action for one finalized form that did not generate rework.
 - `POST /qa/inspections/:id/evidence` and `GET /qa/evidence/:id/content` — authorized evidence lifecycle.
-- `GET /qa/rework`, `POST /qa/rework/:id/acknowledge`, `POST /qa/rework/:id/ready` — minimum factory handoff.
+- `GET /qa/rework`, `POST /qa/rework/:id/acknowledge`, `POST /qa/rework/:id/ready` — QA-owned rework handoff (`canInspect`: ADMIN, QA_USER, MERCHANDISER). Factory has no route access; it may still read `reworkTasks` on its Job Order view.
 
 Every business mutation requires `expectedVersion` and `Idempotency-Key`. Records are scoped by actor and operation and include a SHA-256 request hash. Exact replay returns current authoritative detail without a second mutation or audit event. Key reuse with another entity or payload returns `IDEMPOTENCY_KEY_REUSED`. Mutation, version, idempotency record and audit commit in one transaction.
 

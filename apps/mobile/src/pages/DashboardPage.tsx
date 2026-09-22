@@ -59,7 +59,9 @@ export function DashboardPage({ user }: { user: AuthUser }) {
   const canUseFactoryTasks = user.roles.includes('FACTORY_USER');
   const canUseQa = hasRole(user, operationalQaRoles);
   const canOversee = hasRole(user, oversightRoles);
-  const canUseRework = canUseFactoryTasks || canOversee;
+  // NEW-AUTH-003: rework is QA-owned, not a Factory in-system lifecycle —
+  // canOversee (ADMIN, MERCHANDISER) is already a subset of operationalQaRoles.
+  const canUseRework = canUseQa;
 
   const factoryTasks = useQuery({
     queryKey: ['factory-tasks', 'mobile-home'],
@@ -144,7 +146,7 @@ export function DashboardPage({ user }: { user: AuthUser }) {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 4);
 
-  const hasOperationalAccess = canUseFactoryTasks || canUseQa || canUseRework;
+  const hasOperationalAccess = canUseFactoryTasks || canUseQa;
 
   return (
     <main className="min-h-full space-y-5 bg-background px-4 py-5">
@@ -216,14 +218,12 @@ export function DashboardPage({ user }: { user: AuthUser }) {
             {canUseRework && (
               <SummaryLink
                 to="/factory-rework"
-                title={
-                  canOversee && !canUseFactoryTasks ? 'Factory exceptions and rework' : 'QA rework'
-                }
+                title="Reinspection Handoff"
                 value={rework.data?.length}
                 detail={
                   rework.isLoading
-                    ? 'Loading open rework…'
-                    : `${rework.data?.length ?? 0} open rework tasks need follow-up.`
+                    ? 'Loading open corrections…'
+                    : `${rework.data?.length ?? 0} corrections awaiting reinspection.`
                 }
               />
             )}

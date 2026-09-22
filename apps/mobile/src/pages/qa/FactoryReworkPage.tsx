@@ -11,15 +11,19 @@ export function FactoryReworkPage() {
   return (
     <main className="min-h-full space-y-4 bg-background px-4 py-5">
       <div>
-        <h1 className="text-2xl font-semibold">QA rework</h1>
-        <p className="text-sm text-muted-foreground">Only quantities returned by QA are shown.</p>
+        <h1 className="text-2xl font-semibold">Reinspection Handoff</h1>
+        <p className="text-sm text-muted-foreground">
+          Corrections returned by QA, awaiting acknowledgement or reinspection.
+        </p>
       </div>
-      {query.isLoading && <p>Loading rework…</p>}
+      {query.isLoading && <p>Loading corrections…</p>}
       {query.isError && (
-        <p role="alert">Unable to load rework. Check your connection and factory permission.</p>
+        <p role="alert">
+          Unable to load the reinspection handoff. Check your connection and permission.
+        </p>
       )}
       {query.data?.length === 0 && (
-        <p className="rounded-lg border border-border bg-surface p-5">No rework assigned.</p>
+        <p className="rounded-lg border border-border bg-surface p-5">No open corrections.</p>
       )}
       {query.data?.map((task) => (
         <article key={task.id} className="rounded-xl border border-border bg-surface p-4">
@@ -35,7 +39,7 @@ export function FactoryReworkPage() {
           </p>
           <Link
             className="mt-3 flex min-h-12 w-full items-center justify-center rounded-lg bg-primary text-primary-foreground"
-            to={`/factory-tasks/${task.jobOrderId}`}
+            to={`/job-orders/${task.jobOrderId}`}
           >
             Open original Job Order
           </Link>

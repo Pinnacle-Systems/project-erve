@@ -139,7 +139,7 @@ export function getQaWorkPresentation(state: JobOrderOperationalState): QaWorkPr
     return { label: 'Reinspection Required', tone: 'warning' };
   }
   if (state.lifecycleContext.code === 'REWORK_REQUIRED') {
-    return { label: 'Rework Required', tone: 'warning' };
+    return { label: 'Correction Required', tone: 'warning' };
   }
 
   const quality = state.qualityState;

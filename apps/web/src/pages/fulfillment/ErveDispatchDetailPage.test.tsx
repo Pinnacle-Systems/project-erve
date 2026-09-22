@@ -111,3 +111,44 @@ describe('ErveDispatchDetailPage load error handling (UXAUTH-018)', () => {
     expect(content()).not.toContain('Unable to load dispatch');
   });
 });
+
+// NEW-AUTH: role-parametrized coverage for the mutation CTAs this page
+// actually renders (canMutateErveDispatches — ERVE_DISPATCH_MUTATION_ROLES,
+// ADMIN/MERCHANDISER), verified against the shared apps/web/src/auth/
+// permissions.ts helper the component itself calls. No runtime change —
+// the final audit found this gating already correct; this only makes the
+// contract executable so future role drift is caught by tests.
+describe('ErveDispatchDetailPage mutation-control visibility by role', () => {
+  async function renderDispatched(role: Role, overrides: Partial<ErveDispatchView> = {}) {
+    const dispatch = buildDispatch({ status: 'DISPATCHED', ...overrides });
+    await renderPage(async (url: string) => {
+      if (url === '/erve-dispatches/ed-1') return { data: { data: dispatch } };
+      throw new Error(`Unexpected GET: ${url}`);
+    }, role);
+  }
+
+  it.each<Role>(['ADMIN', 'MERCHANDISER'])(
+    '%s sees both the Confirm Delivery and Update Transport/LR mutation panels on a DISPATCHED record',
+    async (role) => {
+      await renderDispatched(role);
+      expect(content()).toContain('Confirm Delivery');
+      expect(content()).toContain('Update Transport / LR Information');
+    },
+  );
+
+  it.each<Role>(['SENIOR_MANAGEMENT', 'DISTRIBUTOR', 'ACCOUNTANT'])(
+    '%s can read a DISPATCHED record but sees no mutation panel',
+    async (role) => {
+      await renderDispatched(role);
+      expect(content()).toContain('EID/26-27/0001');
+      expect(content()).not.toContain('Confirm Delivery');
+      expect(content()).not.toContain('Update Transport / LR Information');
+    },
+  );
+
+  it('document-state gating: ADMIN still loses Confirm Delivery once the record is DELIVERED, but keeps Update Transport/LR', async () => {
+    await renderDispatched('ADMIN', { status: 'DELIVERED', deliveredAt: '2026-09-02T00:00:00.000Z', deliveredBy: { id: 'u2', name: 'Merch User', email: 'm@test.local' } });
+    expect(content()).not.toContain('Confirm Delivery');
+    expect(content()).toContain('Update Transport / LR Information');
+  });
+});

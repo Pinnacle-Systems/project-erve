@@ -167,7 +167,11 @@ describe('buildPpSampleViewModel', () => {
       ],
     });
     const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
-    expect(viewModel.reworkTasks[0]).toMatchObject({ statusLabel: 'REWORK REQUIRED', quantity: 5, attemptNumber: 1 });
+    expect(viewModel.reworkTasks[0]).toMatchObject({
+      statusLabel: 'Correction required',
+      quantity: 5,
+      attemptNumber: 1,
+    });
   });
 
   it('never spreads the raw detail entity — explicit field mapping only, no internal identifiers leak', () => {

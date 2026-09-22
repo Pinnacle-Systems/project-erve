@@ -3,6 +3,7 @@ import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 import { IMAGE_CONTENT_TYPES } from '../shared/qualityResponseBlocks.js';
+import { REWORK_STATUS_LABELS } from '../../../job-orders/job-order-ui.js';
 import type { PreparedPpSamplePdfData } from './preparePpSamplePdfData.js';
 
 export interface PpSamplePdfMeta {
@@ -146,7 +147,7 @@ export function buildPpSampleViewModel(
     sizeCode: task.sizeCode,
     quantity: task.assignedQuantity,
     attemptNumber: task.attemptNumber,
-    statusLabel: task.status.replaceAll('_', ' '),
+    statusLabel: REWORK_STATUS_LABELS[task.status],
   }));
 
   return {

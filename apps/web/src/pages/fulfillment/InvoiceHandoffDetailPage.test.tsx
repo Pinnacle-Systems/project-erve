@@ -106,3 +106,45 @@ describe('InvoiceHandoffDetailPage load error handling (UXAUTH-018)', () => {
     expect(content()).not.toContain('Unable to load invoice handoff');
   });
 });
+
+// NEW-AUTH: role-parametrized coverage for the Tally-reference mutation CTA
+// (canMutateInvoiceHandoffs — INVOICE_HANDOFF_MUTATION_ROLES, ADMIN/
+// ACCOUNTANT only, per the shared apps/web/src/auth/permissions.ts helper).
+// Merchandiser is a *view-only* role here by deliberate design (it's a
+// mutation role on other fulfillment pages, but not this one) — verified
+// explicitly below since that's exactly the kind of mixed-role behavior a
+// generic role matrix could miss. No runtime change: gating was already
+// correct.
+describe('InvoiceHandoffDetailPage Tally-reference mutation visibility by role', () => {
+  async function renderHandoff(role: Role, overrides: Partial<InvoiceHandoffView> = {}) {
+    const handoff = buildHandoff(overrides);
+    await renderPage(async (url: string) => {
+      if (url === '/invoice-handoffs/ih-1') return { data: { data: handoff } };
+      throw new Error(`Unexpected GET: ${url}`);
+    }, role);
+  }
+
+  it.each<Role>(['ADMIN', 'ACCOUNTANT'])(
+    '%s sees the Record Tally Invoice Reference panel on a PENDING_TALLY handoff',
+    async (role) => {
+      await renderHandoff(role, { status: 'PENDING_TALLY' });
+      expect(content()).toContain('Record Tally Invoice Reference');
+    },
+  );
+
+  it.each<Role>(['MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'])(
+    '%s can read a PENDING_TALLY handoff but never sees the Tally-reference mutation panel',
+    async (role) => {
+      await renderHandoff(role, { status: 'PENDING_TALLY' });
+      expect(content()).toContain('ST-001');
+      expect(content()).not.toContain('Record Tally Invoice Reference');
+      expect(content()).not.toContain('Correct Tally Invoice Reference');
+    },
+  );
+
+  it('ADMIN sees the correction panel (relabeled, not hidden) once the handoff is already INVOICED', async () => {
+    await renderHandoff('ADMIN', { status: 'INVOICED', tallyInvoiceNumber: 'TIV-1', tallyInvoiceDate: '2026-09-01T00:00:00.000Z' });
+    expect(content()).toContain('Correct Tally Invoice Reference');
+    expect(content()).not.toContain('Record Tally Invoice Reference');
+  });
+});

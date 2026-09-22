@@ -22,7 +22,6 @@ export const qaRouter = Router();
 qaRouter.use(requireAuth);
 const canView = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'QA_USER');
 const canInspect = requireRoles(...QA_OPERATION_ROLES, 'MERCHANDISER');
-const canRework = requireRoles('ADMIN', 'MERCHANDISER', 'FACTORY_USER');
 function key(req: { get(name: string): string | undefined }) {
   const value = req.get('Idempotency-Key')?.trim();
   if (!value || value.length > 200)
@@ -119,14 +118,14 @@ qaRouter.post(
 );
 qaRouter.get(
   '/rework',
-  canRework,
+  canInspect,
   asyncHandler(async (req, res) =>
-    res.json(successResponse(await service.getFactoryReworkQueue(req.user!))),
+    res.json(successResponse(await service.getReworkQueue(req.user!))),
   ),
 );
 qaRouter.post(
   '/rework/:id/acknowledge',
-  canRework,
+  canInspect,
   asyncHandler(async (req, res) =>
     res.json(
       successResponse(
@@ -143,7 +142,7 @@ qaRouter.post(
 );
 qaRouter.post(
   '/rework/:id/ready',
-  canRework,
+  canInspect,
   asyncHandler(async (req, res) =>
     res.json(
       successResponse(
@@ -160,7 +159,7 @@ qaRouter.post(
 );
 qaRouter.patch(
   '/rework/:id/notes',
-  canRework,
+  canInspect,
   asyncHandler(async (req, res) =>
     res.json(
       successResponse(
