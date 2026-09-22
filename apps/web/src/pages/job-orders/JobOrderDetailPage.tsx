@@ -1,114 +1,80 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import type {
-  ApiErrorResponse,
-  ApiSuccessResponse,
-  JobOrderAuditEntry,
-  QaReworkTaskView,
-  QualityCoverageView,
-  QualityExecutionView,
-} from '@erve/types';
-import {
-  AuditTrail,
-  ConfirmDialog,
-  FinalBatchAllocationForm,
-  getJobOrderOperationalPresentation,
-  PageHeader,
-  StatusBadge,
-} from '@erve/app-components';
-import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
-import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
+import type { ApiErrorResponse, ApiSuccessResponse, JobOrderAuditEntry } from '@erve/types';
+import { ConfirmDialog, getJobOrderOperationalPresentation } from '@erve/app-components';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@erve/primitives';
+import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import { useAuthedImage } from '../../lib/use-authed-image.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
-import {
-  canManageJobOrderProduction,
-  canMutateQualityExecution,
-  canViewQa,
-} from '../../auth/permissions.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
-import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import type { PurchaseOrder } from '../purchase-orders/types.js';
-import type { Style } from '../master-data/types.js';
-import type { JobOrder, JobOrderLineSize } from './types.js';
-import { OrderSheetMultiSelectField } from './OrderSheetMultiSelectField.js';
-import { ProductionStageStepper } from './ProductionStageStepper.js';
-import { formatJobOrderAuditTitle } from './job-order-audit.js';
+import type { JobOrder } from './types.js';
+import { JobOrderPageHeader } from './job-order-detail/JobOrderPageHeader.js';
+import { JobOrderStickyContext } from './job-order-detail/JobOrderStickyContext.js';
+import { JobOrderOverviewTab } from './job-order-detail/tabs/JobOrderOverviewTab.js';
+import { JobOrderProductionTab } from './job-order-detail/tabs/JobOrderProductionTab.js';
+import { JobOrderQualityTab } from './job-order-detail/tabs/JobOrderQualityTab.js';
+import { JobOrderHistoryTab } from './job-order-detail/tabs/JobOrderHistoryTab.js';
 import {
-  CONFIRMATION_LABELS,
-  JOB_ORDER_STATUS_LABELS,
-  QUALITY_RUNTIME_STATUS_LABELS,
-  REWORK_STATUS_LABELS,
-  STAGE_LABELS,
-  confirmationTone,
-  formatDateTime,
-  qualityRuntimeStatusTone,
-} from './job-order-ui.js';
+  disclaimerRequiredMessage,
+  getJobOrderStyleSummary,
+  mutationErrorMessage,
+  type FlatSize,
+} from './job-order-detail/job-order-detail-utils.js';
 
-type FlatSize = JobOrderLineSize & {
-  style: string;
-  linePreparedQuantityTotal: number;
-};
+const JOB_ORDER_TABS = ['overview', 'production', 'quality', 'history'] as const;
+type JobOrderTab = (typeof JOB_ORDER_TABS)[number];
 
-const disclaimerRequiredMessage =
-  'Factory commercial terms / disclaimer is required before sending this Job Order to the factory.';
-
-function mutationErrorMessage(error: unknown, fallback: string): string {
-  if (isAxiosError<ApiErrorResponse>(error)) return error.response?.data.error.message ?? fallback;
-  if (error instanceof Error && !error.message.startsWith('Request failed with status code'))
-    return error.message;
-  return fallback;
-}
-
-function finalBatchStartError(error: unknown): string {
-  if (!isAxiosError<ApiErrorResponse>(error))
-    return 'Unable to create the Final batch. Review its size allocation and try again.';
-  const response = error.response?.data.error;
-  return response?.message ?? 'Unable to create the Final batch. Review its size allocation.';
-}
-
-function QaEvidenceLink({ evidence }: { evidence: QaReworkTaskView['qaEvidence'][number] }) {
-  const image = useAuthedImage(`/qa/evidence/${evidence.id}/content`, evidence.createdAt);
-  return (
-    <button
-      type="button"
-      className="text-sm font-medium text-primary underline disabled:text-muted-foreground"
-      disabled={!image.url}
-      onClick={() => image.url && window.open(image.url, '_blank', 'noopener,noreferrer')}
-    >
-      {image.loading ? `Loading ${evidence.fileName}…` : evidence.fileName}
-    </button>
-  );
+function isJobOrderTab(value: string | null): value is JobOrderTab {
+  return value != null && (JOB_ORDER_TABS as readonly string[]).includes(value);
 }
 
 export function JobOrderDetailPage() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
-  const [markCompleteDialogOpen, setMarkCompleteDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
-  const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
   const [disclaimerDrafts, setDisclaimerDrafts] = useState<Record<string, string>>({});
   const [disclaimerError, setDisclaimerError] = useState('');
   const [sendError, setSendError] = useState('');
   const [acknowledgedRevision, setAcknowledgedRevision] = useState('');
-  const [reworkNotesDrafts, setReworkNotesDrafts] = useState<Record<string, string>>({});
-  const [deliveryDateDraft, setDeliveryDateDraft] = useState<string | null>(null);
-  const [qualityStartContexts, setQualityStartContexts] = useState<
-    Record<string, { sizeId: string; quantity: string }>
-  >({});
-  const [qualityBatchAllocations, setQualityBatchAllocations] = useState<
-    Record<string, Record<string, string>>
-  >({});
-  const [qualityBatchErrors, setQualityBatchErrors] = useState<Record<string, string>>({});
+  const [pendingFocusTarget, setPendingFocusTarget] = useState<'disclaimer' | null>(null);
   const disclaimerRef = useRef<HTMLTextAreaElement>(null);
-  const qualityStartBatchPendingRef = useRef(false);
   const user = useOptionalAuth()?.user;
+
+  const activeTab: JobOrderTab = isJobOrderTab(searchParams.get('tab')) ? (searchParams.get('tab') as JobOrderTab) : 'overview';
+
+  const navigateToTab = useCallback(
+    (tab: JobOrderTab) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.set('tab', tab);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  // Deferred-focus sequencing: a failed Send validation switches to
+  // Production (via navigateToTab, so ?tab= follows) and records the
+  // pending focus target here. The textarea is `display:none` until Radix
+  // actually marks the Production panel active, so focusing it in the same
+  // tick as the tab switch would silently no-op — this effect only runs
+  // once the Production tab is genuinely the active one.
+  useEffect(() => {
+    if (pendingFocusTarget === 'disclaimer' && activeTab === 'production') {
+      disclaimerRef.current?.focus();
+      disclaimerRef.current?.scrollIntoView?.({ block: 'center' });
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot: clears the pending-focus signal once consumed, doesn't cascade
+      setPendingFocusTarget(null);
+    }
+  }, [pendingFocusTarget, activeTab]);
 
   const jobOrderQuery = useQuery({
     queryKey: ['job-order', id],
@@ -120,80 +86,8 @@ export function JobOrderDetailPage() {
   const auditQuery = useQuery({
     queryKey: ['job-order-audit', id],
     queryFn: async () =>
-      (await apiClient.get<ApiSuccessResponse<JobOrderAuditEntry[]>>(`/job-orders/${id}/audit`))
-        .data.data,
+      (await apiClient.get<ApiSuccessResponse<JobOrderAuditEntry[]>>(`/job-orders/${id}/audit`)).data.data,
   });
-  const qualityStartMutation = useMutation({
-    mutationFn: async ({ activityId, body }: { activityId: string; body?: object }) =>
-      (
-        await apiClient.post<ApiSuccessResponse<QualityExecutionView>>(
-          `/job-orders/${id}/quality-activities/${activityId}/executions`,
-          body ?? {},
-        )
-      ).data.data,
-    onSuccess: (execution) =>
-      navigate(
-        execution.ppSample ? `/qa/${execution.jobOrderId}` : `/quality-executions/${execution.id}`,
-      ),
-    onError: (error, variables) => {
-      if (!Object.prototype.hasOwnProperty.call(variables.body ?? {}, 'allocations')) return;
-      qualityStartBatchPendingRef.current = false;
-      setQualityBatchErrors((current) => ({
-        ...current,
-        [variables.activityId]: finalBatchStartError(error),
-      }));
-    },
-  });
-
-  const updateFinalBatchAllocation = (activityId: string, sizeId: string, quantity: string) => {
-    setQualityBatchAllocations((current) => ({
-      ...current,
-      [activityId]: { ...current[activityId], [sizeId]: quantity },
-    }));
-    setQualityBatchErrors((current) => {
-      if (!current[activityId]) return current;
-      const next = { ...current };
-      delete next[activityId];
-      return next;
-    });
-  };
-
-  const startQualityBatch = (activityId: string, coverage: QualityCoverageView | null) => {
-    if (qualityStartBatchPendingRef.current || qualityStartMutation.isPending) return;
-    const values = qualityBatchAllocations[activityId] ?? {};
-    const allocations = (coverage?.availableBySize ?? []).flatMap((size) => {
-      const quantity = Number(values[size.jobOrderLineSizeId] || 0);
-      return quantity > 0 ? [{ jobOrderLineSizeId: size.jobOrderLineSizeId, quantity }] : [];
-    });
-    const invalid = allocations.some((allocation) => {
-      const capacity = coverage?.availableBySize?.find(
-        (size) => size.jobOrderLineSizeId === allocation.jobOrderLineSizeId,
-      )?.availableQuantity;
-      return (
-        !Number.isInteger(allocation.quantity) || capacity == null || allocation.quantity > capacity
-      );
-    });
-    if (!allocations.length || invalid) {
-      setQualityBatchErrors((current) => ({
-        ...current,
-        [activityId]: !allocations.length
-          ? 'Allocate at least one prepared unit to this Final batch.'
-          : 'Each batch allocation must be a whole number within the available size quantity.',
-      }));
-      return;
-    }
-    setQualityBatchErrors((current) => {
-      if (!current[activityId]) return current;
-      const next = { ...current };
-      delete next[activityId];
-      return next;
-    });
-    qualityStartBatchPendingRef.current = true;
-    qualityStartMutation.mutate({
-      activityId,
-      body: { allocations },
-    });
-  };
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['job-order', id] });
@@ -213,9 +107,7 @@ export function JobOrderDetailPage() {
       invalidate();
     },
     onError: (error) => {
-      const apiCode = isAxiosError<ApiErrorResponse>(error)
-        ? error.response?.data.error.code
-        : undefined;
+      const apiCode = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error.code : undefined;
       const message =
         apiCode === 'DISCLAIMER_REQUIRED'
           ? disclaimerRequiredMessage
@@ -224,11 +116,12 @@ export function JobOrderDetailPage() {
       setSendError(message);
       if (apiCode === 'DISCLAIMER_REQUIRED') {
         setDisclaimerError(message);
-        disclaimerRef.current?.focus();
-        disclaimerRef.current?.scrollIntoView?.({ block: 'center' });
+        navigateToTab('production');
+        setPendingFocusTarget('disclaimer');
       }
     },
   });
+
   const confirmMutation = useMutation({
     mutationFn: async () =>
       apiClient.post<ApiSuccessResponse<JobOrder>>(
@@ -246,148 +139,23 @@ export function JobOrderDetailPage() {
       invalidate();
     },
   });
-  const disclaimerMutation = useMutation({
-    mutationFn: async () =>
-      apiClient.patch<ApiSuccessResponse<JobOrder>>(
-        `/job-orders/${id}/disclaimer`,
-        {
-          expectedVersion: jobOrderQuery.data!.version,
-          disclaimerText:
-            disclaimerDrafts[jobOrderQuery.data!.id] ?? jobOrderQuery.data!.disclaimerText ?? '',
-        },
-        { headers: { 'Idempotency-Key': `${id}:disclaimer:${jobOrderQuery.data!.version}` } },
-      ),
-    onSuccess: invalidate,
-  });
-  const updateSourcesMutation = useMutation({
-    mutationFn: async (input: { add: string[]; remove: string[] }) =>
-      apiClient.patch<ApiSuccessResponse<JobOrder>>(
-        `/job-orders/${id}/sources`,
-        { ...input, expectedVersion: jobOrderQuery.data!.version },
-        { headers: { 'Idempotency-Key': `${id}:sources:${jobOrderQuery.data!.version}:${Date.now()}` } },
-      ),
-    onSuccess: invalidate,
-  });
-  const [planDrafts, setPlanDrafts] = useState<Record<string, number>>({});
-  const updatePlanMutation = useMutation({
-    mutationFn: async (sizes: Array<{ sizeId: string; quantity: number }>) =>
-      apiClient.patch<ApiSuccessResponse<JobOrder>>(
-        `/job-orders/${id}/production-plan`,
-        { sizes, expectedVersion: jobOrderQuery.data!.version },
-        { headers: { 'Idempotency-Key': `${id}:plan:${jobOrderQuery.data!.version}:${Date.now()}` } },
-      ),
-    onSuccess: () => {
-      setPlanDrafts({});
-      invalidate();
-    },
-  });
-  const deliveryDateMutation = useMutation({
-    mutationFn: async (requiredDeliveryDate: string | null) =>
-      apiClient.patch<ApiSuccessResponse<JobOrder>>(
-        `/job-orders/${id}/delivery-date`,
-        { requiredDeliveryDate, expectedVersion: jobOrderQuery.data!.version },
-        {
-          headers: {
-            'Idempotency-Key': `${id}:delivery-date:${jobOrderQuery.data!.version}:${Date.now()}`,
-          },
-        },
-      ),
-    onSuccess: invalidate,
-  });
-  const completeStageMutation = useMutation({
-    mutationFn: async (stageStatusId: string) =>
-      apiClient.post<ApiSuccessResponse<JobOrder>>(
-        `/job-orders/${id}/actions/complete-stage`,
-        { stageStatusId, expectedVersion: jobOrderQuery.data!.version },
-        {
-          headers: {
-            'Idempotency-Key': `${id}:stage:${stageStatusId}:${jobOrderQuery.data!.version}`,
-          },
-        },
-      ),
-    onSuccess: invalidate,
-  });
-  const startStageMutation = useMutation({
-    mutationFn: async (stageStatusId: string) =>
-      apiClient.post<ApiSuccessResponse<JobOrder>>(
-        `/job-orders/${id}/actions/start-stage`,
-        { stageStatusId, expectedVersion: jobOrderQuery.data!.version },
-        {
-          headers: {
-            'Idempotency-Key': `${id}:start-stage:${stageStatusId}:${jobOrderQuery.data!.version}`,
-          },
-        },
-      ),
-    onSuccess: invalidate,
-  });
-  const markProductionCompleteMutation = useMutation({
-    mutationFn: async () =>
-      apiClient.post<ApiSuccessResponse<JobOrder>>(
-        `/job-orders/${id}/actions/mark-production-complete`,
-        { expectedVersion: jobOrderQuery.data!.version },
-        {
-          headers: {
-            'Idempotency-Key': `${id}:mark-production-complete:${jobOrderQuery.data!.version}`,
-          },
-        },
-      ),
-    onSuccess: () => {
-      setMarkCompleteDialogOpen(false);
-      invalidate();
-    },
-  });
+
   const cancelJobOrderMutation = useMutation({
     mutationFn: async () =>
       apiClient.post<ApiSuccessResponse<JobOrder>>(
         `/job-orders/${id}/actions/cancel`,
         { expectedVersion: jobOrderQuery.data!.version },
-        {
-          headers: {
-            'Idempotency-Key': `${id}:cancel:${jobOrderQuery.data!.version}`,
-          },
-        },
+        { headers: { 'Idempotency-Key': `${id}:cancel:${jobOrderQuery.data!.version}` } },
       ),
     onSuccess: () => {
       setCancelDialogOpen(false);
       invalidate();
     },
   });
-  const preparedMutation = useMutation({
-    mutationFn: async (sizes: Array<{ jobOrderLineSizeId: string; preparedQuantity: number }>) =>
-      apiClient.post<ApiSuccessResponse<JobOrder>>(
-        `/job-orders/${id}/actions/update-prepared-quantity`,
-        { sizes, expectedVersion: jobOrderQuery.data!.version },
-        { headers: { 'Idempotency-Key': `${id}:prepared:${jobOrderQuery.data!.version}` } },
-      ),
-    onSuccess: invalidate,
-  });
-  const reworkMutation = useMutation({
-    mutationFn: async ({
-      task,
-      action,
-      notes,
-    }: {
-      task: QaReworkTaskView;
-      action: 'acknowledge' | 'ready' | 'notes';
-      notes: string;
-    }) => {
-      const url = `/qa/rework/${task.id}/${action}`;
-      const body = { expectedVersion: task.version, notes: notes.trim() || null };
-      const config = {
-        headers: { 'Idempotency-Key': `${id}:rework:${task.id}:${action}:${task.version}` },
-      };
-      return action === 'notes'
-        ? apiClient.patch(url, body, config)
-        : apiClient.post(url, body, config);
-    },
-    onSuccess: invalidate,
-  });
 
   const jobOrder = jobOrderQuery.data;
-  const canManageJobOrders = Boolean(
-    user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'),
-  );
-  const canEditProductionPlan = jobOrder?.status === 'DRAFT' && canManageJobOrders;
+  const canManageJobOrders = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER'));
+
   const flatSizes: FlatSize[] = useMemo(
     () =>
       (jobOrder?.lines ?? []).flatMap((line) =>
@@ -398,65 +166,6 @@ export function JobOrderDetailPage() {
         })),
       ),
     [jobOrder],
-  );
-  // Production Plan editable size set (Phase 2.1): the Style's own
-  // canonical valid-size list, unioned with any size already on the plan or
-  // present in the Combined Forecast (so a size that's no longer active but
-  // still has a persisted quantity, or a historical forecast, stays visible
-  // — never silently dropped).
-  const styleDetailQuery = useQuery({
-    queryKey: ['style', jobOrder?.lines[0]?.styleId],
-    enabled: Boolean(jobOrder?.lines[0]?.styleId) && canEditProductionPlan,
-    queryFn: async () =>
-      (await apiClient.get<ApiSuccessResponse<Style>>(`/styles/${jobOrder!.lines[0]!.styleId}`)).data
-        .data,
-  });
-  const productionPlanRows = useMemo(() => {
-    const bySizeId = new Map<
-      string,
-      { sizeId: string; sizeCode: string; sizeLabel: string; sortOrder: number; active: boolean }
-    >();
-    for (const size of styleDetailQuery.data?.sizes ?? []) {
-      bySizeId.set(size.id, {
-        sizeId: size.id,
-        sizeCode: size.code,
-        sizeLabel: size.label,
-        sortOrder: size.sortOrder,
-        active: size.status === 'ACTIVE' && size.mappingStatus === 'ACTIVE',
-      });
-    }
-    for (const size of flatSizes) {
-      if (!bySizeId.has(size.sizeId)) {
-        bySizeId.set(size.sizeId, {
-          sizeId: size.sizeId,
-          sizeCode: size.sizeCode,
-          sizeLabel: size.sizeLabel,
-          sortOrder: Number.POSITIVE_INFINITY,
-          active: false,
-        });
-      }
-    }
-    for (const row of jobOrder?.combinedForecast ?? []) {
-      if (!bySizeId.has(row.sizeId)) {
-        bySizeId.set(row.sizeId, {
-          sizeId: row.sizeId,
-          sizeCode: row.sizeCode,
-          sizeLabel: row.sizeLabel,
-          sortOrder: Number.POSITIVE_INFINITY,
-          active: false,
-        });
-      }
-    }
-    return [...bySizeId.values()].sort((a, b) => a.sortOrder - b.sortOrder);
-  }, [styleDetailQuery.data, flatSizes, jobOrder?.combinedForecast]);
-  function currentPlanQuantity(sizeId: string): number {
-    return flatSizes.find((size) => size.sizeId === sizeId)?.orderedQuantity ?? 0;
-  }
-  const nextStage = jobOrder?.stages.find((stage) => stage.status !== 'COMPLETED');
-  const productionQualityGateLocked = Boolean(
-    jobOrder?.qualityActivities.some(
-      (activity) => activity.executionMode === 'SEQUENTIAL_GATE' && activity.status !== 'COMPLETED',
-    ),
   );
 
   const generateJobOrderDetailPdf = useCallback(async () => {
@@ -475,16 +184,11 @@ export function JobOrderDetailPage() {
     [jobOrder?.jobOrderNumber],
   );
 
-  const pdfAction = usePdfAction({
-    generate: generateJobOrderDetailPdf,
-    filename: jobOrderDetailPdfFilename,
-  });
+  const pdfAction = usePdfAction({ generate: generateJobOrderDetailPdf, filename: jobOrderDetailPdfFilename });
 
   if (jobOrderQuery.isLoading) return <LoadingState label="Loading job order" />;
   if (jobOrderQuery.isError)
-    return (
-      <ErrorState title="Unable to load job order" description={jobOrderQuery.error.message} />
-    );
+    return <ErrorState title="Unable to load job order" description={jobOrderQuery.error.message} />;
   if (!jobOrder)
     return (
       <EmptyState
@@ -499,53 +203,22 @@ export function JobOrderDetailPage() {
   const acknowledgeDisclaimer = acknowledgedRevision === acknowledgementKey;
   const disclaimerText = disclaimerDrafts[jobOrder.id] ?? jobOrder.disclaimerText ?? '';
   const canEditDisclaimer = jobOrder.status === 'DRAFT' && canManageJobOrders;
-  const canConfirm =
-    jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
-  const canMutateProduction = canManageJobOrderProduction(user);
-  const canManageProductionStage =
-    canMutateProduction &&
-    ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) &&
-    Boolean(nextStage) &&
-    !productionQualityGateLocked;
-  const isPreparedQuantitiesUnlocked =
-    jobOrder.preparedQuantityEntry?.available ?? jobOrder.status === 'PRODUCTION_COMPLETE';
-  const canUpdatePrepared = canMutateProduction && isPreparedQuantitiesUnlocked;
-  // NEW-AUTH-003: there is no ERVE-managed Factory rework lifecycle — physical
-  // rework happens offline, and QA (not Factory) acknowledges/readies it here
-  // once told the correction is done. FACTORY_USER keeps read-only visibility
-  // into reworkTasks below (rendered regardless of this flag).
-  const canPerformQaRework = canMutateQualityExecution(user);
-  const openRework = jobOrder.reworkTasks.filter((task) => task.status !== 'REINSPECTED');
-  const historicalRework = jobOrder.reworkTasks.filter((task) => task.status === 'REINSPECTED');
-  const hasProductionStarted = [
-    'CONFIRMED_BY_FACTORY',
-    'IN_PRODUCTION',
-    'PRODUCTION_COMPLETE',
-  ].includes(jobOrder.status);
-  // Mirrors the server's eligibility rule in markJobOrderProductionComplete
-  // — a live in-progress stage must be stopped/completed first. This is a
-  // UI convenience only; the server is authoritative and re-checks it.
-  const anyProductionStageInProgress = jobOrder.stages.some(
-    (stage) => stage.status === 'IN_PROGRESS',
-  );
-  const canMarkProductionComplete =
-    jobOrder.status === 'IN_PRODUCTION' && canManageJobOrders;
+  const canConfirm = jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
   // Mirrors the server's cancellation boundary in cancelJobOrder — a Job
   // Order may be cancelled only until production actually starts.
   const canCancelJobOrder =
-    ['DRAFT', 'SENT_TO_FACTORY', 'CONFIRMED_BY_FACTORY'].includes(jobOrder.status) &&
-    canManageJobOrders;
-  const preparedPayload = flatSizes.map((size) => ({
-    jobOrderLineSizeId: size.id,
-    preparedQuantity: preparedQuantities[size.id] ?? size.preparedQuantity,
-  }));
+    ['DRAFT', 'SENT_TO_FACTORY', 'CONFIRMED_BY_FACTORY'].includes(jobOrder.status) && canManageJobOrders;
+  const operationalPresentation = getJobOrderOperationalPresentation(jobOrder.operationalState);
+  const styleSummary = getJobOrderStyleSummary(jobOrder.lines);
+
   const focusDisclaimer = (message: string) => {
     setDisclaimerError(message);
     setSendError(message);
     setSendDialogOpen(false);
-    disclaimerRef.current?.focus();
-    disclaimerRef.current?.scrollIntoView?.({ block: 'center' });
+    navigateToTab('production');
+    setPendingFocusTarget('disclaimer');
   };
+
   const validateDisclaimerForSend = () => {
     if (!disclaimerText.trim()) {
       focusDisclaimer(disclaimerRequiredMessage);
@@ -559,1314 +232,105 @@ export function JobOrderDetailPage() {
     setSendError('');
     return true;
   };
+
   const openSendDialog = () => {
     if (validateDisclaimerForSend()) setSendDialogOpen(true);
   };
   const sendToFactory = () => {
     if (validateDisclaimerForSend()) sendMutation.mutate();
   };
-  const operationalPresentation = getJobOrderOperationalPresentation(jobOrder.operationalState);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
-        title={jobOrder.jobOrderNumber}
-        subtitle={jobOrder.factory.name}
-        status={
-          <div
-            className="min-w-0 max-w-xl border-l border-border-subtle pl-3"
-            aria-label="Current Job Order operational state"
-          >
-            <p className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
-              {operationalPresentation.heading}
-            </p>
-            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
-              <span className="min-w-0 break-words text-sm font-semibold text-foreground">
-                {operationalPresentation.name}
-              </span>
-              {operationalPresentation.stateLabel && (
-                <StatusBadge
-                  label={operationalPresentation.stateLabel}
-                  tone={operationalPresentation.tone}
-                />
-              )}
-              {jobOrder.isDelayed && <StatusBadge label="Delayed" tone="warning" />}
-            </div>
-            {operationalPresentation.secondaryLanes.length > 0 && (
-              <div className="mt-1 flex min-w-0 flex-wrap gap-x-4 gap-y-1">
-                {operationalPresentation.secondaryLanes.map((lane) => (
-                  <div
-                    key={lane.domain}
-                    className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs"
-                  >
-                    <span className="font-medium text-muted-foreground">{lane.heading}:</span>
-                    {lane.name !== lane.heading && (
-                      <span className="min-w-0 break-words font-medium text-foreground">
-                        {lane.name}
-                      </span>
-                    )}
-                    {lane.stateLabel && (
-                      <span className="font-medium text-foreground">{lane.stateLabel}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        }
-        secondaryActions={
-          <>
-            <PdfActionButtons
-              isGenerating={pdfAction.isGenerating}
-              error={pdfAction.error}
-              onDownload={pdfAction.handleDownload}
-              onPrint={pdfAction.handlePrint}
-            />
-            <Button asChild variant="secondary">
-              <Link to="/job-orders">Back</Link>
-            </Button>
-          </>
-        }
-        primaryAction={
-          <div className="flex flex-wrap gap-2">
-            {canSend && (
-              <div className="flex flex-col items-end gap-1">
-                <Button onClick={openSendDialog}>Send to Factory</Button>
-                {sendError ? (
-                  <p
-                    className="max-w-md text-right text-xs text-[var(--erp-form-field-error-text-color)]"
-                    role="alert"
-                  >
-                    {sendError}
-                  </p>
-                ) : null}
-              </div>
-            )}
-            {canConfirm && (
-              <Button
-                disabled={!acknowledgeDisclaimer}
-                onClick={() => confirmMutation.mutate()}
-                loading={confirmMutation.isPending}
-              >
-                Confirm
-              </Button>
-            )}
-            {canCancelJobOrder && (
-              <Button variant="destructive" onClick={() => setCancelDialogOpen(true)}>
-                Cancel Job Order
-              </Button>
-            )}
-          </div>
-        }
+    <div className="space-y-4">
+      <JobOrderPageHeader
+        jobOrderNumber={jobOrder.jobOrderNumber}
+        factoryName={jobOrder.factory.name}
+        pdfAction={pdfAction}
       />
 
-      {(confirmMutation.isError || completeStageMutation.isError || preparedMutation.isError) && (
-        <ValidationMessage tone="error">
-          {[confirmMutation.error, completeStageMutation.error, preparedMutation.error].find(
-            (error) => error instanceof Error,
-          )?.message ?? 'Unable to update job order'}
-        </ValidationMessage>
-      )}
+      <JobOrderStickyContext
+        jobOrderNumber={jobOrder.jobOrderNumber}
+        style={styleSummary}
+        factoryName={jobOrder.factory.name}
+        isDelayed={jobOrder.isDelayed}
+        operationalPresentation={operationalPresentation}
+        actions={{
+          canSend,
+          onSend: openSendDialog,
+          sendError,
+          canConfirm,
+          onConfirm: () => confirmMutation.mutate(),
+          confirmPending: confirmMutation.isPending,
+          confirmDisabled: !acknowledgeDisclaimer,
+          confirmError: confirmMutation.isError
+            ? mutationErrorMessage(confirmMutation.error, 'Unable to confirm this Job Order.')
+            : '',
+          canCancelJobOrder,
+          onCancel: () => setCancelDialogOpen(true),
+        }}
+      />
 
       {cancelJobOrderMutation.isError && (
-        <ValidationMessage tone="error">
-          {mutationErrorMessage(
-            cancelJobOrderMutation.error,
-            'Unable to cancel this Job Order.',
-          )}
-        </ValidationMessage>
+        <div className="px-4 md:px-8">
+          <p className="text-sm text-[var(--erp-form-field-error-text-color)]" role="alert">
+            {mutationErrorMessage(cancelJobOrderMutation.error, 'Unable to cancel this Job Order.')}
+          </p>
+        </div>
       )}
 
-      {disclaimerMutation.isError && (
-        <ValidationMessage tone="error">
-          {disclaimerMutation.error instanceof Error
-            ? disclaimerMutation.error.message
-            : 'Unable to update disclaimer'}
-        </ValidationMessage>
-      )}
+      <div className="px-4 md:px-8">
+        <Tabs value={activeTab} onValueChange={(value) => navigateToTab(value as JobOrderTab)}>
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="production">Production</TabsTrigger>
+            <TabsTrigger value="quality">Quality</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
+          </TabsList>
 
-      <Panel title="Job Order Header">
-        <DescriptionList columns={4}>
-          <DescriptionList.Item
-            label="Lifecycle"
-            value={JOB_ORDER_STATUS_LABELS[jobOrder.status]}
-          />
-          <DescriptionList.Item label="Order Sheets" value={jobOrder.sourceOrderSheetCount} />
-          <DescriptionList.Item label="Factory" value={jobOrder.factory.name} />
-          <DescriptionList.Item
-            label="Required Delivery Date"
-            value={
-              jobOrder.requiredDeliveryDate ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span>
-                    {new Date(jobOrder.requiredDeliveryDate).toLocaleDateString('en-IN', {
-                      day: '2-digit',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </span>
-                  {jobOrder.isDelayed && <StatusBadge label="Delayed" tone="warning" />}
-                </div>
-              ) : (
-                'Not set'
-              )
-            }
-          />
-          <DescriptionList.Item
-            label="Factory unit price"
-            value={`₹${jobOrder.unitPrice.toFixed(2)}`}
-          />
-          <DescriptionList.Item
-            label="Process Flow"
-            value={`${jobOrder.processFlowVersion.processFlow.name} v${jobOrder.processFlowVersion.versionNumber}`}
-          />
-          {jobOrder.factoryConfirmationStatus !== 'CONFIRMED' && (
-            <DescriptionList.Item
-              label="Confirmation"
-              value={
-                <StatusBadge
-                  label={CONFIRMATION_LABELS[jobOrder.factoryConfirmationStatus]}
-                  tone={confirmationTone(jobOrder.factoryConfirmationStatus)}
-                />
-              }
-            />
-          )}
-          <DescriptionList.Item
-            label="Ordered Qty"
-            value={jobOrder.orderedQuantityTotal.toLocaleString()}
-          />
-          <DescriptionList.Item
-            label="Prepared Qty"
-            value={jobOrder.preparedQuantityTotal.toLocaleString()}
-          />
-          <DescriptionList.Item
-            label="Variance"
-            value={(
-              jobOrder.preparedQuantityTotal - jobOrder.orderedQuantityTotal
-            ).toLocaleString()}
-          />
-          <DescriptionList.Item label="Created" value={formatDateTime(jobOrder.createdAt)} />
-          <DescriptionList.Item label="Confirmed By" value={jobOrder.confirmedBy?.name} />
-          <DescriptionList.Item label="Confirmed At" value={formatDateTime(jobOrder.confirmedAt)} />
-          <DescriptionList.Item
-            label="Production Started"
-            value={formatDateTime(jobOrder.productionStartedAt)}
-          />
-          <DescriptionList.Item
-            label="Production Completed"
-            value={formatDateTime(jobOrder.productionCompletedAt)}
-          />
-        </DescriptionList>
-      </Panel>
+          <TabsContent value="overview" className="pt-4">
+            <JobOrderOverviewTab jobOrder={jobOrder} canManageJobOrders={canManageJobOrders} />
+          </TabsContent>
 
-      {jobOrder.sourceOrderSheets && (
-        <Panel
-          title="Source Order Sheets"
-          description={
-            jobOrder.status === 'DRAFT'
-              ? 'Merchandising planning provenance. Editable while this Job Order is a draft — the mapping freezes once it is sent to factory.'
-              : 'Merchandising planning provenance. This mapping is frozen for this Job Order.'
-          }
-        >
-          <div className="space-y-4">
-            <DataTable
-              density="compact"
-              columns={[
-                { key: 'poNumber', header: 'Order Sheet', accessor: 'poNumber' },
-                { key: 'distributor', header: 'Distributor', render: (os) => os.distributor.name },
-                {
-                  key: 'purchaseMode',
-                  header: 'Mode',
-                  render: (os) => (os.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale Return'),
+          <TabsContent value="production" className="pt-4">
+            <JobOrderProductionTab
+              jobOrder={jobOrder}
+              user={user}
+              flatSizes={flatSizes}
+              canManageJobOrders={canManageJobOrders}
+              disclaimerRef={disclaimerRef}
+              disclaimer={{
+                text: disclaimerText,
+                error: disclaimerError,
+                canEdit: canEditDisclaimer,
+                onChange: (value) => {
+                  setDisclaimerDrafts((current) => ({ ...current, [jobOrder.id]: value }));
+                  if (value.trim()) {
+                    setDisclaimerError('');
+                    setSendError('');
+                  }
                 },
-                {
-                  key: 'requiredDeliveryDate',
-                  header: 'Required Date',
-                  render: (os) => (os.requiredDeliveryDate ? formatDateTime(os.requiredDeliveryDate) : 'Not set'),
-                },
-                {
-                  key: 'forecastTotal',
-                  header: 'Forecast',
-                  align: 'right',
-                  render: (os) => os.forecastTotal.toLocaleString(),
-                },
-                ...(jobOrder.status === 'DRAFT' && canManageJobOrders
-                  ? [
-                      {
-                        key: 'remove',
-                        header: '',
-                        render: (os: NonNullable<JobOrder['sourceOrderSheets']>[number]) => (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            density="compact"
-                            disabled={
-                              updateSourcesMutation.isPending ||
-                              jobOrder.sourceOrderSheets!.length <= 1
-                            }
-                            onClick={() =>
-                              updateSourcesMutation.mutate({ add: [], remove: [os.id] })
-                            }
-                          >
-                            Remove
-                          </Button>
-                        ),
-                      },
-                    ]
-                  : []),
-              ]}
-              data={jobOrder.sourceOrderSheets}
-              rowKey="id"
-            />
-
-            {jobOrder.combinedForecast && jobOrder.combinedForecast.length > 0 && (
-              <DataTable
-                density="compact"
-                columns={[
-                  { key: 'size', header: 'Size', render: (row) => row.sizeLabel },
-                  {
-                    key: 'forecast',
-                    header: 'Combined Forecast',
-                    align: 'right',
-                    render: (row) => row.forecastQuantity.toLocaleString(),
-                  },
-                  {
-                    key: 'jobOrder',
-                    header: 'Job Order',
-                    align: 'right',
-                    render: (row) => {
-                      const jobOrderQuantity = jobOrder.lines
-                        .flatMap((line) => line.sizes)
-                        .filter((size) => size.sizeId === row.sizeId)
-                        .reduce((sum, size) => sum + size.orderedQuantity, 0);
-                      return jobOrderQuantity.toLocaleString();
-                    },
-                  },
-                  {
-                    key: 'variance',
-                    header: 'Variance',
-                    align: 'right',
-                    render: (row) => {
-                      const jobOrderQuantity = jobOrder.lines
-                        .flatMap((line) => line.sizes)
-                        .filter((size) => size.sizeId === row.sizeId)
-                        .reduce((sum, size) => sum + size.orderedQuantity, 0);
-                      return (jobOrderQuantity - row.forecastQuantity).toLocaleString();
-                    },
-                  },
-                ]}
-                data={jobOrder.combinedForecast}
-                rowKey="sizeId"
-              />
-            )}
-
-            {jobOrder.status === 'DRAFT' && canManageJobOrders && (
-              <OrderSheetMultiSelectField
-                label="Add another Order Sheet"
-                styleId={jobOrder.lines[0]?.styleId}
-                excludeIds={jobOrder.sourceOrderSheets.map((os) => os.id)}
-                onSelect={(orderSheet: PurchaseOrder) =>
-                  updateSourcesMutation.mutate({ add: [orderSheet.id], remove: [] })
-                }
-              />
-            )}
-            {updateSourcesMutation.isError && (
-              <ValidationMessage tone="error">
-                {mutationErrorMessage(updateSourcesMutation.error, 'Unable to update source Order Sheets.')}
-              </ValidationMessage>
-            )}
-          </div>
-        </Panel>
-      )}
-
-      {!jobOrder.deliveryDateLocked && canManageJobOrders && (
-        <Panel
-          title="Delivery Date"
-          description="Editable until the factory confirms this Job Order."
-          footer={
-            <div className="flex justify-end">
-              <Button
-                onClick={() =>
-                  deliveryDateMutation.mutate(
-                    (deliveryDateDraft ?? jobOrder.requiredDeliveryDate?.slice(0, 10) ?? '') || null,
-                  )
-                }
-                loading={deliveryDateMutation.isPending}
-              >
-                Save Delivery Date
-              </Button>
-            </div>
-          }
-        >
-          <TextField
-            label="Required Delivery Date"
-            type="date"
-            value={deliveryDateDraft ?? jobOrder.requiredDeliveryDate?.slice(0, 10) ?? ''}
-            onChange={(event) => setDeliveryDateDraft(event.target.value)}
-            width="fill"
-          />
-          {deliveryDateMutation.isError && (
-            <ValidationMessage tone="error">
-              {mutationErrorMessage(deliveryDateMutation.error, 'Unable to update the delivery date.')}
-            </ValidationMessage>
-          )}
-        </Panel>
-      )}
-
-      {jobOrder.reworkTasks.length > 0 && (
-        <Panel
-          title="Reinspection Handoff"
-          description="Physical correction happens offline at the factory. QA tracks each correction here — by size and inspection cycle — through to reinspection."
-        >
-          <div className="space-y-5">
-            {openRework.length > 0 && (
-              <section className="space-y-3" aria-label="Open corrections">
-                <h3 className="text-sm font-semibold">Open corrections</h3>
-                {openRework.map((task) => {
-                  const notes = reworkNotesDrafts[task.id] ?? task.factoryNotes ?? '';
-                  return (
-                    <article
-                      key={task.id}
-                      className="space-y-4 rounded-md border border-border p-4"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold">
-                            {jobOrder.jobOrderNumber} · {task.styleNumber} {task.styleName} · Size{' '}
-                            {task.sizeLabel}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            Correction cycle {task.attemptNumber} · Requested{' '}
-                            {formatDateTime(task.requestedAt)} by {task.requestedBy.name}
-                          </p>
-                        </div>
-                        <StatusBadge
-                          label={REWORK_STATUS_LABELS[task.status]}
-                          tone={task.status === 'READY_FOR_REINSPECTION' ? 'info' : 'warning'}
-                        />
-                      </div>
-                      <DescriptionList columns={3}>
-                        <DescriptionList.Item
-                          label="Requested quantity"
-                          value={task.assignedQuantity.toLocaleString()}
-                        />
-                        <DescriptionList.Item
-                          label="Defect category"
-                          value={task.defectCategory?.replaceAll('_', ' ') ?? 'Not recorded'}
-                        />
-                        <DescriptionList.Item
-                          label="Defect details"
-                          value={task.otherDefectDetails ?? task.defectNotes ?? 'Not recorded'}
-                        />
-                        <DescriptionList.Item
-                          label="QA remarks"
-                          value={task.qaRemarks ?? 'Not recorded'}
-                        />
-                        <DescriptionList.Item
-                          label="Acknowledged"
-                          value={
-                            task.acknowledgedAt
-                              ? `${formatDateTime(task.acknowledgedAt)} by ${task.acknowledgedBy?.name ?? 'QA'}`
-                              : 'Not yet'
-                          }
-                        />
-                        <DescriptionList.Item
-                          label="Ready for reinspection"
-                          value={
-                            task.readyAt
-                              ? `${formatDateTime(task.readyAt)} by ${task.readyBy?.name ?? 'QA'}`
-                              : 'Not yet'
-                          }
-                        />
-                      </DescriptionList>
-                      <div>
-                        <p className="mb-2 text-sm font-medium">QA evidence</p>
-                        {task.qaEvidence.length ? (
-                          <div className="flex flex-wrap gap-3">
-                            {task.qaEvidence.map((evidence) => (
-                              <QaEvidenceLink key={evidence.id} evidence={evidence} />
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-muted-foreground">No QA evidence attached.</p>
-                        )}
-                      </div>
-                      <label className="block text-sm font-medium">
-                        Correction notes
-                        <textarea
-                          className="mt-1 min-h-24 w-full rounded-control border border-border bg-surface-raised px-3 py-2 font-normal"
-                          maxLength={1000}
-                          readOnly={!canPerformQaRework}
-                          value={notes}
-                          onChange={(event) =>
-                            setReworkNotesDrafts((current) => ({
-                              ...current,
-                              [task.id]: event.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                      {canPerformQaRework && (
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            variant="secondary"
-                            loading={reworkMutation.isPending}
-                            onClick={() => reworkMutation.mutate({ task, action: 'notes', notes })}
-                          >
-                            Save notes
-                          </Button>
-                          {task.status === 'REWORK_REQUIRED' && (
-                            <Button
-                              loading={reworkMutation.isPending}
-                              onClick={() =>
-                                reworkMutation.mutate({ task, action: 'acknowledge', notes })
-                              }
-                            >
-                              Acknowledge Correction
-                            </Button>
-                          )}
-                          {task.status === 'ACKNOWLEDGED' && (
-                            <Button
-                              loading={reworkMutation.isPending}
-                              onClick={() =>
-                                reworkMutation.mutate({ task, action: 'ready', notes })
-                              }
-                            >
-                              Mark Ready for Reinspection
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </section>
-            )}
-            {historicalRework.length > 0 && (
-              <section className="space-y-2" aria-label="Reinspection history">
-                <h3 className="text-sm font-semibold">Reinspection history</h3>
-                {historicalRework.map((task) => (
-                  <div key={task.id} className="rounded-md border border-border p-3 text-sm">
-                    <p className="font-medium">
-                      {task.styleNumber} · Size {task.sizeLabel} · correction cycle{' '}
-                      {task.attemptNumber}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {task.assignedQuantity} units · Reinspected{' '}
-                      {formatDateTime(task.reinspectedAt)}
-                    </p>
-                  </div>
-                ))}
-              </section>
-            )}
-            {reworkMutation.isError && (
-              <ValidationMessage tone="error">
-                {mutationErrorMessage(
-                  reworkMutation.error,
-                  'Unable to update the reinspection handoff. Refresh and try again.',
-                )}
-              </ValidationMessage>
-            )}
-          </div>
-        </Panel>
-      )}
-
-      <Panel
-        title="Factory commercial terms / disclaimer"
-        description="Plain-text terms the factory must acknowledge before confirming this Job Order."
-        footer={
-          canEditDisclaimer ? (
-            <div className="flex justify-end">
-              <Button
-                onClick={() => disclaimerMutation.mutate()}
-                loading={disclaimerMutation.isPending}
-              >
-                Save disclaimer
-              </Button>
-            </div>
-          ) : undefined
-        }
-      >
-        {canEditDisclaimer ? (
-          <label className="flex flex-col gap-1 text-sm font-medium" htmlFor="job-order-disclaimer">
-            <span>
-              Disclaimer{' '}
-              <span className="text-[var(--erp-form-field-error-text-color)]" aria-hidden="true">
-                *
-              </span>
-            </span>
-            <textarea
-              ref={disclaimerRef}
-              id="job-order-disclaimer"
-              required
-              aria-invalid={Boolean(disclaimerError) || undefined}
-              aria-describedby={
-                disclaimerError ? 'job-order-disclaimer-error' : 'job-order-disclaimer-help'
-              }
-              className={`min-h-32 rounded-control border bg-surface-raised px-[var(--erp-control-padding-x)] py-2 font-normal focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)] ${
-                disclaimerError
-                  ? 'border-[var(--erp-form-field-error-border)] focus:border-[var(--erp-form-field-error-border)]'
-                  : 'border-[var(--erp-form-field-border)] focus:border-[var(--erp-form-field-focus-border)]'
-              }`}
-              value={disclaimerText}
-              maxLength={10000}
-              onChange={(event) => {
-                const value = event.target.value;
-                setDisclaimerDrafts((current) => ({ ...current, [jobOrder.id]: value }));
-                if (value.trim()) {
-                  setDisclaimerError('');
-                  setSendError('');
-                }
+              }}
+              acknowledgement={{
+                canConfirm,
+                checked: acknowledgeDisclaimer,
+                onToggle: (checked) => setAcknowledgedRevision(checked ? acknowledgementKey : ''),
               }}
             />
-            {disclaimerError ? (
-              <span
-                id="job-order-disclaimer-error"
-                className="text-xs font-normal text-[var(--erp-form-field-error-text-color)]"
-                role="alert"
-              >
-                {disclaimerError}
-              </span>
-            ) : null}
-            <span
-              id="job-order-disclaimer-help"
-              className="text-xs font-normal text-muted-foreground"
-            >
-              Required before sending to the factory. {disclaimerText.length}/10,000
-            </span>
-          </label>
-        ) : jobOrder.disclaimerText ? (
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 text-sm font-sans">
-            {jobOrder.disclaimerText}
-          </pre>
-        ) : (
-          <p className="text-sm text-muted-foreground">No disclaimer has been recorded.</p>
-        )}
-      </Panel>
+          </TabsContent>
 
-      {canConfirm && (
-        <Panel title="Factory acknowledgement review">
-          <p className="text-sm text-muted-foreground">
-            Review the style, size quantities, unit price, process flow, and disclaimer above before
-            confirming.
-          </p>
-          <label className="mt-4 flex min-h-11 items-center gap-3 text-sm font-medium">
-            <input
-              type="checkbox"
-              checked={acknowledgeDisclaimer}
-              onChange={(event) =>
-                setAcknowledgedRevision(event.target.checked ? acknowledgementKey : '')
-              }
+          <TabsContent value="quality" className="pt-4">
+            <JobOrderQualityTab jobOrderId={jobOrder.id} jobOrder={jobOrder} user={user} flatSizes={flatSizes} />
+          </TabsContent>
+
+          <TabsContent value="history" className="pt-4">
+            <JobOrderHistoryTab
+              jobOrder={jobOrder}
+              auditEntries={auditQuery.data ?? []}
+              auditLoading={auditQuery.isLoading}
             />
-            I have read and acknowledge the Job Order commercial terms and disclaimer.
-          </label>
-        </Panel>
-      )}
-
-      {jobOrder.status === 'DRAFT' && (
-        <Panel title="Production workflow not started">
-          <p className="text-sm text-muted-foreground">
-            Send this job order to the factory. Production stages will become available after the
-            factory confirms it.
-          </p>
-        </Panel>
-      )}
-
-      {jobOrder.status === 'SENT_TO_FACTORY' && (
-        <Panel title="Awaiting factory confirmation">
-          <p className="text-sm text-muted-foreground">
-            The production workflow will begin after {jobOrder.factory.name} confirms this job
-            order.
-          </p>
-        </Panel>
-      )}
-
-      {productionQualityGateLocked && jobOrder.factoryConfirmationStatus === 'CONFIRMED' && (
-        <Panel title="Production" actions={<StatusBadge label="Locked" tone="pending" />}>
-          <p className="text-sm text-muted-foreground">
-            Locked until pre-production Quality gates are completed.
-          </p>
-        </Panel>
-      )}
-
-      {hasProductionStarted && (
-        <ProductionStageStepper
-          stages={jobOrder.stages}
-          currentStageId={nextStage?.id}
-          isPreparedQuantitiesUnlocked={isPreparedQuantitiesUnlocked}
-        />
-      )}
-
-      {['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) &&
-        !productionQualityGateLocked &&
-        nextStage && (
-          <Panel title={`Current Stage: ${nextStage.stageNameSnapshot}`}>
-            {canManageProductionStage ? (
-              <div className="flex flex-col gap-4">
-                <p className="text-sm text-muted-foreground">
-                  Complete {nextStage.stageNameSnapshot} when work for this stage has finished.
-                </p>
-                <div className="flex flex-wrap items-end gap-3">
-                  {nextStage.status === 'NOT_STARTED' && (
-                    <Button
-                      variant="secondary"
-                      onClick={() => startStageMutation.mutate(nextStage.id)}
-                      loading={startStageMutation.isPending}
-                    >
-                      Start {nextStage.stageNameSnapshot}
-                    </Button>
-                  )}
-                  {nextStage.status === 'IN_PROGRESS' && (
-                    <Button
-                      onClick={() => completeStageMutation.mutate(nextStage.id)}
-                      loading={completeStageMutation.isPending}
-                    >
-                      Complete {nextStage.stageNameSnapshot}
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Production status: {STAGE_LABELS[nextStage.status]}
-              </p>
-            )}
-          </Panel>
-        )}
-
-      {jobOrder.status === 'IN_PRODUCTION' && (
-        <Panel title="Production Completion">
-          <div className="flex flex-col gap-3">
-            <p className="text-sm text-muted-foreground">
-              Production completes automatically once the entire planned quantity has been
-              produced and carried through Final QA to a resolved outcome (Released or
-              Permanently Rejected). This is independent of Dispatch — no Dispatch Order or
-              delivery activity is required.
-            </p>
-            {canManageJobOrders && (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  If no further production will be pursued for this Job Order — including a
-                  short-produced quantity that will not be completed — Merchandising can mark it
-                  Production Complete now.
-                </p>
-                {anyProductionStageInProgress && (
-                  <p className="text-sm text-[var(--erp-form-field-error-text-color)]">
-                    Stop or complete the in-progress production stage before marking Production
-                    Complete.
-                  </p>
-                )}
-                <div>
-                  <Button
-                    variant="secondary"
-                    disabled={!canMarkProductionComplete || anyProductionStageInProgress}
-                    onClick={() => setMarkCompleteDialogOpen(true)}
-                  >
-                    Mark Production Complete
-                  </Button>
-                </div>
-                {markProductionCompleteMutation.isError && (
-                  <ValidationMessage tone="error">
-                    {mutationErrorMessage(
-                      markProductionCompleteMutation.error,
-                      'Unable to mark this Job Order Production Complete.',
-                    )}
-                  </ValidationMessage>
-                )}
-              </>
-            )}
-          </div>
-        </Panel>
-      )}
-
-      {jobOrder.qualityActivities.length > 0 && (
-        <Panel
-          title="Quality activities"
-          description="Eligibility is calculated from the assigned Process Flow version and current Production runtime."
-        >
-          <div className="space-y-3">
-            {jobOrder.qualityActivities.map((activity) => (
-              <Panel
-                key={activity.processFlowVersionStageId}
-                variant="bordered"
-                padding="sm"
-                title={activity.name}
-                description={`${activity.qualityForm.name} v${activity.qualityFormVersion.versionNumber}`}
-                actions={
-                  <StatusBadge
-                    label={QUALITY_RUNTIME_STATUS_LABELS[activity.status]}
-                    tone={qualityRuntimeStatusTone(activity.status)}
-                  />
-                }
-              >
-                <DescriptionList columns={4} density="compact">
-                  <DescriptionList.Item
-                    label="Mode"
-                    value={
-                      activity.executionMode === 'IN_PROCESS' ? 'In-process' : 'Sequential gate'
-                    }
-                  />
-                  <DescriptionList.Item
-                    label="Associated production activity"
-                    value={activity.associatedProductionActivity?.name ?? 'Not applicable'}
-                  />
-                  <DescriptionList.Item
-                    label="Availability"
-                    value={
-                      activity.progressThresholdPercent
-                        ? `${Number(activity.progressThresholdPercent)}% progress`
-                        : activity.availabilityPolicy.toLowerCase().replaceAll('_', ' ')
-                    }
-                  />
-                  <DescriptionList.Item
-                    label="Execution"
-                    value={activity.executionMultiplicity === 'BATCHED' ? 'Batched' : 'Single'}
-                  />
-                </DescriptionList>
-                {activity.coverage && (
-                  <DescriptionList columns={4} density="compact" className="mt-4">
-                    <DescriptionList.Item
-                      label="Prepared"
-                      value={
-                        activity.coverage.preparedQuantityAuthoritative
-                          ? activity.coverage.preparedQuantity
-                          : 'Not yet recorded'
-                      }
-                    />
-                    <DescriptionList.Item
-                      label="Inspected"
-                      value={
-                        activity.coverage.inspectedPhysicalCoverage ??
-                        activity.coverage.inspectedQuantity
-                      }
-                    />
-                    <DescriptionList.Item
-                      label="Unresolved"
-                      value={activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
-                    />
-                    <DescriptionList.Item label="Coverage" value={activity.coverage.state} />
-                    <DescriptionList.Item
-                      label="Passed batches"
-                      value={activity.coverage.passedBatches}
-                    />
-                    <DescriptionList.Item
-                      label="Failed batches"
-                      value={activity.coverage.failedBatches}
-                    />
-                  </DescriptionList>
-                )}
-                {activity.status === 'MISSED' && (
-                  <p className="mt-4 text-sm text-muted-foreground">
-                    Not performed during the associated Production activity.
-                  </p>
-                )}
-                {activity.qualityForm.executionScope === 'SIZE' &&
-                  activity.executionHistory.length > 0 && (
-                    <DataTable
-                      density="compact"
-                      containerClassName="mt-4"
-                      rowKey="id"
-                      data={activity.executionHistory}
-                      columns={[
-                        { key: 'attempt', header: 'Cycle', accessor: 'attemptNumber' },
-                        {
-                          key: 'size',
-                          header: 'Sample size',
-                          render: (cycle) =>
-                            cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size',
-                        },
-                        {
-                          key: 'quantity',
-                          header: 'Quantity',
-                          accessor: 'sampleQuantity',
-                          align: 'right',
-                        },
-                        {
-                          key: 'status',
-                          header: 'Result',
-                          render: (cycle) =>
-                            cycle.status === 'DRAFT' ? (
-                              <StatusBadge label="In Progress" tone="info" />
-                            ) : (
-                              <StatusBadge
-                                label={cycle.outcome ?? 'Finalized'}
-                                tone={cycle.outcome === 'PASS' ? 'success' : 'danger'}
-                              />
-                            ),
-                        },
-                      ]}
-                    />
-                  )}
-                {activity.execution ? (
-                  <div className="mt-4 space-y-3">
-                    {/* UXAUTH-011: both cross-link targets here (`/qa/:id` and
-                        `/quality-executions/:id`) share the exact same
-                        allowed-role set (QA_VIEW_ROLES) — FACTORY_USER can
-                        view this Job Order and its QA status/history above,
-                        but is in neither route's guard, so the navigation
-                        button itself must not render for it. */}
-                    {canViewQa(user) && (
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          navigate(
-                            activity.qualityForm.executionScope === 'SIZE'
-                              ? `/qa/${jobOrder.id}`
-                              : `/quality-executions/${activity.execution!.id}`,
-                          )
-                        }
-                      >
-                        {activity.status === 'COMPLETED' || activity.status === 'FAILED'
-                          ? 'View Inspection'
-                          : 'Continue Inspection'}
-                      </Button>
-                    )}
-                    {activity.status === 'FAILED' &&
-                      activity.eligible &&
-                      activity.qualityForm.executionScope === 'SIZE' &&
-                      user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') && (
-                        <Panel variant="subtle" padding="sm" title="New PP Sample required">
-                          <div className="flex flex-wrap items-end gap-3">
-                            <SelectField
-                              label="Sample Size"
-                              value={
-                                qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ||
-                                'NONE'
-                              }
-                              onValueChange={(value) =>
-                                setQualityStartContexts((current) => ({
-                                  ...current,
-                                  [activity.processFlowVersionStageId]: {
-                                    sizeId: value === 'NONE' ? '' : value,
-                                    quantity:
-                                      current[activity.processFlowVersionStageId]?.quantity ?? '',
-                                  },
-                                }))
-                              }
-                            >
-                              <SelectItem value="NONE">Select one size</SelectItem>
-                              {flatSizes.map((size) => (
-                                <SelectItem key={size.id} value={size.id}>
-                                  {size.style} — {size.sizeLabel}
-                                </SelectItem>
-                              ))}
-                            </SelectField>
-                            <TextField
-                              label="Sample Quantity"
-                              type="number"
-                              min="1"
-                              width="xs"
-                              value={
-                                qualityStartContexts[activity.processFlowVersionStageId]
-                                  ?.quantity ?? ''
-                              }
-                              onChange={(event) =>
-                                setQualityStartContexts((current) => ({
-                                  ...current,
-                                  [activity.processFlowVersionStageId]: {
-                                    sizeId:
-                                      current[activity.processFlowVersionStageId]?.sizeId ?? '',
-                                    quantity: event.target.value,
-                                  },
-                                }))
-                              }
-                            />
-                            <Button
-                              loading={qualityStartMutation.isPending}
-                              onClick={() => {
-                                const context =
-                                  qualityStartContexts[activity.processFlowVersionStageId];
-                                qualityStartMutation.mutate({
-                                  activityId: activity.processFlowVersionStageId,
-                                  body: {
-                                    sampleJobOrderLineSizeId: context?.sizeId,
-                                    sampleQuantity: Number(context?.quantity),
-                                  },
-                                });
-                              }}
-                            >
-                              Start New PP Sample
-                            </Button>
-                          </div>
-                        </Panel>
-                      )}
-                    {activity.executionMultiplicity === 'BATCHED' &&
-                      activity.execution.status === 'FINALIZED' &&
-                      !activity.coverage?.complete &&
-                      !activity.coverage?.reconciliationConflict && (
-                        <div className="w-full space-y-3">
-                          <FinalBatchAllocationForm
-                            coverage={activity.coverage!}
-                            values={
-                              qualityBatchAllocations[activity.processFlowVersionStageId] ?? {}
-                            }
-                            onChange={(sizeId, value) =>
-                              updateFinalBatchAllocation(
-                                activity.processFlowVersionStageId,
-                                sizeId,
-                                value,
-                              )
-                            }
-                            error={qualityBatchErrors[activity.processFlowVersionStageId]}
-                            disabled={qualityStartMutation.isPending}
-                          />
-                          <Button
-                            loading={qualityStartMutation.isPending}
-                            onClick={() =>
-                              startQualityBatch(
-                                activity.processFlowVersionStageId,
-                                activity.coverage,
-                              )
-                            }
-                          >
-                            Start Next Batch
-                          </Button>
-                        </div>
-                      )}
-                  </div>
-                ) : activity.status === 'AVAILABLE' &&
-                  user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') ? (
-                  <div className="mt-4 flex flex-wrap items-end gap-3">
-                    {activity.qualityForm.executionScope === 'SIZE' && (
-                      <>
-                        <SelectField
-                          label="Sample Size"
-                          value={
-                            qualityStartContexts[activity.processFlowVersionStageId]?.sizeId ||
-                            'NONE'
-                          }
-                          onValueChange={(value) =>
-                            setQualityStartContexts((current) => ({
-                              ...current,
-                              [activity.processFlowVersionStageId]: {
-                                sizeId: value === 'NONE' ? '' : value,
-                                quantity:
-                                  current[activity.processFlowVersionStageId]?.quantity ?? '',
-                              },
-                            }))
-                          }
-                        >
-                          <SelectItem value="NONE">Select one size</SelectItem>
-                          {flatSizes.map((size) => (
-                            <SelectItem key={size.id} value={size.id}>
-                              {size.style} — {size.sizeLabel}
-                            </SelectItem>
-                          ))}
-                        </SelectField>
-                        <TextField
-                          label="Sample Quantity"
-                          type="number"
-                          min="1"
-                          width="xs"
-                          value={
-                            qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''
-                          }
-                          onChange={(event) =>
-                            setQualityStartContexts((current) => ({
-                              ...current,
-                              [activity.processFlowVersionStageId]: {
-                                sizeId: current[activity.processFlowVersionStageId]?.sizeId ?? '',
-                                quantity: event.target.value,
-                              },
-                            }))
-                          }
-                        />
-                      </>
-                    )}
-                    {activity.executionMultiplicity === 'BATCHED' && (
-                      <FinalBatchAllocationForm
-                        coverage={activity.coverage!}
-                        values={qualityBatchAllocations[activity.processFlowVersionStageId] ?? {}}
-                        onChange={(sizeId, value) =>
-                          updateFinalBatchAllocation(
-                            activity.processFlowVersionStageId,
-                            sizeId,
-                            value,
-                          )
-                        }
-                        error={qualityBatchErrors[activity.processFlowVersionStageId]}
-                        disabled={qualityStartMutation.isPending}
-                      />
-                    )}
-                    <Button
-                      loading={qualityStartMutation.isPending}
-                      onClick={() => {
-                        const context = qualityStartContexts[activity.processFlowVersionStageId];
-                        if (activity.executionMultiplicity === 'BATCHED') {
-                          startQualityBatch(activity.processFlowVersionStageId, activity.coverage);
-                          return;
-                        }
-                        qualityStartMutation.mutate({
-                          activityId: activity.processFlowVersionStageId,
-                          body:
-                            activity.qualityForm.executionScope === 'SIZE'
-                              ? {
-                                  sampleJobOrderLineSizeId: context?.sizeId,
-                                  sampleQuantity: Number(context?.quantity),
-                                }
-                              : {},
-                        });
-                      }}
-                    >
-                      Start Inspection
-                    </Button>
-                  </div>
-                ) : null}
-              </Panel>
-            ))}
-          </div>
-        </Panel>
-      )}
-
-      {hasProductionStarted && (
-        <Panel
-          title="Prepared Quantity"
-          description={
-            canUpdatePrepared
-              ? 'Update the cumulative size-wise quantity prepared for Final inspection so far.'
-              : undefined
-          }
-          footer={
-            canUpdatePrepared && (
-              <div className="flex justify-end">
-                <Button
-                  onClick={() => preparedMutation.mutate(preparedPayload)}
-                  disabled={!canUpdatePrepared}
-                  loading={preparedMutation.isPending}
-                >
-                  Save Prepared Quantity
-                </Button>
-              </div>
-            )
-          }
-        >
-          {canUpdatePrepared ? (
-            <DataTable
-              columns={[
-                { key: 'style', header: 'Style', accessor: 'style' },
-                { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-                {
-                  key: 'orderedQuantity',
-                  header: 'Ordered',
-                  align: 'right',
-                  render: (size) => size.orderedQuantity.toLocaleString(),
-                },
-                {
-                  key: 'preparedInput',
-                  header: 'Prepared',
-                  align: 'right',
-                  render: (size) => (
-                    <TextField
-                      aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
-                      type="number"
-                      min={0}
-                      max={size.orderedQuantity}
-                      value={preparedQuantities[size.id] ?? size.preparedQuantity}
-                      onChange={(event) =>
-                        setPreparedQuantities((current) => ({
-                          ...current,
-                          [size.id]: Number(event.target.value || 0),
-                        }))
-                      }
-                      disabled={!canUpdatePrepared}
-                      density="compact"
-                      width="xs"
-                    />
-                  ),
-                },
-              ]}
-              data={flatSizes}
-              rowKey="id"
-            />
-          ) : isPreparedQuantitiesUnlocked ? (
-            <DataTable
-              columns={[
-                { key: 'style', header: 'Style', accessor: 'style' },
-                { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-                {
-                  key: 'orderedQuantity',
-                  header: 'Ordered',
-                  align: 'right',
-                  render: (size) => size.orderedQuantity.toLocaleString(),
-                },
-                {
-                  key: 'preparedQuantity',
-                  header: 'Prepared',
-                  align: 'right',
-                  render: (size) => size.preparedQuantity.toLocaleString(),
-                },
-              ]}
-              data={flatSizes}
-              rowKey="id"
-            />
-          ) : (
-            <div className="p-4 bg-muted/30 rounded-md border text-sm text-muted-foreground">
-              Prepared quantities become available after{' '}
-              {jobOrder.preparedQuantityEntry?.associatedProductionActivity?.name ??
-                jobOrder.stages[jobOrder.stages.length - 1]?.stageNameSnapshot ??
-                'the configured Production activity'}{' '}
-              satisfies the Process Flow rule.
-            </div>
-          )}
-        </Panel>
-      )}
-
-      <Panel
-        title="Production Plan"
-        description={
-          canEditProductionPlan
-            ? "The Job Order's own size-wise production quantities — independent of source Order Sheets. Editable while this Job Order is a draft; source Order Sheet changes never alter it."
-            : undefined
-        }
-        footer={
-          canEditProductionPlan ? (
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                {updatePlanMutation.isError && (
-                  <ValidationMessage tone="error">
-                    {mutationErrorMessage(
-                      updatePlanMutation.error,
-                      'Unable to update the production plan.',
-                    )}
-                  </ValidationMessage>
-                )}
-              </div>
-              <Button
-                onClick={() =>
-                  updatePlanMutation.mutate(
-                    productionPlanRows
-                      .filter((row) => row.active)
-                      .map((row) => ({
-                        sizeId: row.sizeId,
-                        quantity: planDrafts[row.sizeId] ?? currentPlanQuantity(row.sizeId),
-                      })),
-                  )
-                }
-                loading={updatePlanMutation.isPending}
-              >
-                Save Production Plan
-              </Button>
-            </div>
-          ) : undefined
-        }
-      >
-        {canEditProductionPlan ? (
-          <DataTable
-            density="compact"
-            columns={[
-              { key: 'size', header: 'Size', render: (row) => row.sizeLabel },
-              {
-                key: 'quantity',
-                header: 'Production Plan',
-                align: 'right',
-                render: (row) =>
-                  row.active ? (
-                    <TextField
-                      aria-label={`Production quantity for ${row.sizeLabel}`}
-                      type="number"
-                      min={0}
-                      value={planDrafts[row.sizeId] ?? currentPlanQuantity(row.sizeId)}
-                      onChange={(event) =>
-                        setPlanDrafts((current) => ({
-                          ...current,
-                          [row.sizeId]: Math.max(0, Number(event.target.value || 0)),
-                        }))
-                      }
-                      density="compact"
-                      width="xs"
-                    />
-                  ) : (
-                    <span className="text-xs text-muted-foreground">
-                      {currentPlanQuantity(row.sizeId) > 0
-                        ? `${currentPlanQuantity(row.sizeId).toLocaleString()} — size inactive, cannot be changed`
-                        : 'Size inactive — cannot be produced'}
-                    </span>
-                  ),
-              },
-            ]}
-            data={productionPlanRows}
-            rowKey="sizeId"
-          />
-        ) : (
-          <DataTable
-            columns={[
-              { key: 'style', header: 'Style', accessor: 'style' },
-              { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-              {
-                key: 'orderedQuantity',
-                header: 'Ordered',
-                align: 'right',
-                render: (size) => size.orderedQuantity.toLocaleString(),
-              },
-              {
-                key: 'preparedQuantity',
-                header: 'Prepared',
-                align: 'right',
-                render: (size) => size.preparedQuantity.toLocaleString(),
-              },
-              {
-                key: 'varianceQuantity',
-                header: 'Variance',
-                align: 'right',
-                render: (size) => (size.preparedQuantity - size.orderedQuantity).toLocaleString(),
-              },
-            ]}
-            data={flatSizes}
-            rowKey="id"
-          />
-        )}
-      </Panel>
-
-      <Panel title="Seasons">
-        <div className="text-sm text-muted-foreground">
-          {(jobOrder.seasonSnapshots ?? []).map((season) => season.displayName).join(', ') ||
-            'No Season snapshot'}
-        </div>
-      </Panel>
-
-      <Panel title="Audit Log">
-        <AuditTrail
-          items={(auditQuery.data ?? []).map((entry) => ({
-            id: entry.id,
-            title: formatJobOrderAuditTitle(entry.action, entry.metadata),
-            actor: entry.actor?.name ?? 'System',
-            timestamp: formatDateTime(entry.createdAt),
-          }))}
-          emptyState={auditQuery.isLoading ? 'Loading history…' : 'No history available.'}
-        />
-      </Panel>
-
-      <Panel title="Factory acknowledgement evidence">
-        {jobOrder.acknowledgement ? (
-          <div className="space-y-3 text-sm">
-            <p>
-              Acknowledged by <strong>{jobOrder.acknowledgement.acknowledgedBy.name}</strong> at{' '}
-              {formatDateTime(jobOrder.acknowledgement.acknowledgedAt)} (revision{' '}
-              {jobOrder.acknowledgement.disclaimerRevision}).
-            </p>
-            <p className="break-all text-muted-foreground">
-              SHA-256: {jobOrder.acknowledgement.disclaimerSha256}
-            </p>
-            <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-sans">
-              {jobOrder.acknowledgement.disclaimerTextSnapshot}
-            </pre>
-          </div>
-        ) : jobOrder.status === 'DRAFT' ? (
-          <p className="text-sm text-muted-foreground">
-            No acknowledgement is required while this Job Order is a draft.
-          </p>
-        ) : jobOrder.confirmedAt ? (
-          <p className="text-sm text-muted-foreground">
-            No recorded disclaimer acknowledgement. This Job Order predates the factory
-            acknowledgement workflow.
-          </p>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Factory acknowledgement is pending. Waiting for the factory to acknowledge this Job
-            Order.
-          </p>
-        )}
-      </Panel>
+          </TabsContent>
+        </Tabs>
+      </div>
 
       <ConfirmDialog
         open={sendDialogOpen}
@@ -1876,16 +340,6 @@ export function JobOrderDetailPage() {
         confirmLabel="Send"
         loading={sendMutation.isPending}
         onConfirm={sendToFactory}
-      />
-
-      <ConfirmDialog
-        open={markCompleteDialogOpen}
-        onOpenChange={setMarkCompleteDialogOpen}
-        title="Mark Production Complete?"
-        description="No further production is expected for this Job Order — any remaining planned quantity will not be pursued. This does not create or change Prepared Quantity, QA Releases, or Final QA outcomes, and does not affect Dispatch or pooled inventory."
-        confirmLabel="Confirm"
-        loading={markProductionCompleteMutation.isPending}
-        onConfirm={() => markProductionCompleteMutation.mutate()}
       />
 
       <ConfirmDialog

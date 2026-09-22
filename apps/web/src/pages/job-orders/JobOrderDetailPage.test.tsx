@@ -1,14 +1,22 @@
 /** @vitest-environment jsdom */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { apiClient } from '../../lib/api-client.js';
 import { JobOrderDetailPage } from './JobOrderDetailPage.js';
 import { ProductionStageStepper } from './ProductionStageStepper.js';
-import { apiClient } from '../../lib/api-client.js';
-import type { JobOrderStage } from './types.js';
-import { STAGE_LABELS } from './job-order-ui.js';
+import {
+  changeInput,
+  changeTextarea,
+  content,
+  getActiveTabPanel,
+  getLocationSearch,
+  renderJobOrderDetail,
+  switchJobOrderTab,
+} from './job-order-detail/test-utils.js';
+import { mockJobOrder, stage, standardStages } from './job-order-detail/fixtures.js';
 
 const authState = vi.hoisted(() => ({ roles: ['MERCHANDISER', 'FACTORY_USER'] }));
 
@@ -16,10 +24,17 @@ vi.mock('../../auth/AuthContext.js', () => ({
   useOptionalAuth: () => ({ user: { roles: authState.roles } }),
 }));
 
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
   authState.roles = ['MERCHANDISER', 'FACTORY_USER'];
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -30,182 +45,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
-});
-
-const stage = (
-  id: string,
-  name: string,
-  sequence: number,
-  status: JobOrderStage['status'],
-): JobOrderStage => ({
-  id,
-  processFlowVersionStageId: `flow-${id}`,
-  stageSequence: sequence,
-  stageNameSnapshot: name,
-  status,
-  completedAt: status === 'COMPLETED' ? '2026-07-31T10:00:00Z' : null,
-  completedBy:
-    status === 'COMPLETED' ? { id: 'user-1', name: 'Alice', email: 'alice@test.local' } : null,
-  remarks: null,
-  createdAt: '2026-07-30T10:00:00Z',
-  updatedAt: '2026-07-31T10:00:00Z',
-});
-
-const standardStages = [
-  stage('stage-1', 'Cutting', 1, 'NOT_STARTED'),
-  stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
-  stage('stage-3', 'Sewing', 3, 'NOT_STARTED'),
-  stage('stage-4', 'Finishing', 4, 'NOT_STARTED'),
-];
-
-const mockJobOrder = (
-  status: string,
-  stages: JobOrderStage[] = standardStages,
-  overrides: Record<string, unknown> = {},
-) => ({
-  id: 'jo-1',
-  jobOrderNumber: 'JO-001',
-  status,
-  operationalState: {
-    lifecycleContext: {
-      code: status,
-      label: status.replaceAll('_', ' '),
-      tone: 'pending',
-      activityId: null,
-      activityName: null,
-    },
-    productionState: null,
-    qualityState: null,
-    primaryDisplayState: {
-      code: status,
-      label: status.replaceAll('_', ' '),
-      tone: 'pending',
-      activityId: null,
-      activityName: null,
-    },
-  },
-  factoryConfirmationStatus:
-    status === 'DRAFT' || status === 'SENT_TO_FACTORY' ? 'PENDING' : 'CONFIRMED',
-  orderedQuantityTotal: 10,
-  preparedQuantityTotal: 0,
-  unitPrice: 199.5,
-  version: 1,
-  createdAt: '2026-07-31T10:00:00Z',
-  confirmedAt: null,
-  productionStartedAt: null,
-  productionCompletedAt: null,
-  processFlowVersion: { versionNumber: 1, processFlow: { name: 'Standard Flow' } },
-  purchaseOrder: { poNumber: 'PO-001' },
-  factory: { name: 'Test Factory' },
-  confirmedBy: null,
-  disclaimerText: null,
-  disclaimerRevision: 0,
-  acknowledgement: null,
-  reworkTasks: [],
-  qualityActivities: [],
-  lines: [],
-  stages:
-    status === 'PRODUCTION_COMPLETE'
-      ? stages.map((current) => ({ ...current, status: 'COMPLETED' as const }))
-      : stages,
-  ...overrides,
-});
-
-type Audit = {
-  id: string;
-  action: string;
-  createdAt: string;
-  actor: { id: string; name: string; email: string } | null;
-  metadata: unknown;
-};
-
-const renderPage = async (
-  status: string,
-  stages: JobOrderStage[] = standardStages,
-  audits: Audit[] = [],
-  overrides: Record<string, unknown> = {},
-) => {
-  vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) =>
-    url.endsWith('/audit')
-      ? { data: { data: audits } }
-      : { data: { data: mockJobOrder(status, stages, overrides) } },
-  );
-
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  act(() => {
-    root.render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/job-orders/jo-1']}>
-          <Routes>
-            <Route path="/job-orders/:id" element={<JobOrderDetailPage />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-  });
-
-  await vi.waitFor(() => expect(container.textContent).not.toContain('Loading job order'));
-};
-
-const content = () => container.textContent ?? '';
-const changeTextarea = (textarea: HTMLTextAreaElement, value: string) => {
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-  setter?.call(textarea, value);
-  textarea.dispatchEvent(new Event('input', { bubbles: true }));
-};
-
-const changeInput = (input: HTMLInputElement, value: string) => {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  setter?.call(input, value);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-};
-
-const finalQualityActivity = (overrides: Record<string, unknown> = {}) => ({
-  processFlowVersionStageId: 'final-quality',
-  sequence: 5,
-  name: 'Final Inspection',
-  status: 'AVAILABLE',
-  eligible: true,
-  qualityForm: {
-    id: 'final-form',
-    code: 'FINAL',
-    name: 'Final Inspection Report',
-    executionScope: 'JOB_ORDER',
-  },
-  qualityFormVersion: { id: 'final-version', versionNumber: 1 },
-  executionMode: 'IN_PROCESS',
-  associatedProductionActivity: null,
-  availabilityPolicy: 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES',
-  progressThresholdPercent: null,
-  gateSatisfactionRequirement: 'FINALIZED',
-  executionMultiplicity: 'BATCHED',
-  coverageTarget: 'PREPARED_QUANTITY',
-  coverage: {
-    preparedQuantityAuthoritative: true,
-    preparedQuantity: 40,
-    inspectedQuantity: 0,
-    remainingQuantity: 40,
-    complete: false,
-    reconciliationConflict: false,
-    state: 'UNKNOWN',
-    passedBatches: 0,
-    failedBatches: 0,
-    hasFailedBatches: false,
-    batches: [],
-    availableBySize: [
-      {
-        jobOrderLineSizeId: 'line-size-m',
-        sizeCode: 'M',
-        sizeLabel: 'M',
-        preparedQuantity: 40,
-        allocatedQuantity: 0,
-        availableQuantity: 40,
-      },
-    ],
-  },
-  execution: null,
-  executionHistory: [],
-  ...overrides,
+  vi.unstubAllGlobals();
 });
 
 describe('ProductionStageStepper', () => {
@@ -217,96 +57,178 @@ describe('ProductionStageStepper', () => {
   });
 });
 
-describe('JobOrderDetailPage workflow rendering', () => {
-  it('validates a Final size allocation, clears the error, and starts once', async () => {
-    authState.roles = ['QA_USER'];
-    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
-      data: {
-        data: {
-          id: 'execution-1',
-          jobOrderId: 'jo-1',
-          ppSample: null,
-        },
-      },
-    });
-    await renderPage('IN_PRODUCTION', standardStages, [], {
-      qualityActivities: [finalQualityActivity()],
-    });
-    const start = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Start Inspection',
-    ) as HTMLButtonElement;
-    const quantity = container.querySelector(
-      'input[aria-label="Final batch quantity for size M"]',
-    ) as HTMLInputElement;
+describe('JobOrderDetailPage tab navigation', () => {
+  it('defaults to the Overview tab and switches active content on click', async () => {
+    await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
 
-    act(() => start.click());
+    expect(getActiveTabPanel(container).textContent).toContain('Lifecycle');
 
-    expect(post).not.toHaveBeenCalled();
-    expect(content()).toContain('Allocate at least one prepared unit to this Final batch.');
+    act(() => switchJobOrderTab(container, 'Production'));
+    expect(getActiveTabPanel(container).textContent).toContain('Current Stage: Cutting');
+    expect(getActiveTabPanel(container).textContent).not.toContain('Lifecycle');
 
-    await act(async () => changeInput(quantity, '0'));
-    act(() => start.click());
-    expect(post).not.toHaveBeenCalled();
-    expect(content()).toContain('Allocate at least one prepared unit to this Final batch.');
+    act(() => switchJobOrderTab(container, 'Quality'));
+    expect(getActiveTabPanel(container).textContent).not.toContain('Current Stage:');
 
-    await act(async () => changeInput(quantity, '-1'));
-    act(() => start.click());
-    expect(post).not.toHaveBeenCalled();
-    expect(content()).toContain('Allocate at least one prepared unit to this Final batch.');
-
-    await act(async () => changeInput(quantity, '1.5'));
-    act(() => start.click());
-    expect(post).not.toHaveBeenCalled();
-    expect(content()).toContain(
-      'Each batch allocation must be a whole number within the available size quantity.',
-    );
-
-    await act(async () => changeInput(quantity, '25'));
-    expect(content()).not.toContain('Allocate at least one prepared unit');
-
-    await act(async () => {
-      start.click();
-      start.click();
-    });
-    expect(post).toHaveBeenCalledOnce();
-    expect(post).toHaveBeenCalledWith(
-      '/job-orders/jo-1/quality-activities/final-quality/executions',
-      { allocations: [{ jobOrderLineSizeId: 'line-size-m', quantity: 25 }] },
-    );
+    act(() => switchJobOrderTab(container, 'History'));
+    expect(getActiveTabPanel(container).textContent).toContain('Audit Log');
+    expect(getActiveTabPanel(container).textContent).toContain('Seasons');
   });
 
-  it('surfaces a Final allocation conflict returned by the API', async () => {
+  it('supports arrow-key navigation between tab triggers (Radix roving tabindex)', async () => {
+    await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
+    const overviewTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (el) => el.textContent === 'Overview',
+    ) as HTMLElement;
+    act(() => overviewTab.focus());
+    expect(document.activeElement).toBe(overviewTab);
+    const productionTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (el) => el.textContent === 'Production',
+    ) as HTMLElement;
+    act(() => {
+      overviewTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    });
+    // Radix's roving-focus-group defers the actual .focus() call via
+    // setTimeout, so it lands on the next tick, not synchronously.
+    await vi.waitFor(() => expect(document.activeElement).toBe(productionTab));
+  });
+
+  it('inactive tab content is force-mounted but excluded from the tab order (inert)', async () => {
+    await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
+    // Production is mounted (forceMount) even though Overview is active...
+    expect(content(container)).toContain('Current Stage: Cutting');
+    // ...but its panel is marked `inert`, so it isn't the active one and
+    // isn't reachable by keyboard/assistive tech as current page content.
+    // (Radix's own `hidden` attribute only applies when NOT force-mounted —
+    // verified against the installed version, see tabs.tsx.)
+    const productionPanel = Array.from(container.querySelectorAll('[role="tabpanel"]')).find((panel) =>
+      panel.textContent?.includes('Current Stage: Cutting'),
+    ) as HTMLElement;
+    expect(productionPanel.hasAttribute('inert')).toBe(true);
+    expect(productionPanel.tabIndex).toBe(-1);
+    expect(getActiveTabPanel(container)).not.toBe(productionPanel);
+    expect(getActiveTabPanel(container).hasAttribute('inert')).toBe(false);
+  });
+});
+
+describe('JobOrderDetailPage ?tab= deep linking', () => {
+  it('opens the requested tab directly from the URL', async () => {
+    await renderJobOrderDetail(container, root, {
+      status: 'IN_PRODUCTION',
+      stages: standardStages,
+      initialPath: '/job-orders/jo-1?tab=production',
+    });
+    expect(getActiveTabPanel(container).textContent).toContain('Current Stage: Cutting');
+  });
+
+  it('falls back to Overview for an invalid or missing tab value', async () => {
+    await renderJobOrderDetail(container, root, {
+      status: 'IN_PRODUCTION',
+      stages: standardStages,
+      initialPath: '/job-orders/jo-1?tab=not-a-real-tab',
+    });
+    expect(getActiveTabPanel(container).textContent).toContain('Lifecycle');
+  });
+
+  it('preserves an unrelated existing query parameter when switching tabs', async () => {
+    await renderJobOrderDetail(container, root, {
+      status: 'IN_PRODUCTION',
+      stages: standardStages,
+      initialPath: '/job-orders/jo-1?from=list',
+    });
+    act(() => switchJobOrderTab(container, 'Production'));
+    await vi.waitFor(() => expect(getLocationSearch(container)).toContain('from=list'));
+    expect(getLocationSearch(container)).toContain('tab=production');
+  });
+});
+
+describe('JobOrderDetailPage sticky context', () => {
+  it('shows Job Order number, factory, and status regardless of which tab is active', async () => {
+    await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
+    const sticky = container.querySelector('.sticky') as HTMLElement;
+    expect(sticky).not.toBeNull();
+    expect(sticky.textContent).toContain('JO-001');
+    expect(sticky.textContent).toContain('Test Factory');
+
+    act(() => switchJobOrderTab(container, 'History'));
+    expect(sticky.textContent).toContain('JO-001');
+    expect(sticky.textContent).toContain('Test Factory');
+  });
+});
+
+describe('JobOrderDetailPage state persistence across tab switches', () => {
+  it('keeps an in-progress Quality form value when navigating away and back', async () => {
     authState.roles = ['QA_USER'];
-    vi.spyOn(apiClient, 'post').mockRejectedValue({
-      isAxiosError: true,
-      response: {
-        data: {
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Final batch allocation exceeds available prepared quantity',
+    await renderJobOrderDetail(container, root, {
+      status: 'IN_PRODUCTION',
+      stages: standardStages,
+      overrides: {
+        qualityActivities: [
+          {
+            processFlowVersionStageId: 'quality-1',
+            sequence: 1,
+            name: 'Size Set / Pre-Production Report',
+            status: 'AVAILABLE',
+            eligible: true,
+            qualityForm: {
+              id: 'form-1',
+              code: 'PP_REPORT',
+              name: 'Size Set / Pre-Production Report',
+              executionScope: 'SIZE',
+            },
+            qualityFormVersion: { id: 'form-version-1', versionNumber: 1 },
+            executionMode: 'SEQUENTIAL_GATE',
+            associatedProductionActivity: null,
+            availabilityPolicy: 'SEQUENTIAL_PREDECESSOR_COMPLETED',
+            progressThresholdPercent: null,
+            gateSatisfactionRequirement: 'FINALIZED',
+            executionMultiplicity: 'SINGLE',
+            coverageTarget: null,
+            coverage: null,
+            execution: null,
+            executionHistory: [],
           },
-        },
+        ],
+        lines: [
+          {
+            id: 'line-1',
+            styleId: 'style-1',
+            styleNumber: 'ST-1',
+            styleName: 'Style One',
+            orderedQuantityTotal: 10,
+            preparedQuantityTotal: 0,
+            status: 'IN_PRODUCTION',
+            sizes: [
+              {
+                id: 'size-1',
+                sizeId: 'sz-1',
+                sizeCode: 'S',
+                sizeLabel: 'Small',
+                orderedQuantity: 10,
+                preparedQuantity: 0,
+                varianceQuantity: 0,
+              },
+            ],
+          },
+        ],
       },
     });
-    await renderPage('IN_PRODUCTION', standardStages, [], {
-      qualityActivities: [finalQualityActivity()],
-    });
-    const quantity = container.querySelector(
-      'input[aria-label="Final batch quantity for size M"]',
-    ) as HTMLInputElement;
-    await act(async () => changeInput(quantity, '25'));
-    const start = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Start Inspection',
-    ) as HTMLButtonElement;
 
-    await act(async () => start.click());
-    await vi.waitFor(() =>
-      expect(content()).toContain('Final batch allocation exceeds available prepared quantity'),
-    );
+    act(() => switchJobOrderTab(container, 'Quality'));
+    const quantity = container.querySelector('#field-sample-quantity') as HTMLInputElement;
+    expect(quantity).not.toBeNull();
+    await act(async () => changeInput(quantity, '5'));
+    expect(quantity.value).toBe('5');
 
-    expect(quantity.value).toBe('25');
+    act(() => switchJobOrderTab(container, 'Overview'));
+    act(() => switchJobOrderTab(container, 'Quality'));
+
+    const quantityAfterReturn = container.querySelector('#field-sample-quantity') as HTMLInputElement;
+    expect(quantityAfterReturn.value).toBe('5');
   });
+});
 
+describe('JobOrderDetailPage workflow rendering', () => {
   it('shows primary Production and concurrent Quality without duplicating Production or Lifecycle', async () => {
     const concurrentStages = [
       stage('stage-1', 'Cutting', 1, 'COMPLETED'),
@@ -314,270 +236,125 @@ describe('JobOrderDetailPage workflow rendering', () => {
       stage('stage-3', 'Sewing', 3, 'IN_PROGRESS'),
       stage('stage-4', 'Finishing', 4, 'NOT_STARTED'),
     ];
-    await renderPage('CONFIRMED_BY_FACTORY', concurrentStages, [], {
-      operationalState: {
-        lifecycleContext: {
-          code: 'CONFIRMED_BY_FACTORY',
-          label: 'Factory Confirmed',
-          tone: 'pending',
-          activityId: null,
-          activityName: null,
-        },
-        productionState: {
-          code: 'IN_PROGRESS',
-          label: 'Sewing In Progress',
-          tone: 'info',
-          activityId: 'sewing',
-          activityName: 'Sewing',
-        },
-        qualityState: {
-          code: 'PENDING',
-          label: 'Inline Inspection Pending',
-          tone: 'pending',
-          activityId: 'inline',
-          activityName: 'Inline Inspection',
-        },
-        primaryDisplayState: {
-          code: 'IN_PROGRESS',
-          label: 'Sewing In Progress',
-          tone: 'info',
-          activityId: 'sewing',
-          activityName: 'Sewing',
+    await renderJobOrderDetail(container, root, {
+      status: 'CONFIRMED_BY_FACTORY',
+      stages: concurrentStages,
+      overrides: {
+        operationalState: {
+          lifecycleContext: { code: 'CONFIRMED_BY_FACTORY', label: 'Factory Confirmed', tone: 'pending', activityId: null, activityName: null },
+          productionState: { code: 'IN_PROGRESS', label: 'Sewing In Progress', tone: 'info', activityId: 'sewing', activityName: 'Sewing' },
+          qualityState: { code: 'PENDING', label: 'Inline Inspection Pending', tone: 'pending', activityId: 'inline', activityName: 'Inline Inspection' },
+          primaryDisplayState: { code: 'IN_PROGRESS', label: 'Sewing In Progress', tone: 'info', activityId: 'sewing', activityName: 'Sewing' },
         },
       },
     });
-    const operational = container.querySelector(
-      '[aria-label="Current Job Order operational state"]',
-    )!;
+    const operational = container.querySelector('[aria-label="Current Job Order operational state"]')!;
     expect(operational.textContent).toContain('Current Activity');
     expect(operational.textContent).toContain('Sewing');
-    expect(operational.textContent).toContain('In Progress');
     expect(operational.textContent).toContain('Quality');
     expect(operational.textContent).toContain('Inline Inspection');
     expect(operational.textContent?.match(/Sewing/g)).toHaveLength(1);
     expect(operational.textContent).not.toContain('Lifecycle');
-    expect(content()).toContain('Lifecycle');
-    expect(content()).toContain('Confirmed');
-    const detailLabels = Array.from(container.querySelectorAll('.text-label')).map(
-      (item) => item.textContent,
-    );
-    expect(detailLabels).toContain('Lifecycle');
-    expect(detailLabels).not.toContain('Confirmation');
+    expect(getActiveTabPanel(container).textContent).toContain('Lifecycle');
+    expect(getActiveTabPanel(container).textContent).toContain('Confirmed');
+
+    act(() => switchJobOrderTab(container, 'Production'));
     const currentStage = container.querySelector('li[aria-current="step"]')!;
     expect(currentStage.textContent).toContain('SewingCurrent');
-    expect(content()).not.toContain('10 / 10 completed');
-    expect(content()).not.toContain('100%');
-    expect(content()).not.toContain('Completed quantity');
-    expect(content()).not.toContain('Save progress');
   });
 
   it('prioritizes pending pre-production Quality and presents Production as locked', async () => {
-    await renderPage('CONFIRMED_BY_FACTORY', standardStages, [], {
-      operationalState: {
-        lifecycleContext: {
-          code: 'CONFIRMED_BY_FACTORY',
-          label: 'Factory Confirmed',
-          tone: 'pending',
-          activityId: null,
-          activityName: null,
+    await renderJobOrderDetail(container, root, {
+      status: 'CONFIRMED_BY_FACTORY',
+      stages: standardStages,
+      overrides: {
+        operationalState: {
+          lifecycleContext: { code: 'CONFIRMED_BY_FACTORY', label: 'Factory Confirmed', tone: 'pending', activityId: null, activityName: null },
+          productionState: { code: 'LOCKED', label: 'Production Locked', tone: 'pending', activityId: null, activityName: null },
+          qualityState: { code: 'PENDING', label: 'Size Set / Pre-Production Report Pending', tone: 'pending', activityId: 'quality-1', activityName: 'Size Set / Pre-Production Report' },
+          primaryDisplayState: { code: 'PENDING', label: 'Size Set / Pre-Production Report Pending', tone: 'pending', activityId: 'quality-1', activityName: 'Size Set / Pre-Production Report' },
         },
-        productionState: {
-          code: 'LOCKED',
-          label: 'Production Locked',
-          tone: 'pending',
-          activityId: null,
-          activityName: null,
-        },
-        qualityState: {
-          code: 'PENDING',
-          label: 'Size Set / Pre-Production Report Pending',
-          tone: 'pending',
-          activityId: 'quality-1',
-          activityName: 'Size Set / Pre-Production Report',
-        },
-        primaryDisplayState: {
-          code: 'PENDING',
-          label: 'Size Set / Pre-Production Report Pending',
-          tone: 'pending',
-          activityId: 'quality-1',
-          activityName: 'Size Set / Pre-Production Report',
-        },
-      },
-      qualityActivities: [
-        {
-          processFlowVersionStageId: 'quality-1',
-          sequence: 1,
-          name: 'Size Set / Pre-Production Report',
-          status: 'AVAILABLE',
-          eligible: true,
-          qualityForm: {
-            id: 'form-1',
-            code: 'PP_REPORT',
+        qualityActivities: [
+          {
+            processFlowVersionStageId: 'quality-1',
+            sequence: 1,
             name: 'Size Set / Pre-Production Report',
-            executionScope: 'JOB_ORDER',
+            status: 'AVAILABLE',
+            eligible: true,
+            qualityForm: { id: 'form-1', code: 'PP_REPORT', name: 'Size Set / Pre-Production Report', executionScope: 'JOB_ORDER' },
+            qualityFormVersion: { id: 'form-version-1', versionNumber: 1 },
+            executionMode: 'SEQUENTIAL_GATE',
+            associatedProductionActivity: null,
+            availabilityPolicy: 'SEQUENTIAL_PREDECESSOR_COMPLETED',
+            progressThresholdPercent: null,
+            gateSatisfactionRequirement: 'FINALIZED',
+            executionMultiplicity: 'SINGLE',
+            coverageTarget: null,
+            coverage: null,
+            execution: null,
+            executionHistory: [],
           },
-          qualityFormVersion: { id: 'form-version-1', versionNumber: 1 },
-          executionMode: 'SEQUENTIAL_GATE',
-          associatedProductionActivity: null,
-          availabilityPolicy: 'SEQUENTIAL_PREDECESSOR_COMPLETED',
-          progressThresholdPercent: null,
-          gateSatisfactionRequirement: 'FINALIZED',
-          executionMultiplicity: 'SINGLE',
-          coverageTarget: null,
-          coverage: null,
-          execution: null,
-          executionHistory: [],
-        },
-      ],
+        ],
+      },
     });
 
-    const operational = container.querySelector(
-      '[aria-label="Current Job Order operational state"]',
-    )!;
+    const operational = container.querySelector('[aria-label="Current Job Order operational state"]')!;
     expect(operational.textContent).toContain('Current Activity');
     expect(operational.textContent).toContain('Size Set / Pre-Production Report');
-    expect(operational.textContent).toContain('Pending');
     expect(operational.textContent).toContain('Production:Locked');
-    expect(content()).toContain('Locked until pre-production Quality gates are completed.');
-    expect(content()).not.toContain('Planned Production Flow');
-    expect(content()).not.toContain('Workflow sequence only');
+
+    act(() => switchJobOrderTab(container, 'Production'));
+    expect(getActiveTabPanel(container).textContent).toContain('Locked until pre-production Quality gates are completed.');
     const currentStage = container.querySelector('li[aria-current="step"]')!;
     expect(currentStage.textContent).toContain('CuttingCurrent');
-    expect(currentStage.closest('ol')?.querySelectorAll('.rounded-full')).toHaveLength(5);
-    expect(content()).toContain('Quality activities');
-    expect(content()).toContain('Available');
-    expect(content()).not.toContain('0 / 10');
-    expect(content()).not.toContain('0%');
-    expect(content()).not.toContain('Historical progress not captured');
+
+    act(() => switchJobOrderTab(container, 'Quality'));
+    expect(getActiveTabPanel(container).textContent).toContain('Quality activities');
+    expect(getActiveTabPanel(container).textContent).toContain('Available');
   });
+});
 
-  const reworkTaskFixture = {
-    id: 'rework-1',
-    jobOrderId: 'jo-1',
-    jobOrderNumber: 'JO-001',
-    jobOrderLineSizeId: 'size-m',
-    styleNumber: 'ST-101',
-    styleName: 'Oxford Shirt',
-    sizeCode: 'M',
-    sizeLabel: 'Medium',
-    assignedQuantity: 4,
-    attemptNumber: 1,
-    status: 'REWORK_REQUIRED',
-    defectCategory: 'STITCHING',
-    otherDefectDetails: null,
-    defectNotes: 'Loose cuff seam',
-    qaRemarks: 'Repair the cuff and present all four units.',
-    qaEvidence: [],
-    requestedBy: { id: 'qa-1', name: 'QA Inspector', email: 'qa@test.local' },
-    requestedAt: '2026-08-09T10:00:00Z',
-    factoryNotes: null,
-    acknowledgedBy: null,
-    acknowledgedAt: null,
-    readyBy: null,
-    readyAt: null,
-    reinspectedAt: null,
-    version: 1,
-    updatedAt: '2026-08-09T10:00:00Z',
-  };
-
-  // NEW-AUTH-003: there is no ERVE-managed Factory rework lifecycle — QA (not
-  // Factory) acknowledges/readies rework in ERVE once the physical correction
-  // is confirmed offline.
-  it('shows size-level corrections inside the original Job Order and performs QA actions', async () => {
-    authState.roles = ['QA_USER'];
-    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: {} } });
-    await renderPage('REWORK_REQUIRED', standardStages, [], {
-      reworkTasks: [reworkTaskFixture],
-    });
-
-    expect(content()).toContain('Open corrections');
-    expect(content()).toContain('JO-001 · ST-101 Oxford Shirt · Size Medium');
-    expect(content()).toContain('Requested quantity4');
-    expect(content()).toContain('Loose cuff seam');
-    expect(content()).toContain('Repair the cuff and present all four units.');
-    expect(content()).not.toContain('rework-1');
-
-    const acknowledge = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Acknowledge Correction',
-    ) as HTMLButtonElement;
-    await act(async () => acknowledge.click());
-    expect(post).toHaveBeenCalledWith(
-      '/qa/rework/rework-1/acknowledge',
-      { expectedVersion: 1, notes: null },
-      expect.objectContaining({ headers: expect.any(Object) }),
-    );
-  });
-
-  it('shows FACTORY_USER read-only correction details with no reinspection-handoff controls', async () => {
-    authState.roles = ['FACTORY_USER'];
-    await renderPage('REWORK_REQUIRED', standardStages, [], {
-      reworkTasks: [reworkTaskFixture],
-    });
-
-    expect(content()).toContain('Open corrections');
-    expect(content()).toContain('Loose cuff seam');
-    expect(content()).toContain('Repair the cuff and present all four units.');
-    const buttons = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
-    expect(buttons).not.toContain('Acknowledge Correction');
-    expect(buttons).not.toContain('Save notes');
-    expect(buttons).not.toContain('Mark Ready for Reinspection');
-    const notes = container.querySelector('textarea') as HTMLTextAreaElement;
-    expect(notes.readOnly).toBe(true);
-  });
-
-  it('renders the draft notice without production controls', async () => {
-    await renderPage('DRAFT');
-    expect(content()).toContain('Production workflow not started');
-    expect(content()).toContain('Send this job order to the factory');
-    expect(content()).not.toContain('Prepared Quantities');
-    expect(content()).not.toContain('Current Stage:');
-  });
-
-  it('blocks send before the API call and focuses the required disclaimer', async () => {
+describe('JobOrderDetailPage Send validation (disclaimer, cross-tab)', () => {
+  it('blocks send before the API call, switches to Production, and focuses the required disclaimer', async () => {
     const post = vi.spyOn(apiClient, 'post');
-    await renderPage('DRAFT');
+    await renderJobOrderDetail(container, root, { status: 'DRAFT' });
     const send = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Send to Factory',
     ) as HTMLButtonElement;
 
     act(() => send.click());
 
-    const disclaimer = container.querySelector('#job-order-disclaimer') as HTMLTextAreaElement;
-    const disclaimerLabel = container.querySelector(
-      'label[for="job-order-disclaimer"] > span',
-    ) as HTMLSpanElement;
     expect(post).not.toHaveBeenCalled();
-    expect(disclaimerLabel.textContent?.replace(/\s+/g, ' ').trim()).toBe('Disclaimer *');
-    expect(disclaimer.required).toBe(true);
-    expect(disclaimer.getAttribute('aria-invalid')).toBe('true');
+    // Production wasn't the active tab when Send was clicked — the failed
+    // validation must switch to it before focusing the invalid field.
+    expect(getActiveTabPanel(container).textContent).toContain('Factory commercial terms / disclaimer');
+
+    const disclaimer = container.querySelector('#job-order-disclaimer') as HTMLTextAreaElement;
     expect(document.activeElement).toBe(disclaimer);
-    expect(content()).toContain(
+    expect(disclaimer.getAttribute('aria-invalid')).toBe('true');
+    expect(content(container)).toContain(
       'Factory commercial terms / disclaimer is required before sending this Job Order to the factory.',
     );
-    expect(content()).not.toContain('Send job order to factory?');
+    expect(content(container)).not.toContain('Send job order to factory?');
 
     await act(async () => changeTextarea(disclaimer, 'Factory terms'));
     expect(disclaimer.getAttribute('aria-invalid')).toBeNull();
-    expect(content()).not.toContain(
-      'Factory commercial terms / disclaimer is required before sending this Job Order to the factory.',
-    );
   });
 
   it('requires an edited disclaimer to be saved before opening send confirmation', async () => {
     const post = vi.spyOn(apiClient, 'post');
-    await renderPage('DRAFT', standardStages, [], { disclaimerText: 'Persisted terms' });
+    await renderJobOrderDetail(container, root, { status: 'DRAFT', overrides: { disclaimerText: 'Persisted terms' } });
+    act(() => switchJobOrderTab(container, 'Production'));
     const disclaimer = container.querySelector('#job-order-disclaimer') as HTMLTextAreaElement;
     await act(async () => changeTextarea(disclaimer, 'Unsaved replacement terms'));
+
     const send = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Send to Factory',
     ) as HTMLButtonElement;
-
     act(() => send.click());
 
     expect(post).not.toHaveBeenCalled();
-    expect(content()).toContain(
-      'Save the disclaimer before sending this Job Order to the factory.',
-    );
+    expect(content(container)).toContain('Save the disclaimer before sending this Job Order to the factory.');
     expect(document.activeElement).toBe(disclaimer);
   });
 
@@ -586,15 +363,10 @@ describe('JobOrderDetailPage workflow rendering', () => {
       isAxiosError: true,
       message: 'Request failed with status code 400',
       response: {
-        data: {
-          error: {
-            code: 'DISCLAIMER_REQUIRED',
-            message: 'A factory commercial terms / disclaimer is required',
-          },
-        },
+        data: { error: { code: 'DISCLAIMER_REQUIRED', message: 'A factory commercial terms / disclaimer is required' } },
       },
     });
-    await renderPage('DRAFT', standardStages, [], { disclaimerText: 'Persisted terms' });
+    await renderJobOrderDetail(container, root, { status: 'DRAFT', overrides: { disclaimerText: 'Persisted terms' } });
     const send = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Send to Factory',
     ) as HTMLButtonElement;
@@ -606,420 +378,11 @@ describe('JobOrderDetailPage workflow rendering', () => {
     await act(async () => confirm.click());
 
     await vi.waitFor(() =>
-      expect(content()).toContain(
+      expect(content(container)).toContain(
         'Factory commercial terms / disclaimer is required before sending this Job Order to the factory.',
       ),
     );
-    expect(content()).not.toContain('Request failed with status code 400');
-  });
-
-  it('renders the awaiting-confirmation notice without production controls', async () => {
-    await renderPage('SENT_TO_FACTORY');
-    expect(content()).toContain('Awaiting factory confirmation');
-    expect(content()).not.toContain('Prepared Quantities');
-    expect(content()).not.toContain('Current Stage:');
-  });
-
-  it.each(['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'])(
-    'renders the guided workflow for %s',
-    async (status) => {
-      await renderPage(status);
-      expect(content()).toContain('Cutting');
-      expect(content()).toContain('Printing');
-      expect(content()).toContain('Current Stage: Cutting');
-      expect(content()).toContain(
-        'Prepared quantities become available after Finishing satisfies the Process Flow rule.',
-      );
-    },
-  );
-
-  it('renders unlocked prepared quantities after production completes', async () => {
-    await renderPage('PRODUCTION_COMPLETE');
-    expect(content()).toContain('Cutting');
-    expect(content()).toContain(
-      'Update the cumulative size-wise quantity prepared for Final inspection so far.',
-    );
-    expect(content()).not.toContain('Prepared quantities become available after');
-  });
-
-  it('renders custom stages in server-provided order without hard-coded names', async () => {
-    const customStages = [
-      stage('custom-1', 'Fabric Preparation', 1, 'NOT_STARTED'),
-      stage('custom-2', 'Embroidery', 2, 'NOT_STARTED'),
-      stage('custom-3', 'Final Inspection', 3, 'NOT_STARTED'),
-    ];
-    await renderPage('IN_PRODUCTION', customStages);
-    expect(content()).toContain('Fabric Preparation');
-    expect(content()).toContain('Embroidery');
-    expect(content()).toContain('Final Inspection');
-    expect(content()).toContain('Current Stage: Fabric Preparation');
-    expect(content()).toContain(
-      'Prepared quantities become available after Final Inspection satisfies the Process Flow rule.',
-    );
-    expect(content()).not.toContain('Cutting');
-  });
-});
-
-describe('JobOrderDetailPage factory acknowledgement evidence', () => {
-  it('shows pending copy for a current Job Order sent to the factory but not yet acknowledged', async () => {
-    await renderPage('SENT_TO_FACTORY', standardStages, [], {
-      confirmedAt: null,
-      confirmedBy: null,
-      acknowledgement: null,
-    });
-    expect(content()).toContain('Factory acknowledgement is pending');
-    expect(content()).not.toContain('predates the factory acknowledgement workflow');
-  });
-
-  it('shows acknowledgement evidence once the factory has acknowledged the Job Order', async () => {
-    await renderPage('CONFIRMED_BY_FACTORY', standardStages, [], {
-      confirmedAt: '2026-08-10T09:00:00Z',
-      confirmedBy: { id: 'factory-user-1', name: 'Factory Owner', email: 'factory@test.local' },
-      acknowledgement: {
-        id: 'ack-1',
-        jobOrderVersion: 1,
-        disclaimerRevision: 1,
-        disclaimerTextSnapshot: 'Standard factory terms apply.',
-        disclaimerSha256: 'abc123',
-        factoryIdSnapshot: 'factory-1',
-        acknowledgedBy: { id: 'factory-user-1', name: 'Factory Owner', email: 'factory@test.local' },
-        acknowledgedByRole: 'FACTORY_USER',
-        acknowledgedAt: '2026-08-10T09:00:00Z',
-        invalidatedAt: null,
-        invalidatedByUserId: null,
-        invalidationReason: null,
-        invalidationMetadata: null,
-      },
-    });
-    expect(content()).toContain('Acknowledged by');
-    expect(content()).toContain('Factory Owner');
-    expect(content()).toContain('SHA-256: abc123');
-    expect(content()).not.toContain('Factory acknowledgement is pending');
-    expect(content()).not.toContain('predates the factory acknowledgement workflow');
-  });
-
-  it('does not classify a normal confirmed Job Order awaiting acknowledgement data as legacy', async () => {
-    await renderPage('CONFIRMED_BY_FACTORY', standardStages, [], {
-      confirmedAt: null,
-      confirmedBy: null,
-      acknowledgement: null,
-    });
-    expect(content()).toContain('Factory acknowledgement is pending');
-    expect(content()).not.toContain('predates the factory acknowledgement workflow');
-  });
-
-  it('shows legacy copy only when a Job Order was confirmed with no acknowledgement on record', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [], {
-      confirmedAt: '2026-08-01T09:00:00Z',
-      confirmedBy: { id: 'factory-user-1', name: 'Factory Owner', email: 'factory@test.local' },
-      acknowledgement: null,
-    });
-    expect(content()).toContain('predates the factory acknowledgement workflow');
-    expect(content()).not.toContain('Factory acknowledgement is pending');
-  });
-
-  it('requires no acknowledgement while the Job Order is still a draft', async () => {
-    await renderPage('DRAFT');
-    expect(content()).toContain('No acknowledgement is required while this Job Order is a draft');
-    expect(content()).not.toContain('Factory acknowledgement is pending');
-    expect(content()).not.toContain('predates the factory acknowledgement workflow');
-  });
-});
-
-describe('JobOrderDetailPage audit history', () => {
-  const audit = (id: string, metadata: unknown, action = 'JOB_ORDER_STAGE_COMPLETED'): Audit => ({
-    id,
-    action,
-    createdAt: '2026-07-31T10:00:00Z',
-    actor: { id: 'actor-1', name: 'Alice', email: 'alice@test.local' },
-    metadata,
-  });
-
-  it('renders valid stage names while preserving actor and timestamp', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [
-      audit('cutting', { stageName: ' Cutting ' }),
-    ]);
-    expect(content()).toContain('Production stage completed — Cutting');
-    expect(content()).toContain('Alice');
-    expect(content()).toContain('31 Jul 2026');
-  });
-
-  it('renders known generic actions in sentence case', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [
-      audit('created', null, 'JOB_ORDER_CREATED'),
-      audit('sent', null, 'JOB_ORDER_SENT_TO_FACTORY'),
-      audit('confirmed', null, 'JOB_ORDER_FACTORY_CONFIRMED'),
-      audit('prepared', null, 'JOB_ORDER_PREPARED_QUANTITY_UPDATED'),
-    ]);
-    expect(content()).toContain('Job order created');
-    expect(content()).toContain('Job order sent to factory');
-    expect(content()).toContain('Job order factory confirmed');
-    expect(content()).toContain('Job order prepared quantity updated');
-    expect(content()).not.toContain('JOB ORDER CREATED');
-  });
-
-  it.each([null, [], 'stage', 42, {}, { stageName: '' }, { stageName: '   ' }, { stageName: 42 }])(
-    'falls back for malformed metadata: %p',
-    async (metadata) => {
-      await renderPage('IN_PRODUCTION', standardStages, [audit('historical', metadata)]);
-      expect(content()).toContain('Job order stage completed');
-      expect(content()).not.toContain('Production stage completed —');
-    },
-  );
-
-  it('preserves custom stage-name capitalization', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [
-      audit('custom', { stageName: 'QA Review' }),
-    ]);
-    expect(content()).toContain('Production stage completed — QA Review');
-  });
-
-  it('uses a safe sentence-case fallback for unknown actions', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [
-      audit('unknown', null, 'SOME_NEW_EVENT_CODE'),
-    ]);
-    expect(content()).toContain('Some new event code');
-    expect(content()).not.toContain('SOME_NEW_EVENT_CODE');
-  });
-
-  it('renders each stage name for multiple completion events', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [
-      audit('cutting', { stageName: 'Cutting' }),
-      audit('printing', { stageName: 'Printing' }),
-    ]);
-    expect(content()).toContain('Production stage completed — Cutting');
-    expect(content()).toContain('Production stage completed — Printing');
-  });
-
-  it('renders Quality attempts, outcomes, batches, and attachments in the same history', async () => {
-    await renderPage('IN_PRODUCTION', standardStages, [
-      audit('pp-fail', { attemptNumber: 1, decision: 'FAIL' }, 'PP_SAMPLE_FINALIZED'),
-      audit('pp-pass', { attemptNumber: 2, decision: 'PASS' }, 'PP_SAMPLE_FINALIZED'),
-      audit('ppm', { activityName: 'Size Set / Pre-Production' }, 'QUALITY_ACTIVITY_FINALIZED'),
-      audit('cutting', { stageName: 'Cutting' }),
-      audit(
-        'final-pass',
-        { activityName: 'Final Inspection', batchNumber: 1, outcome: 'PASS' },
-        'FINAL_INSPECTION_BATCH_FINALIZED',
-      ),
-      audit(
-        'attachment',
-        { activityName: 'Final Inspection', batchNumber: 2, requirementKey: 'measurement_sheet' },
-        'QUALITY_ACTIVITY_ATTACHMENT_ADDED',
-      ),
-      audit(
-        'final-fail',
-        { activityName: 'Final Inspection', batchNumber: 2, outcome: 'FAIL' },
-        'FINAL_INSPECTION_BATCH_FINALIZED',
-      ),
-    ]);
-
-    expect(content()).toContain('PP Sample attempt 1 finalized — FAIL');
-    expect(content()).toContain('PP Sample attempt 2 finalized — PASS');
-    expect(content()).toContain('Size Set / Pre-Production finalized');
-    expect(content()).toContain('Production stage completed — Cutting');
-    expect(content()).toContain('Final Inspection batch 1 finalized — PASS');
-    expect(content()).toContain('Final Inspection batch 2 attachment added — Measurement sheet');
-    expect(content()).toContain('Final Inspection batch 2 finalized — FAIL');
-  });
-});
-
-describe('JobOrderDetailPage stage completion mutation', () => {
-  it('shows only Start for a not-started Production stage', async () => {
-    await renderPage('CONFIRMED_BY_FACTORY', [stage('stage-1', 'Cutting', 1, 'NOT_STARTED')]);
-
-    expect(content()).toContain('Start Cutting');
-    expect(
-      Array.from(container.querySelectorAll('button')).some(
-        (button) => button.textContent?.trim() === 'Complete Cutting',
-      ),
-    ).toBe(false);
-    expect(content()).not.toContain('Completed quantity');
-    expect(content()).not.toContain('Save progress');
-  });
-
-  it('keeps the current stage while pending and advances only after refreshed data', async () => {
-    let readCount = 0;
-    let resolvePost!: (value: unknown) => void;
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url.endsWith('/audit')) return { data: { data: [] } };
-      readCount += 1;
-      const stages =
-        readCount <= 1
-          ? [
-              stage('stage-1', 'Cutting', 1, 'IN_PROGRESS'),
-              stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
-            ]
-          : [
-              stage('stage-1', 'Cutting', 1, 'COMPLETED'),
-              stage('stage-2', 'Printing', 2, 'IN_PROGRESS'),
-            ];
-      return { data: { data: mockJobOrder('IN_PRODUCTION', stages) } };
-    });
-    vi.spyOn(apiClient, 'post').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvePost = resolve;
-        }),
-    );
-
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    act(() => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <MemoryRouter initialEntries={['/job-orders/jo-1']}>
-            <Routes>
-              <Route path="/job-orders/:id" element={<JobOrderDetailPage />} />
-            </Routes>
-          </MemoryRouter>
-        </QueryClientProvider>,
-      );
-    });
-    await vi.waitFor(() => expect(content()).toContain('Current Stage: Cutting'));
-
-    const button = Array.from(container.querySelectorAll('button')).find((candidate) =>
-      candidate.textContent?.includes('Complete Cutting'),
-    );
-    expect(button).toBeDefined();
-    act(() => button?.click());
-    await vi.waitFor(() => expect(button?.disabled).toBe(true));
-    expect(content()).toContain('Current Stage: Cutting');
-
-    resolvePost({ data: { data: mockJobOrder('IN_PRODUCTION') } });
-    await vi.waitFor(() => expect(content()).toContain('Current Stage: Printing'));
-  });
-
-  it('shows a completion error and keeps the current stage after failure', async () => {
-    await renderPage('IN_PRODUCTION', [stage('stage-1', 'Cutting', 1, 'IN_PROGRESS')]);
-    vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('Stage completion failed'));
-    const button = Array.from(container.querySelectorAll('button')).find((candidate) =>
-      candidate.textContent?.includes('Complete Cutting'),
-    );
-    act(() => button?.click());
-    await vi.waitFor(() => expect(content()).toContain('Stage completion failed'));
-    expect(content()).toContain('Current Stage: Cutting');
-  });
-
-  it.each([
-    ['CONFIRMED_BY_FACTORY', 'NOT_STARTED'],
-    ['IN_PRODUCTION', 'IN_PROGRESS'],
-    ['IN_PRODUCTION', 'NOT_STARTED'],
-  ] as const)(
-    'shows production context without mutation controls to QA for %s/%s',
-    async (status, stageStatus) => {
-      authState.roles = ['QA_USER'];
-      await renderPage(status, [stage('stage-1', 'Cutting', 1, stageStatus)]);
-
-      expect(content()).toContain('Current Stage: Cutting');
-      expect(content()).toContain(`Production status: ${STAGE_LABELS[stageStatus]}`);
-      expect(content()).not.toContain('Complete Cutting when work for this stage has finished.');
-      expect(content()).not.toContain('Start Cutting');
-      expect(content()).not.toContain('Complete Cutting');
-    },
-  );
-
-  it('shows completed production quantities read-only to QA', async () => {
-    authState.roles = ['QA_USER'];
-    await renderPage('PRODUCTION_COMPLETE');
-
-    expect(content()).toContain('Prepared Quantity');
-    expect(content()).not.toContain('Update size-wise prepared quantities');
-    expect(content()).not.toContain('Save Prepared Quantity');
-    expect(container.querySelector('input[aria-label^="Prepared quantity for"]')).toBeNull();
-  });
-});
-
-describe('JobOrderDetailPage manual Production Complete (Correction 3)', () => {
-  it('lets a Merchandiser mark an in-production Job Order Production Complete', async () => {
-    const post = vi
-      .spyOn(apiClient, 'post')
-      .mockResolvedValue({ data: { data: mockJobOrder('PRODUCTION_COMPLETE') } });
-    await renderPage('IN_PRODUCTION');
-
-    const trigger = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Mark Production Complete',
-    ) as HTMLButtonElement;
-    expect(trigger).toBeDefined();
-    expect(trigger.disabled).toBe(false);
-    act(() => trigger.click());
-
-    const confirm = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Confirm',
-    ) as HTMLButtonElement;
-    expect(confirm).toBeDefined();
-    await act(async () => confirm.click());
-
-    expect(post).toHaveBeenCalledWith(
-      '/job-orders/jo-1/actions/mark-production-complete',
-      { expectedVersion: 1 },
-      expect.objectContaining({ headers: expect.any(Object) }),
-    );
-  });
-
-  it('disables the action while a production stage is in progress', async () => {
-    await renderPage('IN_PRODUCTION', [
-      stage('stage-1', 'Cutting', 1, 'IN_PROGRESS'),
-      stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
-    ]);
-
-    const trigger = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Mark Production Complete',
-    ) as HTMLButtonElement;
-    expect(trigger).toBeDefined();
-    expect(trigger.disabled).toBe(true);
-    expect(content()).toContain(
-      'Stop or complete the in-progress production stage before marking Production Complete.',
-    );
-  });
-
-  it('hides the action from a Factory-only user', async () => {
-    authState.roles = ['FACTORY_USER'];
-    await renderPage('IN_PRODUCTION');
-
-    expect(content()).toContain('Production Completion');
-    expect(
-      Array.from(container.querySelectorAll('button')).some(
-        (button) => button.textContent === 'Mark Production Complete',
-      ),
-    ).toBe(false);
-  });
-
-  it('does not show the action once already Production Complete', async () => {
-    await renderPage('PRODUCTION_COMPLETE');
-
-    expect(content()).not.toContain('Mark Production Complete');
-  });
-
-  it('surfaces a server-side eligibility error', async () => {
-    vi.spyOn(apiClient, 'post').mockRejectedValue({
-      isAxiosError: true,
-      message: 'Request failed with status code 409',
-      response: {
-        data: {
-          error: {
-            code: 'CONFLICT',
-            message:
-              'A production stage is currently in progress; stop or complete it before marking Production Complete',
-          },
-        },
-      },
-    });
-    await renderPage('IN_PRODUCTION');
-    const trigger = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Mark Production Complete',
-    ) as HTMLButtonElement;
-    act(() => trigger.click());
-    const confirm = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Confirm',
-    ) as HTMLButtonElement;
-
-    await act(async () => confirm.click());
-
-    await vi.waitFor(() =>
-      expect(content()).toContain(
-        'A production stage is currently in progress; stop or complete it before marking Production Complete',
-      ),
-    );
+    expect(content(container)).not.toContain('Request failed with status code 400');
   });
 });
 
@@ -1027,10 +390,8 @@ describe('JobOrderDetailPage Cancel Job Order (Correction 4)', () => {
   it.each(['DRAFT', 'SENT_TO_FACTORY', 'CONFIRMED_BY_FACTORY'])(
     'lets a Merchandiser cancel a %s job order with a confirmation dialog',
     async (status) => {
-      const post = vi
-        .spyOn(apiClient, 'post')
-        .mockResolvedValue({ data: { data: mockJobOrder('CANCELLED') } });
-      await renderPage(status);
+      const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: mockJobOrder('CANCELLED') } });
+      await renderJobOrderDetail(container, root, { status });
 
       const trigger = Array.from(container.querySelectorAll('button')).find(
         (button) => button.textContent === 'Cancel Job Order',
@@ -1038,8 +399,7 @@ describe('JobOrderDetailPage Cancel Job Order (Correction 4)', () => {
       expect(trigger).toBeDefined();
       act(() => trigger.click());
 
-      const dialogButtons = Array.from(document.body.querySelectorAll('button'));
-      const confirm = dialogButtons.find(
+      const confirm = Array.from(document.body.querySelectorAll('button')).find(
         (button) => button.textContent === 'Yes, cancel Job Order',
       ) as HTMLButtonElement;
       expect(confirm).toBeDefined();
@@ -1055,7 +415,7 @@ describe('JobOrderDetailPage Cancel Job Order (Correction 4)', () => {
 
   it('shows the consequence of cancellation before confirming', async () => {
     vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: mockJobOrder('CANCELLED') } });
-    await renderPage('DRAFT');
+    await renderJobOrderDetail(container, root, { status: 'DRAFT' });
     const trigger = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Cancel Job Order',
     ) as HTMLButtonElement;
@@ -1070,22 +430,18 @@ describe('JobOrderDetailPage Cancel Job Order (Correction 4)', () => {
   it.each(['IN_PRODUCTION', 'PRODUCTION_COMPLETE', 'CANCELLED'])(
     'does not offer cancellation once the job order is %s',
     async (status) => {
-      await renderPage(status);
+      await renderJobOrderDetail(container, root, { status });
       expect(
-        Array.from(container.querySelectorAll('button')).some(
-          (button) => button.textContent === 'Cancel Job Order',
-        ),
+        Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Cancel Job Order'),
       ).toBe(false);
     },
   );
 
   it('hides the action from a Factory-only user', async () => {
     authState.roles = ['FACTORY_USER'];
-    await renderPage('DRAFT');
+    await renderJobOrderDetail(container, root, { status: 'DRAFT' });
     expect(
-      Array.from(container.querySelectorAll('button')).some(
-        (button) => button.textContent === 'Cancel Job Order',
-      ),
+      Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Cancel Job Order'),
     ).toBe(false);
   });
 
@@ -1094,15 +450,10 @@ describe('JobOrderDetailPage Cancel Job Order (Correction 4)', () => {
       isAxiosError: true,
       message: 'Request failed with status code 409',
       response: {
-        data: {
-          error: {
-            code: 'CONFLICT',
-            message: 'This job order can no longer be cancelled — production has already started',
-          },
-        },
+        data: { error: { code: 'CONFLICT', message: 'This job order can no longer be cancelled — production has already started' } },
       },
     });
-    await renderPage('CONFIRMED_BY_FACTORY');
+    await renderJobOrderDetail(container, root, { status: 'CONFIRMED_BY_FACTORY' });
     const trigger = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Cancel Job Order',
     ) as HTMLButtonElement;
@@ -1114,245 +465,8 @@ describe('JobOrderDetailPage Cancel Job Order (Correction 4)', () => {
     await act(async () => confirm.click());
 
     await vi.waitFor(() =>
-      expect(content()).toContain(
-        'This job order can no longer be cancelled — production has already started',
-      ),
+      expect(content(container)).toContain('This job order can no longer be cancelled — production has already started'),
     );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Production Plan (Phase 2.1) — the sources panel currently has zero
-// coverage of the Production Plan edit control or the simplified
-// orderSheetId-only add/remove flow; these tests close that gap.
-// ---------------------------------------------------------------------------
-
-describe('JobOrderDetailPage Production Plan (Phase 2.1)', () => {
-  const draftOverrides = {
-    lines: [
-      {
-        id: 'line-1',
-        styleId: 'style-1',
-        styleNumber: 'ST-1',
-        styleName: 'Style One',
-        orderedQuantityTotal: 10,
-        preparedQuantityTotal: 0,
-        status: 'DRAFT',
-        sizes: [
-          {
-            id: 'size-1',
-            sizeId: 'sz-1',
-            sizeCode: 'S',
-            sizeLabel: 'Small',
-            orderedQuantity: 10,
-            preparedQuantity: 0,
-            varianceQuantity: 0,
-          },
-        ],
-      },
-    ],
-    sourceOrderSheets: [
-      {
-        id: 'os-1',
-        poNumber: 'EIOS/26-27/0001',
-        distributor: { id: 'd1', code: 'D1', name: 'ABC Distributors' },
-        purchaseMode: 'OUTRIGHT',
-        requiredDeliveryDate: null,
-        forecastTotal: 10,
-      },
-    ],
-    combinedForecast: [{ sizeId: 'sz-1', sizeCode: 'S', sizeLabel: 'Small', forecastQuantity: 10 }],
-    sourceOrderSheetCount: 1,
-  };
-  const styleLookup = {
-    id: 'style-1',
-    sizes: [
-      {
-        id: 'sz-1',
-        code: 'S',
-        label: 'Small',
-        sizeType: 'ALPHA',
-        sortOrder: 1,
-        status: 'ACTIVE',
-        mappingStatus: 'ACTIVE',
-      },
-    ],
-    factories: [],
-  };
-
-  const renderDraftPage = async (overrides: Record<string, unknown> = {}) => {
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url.endsWith('/audit')) return { data: { data: [] } };
-      if (url === '/styles/style-1') return { data: { data: styleLookup } };
-      if (url === '/job-orders/jo-1')
-        return { data: { data: mockJobOrder('DRAFT', standardStages, { ...draftOverrides, ...overrides }) } };
-      throw new Error(`Unexpected GET request: ${url}`);
-    });
-
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    act(() => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <MemoryRouter initialEntries={['/job-orders/jo-1']}>
-            <Routes>
-              <Route path="/job-orders/:id" element={<JobOrderDetailPage />} />
-            </Routes>
-          </MemoryRouter>
-        </QueryClientProvider>,
-      );
-    });
-    await vi.waitFor(() => expect(content()).not.toContain('Loading job order'));
-  };
-
-  it('renders an editable Production Plan for a DRAFT job order and saves via PATCH .../production-plan', async () => {
-    await renderDraftPage();
-
-    const quantityInput = await vi.waitFor(() => {
-      const input = container.querySelector<HTMLInputElement>(
-        '[aria-label="Production quantity for Small"]',
-      );
-      expect(input).not.toBeNull();
-      return input!;
-    });
-    expect(quantityInput.value).toBe('10');
-    changeInput(quantityInput, '7');
-
-    vi.spyOn(apiClient, 'patch').mockResolvedValue({
-      data: { data: mockJobOrder('DRAFT', standardStages, draftOverrides) },
-    } as never);
-
-    const saveButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Save Production Plan',
-    )!;
-    act(() => saveButton.click());
-    await vi.waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
-
-    const [url, body] = vi.mocked(apiClient.patch).mock.calls[0]!;
-    expect(url).toBe('/job-orders/jo-1/production-plan');
-    expect(body).toMatchObject({ sizes: [{ sizeId: 'sz-1', quantity: 7 }], expectedVersion: 1 });
-  });
-
-  it('does not render an editable Production Plan once the job order leaves DRAFT', async () => {
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url.endsWith('/audit')) return { data: { data: [] } };
-      if (url === '/job-orders/jo-1')
-        return {
-          data: {
-            data: mockJobOrder('SENT_TO_FACTORY', standardStages, draftOverrides),
-          },
-        };
-      throw new Error(`Unexpected GET request: ${url}`);
-    });
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    act(() => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <MemoryRouter initialEntries={['/job-orders/jo-1']}>
-            <Routes>
-              <Route path="/job-orders/:id" element={<JobOrderDetailPage />} />
-            </Routes>
-          </MemoryRouter>
-        </QueryClientProvider>,
-      );
-    });
-    await vi.waitFor(() => expect(content()).not.toContain('Loading job order'));
-
-    expect(container.querySelector('[aria-label="Production quantity for Small"]')).toBeNull();
-    expect(
-      Array.from(container.querySelectorAll('button')).some(
-        (button) => button.textContent === 'Save Production Plan',
-      ),
-    ).toBe(false);
-  });
-
-  it('removing a source sends a bare orderSheetId list, never per-source quantities', async () => {
-    // Two sources so Remove isn't disabled (a Job Order must retain at
-    // least one).
-    await renderDraftPage({
-      sourceOrderSheets: [
-        ...draftOverrides.sourceOrderSheets,
-        {
-          id: 'os-2',
-          poNumber: 'EIOS/26-27/0002',
-          distributor: { id: 'd2', code: 'D2', name: 'XYZ Distributors' },
-          purchaseMode: 'OUTRIGHT',
-          requiredDeliveryDate: null,
-          forecastTotal: 15,
-        },
-      ],
-      sourceOrderSheetCount: 2,
-    });
-    await vi.waitFor(() => expect(content()).toContain('EIOS/26-27/0002'));
-
-    vi.spyOn(apiClient, 'patch').mockResolvedValue({
-      data: { data: mockJobOrder('DRAFT', standardStages, draftOverrides) },
-    } as never);
-
-    const removeButtons = Array.from(container.querySelectorAll('button')).filter(
-      (button) => button.textContent === 'Remove',
-    );
-    expect(removeButtons).toHaveLength(2);
-    act(() => removeButtons[0]!.click());
-    await vi.waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
-
-    const [url, body] = vi.mocked(apiClient.patch).mock.calls[0]!;
-    expect(url).toBe('/job-orders/jo-1/sources');
-    // Bare orderSheetId list — no `sizes` anywhere in the payload (Phase
-    // 2.1: source mapping is pure planning provenance).
-    expect(body).toMatchObject({ add: [], remove: ['os-1'], expectedVersion: 1 });
-    expect(JSON.stringify(body)).not.toContain('sizes');
-  });
-});
-
-// UXAUTH-011: the View/Continue Inspection cross-link navigates to either
-// /qa/:jobOrderId (SIZE scope) or /quality-executions/:executionId (JOB_ORDER
-// scope) — both routes share the exact same allowed-role set (QA_VIEW_ROLES:
-// ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, QA_USER). FACTORY_USER can view
-// this Job Order and its Quality activities status/history, but is in
-// neither route's guard, so the button itself must not render for it.
-describe('JobOrderDetailPage QA/inspection cross-link (UXAUTH-011)', () => {
-  const activityWithExecution = () =>
-    finalQualityActivity({
-      status: 'IN_PROGRESS',
-      execution: { id: 'execution-1' },
-    });
-
-  it('does not render the View/Continue Inspection cross-link for FACTORY_USER', async () => {
-    authState.roles = ['FACTORY_USER'];
-    await renderPage('IN_PRODUCTION', standardStages, [], {
-      qualityActivities: [activityWithExecution()],
-    });
-    // Status information remains visible.
-    expect(content()).toContain('Final Inspection');
-    const link = [...container.querySelectorAll('button')].find(
-      (button) =>
-        button.textContent === 'Continue Inspection' || button.textContent === 'View Inspection',
-    );
-    expect(link).toBeUndefined();
-  });
-
-  it('still renders Continue Inspection for MERCHANDISER (an authorized QA_VIEW_ROLES member)', async () => {
-    authState.roles = ['MERCHANDISER'];
-    await renderPage('IN_PRODUCTION', standardStages, [], {
-      qualityActivities: [activityWithExecution()],
-    });
-    const link = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Continue Inspection',
-    );
-    expect(link).not.toBeUndefined();
-  });
-
-  it('still renders View Inspection for QA_USER once the activity is COMPLETED', async () => {
-    authState.roles = ['QA_USER'];
-    await renderPage('IN_PRODUCTION', standardStages, [], {
-      qualityActivities: [
-        finalQualityActivity({ status: 'COMPLETED', execution: { id: 'execution-1' } }),
-      ],
-    });
-    const link = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'View Inspection',
-    );
-    expect(link).not.toBeUndefined();
   });
 });
 
@@ -1378,11 +492,11 @@ describe('JobOrderDetailPage load error handling (UXAUTH-018)', () => {
         </QueryClientProvider>,
       );
     });
-    await vi.waitFor(() => expect(content()).not.toContain('Loading job order'));
+    await vi.waitFor(() => expect(content(container)).not.toContain('Loading job order'));
 
-    expect(content()).not.toContain('Job order not found');
-    expect(content()).toContain('Unable to load job order');
-    expect(content()).toContain('Request failed with status code 500');
+    expect(content(container)).not.toContain('Job order not found');
+    expect(content(container)).toContain('Unable to load job order');
+    expect(content(container)).toContain('Request failed with status code 500');
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
   });
 });

@@ -17,7 +17,15 @@ export function ProductionStageStepper({
   if (stages.length === 0) return null;
 
   return (
-    <div className="py-6 overflow-hidden">
+    // isolate: this component's step circles use a local z-10 purely to sit
+    // above their own connector line within this component. Without a
+    // stacking context boundary here, that z-10 has nothing containing it
+    // and competes directly with page-level elements — notably the sticky
+    // Job Order context bar — during scroll, which it always loses on
+    // z-index value alone but can still win by DOM order in a tie (e.g.
+    // against the app shell header's own z-10). isolate stops it from ever
+    // being compared outside this component at all.
+    <div className="isolate py-6 overflow-hidden">
       <ol className="flex flex-col md:flex-row w-full gap-8 md:gap-0">
         {stages.map((stage) => {
           const isCompleted = stage.status === 'COMPLETED';

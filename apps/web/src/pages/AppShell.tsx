@@ -1,4 +1,12 @@
-import { type ReactNode, type SVGProps, useState } from 'react';
+import {
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+  type SVGProps,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { NavLink, useMatch, useNavigate } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -12,6 +20,39 @@ import {
 import { useAuth } from '../auth/AuthContext.js';
 import { ThemeModeMenu } from '../theme/ThemeModeMenu.js';
 import { PoweredByPinnacleBranding } from '../branding/PoweredByPinnacleBranding.js';
+
+/**
+ * Publishes an element's live rendered height in pixels. The shell header's
+ * height isn't a safe compile-time constant — the user name and role list it
+ * renders aren't clamped to a single line, so it can genuinely grow (a long
+ * name, several roles) without warning. Pages that need to stick content
+ * directly below the header (e.g. a page-level sticky context bar) read the
+ * real measured value instead of guessing an offset that would either gap or
+ * overlap whenever the header isn't at its usual height.
+ */
+function useObservedHeightPx<T extends HTMLElement>(): [RefObject<T | null>, number | null] {
+  const ref = useRef<T>(null);
+  const [height, setHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    setHeight(node.getBoundingClientRect().height);
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      // Deliberately re-measure via getBoundingClientRect rather than
+      // trusting entry.contentRect: contentRect is the content box only
+      // (excludes padding/border), which would under-report this element's
+      // real occupied height by exactly its padding+border — the offset
+      // this hook exists to get right.
+      setHeight(node.getBoundingClientRect().height);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return [ref, height];
+}
 
 export interface AppShellNavItem {
   to: string;
@@ -176,6 +217,11 @@ export function AppShell({ navSections, children }: AppShellProps) {
   const { user, logout } = useAuth();
   const mobileNavItems = navSections.flatMap((section) => section.items);
   const [collapsed, setCollapsed] = useState(getStoredSidebarCollapsed);
+  const [headerRef, headerHeight] = useObservedHeightPx<HTMLElement>();
+  const mainStyle =
+    headerHeight != null
+      ? ({ '--app-shell-header-height': `${headerHeight}px` } as CSSProperties)
+      : undefined;
 
   function toggleCollapsed() {
     setCollapsed((prev) => {
@@ -278,7 +324,10 @@ export function AppShell({ navSections, children }: AppShellProps) {
             : 'md:pl-[var(--erp-shell-sidebar-width)]',
         )}
       >
-        <header className="sticky top-0 z-10 border-b border-border bg-shell/95 px-4 py-3 backdrop-blur-sm md:px-8">
+        <header
+          ref={headerRef}
+          className="sticky top-0 z-10 border-b border-border bg-shell/95 px-4 py-3 backdrop-blur-sm md:px-8"
+        >
           <div className="flex items-center justify-between gap-4">
             <div>
               <div className="text-sm font-medium text-foreground">{user?.name}</div>
@@ -316,7 +365,9 @@ export function AppShell({ navSections, children }: AppShellProps) {
             ))}
           </nav>
         </header>
-        <main className="px-4 py-6 md:px-8">{children}</main>
+        <main className="px-4 py-6 md:px-8" style={mainStyle}>
+          {children}
+        </main>
       </div>
     </div>
   );
