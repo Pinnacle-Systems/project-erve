@@ -14,6 +14,7 @@ import { analyzeLegacyNumbering } from '../modules/historical-import/numbering-a
 import { buildSourceManifest } from '../modules/historical-import/source-manifest.js';
 import { writeDryRunOutputs } from '../modules/historical-import/dry-run-report.service.js';
 import { parseFactoryMappingArtifact, type FactoryMappingRow } from '../modules/historical-import/factory-mapping.js';
+import { parseSizeMappingArtifact, type SizeMappingRow } from '../modules/historical-import/size-mapping.js';
 import {
   parseSourceOverridesArtifact,
   resolveApprovedOverridesForRecord,
@@ -57,6 +58,8 @@ export interface RunHistoricalImportDryRunOptions {
   processFlowVersionId?: string;
   /** H2A plan §11: optional path to a human-reviewed factory-mapping.json. Consulted only after exact Factory-name matching fails; never fuzzy. */
   factoryMappingFilePath?: string;
+  /** H2A continuation §3: optional path to a human-reviewed size-mapping.json. Consulted only after exact Size-code matching fails; never fuzzy. */
+  sizeMappingFilePath?: string;
   /** H2A plan §8: optional path to a human-reviewed source-overrides.json. Only APPROVED overrides bound to a matching sourceSha256 are ever applied, and only in-memory — source-staging.json is never modified. */
   sourceOverridesFilePath?: string;
 }
@@ -105,6 +108,12 @@ export async function runHistoricalImportDryRun(options: RunHistoricalImportDryR
     factoryMappings = parseFactoryMappingArtifact(raw);
   }
 
+  let sizeMappings: SizeMappingRow[] | undefined;
+  if (options.sizeMappingFilePath) {
+    const raw = JSON.parse(await readFile(options.sizeMappingFilePath, 'utf8'));
+    sizeMappings = parseSizeMappingArtifact(raw);
+  }
+
   let overrideEntries: SourceOverrideEntry[] = [];
   if (options.sourceOverridesFilePath) {
     const raw = JSON.parse(await readFile(options.sourceOverridesFilePath, 'utf8'));
@@ -112,19 +121,31 @@ export async function runHistoricalImportDryRun(options: RunHistoricalImportDryR
   }
 
   const appliedOverridesByFile: Record<string, string[]> = {};
+  const effectiveParseStatusChangesByFile: Record<string, { from: string; to: string; resolvedWarnings: string[] }> = {};
   const items = stagingRecords.map((staging) => {
     const parsed = stagingToParsedRecord(staging);
     const approvedOverrides = resolveApprovedOverridesForRecord(overrideEntries, {
       sourceFileName: staging.sourceFileName,
       sourceChecksumSha256: staging.sourceChecksumSha256,
     });
-    const { record, appliedFields } = applyApprovedOverrides(parsed, approvedOverrides);
+    const { record, appliedFields, resolvedWarnings } = applyApprovedOverrides(parsed, approvedOverrides);
     if (appliedFields.length > 0) appliedOverridesByFile[staging.sourceFileName] = appliedFields;
+    if (record.parseStatus !== parsed.parseStatus) {
+      effectiveParseStatusChangesByFile[staging.sourceFileName] = { from: parsed.parseStatus, to: record.parseStatus, resolvedWarnings };
+    }
     return { parsed: record, image: stagingToImageCandidate(staging) };
   });
-  const reconciledRecords = await reconcileBatch(prisma, items, factoryMappings);
+  const reconciledRecords = await reconcileBatch(prisma, items, factoryMappings, sizeMappings);
+  // Uses the EFFECTIVE (post-approved-override) legacyReferenceNumber, not
+  // the raw staging value — otherwise an approved identity correction (e.g.
+  // EI26032) would leave this recommendation citing a "repeat" that
+  // reconciliation itself no longer sees (H2A continuation §1/§6).
   const numbering = analyzeLegacyNumbering(
-    stagingRecords.map((s) => ({ sourceFileName: s.sourceFileName, sourceSeasonFolder: s.sourceSeasonFolder, legacyReferenceNumber: s.fields.legacyReferenceNumber.value })),
+    items.map((item, i) => ({
+      sourceFileName: stagingRecords[i]!.sourceFileName,
+      sourceSeasonFolder: stagingRecords[i]!.sourceSeasonFolder,
+      legacyReferenceNumber: item.parsed.legacyReferenceNumber.value,
+    })),
   );
 
   const { devReconciliationPath, migrationApprovalPath, humanReviewPath, summary, identity } = await writeDryRunOutputs({
@@ -137,41 +158,48 @@ export async function runHistoricalImportDryRun(options: RunHistoricalImportDryR
     numbering,
     devTargetDatabase: target.actualDatabase,
     factoryMappingFilePath: options.factoryMappingFilePath,
+    sizeMappingFilePath: options.sizeMappingFilePath,
     sourceOverridesFilePath: options.sourceOverridesFilePath,
     appliedOverridesByFile,
+    effectiveParseStatusChangesByFile,
     h2aApprovals: {
       processFlowVersion: {
         status: 'APPROVED',
         rationale:
           "Verified logically: ERVE_PRODUCTION_QUALITY v3 is the only ACTIVE version of the named apparel production+quality flow (v1/v2 are RETIRED); its 8 stages (PP Sample, PPM, Cutting, Printing, Sewing, Inline Inspection, Finishing, Final Inspection) match ERVE's documented quality-gated apparel process. The competing ACTIVE flow, DEFAULT_PRODUCTION v1, has only 4 bare production stages with no quality gates and no stage codes — a minimal seed/bootstrap flow, not the intended historical apparel flow. Fingerprint is deterministic/reproducible across repeated resolution and excludes all environment-specific DB ids.",
       },
-      pendingUserApprovals: [
+      resolvedApprovals: [
         {
           topic: 'EI26031/EI26032 legacyReferenceNumber identity conflict',
-          recommendation: "EI26032.pdf's printed order number (EI26031) is very likely a source-document numbering error; recommended effective legacyReferenceNumber for EI26032.pdf is EI26032.",
+          resolution:
+            "APPROVED by the project owner. EI26032.pdf's printed order number (EI26031) was confirmed a source-document numbering error; effective legacyReferenceNumber for EI26032.pdf is now EI26032, applied via an APPROVED, checksum-bound override — see source-overrides.json and appliedOverridesByFile above. All 91 effective legacy references are now confirmed unique (see historicalIdentityRecommendation).",
           evidenceFile: 'h2a/ei26031-ei26032-investigation.md',
         },
         {
           topic: 'EI26002 truncated order date',
-          recommendation: 'orderDate for EI26002.pdf is truncated in the source PDF itself (19/02/202); recommended value 2026-02-19, inferred from the adjacent shipment date and season, not read directly.',
+          resolution:
+            'APPROVED by the project owner. orderDate for EI26002.pdf, truncated in the source PDF itself (19/02/202), is now 2026-02-19 via an APPROVED, checksum-bound override; the record\'s effective parseStatus was upgraded PARTIAL -> OK (see effectiveParseStatusChangesByFile above) since that was the only cause of its PARTIAL status.',
           evidenceFile: 'h2a/partial-record-investigation.md',
         },
         {
           topic: 'EI26042 licenseStyleLmix source anomaly',
-          recommendation: "EI26042.pdf's Artwork-table fallback value (LMIX42026007) is very likely a copy/paste carryover from the preceding order EI26041; recommended effective licenseStyleLmix is LMIX42026010, matching the document's own orphaned header value and its filename.",
+          resolution:
+            "APPROVED by the project owner. Fixed at the parser level (not a one-off hack): explicit header LMIX now takes precedence over the table's Artwork-column fallback, and a new standalone-header-region lookup finds the header's own unlabeled LMIX value when the 'License Style' label text is itself absent from the source (an authentic template variant affecting 10 real SS26 documents, not just EI26042). EI26042.pdf now parses LMIX42026010 natively; an APPROVED override is additionally recorded for audit/diagnostic history. Rerun across all 91 real PDFs confirmed 0 regressions (90 OK / 1 PARTIAL / 0 FAILED, unchanged; 0 filename-vs-parsed LMIX mismatches, down from 1).",
           evidenceFile: 'h2a/lmix42026007-lmix42026010-investigation.md',
         },
         {
+          topic: 'Size-code naming convention (source bare digits vs Dev AGE_<n>)',
+          resolution:
+            'APPROVED by the project owner. A historical-import-specific size-mapping.json mechanism (analogous to factory-mapping.json, no fuzzy matching, portable Size.code business key) now maps all 12 source codes ("3".."14") to their current Dev Size.code ("AGE_3".."AGE_14"). Every row was verified against the CURRENT Dev Size.label set at generation time, not assumed — 12/12 approved.',
+          evidenceFile: 'h2a/size-mapping.json',
+        },
+      ],
+      pendingUserApprovals: [
+        {
           topic: 'Style.finalMrp has no source equivalent',
           recommendation:
-            'Every one of the 90 unique Season+LMIX Style identities is blocked on this required field. Source PDFs give a supplier ex-factory rate, not a consumer MRP, and no documented conversion convention exists. Needs an explicit business decision (a real historical MRP list, or an approved placeholder/default convention) before any historical Style can be created.',
-          evidenceFile: 'h2a/master-readiness-plan.json',
-        },
-        {
-          topic: 'Size-code naming convention (source bare digits vs Dev AGE_<n>)',
-          recommendation:
-            'All 12 source Size codes ("3".."14") fail an exact match against Dev Size.code ("AGE_3".."AGE_14"), even though Dev Size.label already equals the source code exactly. Recommend extending the same explicit-mapping approach used for Factory (map "3"->"AGE_3", etc.) rather than creating duplicate Size masters — needs explicit approval before implementation.',
-          evidenceFile: 'h2a/master-readiness-plan.json',
+            'STILL BLOCKED — explicitly NOT approved. Every one of the 91 unique Season+LMIX Style identities is blocked on this required field. Source PDFs give a supplier ex-factory rate, not a consumer MRP, and no documented conversion convention exists. No default/placeholder/markup/nulled value has been used. A clean, business-ready request (one row per Style identity) is in h2a/mrp-blocker-report.md — the business will supply real MRP data separately.',
+          evidenceFile: 'h2a/mrp-blocker-report.md',
         },
       ],
     },

@@ -38,4 +38,23 @@ describe('analyzeLegacyNumbering', () => {
     expect(result.crossSeasonReuse).toHaveLength(1);
     expect(result.crossSeasonReuse[0]!.legacyReferenceNumber).toBe('EI25099');
   });
+
+  it('H2A: the EI26031/EI26032 repeat disappears once the approved effective identity is used instead of the raw printed value', () => {
+    // Before the approved override: both documents' PARSED legacyReferenceNumber read "EI26031" (the printed-number anomaly).
+    const before = analyzeLegacyNumbering([
+      { sourceFileName: 'EI26031.pdf', sourceSeasonFolder: 'SS26', legacyReferenceNumber: 'EI26031' },
+      { sourceFileName: 'EI26032.pdf', sourceSeasonFolder: 'SS26', legacyReferenceNumber: 'EI26031' },
+    ]);
+    const beforeSs26 = before.bySeason.find((s) => s.season === 'SS26')!;
+    expect(beforeSs26.repeatedReferences).toEqual([{ legacyReferenceNumber: 'EI26031', sourceFileNames: ['EI26031.pdf', 'EI26032.pdf'] }]);
+
+    // After applying the APPROVED override (effective legacyReferenceNumber for EI26032.pdf becomes "EI26032"): no repeat remains.
+    const after = analyzeLegacyNumbering([
+      { sourceFileName: 'EI26031.pdf', sourceSeasonFolder: 'SS26', legacyReferenceNumber: 'EI26031' },
+      { sourceFileName: 'EI26032.pdf', sourceSeasonFolder: 'SS26', legacyReferenceNumber: 'EI26032' },
+    ]);
+    const afterSs26 = after.bySeason.find((s) => s.season === 'SS26')!;
+    expect(afterSs26.repeatedReferences).toEqual([]);
+    expect(afterSs26.missingSerials).not.toContain(32);
+  });
 });

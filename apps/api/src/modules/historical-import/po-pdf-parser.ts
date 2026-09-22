@@ -195,8 +195,10 @@ interface StyleSizeTableResult {
   styleName: ParsedField<string>;
   colour: ParsedField<string>;
   description: ParsedField<string>;
-  /** The table's own Artwork column value — on this template it's always the LMIX code, and serves as a fallback source for licenseStyleLmix on documents where the header grid's "License Style" label item is missing entirely. */
+  /** The table's own Artwork column value — on most documents it's a reliable copy of the same LMIX code found in the header, and served (pre-H2A) as the last-resort fallback source for licenseStyleLmix on documents where the header grid's "License Style" label item is missing entirely. H2A discovered this copy can itself be stale/wrong (source-template copy/paste error — see EI26042 in po-pdf-parser.test.ts and h2a/lmix42026007-lmix42026010-investigation.md), so it is now only consulted after findStandaloneHeaderLmix also fails to find the header's own (unlabeled but present) value. */
   artwork: ParsedField<string>;
+  /** The Style/Colour/Description/size table header row's own y position, so callers can distinguish "header region" (above this row — the info-grid, including any label-less orphaned LMIX value) from "table region" (this row and below, including the Artwork column) when a value could plausibly appear in either. Null when the table itself could not be located. */
+  tableHeaderY: number | null;
   sizeQuantities: ParsedSizeQuantity[];
   tableTotalQuantity: ParsedField<number>;
   warnings: string[];
@@ -308,10 +310,42 @@ function extractStyleSizeTable(lines: TextLine[]): StyleSizeTableResult | null {
     colour: sourceField(joinedCell('colour')),
     description: sourceField(joinedCell('description')),
     artwork: sourceField(joinedCell('artwork')),
+    tableHeaderY: lines[headerIndex]!.y,
     sizeQuantities,
     tableTotalQuantity,
     warnings,
   };
+}
+
+/** "LMIX" + any non-space run, as the item's ENTIRE trimmed text — never a substring match — so this never mistakes e.g. a sentence mentioning "LMIX" for a standalone code. */
+const STANDALONE_LMIX_PATTERN = /^LMIX\S*$/i;
+
+/**
+ * Finds a standalone LMIX-shaped text item positioned in the header/info-grid
+ * region of the page (strictly above the Style/Colour/Description table),
+ * independent of whether an adjacent "License Style"/"License" label text
+ * item exists nearby to anchor it to (H2A: confirmed genuinely absent from
+ * the content stream on a real subset of documents — see the EI26041-EI26050
+ * block in po-pdf-parser.test.ts — not a parser anchoring failure). This is
+ * the document's own header value, distinct from (and, per H2A's EI26042
+ * finding, occasionally more trustworthy than) the table's Artwork-column
+ * copy of the same code. Deliberately conservative: if more than one
+ * distinct standalone LMIX value is found in the header region, this fails
+ * closed to unknownField() rather than guessing which one is authoritative.
+ */
+function findStandaloneHeaderLmix(lines: TextLine[], tableHeaderY: number | null): ParsedField<string> {
+  const found = new Set<string>();
+  for (const line of lines) {
+    // The header/info-grid sits strictly above the table header row on this
+    // template (higher y — pdf-text-layout.ts's TextItem y grows upward).
+    if (tableHeaderY !== null && line.y <= tableHeaderY) continue;
+    for (const item of line.items) {
+      const text = item.text.trim();
+      if (STANDALONE_LMIX_PATTERN.test(text)) found.add(text.toUpperCase());
+    }
+  }
+  if (found.size === 1) return sourceField([...found][0]!);
+  return unknownField();
 }
 
 function extractHeaderTotalQty(lines: TextLine[]): ParsedField<number> {
@@ -401,19 +435,27 @@ export function parsePurchaseOrderFromSession(
   warnings.push(...(table?.warnings ?? []));
   if (!table) warnings.push('Could not locate the Style/Colour/Description/size table on this page');
 
-  // On a minority of documents the header grid's "License Style" label item
-  // is entirely absent from the content stream (a source-document rendering
-  // gap, not a parser miss — confirmed by inspecting the raw text items).
-  // The table's own Artwork column reliably carries the same LMIX code on
-  // every observed document, so it's used as a fallback location, not a
-  // different data source.
+  // Precedence (H2A: fixed after the EI26042 anomaly — see
+  // findStandaloneHeaderLmix's own comment and h2a/lmix42026007-
+  // lmix42026010-investigation.md): explicit header LMIX (by label anchor,
+  // or — on a minority of documents where the "License Style" label item is
+  // entirely absent from the content stream, a source-document rendering
+  // gap, not a parser miss — the header's own unlabeled standalone value)
+  // always wins over the table's Artwork-column copy. The Artwork column is
+  // now a LAST-RESORT fallback only, used when a valid header LMIX is
+  // genuinely absent by both routes — H2A found it can itself be a stale
+  // copy/paste artifact from a neighboring order (EI26042), not always a
+  // reliable duplicate of the header value as previously assumed.
   const licenseStyleLmixHeader = findLabelValue(lines, 'License Style');
+  const licenseStyleLmixStandaloneHeader = findStandaloneHeaderLmix(lines, table?.tableHeaderY ?? null);
   const licenseStyleLmix: ParsedField<string> = licenseStyleLmixHeader.value
     ? licenseStyleLmixHeader
-    : (() => {
-        const artworkMatch = table?.artwork.value ? /LMIX\S*/i.exec(table.artwork.value) : null;
-        return artworkMatch ? sourceField(artworkMatch[0].toUpperCase()) : unknownField();
-      })();
+    : licenseStyleLmixStandaloneHeader.value
+      ? licenseStyleLmixStandaloneHeader
+      : (() => {
+          const artworkMatch = table?.artwork.value ? /LMIX\S*/i.exec(table.artwork.value) : null;
+          return artworkMatch ? sourceField(artworkMatch[0].toUpperCase()) : unknownField();
+        })();
 
   const orderDate = sourceField(parseDdMmYyyy(orderDateRaw.value));
   if (orderDateRaw.value && !orderDate.value) warnings.push(`Unrecognized order date format: "${orderDateRaw.value}"`);

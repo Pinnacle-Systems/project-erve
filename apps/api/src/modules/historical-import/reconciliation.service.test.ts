@@ -137,6 +137,30 @@ describe('reconcileSizes', () => {
     const notStyleSize = await reconcileSizes(prisma, style.id, [{ sizeCode: otherSize.code, quantity: 10 }]);
     expect(notStyleSize[0]).toMatchObject({ status: 'UNMATCHED', reason: expect.stringContaining('not a valid StyleSize') });
   });
+
+  it('resolves an APPROVED explicit size mapping when the exact code does not match (H2A continuation §3)', async () => {
+    const { style } = await seedMasterData();
+    const ageSize = await prisma.size.create({ data: { id: createId(), code: 'AGE_9', label: '9', sizeType: 'AGE', sortOrder: 9 } });
+    await prisma.styleSize.create({ data: { id: createId(), styleId: style.id, sizeId: ageSize.id } });
+    const mappings = [{ sourceSizeCode: '9', targetSizeCode: 'AGE_9', status: 'APPROVED' as const }];
+    const resolved = await reconcileSizes(prisma, style.id, [{ sizeCode: '9', quantity: 168 }], mappings);
+    expect(resolved[0]).toMatchObject({ status: 'MATCHED', sizeId: ageSize.id });
+  });
+
+  it('does not resolve via a size mapping row that is not APPROVED', async () => {
+    const { style } = await seedMasterData();
+    await prisma.size.create({ data: { id: createId(), code: 'AGE_9', label: '9', sizeType: 'AGE', sortOrder: 9 } });
+    const mappings = [{ sourceSizeCode: '9', targetSizeCode: 'AGE_9', status: 'REVIEW_REQUIRED' as const }];
+    const resolved = await reconcileSizes(prisma, style.id, [{ sizeCode: '9', quantity: 168 }], mappings);
+    expect(resolved[0]).toMatchObject({ status: 'UNMATCHED' });
+  });
+
+  it('leaves an unknown source size code with no mapping row UNMATCHED, never guessed', async () => {
+    const { style } = await seedMasterData();
+    const mappings = [{ sourceSizeCode: '9', targetSizeCode: 'AGE_9', status: 'APPROVED' as const }];
+    const resolved = await reconcileSizes(prisma, style.id, [{ sizeCode: 'XL', quantity: 10 }], mappings);
+    expect(resolved[0]).toMatchObject({ status: 'UNMATCHED' });
+  });
 });
 
 describe('reconcileImage', () => {

@@ -3,6 +3,7 @@ import { sourceField, unknownField, type ParsedPurchaseOrderRecord } from './po-
 import {
   applyApprovedOverrides,
   parseSourceOverridesArtifact,
+  recomputeEffectiveParseStatus,
   resolveApprovedOverridesForRecord,
   SourceOverrideError,
   type SourceOverrideEntry,
@@ -116,6 +117,60 @@ describe('applyApprovedOverrides', () => {
     expect(appliedFields).toEqual([]);
     expect(ignoredFields).toEqual(['sizeQuantities']);
     expect(record.sizeQuantities).toEqual(parsed.sizeQuantities);
+  });
+});
+
+describe('recomputeEffectiveParseStatus / applyApprovedOverrides — EI26002 truncated-date scenario', () => {
+  function partialOrderDateRecord(): ParsedPurchaseOrderRecord {
+    return baseParsedRecord({
+      sourceFileName: 'EI26002.pdf',
+      parseStatus: 'PARTIAL',
+      orderDate: unknownField(),
+      warnings: ['Unrecognized order date format: "19/02/202 30/03/2026"', 'Could not extract required field: orderDate'],
+    });
+  }
+
+  it('upgrades PARTIAL to OK once an approved override resolves the field that caused it', () => {
+    const parsed = partialOrderDateRecord();
+    const { record, resolvedWarnings } = applyApprovedOverrides(parsed, [
+      { field: 'orderDate', sourceValue: null, approvedValue: '2026-02-19', reason: 'approved correction', status: 'APPROVED' },
+    ]);
+    expect(record.parseStatus).toBe('OK');
+    expect(record.warnings).toEqual([]);
+    expect(record.orderDate).toEqual({ value: '2026-02-19', provenance: 'OVERRIDE' });
+    expect(resolvedWarnings).toHaveLength(2);
+    // The ORIGINAL record (and, by extension, source-staging.json, which this never touches) keeps the true parse outcome.
+    expect(parsed.parseStatus).toBe('PARTIAL');
+    expect(parsed.warnings).toHaveLength(2);
+  });
+
+  it('does not upgrade the record when the override does not resolve the actual cause of PARTIAL', () => {
+    const parsed = partialOrderDateRecord();
+    const { record } = applyApprovedOverrides(parsed, [
+      { field: 'colour', sourceValue: 'Blue', approvedValue: 'Navy', reason: 'unrelated correction', status: 'APPROVED' },
+    ]);
+    expect(record.parseStatus).toBe('PARTIAL');
+    expect(record.warnings).toEqual(parsed.warnings);
+  });
+
+  it('never upgrades a FAILED record, even with an applied override', () => {
+    const failed = baseParsedRecord({ parseStatus: 'FAILED', orderDate: unknownField(), warnings: ['Could not extract required field: orderDate'] });
+    const result = recomputeEffectiveParseStatus(failed, ['orderDate']);
+    expect(result.effectiveParseStatus).toBe('FAILED');
+  });
+
+  it('leaves a still-PARTIAL record PARTIAL when an unrelated warning remains after the override', () => {
+    const parsed = baseParsedRecord({
+      parseStatus: 'PARTIAL',
+      orderDate: unknownField(),
+      warnings: ['Could not extract required field: orderDate', 'Size quantities sum to 900 but the table Total reads 1008'],
+    });
+    const { record, resolvedWarnings } = applyApprovedOverrides(parsed, [
+      { field: 'orderDate', sourceValue: null, approvedValue: '2026-02-19', reason: 'approved correction', status: 'APPROVED' },
+    ]);
+    expect(record.parseStatus).toBe('PARTIAL');
+    expect(record.warnings).toEqual(['Size quantities sum to 900 but the table Total reads 1008']);
+    expect(resolvedWarnings).toEqual(['Could not extract required field: orderDate']);
   });
 });
 

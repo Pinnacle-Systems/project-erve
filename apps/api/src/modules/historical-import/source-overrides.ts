@@ -8,7 +8,7 @@
 // source-overrides -> effective migration record. An entry with the wrong
 // checksum is rejected outright (never partially trusted); an unapproved
 // override can never make a record READY.
-import type { FieldProvenance, ParsedField, ParsedPurchaseOrderRecord } from './po-pdf-parser.types.js';
+import type { FieldProvenance, ParsedField, ParsedPurchaseOrderRecord, ParseStatus } from './po-pdf-parser.types.js';
 
 export type SourceOverrideStatus = 'APPROVED' | 'REVIEW_REQUIRED' | 'REJECTED';
 
@@ -98,8 +98,8 @@ const OVERRIDE_PROVENANCE: FieldProvenance = 'OVERRIDE';
 export function applyApprovedOverrides(
   parsed: ParsedPurchaseOrderRecord,
   approvedOverrides: SourceOverrideFieldEntry[],
-): { record: ParsedPurchaseOrderRecord; appliedFields: string[]; ignoredFields: string[] } {
-  if (approvedOverrides.length === 0) return { record: parsed, appliedFields: [], ignoredFields: [] };
+): { record: ParsedPurchaseOrderRecord; appliedFields: string[]; ignoredFields: string[]; resolvedWarnings: string[] } {
+  if (approvedOverrides.length === 0) return { record: parsed, appliedFields: [], ignoredFields: [], resolvedWarnings: [] };
   const next: ParsedPurchaseOrderRecord = { ...parsed };
   const appliedFields: string[] = [];
   const ignoredFields: string[] = [];
@@ -113,5 +113,55 @@ export function applyApprovedOverrides(
     (next as unknown as Record<string, ParsedField<string>>)[fieldName] = nextField;
     appliedFields.push(override.field);
   }
-  return { record: next, appliedFields, ignoredFields };
+
+  const { effectiveParseStatus, effectiveWarnings, resolvedWarnings } = recomputeEffectiveParseStatus(parsed, appliedFields);
+  next.parseStatus = effectiveParseStatus;
+  next.warnings = effectiveWarnings;
+
+  return { record: next, appliedFields, ignoredFields, resolvedWarnings };
+}
+
+/** Explicit registry of which warning message(s) a given field's parser warnings use — deliberately NOT a blind substring/heuristic match, so this only ever recognizes the exact known warning shapes this parser produces (po-pdf-parser.ts), never guesses at an unrelated one. */
+const FIELD_WARNING_PATTERNS: Partial<Record<keyof ParsedPurchaseOrderRecord, RegExp[]>> = {
+  orderDate: [/^Could not extract required field: orderDate$/, /^Unrecognized order date format:/],
+  shipmentDate: [/^Could not extract required field: shipmentDate$/, /^Unrecognized shipment date format:/],
+  legacyReferenceNumber: [/^Could not extract required field: legacyReferenceNumber$/],
+  documentSeason: [/^Could not extract required field: documentSeason$/],
+  factoryName: [/^Could not extract required field: factoryName$/],
+  licenseStyleLmix: [/^Could not extract required field: licenseStyleLmix$/],
+  unitRate: [/^Could not extract required field: unitRate$/],
+  headerTotalQuantity: [/^Could not extract required field: headerTotalQuantity$/],
+};
+
+/**
+ * A record's parseStatus/warnings are set once, by the parser, from the RAW
+ * (pre-override) field values — applying an approved override to e.g.
+ * orderDate does not, by itself, change those. Without this step a record
+ * would stay PARTIAL (and therefore REVIEW_REQUIRED downstream) "solely
+ * because of" a field an approved override has already resolved, which is
+ * exactly the outcome this story's approvals were meant to fix (H2A
+ * continuation §4/§6). This recomputation is conservative: it only ever
+ * downgrades PARTIAL -> OK (never touches FAILED — a whole-document parse
+ * failure is never rescued by a single field override — and never
+ * *introduces* a new problem), and only removes a warning when it exactly
+ * matches a known pattern for a field that actually received an applied
+ * override; every other warning (e.g. an unrelated quantity mismatch)
+ * still counts and still keeps the record PARTIAL.
+ */
+export function recomputeEffectiveParseStatus(
+  record: Pick<ParsedPurchaseOrderRecord, 'parseStatus' | 'warnings'>,
+  appliedFields: string[],
+): { effectiveParseStatus: ParseStatus; effectiveWarnings: string[]; resolvedWarnings: string[] } {
+  if (record.parseStatus !== 'PARTIAL' || appliedFields.length === 0) {
+    return { effectiveParseStatus: record.parseStatus, effectiveWarnings: record.warnings, resolvedWarnings: [] };
+  }
+  const applicablePatterns = appliedFields.flatMap((f) => FIELD_WARNING_PATTERNS[f as keyof ParsedPurchaseOrderRecord] ?? []);
+  const resolvedWarnings: string[] = [];
+  const effectiveWarnings = record.warnings.filter((w) => {
+    const resolved = applicablePatterns.some((pattern) => pattern.test(w));
+    if (resolved) resolvedWarnings.push(w);
+    return !resolved;
+  });
+  const effectiveParseStatus: ParseStatus = effectiveWarnings.length === 0 ? 'OK' : 'PARTIAL';
+  return { effectiveParseStatus, effectiveWarnings, resolvedWarnings };
 }
