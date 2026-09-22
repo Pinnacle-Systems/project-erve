@@ -868,9 +868,14 @@ export async function getJobOrderList(
         // list job orders — it's a filter predicate, not response data, so it
         // carries no provenance leak even for Factory/QA (see
         // canViewOrderSheetProvenance, which gates response *content* only).
+        // legacyReferenceNumber (e.g. "EI25001") is the historical-import
+        // module's real historical identity — see apps/api/src/modules/
+        // historical-import/. Backend search only; UI presentation is owned
+        // by the concurrent UI/UX branch.
         OR: filters.search
           ? [
               { jobOrderNumber: { contains: filters.search, mode: 'insensitive' } },
+              { legacyReferenceNumber: { contains: filters.search, mode: 'insensitive' } },
               { orderSheets: { some: { poNumber: { contains: filters.search, mode: 'insensitive' } } } },
             ]
           : undefined,
@@ -935,6 +940,13 @@ export async function getAssignedFactoryTasks(
     where: {
       factoryId,
       status: { in: visibleStatuses },
+      // Historical-import rows (see apps/api/src/modules/historical-import/)
+      // never went through live Factory confirmation/production/QA and must
+      // never surface as Factory work here, even though a historical row's
+      // status/factoryId can otherwise overlap this list's filters (e.g.
+      // PRODUCTION_COMPLETE). Explicit, not incidental — this must stay
+      // correct even if the operational status set above changes later.
+      recordOrigin: 'LIVE_WORKFLOW',
       // Factory identifies work by Job Order Number only — no Order Sheet/
       // Purchase Order provenance is exposed to this role (§22), so search
       // matches only that.
@@ -1127,8 +1139,11 @@ async function validateProductionPlanSizes(
 
 // Creates the Job Order's single production-plan line (Phase 2.1: exactly
 // one JobOrderLine per Job Order, independent of source Order Sheet count —
-// see JobOrderLine's schema comment).
-async function createJobOrderLine(
+// see JobOrderLine's schema comment). Exported so the historical-import
+// module (apps/api/src/modules/historical-import/) can reuse the same
+// Style/Size/StyleSize validation instead of duplicating it — createJobOrder
+// itself is otherwise untouched by that module.
+export async function createJobOrderLine(
   tx: Tx,
   jobOrderId: string,
   styleId: string,

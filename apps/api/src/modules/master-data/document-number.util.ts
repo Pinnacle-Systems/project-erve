@@ -19,6 +19,13 @@ export const DOCUMENT_PREFIXES = {
   // No original-scope-specified prefix for Distributor Return either — same
   // "EI" + short document abbreviation convention as the three above.
   DISTRIBUTOR_RETURN: 'EIDR',
+  // Historical-import module only (apps/api/src/modules/historical-import/).
+  // Deliberately distinct from JOB_ORDER/EIJO and its own DocumentSequence
+  // row — a historical Job Order never allocates a live EIJO serial. This
+  // exists only because JobOrder.jobOrderNumber is still NOT NULL @unique;
+  // the real historical identity is JobOrder.legacyReferenceNumber (e.g.
+  // "EI25001"), not this value.
+  HISTORICAL_JOB_ORDER: 'EIJOH',
 } as const;
 
 // MINIMUM width — pads short serials up to 4 digits but never truncates

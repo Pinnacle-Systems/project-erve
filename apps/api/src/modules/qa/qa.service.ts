@@ -372,6 +372,11 @@ export async function getQueue(
       factoryId: scopedFactory,
       status: { in: statuses as never[] },
       updatedAt: { gte: filters.dateFrom, lte: filters.dateTo },
+      // Historical-import rows (see apps/api/src/modules/historical-import/)
+      // never went through live QA and must never surface in this queue —
+      // explicit, not incidental on today's QA_QUEUE_STATUSES excluding
+      // PRODUCTION_COMPLETE, since that status set can change later.
+      recordOrigin: 'LIVE_WORKFLOW',
       // QA identifies work by Job Order Number only — no Order Sheet/
       // Purchase Order provenance is exposed to this role (§22).
       OR: filters.search
@@ -1096,7 +1101,12 @@ export async function updateRework(
 export async function getReworkQueue(user: CurrentUser) {
   if (!isSupervisor(user)) throw HttpError.forbidden('You cannot view rework');
   const jobs = await prisma.jobOrder.findMany({
-    where: { qaReworkTasks: { some: { status: { not: 'REINSPECTED' } } } },
+    // Historical-import rows never have QaReworkTask rows at all (import
+    // creates zero live QA history), so this is structurally unreachable
+    // for them already — recordOrigin is included anyway so every
+    // operational queue enforces the same explicit rule, not a mix of
+    // explicit and incidental ones.
+    where: { recordOrigin: 'LIVE_WORKFLOW', qaReworkTasks: { some: { status: { not: 'REINSPECTED' } } } },
     include: detailInclude,
   });
   return jobs.flatMap((job) =>

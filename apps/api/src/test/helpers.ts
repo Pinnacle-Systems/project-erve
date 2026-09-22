@@ -118,6 +118,15 @@ export async function resetDatabase(): Promise<void> {
   await prisma.distributorPurchaseOrderLine.deleteMany();
   await prisma.distributorPurchaseOrder.deleteMany();
   await prisma.jobOrder.deleteMany();
+  // Historical-import module (apps/api/src/modules/historical-import/):
+  // HistoricalDocumentJobOrder cascades off JobOrder/HistoricalDocument
+  // already, but ImportBatch.processFlowVersionId is onDelete: Restrict —
+  // it must clear before processFlowVersion.deleteMany() below, and
+  // HistoricalDocument.fileId is onDelete: Restrict, so it must clear
+  // before file.deleteMany() further down.
+  await prisma.historicalDocumentJobOrder.deleteMany();
+  await prisma.historicalDocument.deleteMany();
+  await prisma.importBatch.deleteMany();
   await prisma.processFlowVersionStage.deleteMany();
   await prisma.processFlowVersion.deleteMany();
   await prisma.processFlow.deleteMany();
