@@ -116,7 +116,10 @@ export function requireVerifiedDevDatabaseTarget(input: DevTargetGuardInput): De
 }
 
 /** Renders the report block shown in every plan revision, e.g. before `prisma migrate deploy` or the dry-run reconciliation. */
-export function formatDevTargetReport(report: DevTargetReport, mode: 'SCHEMA MIGRATION ONLY' | 'READ ONLY BUSINESS DATA'): string {
+export function formatDevTargetReport(
+  report: DevTargetReport,
+  mode: 'SCHEMA MIGRATION ONLY' | 'READ ONLY BUSINESS DATA' | 'DEV MASTER-DATA PREPARATION',
+): string {
   return [
     `Expected environment: ${report.expectedEnvironment}`,
     `Expected database: ${report.expectedDatabase}`,

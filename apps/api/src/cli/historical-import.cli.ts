@@ -16,7 +16,13 @@ import { prisma } from '../db/prisma.js';
 import { DevTargetGuardError, HistoricalImportDryRunError, runHistoricalImportDryRun } from './historical-import.js';
 import { ProcessFlowPinError } from '../modules/historical-import/process-flow-pin.js';
 
-function parseArgs(argv: string[]): { batchLabel: string; stagingFilePath: string; processFlowVersionId?: string } {
+function parseArgs(argv: string[]): {
+  batchLabel: string;
+  stagingFilePath: string;
+  processFlowVersionId?: string;
+  factoryMappingFilePath?: string;
+  sourceOverridesFilePath?: string;
+} {
   const get = (flag: string): string | undefined => {
     const index = argv.indexOf(flag);
     return index >= 0 ? argv[index + 1] : undefined;
@@ -24,9 +30,11 @@ function parseArgs(argv: string[]): { batchLabel: string; stagingFilePath: strin
   const batchLabel = get('--batch');
   const stagingFilePath = get('--input');
   const processFlowVersionId = get('--process-flow-version-id');
+  const factoryMappingFilePath = get('--factory-mapping');
+  const sourceOverridesFilePath = get('--source-overrides');
   if (!batchLabel) throw new HistoricalImportDryRunError('--batch is required, e.g. --batch AW25-SS26');
   if (!stagingFilePath) throw new HistoricalImportDryRunError('--input is required (path to source-staging.json from historical-import:prepare)');
-  return { batchLabel, stagingFilePath, processFlowVersionId };
+  return { batchLabel, stagingFilePath, processFlowVersionId, factoryMappingFilePath, sourceOverridesFilePath };
 }
 
 async function main(): Promise<void> {
