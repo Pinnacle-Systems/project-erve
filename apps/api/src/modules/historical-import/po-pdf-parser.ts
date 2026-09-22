@@ -8,7 +8,8 @@
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
-import { loadFirstPageLayout, loadPageCount, type TextLine } from './pdf-text-layout.js';
+import type { TextLine } from './pdf-text-layout.js';
+import { openPdfDocumentSession, type PdfDocumentSession } from './pdf-document-session.js';
 import {
   sourceField,
   unknownField,
@@ -337,10 +338,13 @@ export interface ParsePurchaseOrderBufferOptions {
 }
 
 /** The parser's actual core — bytes in, record out, no filesystem access. `parsePurchaseOrderPdf` below is the thin disk-reading wrapper prepare/dry-run use; tests exercise this directly against synthetic in-memory PDFs (H1 plan §23 — real historic PDFs are never committed as fixtures). */
-export async function parsePurchaseOrderBuffer(options: ParsePurchaseOrderBufferOptions): Promise<ParsedPurchaseOrderRecord> {
-  const { fileBuffer } = options;
-  const checksum = createHash('sha256').update(fileBuffer).digest('hex');
+/** The parser's field-extraction logic given an already-open pdfjs session — takes no bytes and does no pdfjs I/O itself, so it composes safely with the image extractor sharing the SAME session (see pdf-document-session.ts's module comment for why a second session per file must be avoided). */
+export function parsePurchaseOrderFromSession(
+  session: Pick<PdfDocumentSession, 'pageCount' | 'layout'>,
+  meta: { checksum: string; sourceFileName: string; relativePath: string; sourceSizeBytes: number; sourceSeasonFolder: 'AW25' | 'SS26' },
+): ParsedPurchaseOrderRecord {
   const warnings: string[] = [];
+  const { pageCount, layout } = session;
 
   const base: Omit<
     ParsedPurchaseOrderRecord,
@@ -366,49 +370,18 @@ export async function parsePurchaseOrderBuffer(options: ParsePurchaseOrderBuffer
     | 'headerTotalQuantity'
     | 'quantitySumMatchesTotal'
   > = {
-    sourceFileName: options.sourceFileName,
-    sourceRelativePath: options.relativePath,
-    sourceChecksumSha256: checksum,
-    sourceSizeBytes: options.sourceSizeBytes,
-    sourceSeasonFolder: options.sourceSeasonFolder,
+    sourceFileName: meta.sourceFileName,
+    sourceRelativePath: meta.relativePath,
+    sourceChecksumSha256: meta.checksum,
+    sourceSizeBytes: meta.sourceSizeBytes,
+    sourceSeasonFolder: meta.sourceSeasonFolder,
     warnings,
   };
 
-  let pageCount: number;
-  try {
-    pageCount = await loadPageCount(new Uint8Array(fileBuffer));
-  } catch (error) {
-    warnings.push(`Unreadable/corrupt PDF: ${error instanceof Error ? error.message : String(error)}`);
-    return {
-      ...base,
-      parseStatus: 'FAILED',
-      legacyReferenceNumber: unknownField(),
-      documentSeason: unknownField(),
-      seasonFolderMismatch: false,
-      factoryName: unknownField(),
-      licenseStyleLmix: unknownField(),
-      styleName: unknownField(),
-      colour: unknownField(),
-      description: unknownField(),
-      hsnCode: unknownField(),
-      orderDate: unknownField(),
-      shipmentDate: unknownField(),
-      unitRate: unknownField(),
-      currency: unknownField(),
-      paymentTerms: unknownField(),
-      approvalSampleInstructions: unknownField(),
-      aqlInspectionTerms: unknownField(),
-      sizeQuantities: [],
-      tableTotalQuantity: unknownField(),
-      headerTotalQuantity: unknownField(),
-      quantitySumMatchesTotal: null,
-    };
-  }
   if (pageCount !== 1) {
     warnings.push(`Expected a single-page PO sheet, found ${pageCount} pages — outside the known AW25/SS26 template`);
   }
 
-  const layout = await loadFirstPageLayout(new Uint8Array(fileBuffer));
   const lines = layout.lines;
 
   const legacyReferenceNumber = findLabelValue(lines, 'invoices');
@@ -469,10 +442,10 @@ export async function parsePurchaseOrderBuffer(options: ParsePurchaseOrderBuffer
   }
 
   const seasonFolderMismatch =
-    documentSeason.value !== null && documentSeason.value.trim().toUpperCase() !== options.sourceSeasonFolder;
+    documentSeason.value !== null && documentSeason.value.trim().toUpperCase() !== meta.sourceSeasonFolder;
   if (seasonFolderMismatch) {
     warnings.push(
-      `Document Season reads "${documentSeason.value}" but this file was supplied under --${options.sourceSeasonFolder.toLowerCase()}-dir`,
+      `Document Season reads "${documentSeason.value}" but this file was supplied under --${meta.sourceSeasonFolder.toLowerCase()}-dir`,
     );
   }
 
@@ -524,6 +497,90 @@ export async function parsePurchaseOrderBuffer(options: ParsePurchaseOrderBuffer
     headerTotalQuantity,
     quantitySumMatchesTotal,
   };
+}
+
+function failedParseRecord(
+  base: Omit<
+    ParsedPurchaseOrderRecord,
+    | 'parseStatus'
+    | 'legacyReferenceNumber'
+    | 'documentSeason'
+    | 'seasonFolderMismatch'
+    | 'factoryName'
+    | 'licenseStyleLmix'
+    | 'styleName'
+    | 'colour'
+    | 'description'
+    | 'hsnCode'
+    | 'orderDate'
+    | 'shipmentDate'
+    | 'unitRate'
+    | 'currency'
+    | 'paymentTerms'
+    | 'approvalSampleInstructions'
+    | 'aqlInspectionTerms'
+    | 'sizeQuantities'
+    | 'tableTotalQuantity'
+    | 'headerTotalQuantity'
+    | 'quantitySumMatchesTotal'
+  >,
+): ParsedPurchaseOrderRecord {
+  return {
+    ...base,
+    parseStatus: 'FAILED',
+    legacyReferenceNumber: unknownField(),
+    documentSeason: unknownField(),
+    seasonFolderMismatch: false,
+    factoryName: unknownField(),
+    licenseStyleLmix: unknownField(),
+    styleName: unknownField(),
+    colour: unknownField(),
+    description: unknownField(),
+    hsnCode: unknownField(),
+    orderDate: unknownField(),
+    shipmentDate: unknownField(),
+    unitRate: unknownField(),
+    currency: unknownField(),
+    paymentTerms: unknownField(),
+    approvalSampleInstructions: unknownField(),
+    aqlInspectionTerms: unknownField(),
+    sizeQuantities: [],
+    tableTotalQuantity: unknownField(),
+    headerTotalQuantity: unknownField(),
+    quantitySumMatchesTotal: null,
+  };
+}
+
+/** Opens exactly one pdfjs session for these bytes, parses, and closes it — the standalone entry point for parsing alone (tests, or any caller that doesn't also need the image extractor). The combined prepare pipeline instead opens one session and calls parsePurchaseOrderFromSession + extractStyleImageCandidate against it directly. */
+export async function parsePurchaseOrderBuffer(options: ParsePurchaseOrderBufferOptions): Promise<ParsedPurchaseOrderRecord> {
+  const { fileBuffer } = options;
+  const checksum = createHash('sha256').update(fileBuffer).digest('hex');
+  const meta = {
+    checksum,
+    sourceFileName: options.sourceFileName,
+    relativePath: options.relativePath,
+    sourceSizeBytes: options.sourceSizeBytes,
+    sourceSeasonFolder: options.sourceSeasonFolder,
+  };
+
+  let session: PdfDocumentSession;
+  try {
+    session = await openPdfDocumentSession(new Uint8Array(fileBuffer));
+  } catch (error) {
+    return failedParseRecord({
+      sourceFileName: meta.sourceFileName,
+      sourceRelativePath: meta.relativePath,
+      sourceChecksumSha256: checksum,
+      sourceSizeBytes: meta.sourceSizeBytes,
+      sourceSeasonFolder: meta.sourceSeasonFolder,
+      warnings: [`Unreadable/corrupt PDF: ${error instanceof Error ? error.message : String(error)}`],
+    });
+  }
+  try {
+    return parsePurchaseOrderFromSession(session, meta);
+  } finally {
+    await session.destroy();
+  }
 }
 
 /** Disk-reading wrapper around parsePurchaseOrderBuffer — what the prepare/dry-run CLIs actually call. */
