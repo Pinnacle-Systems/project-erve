@@ -95,3 +95,6 @@ export type {
   SkeletonTableRowProps,
   SkeletonCardProps,
 } from "./components/skeleton";
+
+export { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/tabs";
+export type { TabsListProps, TabsTriggerProps } from "./components/tabs";
