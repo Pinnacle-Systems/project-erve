@@ -243,6 +243,45 @@ enum ProductionStageStatus {
   COMPLETED
 }
 
+// Distinguishes Job Orders created through the normal live application
+// workflow from ones brought in by the historical-import pipeline (see
+// apps/api/src/modules/historical-import/). Historical rows never went
+// through live Factory confirmation, QA, packing, or dispatch — every
+// operational Factory/QA work-queue query must filter LIVE_WORKFLOW
+// explicitly rather than relying on status values to keep them out.
+enum RecordOrigin {
+  LIVE_WORKFLOW
+  HISTORICAL_IMPORT
+}
+
+// ---------------------------------------------------------------------------
+// Historical Import — enums (models are defined near JobOrder, below)
+// ---------------------------------------------------------------------------
+
+enum ImportBatchStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+// Deliberately application-level typed values, not free text, so this
+// permanent audit/provenance data can't accumulate spelling variants.
+// OTHER covers anything unanticipated without a schema migration.
+enum HistoricalDocumentType {
+  HISTORICAL_FACTORY_ORDER
+  FACTORY_INVOICE
+  FACTORY_PACKING_DISPATCH
+  ERVE_CUSTOMER_INVOICE
+  DELIVERY_POD
+  OTHER
+}
+
+enum HistoricalDocumentRelationshipType {
+  PRIMARY_SOURCE
+  SUPPORTING_DOCUMENT
+  OTHER
+}
+
 // ---------------------------------------------------------------------------
 // Authentication & Access
 // ---------------------------------------------------------------------------
@@ -265,48 +304,51 @@ model User {
   userRoles                            UserRole[]
   userDistributors                     UserDistributor[]
   userFactories                        UserFactory[]
-  uploadedFiles                        File[]                     @relation("FileUploadedBy")
-  auditLogs                            AuditLog[]                 @relation("AuditLogActor")
+  uploadedFiles                        File[]                      @relation("FileUploadedBy")
+  auditLogs                            AuditLog[]                  @relation("AuditLogActor")
   refreshSessions                      RefreshSession[]
-  createdPurchaseOrders                DistributorPurchaseOrder[] @relation("POCreator")
-  merchandisedPurchaseOrders           DistributorPurchaseOrder[] @relation("POMerchandiser")
-  createdJobOrders                     JobOrder[]                 @relation("JobOrderCreator")
-  confirmedJobOrders                   JobOrder[]                 @relation("JobOrderConfirmer")
-  jobOrderAcknowledgements             JobOrderAcknowledgement[]  @relation("JobOrderAcknowledgedBy")
-  completedJobOrderStages              JobOrderStageStatus[]      @relation("JobOrderStageCompleter")
-  qaInspections                        QaInspectionSession[]      @relation("QaInspector")
-  reopenedQaInspections                QaInspectionSession[]      @relation("QaReopenedBy")
-  reopenedQaSizeForms                  QaSizeInspectionForm[]     @relation("QaSizeFormReopenedBy")
-  acknowledgedQaReworks                QaReworkTask[]             @relation("QaReworkAcknowledgedBy")
-  readiedQaReworks                     QaReworkTask[]             @relation("QaReworkReadiedBy")
-  startedQualityExecutions             QualityActivityExecution[] @relation("QualityExecutionStarter")
-  finalizedQualityExecutions           QualityActivityExecution[] @relation("QualityExecutionFinalizer")
-  qualitySignoffs                      QualitySignoff[]           @relation("QualitySignoffRecorder")
-  createdFinalQualityBatches           FinalQualityBatch[]        @relation("FinalQualityBatchCreator")
-  terminalFinalQualityBatches          FinalQualityBatch[]        @relation("FinalQualityBatchTerminalActor")
-  qaReleases                           QaRelease[]                @relation("QaReleaseActor")
-  createdSaleOrders                    SaleOrder[]                @relation("SaleOrderCreator")
-  allocatedStockAllocations            StockAllocation[]          @relation("StockAllocationAllocator")
-  releasedStockAllocations             StockAllocation[]          @relation("StockAllocationReleaser")
-  preparedFactoryDispatches            FactoryDispatch[]          @relation("FactoryDispatchPreparer")
-  finalizedFactoryDispatches           FactoryDispatch[]          @relation("FactoryDispatchFinalizer")
+  createdPurchaseOrders                DistributorPurchaseOrder[]  @relation("POCreator")
+  merchandisedPurchaseOrders           DistributorPurchaseOrder[]  @relation("POMerchandiser")
+  createdJobOrders                     JobOrder[]                  @relation("JobOrderCreator")
+  confirmedJobOrders                   JobOrder[]                  @relation("JobOrderConfirmer")
+  jobOrderAcknowledgements             JobOrderAcknowledgement[]   @relation("JobOrderAcknowledgedBy")
+  completedJobOrderStages              JobOrderStageStatus[]       @relation("JobOrderStageCompleter")
+  qaInspections                        QaInspectionSession[]       @relation("QaInspector")
+  reopenedQaInspections                QaInspectionSession[]       @relation("QaReopenedBy")
+  reopenedQaSizeForms                  QaSizeInspectionForm[]      @relation("QaSizeFormReopenedBy")
+  acknowledgedQaReworks                QaReworkTask[]              @relation("QaReworkAcknowledgedBy")
+  readiedQaReworks                     QaReworkTask[]              @relation("QaReworkReadiedBy")
+  startedQualityExecutions             QualityActivityExecution[]  @relation("QualityExecutionStarter")
+  finalizedQualityExecutions           QualityActivityExecution[]  @relation("QualityExecutionFinalizer")
+  qualitySignoffs                      QualitySignoff[]            @relation("QualitySignoffRecorder")
+  createdFinalQualityBatches           FinalQualityBatch[]         @relation("FinalQualityBatchCreator")
+  terminalFinalQualityBatches          FinalQualityBatch[]         @relation("FinalQualityBatchTerminalActor")
+  qaReleases                           QaRelease[]                 @relation("QaReleaseActor")
+  createdSaleOrders                    SaleOrder[]                 @relation("SaleOrderCreator")
+  allocatedStockAllocations            StockAllocation[]           @relation("StockAllocationAllocator")
+  releasedStockAllocations             StockAllocation[]           @relation("StockAllocationReleaser")
+  preparedFactoryDispatches            FactoryDispatch[]           @relation("FactoryDispatchPreparer")
+  finalizedFactoryDispatches           FactoryDispatch[]           @relation("FactoryDispatchFinalizer")
   createdFactoryPackingCartons         FactoryPackingCarton[]      @relation("FactoryPackingCartonCreator")
   retiredFactoryPackingCartons         FactoryPackingCarton[]      @relation("FactoryPackingCartonRetirer")
   inspectedFactoryPackingCartonAudits  FactoryPackingCartonAudit[] @relation("FactoryPackingCartonAuditInspector")
-  createdErvePackingLists              ErvePackingList[]          @relation("ErvePackingListCreator")
-  finalizedErvePackingLists            ErvePackingList[]          @relation("ErvePackingListFinalizer")
-  dispatchedErveDispatches             ErveDispatch[]             @relation("ErveDispatchDispatcher")
-  lrUpdatedErveDispatches              ErveDispatch[]             @relation("ErveDispatchLrUpdater")
-  deliveredErveDispatches              ErveDispatch[]             @relation("ErveDispatchDeliveryConfirmer")
-  recordedInvoiceHandoffs              InvoiceHandoff[]           @relation("InvoiceHandoffRecordedBy")
-  submittedDistributorSalesReports     DistributorSalesReport[]   @relation("DistributorSalesReportSubmitter")
-  submittedDistributorReturns          DistributorReturn[]        @relation("DistributorReturnSubmitter")
-  approvedDistributorReturns           DistributorReturn[]        @relation("DistributorReturnApprover")
-  receivedDistributorReturns           DistributorReturn[]        @relation("DistributorReturnReceiver")
-  cancelledDistributorReturns          DistributorReturn[]        @relation("DistributorReturnCanceller")
-  creditNoteRecordedDistributorReturns DistributorReturn[]        @relation("DistributorReturnCreditNoteRecorder")
-  factoryConfirmedFactoryInvoices      FactoryInvoice[]           @relation("FactoryInvoiceFactoryConfirmedBy")
-  finalizedFactoryInvoices             FactoryInvoice[]           @relation("FactoryInvoiceFinalizedBy")
+  createdErvePackingLists              ErvePackingList[]           @relation("ErvePackingListCreator")
+  finalizedErvePackingLists            ErvePackingList[]           @relation("ErvePackingListFinalizer")
+  dispatchedErveDispatches             ErveDispatch[]              @relation("ErveDispatchDispatcher")
+  lrUpdatedErveDispatches              ErveDispatch[]              @relation("ErveDispatchLrUpdater")
+  deliveredErveDispatches              ErveDispatch[]              @relation("ErveDispatchDeliveryConfirmer")
+  recordedInvoiceHandoffs              InvoiceHandoff[]            @relation("InvoiceHandoffRecordedBy")
+  submittedDistributorSalesReports     DistributorSalesReport[]    @relation("DistributorSalesReportSubmitter")
+  submittedDistributorReturns          DistributorReturn[]         @relation("DistributorReturnSubmitter")
+  approvedDistributorReturns           DistributorReturn[]         @relation("DistributorReturnApprover")
+  receivedDistributorReturns           DistributorReturn[]         @relation("DistributorReturnReceiver")
+  cancelledDistributorReturns          DistributorReturn[]         @relation("DistributorReturnCanceller")
+  creditNoteRecordedDistributorReturns DistributorReturn[]         @relation("DistributorReturnCreditNoteRecorder")
+  factoryConfirmedFactoryInvoices      FactoryInvoice[]            @relation("FactoryInvoiceFactoryConfirmedBy")
+  finalizedFactoryInvoices             FactoryInvoice[]            @relation("FactoryInvoiceFinalizedBy")
+  importedJobOrders                    JobOrder[]                  @relation("JobOrderImportedBy")
+  startedImportBatches                 ImportBatch[]
+  addedHistoricalDocuments             HistoricalDocument[]
 
   @@index([status])
   @@map("users")
@@ -496,6 +538,12 @@ enum DocumentType {
   ERVE_PACKING_LIST
   ERVE_DISPATCH
   DISTRIBUTOR_RETURN
+  // Own DocumentSequence row per financial year, entirely separate from
+  // JOB_ORDER/EIJO. Historical Job Orders never allocate a live JOB_ORDER
+  // serial (see JobOrder.jobOrderSerial); this exists only because
+  // JobOrder.jobOrderNumber is still NOT NULL @unique. The real historical
+  // identity is JobOrder.legacyReferenceNumber (e.g. "EI25001").
+  HISTORICAL_JOB_ORDER
 }
 
 // Append-only high-water mark for (documentType, financialYearId) serial
@@ -545,7 +593,7 @@ model Style {
   createdAt           DateTime    @default(now()) @map("created_at")
   updatedAt           DateTime    @updatedAt @map("updated_at")
 
-  season               Season                          @relation(fields: [seasonId], references: [id], onDelete: Restrict)
+  season               Season                         @relation(fields: [seasonId], references: [id], onDelete: Restrict)
   images               StyleImage[]
   styleSizes           StyleSize[]
   styleFactoryMappings StyleFactoryMapping[]
@@ -731,9 +779,10 @@ model ProcessFlowVersion {
   createdAt     DateTime                 @default(now()) @map("created_at")
   updatedAt     DateTime                 @updatedAt @map("updated_at")
 
-  processFlow ProcessFlow               @relation(fields: [processFlowId], references: [id], onDelete: Cascade)
-  stages      ProcessFlowVersionStage[]
-  jobOrders   JobOrder[]
+  processFlow   ProcessFlow               @relation(fields: [processFlowId], references: [id], onDelete: Cascade)
+  stages        ProcessFlowVersionStage[]
+  jobOrders     JobOrder[]
+  importBatches ImportBatch[]
 
   @@unique([processFlowId, versionNumber])
   @@index([processFlowId])
@@ -1020,13 +1069,44 @@ model JobOrder {
   // date for Financial Year purposes is this same createdAt, never the
   // parent Purchase Order's Financial Year.
   financialYearId           String                    @map("financial_year_id")
-  jobOrderSerial            Int                       @map("job_order_serial")
+  // Nullable: HISTORICAL_IMPORT rows never allocate a live JOB_ORDER serial
+  // (see the historical numbering comment on DocumentType.HISTORICAL_JOB_ORDER
+  // above) and always store NULL here. Postgres treats each NULL as distinct
+  // under @@unique([financialYearId, jobOrderSerial]) below, so this can't
+  // collide with a live row's serial in the same financial year. Every call
+  // site that allocates/reads this field (job-orders.service.ts,
+  // src/test/helpers.ts) is on the live-creation path and always supplies a
+  // value there — audited before this field was made nullable.
+  jobOrderSerial            Int?                      @map("job_order_serial")
 
-  factory             Factory                     @relation(fields: [factoryId], references: [id], onDelete: Restrict)
-  processFlowVersion  ProcessFlowVersion          @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
-  confirmer           User?                       @relation("JobOrderConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
-  creator             User                        @relation("JobOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
-  financialYear       FinancialYear               @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  // ---- Historical Import (see apps/api/src/modules/historical-import/) ----
+  // recordOrigin defaults LIVE_WORKFLOW, so every existing/normal row is
+  // unaffected by this migration. HISTORICAL_IMPORT rows are written only by
+  // the dedicated historical-import service, never by createJobOrder.
+  recordOrigin           RecordOrigin @default(LIVE_WORKFLOW) @map("record_origin")
+  // The real historical identity (e.g. "EI25001") — see jobOrderNumber's
+  // comment for why it isn't reused as the internal unique number. Not
+  // globally unique in the schema: the full AW25/SS26 archive must be
+  // scanned before assuming uniqueness (see historical-import dry run).
+  legacyReferenceNumber  String?      @map("legacy_reference_number")
+  // Original historic PO/order date. Independent of createdAt (the actual
+  // import time) and never feeds financialYearId resolution — JobOrder's
+  // financial year always follows createdAt, exactly like a live row (see
+  // ensureFinancialYear usage in generateJobOrderNumber below).
+  historicalBusinessDate DateTime?    @map("historical_business_date") @db.Date
+  importBatchId          String?      @map("import_batch_id")
+  importedById           String?      @map("imported_by_id")
+  importedAt             DateTime?    @map("imported_at")
+  // Migration/reconciliation commentary only — never a dumping ground for
+  // source-document facts that belong in a normalized field or in
+  // HistoricalDocument.sourceSnapshot.
+  migrationNotes         String?      @map("migration_notes")
+
+  factory             Factory                      @relation(fields: [factoryId], references: [id], onDelete: Restrict)
+  processFlowVersion  ProcessFlowVersion           @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
+  confirmer           User?                        @relation("JobOrderConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
+  creator             User                         @relation("JobOrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  financialYear       FinancialYear                @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
   lines               JobOrderLine[]
   stageStatuses       JobOrderStageStatus[]
   idempotencyRecords  JobOrderIdempotencyRecord[]
@@ -1045,14 +1125,101 @@ model JobOrder {
   // production plan (`lines` above — exactly one JobOrderLine, one Style)
   // is independent of and never split across these sources; see
   // JobOrderLine's own comment.
-  orderSheets         DistributorPurchaseOrder[]  @relation("OrderSheetJobOrderLock")
+  orderSheets         DistributorPurchaseOrder[]   @relation("OrderSheetJobOrderLock")
+  importBatch         ImportBatch?                 @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  importedBy          User?                        @relation("JobOrderImportedBy", fields: [importedById], references: [id], onDelete: SetNull)
+  historicalDocuments HistoricalDocumentJobOrder[]
 
   @@unique([financialYearId, jobOrderSerial])
   @@index([factoryId])
   @@index([processFlowVersionId])
   @@index([status])
   @@index([factoryConfirmationStatus])
+  @@index([recordOrigin])
+  @@index([legacyReferenceNumber])
   @@map("job_orders")
+}
+
+// ---------------------------------------------------------------------------
+// Historical Import
+// (apps/api/src/modules/historical-import/ — see RecordOrigin/
+// HistoricalDocumentType/HistoricalDocumentRelationshipType above)
+// ---------------------------------------------------------------------------
+
+// Generic provenance record for a bulk historical-source import (e.g. the
+// AW25/SS26 Job Order batch). Deliberately not Job-Order-specific: later
+// batches (recovered Factory Invoices, PODs, etc.) may not involve a Job
+// Order or a Process Flow Version at all, hence processFlowVersionId is
+// nullable here — the historical Job Order import service enforces it's
+// populated for that specific batch kind at the application level.
+model ImportBatch {
+  id                   String            @id
+  sourceLabel          String            @map("source_label")
+  startedById          String            @map("started_by_id")
+  startedAt            DateTime          @default(now()) @map("started_at")
+  completedAt          DateTime?         @map("completed_at")
+  status               ImportBatchStatus @default(IN_PROGRESS)
+  processFlowVersionId String?           @map("process_flow_version_id")
+  notes                String?
+  totalSourceDocuments Int               @default(0) @map("total_source_documents")
+  readyCount           Int               @default(0) @map("ready_count")
+  reviewRequiredCount  Int               @default(0) @map("review_required_count")
+  blockedCount         Int               @default(0) @map("blocked_count")
+  duplicateCount       Int               @default(0) @map("duplicate_count")
+
+  startedBy           User                 @relation(fields: [startedById], references: [id], onDelete: Restrict)
+  processFlowVersion  ProcessFlowVersion?  @relation(fields: [processFlowVersionId], references: [id], onDelete: Restrict)
+  jobOrders           JobOrder[]
+  historicalDocuments HistoricalDocument[]
+
+  @@map("import_batches")
+}
+
+// A piece of historical evidence (a scanned PO sheet, later a recovered
+// Factory Invoice/POD/etc.), attached to one or more Job Orders via the
+// join table below. sourceSnapshot retains raw source-document facts that
+// don't have a normalized ERVE field.
+model HistoricalDocument {
+  id                String                 @id
+  documentType      HistoricalDocumentType @map("document_type")
+  externalReference String?                @map("external_reference")
+  documentDate      DateTime?              @map("document_date") @db.Date
+  fileId            String                 @map("file_id")
+  sourceSnapshot    Json                   @map("source_snapshot")
+  // Nullable: bulk migration batches set this to the batch that created
+  // them; a later one-off document added individually by an ADMIN through
+  // an enrichment workflow has no ImportBatch at all (see the enum/model
+  // comments above) and relies on addedById/addedAt alone for provenance.
+  importBatchId     String?                @map("import_batch_id")
+  addedById         String                 @map("added_by_id")
+  addedAt           DateTime               @default(now()) @map("added_at")
+  notes             String?
+
+  file        File                         @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  importBatch ImportBatch?                 @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  addedBy     User                         @relation(fields: [addedById], references: [id], onDelete: Restrict)
+  jobOrders   HistoricalDocumentJobOrder[]
+
+  @@index([importBatchId])
+  @@index([externalReference])
+  @@map("historical_documents")
+}
+
+// Many-to-many: a single historical document (e.g. one multi-line PO) may
+// later need to relate to more than one Job Order.
+model HistoricalDocumentJobOrder {
+  id                   String                             @id
+  historicalDocumentId String                             @map("historical_document_id")
+  jobOrderId           String                             @map("job_order_id")
+  relationshipType     HistoricalDocumentRelationshipType @map("relationship_type")
+  createdAt            DateTime                           @default(now()) @map("created_at")
+
+  historicalDocument HistoricalDocument @relation(fields: [historicalDocumentId], references: [id], onDelete: Cascade)
+  jobOrder           JobOrder           @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([historicalDocumentId, jobOrderId])
+  @@index([jobOrderId])
+  @@map("historical_document_job_orders")
 }
 
 // Start eligibility applies only at creation. A valid draft remains editable
@@ -1330,10 +1497,10 @@ model SaleOrderDestination {
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
 
-  saleOrder            SaleOrder            @relation(fields: [saleOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  saleOrderDistributor SaleOrderDistributor @relation(fields: [saleOrderDistributorId, saleOrderId], references: [id, saleOrderId], onDelete: Restrict, onUpdate: NoAction)
-  lines     SaleOrderLine[]
-  cartons   FactoryPackingCarton[]
+  saleOrder              SaleOrder              @relation(fields: [saleOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  saleOrderDistributor   SaleOrderDistributor   @relation(fields: [saleOrderDistributorId, saleOrderId], references: [id, saleOrderId], onDelete: Restrict, onUpdate: NoAction)
+  lines                  SaleOrderLine[]
+  cartons                FactoryPackingCarton[]
   ervePackingListOrigins ErvePackingList[]
 
   @@index([saleOrderId])
@@ -1542,11 +1709,11 @@ model FactoryPackingCarton {
   retiredById       String?   @map("retired_by_id")
   retiredAt         DateTime? @map("retired_at")
 
-  factoryDispatch FactoryDispatch            @relation(fields: [factoryDispatchId], references: [id], onDelete: Cascade)
-  destination     SaleOrderDestination       @relation(fields: [destinationId], references: [id], onDelete: Restrict)
-  ervePackingList ErvePackingList?           @relation(fields: [ervePackingListId], references: [id], onDelete: Restrict)
-  createdBy       User                       @relation("FactoryPackingCartonCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  retiredBy       User?                      @relation("FactoryPackingCartonRetirer", fields: [retiredById], references: [id], onDelete: Restrict)
+  factoryDispatch FactoryDispatch             @relation(fields: [factoryDispatchId], references: [id], onDelete: Cascade)
+  destination     SaleOrderDestination        @relation(fields: [destinationId], references: [id], onDelete: Restrict)
+  ervePackingList ErvePackingList?            @relation(fields: [ervePackingListId], references: [id], onDelete: Restrict)
+  createdBy       User                        @relation("FactoryPackingCartonCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  retiredBy       User?                       @relation("FactoryPackingCartonRetirer", fields: [retiredById], references: [id], onDelete: Restrict)
   lines           FactoryPackingCartonLine[]
   audits          FactoryPackingCartonAudit[]
 
@@ -1587,13 +1754,13 @@ model FactoryPackingCartonLine {
 // one sign-off exists per carton version; confirming an already-current
 // version is idempotent (returns the existing row).
 model FactoryPackingCartonAudit {
-  id            String    @id
-  cartonId      String    @map("carton_id")
-  cartonVersion Int       @map("carton_version")
-  inspectedById String    @map("inspected_by_id")
-  inspectedAt   DateTime  @default(now()) @map("inspected_at")
+  id            String   @id
+  cartonId      String   @map("carton_id")
+  cartonVersion Int      @map("carton_version")
+  inspectedById String   @map("inspected_by_id")
+  inspectedAt   DateTime @default(now()) @map("inspected_at")
   remarks       String?
-  createdAt     DateTime  @default(now()) @map("created_at")
+  createdAt     DateTime @default(now()) @map("created_at")
 
   carton      FactoryPackingCarton @relation(fields: [cartonId], references: [id], onDelete: Restrict)
   inspectedBy User                 @relation("FactoryPackingCartonAuditInspector", fields: [inspectedById], references: [id], onDelete: Restrict)
@@ -1634,16 +1801,16 @@ model FactoryInvoice {
   finalizedById        String?              @map("finalized_by_id")
   finalizedAt          DateTime?            @map("finalized_at")
   subtotal             Decimal              @default(0) @db.Decimal(14, 2)
-  gstAmount            Decimal              @default(0) @db.Decimal(14, 2) @map("gst_amount")
+  gstAmount            Decimal              @default(0) @map("gst_amount") @db.Decimal(14, 2)
   total                Decimal              @default(0) @db.Decimal(14, 2)
   remarks              String?
   createdAt            DateTime             @default(now()) @map("created_at")
   updatedAt            DateTime             @updatedAt @map("updated_at")
 
-  factoryDispatch    FactoryDispatch     @relation(fields: [factoryDispatchId], references: [id], onDelete: Restrict)
-  factory            Factory             @relation(fields: [factoryId], references: [id], onDelete: Restrict)
-  factoryConfirmedBy User?               @relation("FactoryInvoiceFactoryConfirmedBy", fields: [factoryConfirmedById], references: [id], onDelete: Restrict)
-  finalizedBy        User?               @relation("FactoryInvoiceFinalizedBy", fields: [finalizedById], references: [id], onDelete: Restrict)
+  factoryDispatch    FactoryDispatch      @relation(fields: [factoryDispatchId], references: [id], onDelete: Restrict)
+  factory            Factory              @relation(fields: [factoryId], references: [id], onDelete: Restrict)
+  factoryConfirmedBy User?                @relation("FactoryInvoiceFactoryConfirmedBy", fields: [factoryConfirmedById], references: [id], onDelete: Restrict)
+  finalizedBy        User?                @relation("FactoryInvoiceFinalizedBy", fields: [finalizedById], references: [id], onDelete: Restrict)
   lines              FactoryInvoiceLine[]
 
   @@index([factoryId, status])
@@ -1664,9 +1831,9 @@ model FactoryInvoiceLine {
   factoryInvoiceId String   @map("factory_invoice_id")
   saleOrderLineId  String   @map("sale_order_line_id")
   quantity         Int
-  defaultRate      Decimal  @db.Decimal(12, 2) @map("default_rate")
-  unitRate         Decimal  @db.Decimal(12, 2) @map("unit_rate")
-  lineAmount       Decimal  @db.Decimal(14, 2) @map("line_amount")
+  defaultRate      Decimal  @map("default_rate") @db.Decimal(12, 2)
+  unitRate         Decimal  @map("unit_rate") @db.Decimal(12, 2)
+  lineAmount       Decimal  @map("line_amount") @db.Decimal(14, 2)
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
@@ -1718,29 +1885,29 @@ enum ErvePackingListStatus {
 // is kept purely for traceability/display back to that first carton's source
 // row — it must never be used for eligibility/matching logic.
 model ErvePackingList {
-  id                    String                @id
-  ervePackingListNumber String                @unique @map("erve_packing_list_number")
-  saleOrderId           String?               @map("sale_order_id")
-  distributorId         String?               @map("distributor_id")
-  originDestinationId   String?               @map("origin_destination_id")
-  destinationMatchKey   String?               @map("destination_match_key")
-  destinationLabel      String?               @map("destination_label")
-  destinationContactName  String?             @map("destination_contact_name")
-  destinationContactEmail String?             @map("destination_contact_email")
-  destinationContactPhone String?             @map("destination_contact_phone")
-  destinationAddressLine1 String?             @map("destination_address_line1")
-  destinationAddressLine2 String?             @map("destination_address_line2")
-  destinationCity         String?             @map("destination_city")
-  destinationState        String?             @map("destination_state")
-  destinationCountry      String?             @map("destination_country")
-  destinationPostalCode   String?             @map("destination_postal_code")
-  status                ErvePackingListStatus @default(OPEN)
-  createdById           String                @map("created_by_id")
-  createdAt             DateTime              @default(now()) @map("created_at")
-  finalizedById         String?               @map("finalized_by_id")
-  finalizedAt           DateTime?             @map("finalized_at")
-  financialYearId       String                @map("financial_year_id")
-  ervePackingListSerial Int                   @map("erve_packing_list_serial")
+  id                      String                @id
+  ervePackingListNumber   String                @unique @map("erve_packing_list_number")
+  saleOrderId             String?               @map("sale_order_id")
+  distributorId           String?               @map("distributor_id")
+  originDestinationId     String?               @map("origin_destination_id")
+  destinationMatchKey     String?               @map("destination_match_key")
+  destinationLabel        String?               @map("destination_label")
+  destinationContactName  String?               @map("destination_contact_name")
+  destinationContactEmail String?               @map("destination_contact_email")
+  destinationContactPhone String?               @map("destination_contact_phone")
+  destinationAddressLine1 String?               @map("destination_address_line1")
+  destinationAddressLine2 String?               @map("destination_address_line2")
+  destinationCity         String?               @map("destination_city")
+  destinationState        String?               @map("destination_state")
+  destinationCountry      String?               @map("destination_country")
+  destinationPostalCode   String?               @map("destination_postal_code")
+  status                  ErvePackingListStatus @default(OPEN)
+  createdById             String                @map("created_by_id")
+  createdAt               DateTime              @default(now()) @map("created_at")
+  finalizedById           String?               @map("finalized_by_id")
+  finalizedAt             DateTime?             @map("finalized_at")
+  financialYearId         String                @map("financial_year_id")
+  ervePackingListSerial   Int                   @map("erve_packing_list_serial")
 
   saleOrder         SaleOrder?              @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
   distributor       Distributor?            @relation(fields: [distributorId], references: [id], onDelete: Restrict)
@@ -2676,10 +2843,11 @@ model File {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  uploadedBy         User?               @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
-  styleImages        StyleImage[]
-  qaEvidence         QaEvidence[]
-  qualityAttachments QualityAttachment[]
+  uploadedBy          User?                @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  styleImages         StyleImage[]
+  qaEvidence          QaEvidence[]
+  qualityAttachments  QualityAttachment[]
+  historicalDocuments HistoricalDocument[]
 
   @@index([storageKey])
   @@index([uploadedById])
