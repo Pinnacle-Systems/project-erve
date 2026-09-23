@@ -344,6 +344,10 @@ export function DistributorDetailPage() {
             <DescriptionList.Item key={label} label={label} value={value} />
           ))}
         </DescriptionList>
+        <p className="mt-4 text-xs text-muted-foreground">
+          Purchase Mode is locked after creation. If this distributor needs both Outright and Sale
+          or Return, create separate distributor records.
+        </p>
       </Panel>
 
       {canManageUserMappings ? <UserMappingPanel distributor={distributor} /> : null}
