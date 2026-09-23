@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { act, type ReactNode } from 'react';
+import { act, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -313,5 +313,87 @@ describe('StyleImagesPanel', () => {
     await flush();
 
     expect(container.textContent).toContain('Unsupported or corrupted image file');
+  });
+});
+
+// U2: create mode now shares this same component (in "deferred" mode) instead of a separate
+// hand-rolled picker in StyleFormPage — no API call happens until the caller supplies a real
+// pendingImage via onSelect; the real upload is the caller's responsibility after the style
+// itself is created (see StyleFormPage's mutation, which preserves the exact partial-failure
+// wording/flow this suite doesn't re-test here).
+describe('StyleImagesPanel deferred (create) mode', () => {
+  function DeferredHarness({ initial = null }: { initial?: File | null }) {
+    const [pendingImage, setPendingImage] = useState<File | null>(initial);
+    return (
+      <StyleImagesPanel canManage deferred={{ pendingImage, onSelect: setPendingImage }} />
+    );
+  }
+
+  it('shows a Choose Image action and no image yet, with zero API calls', async () => {
+    installAdapter();
+    render(<DeferredHarness />);
+    await flush();
+
+    expect(container.textContent).toContain('Choose Image');
+    expect(container.textContent).toContain('No image');
+    expect(container.textContent).toContain('The image is uploaded after the style is saved.');
+    expect(requests).toHaveLength(0);
+  });
+
+  it('stages a valid picked file locally without calling the API', async () => {
+    installAdapter();
+    render(<DeferredHarness />);
+    await flush();
+
+    pickFile('Style image', jpegFile('front.jpg'));
+    await flush();
+
+    expect(container.textContent).toContain('front.jpg');
+    expect(container.querySelector('img')).not.toBeNull();
+    expect(requests).toHaveLength(0);
+  });
+
+  it('rejects an invalid file client-side and keeps no image staged', async () => {
+    installAdapter();
+    render(<DeferredHarness />);
+    await flush();
+
+    pickFile('Style image', new File([new Uint8Array(10)], 'a.gif', { type: 'image/gif' }));
+    await flush();
+
+    expect(container.textContent).toContain('Only JPEG, PNG and WebP images are accepted');
+    expect(container.textContent).toContain('No image');
+    expect(requests).toHaveLength(0);
+  });
+
+  it('clears the staged image via Remove', async () => {
+    installAdapter();
+    render(<DeferredHarness />);
+    await flush();
+
+    pickFile('Style image', jpegFile('front.jpg'));
+    await flush();
+    expect(container.textContent).toContain('front.jpg');
+
+    click('Remove');
+    await flush();
+
+    expect(container.textContent).not.toContain('front.jpg');
+    expect(container.textContent).toContain('No image');
+  });
+
+  it('hides Choose Image and Change/Remove for view-only users', async () => {
+    installAdapter();
+    act(() => {
+      root.render(
+        <Providers>
+          <StyleImagesPanel canManage={false} deferred={{ pendingImage: null, onSelect: () => {} }} />
+        </Providers>,
+      );
+    });
+    await flush();
+
+    expect(container.textContent).not.toContain('Choose Image');
+    expect(container.textContent).toContain('No image has been chosen for this style.');
   });
 });

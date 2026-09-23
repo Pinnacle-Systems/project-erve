@@ -2,9 +2,9 @@ import { useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { AuditTrail, PageHeader, StatusBadge } from '@erve/app-components';
+import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
-import { DescriptionList, Panel } from '@erve/layout';
+import { Panel } from '@erve/layout';
 import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageStyles } from '../../auth/permissions.js';
@@ -13,6 +13,8 @@ import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { StyleImagesPanel } from './StyleImagesPanel.js';
+import { StyleIdentityDetail } from './style/StyleIdentityDetail.js';
+import { StyleCommercialDetail } from './style/StyleCommercialDetail.js';
 import type { Style } from './types.js';
 
 export function StyleDetailPage() {
@@ -57,22 +59,6 @@ export function StyleDetailPage() {
     );
   }
 
-  const fields = [
-    ['Style Number', style.styleNumber],
-    ['Style Name', style.styleName],
-    ['Description', style.description],
-    ['Category', style.categoryDescription],
-    ['Item Name Group', style.itemNameGroup],
-    ['IP Name', style.ipName],
-    ['Licensor', style.licensor],
-    ['Colour', style.colour],
-    ['LMIX Number', style.lmixNumber],
-    ['HSN Code', style.hsnCode],
-    ['HSN Description', style.hsnDescription],
-    ['Final MRP', style.finalMrp.toFixed(2)],
-    ['Royalty %', style.royaltyPercentage ?? '-'],
-  ];
-
   return (
     <div className="space-y-5">
       <PageHeader
@@ -101,19 +87,12 @@ export function StyleDetailPage() {
         }
       />
 
-      <Panel title="Style Details">
-        <DescriptionList columns={3}>
-          {fields.map(([label, value]) => (
-            <DescriptionList.Item key={label} label={label} value={value} />
-          ))}
-        </DescriptionList>
+      <Panel title="Identity & Classification">
+        <StyleIdentityDetail style={style} />
       </Panel>
 
-      <Panel title="Season">
-        <StatusBadge
-          label={`${style.season.displayName} — ${style.season.name}`}
-          tone={style.season.status === 'ACTIVE' ? 'info' : 'muted'}
-        />
+      <Panel title="Commercial & Tax">
+        <StyleCommercialDetail style={style} />
       </Panel>
 
       <StyleImagesPanel
@@ -148,10 +127,6 @@ export function StyleDetailPage() {
           </div>
         </Panel>
       </div>
-
-      <Panel title="Audit">
-        <AuditTrail items={[]} emptyState="Audit events will appear here." />
-      </Panel>
     </div>
   );
 }

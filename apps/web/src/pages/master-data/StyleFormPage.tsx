@@ -1,90 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
-import {
-  Button,
-  Checkbox,
-  SelectField,
-  SelectItem,
-  TextField,
-  ValidationMessage,
-} from '@erve/primitives';
-import { FormGrid, FormSection, Panel, Stack } from '@erve/layout';
+import { Button, ValidationMessage } from '@erve/primitives';
+import { Panel } from '@erve/layout';
 import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { imageErrorMessage, StyleImagesPanel } from './StyleImagesPanel.js';
+import { StyleIdentitySection } from './style/StyleIdentitySection.js';
+import { StyleCommercialSection } from './style/StyleCommercialSection.js';
+import { StyleSizesField } from './style/StyleSizesField.js';
 import {
-  IMAGE_GUIDANCE,
-  ACCEPTED_IMAGE_TYPES,
-  StyleImagesPanel,
-  imageErrorMessage,
-  validateImageFile,
-} from './StyleImagesPanel.js';
-import type { Factory, Season, Size, Status, Style } from './types.js';
-
-const emptyForm = {
-  styleNumber: '',
-  styleName: '',
-  description: '',
-  categoryDescription: '',
-  itemNameGroup: '',
-  ipName: '',
-  licensor: '',
-  colour: '',
-  lmixNumber: '',
-  hsnCode: '',
-  hsnDescription: '',
-  finalMrp: '',
-  royaltyPercentage: '',
-  status: 'ACTIVE' as Status,
-};
-
-const fieldLabels: Record<keyof typeof emptyForm, string> = {
-  styleNumber: 'Style Number',
-  styleName: 'Style Name',
-  description: 'Description',
-  categoryDescription: 'Category',
-  itemNameGroup: 'Item Name Group',
-  ipName: 'IP Name',
-  licensor: 'Licensor',
-  colour: 'Colour',
-  lmixNumber: 'LMIX Number',
-  hsnCode: 'HSN Code',
-  hsnDescription: 'HSN Description',
-  finalMrp: 'Final MRP',
-  royaltyPercentage: 'Royalty %',
-  status: 'Status',
-};
-
-const styleFieldLayout = [
-  { key: 'styleNumber', width: 'sm' },
-  { key: 'styleName', width: 'md' },
-  { key: 'categoryDescription', width: 'sm' },
-  { key: 'itemNameGroup', width: 'md' },
-  { key: 'ipName', width: 'sm' },
-  { key: 'licensor', width: 'md' },
-  { key: 'colour', width: 'sm' },
-  { key: 'lmixNumber', width: 'sm' },
-  { key: 'hsnCode', width: 'sm' },
-  { key: 'finalMrp', width: 'sm' },
-  { key: 'hsnDescription', width: 'lg' },
-  { key: 'royaltyPercentage', width: 'xs' },
-  { key: 'status', width: 'sm' },
-  { key: 'description', width: 'lg' },
-] as const;
-
-const HSN_CODE_PATTERN = /^\d{8}$/;
-const isValidHsnCode = (value: string) => !value || HSN_CODE_PATTERN.test(value);
-
-function cleanPayload(form: typeof emptyForm, seasonId: string) {
-  return {
-    ...form,
-    finalMrp: Number(form.finalMrp),
-    royaltyPercentage: form.royaltyPercentage === '' ? null : Number(form.royaltyPercentage),
-    seasonId,
-  };
-}
+  StyleFactoryMappingsField,
+  nextFactoryMappingRowId,
+  type StyleFactoryMappingRow,
+} from './style/StyleFactoryMappingsField.js';
+import { cleanPayload, emptyForm, validateStyleForm } from './style/style-form-state.js';
+import type { Factory, Season, Size, Style } from './types.js';
 
 export function StyleFormPage() {
   const navigate = useNavigate();
@@ -93,39 +26,15 @@ export function StyleFormPage() {
   const [form, setForm] = useState(emptyForm);
   const [selectedSizeIds, setSelectedSizeIds] = useState<string[]>([]);
   const [seasonId, setSeasonId] = useState('');
-  const [factoryMappings, setFactoryMappings] = useState<
-    Array<{ factoryId: string; exFactoryPrice: string }>
-  >([]);
+  const [factoryMappings, setFactoryMappings] = useState<StyleFactoryMappingRow[]>([]);
   const [error, setError] = useState('');
   // Create-mode only: an image picked before the style exists. The style
   // must be created first (the image endpoint needs a style ID), so this is
   // an explicit two-step flow — see the mutation below for the honest
-  // partial-failure handling.
-  const pendingImageInputRef = useRef<HTMLInputElement>(null);
+  // partial-failure handling. StyleImagesPanel (deferred mode) owns the
+  // picker UI and preview lifecycle; this page only needs the current File.
   const [pendingImage, setPendingImage] = useState<File | null>(null);
-  const [pendingImageUrl, setPendingImageUrl] = useState<string | null>(null);
   const [createdWithImageFailure, setCreatedWithImageFailure] = useState<Style | null>(null);
-
-  const selectPendingImage = (file: File | null) => {
-    setError('');
-    if (pendingImageUrl) {
-      URL.revokeObjectURL(pendingImageUrl);
-    }
-    if (!file) {
-      setPendingImage(null);
-      setPendingImageUrl(null);
-      return;
-    }
-    const validationError = validateImageFile(file);
-    if (validationError) {
-      setPendingImage(null);
-      setPendingImageUrl(null);
-      setError(validationError);
-      return;
-    }
-    setPendingImage(file);
-    setPendingImageUrl(URL.createObjectURL(file));
-  };
 
   const styleQuery = useQuery({
     queryKey: ['style', id],
@@ -155,12 +64,25 @@ export function StyleFormPage() {
   });
   const seasonsQuery = useQuery({ queryKey: ['seasons'], queryFn: async () => (await apiClient.get<ApiSuccessResponse<Season[]>>('/seasons')).data.data });
 
+  // Edit mode only: true once the form has been hydrated from the loaded record and is safe to
+  // reveal. Gating on this (see the render-time check below), not just styleQuery.isLoading, is
+  // load-bearing: it keeps the Season SelectField from ever mounting with an empty value and then
+  // being reassigned a real one by this effect on a later render. That external post-mount value
+  // change — regardless of whether matching <SelectItem>s already exist by then — is what makes
+  // Radix's hidden native bubble-select fire its own change handler back to "", silently clobbering
+  // the just-hydrated season to empty with no error (confirmed live via a console trace on
+  // onValueChange; see erve-sale-order-edit-hydration-fix memory for the same root cause in a
+  // different form). Waiting to hydrate everything — Season included — until both styleQuery and
+  // seasonsQuery have resolved means the SelectField's first-ever render already carries the
+  // correct value, so no such post-mount change ever happens.
+  const [hydrated, setHydrated] = useState(!isEdit);
+
   useEffect(() => {
-    if (!styleQuery.data) {
+    if (!styleQuery.data || !seasonsQuery.data) {
       return;
     }
-    // Hydrates the edit form from an async-loaded record; the data isn't available
-    // for a lazy initial-state computation, so this can't be done without an effect.
+    // Hydrates the edit form from async-loaded records; the data isn't available for a lazy
+    // initial-state computation, so this can't be done without an effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm({
       styleNumber: styleQuery.data.styleNumber,
@@ -183,20 +105,20 @@ export function StyleFormPage() {
     setSeasonId(styleQuery.data.season.id);
     setFactoryMappings(
       styleQuery.data.factories.map((factory) => ({
+        rowId: nextFactoryMappingRowId(),
         factoryId: factory.id,
         exFactoryPrice: String(factory.exFactoryPrice),
       })),
     );
-  }, [styleQuery.data]);
+    setHydrated(true);
+  }, [styleQuery.data, seasonsQuery.data]);
 
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!isValidHsnCode(form.hsnCode)) {
-        throw new Error('HSN Code must be exactly 8 digits.');
-      }
-      if (!form.styleNumber || !form.styleName || Number(form.finalMrp) <= 0 || !seasonId) {
-        throw new Error('Style number, style name, final MRP, and Season are required');
+      const validationError = validateStyleForm(form, seasonId);
+      if (validationError) {
+        throw new Error(validationError);
       }
       const response = isEdit
         ? await apiClient.patch<ApiSuccessResponse<Style>>(`/styles/${id}`, cleanPayload(form, seasonId))
@@ -284,11 +206,17 @@ export function StyleFormPage() {
 
   const availableFactories = useMemo(() => factoriesQuery.data ?? [], [factoriesQuery.data]);
 
-  if (isEdit && styleQuery.isLoading) {
-    return <LoadingState label="Loading style" />;
-  }
   if (isEdit && styleQuery.isError) {
     return <ErrorState title="Unable to load style" description={styleQuery.error.message} />;
+  }
+  // Hydration also depends on seasonsQuery (see the hydration effect above) — surface its failure
+  // too, rather than leaving the page stuck on the loading state forever if it errors while
+  // styleQuery succeeds.
+  if (isEdit && seasonsQuery.isError) {
+    return <ErrorState title="Unable to load seasons" description={seasonsQuery.error.message} />;
+  }
+  if (isEdit && (styleQuery.isLoading || !hydrated)) {
+    return <LoadingState label="Loading style" />;
   }
 
   return (
@@ -313,222 +241,32 @@ export function StyleFormPage() {
             mutation.mutate();
           }}
         >
-          <FormSection title="Style Details">
-            <FormGrid layout="content">
-              {styleFieldLayout.map(({ key, width }) =>
-                key === 'status' ? (
-                  <SelectField
-                    key={key}
-                    label="Status"
-                    value={form.status}
-                    onValueChange={(value) =>
-                      setForm((current) => ({ ...current, status: value as Status }))
-                    }
-                    width={width}
-                  >
-                    <SelectItem value="ACTIVE">Active</SelectItem>
-                    <SelectItem value="INACTIVE">Inactive</SelectItem>
-                  </SelectField>
-                ) : (
-                  <TextField
-                    key={key}
-                    label={fieldLabels[key as keyof typeof emptyForm]}
-                    type={key.includes('Mrp') || key.includes('Percentage') ? 'number' : 'text'}
-                    value={form[key as keyof typeof emptyForm]}
-                    width={width}
-                    maxLength={key === 'hsnCode' ? 8 : undefined}
-                    errorMessage={
-                      error && key === 'hsnCode' && !isValidHsnCode(form.hsnCode)
-                        ? 'HSN Code must be exactly 8 digits'
-                        : error &&
-                            ((key === 'styleNumber' && !form.styleNumber) ||
-                              (key === 'styleName' && !form.styleName))
-                          ? 'Required'
-                          : undefined
-                    }
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, [key]: event.target.value }))
-                    }
-                  />
-                ),
-              )}
-            </FormGrid>
-          </FormSection>
+          <StyleIdentitySection
+            form={form}
+            onFieldChange={(key, value) => setForm((current) => ({ ...current, [key]: value }))}
+            seasonId={seasonId}
+            onSeasonChange={setSeasonId}
+            seasons={seasonsQuery.data ?? []}
+            error={error}
+          />
 
-          <FormSection title="Season">
-            <SelectField
-              label="Season *"
-              value={seasonId || 'NONE'}
-              onValueChange={(value) => setSeasonId(value === 'NONE' ? '' : value)}
-              errorMessage={error && !seasonId ? 'Season is required.' : undefined}
-              width="md"
-            >
-              <SelectItem value="NONE">Select season</SelectItem>
-              {(seasonsQuery.data ?? [])
-                .filter((season) => season.status === 'ACTIVE' || season.id === seasonId)
-                .map((season) => (
-                  <SelectItem key={season.id} value={season.id}>
-                    {season.displayName} — {season.name}
-                    {season.status === 'INACTIVE' ? ' (inactive)' : ''}
-                  </SelectItem>
-                ))}
-            </SelectField>
-          </FormSection>
+          <StyleCommercialSection
+            form={form}
+            onFieldChange={(key, value) => setForm((current) => ({ ...current, [key]: value }))}
+            error={error}
+          />
 
-          <FormSection title="Valid Sizes">
-            <div className="grid gap-2 md:grid-cols-4">
-              {(sizesQuery.data ?? []).map((size) => (
-                <label
-                  key={size.id}
-                  className="flex items-center gap-2 rounded-control border border-border-subtle bg-surface-muted p-2 text-sm text-foreground"
-                >
-                  <Checkbox
-                    checked={selectedSizeIds.includes(size.id)}
-                    onCheckedChange={(checked) =>
-                      setSelectedSizeIds((current) =>
-                        checked === true
-                          ? [...current, size.id]
-                          : current.filter((sizeId) => sizeId !== size.id),
-                      )
-                    }
-                  />
-                  {size.code}
-                </label>
-              ))}
-            </div>
-          </FormSection>
+          <StyleSizesField
+            sizes={sizesQuery.data ?? []}
+            selectedSizeIds={selectedSizeIds}
+            onChange={setSelectedSizeIds}
+          />
 
-          <FormSection
-            title="Factory Mappings"
-            actions={
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() =>
-                  setFactoryMappings((current) => [
-                    ...current,
-                    { factoryId: '', exFactoryPrice: '' },
-                  ])
-                }
-              >
-                Add Factory
-              </Button>
-            }
-          >
-            <Stack gap="sm">
-              {factoryMappings.map((mapping, index) => (
-                <div key={index} className="grid gap-3 md:grid-cols-[1fr_160px_100px]">
-                  <SelectField
-                    aria-label="Factory"
-                    value={mapping.factoryId || 'NONE'}
-                    onValueChange={(value) =>
-                      setFactoryMappings((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, factoryId: value === 'NONE' ? '' : value }
-                            : item,
-                        ),
-                      )
-                    }
-                    width="fill"
-                  >
-                    <SelectItem value="NONE">Select factory</SelectItem>
-                    {availableFactories.map((factory) => (
-                      <SelectItem key={factory.id} value={factory.id}>
-                        {factory.name}
-                      </SelectItem>
-                    ))}
-                  </SelectField>
-                  <TextField
-                    type="number"
-                    aria-label="Ex-factory price"
-                    value={mapping.exFactoryPrice}
-                    onChange={(event) =>
-                      setFactoryMappings((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, exFactoryPrice: event.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() =>
-                      setFactoryMappings((current) =>
-                        current.filter((_, itemIndex) => itemIndex !== index),
-                      )
-                    }
-                  >
-                    Remove
-                  </Button>
-                </div>
-              ))}
-            </Stack>
-          </FormSection>
-
-          {!isEdit ? (
-            <FormSection title="Image">
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  {IMAGE_GUIDANCE}. The image is uploaded after the style is saved.
-                </p>
-                <input
-                  ref={pendingImageInputRef}
-                  type="file"
-                  accept={ACCEPTED_IMAGE_TYPES.join(',')}
-                  className="sr-only"
-                  aria-label="Style image"
-                  onChange={(event) => {
-                    selectPendingImage(event.target.files?.[0] ?? null);
-                    event.target.value = '';
-                  }}
-                />
-                {pendingImageUrl && pendingImage ? (
-                  <div className="flex items-start gap-4">
-                    <div className="flex aspect-square w-40 items-center justify-center overflow-hidden rounded-control border border-border-subtle bg-surface-muted">
-                      <img
-                        src={pendingImageUrl}
-                        alt={`Preview of ${pendingImage.name}`}
-                        className="h-full w-full object-contain"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <p className="text-sm text-foreground">{pendingImage.name}</p>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          density="compact"
-                          onClick={() => pendingImageInputRef.current?.click()}
-                        >
-                          Change
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          density="compact"
-                          onClick={() => selectPendingImage(null)}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => pendingImageInputRef.current?.click()}
-                  >
-                    Choose Image
-                  </Button>
-                )}
-              </div>
-            </FormSection>
-          ) : null}
+          <StyleFactoryMappingsField
+            mappings={factoryMappings}
+            availableFactories={availableFactories}
+            onChange={setFactoryMappings}
+          />
 
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
           {createdWithImageFailure ? (
@@ -557,7 +295,9 @@ export function StyleFormPage() {
 
       {isEdit && id ? (
         <StyleImagesPanel styleId={id} images={styleQuery.data?.images ?? []} canManage />
-      ) : null}
+      ) : (
+        <StyleImagesPanel canManage deferred={{ pendingImage, onSelect: setPendingImage }} />
+      )}
     </div>
   );
 }
