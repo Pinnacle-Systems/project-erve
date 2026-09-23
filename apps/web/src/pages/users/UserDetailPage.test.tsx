@@ -132,3 +132,48 @@ describe('UserDetailPage PDF actions', () => {
     expect(downloadSpy).toHaveBeenCalledWith(expect.any(Blob), 'ERVE-User-Jane-O-Doe.pdf');
   });
 });
+
+describe('UserDetailPage — U3B mobile field and multiple-mappings display', () => {
+  it('shows Mobile when present on the loaded user', async () => {
+    await renderPage(makeUser({ mobile: '9876543210' }));
+    expect(container.textContent).toContain('Mobile');
+    expect(container.textContent).toContain('9876543210');
+  });
+
+  it('falls back to the empty-value convention when mobile is absent', async () => {
+    await renderPage(makeUser({ mobile: null }));
+    const mobileLabel = Array.from(container.querySelectorAll('div')).find(
+      (el) => el.textContent === 'Mobile',
+    );
+    expect(mobileLabel).toBeTruthy();
+    expect(mobileLabel?.nextElementSibling?.textContent).toBe('—');
+  });
+
+  it('shows all Distributor mappings, not just the first, on Detail', async () => {
+    await renderPage(
+      makeUser({
+        roles: ['DISTRIBUTOR'],
+        distributors: [
+          { id: 'd1', code: 'D1', name: 'Acme Distribution' },
+          { id: 'd2', code: 'D2', name: 'Beta Distribution' },
+        ],
+      }),
+    );
+    expect(container.textContent).toContain('Acme Distribution');
+    expect(container.textContent).toContain('Beta Distribution');
+  });
+
+  it('shows all Factory mappings, not just the first, on Detail', async () => {
+    await renderPage(
+      makeUser({
+        roles: ['FACTORY_USER'],
+        factories: [
+          { id: 'f1', code: 'F1', name: 'North Factory' },
+          { id: 'f2', code: 'F2', name: 'South Factory' },
+        ],
+      }),
+    );
+    expect(container.textContent).toContain('North Factory');
+    expect(container.textContent).toContain('South Factory');
+  });
+});

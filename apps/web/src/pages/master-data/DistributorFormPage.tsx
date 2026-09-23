@@ -48,6 +48,23 @@ const fieldLabels: Record<keyof typeof emptyForm, string> = {
   status: 'Status',
 };
 
+// Required at creation; the backend rejects a create/update without these.
+const requiredFieldKeys = new Set<keyof typeof emptyForm>(['code', 'name', 'gstin']);
+
+const identityFieldKeys = ['code', 'name', 'gstin', 'purchaseMode', 'status'] as const;
+const contactFieldKeys = ['contactName', 'contactEmail', 'contactPhone'] as const;
+const addressFieldKeys = [
+  'addressLine1',
+  'addressLine2',
+  'city',
+  'state',
+  'country',
+  'postalCode',
+] as const;
+
+export const PURCHASE_MODE_HELP_TEXT =
+  'Locked after creation. If this distributor needs both Outright and Sale or Return, create separate distributor records.';
+
 function cleanPayload(form: typeof emptyForm) {
   return Object.fromEntries(
     Object.entries(form).map(([key, value]) => [key, value === '' ? null : value]),
@@ -147,6 +164,59 @@ export function DistributorFormPage() {
     );
   }
 
+  function renderField(key: keyof typeof emptyForm) {
+    if (key === 'status') {
+      return (
+        <SelectField
+          key={key}
+          label="Status"
+          value={form.status}
+          onValueChange={(value) => setForm((current) => ({ ...current, status: value as Status }))}
+          width="fill"
+        >
+          <SelectItem value="ACTIVE">Active</SelectItem>
+          <SelectItem value="INACTIVE">Inactive</SelectItem>
+        </SelectField>
+      );
+    }
+    if (key === 'purchaseMode') {
+      return (
+        <SelectField
+          key={key}
+          label="Purchase Mode *"
+          helpText={PURCHASE_MODE_HELP_TEXT}
+          value={form.purchaseMode}
+          disabled={isEdit}
+          onValueChange={(value) =>
+            setForm((current) => ({ ...current, purchaseMode: value as 'OUTRIGHT' | 'SALE_RETURN' }))
+          }
+          width="fill"
+        >
+          <SelectItem value="OUTRIGHT">Outright</SelectItem>
+          <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
+        </SelectField>
+      );
+    }
+    const label = requiredFieldKeys.has(key) ? `${fieldLabels[key]} *` : fieldLabels[key];
+    return (
+      <TextField
+        key={key}
+        label={label}
+        type={key === 'contactEmail' ? 'email' : 'text'}
+        value={form[key]}
+        errorMessage={
+          error &&
+          ((key === 'code' && !form.code) ||
+            (key === 'name' && !form.name) ||
+            (key === 'gstin' && !form.gstin))
+            ? 'Required'
+            : undefined
+        }
+        onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
+      />
+    );
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -167,58 +237,21 @@ export function DistributorFormPage() {
             mutation.mutate();
           }}
         >
-          <FormSection title="Distributor Details">
-            <FormGrid columns={3}>
-              {Object.keys(emptyForm).map((key) =>
-                key === 'status' ? (
-                  <SelectField
-                    key={key}
-                    label="Status"
-                    value={form.status}
-                    onValueChange={(value) => setForm((current) => ({ ...current, status: value as Status }))}
-                    width="fill"
-                  >
-                    <SelectItem value="ACTIVE">Active</SelectItem>
-                    <SelectItem value="INACTIVE">Inactive</SelectItem>
-                  </SelectField>
-                ) : key === 'purchaseMode' ? (
-                  <SelectField
-                    key={key}
-                    label="Purchase Mode *"
-                    value={form.purchaseMode}
-                    disabled={isEdit}
-                    onValueChange={(value) =>
-                      setForm((current) => ({ ...current, purchaseMode: value as 'OUTRIGHT' | 'SALE_RETURN' }))
-                    }
-                    width="fill"
-                  >
-                    <SelectItem value="OUTRIGHT">Outright</SelectItem>
-                    <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
-                  </SelectField>
-                ) : (
-                  <TextField
-                    key={key}
-                    label={fieldLabels[key as keyof typeof emptyForm]}
-                    type={key === 'contactEmail' ? 'email' : 'text'}
-                    value={form[key as keyof typeof emptyForm]}
-                    errorMessage={
-                      error &&
-                      ((key === 'code' && !form.code) ||
-                        (key === 'name' && !form.name) ||
-                        (key === 'gstin' && !form.gstin))
-                        ? 'Required'
-                        : undefined
-                    }
-                    onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
-                  />
-                ),
-              )}
-            </FormGrid>
+          <FormSection title="Identity / Business">
+            <FormGrid columns={3}>{identityFieldKeys.map(renderField)}</FormGrid>
+          </FormSection>
+
+          <FormSection title="Contact">
+            <FormGrid columns={3}>{contactFieldKeys.map(renderField)}</FormGrid>
+          </FormSection>
+
+          <FormSection title="Address">
+            <FormGrid columns={3}>{addressFieldKeys.map(renderField)}</FormGrid>
           </FormSection>
 
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
 
-          <div className="flex justify-end gap-3">
+          <div className="flex justify-end gap-3 border-t border-border-subtle pt-4">
             <Button type="submit" loading={mutation.isPending}>
               {isEdit ? 'Save Changes' : 'Create Distributor'}
             </Button>

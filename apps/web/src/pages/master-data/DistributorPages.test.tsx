@@ -17,6 +17,13 @@ function ok<T>(config: InternalAxiosRequestConfig, data: T): AxiosResponse<T> {
   return { data, status: 200, statusText: 'OK', headers: {}, config };
 }
 
+function fail(config: InternalAxiosRequestConfig, status: number, message: string) {
+  const error = new Error(message) as Error & { response: unknown; isAxiosError: boolean };
+  error.isAxiosError = true;
+  error.response = { status, data: { error: { message } }, statusText: '', headers: {}, config };
+  throw error;
+}
+
 const distributor = {
   id: 'dist-1',
   code: 'DIST-1',
@@ -50,6 +57,10 @@ beforeEach(() => {
     },
   );
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -76,13 +87,17 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-async function renderPage(path: string, adapter: AxiosAdapter) {
+async function renderPage(
+  path: string,
+  adapter: AxiosAdapter,
+  callerRoles: AuthUser['roles'] = ['MERCHANDISER'],
+) {
   const user: AuthUser = {
     id: 'merch-1',
     email: 'merch@test.local',
     mobile: null,
     name: 'Merchandiser',
-    roles: ['MERCHANDISER'],
+    roles: callerRoles,
   };
   setStoredToken('valid-token');
   apiClient.defaults.adapter = vi.fn(async (config) => {
@@ -147,6 +162,17 @@ describe('distributor management pages', () => {
     expect(container.textContent).toContain('27AAAAA0000A1Z5');
   });
 
+  it('shows the purchaseMode immutability explanation on the detail page for a manager', async () => {
+    await renderPage('/master-data/distributors/dist-1', async (config) => {
+      if (config.url === '/distributors/dist-1') {
+        return ok(config, { success: true, data: { ...distributor, purchaseMode: 'OUTRIGHT' } });
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    expect(container.textContent).toContain('Purchase Mode is locked after creation');
+  });
+
   it('debounces the distributor list search so rapid typing issues only the final request', async () => {
     const requestedSearches: Array<string | undefined> = [];
     await renderPage('/master-data/distributors', async (config) => {
@@ -179,5 +205,150 @@ describe('distributor management pages', () => {
 
     expect(requestedSearches.length).toBe(requestsBeforeTyping + 1);
     expect(requestedSearches.at(-1)).toBe('Acme');
+  });
+});
+
+describe('distributor detail — UserMappingPanel (U3B regression coverage)', () => {
+  const eligibleUser = {
+    id: 'du-1',
+    name: 'Dana Distributor',
+    email: 'dana@test.local',
+    status: 'ACTIVE',
+    roles: ['DISTRIBUTOR'],
+    distributors: [],
+  };
+  const mappedUser = {
+    id: 'du-2',
+    name: 'Pat Distributor',
+    email: 'pat@test.local',
+    status: 'ACTIVE',
+    roles: ['DISTRIBUTOR'],
+  };
+
+  it('is not shown to a MERCHANDISER (mapping management is ADMIN-only)', async () => {
+    await renderPage(
+      '/master-data/distributors/dist-1',
+      async (config) => {
+        if (config.url === '/distributors/dist-1') return ok(config, { success: true, data: distributor });
+        throw new Error(`Unexpected request: ${config.url}`);
+      },
+      ['MERCHANDISER'],
+    );
+    expect(container.textContent).not.toContain('Mapped Users');
+  });
+
+  it('assigns an eligible distributor user to the distributor', async () => {
+    const assignCalls: Array<{ url: string; body: unknown }> = [];
+    await renderPage(
+      '/master-data/distributors/dist-1',
+      async (config) => {
+        if (config.url === '/distributors/dist-1') return ok(config, { success: true, data: distributor });
+        if (config.url === '/distributors/dist-1/users') return ok(config, { success: true, data: [] });
+        if (config.url === '/users') return ok(config, { success: true, data: [eligibleUser] });
+        if (config.url === '/users/du-1/distributors' && config.method === 'post') {
+          assignCalls.push({ url: config.url, body: config.data ? JSON.parse(config.data) : undefined });
+          return ok(config, { success: true, data: {} });
+        }
+        throw new Error(`Unexpected request: ${config.url} ${config.method}`);
+      },
+      ['ADMIN'],
+    );
+
+    expect(container.textContent).toContain('Mapped Users');
+    const select = container.querySelector<HTMLButtonElement>('#select-assign-user')!;
+    await act(async () => {
+      select.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (el) => el.textContent?.includes('Dana Distributor'),
+    )!;
+    await act(async () => {
+      option.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const assignButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Assign',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      assignButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(assignCalls).toHaveLength(1);
+    expect(assignCalls[0]).toEqual({ url: '/users/du-1/distributors', body: { distributorId: 'dist-1' } });
+  });
+
+  it('removes a mapped user after confirmation', async () => {
+    let removeCalled = false;
+    await renderPage(
+      '/master-data/distributors/dist-1',
+      async (config) => {
+        if (config.url === '/distributors/dist-1') return ok(config, { success: true, data: distributor });
+        if (config.url === '/distributors/dist-1/users')
+          return ok(config, { success: true, data: [mappedUser] });
+        if (config.url === '/users') return ok(config, { success: true, data: [] });
+        if (config.url === '/users/du-2/distributors/dist-1' && config.method === 'delete') {
+          removeCalled = true;
+          return ok(config, { success: true, data: {} });
+        }
+        throw new Error(`Unexpected request: ${config.url} ${config.method}`);
+      },
+      ['ADMIN'],
+    );
+
+    expect(container.textContent).toContain('Pat Distributor');
+    const removeButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Remove',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    // ConfirmDialog is rendered via a Radix portal into document.body.
+    const confirmButton = Array.from(document.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Remove' && b !== removeButton,
+    ) as HTMLButtonElement;
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(removeCalled).toBe(true);
+  });
+
+  it('shows a mutation error message when assignment fails', async () => {
+    await renderPage(
+      '/master-data/distributors/dist-1',
+      async (config) => {
+        if (config.url === '/distributors/dist-1') return ok(config, { success: true, data: distributor });
+        if (config.url === '/distributors/dist-1/users') return ok(config, { success: true, data: [] });
+        if (config.url === '/users') return ok(config, { success: true, data: [eligibleUser] });
+        if (config.url === '/users/du-1/distributors' && config.method === 'post') {
+          fail(config, 409, 'User is already mapped to a distributor');
+        }
+        throw new Error(`Unexpected request: ${config.url} ${config.method}`);
+      },
+      ['ADMIN'],
+    );
+
+    const select = container.querySelector<HTMLButtonElement>('#select-assign-user')!;
+    await act(async () => {
+      select.click();
+    });
+    const option = Array.from(document.querySelectorAll('[role="option"]')).find((el) =>
+      el.textContent?.includes('Dana Distributor'),
+    ) as HTMLElement;
+    await act(async () => {
+      option.click();
+    });
+    const assignButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Assign',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      assignButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(container.textContent).toContain('User is already mapped to a distributor');
   });
 });

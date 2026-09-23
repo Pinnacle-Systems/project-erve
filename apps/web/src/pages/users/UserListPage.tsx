@@ -17,6 +17,12 @@ import type { AdminUserSummary } from '../master-data/types.js';
 
 type UserStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
 
+function formatMappings(mappings: Array<{ name: string }>): string {
+  if (mappings.length === 0) return '—';
+  const extra = mappings.length - 1;
+  return extra > 0 ? `${mappings[0]!.name} +${extra} more` : mappings[0]!.name;
+}
+
 export function UserListPage() {
   const { user: currentUser } = useAuth();
   const [search, setSearch] = useState('');
@@ -150,12 +156,12 @@ export function UserListPage() {
           {
             key: 'distributor',
             header: 'Distributor',
-            render: (user) => user.distributors[0]?.name ?? '—',
+            render: (user) => formatMappings(user.distributors),
           },
           {
             key: 'factory',
             header: 'Factory',
-            render: (user) => user.factories[0]?.name ?? '—',
+            render: (user) => formatMappings(user.factories),
           },
           {
             key: 'createdAt',

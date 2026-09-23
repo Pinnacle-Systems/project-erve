@@ -159,3 +159,131 @@ describe('UserFormPage — UXAUTH-019 edit-load gating', () => {
     expect(nameInput?.value).toBe('');
   });
 });
+
+describe('UserFormPage — U3B preserved create/edit authorization model', () => {
+  it('EDIT: does not render Roles, Initial Password, or Factory sections', async () => {
+    const user = makeUser({ roles: ['FACTORY_USER'] });
+    mockUserGets({ '/users/user-1': () => Promise.resolve({ data: { data: user } }) });
+    renderUserPage('/master-data/users/user-1/edit', '/master-data/users/:id/edit');
+
+    await waitFor(
+      () => !container.textContent?.includes('Loading user'),
+      'timed out waiting for loading to clear',
+    );
+
+    const sectionTitles = Array.from(container.querySelectorAll('h4')).map((h) => h.textContent);
+    expect(sectionTitles).toEqual(['Profile']);
+    expect(container.textContent).not.toContain('Roles');
+    expect(container.textContent).not.toContain('Initial Password');
+  });
+
+  it('EDIT: PATCH payload is limited to name and email only', async () => {
+    const user = makeUser();
+    let patchBody: unknown;
+    mockUserGets({ '/users/user-1': () => Promise.resolve({ data: { data: user } }) });
+    vi.spyOn(apiClient, 'patch').mockImplementation(async (_url: string, body: unknown) => {
+      patchBody = body;
+      return { data: { data: user } };
+    });
+    renderUserPage('/master-data/users/user-1/edit', '/master-data/users/:id/edit');
+
+    await waitFor(
+      () => !container.textContent?.includes('Loading user'),
+      'timed out waiting for loading to clear',
+    );
+
+    const form = container.querySelector('form') as HTMLFormElement;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+    });
+
+    expect(patchBody).toEqual({ name: 'Jane Admin', email: 'jane@test.local' });
+  });
+
+  it('CREATE: submits name, email, password, and roles on a successful create', async () => {
+    const created = makeUser({ id: 'user-new', name: 'New User', email: 'new-user@test.local' });
+    let postBody: unknown;
+    mockUserGets();
+    vi.spyOn(apiClient, 'post').mockImplementation(async (_url: string, body: unknown) => {
+      postBody = body;
+      return { data: { data: created } };
+    });
+    renderUserPage('/master-data/users/new', '/master-data/users/new');
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    function setInputValue(input: HTMLInputElement, value: string): void {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    act(() => {
+      setInputValue(container.querySelector('#field-name')!, 'New User');
+      setInputValue(container.querySelector('#field-email')!, 'new-user@test.local');
+      setInputValue(container.querySelector('#password-password')!, 'password123');
+      setInputValue(container.querySelector('#password-confirm-password')!, 'password123');
+    });
+    const roleLabel = Array.from(container.querySelectorAll('label')).find((label) =>
+      label.textContent?.includes('MERCHANDISER'),
+    ) as HTMLLabelElement;
+    const roleCheckbox = roleLabel.querySelector('button[role="checkbox"]') as HTMLButtonElement;
+    await act(async () => {
+      roleCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const form = container.querySelector('form') as HTMLFormElement;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+    });
+
+    expect(postBody).toEqual({
+      name: 'New User',
+      email: 'new-user@test.local',
+      password: 'password123',
+      roles: ['MERCHANDISER'],
+      factoryId: undefined,
+    });
+  });
+
+  it('CREATE: selecting FACTORY_USER requires a factory before submit', async () => {
+    mockUserGets({ '/factories': () => Promise.resolve({ data: { data: [] } }) });
+    renderUserPage('/master-data/users/new', '/master-data/users/new');
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    function setInputValue(input: HTMLInputElement, value: string): void {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    act(() => {
+      setInputValue(container.querySelector('#field-name')!, 'Factory Person');
+      setInputValue(container.querySelector('#field-email')!, 'factory-person@test.local');
+      setInputValue(container.querySelector('#password-password')!, 'password123');
+      setInputValue(container.querySelector('#password-confirm-password')!, 'password123');
+    });
+    const roleLabel = Array.from(container.querySelectorAll('label')).find((label) =>
+      label.textContent?.includes('FACTORY_USER'),
+    ) as HTMLLabelElement;
+    const roleCheckbox = roleLabel.querySelector('button[role="checkbox"]') as HTMLButtonElement;
+    await act(async () => {
+      roleCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Factory');
+
+    const form = container.querySelector('form') as HTMLFormElement;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+    });
+
+    expect(container.textContent).toContain('Select a factory for the Factory User role');
+  });
+});

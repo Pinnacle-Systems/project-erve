@@ -135,3 +135,42 @@ describe('UserListPage PDF actions', () => {
     expect(downloadSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('UserListPage — U3B multiple-mappings display', () => {
+  it('shows the first mapping plus a count when a user has more than one', async () => {
+    await renderPageWithUsers([
+      makeUser({
+        distributors: [
+          { id: 'd1', code: 'D1', name: 'Acme Distribution' },
+          { id: 'd2', code: 'D2', name: 'Beta Distribution' },
+        ],
+        factories: [
+          { id: 'f1', code: 'F1', name: 'North Factory' },
+          { id: 'f2', code: 'F2', name: 'South Factory' },
+          { id: 'f3', code: 'F3', name: 'East Factory' },
+        ],
+      }),
+    ]);
+
+    await waitFor(() => !container.textContent?.includes('Loading users'));
+    expect(container.textContent).toContain('Acme Distribution +1 more');
+    expect(container.textContent).toContain('North Factory +2 more');
+  });
+
+  it('shows just the single mapping name with no count when there is only one', async () => {
+    await renderPageWithUsers([
+      makeUser({ distributors: [{ id: 'd1', code: 'D1', name: 'Acme Distribution' }] }),
+    ]);
+
+    await waitFor(() => !container.textContent?.includes('Loading users'));
+    expect(container.textContent).toContain('Acme Distribution');
+    expect(container.textContent).not.toContain('more');
+  });
+
+  it('falls back to the empty-value convention when a user has no mappings', async () => {
+    await renderPageWithUsers([makeUser({ distributors: [], factories: [] })]);
+    await waitFor(() => !container.textContent?.includes('Loading users'));
+    const cells = Array.from(container.querySelectorAll('td')).map((td) => td.textContent);
+    expect(cells.filter((text) => text === '—').length).toBeGreaterThanOrEqual(2);
+  });
+});

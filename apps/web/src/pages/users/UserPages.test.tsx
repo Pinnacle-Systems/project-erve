@@ -50,6 +50,10 @@ beforeEach(() => {
     },
   );
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -381,5 +385,333 @@ describe('user detail page', () => {
     });
 
     expect(document.body.textContent).toContain('Password must be at least 8 characters');
+  });
+
+  it('shows the revised security-impact copy communicating session revocation', async () => {
+    await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
+      if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
+      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    const resetButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Reset Password',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      resetButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.body.textContent).toContain('revokes their existing sessions');
+    const submitButton = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Reset Password' && button.type === 'submit',
+    ) as HTMLButtonElement;
+    // Visually distinguished (not the default/secondary action styling) since
+    // it's a consequential, session-affecting action — same convention as
+    // Deactivate.
+    expect(submitButton.className).toContain('bg-danger');
+  });
+
+  it('successfully resets the password and reports that sessions were revoked', async () => {
+    let resetBody: unknown;
+    await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
+      if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
+      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/users/user-1/reset-password' && config.method === 'post') {
+        resetBody = JSON.parse(config.data as string);
+        return ok(config, { success: true, data: {} });
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    const resetButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Reset Password',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      resetButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const newPasswordInput = document.querySelector('#password-new-password') as HTMLInputElement;
+    const confirmInput = document.querySelector(
+      '#password-confirm-new-password',
+    ) as HTMLInputElement;
+    const form = Array.from(document.querySelectorAll('form')).find((f) =>
+      f.textContent?.includes('Reset Password'),
+    ) as HTMLFormElement;
+
+    await act(async () => {
+      setInputValue(newPasswordInput, 'newpassword123');
+      setInputValue(confirmInput, 'newpassword123');
+    });
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(resetBody).toEqual({ password: 'newpassword123' });
+    expect(document.body.textContent).toContain('sessions were revoked');
+  });
+
+  it('shows a server error from the reset-password mutation', async () => {
+    await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
+      if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
+      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/users/user-1/reset-password' && config.method === 'post') {
+        fail(config, 500, 'Unable to reset password right now');
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    const resetButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Reset Password',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      resetButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const newPasswordInput = document.querySelector('#password-new-password') as HTMLInputElement;
+    const confirmInput = document.querySelector(
+      '#password-confirm-new-password',
+    ) as HTMLInputElement;
+    const form = Array.from(document.querySelectorAll('form')).find((f) =>
+      f.textContent?.includes('Reset Password'),
+    ) as HTMLFormElement;
+
+    await act(async () => {
+      setInputValue(newPasswordInput, 'newpassword123');
+      setInputValue(confirmInput, 'newpassword123');
+    });
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(document.body.textContent).toContain('Unable to reset password right now');
+  });
+
+  it('RolesPanel: renders current roles and assigns a new one', async () => {
+    let assignBody: unknown;
+    await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
+      if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
+      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/users/user-1/roles' && config.method === 'post') {
+        assignBody = JSON.parse(config.data as string);
+        return ok(config, { success: true, data: {} });
+      }
+      throw new Error(`Unexpected request: ${config.url} ${config.method}`);
+    });
+
+    expect(container.textContent).toContain('DISTRIBUTOR');
+
+    const select = container.querySelector<HTMLButtonElement>('#select-assign-role')!;
+    await act(async () => {
+      select.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (el) => el.textContent === 'ADMIN',
+    )!;
+    await act(async () => {
+      option.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const assignButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Assign',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      assignButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(assignBody).toEqual({ roleName: 'ADMIN', factoryId: undefined });
+  });
+
+  it('RolesPanel: removes a role after confirmation', async () => {
+    let removeCalled = false;
+    await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
+      if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
+      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/users/user-1/roles/DISTRIBUTOR' && config.method === 'delete') {
+        removeCalled = true;
+        return ok(config, { success: true, data: {} });
+      }
+      throw new Error(`Unexpected request: ${config.url} ${config.method}`);
+    });
+
+    const removeRoleButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove DISTRIBUTOR role"]',
+    )!;
+    await act(async () => {
+      removeRoleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Remove',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(removeCalled).toBe(true);
+  });
+
+  it('DistributorMappingPanel: assigns and can then remove the mapping', async () => {
+    let assignBody: unknown;
+    let removeCalled = false;
+    let mapped = false;
+    await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
+      if (config.url === '/users/user-1') {
+        return ok(config, {
+          success: true,
+          data: {
+            ...baseUser,
+            distributors: mapped ? [{ id: 'dist-1', code: 'DIST-1', name: 'Acme Distribution' }] : [],
+          },
+        });
+      }
+      if (config.url === '/distributors')
+        return ok(config, {
+          success: true,
+          data: [{ id: 'dist-1', code: 'DIST-1', name: 'Acme Distribution' }],
+        });
+      if (config.url === '/users/user-1/distributors' && config.method === 'post') {
+        assignBody = JSON.parse(config.data as string);
+        mapped = true;
+        return ok(config, { success: true, data: {} });
+      }
+      if (config.url === '/users/user-1/distributors/dist-1' && config.method === 'delete') {
+        removeCalled = true;
+        mapped = false;
+        return ok(config, { success: true, data: {} });
+      }
+      throw new Error(`Unexpected request: ${config.url} ${config.method}`);
+    });
+
+    const select = container.querySelector<HTMLButtonElement>('#select-assign-distributor')!;
+    await act(async () => {
+      select.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (el) => el.textContent?.includes('Acme Distribution'),
+    )!;
+    await act(async () => {
+      option.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    // RolesPanel also renders an "Assign" button above this one — scope the
+    // lookup to the form that owns the distributor select, not just any
+    // button whose text happens to be "Assign".
+    const assignButton = select.closest('form')!.querySelector('button[type="submit"]') as
+      | HTMLButtonElement
+      | null;
+    await act(async () => {
+      assignButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(assignBody).toEqual({ distributorId: 'dist-1' });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    const removeButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Remove',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Remove' && b !== removeButton,
+    ) as HTMLButtonElement;
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(removeCalled).toBe(true);
+  });
+
+  it('FactoryMappingPanel: computes the selected factory directly at render time (Radix hydration-race regression)', async () => {
+    // Regression guard for the Radix Select hydration race documented across
+    // U2/U3A: the selected value must be derived directly from `mapped` at
+    // render time, never copied into state via a post-mount useEffect. This
+    // asserts the *symptom* a useEffect-copy regression would produce — the
+    // trigger showing a stale/blank value immediately after the record with
+    // its mapping loads — rather than the implementation detail itself.
+    await renderPage('/master-data/users/user-2', ['ADMIN'], async (config) => {
+      if (config.url === '/users/user-2')
+        return ok(config, {
+          success: true,
+          data: {
+            ...baseUser,
+            id: 'user-2',
+            roles: ['FACTORY_USER'],
+            factories: [{ id: 'fac-1', code: 'FAC-1', name: 'North Factory' }],
+          },
+        });
+      if (config.url === '/factories')
+        return ok(config, {
+          success: true,
+          data: [
+            { id: 'fac-1', code: 'FAC-1', name: 'North Factory' },
+            { id: 'fac-2', code: 'FAC-2', name: 'South Factory' },
+          ],
+        });
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    let trigger = container.querySelector<HTMLButtonElement>('#select-reassign-factory');
+    for (let i = 0; i < 20 && !trigger?.textContent?.includes('North Factory'); i++) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      });
+      trigger = container.querySelector<HTMLButtonElement>('#select-reassign-factory');
+    }
+    expect(trigger?.textContent).toContain('North Factory');
+  });
+
+  it('FactoryMappingPanel: no existing mapping — selecting a factory assigns it (second hydration-safe scenario)', async () => {
+    let assignBody: unknown;
+    await renderPage('/master-data/users/user-2', ['ADMIN'], async (config) => {
+      if (config.url === '/users/user-2')
+        return ok(config, {
+          success: true,
+          data: { ...baseUser, id: 'user-2', roles: ['FACTORY_USER'], factories: [] },
+        });
+      if (config.url === '/factories')
+        return ok(config, {
+          success: true,
+          data: [{ id: 'fac-1', code: 'FAC-1', name: 'North Factory' }],
+        });
+      if (config.url === '/users/user-2/factories' && config.method === 'post') {
+        assignBody = JSON.parse(config.data as string);
+        return ok(config, { success: true, data: {} });
+      }
+      throw new Error(`Unexpected request: ${config.url} ${config.method}`);
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>('#select-assign-factory')!;
+    expect(trigger.textContent).not.toContain('North Factory');
+
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (el) => el.textContent?.includes('North Factory'),
+    )!;
+    await act(async () => {
+      option.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const assignButton = trigger.closest('form')!.querySelector('button[type="submit"]') as
+      | HTMLButtonElement
+      | null;
+    await act(async () => {
+      assignButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(assignBody).toEqual({ factoryId: 'fac-1' });
   });
 });
