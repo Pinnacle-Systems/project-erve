@@ -8,6 +8,7 @@ import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primit
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
+import { canManageFactories } from '../../auth/permissions.js';
 import { apiClient } from '../../lib/api-client.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
@@ -151,7 +152,7 @@ export function FactoryDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
   const client = useQueryClient();
-  const canEdit = user?.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER') ?? false;
+  const canEdit = canManageFactories(user);
   const isAdmin = user?.roles.includes('ADMIN') ?? false;
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState('');

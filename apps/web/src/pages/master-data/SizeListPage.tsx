@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem, TextField } from '@erve/primitives';
+import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -14,10 +15,16 @@ import type { Size } from './types.js';
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+function errorMessage(error: unknown) {
+  if (isAxiosError(error)) return (error.response?.data?.error?.message as string | undefined) ?? error.message;
+  return error instanceof Error ? error.message : 'Unable to create size';
+}
+
 export function SizeListPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [form, setForm] = useState({ code: '', label: '', sizeType: 'AGE', sortOrder: '' });
+  const [error, setError] = useState('');
   const sizesQuery = useQuery({
     queryKey: ['sizes'],
     queryFn: async () => {
@@ -26,11 +33,21 @@ export function SizeListPage() {
     },
   });
   const createMutation = useMutation({
-    mutationFn: () => apiClient.post('/sizes', { ...form, sortOrder: Number(form.sortOrder) }),
+    mutationFn: () => {
+      setError('');
+      if (!form.code.trim() || !form.label.trim() || !form.sortOrder.trim() || Number.isNaN(Number(form.sortOrder))) {
+        throw new Error('Code, label, and sort order are required');
+      }
+      return apiClient.post('/sizes', { ...form, code: form.code.trim(), label: form.label.trim(), sortOrder: Number(form.sortOrder) });
+    },
     onSuccess: async () => {
+      // Only clear the form once the size is actually created — a failed
+      // create (validation or duplicate-code conflict) must preserve what
+      // the user typed so they can fix and resubmit it.
       setForm({ code: '', label: '', sizeType: 'AGE', sortOrder: '' });
       await queryClient.invalidateQueries({ queryKey: ['sizes'] });
     },
+    onError: (caught) => setError(errorMessage(caught)),
   });
 
   const generateSizeListPdf = useCallback(async () => {
@@ -64,17 +81,19 @@ export function SizeListPage() {
         >
           <FormGrid columns={4}>
             <TextField
-              label="Code"
+              label="Code *"
               value={form.code}
+              errorMessage={error && !form.code.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, code: event.target.value })}
             />
             <TextField
-              label="Label"
+              label="Label *"
               value={form.label}
+              errorMessage={error && !form.label.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, label: event.target.value })}
             />
             <SelectField
-              label="Type"
+              label="Type *"
               value={form.sizeType}
               onValueChange={(value) => setForm({ ...form, sizeType: value })}
               width="fill"
@@ -86,12 +105,14 @@ export function SizeListPage() {
               <SelectItem value="FREE_SIZE">Free Size</SelectItem>
             </SelectField>
             <TextField
-              label="Sort"
+              label="Sort Order *"
               type="number"
               value={form.sortOrder}
+              errorMessage={error && !form.sortOrder.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, sortOrder: event.target.value })}
             />
           </FormGrid>
+          {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
           <div className="flex justify-end">
             <Button type="submit" loading={createMutation.isPending}>
               Add

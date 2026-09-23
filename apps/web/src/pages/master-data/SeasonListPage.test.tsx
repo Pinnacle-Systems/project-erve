@@ -98,6 +98,7 @@ interface AdapterOverrides {
   financialYears?: AxiosAdapter;
   current?: AxiosAdapter;
   createSeason?: AxiosAdapter;
+  updateStatus?: AxiosAdapter;
 }
 
 function baseAdapter(overrides: AdapterOverrides = {}): AxiosAdapter {
@@ -117,6 +118,11 @@ function baseAdapter(overrides: AdapterOverrides = {}): AxiosAdapter {
       return overrides.createSeason
         ? overrides.createSeason(config)
         : ok(config, { success: true, data: { id: 'season-1' } });
+    }
+    if (config.url?.match(/^\/seasons\/.+\/status$/) && config.method === 'patch') {
+      return overrides.updateStatus
+        ? overrides.updateStatus(config)
+        : ok(config, { success: true, data: {} });
     }
     throw new Error(`Unexpected request: ${config.method} ${config.url}`);
   }) as AxiosAdapter;
@@ -260,6 +266,55 @@ describe('SeasonListPage Financial Year integration', () => {
   });
 });
 
+describe('SeasonListPage Activate/Deactivate confirmation', () => {
+  it('does not call the status API until the confirmation dialog is confirmed', async () => {
+    seasons = [{ id: 's1', code: 'SS26', name: 'Summer 26', financialYear: currentFinancialYear, displayName: 'SS26', status: 'ACTIVE' }];
+    let statusCalls = 0;
+    await renderPage(baseAdapter({ updateStatus: async (config) => { statusCalls += 1; return ok(config, { success: true, data: {} }); } }));
+    await vi.waitFor(() => expect(container.textContent).toContain('SS26'));
+
+    const deactivateButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Deactivate',
+    );
+    await act(async () => deactivateButton!.click());
+
+    expect(statusCalls).toBe(0);
+    const dialogTitle = Array.from(document.body.querySelectorAll('h2, [role="heading"]')).find(
+      (el) => el.textContent === 'Deactivate SS26?',
+    );
+    expect(dialogTitle).toBeDefined();
+
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Deactivate' && button.closest('[role="dialog"]'),
+    );
+    await act(async () => confirmButton!.click());
+    await flush();
+
+    expect(statusCalls).toBe(1);
+  });
+
+  it('cancelling the dialog does not call the status API', async () => {
+    seasons = [{ id: 's1', code: 'SS26', name: 'Summer 26', financialYear: currentFinancialYear, displayName: 'SS26', status: 'INACTIVE' }];
+    let statusCalls = 0;
+    await renderPage(baseAdapter({ updateStatus: async (config) => { statusCalls += 1; return ok(config, { success: true, data: {} }); } }));
+    await vi.waitFor(() => expect(container.textContent).toContain('SS26'));
+
+    const activateButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Activate',
+    );
+    await act(async () => activateButton!.click());
+
+    const cancelButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Cancel' && button.closest('[role="dialog"]'),
+    );
+    await act(async () => cancelButton!.click());
+    await flush();
+
+    expect(statusCalls).toBe(0);
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
 describe('SeasonListPage PDF actions', () => {
   it('shows Download PDF and Print actions near the Financial Year filter', async () => {
     await renderPage(baseAdapter());
@@ -317,5 +372,146 @@ describe('SeasonListPage PDF actions', () => {
 
     expect(printSpy).toHaveBeenCalledTimes(1);
     expect(downloadSpy).not.toHaveBeenCalled();
+  });
+});
+
+// U3A audit: the Add-Season form's default Financial Year comes from
+// useCurrentFinancialYearQuery while the Select's options come from the
+// independently-timed useFinancialYearsQuery. These tests deliberately
+// control resolution order to prove whether the Radix Select's controlled
+// `value` prop (which changes from '' to a real id once currentFinancialYearQuery
+// resolves, after the Select has already mounted) gets clobbered back to
+// empty — the same shape of bug documented for Style Season in
+// erve-radix-select-hydration-race-general-pattern.
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+describe('SeasonListPage Financial Year hydration race (regression)', () => {
+  it('Case A: financial-year options resolve before current FY — final Select value is correct', async () => {
+    const optionsGate = deferred<void>();
+    const currentGate = deferred<void>();
+    let createBody: Record<string, unknown> | undefined;
+
+    await renderPage(
+      baseAdapter({
+        financialYears: async (config) => {
+          await optionsGate.promise;
+          return ok(config, { success: true, data: financialYears });
+        },
+        current: async (config) => {
+          await currentGate.promise;
+          return ok(config, { success: true, data: currentFinancialYear });
+        },
+        createSeason: async (config) => {
+          createBody = JSON.parse(config.data as string) as Record<string, unknown>;
+          return ok(config, {
+            success: true,
+            data: { id: 'season-1', code: 'SS26', name: 'Summer 26', financialYear: currentFinancialYear, displayName: 'SS26', status: 'ACTIVE' },
+          });
+        },
+      }),
+    );
+
+    optionsGate.resolve();
+    await flush();
+    currentGate.resolve();
+    await flush();
+    await flush();
+
+    expect(trigger('select-financial-year').textContent).toContain('26-27');
+
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-code')!, 'ss26');
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-name')!, 'Summer 26');
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add Season',
+    );
+    await act(async () => submit!.click());
+    await flush();
+
+    expect(createBody).toMatchObject({ financialYearId: currentFinancialYear.id });
+  });
+
+  it('Case B: current FY resolves before financial-year options — final Select value is correct', async () => {
+    const optionsGate = deferred<void>();
+    const currentGate = deferred<void>();
+    let createBody: Record<string, unknown> | undefined;
+
+    await renderPage(
+      baseAdapter({
+        financialYears: async (config) => {
+          await optionsGate.promise;
+          return ok(config, { success: true, data: financialYears });
+        },
+        current: async (config) => {
+          await currentGate.promise;
+          return ok(config, { success: true, data: currentFinancialYear });
+        },
+        createSeason: async (config) => {
+          createBody = JSON.parse(config.data as string) as Record<string, unknown>;
+          return ok(config, {
+            success: true,
+            data: { id: 'season-1', code: 'SS26', name: 'Summer 26', financialYear: currentFinancialYear, displayName: 'SS26', status: 'ACTIVE' },
+          });
+        },
+      }),
+    );
+
+    currentGate.resolve();
+    await flush();
+    optionsGate.resolve();
+    await flush();
+    await flush();
+
+    expect(trigger('select-financial-year').textContent).toContain('26-27');
+
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-code')!, 'ss26');
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-name')!, 'Summer 26');
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add Season',
+    );
+    await act(async () => submit!.click());
+    await flush();
+
+    expect(createBody).toMatchObject({ financialYearId: currentFinancialYear.id });
+  });
+
+  it('Case C: opening Edit before financial-year options resolve keeps the existing Season FY selected', async () => {
+    seasons = [
+      {
+        id: 'season-old',
+        code: 'AW25',
+        name: 'Autumn 25',
+        financialYear: financialYears[0],
+        displayName: 'AW25',
+        status: 'ACTIVE',
+      },
+    ];
+    const optionsGate = deferred<void>();
+
+    await renderPage(
+      baseAdapter({
+        financialYears: async (config) => {
+          await optionsGate.promise;
+          return ok(config, { success: true, data: financialYears });
+        },
+      }),
+    );
+
+    const editButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Edit',
+    );
+    await act(async () => editButton!.click());
+    await flush();
+
+    optionsGate.resolve();
+    await flush();
+    await flush();
+
+    expect(trigger('select-financial-year').textContent).toContain('25-26');
   });
 });

@@ -22,6 +22,9 @@ vi.mock('../pages/ForbiddenPage.js', () => ({ ForbiddenPage: () => <div>Forbidde
 vi.mock('../pages/master-data/FactoryListPage.js', () => ({
   FactoryListPage: () => <div>FactoryListPage</div>,
 }));
+vi.mock('../pages/master-data/FactoryFormPage.js', () => ({
+  FactoryFormPage: () => <div>FactoryFormPage</div>,
+}));
 vi.mock('../pages/master-data/DistributorListPage.js', () => ({
   DistributorListPage: () => <div>DistributorListPage</div>,
 }));
@@ -148,6 +151,18 @@ describe('AppRoutes Permissions', () => {
     }
   });
 
+  it.each([
+    ['ADMIN', true],
+    ['MERCHANDISER', true],
+    ['SENIOR_MANAGEMENT', false],
+    ['FACTORY_USER', false],
+    ['QA_USER', false],
+    ['DISTRIBUTOR', false],
+  ] as const)('allows /master-data/factories/new for %s = %s', async (role, allowed) => {
+    await renderRoutes(role, '/master-data/factories/new');
+    expect(getPageContent()).toContain(allowed ? 'FactoryFormPage' : 'ForbiddenPage');
+  });
+
   describe('FACTORY_USER', () => {
     it('is denied access to the Factory master — factory info comes from assigned Job Orders', async () => {
       await renderRoutes('FACTORY_USER', '/master-data/factories');
@@ -252,6 +267,13 @@ describe('AppRoutes Permissions', () => {
       await renderRoutes('ADMIN', '/master-data/factories');
       const content = getPageContent();
       expect(content).toContain('FactoryListPage');
+    });
+
+    it('is allowed access to /master-data/factories/new', async () => {
+      await renderRoutes('ADMIN', '/master-data/factories/new');
+      const content = getPageContent();
+      expect(content).toContain('FactoryFormPage');
+      expect(content).not.toContain('ForbiddenPage');
     });
 
     it('is allowed access to /purchase-orders', async () => {
