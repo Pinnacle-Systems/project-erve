@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { ConfirmDialog } from '@erve/app-components';
@@ -67,21 +67,65 @@ function StyleImageThumbnail({ image }: { image: StyleImage }) {
   );
 }
 
-export function StyleImagesPanel({
-  styleId,
-  images,
-  canManage,
-}: {
-  styleId: string;
-  images: StyleImage[];
-  canManage: boolean;
-}) {
+export interface StyleImagesDeferredProps {
+  /** The single image staged before the style exists yet. */
+  pendingImage: File | null;
+  /** Called with the newly picked (or cleared, via null) file. Client-side validation has
+   * already run by the time this fires. */
+  onSelect: (file: File | null) => void;
+}
+
+// Attached mode (edit/detail): the style already exists, images come from the server and every
+// action is a live API call. Deferred mode (create): the style doesn't exist yet, so at most one
+// image is staged locally here and handed back to the caller via onSelect — the real upload
+// happens only after the parent's create mutation resolves with a real style id (see
+// StyleFormPage's mutation, which owns the honest "created but image upload failed" partial
+// failure handling; this component never uploads on its own in deferred mode).
+export type StyleImagesPanelProps =
+  | { canManage: boolean; styleId: string; images: StyleImage[]; deferred?: undefined }
+  | { canManage: boolean; styleId?: undefined; images?: undefined; deferred: StyleImagesDeferredProps };
+
+export function StyleImagesPanel(props: StyleImagesPanelProps) {
+  const { canManage, deferred } = props;
+  const styleId = props.styleId ?? '';
+  const images = props.images ?? [];
+
   const queryClient = useQueryClient();
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const replaceTargetRef = useRef<string | null>(null);
+  const deferredInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
   const [removeTarget, setRemoveTarget] = useState<StyleImage | null>(null);
+  const pendingImage = deferred?.pendingImage ?? null;
+  // Derived, not stored state: recomputed whenever the selected File's identity changes. The
+  // effect below only revokes the previous URL on the next change/unmount — it never calls
+  // setState, so this can't cascade renders.
+  const deferredPreviewUrl = useMemo(
+    () => (pendingImage ? URL.createObjectURL(pendingImage) : null),
+    [pendingImage],
+  );
+  useEffect(() => {
+    return () => {
+      if (deferredPreviewUrl) URL.revokeObjectURL(deferredPreviewUrl);
+    };
+  }, [deferredPreviewUrl]);
+
+  const selectDeferredImage = (file: File | null) => {
+    if (!deferred) return;
+    setError('');
+    if (!file) {
+      deferred.onSelect(null);
+      return;
+    }
+    const validationError = validateImageFile(file);
+    if (validationError) {
+      deferred.onSelect(null);
+      setError(validationError);
+      return;
+    }
+    deferred.onSelect(file);
+  };
 
   const invalidate = async () => {
     await Promise.all([
@@ -152,6 +196,92 @@ export function StyleImagesPanel({
       uploadMutation.mutate(file);
     }
   };
+
+  if (deferred) {
+    return (
+      <Panel
+        title="Images"
+        actions={
+          canManage && !pendingImage ? (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => deferredInputRef.current?.click()}
+            >
+              Choose Image
+            </Button>
+          ) : undefined
+        }
+      >
+        <div className="space-y-3">
+          {canManage ? (
+            <>
+              <p className="text-xs text-muted-foreground">
+                {IMAGE_GUIDANCE}. The image is uploaded after the style is saved.
+              </p>
+              <input
+                ref={deferredInputRef}
+                type="file"
+                accept={ACCEPTED_IMAGE_TYPES.join(',')}
+                className="sr-only"
+                aria-label="Style image"
+                onChange={(event) => {
+                  selectDeferredImage(event.target.files?.[0] ?? null);
+                  event.target.value = '';
+                }}
+              />
+            </>
+          ) : null}
+
+          {pendingImage && deferredPreviewUrl ? (
+            <div className="flex items-start gap-4">
+              <div className="flex aspect-square w-40 items-center justify-center overflow-hidden rounded-control border border-border-subtle bg-surface-muted">
+                <img
+                  src={deferredPreviewUrl}
+                  alt={`Preview of ${pendingImage.name}`}
+                  className="h-full w-full object-contain"
+                />
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm text-foreground">{pendingImage.name}</p>
+                {canManage ? (
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      density="compact"
+                      onClick={() => deferredInputRef.current?.click()}
+                    >
+                      Change
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      density="compact"
+                      onClick={() => selectDeferredImage(null)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <EmptyState
+              title="No image"
+              description={
+                canManage
+                  ? 'Choose a JPEG, PNG or WebP image for this style.'
+                  : 'No image has been chosen for this style.'
+              }
+            />
+          )}
+
+          {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
+        </div>
+      </Panel>
+    );
+  }
 
   return (
     <Panel
