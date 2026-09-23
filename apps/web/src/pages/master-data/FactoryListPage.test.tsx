@@ -3,9 +3,11 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { AuthUser, Role } from '@erve/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '../../lib/api-client.js';
 import { AuthProvider } from '../../auth/AuthContext.js';
+import { setStoredToken } from '../../auth/token-storage.js';
 import * as generateModule from '../../lib/pdf/generate.js';
 import * as downloadModule from '../../lib/pdf/download.js';
 import * as printModule from '../../lib/pdf/print.js';
@@ -131,5 +133,66 @@ describe('FactoryListPage PDF actions', () => {
 
     expect(printSpy).toHaveBeenCalledTimes(1);
     expect(downloadSpy).not.toHaveBeenCalled();
+  });
+});
+
+async function renderPageAsRole(role: Role, factories: Factory[]) {
+  const user: AuthUser = { id: 'user-1', email: 'user@test.local', mobile: null, name: 'Test User', roles: [role] };
+  setStoredToken('valid-token');
+  vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    if (url === '/auth/me') return { data: { data: user } };
+    if (url === '/factories') return { data: { data: factories } };
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  act(() => {
+    root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <AuthProvider>
+            <FactoryListPage />
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  });
+  await act(async () => {
+    await flushMicrotasks();
+  });
+  await act(async () => {
+    await flushMicrotasks();
+  });
+}
+
+describe('FactoryListPage Add Factory navigation', () => {
+  afterEach(() => {
+    sessionStorage.clear();
+  });
+
+  it('no longer renders the old partial inline Add Factory form', async () => {
+    await renderPageAsRole('ADMIN', []);
+    // The old surface was a 4-field inline <form>/<Panel title="Add Factory">
+    // on this page itself. It's replaced by a page-level action that
+    // navigates to the routed Create page (asserted separately below) — so
+    // the text "Add Factory" legitimately remains, just as a link, not a form.
+    expect(container.querySelector('form')).toBeNull();
+    expect(container.querySelector('input')).toBeNull();
+  });
+
+  it('shows a page-level Add Factory action linking to /master-data/factories/new for a manage role', async () => {
+    await renderPageAsRole('ADMIN', []);
+    const addLink = Array.from(container.querySelectorAll('a')).find(
+      (a) => a.textContent === 'Add Factory',
+    );
+    expect(addLink).toBeDefined();
+    expect(addLink?.getAttribute('href')).toBe('/master-data/factories/new');
+  });
+
+  it('hides the Add Factory action for a non-manage role', async () => {
+    await renderPageAsRole('FACTORY_USER', []);
+    const addLink = Array.from(container.querySelectorAll('a')).find(
+      (a) => a.textContent === 'Add Factory',
+    );
+    expect(addLink).toBeUndefined();
   });
 });

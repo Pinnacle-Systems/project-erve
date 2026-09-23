@@ -31,6 +31,29 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// jsdom does not implement CSS.escape, and the ids this app derives from
+// labels can contain "*" (e.g. "Code *" -> "field-code-*") — escape manually.
+function cssEscapeId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
+}
+
+function findInput(label: string): HTMLInputElement {
+  const labelEl = Array.from(container.querySelectorAll('label')).find(
+    (el) => el.textContent === label,
+  );
+  if (!labelEl) throw new Error(`Label "${label}" not found`);
+  const forId = labelEl.getAttribute('for');
+  const input = forId ? container.querySelector<HTMLInputElement>(`#${cssEscapeId(forId)}`) : null;
+  if (!input) throw new Error(`Input for label "${label}" not found`);
+  return input;
+}
+
 // Clicking a PDF action triggers a dynamic import() of the PDF generation code (kept out of the
 // eager bundle), which takes an unpredictable number of extra ticks beyond a single
 // flushMicrotasks() to settle — poll instead (see StyleListPage.test.tsx).
@@ -132,5 +155,91 @@ describe('SizeListPage PDF actions', () => {
 
     expect(printSpy).toHaveBeenCalledTimes(1);
     expect(downloadSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('SizeListPage inline Create', () => {
+  it('successfully creates a Size and clears the form', async () => {
+    await renderPageWithSizes([]);
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: { id: 'size-2' } } });
+
+    setInputValue(findInput('Code *'), 'AGE_4');
+    setInputValue(findInput('Label *'), '4 years');
+    setInputValue(findInput('Sort Order *'), '4');
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add',
+    );
+    await act(async () => submit!.click());
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(postSpy).toHaveBeenCalledWith(
+      '/sizes',
+      expect.objectContaining({ code: 'AGE_4', label: '4 years', sortOrder: 4 }),
+    );
+    expect(findInput('Code *').value).toBe('');
+    expect(findInput('Label *').value).toBe('');
+    expect(findInput('Sort Order *').value).toBe('');
+  });
+
+  it('a duplicate/error create surfaces a visible error instead of failing silently', async () => {
+    await renderPageWithSizes([]);
+    vi.spyOn(apiClient, 'post').mockRejectedValue(
+      Object.assign(new Error('A size with this code already exists'), {
+        isAxiosError: true,
+        response: { data: { error: { message: 'A size with this code already exists' } } },
+      }),
+    );
+
+    setInputValue(findInput('Code *'), 'AGE_3');
+    setInputValue(findInput('Label *'), '3 years');
+    setInputValue(findInput('Sort Order *'), '3');
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add',
+    );
+    await act(async () => submit!.click());
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(container.textContent).toContain('A size with this code already exists');
+  });
+
+  it('a failed create preserves the entered input instead of clearing the form', async () => {
+    await renderPageWithSizes([]);
+    vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('boom'));
+
+    setInputValue(findInput('Code *'), 'AGE_5');
+    setInputValue(findInput('Label *'), '5 years');
+    setInputValue(findInput('Sort Order *'), '5');
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add',
+    );
+    await act(async () => submit!.click());
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(findInput('Code *').value).toBe('AGE_5');
+    expect(findInput('Label *').value).toBe('5 years');
+    expect(findInput('Sort Order *').value).toBe('5');
+  });
+
+  it('shows a required-field error and does not call the API when submitted blank', async () => {
+    await renderPageWithSizes([]);
+    const postSpy = vi.spyOn(apiClient, 'post');
+
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add',
+    );
+    await act(async () => submit!.click());
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Code, label, and sort order are required');
+    expect(findInput('Code *').getAttribute('aria-invalid')).toBe('true');
   });
 });

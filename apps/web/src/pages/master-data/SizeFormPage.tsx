@@ -24,6 +24,18 @@ export function SizeFormPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ code: '', label: '', sizeType: 'AGE', sortOrder: '0' });
   const [error, setError] = useState('');
+  // True once the form has been hydrated from the loaded record and is safe to reveal. Gating on
+  // this (see the render-time check below), not just query.isLoading, is load-bearing: isLoading
+  // flips to false the moment query.data arrives, but this effect (which actually copies it into
+  // `form`) only runs after that render commits — so a naive `if (query.isLoading)` guard still
+  // lets the Type SelectField mount once, still showing the initial 'AGE' default, before this
+  // effect corrects it a render later. That later correction is a controlled-value change on an
+  // already-mounted Select, which reproduces the same Radix hidden-bubble-select clobber
+  // documented in erve-radix-select-hydration-race-general-pattern (confirmed here via a
+  // regression test: the Type trigger got stuck on the placeholder instead of showing the loaded
+  // sizeType). Waiting for `hydrated` means the Select's first-ever render already carries the
+  // correct value, so no such post-mount transition ever happens.
+  const [hydrated, setHydrated] = useState(false);
   const query = useQuery({
     queryKey: ['size', id],
     queryFn: async () => (await apiClient.get<ApiSuccessResponse<Size>>(`/sizes/${id}`)).data.data,
@@ -38,11 +50,15 @@ export function SizeFormPage() {
         sizeType: query.data.sizeType,
         sortOrder: String(query.data.sortOrder),
       });
+      setHydrated(true);
     }
   }, [query.data]);
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
+      if (!form.code.trim() || !form.label.trim() || !form.sortOrder.trim() || Number.isNaN(Number(form.sortOrder))) {
+        throw new Error('Code, label, and sort order are required');
+      }
       return (
         await apiClient.patch<ApiSuccessResponse<Size>>(`/sizes/${id}`, {
           ...form,
@@ -61,9 +77,14 @@ export function SizeFormPage() {
     },
     onError: (caught) => setError(message(caught)),
   });
-  if (query.isLoading) return <LoadingState label="Loading size" />;
+  // isError must be checked before the hydrated gate below — hydrated only ever becomes true once
+  // query.data arrives, so a fetch failure would otherwise leave the page stuck on LoadingState
+  // forever with no escape.
   if (query.isError)
     return <ErrorState title="Unable to load size" description={query.error.message} />;
+  if (query.isLoading || !hydrated) return <LoadingState label="Loading size" />;
+  const locked =
+    (query.data?.usage?.purchaseOrderLines ?? 0) > 0 || (query.data?.usage?.jobOrderLines ?? 0) > 0;
   return (
     <div className="space-y-5">
       <PageHeader
@@ -85,18 +106,22 @@ export function SizeFormPage() {
         >
           <FormGrid columns={4}>
             <TextField
-              label="Code"
+              label="Code *"
               value={form.code}
+              disabled={locked}
+              errorMessage={error && !form.code.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, code: event.target.value })}
             />
             <TextField
-              label="Label"
+              label="Label *"
               value={form.label}
+              errorMessage={error && !form.label.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, label: event.target.value })}
             />
             <SelectField
-              label="Type"
+              label="Type *"
               value={form.sizeType}
+              disabled={locked}
               onValueChange={(value) => setForm({ ...form, sizeType: value })}
               width="fill"
             >
@@ -107,16 +132,17 @@ export function SizeFormPage() {
               ))}
             </SelectField>
             <TextField
-              label="Sort order"
+              label="Sort Order *"
               type="number"
               value={form.sortOrder}
+              errorMessage={error && !form.sortOrder.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, sortOrder: event.target.value })}
             />
           </FormGrid>
-          {(query.data?.usage?.purchaseOrderLines ?? 0) > 0 ||
-          (query.data?.usage?.jobOrderLines ?? 0) > 0 ? (
+          {locked ? (
             <ValidationMessage tone="info">
-              Code and type are locked by the API once this size has transactional history.
+              Code and type are locked because this size has transactional history — they cannot
+              be edited. Label and sort order remain editable.
             </ValidationMessage>
           ) : null}
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}

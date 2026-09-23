@@ -5,12 +5,12 @@ import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
-import { FormGrid, Panel } from '@erve/layout';
+import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { Factory } from './types.js';
 
-const empty = {
+const emptyForm = {
   code: '',
   name: '',
   contactName: '',
@@ -23,35 +23,61 @@ const empty = {
   country: '',
   postalCode: '',
 };
-const labels: Record<keyof typeof empty, string> = {
-  code: 'Code',
-  name: 'Name',
-  contactName: 'Contact name',
-  contactEmail: 'Contact email',
-  contactPhone: 'Contact phone',
-  addressLine1: 'Address line 1',
-  addressLine2: 'Address line 2',
+
+type FactoryFormFields = typeof emptyForm;
+
+const identityFields: Array<keyof FactoryFormFields> = ['code', 'name'];
+const contactFields: Array<keyof FactoryFormFields> = ['contactName', 'contactEmail', 'contactPhone'];
+const addressFields: Array<keyof FactoryFormFields> = [
+  'addressLine1',
+  'addressLine2',
+  'city',
+  'state',
+  'country',
+  'postalCode',
+];
+
+const labels: Record<keyof FactoryFormFields, string> = {
+  code: 'Code *',
+  name: 'Name *',
+  contactName: 'Contact Name',
+  contactEmail: 'Contact Email',
+  contactPhone: 'Contact Phone',
+  addressLine1: 'Address Line 1',
+  addressLine2: 'Address Line 2',
   city: 'City',
   state: 'State',
   country: 'Country',
-  postalCode: 'Postal code',
+  postalCode: 'Postal Code',
 };
-function message(error: unknown) {
+
+function message(error: unknown): string {
   if (isAxiosError(error))
     return (error.response?.data?.error?.message as string | undefined) ?? error.message;
   return error instanceof Error ? error.message : 'Unable to save factory';
 }
+
+function cleanPayload(form: FactoryFormFields) {
+  return Object.fromEntries(
+    Object.entries(form).map(([key, value]) => [key, value.trim() || null]),
+  ) as Record<string, string | null>;
+}
+
 export function FactoryFormPage() {
   const { id } = useParams();
+  const isEdit = Boolean(id);
   const navigate = useNavigate();
   const client = useQueryClient();
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState<FactoryFormFields>(emptyForm);
   const [error, setError] = useState('');
+
   const query = useQuery({
     queryKey: ['factory', id],
+    enabled: isEdit,
     queryFn: async () =>
       (await apiClient.get<ApiSuccessResponse<Factory>>(`/factories/${id}`)).data.data,
   });
+
   useEffect(() => {
     if (!query.data) return;
     const factory = query.data;
@@ -59,41 +85,61 @@ export function FactoryFormPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm(
       Object.fromEntries(
-        Object.keys(empty).map((key) => [key, factory[key as keyof typeof empty] ?? '']),
-      ) as typeof empty,
+        Object.keys(emptyForm).map((key) => [key, factory[key as keyof FactoryFormFields] ?? '']),
+      ) as FactoryFormFields,
     );
   }, [query.data]);
+
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      const payload = Object.fromEntries(
-        Object.entries(form).map(([key, value]) => [key, value.trim() || null]),
-      );
-      return (
-        await apiClient.patch<ApiSuccessResponse<Factory>>(`/factories/${id}`, {
-          ...payload,
-          code: form.code.trim(),
-          name: form.name.trim(),
-        })
-      ).data.data;
+      if (!form.code.trim() || !form.name.trim()) {
+        throw new Error('Code and name are required');
+      }
+      const payload = {
+        ...cleanPayload(form),
+        code: form.code.trim(),
+        name: form.name.trim(),
+      };
+      const response = isEdit
+        ? await apiClient.patch<ApiSuccessResponse<Factory>>(`/factories/${id}`, payload)
+        : await apiClient.post<ApiSuccessResponse<Factory>>('/factories', payload);
+      return response.data.data;
     },
     onSuccess: async (factory) => {
       await Promise.all([
-        client.invalidateQueries({ queryKey: ['factory', id] }),
+        client.invalidateQueries({ queryKey: ['factory', factory.id] }),
         client.invalidateQueries({ queryKey: ['factories'] }),
       ]);
       navigate(`/master-data/factories/${factory.id}`);
     },
     onError: (caught) => setError(message(caught)),
   });
-  if (query.isLoading) return <LoadingState label="Loading factory" />;
-  if (query.isError)
+
+  if (isEdit && query.isLoading) return <LoadingState label="Loading factory" />;
+  if (isEdit && query.isError)
     return <ErrorState title="Unable to load factory" description={query.error.message} />;
+
+  const renderField = (key: keyof FactoryFormFields) => (
+    <TextField
+      key={key}
+      label={labels[key]}
+      type={key === 'contactEmail' ? 'email' : 'text'}
+      value={form[key]}
+      errorMessage={
+        error && ((key === 'code' && !form.code.trim()) || (key === 'name' && !form.name.trim()))
+          ? 'Required'
+          : undefined
+      }
+      onChange={(event) => setForm({ ...form, [key]: event.target.value })}
+    />
+  );
+
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Edit Factory"
-        subtitle="Update factory master details"
+        title={isEdit ? 'Edit Factory' : 'Create Factory'}
+        subtitle={isEdit ? 'Update factory master details' : 'Create a factory master record'}
         secondaryActions={
           <Button variant="secondary" onClick={() => navigate(-1)}>
             Cancel
@@ -102,27 +148,25 @@ export function FactoryFormPage() {
       />
       <Panel>
         <form
-          className="space-y-5"
+          className="space-y-6"
           onSubmit={(event) => {
             event.preventDefault();
             mutation.mutate();
           }}
         >
-          <FormGrid columns={3}>
-            {Object.keys(empty).map((key) => (
-              <TextField
-                key={key}
-                label={labels[key as keyof typeof empty]}
-                type={key === 'contactEmail' ? 'email' : 'text'}
-                value={form[key as keyof typeof empty]}
-                onChange={(event) => setForm({ ...form, [key]: event.target.value })}
-              />
-            ))}
-          </FormGrid>
+          <FormSection title="Identity">
+            <FormGrid columns={2}>{identityFields.map(renderField)}</FormGrid>
+          </FormSection>
+          <FormSection title="Contact">
+            <FormGrid columns={3}>{contactFields.map(renderField)}</FormGrid>
+          </FormSection>
+          <FormSection title="Address">
+            <FormGrid columns={3}>{addressFields.map(renderField)}</FormGrid>
+          </FormSection>
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
-          <div className="flex justify-end">
+          <div className="flex justify-end border-t border-border-subtle pt-4">
             <Button type="submit" loading={mutation.isPending}>
-              Save Changes
+              {isEdit ? 'Save Changes' : 'Create Factory'}
             </Button>
           </div>
         </form>

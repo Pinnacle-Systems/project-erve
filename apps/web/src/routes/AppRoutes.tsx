@@ -207,6 +207,14 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="factories/new"
+          element={
+            <RoleRoute allowed={FACTORY_MANAGE_ROLES}>
+              <FactoryFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
           path="factories/:id"
           element={
             <RoleRoute allowed={FACTORY_VIEW_ROLES}>
