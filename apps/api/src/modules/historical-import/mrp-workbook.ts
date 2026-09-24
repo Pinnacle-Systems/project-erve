@@ -197,3 +197,35 @@ export function parseMrpWorkbookRows(sheetRows: unknown[][]): MrpWorkbookRow[] {
     .filter(({ row }) => row.some((cell) => cell !== null && cell !== undefined && cell !== ''))
     .map(({ row, excelRow }) => parseMrpWorkbookRow(row, excelRow));
 }
+
+export interface NormalizedMrpCategory {
+  categoryRaw: string | null;
+  categoryNormalized: string | null;
+  normalizationApplied: boolean;
+}
+
+/**
+ * H2B.2 Stage A finding: the workbook's `Description` column is built by
+ * literal concatenation (`IP's + Category + last-3-digits(Base code)` for
+ * every AW25 row, verified exact on 42/42) — so a trailing "-" on `Category`
+ * is the separator character the concatenation left behind, not business
+ * data. This strips exactly ONE trailing separator hyphen (plus adjacent
+ * whitespace) and nothing else: internal hyphens ("Co-Ord Set") are
+ * untouched, and the rule is expressed as "one trailing separator hyphen",
+ * never "if season is AW25" — the artifact happens to be 100% AW25/0% SS26
+ * in the audited data, but the rule must describe the data shape, not guess
+ * at a season split that could stop holding for a future workbook.
+ */
+export function normalizeMrpCategory(raw: string | null | undefined): NormalizedMrpCategory {
+  if (raw === null || raw === undefined) {
+    return { categoryRaw: null, categoryNormalized: null, normalizationApplied: false };
+  }
+  const trimmed = raw.trim();
+  const withoutTrailingSeparator = trimmed.replace(/-\s*$/, '').trim();
+  const categoryNormalized = withoutTrailingSeparator.length > 0 ? withoutTrailingSeparator : null;
+  return {
+    categoryRaw: raw,
+    categoryNormalized,
+    normalizationApplied: categoryNormalized !== trimmed,
+  };
+}

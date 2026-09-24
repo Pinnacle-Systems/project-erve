@@ -161,8 +161,15 @@ function extractSeasonWithGluedFallback(lines: TextLine[]): ParsedField<string> 
   return unknownField();
 }
 
-function extractHsnCode(lines: TextLine[]): ParsedField<string> {
-  const pattern = /\*?\s*HS\s+(\d{6,8})/i;
+// H2B.2 Stage A finding: the source PDFs use at least three "*HS" line
+// formats interchangeably — "*HS 61091000" (space), "*HS61034200" (no
+// space), "*HS - 61046200" (dash). The leading "*" and the spacing around
+// "HS" and around an optional dash separator are never load-bearing; only
+// the trailing 6-8 digit HSN code is extracted. Verified against all 91
+// source PDFs: recovers the 37 previously-null cases with zero conflicts
+// against the 54 already-parsed values.
+export function extractHsnCode(lines: TextLine[]): ParsedField<string> {
+  const pattern = /\*?\s*HS\s*-?\s*(\d{6,8})/i;
   for (const line of lines) {
     const match = pattern.exec(line.text);
     if (match) return sourceField(match[1]!);

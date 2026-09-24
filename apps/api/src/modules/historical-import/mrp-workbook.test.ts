@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EXPECTED_MRP_WORKBOOK_HEADER,
   MrpWorkbookError,
+  normalizeMrpCategory,
   normalizeMrpSeason,
   parseMrpWorkbookRow,
   parseMrpWorkbookRows,
@@ -172,5 +173,42 @@ describe('parseMrpWorkbookRows', () => {
     const badHeader = [...HEADER];
     badHeader[0] = 'Collection';
     expect(() => parseMrpWorkbookRows([badHeader, row()])).toThrow(MrpWorkbookError);
+  });
+});
+
+// H2B.2 Stage A: proven by exact reconstruction — for AW25, workbook
+// Description = IP's + Category + last-3-digits(Base code) on 42/42 rows, so
+// Category's trailing "-" is the concatenation separator left behind, not
+// business data. Only ONE trailing separator hyphen is ever removed; internal
+// hyphens ("Co-Ord Set") are untouched, and SS26 rows (already clean, no
+// trailing "-" on any of the 50) must pass through unchanged.
+describe('normalizeMrpCategory', () => {
+  it.each([
+    ['Sweat Shirt-', 'Sweat Shirt', true],
+    ['Sweat Shirt -', 'Sweat Shirt', true],
+    ['Girls Shorts- ', 'Girls Shorts', true],
+    ['T-shirt HS-', 'T-shirt HS', true],
+    ["Hoody's Pant-", "Hoody's Pant", true],
+    ['Co-Ord Set', 'Co-Ord Set', false],
+    ['Girls Co-Ord Set', 'Girls Co-Ord Set', false],
+    ['Boys Shorts  ', 'Boys Shorts', false], // already-clean SS26-shaped value: whitespace trim only, no hyphen artifact
+    ['Girls Regular T-Shirt', 'Girls Regular T-Shirt', false],
+  ])('normalizes %s -> %s (applied=%s)', (raw, expectedNormalized, expectedApplied) => {
+    const result = normalizeMrpCategory(raw);
+    expect(result.categoryRaw).toBe(raw);
+    expect(result.categoryNormalized).toBe(expectedNormalized);
+    expect(result.normalizationApplied).toBe(expectedApplied);
+  });
+
+  it('returns null for a null/undefined raw category', () => {
+    expect(normalizeMrpCategory(null)).toEqual({ categoryRaw: null, categoryNormalized: null, normalizationApplied: false });
+    expect(normalizeMrpCategory(undefined)).toEqual({ categoryRaw: null, categoryNormalized: null, normalizationApplied: false });
+  });
+
+  it('is idempotent — normalizing an already-normalized value changes nothing further', () => {
+    const first = normalizeMrpCategory('Sweat Shirt-');
+    const second = normalizeMrpCategory(first.categoryNormalized);
+    expect(second.categoryNormalized).toBe('Sweat Shirt');
+    expect(second.normalizationApplied).toBe(false);
   });
 });

@@ -20,6 +20,10 @@ interface FixtureOptions {
   workbookMrp: number;
   workbookExFactory: number;
   historicalSupplierRate: string;
+  /** Defaults to a trailing-separator-hyphen value ("Test Category-") so the default fixture exercises normalizeMrpCategory end-to-end, matching the real AW25 workbook shape. */
+  workbookCategory?: string;
+  /** Defaults to the "*HS 61091000" (space) format already handled before H2B.2; override to exercise the newly-recovered "*HSxxxxx"/"*HS - xxxxx" formats. */
+  stagedHsnCode?: string | null;
 }
 
 async function writeFixtures(dir: string, opts: FixtureOptions) {
@@ -32,7 +36,7 @@ async function writeFixtures(dir: string, opts: FixtureOptions) {
       '#VALUE!',
       'Test Description',
       'Test IP',
-      'Test Category',
+      opts.workbookCategory ?? 'Test Category-',
       'Test Licensor',
       opts.factoryName,
       Number(baseCodeDigits),
@@ -72,7 +76,7 @@ async function writeFixtures(dir: string, opts: FixtureOptions) {
           disclaimerText: '*Source clause', jobOrderDisclaimer: 'Sample instruction\n\n*Source clause',
           reviewReasons: [], boundaries: {},
         },
-        hsnCode: { value: '61091000', provenance: 'SOURCE_DOCUMENT' },
+        hsnCode: { value: opts.stagedHsnCode === undefined ? '61091000' : opts.stagedHsnCode, provenance: opts.stagedHsnCode === null ? 'UNKNOWN' : 'SOURCE_DOCUMENT' },
         orderDate: { value: '2026-01-01', provenance: 'SOURCE_DOCUMENT' },
         shipmentDate: { value: '2026-02-01', provenance: 'SOURCE_DOCUMENT' },
         unitRate: { value: opts.historicalSupplierRate, provenance: 'SOURCE_DOCUMENT' },
@@ -152,6 +156,11 @@ describe('historical-import-style-prep', () => {
     expect(style.lmixNumber).toBe('LMIX99999999');
     expect(style.seasonId).toBe(season.id);
     expect(Number(style.finalMrp)).toBe(999);
+    // H2B.2 Stage A: CREATE now also populates categoryDescription (workbook
+    // Category with the trailing separator hyphen stripped) and hsnCode.
+    expect(style.categoryDescription).toBe('Test Category');
+    expect(style.hsnCode).toBe('61091000');
+    expect(plan1[0]).toMatchObject({ categoryRaw: 'Test Category-', categoryNormalized: 'Test Category', categoryNormalizationApplied: true });
 
     const mapping = await prisma.styleFactoryMapping.findFirstOrThrow({ where: { styleId: style.id, factoryId: factory.id } });
     expect(Number(mapping.exFactoryPrice)).toBe(200);
@@ -226,5 +235,134 @@ describe('historical-import-style-prep', () => {
     expect(result.stylesCreated).toHaveLength(0);
     expect(result.stylesBlocked).toHaveLength(1);
     expect(await prisma.style.count()).toBe(0);
+  });
+
+  // H2B.2 Stage A: the 91 real Dev Styles were created BEFORE this change and
+  // therefore have categoryDescription/hsnCode null on 91/91 and 37/91
+  // respectively. These tests simulate that pre-existing state directly
+  // (rather than re-deriving it through two full CREATE runs) and verify the
+  // canonical VERIFY_EXISTING path backfills the same way applyStyles would
+  // have for a truly pre-existing row.
+  describe('field reconciliation on an already-existing Style (Dev backfill)', () => {
+    async function setUpExistingStyle(overrides?: Partial<FixtureOptions>) {
+      await createTestSeason({ code: 'SS26' });
+      await createTestFactory({ name: 'Test Factory' });
+      await prisma.size.create({ data: { id: createId(), code: '3', label: '3', sizeType: 'AGE', sortOrder: 3 } });
+      const actor = await createActor();
+      const options = await writeFixtures(tmpDir, {
+        season: 'SS26',
+        lmix: 'LMIX99999999',
+        factoryName: 'Test Factory',
+        legacyRef: 'EI99001',
+        sizeCode: '3',
+        workbookMrp: 999,
+        workbookExFactory: 200,
+        historicalSupplierRate: '200',
+        ...overrides,
+      });
+      const plan = await planStyles(options);
+      const result = await applyStyles(actor, plan);
+      const styleId = result.stylesCreated[0]!;
+      return { actor, options, styleId };
+    }
+
+    it('backfills a currently-null categoryDescription/hsnCode without touching anything else', async () => {
+      const { actor, options, styleId } = await setUpExistingStyle();
+      // Simulate the pre-H2B.2 state: created without these two fields.
+      await prisma.style.update({ where: { id: styleId }, data: { categoryDescription: null, hsnCode: null } });
+
+      const plan = await planStyles(options);
+      expect(plan[0]).toMatchObject({ action: 'VERIFY_EXISTING', existingStyleId: styleId });
+      const result = await applyStyles(actor, plan);
+
+      expect(result.fieldReconciliation).toHaveLength(1);
+      expect(result.fieldReconciliation[0]).toMatchObject({
+        categoryOutcome: 'SET',
+        proposedCategoryDescription: 'Test Category',
+        hsnOutcome: 'SET',
+        parsedHsnCode: '61091000',
+        hsnChanged: true,
+      });
+
+      const style = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(style.categoryDescription).toBe('Test Category');
+      expect(style.hsnCode).toBe('61091000');
+    });
+
+    it('never overwrites an existing non-null value that disagrees with the proposed one', async () => {
+      const { actor, options, styleId } = await setUpExistingStyle();
+      await prisma.style.update({ where: { id: styleId }, data: { categoryDescription: 'Some Other Category', hsnCode: '99999999' } });
+
+      const plan = await planStyles(options);
+      const result = await applyStyles(actor, plan);
+
+      expect(result.fieldReconciliation[0]).toMatchObject({
+        categoryOutcome: 'REVIEW_REQUIRED_CONFLICT',
+        hsnOutcome: 'REVIEW_REQUIRED_CONFLICT',
+        hsnChanged: false,
+      });
+      const style = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(style.categoryDescription).toBe('Some Other Category');
+      expect(style.hsnCode).toBe('99999999');
+    });
+
+    it('is idempotent — a second reconciliation run makes no further writes once already backfilled', async () => {
+      const { actor, options, styleId } = await setUpExistingStyle();
+      await prisma.style.update({ where: { id: styleId }, data: { categoryDescription: null, hsnCode: null } });
+
+      const plan1 = await planStyles(options);
+      const result1 = await applyStyles(actor, plan1);
+      expect(result1.fieldReconciliation[0]!.categoryOutcome).toBe('SET');
+      expect(result1.fieldReconciliation[0]!.hsnOutcome).toBe('SET');
+
+      const plan2 = await planStyles(options);
+      const result2 = await applyStyles(actor, plan2);
+      expect(result2.fieldReconciliation[0]!.categoryOutcome).toBe('ALREADY_SET');
+      expect(result2.fieldReconciliation[0]!.hsnOutcome).toBe('ALREADY_SET');
+
+      const style = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(style.categoryDescription).toBe('Test Category');
+      expect(style.hsnCode).toBe('61091000');
+    });
+
+    it('recovers a null hsnCode using an hsnRefreshBySourceChecksum override, bypassing the stale staging cache', async () => {
+      // staging.json carries no usable hsnCode for this identity (the
+      // pre-H2B.2 parser's real-world equivalent of the 37 null cases) —
+      // only the fresh override supplies the corrected value. Keyed by
+      // sourceChecksumSha256 ('a'.repeat(64) in the fixture staging record),
+      // never by legacyReferenceNumber — see hsn-refresh.ts for why a
+      // printed-legacyReference key is unsafe (EI26031/EI26032 collision).
+      const { actor, options, styleId } = await setUpExistingStyle({ stagedHsnCode: null });
+      await prisma.style.update({ where: { id: styleId }, data: { categoryDescription: null, hsnCode: null } });
+
+      const withOverride: StylePrepOptions = {
+        ...options,
+        hsnRefreshBySourceChecksum: new Map([['a'.repeat(64), '61046200']]),
+      };
+      const plan = await planStyles(withOverride);
+      expect(plan[0]!.hsnCode).toBe('61046200');
+      const result = await applyStyles(actor, plan);
+      expect(result.fieldReconciliation[0]).toMatchObject({ hsnOutcome: 'SET', parsedHsnCode: '61046200' });
+
+      const style = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(style.hsnCode).toBe('61046200');
+    });
+
+    it('does not alter Style.description, styleName, or any other field while backfilling', async () => {
+      const { actor, options, styleId } = await setUpExistingStyle();
+      const before = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      await prisma.style.update({ where: { id: styleId }, data: { categoryDescription: null, hsnCode: null } });
+
+      const plan = await planStyles(options);
+      await applyStyles(actor, plan);
+
+      const after = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(after.description).toBe(before.description);
+      expect(after.styleName).toBe(before.styleName);
+      expect(after.finalMrp.toString()).toBe(before.finalMrp.toString());
+      expect(after.colour).toBe(before.colour);
+      expect(after.ipName).toBe(before.ipName);
+      expect(after.licensor).toBe(before.licensor);
+    });
   });
 });

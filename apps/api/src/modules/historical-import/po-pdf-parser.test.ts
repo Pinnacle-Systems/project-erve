@@ -6,7 +6,12 @@
 // simplified stand-in for it.
 import { describe, expect, it } from 'vitest';
 import { buildSyntheticPdf, type SyntheticTextRun } from './__fixtures__/synthetic-pdf.js';
-import { parsePurchaseOrderBuffer } from './po-pdf-parser.js';
+import { parsePurchaseOrderBuffer, extractHsnCode } from './po-pdf-parser.js';
+import type { TextLine } from './pdf-text-layout.js';
+
+function line(text: string): TextLine {
+  return { y: 0, items: [], text };
+}
 
 /** Small enough that pdfjs never merges two visually-close-but-distinct synthetic runs into one text item (it merges adjacent glyphs with near-zero gaps, and Helvetica-8pt's computed widths overrun this fixture's column spacing at the default size) — real per-document font metrics differ from base14 Helvetica, which is why this only needs tuning here, not in the parser itself. */
 const FIXTURE_FONT_SIZE = 5;
@@ -328,5 +333,33 @@ describe('parsePurchaseOrderBuffer — AW25/SS26 template', () => {
     expect(result.sizeQuantities.map((s) => s.sizeCode)).toEqual(['S', 'M', 'L']);
     expect(result.sizeQuantities.map((s) => s.quantity)).toEqual([200, 300, 400]);
     expect(result.tableTotalQuantity.value).toBe(900);
+  });
+});
+
+// H2B.2 Stage A: the source PDFs use "*HS" in at least three formats
+// interchangeably (space, no space, dash-separated) — confirmed against all
+// 91 real source PDFs. Only 54/91 were extracted before this fix; the fix
+// must recover the other 37 with zero conflicts against the 54 already-OK.
+describe('extractHsnCode', () => {
+  it.each([
+    ['*HS 61091000', '61091000'],
+    ['*HS61034200', '61034200'],
+    ['*HS - 61046200', '61046200'],
+    ['HS 61091000', '61091000'], // optional leading "*"
+    ['HS61034200', '61034200'], // optional leading "*", no space
+    ['*HS   61061000', '61061000'], // extra internal whitespace
+    ['*HS 61061000 Girls/ Hoody', '61061000'], // trailing descriptive text ignored
+  ])('extracts %s -> %s', (text, expected) => {
+    expect(extractHsnCode([line(text)]).value).toBe(expected);
+  });
+
+  it('returns unknown when no HS line is present', () => {
+    expect(extractHsnCode([line('*ST1: Girls Long Sleeve Hoody - Barbie')]).value).toBeNull();
+    expect(extractHsnCode([line('*ST1: Girls Long Sleeve Hoody - Barbie')]).provenance).toBe('UNKNOWN');
+  });
+
+  it('finds the HS line regardless of position among other lines', () => {
+    const result = extractHsnCode([line('*ST1: Some style'), line('*HS - 61046200'), line('*For detailed Trims')]);
+    expect(result.value).toBe('61046200');
   });
 });
