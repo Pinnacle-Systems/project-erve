@@ -27,7 +27,7 @@ import type { ExtractedImageCandidate } from '../modules/historical-import/style
 
 export class HistoricalImportDryRunError extends Error {}
 
-function stagingToParsedRecord(staging: SourceStagingRecord): ParsedPurchaseOrderRecord {
+export function stagingToParsedRecord(staging: SourceStagingRecord): ParsedPurchaseOrderRecord {
   return {
     sourceFileName: staging.sourceFileName,
     sourceRelativePath: staging.sourceRelativePath,
@@ -193,15 +193,20 @@ export async function runHistoricalImportDryRun(options: RunHistoricalImportDryR
             'APPROVED by the project owner. A historical-import-specific size-mapping.json mechanism (analogous to factory-mapping.json, no fuzzy matching, portable Size.code business key) now maps all 12 source codes ("3".."14") to their current Dev Size.code ("AGE_3".."AGE_14"). Every row was verified against the CURRENT Dev Size.label set at generation time, not assumed — 12/12 approved.',
           evidenceFile: 'h2a/size-mapping.json',
         },
-      ],
-      pendingUserApprovals: [
         {
-          topic: 'Style.finalMrp has no source equivalent',
-          recommendation:
-            'STILL BLOCKED — explicitly NOT approved. Every one of the 91 unique Season+LMIX Style identities is blocked on this required field. Source PDFs give a supplier ex-factory rate, not a consumer MRP, and no documented conversion convention exists. No default/placeholder/markup/nulled value has been used. A clean, business-ready request (one row per Style identity) is in h2a/mrp-blocker-report.md — the business will supply real MRP data separately.',
-          evidenceFile: 'h2a/mrp-blocker-report.md',
+          topic: 'Style.finalMrp has no source equivalent (H2A continuation — MRP/Ex-Factory Reconciliation)',
+          resolution:
+            'RESOLVED. The business supplied "MRP & Ex factory cost.xlsx" (91 required Season+LMIX identities, 92 workbook rows, 1 extra row outside current scope). The workbook has no explicit LMIX column; its numeric "Base code" column resolves to the already-approved historical LMIX either directly (all 49 SS26 rows) or via a verified, deterministic digit-transposition at positions 4-5 (all 42 AW25 rows) — never fuzzy, never by description/colour/rate alone (see mrp-workbook.ts/mrp-reconciliation.ts). All 91 identities RESOLVED with 0 REVIEW_REQUIRED/BLOCKED and 100% ex-factory-cost agreement against the historical PO supplier rate (91/91), strongly corroborating the match. 91 Styles, 546 StyleSizes, and 91 Style<->Factory mappings were created in Dev via the same controlled, idempotent, dev-target-guarded write path as historical-import-master-prep.ts (see historical-import-style-prep.ts) — never raw SQL, never a historical Job Order/ImportBatch/HistoricalDocument row.',
+          evidenceFile: 'h2a/mrp-reconciliation.json',
+        },
+        {
+          topic: 'Ex-factory cost reconciliation (H2A plan §7)',
+          resolution:
+            'RESOLVED. All 91 Style<->Factory mappings were NEW_MAPPING_RATE (no current Dev mapping existed yet) with an unambiguous business workbook rate; a rerun after creation confirms all 91 now MATCH. Historical PO supplier rate is left unaltered as documentary evidence — never overwritten by the new workbook.',
+          evidenceFile: 'h2a/ex-factory-reconciliation.json',
         },
       ],
+      pendingUserApprovals: [],
     },
   });
 
