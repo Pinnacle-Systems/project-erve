@@ -2,7 +2,13 @@ import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
-import { FilterBar, getQaStatusPresentation, PageHeader, StatusBadge } from '@erve/app-components';
+import {
+  FilterBar,
+  formatPreparedQuantity,
+  getQaStatusPresentation,
+  PageHeader,
+  StatusBadge,
+} from '@erve/app-components';
 import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -18,10 +24,9 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import type { JobOrder, JobOrderFactoryOption, JobOrderStatus } from './types.js';
 import {
-  CONFIRMATION_LABELS,
   JOB_ORDER_STATUS_LABELS,
-  confirmationTone,
   formatDateTime,
+  getJobOrderConfirmationPresentation,
 } from './job-order-ui.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { useSearchParams } from 'react-router-dom';
@@ -292,12 +297,7 @@ export function JobOrderListPage() {
           {
             key: 'factoryConfirmationStatus',
             header: 'Confirmation',
-            render: (jobOrder) => (
-              <StatusBadge
-                label={CONFIRMATION_LABELS[jobOrder.factoryConfirmationStatus]}
-                tone={confirmationTone(jobOrder.factoryConfirmationStatus)}
-              />
-            ),
+            render: (jobOrder) => <StatusBadge {...getJobOrderConfirmationPresentation(jobOrder)} />,
           },
           {
             key: 'orderedQuantityTotal',
@@ -309,7 +309,7 @@ export function JobOrderListPage() {
             key: 'preparedQuantityTotal',
             header: 'Prepared',
             align: 'right',
-            render: (jobOrder) => jobOrder.preparedQuantityTotal.toLocaleString(),
+            render: (jobOrder) => formatPreparedQuantity(jobOrder, jobOrder.preparedQuantityTotal),
           },
           {
             key: 'createdAt',

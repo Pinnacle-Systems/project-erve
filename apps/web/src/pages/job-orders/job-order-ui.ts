@@ -1,4 +1,5 @@
 import type { QaReworkTaskView, QualityRuntimeStatus } from '@erve/types';
+import { NOT_RECORDED_LABEL, isHistoricalImportJobOrder, type HistoricalAwareJobOrder } from '@erve/app-components';
 import type { FactoryConfirmationStatus, JobOrderStatus, ProductionStageStatus } from './types.js';
 
 export const JOB_ORDER_STATUS_LABELS: Record<JobOrderStatus, string> = {
@@ -73,6 +74,21 @@ export function confirmationTone(status: FactoryConfirmationStatus) {
   if (status === 'CONFIRMED') return 'success';
   if (status === 'REJECTED') return 'cancelled';
   return 'pending';
+}
+
+/**
+ * Historical imports have no factory-confirmation event, so they show
+ * "Not recorded" rather than a raw PENDING that would read as outstanding
+ * work. Confirmation is never inferred from PRODUCTION_COMPLETE.
+ */
+export function getJobOrderConfirmationPresentation(
+  jobOrder: HistoricalAwareJobOrder & { factoryConfirmationStatus: FactoryConfirmationStatus },
+): { label: string; tone: ReturnType<typeof confirmationTone> | 'default' } {
+  if (isHistoricalImportJobOrder(jobOrder)) return { label: NOT_RECORDED_LABEL, tone: 'default' };
+  return {
+    label: CONFIRMATION_LABELS[jobOrder.factoryConfirmationStatus],
+    tone: confirmationTone(jobOrder.factoryConfirmationStatus),
+  };
 }
 
 export function stageTone(status: ProductionStageStatus) {

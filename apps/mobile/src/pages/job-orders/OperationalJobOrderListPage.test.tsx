@@ -89,4 +89,40 @@ describe('mobile operational Job Order list', () => {
     expect(container.textContent).not.toContain('Inline Inspection Pending');
     expect(container.textContent).not.toContain('CONFIRMED BY FACTORY');
   });
+
+  it('shows Prepared as not recorded for a historical import, and keeps a live recorded 0', async () => {
+    const base = {
+      factory: { name: 'Green Way' },
+      sourceOrderSheetCount: 0,
+      orderedQuantityTotal: 1008,
+      preparedQuantityTotal: 0,
+      operationalState: { primaryDisplayState: { code: 'COMPLETED', label: 'Production Complete', tone: 'success', activityId: null, activityName: null } },
+    };
+    const historical = {
+      ...base,
+      id: 'hist',
+      jobOrderNumber: 'EIJOH/26-27/0109',
+      status: 'PRODUCTION_COMPLETE',
+      historicalImport: { legacyReferenceNumber: 'EI25018', historicalBusinessDate: '2025-08-15', importedAt: '2026-09-24T00:00:00Z' },
+    } as unknown as JobOrderDetail;
+    const live = { ...base, id: 'live', jobOrderNumber: 'EIJO/26-27/0001', status: 'IN_PRODUCTION', historicalImport: null } as unknown as JobOrderDetail;
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { success: true, data: { items: [historical, live], pageInfo: { limit: 50, hasMore: false, nextCursor: null } } },
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <OperationalJobOrderListPage />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    await vi.waitFor(() => expect(container.querySelectorAll('a')).toHaveLength(2));
+    const [histCard, liveCard] = Array.from(container.querySelectorAll('a')).map((a) => a.textContent ?? '');
+    expect(histCard).toContain('Prepared: Not recorded · Ordered 1008');
+    expect(histCard).not.toContain('Prepared 0');
+    expect(liveCard).toContain('Prepared 0 of 1008');
+  });
 });

@@ -1,7 +1,13 @@
 import { useMemo, useState, type RefObject } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse, AuthUser } from '@erve/types';
-import { ConfirmDialog, StatusBadge } from '@erve/app-components';
+import {
+  ConfirmDialog,
+  NOT_RECORDED_LABEL,
+  StatusBadge,
+  formatPreparedQuantity,
+  formatPreparedVariance,
+} from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
@@ -147,8 +153,11 @@ export function JobOrderProductionTab({
   const hasProductionStarted = ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION', 'PRODUCTION_COMPLETE'].includes(
     jobOrder.status,
   );
+  // A historical import is read-only evidence: prepared quantity is never
+  // entered for it (the API refuses it too), whatever its status.
   const isPreparedQuantitiesUnlocked =
-    jobOrder.preparedQuantityEntry?.available ?? jobOrder.status === 'PRODUCTION_COMPLETE';
+    !jobOrder.historicalImport &&
+    (jobOrder.preparedQuantityEntry?.available ?? jobOrder.status === 'PRODUCTION_COMPLETE');
   const canUpdatePrepared = canMutateProduction && isPreparedQuantitiesUnlocked;
   const canEditProductionPlan = jobOrder.status === 'DRAFT' && canManageJobOrders;
   // Mirrors the server's eligibility rule in markJobOrderProductionComplete
@@ -439,7 +448,11 @@ export function JobOrderProductionTab({
             )
           }
         >
-          {canUpdatePrepared ? (
+          {jobOrder.historicalImport ? (
+            <div className="p-4 bg-muted/30 rounded-md border text-sm text-muted-foreground">
+              {NOT_RECORDED_LABEL} — this is a historical imported Job Order; no prepared quantity was recorded.
+            </div>
+          ) : canUpdatePrepared ? (
             <DataTable
               columns={[
                 { key: 'style', header: 'Style', accessor: 'style' },
@@ -598,13 +611,13 @@ export function JobOrderProductionTab({
                 key: 'preparedQuantity',
                 header: 'Prepared',
                 align: 'right',
-                render: (size) => size.preparedQuantity.toLocaleString(),
+                render: (size) => formatPreparedQuantity(jobOrder, size.preparedQuantity),
               },
               {
                 key: 'varianceQuantity',
                 header: 'Variance',
                 align: 'right',
-                render: (size) => (size.preparedQuantity - size.orderedQuantity).toLocaleString(),
+                render: (size) => formatPreparedVariance(jobOrder, size.preparedQuantity, size.orderedQuantity),
               },
             ]}
             data={flatSizes}
