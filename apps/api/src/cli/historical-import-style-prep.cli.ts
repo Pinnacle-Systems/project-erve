@@ -17,6 +17,12 @@
 // staging.json cache — this is what recovers the 37 previously-null HSN
 // codes on an already-populated Dev. --report-dir, when given, writes the
 // categoryDescription/hsnCode field-reconciliation audit (CSV + JSON).
+//
+// H2B.2 follow-up: Style.hsnDescription is populated from the source *HS
+// line's trailing label under the approved Policy C (hsn-description.ts) —
+// null for code-only and review-required sources, never overwriting an
+// existing value (a differing existing value aborts the run before any
+// write). --report-dir additionally writes hsn-description-backfill.csv/.json.
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { prisma } from '../db/prisma.js';
@@ -148,6 +154,7 @@ async function main(): Promise<void> {
   const reportDir = flagValue(args, '--report-dir');
   if (reportDir) {
     await writeFieldReconciliationReport(reportDir, result);
+    await writeHsnDescriptionReport(reportDir, result);
   }
 }
 
@@ -175,6 +182,63 @@ async function printFieldReconciliationSummary(result: ApplyStylesResult): Promi
   console.log(`  existing-value changes = 0 (an ALREADY_SET/REVIEW_REQUIRED_CONFLICT value is never overwritten)`);
   console.log(`  conflicts = ${hsnReview}`);
   console.log(`  REVIEW_REQUIRED = ${hsnReview}`);
+
+  const descriptionRows = rows.map((r) => ({ r, result: hsnDescriptionResult(r) }));
+  const count = (result: string) => descriptionRows.filter((d) => d.result === result).length;
+  console.log('HSN description (Style.hsnDescription, source HS label — not official tariff text):');
+  console.log(`  set this run (BACKFILL) = ${count('BACKFILL')}`);
+  console.log(`  already set to the same source label = ${count('ALREADY_SET')}`);
+  console.log(`  code-only source, left null (NO_SOURCE_DESCRIPTION) = ${count('NO_SOURCE_DESCRIPTION')}`);
+  console.log(`  REVIEW_REQUIRED, left null = ${count('REVIEW_REQUIRED')}`);
+  for (const { r } of descriptionRows.filter((d) => d.result === 'REVIEW_REQUIRED')) {
+    const source = r.hsnDescriptionSource;
+    console.log(`    ${r.legacyReference} ${r.styleNumber}: ${source?.reasons.join(' ') ?? 'no source record'}${source?.hsnCodeSourceSuspect ? ' [hsnCode source-suspect — not changed]' : ''}`);
+  }
+}
+
+type HsnDescriptionResult = 'BACKFILL' | 'ALREADY_SET' | 'NO_SOURCE_DESCRIPTION' | 'REVIEW_REQUIRED';
+
+function hsnDescriptionResult(r: StyleFieldReconciliationDetail): HsnDescriptionResult {
+  const classification = r.hsnDescriptionSource?.classification;
+  if (classification === 'HSN_WITH_SOURCE_DESCRIPTION') {
+    if (r.hsnDescriptionOutcome === 'SET') return 'BACKFILL';
+    if (r.hsnDescriptionOutcome === 'ALREADY_SET') return 'ALREADY_SET';
+    return 'REVIEW_REQUIRED';
+  }
+  if (classification === 'HSN_CODE_ONLY') return 'NO_SOURCE_DESCRIPTION';
+  return 'REVIEW_REQUIRED';
+}
+
+async function writeHsnDescriptionReport(reportDir: string, result: ApplyStylesResult): Promise<void> {
+  const records = result.fieldReconciliation.map((r) => {
+    const source = r.hsnDescriptionSource;
+    return {
+      season: r.season,
+      effectiveLegacyReference: r.legacyReference,
+      lmix: r.lmix,
+      styleId: r.styleId,
+      styleNumber: r.styleNumber,
+      sourcePdf: r.sourceFileName,
+      sourceChecksumSha256: r.sourceChecksumSha256,
+      rawHsLine: source?.rawHsLine ?? null,
+      parsedHsnCode: source?.parsedHsnCode ?? null,
+      candidateHsnDescription: source?.candidateHsnDescription ?? null,
+      currentHsnCode: r.previousHsnCode,
+      currentHsnDescription: r.previousHsnDescription,
+      proposedHsnDescription: r.proposedHsnDescription,
+      classification: source?.classification ?? 'NO_HS_LINE',
+      semanticCheck: source?.semanticCheck ?? 'NOT_APPLICABLE',
+      hsnCodeSourceSuspect: source?.hsnCodeSourceSuspect ?? false,
+      result: hsnDescriptionResult(r),
+      reason: source?.reasons.join(' ') ?? 'No effective source record.',
+    };
+  });
+  await writeFile(join(reportDir, 'hsn-description-backfill.json'), JSON.stringify(records, null, 2));
+  const keys = Object.keys(records[0] ?? {}) as Array<keyof (typeof records)[number]>;
+  const csv = (value: unknown) => '"' + String(value ?? '').replace(/"/g, '""') + '"';
+  const csvBody = [keys.join(','), ...records.map((r) => keys.map((k) => csv(r[k])).join(','))].join('\r\n');
+  await writeFile(join(reportDir, 'hsn-description-backfill.csv'), csvBody);
+  console.log(`HSN-description audit written: ${join(reportDir, 'hsn-description-backfill.json')} / .csv (${records.length} records)`);
 }
 
 async function writeFieldReconciliationReport(reportDir: string, result: ApplyStylesResult): Promise<void> {
@@ -186,14 +250,14 @@ async function writeFieldReconciliationReport(reportDir: string, result: ApplySt
   const descriptionById = new Map(styles.map((s) => [s.id, s.description] as const));
   const hsLinePattern = /\*\s*HS[^\n]*/i;
 
-  const records = result.fieldReconciliation.map((r): StyleFieldReconciliationDetail & { pdfHsLine: string | null; hsnDescription: null; result: string; reason: string } => {
+  const records = result.fieldReconciliation.map((r): StyleFieldReconciliationDetail & { pdfHsLine: string | null; hsnDescription: string | null; result: string; reason: string } => {
     const description = descriptionById.get(r.styleId) ?? null;
     const pdfHsLine = description ? (hsLinePattern.exec(description)?.[0]?.trim() ?? null) : null;
     const conflict = r.categoryOutcome === 'REVIEW_REQUIRED_CONFLICT' || r.hsnOutcome === 'REVIEW_REQUIRED_CONFLICT';
     return {
       ...r,
       pdfHsLine,
-      hsnDescription: null,
+      hsnDescription: r.proposedHsnDescription,
       result: conflict ? 'REVIEW_REQUIRED' : 'OK',
       reason: conflict
         ? [
