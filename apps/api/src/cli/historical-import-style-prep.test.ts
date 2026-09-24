@@ -24,14 +24,19 @@ interface FixtureOptions {
   workbookCategory?: string;
   /** Defaults to the "*HS 61091000" (space) format already handled before H2B.2; override to exercise the newly-recovered "*HSxxxxx"/"*HS - xxxxx" formats. */
   stagedHsnCode?: string | null;
+  /** H2B.1 documentary stanza under the table; defaults to empty (no *HS line, so hsnDescription stays null). */
+  specificationText?: string;
+  tableDescription?: string;
+  tableStyleName?: string;
+  sourceChecksumSha256?: string;
 }
 
-async function writeFixtures(dir: string, opts: FixtureOptions) {
+async function writeFixtures(dir: string, optsOrList: FixtureOptions | FixtureOptions[]) {
+  const list = Array.isArray(optsOrList) ? optsOrList : [optsOrList];
   const workbookPath = join(dir, 'mrp.xlsx');
-  const baseCodeDigits = opts.lmix.replace(/^LMIX/i, '');
   const ws = XLSX.utils.aoa_to_sheet([
     EXPECTED_HEADER,
-    [
+    ...list.map((opts) => [
       opts.season.replace(/(\w{2})(\d{2})/, '$1-$2'),
       '#VALUE!',
       'Test Description',
@@ -39,24 +44,23 @@ async function writeFixtures(dir: string, opts: FixtureOptions) {
       opts.workbookCategory ?? 'Test Category-',
       'Test Licensor',
       opts.factoryName,
-      Number(baseCodeDigits),
+      Number(opts.lmix.replace(/^LMIX/i, '')),
       opts.workbookMrp,
       opts.workbookExFactory,
       opts.factoryName,
       'TEST COLOUR',
       opts.season.replace(/(\w{2})(\d{2})/, '$1-$2'),
-    ],
+    ]),
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'MRP & Ex Factory');
   XLSX.writeFile(wb, workbookPath);
 
   const stagingPath = join(dir, 'source-staging.json');
-  const staging = [
-    {
-      sourceFileName: `PO Sheet - ${opts.legacyRef}.pdf`,
-      sourceRelativePath: `PO Sheet - ${opts.legacyRef}.pdf`,
-      sourceChecksumSha256: 'a'.repeat(64),
+  const staging = list.map((opts) => ({
+      sourceFileName: `PO Sheet - ${opts.legacyRef} - ${opts.lmix}.pdf`,
+      sourceRelativePath: `PO Sheet - ${opts.legacyRef} - ${opts.lmix}.pdf`,
+      sourceChecksumSha256: opts.sourceChecksumSha256 ?? 'a'.repeat(64),
       sourceSizeBytes: 1000,
       sourceSeasonFolder: opts.season,
       parseStatus: 'OK',
@@ -71,7 +75,8 @@ async function writeFixtures(dir: string, opts: FixtureOptions) {
         colour: { value: 'Test Colour Detailed', provenance: 'SOURCE_DOCUMENT' },
         description: { value: 'Test Description Detailed', provenance: 'SOURCE_DOCUMENT' },
         documentarySections: {
-          version: 'H2B.1', tableDescription: 'Test Description Detailed', specificationText: '',
+          version: 'H2B.1', tableDescription: opts.tableDescription ?? 'Test Description Detailed', tableStyleName: opts.tableStyleName ?? 'Test Style',
+          specificationText: opts.specificationText ?? '',
           styleDescription: 'Test Description Detailed', approvalText: 'Sample instruction',
           disclaimerText: '*Source clause', jobOrderDisclaimer: 'Sample instruction\n\n*Source clause',
           reviewReasons: [], boundaries: {},
@@ -95,8 +100,7 @@ async function writeFixtures(dir: string, opts: FixtureOptions) {
       imageHeightPx: null,
       imageRelativePath: null,
       imageNotes: [],
-    },
-  ];
+  }));
   await writeFile(stagingPath, JSON.stringify(staging), 'utf8');
 
   const options: StylePrepOptions = { workbookPath, stagingFilePath: stagingPath };
@@ -363,6 +367,147 @@ describe('historical-import-style-prep', () => {
       expect(after.colour).toBe(before.colour);
       expect(after.ipName).toBe(before.ipName);
       expect(after.licensor).toBe(before.licensor);
+    });
+  });
+
+  // H2B.2 follow-up — Policy C (hsn-description.ts): the source *HS label is
+  // written only when the stanza is consistent; code-only and conflicting
+  // sources stay null; an existing different value is never overwritten.
+  describe('hsnDescription from the source *HS label', () => {
+    const boysTee = {
+      specificationText: '*ST1: Boys Short Sleeve T-Shirt - Jurrasic World\n*HS 61091000 Boys / T-Shirt',
+      tableDescription: 'SandShell Boys Short Sleeve T Shirt',
+      tableStyleName: "Boy's T- Shirt",
+    };
+
+    async function setUp(overrides?: Partial<FixtureOptions>) {
+      await createTestSeason({ code: 'SS26' });
+      await createTestFactory({ name: 'Test Factory' });
+      await prisma.size.create({ data: { id: createId(), code: '3', label: '3', sizeType: 'AGE', sortOrder: 3 } });
+      const actor = await createActor();
+      const options = await writeFixtures(tmpDir, {
+        season: 'SS26',
+        lmix: 'LMIX99999999',
+        factoryName: 'Test Factory',
+        legacyRef: 'EI99001',
+        sizeCode: '3',
+        workbookMrp: 999,
+        workbookExFactory: 200,
+        historicalSupplierRate: '200',
+        ...boysTee,
+        ...overrides,
+      });
+      const result = await applyStyles(actor, await planStyles(options));
+      return { actor, options, styleId: result.stylesCreated[0]!, created: result };
+    }
+
+    it('writes the verbatim source label on CREATE', async () => {
+      const { styleId, created } = await setUp();
+      expect(created.fieldReconciliation[0]).toMatchObject({ hsnDescriptionOutcome: 'SET', proposedHsnDescription: 'Boys / T-Shirt' });
+      const style = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(style).toMatchObject({ hsnCode: '61091000', hsnDescription: 'Boys / T-Shirt' });
+    });
+
+    it('backfills a null hsnDescription on an existing Style, leaving hsnCode and every other field unchanged', async () => {
+      const { actor, options, styleId } = await setUp();
+      await prisma.style.update({ where: { id: styleId }, data: { hsnDescription: null } });
+      const before = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+
+      const result = await applyStyles(actor, await planStyles(options));
+      expect(result.fieldReconciliation[0]).toMatchObject({
+        hsnOutcome: 'ALREADY_SET',
+        hsnChanged: false,
+        hsnDescriptionOutcome: 'SET',
+        previousHsnDescription: null,
+        proposedHsnDescription: 'Boys / T-Shirt',
+        sourceChecksumSha256: 'a'.repeat(64),
+      });
+      expect(result.fieldReconciliation[0]!.hsnDescriptionSource).toMatchObject({ classification: 'HSN_WITH_SOURCE_DESCRIPTION', rawHsLine: '*HS 61091000 Boys / T-Shirt' });
+
+      const after = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(after.hsnDescription).toBe('Boys / T-Shirt');
+      expect({ ...after, hsnDescription: null, updatedAt: null }).toEqual({ ...before, hsnDescription: null, updatedAt: null });
+    });
+
+    it('is idempotent — a second run finds ALREADY_SET and writes nothing', async () => {
+      const { actor, options, styleId } = await setUp();
+      await prisma.style.update({ where: { id: styleId }, data: { hsnDescription: null } });
+      await applyStyles(actor, await planStyles(options));
+      const afterFirst = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+
+      const second = await applyStyles(actor, await planStyles(options));
+      expect(second.fieldReconciliation[0]).toMatchObject({ hsnDescriptionOutcome: 'ALREADY_SET', hsnOutcome: 'ALREADY_SET' });
+      const afterSecond = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(afterSecond.updatedAt).toEqual(afterFirst.updatedAt);
+      expect(afterSecond.hsnDescription).toBe('Boys / T-Shirt');
+    });
+
+    it('hard-stops without writing anything when an existing different hsnDescription is found', async () => {
+      const { actor, options, styleId } = await setUp();
+      await prisma.style.update({ where: { id: styleId }, data: { hsnDescription: 'Manually Entered', categoryDescription: null } });
+
+      await expect(applyStyles(actor, await planStyles(options))).rejects.toThrow(/REVIEW_REQUIRED.*existing="Manually Entered" proposed="Boys \/ T-Shirt"/);
+      const style = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(style.hsnDescription).toBe('Manually Entered');
+      // The null categoryDescription would otherwise have been backfilled — proves the stop precedes every write.
+      expect(style.categoryDescription).toBeNull();
+    });
+
+    it('leaves hsnDescription null for a code-only *HS line', async () => {
+      const { styleId, created } = await setUp({
+        stagedHsnCode: '61046200',
+        specificationText: '*ST1: Girls High Waist Shorts - BARBIE\n*HS - 61046200',
+        tableDescription: 'Girls High Waist Shorts',
+        tableStyleName: 'Barbie Girls Shorts',
+      });
+      expect(created.fieldReconciliation[0]).toMatchObject({ hsnDescriptionOutcome: 'NO_SOURCE_VALUE', proposedHsnDescription: null });
+      expect(created.fieldReconciliation[0]!.hsnDescriptionSource?.classification).toBe('HSN_CODE_ONLY');
+      const style = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(style).toMatchObject({ hsnCode: '61046200', hsnDescription: null });
+    });
+
+    it('leaves hsnDescription null (review-required) for a gender-conflicting label but keeps the hsnCode', async () => {
+      const { styleId, created } = await setUp({
+        stagedHsnCode: '61061000',
+        specificationText: '*ST1: Girls Sweat Shirt - Paw Patrol\n*HS 61061000Boys / Sweat Shirt',
+        tableDescription: 'Prism Pink Girls Sweat Shirt',
+        tableStyleName: "Girl's Sweat Shirt",
+      });
+      expect(created.fieldReconciliation[0]!.hsnDescriptionSource).toMatchObject({ classification: 'REVIEW_REQUIRED', semanticCheck: 'GENDER_CONFLICT' });
+      const style = await prisma.style.findUniqueOrThrow({ where: { id: styleId } });
+      expect(style).toMatchObject({ hsnCode: '61061000', hsnDescription: null });
+    });
+
+    it('resolves each source document by checksum, so two PDFs printing the same legacy reference (EI26031/EI26032) cannot collide', async () => {
+      await createTestSeason({ code: 'SS26' });
+      await createTestFactory({ name: 'Test Factory' });
+      await prisma.size.create({ data: { id: createId(), code: '3', label: '3', sizeType: 'AGE', sortOrder: 3 } });
+      const actor = await createActor();
+      const shared = { season: 'SS26', factoryName: 'Test Factory', legacyRef: 'EI26031', sizeCode: '3', workbookMrp: 999, workbookExFactory: 200, historicalSupplierRate: '200' };
+      const options = await writeFixtures(tmpDir, [
+        { ...shared, lmix: 'LMIX29526010', sourceChecksumSha256: 'a'.repeat(64), stagedHsnCode: '61091000', ...boysTee },
+        {
+          ...shared,
+          lmix: 'LMIX25426009',
+          sourceChecksumSha256: 'b'.repeat(64),
+          stagedHsnCode: '61046200',
+          specificationText: '*ST1: Girls Sweat Pant\n*HS 61046200 Girls / Sweat Pant',
+          tableDescription: 'Black Girls Sweat Pant',
+          tableStyleName: "Girl's Sweat Pant",
+        },
+      ]);
+
+      const plan = await planStyles(options);
+      expect(plan.map((p) => [p.lmix, p.sourceChecksumSha256, p.hsnDescription])).toEqual([
+        ['LMIX29526010', 'a'.repeat(64), 'Boys / T-Shirt'],
+        ['LMIX25426009', 'b'.repeat(64), 'Girls / Sweat Pant'],
+      ]);
+      const result = await applyStyles(actor, plan);
+      const styles = await prisma.style.findMany({ where: { id: { in: result.stylesCreated } }, select: { lmixNumber: true, hsnCode: true, hsnDescription: true } });
+      expect(styles.sort((a, b) => a.lmixNumber!.localeCompare(b.lmixNumber!))).toEqual([
+        { lmixNumber: 'LMIX25426009', hsnCode: '61046200', hsnDescription: 'Girls / Sweat Pant' },
+        { lmixNumber: 'LMIX29526010', hsnCode: '61091000', hsnDescription: 'Boys / T-Shirt' },
+      ]);
     });
   });
 });

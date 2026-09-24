@@ -25,6 +25,7 @@ import { normalizeMrpCategory, type MrpWorkbookRow } from '../modules/historical
 import type { ParsedPurchaseOrderRecord } from '../modules/historical-import/po-pdf-parser.types.js';
 import type { CurrentUser } from '../auth/current-user.js';
 import { requireDocumentarySections } from '../modules/historical-import/documentary-sections.js';
+import { resolveHsnSourceDescription, type HsnDescriptionResolution } from '../modules/historical-import/hsn-description.js';
 
 export class StylePrepError extends Error {}
 
@@ -59,6 +60,13 @@ export interface StylePlanEntry {
   description: string | null;
   colour: string | null;
   hsnCode: string | null;
+  /** Source-provided HS label (Policy C, hsn-description.ts) — null for code-only and review-required sources. */
+  hsnDescription: string | null;
+  /** Full Policy C evidence for the audit report; null only when no effective source record exists. */
+  hsnDescriptionSource: HsnDescriptionResolution | null;
+  /** Source-document identity (never the printed legacy reference — see hsn-refresh.ts). */
+  sourceChecksumSha256: string | null;
+  sourceFileName: string | null;
   ipName: string | null;
   licensor: string | null;
   /** Raw MRP workbook Category cell, unaltered (audit evidence). */
@@ -177,6 +185,21 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
       ? options.hsnRefreshBySourceChecksum?.get(effectiveRecord.sourceChecksumSha256)
       : undefined;
     const hsnCode = refreshedHsn !== undefined ? refreshedHsn : (effectiveRecord?.hsnCode.value ?? null);
+    const hsnDescriptionSource = effectiveRecord
+      ? resolveHsnSourceDescription({
+          specificationText: effectiveRecord.documentarySections?.specificationText,
+          tableDescription: effectiveRecord.documentarySections?.tableDescription,
+          tableStyleName: effectiveRecord.documentarySections?.tableStyleName,
+          expectedHsnCode: hsnCode,
+        })
+      : null;
+    const hsnFields = {
+      hsnCode,
+      hsnDescription: hsnDescriptionSource?.proposedHsnDescription ?? null,
+      hsnDescriptionSource,
+      sourceChecksumSha256: effectiveRecord?.sourceChecksumSha256 ?? null,
+      sourceFileName: effectiveRecord?.sourceFileName ?? null,
+    };
 
     if (mrpRecord.disposition !== 'RESOLVED') {
       plan.push({
@@ -191,7 +214,7 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
         styleName: effectiveRecord?.styleName.value ?? null,
         description: effectiveRecord?.description.value ?? null,
         colour: workbookRow?.colour ?? effectiveRecord?.colour.value ?? null,
-        hsnCode,
+        ...hsnFields,
         ipName: workbookRow?.ipName ?? null,
         licensor: workbookRow?.licensor ?? null,
         categoryRaw: category.categoryRaw,
@@ -217,7 +240,7 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
         styleName: effectiveRecord?.styleName.value ?? null,
         description: effectiveRecord?.description.value ?? null,
         colour: workbookRow?.colour ?? null,
-        hsnCode,
+        ...hsnFields,
         ipName: workbookRow?.ipName ?? null,
         licensor: workbookRow?.licensor ?? null,
         categoryRaw: category.categoryRaw,
@@ -290,7 +313,7 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
       styleName: effectiveRecord?.styleName.value ?? null,
       description: effectiveRecord?.description.value ?? null,
       colour: (workbookRow?.colour ?? effectiveRecord?.colour.value ?? null)?.trim().toUpperCase() ?? null,
-      hsnCode,
+      ...hsnFields,
       ipName: workbookRow?.ipName?.trim().toUpperCase() ?? null,
       licensor: workbookRow?.licensor?.trim().toUpperCase() ?? null,
       categoryRaw: category.categoryRaw,
@@ -324,6 +347,12 @@ export interface StyleFieldReconciliationDetail {
   parsedHsnCode: string | null;
   hsnChanged: boolean;
   hsnOutcome: FieldReconciliationOutcome;
+  sourceChecksumSha256: string | null;
+  sourceFileName: string | null;
+  previousHsnDescription: string | null;
+  proposedHsnDescription: string | null;
+  hsnDescriptionOutcome: FieldReconciliationOutcome;
+  hsnDescriptionSource: HsnDescriptionResolution | null;
 }
 
 export interface ApplyStylesResult {
@@ -335,8 +364,28 @@ export interface ApplyStylesResult {
   styleFactoryMappingsCreated: number;
   styleFactoryMappingsVerified: number;
   styleFactoryMappingsSkipped: number;
-  /** Per-Style categoryDescription/hsnCode reconciliation outcome — CREATE entries are always SET (or NO_SOURCE_VALUE); VERIFY_EXISTING entries only ever set a currently-null field, never overwrite a populated one. */
+  /** Per-Style categoryDescription/hsnCode/hsnDescription reconciliation outcome — CREATE entries are always SET (or NO_SOURCE_VALUE); VERIFY_EXISTING entries only ever set a currently-null field, never overwrite a populated one. */
   fieldReconciliation: StyleFieldReconciliationDetail[];
+}
+
+/**
+ * Unlike categoryDescription/hsnCode (report-and-continue), an existing
+ * non-null hsnDescription that differs from the source label is a hard stop:
+ * applyStyles throws before its first write, so nothing is half-applied.
+ */
+function findHsnDescriptionConflicts(
+  plan: StylePlanEntry[],
+  existingHsnDescriptionById: Map<string, string | null>,
+): Array<{ styleNumber: string; existing: string; proposed: string }> {
+  const conflicts: Array<{ styleNumber: string; existing: string; proposed: string }> = [];
+  for (const entry of plan) {
+    if (entry.action !== 'VERIFY_EXISTING' || !entry.existingStyleId) continue;
+    const existing = existingHsnDescriptionById.get(entry.existingStyleId) ?? null;
+    if (resolveFieldReconciliation(existing, entry.hsnDescription) === 'REVIEW_REQUIRED_CONFLICT') {
+      conflicts.push({ styleNumber: entry.styleNumber, existing: existing!, proposed: entry.hsnDescription! });
+    }
+  }
+  return conflicts;
 }
 
 /** Never overwrites an existing non-null value that disagrees with the proposed one — that is always REVIEW_REQUIRED_CONFLICT, reported but not applied. */
@@ -366,10 +415,17 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
   const existingFieldRows = existingStyleIds.length
     ? await prisma.style.findMany({
         where: { id: { in: existingStyleIds } },
-        select: { id: true, categoryDescription: true, hsnCode: true },
+        select: { id: true, categoryDescription: true, hsnCode: true, hsnDescription: true },
       })
     : [];
   const existingFieldsById = new Map(existingFieldRows.map((r) => [r.id, r] as const));
+  const hsnDescriptionConflicts = findHsnDescriptionConflicts(plan, new Map(existingFieldRows.map((r) => [r.id, r.hsnDescription] as const)));
+  if (hsnDescriptionConflicts.length) {
+    throw new StylePrepError(
+      `REVIEW_REQUIRED: ${hsnDescriptionConflicts.length} Style(s) already hold a different hsnDescription — nothing was written: ` +
+        hsnDescriptionConflicts.map((c) => `${c.styleNumber} existing="${c.existing}" proposed="${c.proposed}"`).join('; '),
+    );
+  }
 
   for (const entry of plan) {
     if (entry.action === 'BLOCKED') {
@@ -382,12 +438,14 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
       styleId = entry.existingStyleId;
       result.stylesVerified.push(styleId);
 
-      const existingFields = existingFieldsById.get(styleId) ?? { categoryDescription: null, hsnCode: null };
+      const existingFields = existingFieldsById.get(styleId) ?? { categoryDescription: null, hsnCode: null, hsnDescription: null };
       const categoryOutcome = resolveFieldReconciliation(existingFields.categoryDescription, entry.categoryNormalized);
       const hsnOutcome = resolveFieldReconciliation(existingFields.hsnCode, entry.hsnCode);
       const patch: Record<string, unknown> = {};
       if (categoryOutcome === 'SET') patch.categoryDescription = entry.categoryNormalized;
       if (hsnOutcome === 'SET') patch.hsnCode = entry.hsnCode;
+      const hsnDescriptionOutcome = resolveFieldReconciliation(existingFields.hsnDescription, entry.hsnDescription);
+      if (hsnDescriptionOutcome === 'SET') patch.hsnDescription = entry.hsnDescription;
       if (Object.keys(patch).length > 0) {
         await updateStyle(actor, styleId, patch);
       }
@@ -408,6 +466,12 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
         parsedHsnCode: entry.hsnCode,
         hsnChanged: hsnOutcome === 'SET',
         hsnOutcome,
+        sourceChecksumSha256: entry.sourceChecksumSha256,
+        sourceFileName: entry.sourceFileName,
+        previousHsnDescription: existingFields.hsnDescription,
+        proposedHsnDescription: entry.hsnDescription,
+        hsnDescriptionOutcome,
+        hsnDescriptionSource: entry.hsnDescriptionSource,
       });
     } else {
       if (!entry.styleName || !entry.finalMrp || !entry.seasonId) {
@@ -421,6 +485,7 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
         colour: entry.colour ?? undefined,
         lmixNumber: entry.lmix,
         hsnCode: entry.hsnCode ?? undefined,
+        hsnDescription: entry.hsnDescription ?? undefined,
         categoryDescription: entry.categoryNormalized ?? undefined,
         ipName: entry.ipName ?? undefined,
         licensor: entry.licensor ?? undefined,
@@ -447,6 +512,12 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
         parsedHsnCode: entry.hsnCode,
         hsnChanged: entry.hsnCode !== null,
         hsnOutcome: entry.hsnCode === null ? 'NO_SOURCE_VALUE' : 'SET',
+        sourceChecksumSha256: entry.sourceChecksumSha256,
+        sourceFileName: entry.sourceFileName,
+        previousHsnDescription: null,
+        proposedHsnDescription: entry.hsnDescription,
+        hsnDescriptionOutcome: entry.hsnDescription === null ? 'NO_SOURCE_VALUE' : 'SET',
+        hsnDescriptionSource: entry.hsnDescriptionSource,
       });
     }
 
