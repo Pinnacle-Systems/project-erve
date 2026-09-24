@@ -50,6 +50,8 @@ export interface ParsedPurchaseOrderRecord {
   styleName: ParsedField<string>;
   colour: ParsedField<string>;
   description: ParsedField<string>;
+  /** Absent only on immutable pre-H2B.1 staging; import must re-extract it. */
+  documentarySections?: import('./documentary-sections.js').DocumentarySections;
   hsnCode: ParsedField<string>;
   orderDate: ParsedField<string>;
   shipmentDate: ParsedField<string>;

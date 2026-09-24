@@ -58,6 +58,21 @@ describe('ProductionStageStepper', () => {
 });
 
 describe('JobOrderDetailPage tab navigation', () => {
+  it('shows multiline historical documentary text without an editing action even for draft status', async () => {
+    const source = 'Sample: 2 Pcs\nPhoto: 3 Pcs\n\n*Source clause';
+    await renderJobOrderDetail(container, root, { status: 'DRAFT', overrides: {
+      historicalImport: { legacyReferenceNumber: 'SYN001', historicalBusinessDate: '2025-08-15', importedAt: '2026-09-24T00:00:00Z' },
+      disclaimerText: source,
+    } });
+    act(() => switchJobOrderTab(container, 'Production'));
+    expect(container.querySelector('#job-order-disclaimer')).toBeNull();
+    expect(content(container)).not.toContain('Save disclaimer');
+    const rendered = Array.from(container.querySelectorAll('pre')).find((p) => p.textContent === source);
+    expect(rendered).toBeDefined();
+    expect(rendered!.classList.contains('whitespace-pre-wrap')).toBe(true);
+    expect(content(container)).toContain('Historical source wording; no factory acknowledgement was recorded.');
+  });
+
   it('defaults to the Overview tab and switches active content on click', async () => {
     await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
 

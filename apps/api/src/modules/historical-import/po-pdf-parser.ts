@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type { TextLine } from './pdf-text-layout.js';
+import { descriptionHeading, extractDocumentarySections } from './documentary-sections.js';
 import { openPdfDocumentSession, type PdfDocumentSession } from './pdf-document-session.js';
 import {
   sourceField,
@@ -247,12 +248,16 @@ function extractStyleSizeTable(lines: TextLine[]): StyleSizeTableResult | null {
   // Data region: everything below the header row down to (not including)
   // the next "Description" line — the free-text section heading that
   // always follows the single style/colour/size data row on this template.
-  const nextDescriptionIndex = lines.findIndex((line, i) => i > headerIndex && line.text.trim() === 'Description');
-  const dataLines = lines.slice(headerIndex + 1, nextDescriptionIndex === -1 ? undefined : nextDescriptionIndex);
+  const nextDescriptionIndex = lines.findIndex((line, i) => i > headerIndex && line.items.some((item) => item.x < styleCol.x && descriptionHeading.test(item.text.trim())));
+  // Include the heading's visual row: a table-cell continuation may share
+  // its baseline. Exclude only the heading item itself from cell assignment.
+  const headingItem = nextDescriptionIndex < 0 ? undefined : lines[nextDescriptionIndex]!.items.find((item) => item.x < styleCol.x && descriptionHeading.test(item.text.trim()));
+  const dataLines = lines.slice(headerIndex + 1, nextDescriptionIndex === -1 ? undefined : nextDescriptionIndex + 1);
 
   const cellsByColumn = new Map<ColumnKey, { y: number; x: number; text: string }[]>();
   for (const line of dataLines) {
     for (const item of line.items) {
+      if (item === headingItem) continue;
       const boundary = boundaries.find((b) => item.x >= b.lower && item.x < b.upper);
       if (!boundary) continue;
       const list = cellsByColumn.get(boundary.key) ?? [];
@@ -417,6 +422,7 @@ export function parsePurchaseOrderFromSession(
   }
 
   const lines = layout.lines;
+  const documentarySections = extractDocumentarySections(layout, pageCount);
 
   const legacyReferenceNumber = findLabelValue(lines, 'invoices');
   const documentSeason = extractSeasonWithGluedFallback(lines);
@@ -523,16 +529,17 @@ export function parsePurchaseOrderFromSession(
     seasonFolderMismatch,
     factoryName,
     licenseStyleLmix,
-    styleName: table?.styleName ?? unknownField(),
+    styleName: documentarySections.reviewReasons.length ? table?.styleName ?? unknownField() : sourceField(documentarySections.tableStyleName),
     colour: table?.colour ?? unknownField(),
-    description: table?.description ?? unknownField(),
+    description: documentarySections.reviewReasons.length ? table?.description ?? unknownField() : sourceField(documentarySections.styleDescription),
+    documentarySections,
     hsnCode,
     orderDate,
     shipmentDate,
     unitRate,
     currency,
     paymentTerms,
-    approvalSampleInstructions,
+    approvalSampleInstructions: documentarySections.reviewReasons.length ? approvalSampleInstructions : sourceField(documentarySections.approvalText),
     aqlInspectionTerms,
     sizeQuantities,
     tableTotalQuantity,

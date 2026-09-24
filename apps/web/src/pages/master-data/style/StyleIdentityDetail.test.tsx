@@ -60,6 +60,12 @@ function makeStyle(overrides: Partial<Style> = {}): Style {
 }
 
 describe('StyleIdentityDetail', () => {
+  it('retains source description line breaks and starred specifications', () => {
+    const description = 'Girls tee\n\n*ST1: Original specification\n*HS 61091000';
+    render(<StyleIdentityDetail style={makeStyle({ description })} />);
+    expect(container.querySelector('.whitespace-pre-wrap')?.textContent).toBe(description);
+  });
+
   it('renders identity fields plus the Season badge, but no commercial fields', () => {
     render(<StyleIdentityDetail style={makeStyle({ lmixNumber: 'LMX-1', colour: 'Blue' })} />);
 

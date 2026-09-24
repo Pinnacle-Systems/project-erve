@@ -21,7 +21,7 @@ export function StyleIdentityDetail({ style }: { style: Style }) {
     ['IP Name', style.ipName],
     ['Licensor', style.licensor],
     ['Colour', style.colour],
-    ['Description', style.description],
+    ['Description', style.description ? <span className="whitespace-pre-wrap">{style.description}</span> : null],
   ];
 
   return (

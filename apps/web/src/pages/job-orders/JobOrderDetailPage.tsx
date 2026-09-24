@@ -202,7 +202,7 @@ export function JobOrderDetailPage() {
   const acknowledgementKey = `${jobOrder.id}:${jobOrder.version}:${jobOrder.disclaimerRevision}`;
   const acknowledgeDisclaimer = acknowledgedRevision === acknowledgementKey;
   const disclaimerText = disclaimerDrafts[jobOrder.id] ?? jobOrder.disclaimerText ?? '';
-  const canEditDisclaimer = jobOrder.status === 'DRAFT' && canManageJobOrders;
+  const canEditDisclaimer = !jobOrder.historicalImport && jobOrder.status === 'DRAFT' && canManageJobOrders;
   const canConfirm = jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
   // Mirrors the server's cancellation boundary in cancelJobOrder — a Job
   // Order may be cancelled only until production actually starts.

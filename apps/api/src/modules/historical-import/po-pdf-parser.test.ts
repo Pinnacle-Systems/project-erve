@@ -92,6 +92,48 @@ async function parse(runs: SyntheticTextRun[], overrides?: Partial<Parameters<ty
 }
 
 describe('parsePurchaseOrderBuffer — AW25/SS26 template', () => {
+  it('keeps a misspelled lower heading and its clauses out of the Style name', async () => {
+    const runs = baseRuns().map((run) => run.text === 'Description' && run.x === 20 ? { ...run, text: 'Descrition', y: 306 } : run);
+    const result = await parse([...runs,
+      { text: '*For detailed Trims and Accessories please refer Bill of Material.', x: 20, y: 276, fontSize: 5 },
+      { text: '*Any delay will cause penalties as per the sales and distribution team', x: 20, y: 267, fontSize: 5 },
+    ]);
+    expect(result.styleName.value).toBe('Girls Hoody');
+    expect(result.description.value).toContain('*ST1: Girls Long Sleeve Hoody - Barbie');
+    expect(result.documentarySections?.reviewReasons).toEqual([]);
+  });
+
+  it('retains the order-detail instruction above approval steps in source order', async () => {
+    const result = await parse([...baseRuns(),
+      { text: 'FOR ALL ADDITIONAL ORDER DETAILS, WE REFER TO OUR PLM-SYSTEM DELOGUE', x: 20, y: 465, fontSize: 5 },
+      { text: '*For detailed Trims and Accessories please refer Bill of Material.', x: 20, y: 276, fontSize: 5 },
+      { text: '*Any delay will cause penalties as per the sales and distribution team', x: 20, y: 267, fontSize: 5 },
+    ]);
+    expect(result.documentarySections?.jobOrderDisclaimer).toBe(
+      'FOR ALL ADDITIONAL ORDER DETAILS, WE REFER TO OUR PLM-SYSTEM DELOGUE\n\nFitting S: 4 years - 2 Pcs\n\n*For detailed Trims and Accessories please refer Bill of Material.\n*Any delay will cause penalties as per the sales and distribution team',
+    );
+  });
+
+  it.each([false, true])('separates documentary sections without manufacturing clauses (full=%s)', async (full) => {
+    const result = await parse([...baseRuns(),
+      { text: 'Photo Sample: 2 Pcs', x: 20, y: 432, fontSize: 5 },
+      { text: 'Above samples are for approval only', x: 20, y: 421, fontSize: 5 },
+      { text: '*For detailed Trims and Accessories please refer Bill of Material.', x: 20, y: 276, fontSize: 5 },
+      { text: '*Any delay will cause penalties as per the sales and distribution team', x: 20, y: 267, fontSize: 5 },
+      ...(full ? [
+        { text: '*100% AQL Inspection.', x: 20, y: 258, fontSize: 5 },
+        { text: '*Delivery date needs to be respected to avoid any loss of sales or discounts.', x: 20, y: 249, fontSize: 5 },
+      ] : []),
+    ]);
+    expect(result.description.value).toBe("Girls Long\nSleeve Hoody\n\n*ST1: Girls Long Sleeve Hoody - Barbie\n*HS 61061000 Girls/ Hoody");
+    expect(result.approvalSampleInstructions.value).toBe('Fitting S: 4 years - 2 Pcs\nPhoto Sample: 2 Pcs\nAbove samples are for approval only');
+    expect(result.documentarySections?.reviewReasons).toEqual([]);
+    expect(result.documentarySections?.disclaimerText).toBe(
+      '*For detailed Trims and Accessories please refer Bill of Material.\n*Any delay will cause penalties as per the sales and distribution team' +
+      (full ? '\n*100% AQL Inspection.\n*Delivery date needs to be respected to avoid any loss of sales or discounts.' : ''),
+    );
+  });
+
   it('parses a complete, well-formed document as OK with every field extracted', async () => {
     const result = await parse(baseRuns());
     expect(result.parseStatus).toBe('OK');

@@ -74,6 +74,8 @@ export interface ImportHistoricalJobOrderInput {
   sizes: Array<{ sizeId: string; quantity: number }>;
   document: ImportHistoricalJobOrderDocumentInput;
   migrationNotes?: string | null;
+  /** Verbatim documentary text, never a factory acknowledgement event. */
+  disclaimerText?: string | null;
 }
 
 export interface ImportHistoricalJobOrderResult {
@@ -175,6 +177,8 @@ export async function importHistoricalJobOrder(
         importedById: actor.id,
         importedAt: createdAt,
         migrationNotes: input.migrationNotes ?? null,
+        disclaimerText: input.disclaimerText ?? null,
+        disclaimerRevision: input.disclaimerText ? 1 : 0,
       },
     });
 
