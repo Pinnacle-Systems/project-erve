@@ -244,6 +244,26 @@ describe('FactoryTaskDetailPage production stages', () => {
     expect(container.textContent).toContain('Complete Printing');
   });
 
+  it('shows a historical import\'s prepared quantity as not recorded, and a live 0 as 0', async () => {
+    authState.roles = ['ADMIN'];
+    await renderTask(
+      job({
+        status: 'PRODUCTION_COMPLETE',
+        stages: [],
+        orderedQuantityTotal: 1008,
+        preparedQuantityTotal: 0,
+        historicalImport: { legacyReferenceNumber: 'EI25018', historicalBusinessDate: '2025-08-15', importedAt: '2026-09-24T00:00:00Z' },
+      }),
+    );
+    expect(container.textContent).toContain('Prepared: Not recorded (historical) · Ordered 1008');
+    expect(container.textContent).not.toContain('Prepared 0 of 1008');
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    await renderTask(job({ orderedQuantityTotal: 1008, preparedQuantityTotal: 0, historicalImport: null }));
+    expect(container.textContent).toContain('Prepared 0 of 1008');
+  });
+
   it('shows only Start for a not-started Production stage', async () => {
     await renderTask(
       job({

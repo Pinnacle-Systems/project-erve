@@ -1188,6 +1188,15 @@ export interface JobOrderDetail extends JobOrderSummary {
   // live Job Order): the real historical identity and business date, so the
   // UI can present the row as read-only historical evidence rather than as
   // live work awaiting factory confirmation.
+  //
+  // When this is non-null, the live-workflow fields factoryConfirmationStatus
+  // (PENDING) and preparedQuantityTotal / per-size preparedQuantity (0) are
+  // NON-AUTHORITATIVE schema defaults, not recorded facts: no factory
+  // confirmation or prepared quantity exists for a historical import. Always
+  // interpret them together with this marker — present them via the
+  // @erve/app-components historical helpers ("Not recorded"), and never treat
+  // such a row as active operational work (work queues filter
+  // recordOrigin=LIVE_WORKFLOW).
   historicalImport?: {
     legacyReferenceNumber: string | null;
     historicalBusinessDate: string | null;

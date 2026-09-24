@@ -2,10 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, JobOrderDetail, PaginatedResponse } from '@erve/types';
-import { NOT_RECORDED_LABEL, isHistoricalImportJobOrder } from '@erve/app-components';
 import { apiClient } from '../../lib/api-client.js';
-
-const inactiveStatuses = ['DRAFT', 'CLOSED', 'CANCELLED'];
+import { ACTIVE_JOB_ORDER_QUERY_PARAMS, isActiveOperationalJobOrder } from './active-job-orders.js';
 
 export function OperationalJobOrderListPage() {
   const [search, setSearch] = useState('');
@@ -14,11 +12,11 @@ export function OperationalJobOrderListPage() {
     queryFn: async () =>
       (
         await apiClient.get<ApiSuccessResponse<PaginatedResponse<JobOrderDetail>>>('/job-orders', {
-          params: { search: search || undefined, limit: 50 },
+          params: { search: search || undefined, limit: 50, ...ACTIVE_JOB_ORDER_QUERY_PARAMS },
         })
       ).data.data,
   });
-  const jobs = query.data?.items.filter((job) => !inactiveStatuses.includes(job.status)) ?? [];
+  const jobs = query.data?.items.filter(isActiveOperationalJobOrder) ?? [];
 
   return (
     <main className="min-h-full space-y-4 bg-background px-4 py-5">
@@ -86,9 +84,7 @@ export function OperationalJobOrderListPage() {
               </div>
             </div>
             <p className="mt-3 text-sm">
-              {isHistoricalImportJobOrder(job)
-                ? `Prepared: ${NOT_RECORDED_LABEL} · Ordered ${job.orderedQuantityTotal}`
-                : `Prepared ${job.preparedQuantityTotal} of ${job.orderedQuantityTotal}`}
+              Prepared {job.preparedQuantityTotal} of {job.orderedQuantityTotal}
             </p>
           </Link>
         ))}

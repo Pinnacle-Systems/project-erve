@@ -11,6 +11,7 @@ import type {
 } from '@erve/types';
 import { apiClient } from '../lib/api-client.js';
 import { QA_OPERATION_ROLES } from '@erve/shared';
+import { ACTIVE_JOB_ORDER_QUERY_PARAMS, isActiveOperationalJobOrder } from './job-orders/active-job-orders.js';
 
 const operationalQaRoles = [...QA_OPERATION_ROLES, 'MERCHANDISER'] as const;
 const oversightRoles = ['ADMIN', 'MERCHANDISER'] as const;
@@ -96,17 +97,14 @@ export function DashboardPage({ user }: { user: AuthUser }) {
     queryFn: async () =>
       (
         await apiClient.get<ApiSuccessResponse<PaginatedResponse<JobOrderDetail>>>('/job-orders', {
-          params: { limit: 50 },
+          params: { limit: 50, ...ACTIVE_JOB_ORDER_QUERY_PARAMS },
         })
       ).data.data,
   });
 
   const activeFactoryTasks =
     factoryTasks.data?.items.filter((task) => !['CLOSED', 'CANCELLED'].includes(task.status)) ?? [];
-  const activeOperationalJobs =
-    operationalJobs.data?.items.filter(
-      (job) => !['DRAFT', 'CLOSED', 'CANCELLED'].includes(job.status),
-    ) ?? [];
+  const activeOperationalJobs = operationalJobs.data?.items.filter(isActiveOperationalJobOrder) ?? [];
   const actionRequired = activeFactoryTasks.filter((task) => task.actionRequired).length;
   const pendingQa = qaQueue.data?.items.filter((task) => task.status !== 'QA_APPROVED') ?? [];
   const pendingApprovals = canOversee

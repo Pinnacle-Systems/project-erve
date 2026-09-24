@@ -13,7 +13,12 @@ import type {
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import { FinalBatchAllocationForm, getJobOrderOperationalPresentation } from '@erve/app-components';
+import {
+  FinalBatchAllocationForm,
+  NOT_RECORDED_LABEL,
+  getJobOrderOperationalPresentation,
+  isHistoricalImportJobOrder,
+} from '@erve/app-components';
 
 interface MutationVariables {
   body: object;
@@ -283,7 +288,9 @@ export function FactoryTaskDetailPage() {
           ))}
         </div>
         <p className="mt-1 text-sm">
-          Prepared {job.preparedQuantityTotal} of {job.orderedQuantityTotal}
+          {isHistoricalImportJobOrder(job)
+            ? `Prepared: ${NOT_RECORDED_LABEL} (historical) · Ordered ${job.orderedQuantityTotal}`
+            : `Prepared ${job.preparedQuantityTotal} of ${job.orderedQuantityTotal}`}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           Lifecycle: {job.operationalState.lifecycleContext.label} · Version {job.version}

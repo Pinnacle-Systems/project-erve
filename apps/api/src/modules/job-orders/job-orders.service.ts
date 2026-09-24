@@ -858,6 +858,7 @@ export async function getJobOrderList(
     status?: JobOrderStatus;
     factoryId?: string;
     financialYearId?: string;
+    recordOrigin?: 'LIVE_WORKFLOW' | 'HISTORICAL_IMPORT';
     cursor?: string;
     limit: number;
   },
@@ -874,6 +875,7 @@ export async function getJobOrderList(
         factoryId: filters.factoryId,
         // This JO's own Financial Year — never any source Order Sheet's.
         financialYearId: filters.financialYearId,
+        recordOrigin: filters.recordOrigin,
         // Order Sheet number search stays available to every viewer who can
         // list job orders — it's a filter predicate, not response data, so it
         // carries no provenance leak even for Factory/QA (see
