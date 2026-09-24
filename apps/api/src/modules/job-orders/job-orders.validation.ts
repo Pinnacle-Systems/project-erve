@@ -104,6 +104,10 @@ export const listJobOrdersQuerySchema = z.object({
   // Filters by this JO's own Financial Year (derived from its createdAt) —
   // never the parent Purchase Order's Financial Year.
   financialYearId: z.string().trim().optional(),
+  // Optional. Omitted = every origin (the general list includes historical
+  // imports). Operational views (mobile "Active job orders") pass
+  // LIVE_WORKFLOW so historical rows can't occupy the page they paginate.
+  recordOrigin: z.enum(['LIVE_WORKFLOW', 'HISTORICAL_IMPORT']).optional(),
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });

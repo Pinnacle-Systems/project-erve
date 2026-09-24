@@ -90,7 +90,7 @@ describe('mobile operational Job Order list', () => {
     expect(container.textContent).not.toContain('CONFIRMED BY FACTORY');
   });
 
-  it('shows Prepared as not recorded for a historical import, and keeps a live recorded 0', async () => {
+  it('is live operational work only: requests LIVE_WORKFLOW, excludes a historical import, keeps a live PRODUCTION_COMPLETE and its recorded 0', async () => {
     const base = {
       factory: { name: 'Green Way' },
       sourceOrderSheetCount: 0,
@@ -105,7 +105,7 @@ describe('mobile operational Job Order list', () => {
       status: 'PRODUCTION_COMPLETE',
       historicalImport: { legacyReferenceNumber: 'EI25018', historicalBusinessDate: '2025-08-15', importedAt: '2026-09-24T00:00:00Z' },
     } as unknown as JobOrderDetail;
-    const live = { ...base, id: 'live', jobOrderNumber: 'EIJO/26-27/0001', status: 'IN_PRODUCTION', historicalImport: null } as unknown as JobOrderDetail;
+    const live = { ...base, id: 'live', jobOrderNumber: 'EIJO/26-27/0001', status: 'PRODUCTION_COMPLETE', historicalImport: null } as unknown as JobOrderDetail;
     vi.mocked(apiClient.get).mockResolvedValue({
       data: { success: true, data: { items: [historical, live], pageInfo: { limit: 50, hasMore: false, nextCursor: null } } },
     });
@@ -119,10 +119,14 @@ describe('mobile operational Job Order list', () => {
         </MemoryRouter>,
       );
     });
-    await vi.waitFor(() => expect(container.querySelectorAll('a')).toHaveLength(2));
-    const [histCard, liveCard] = Array.from(container.querySelectorAll('a')).map((a) => a.textContent ?? '');
-    expect(histCard).toContain('Prepared: Not recorded · Ordered 1008');
-    expect(histCard).not.toContain('Prepared 0');
+    // The API is asked for live rows only; the historical row returned anyway
+    // here proves the client-side guard as well.
+    await vi.waitFor(() => expect(container.querySelectorAll('a')).toHaveLength(1));
+    expect(vi.mocked(apiClient.get).mock.calls.at(-1)?.[1]).toMatchObject({ params: { recordOrigin: 'LIVE_WORKFLOW' } });
+    expect(container.querySelector('a[href="/job-orders/hist"]')).toBeNull();
+    expect(container.textContent).not.toContain('EIJOH/26-27/0109');
+    const liveCard = container.querySelector('a[href="/job-orders/live"]')!.textContent ?? '';
+    expect(liveCard).toContain('Production Complete');
     expect(liveCard).toContain('Prepared 0 of 1008');
   });
 });

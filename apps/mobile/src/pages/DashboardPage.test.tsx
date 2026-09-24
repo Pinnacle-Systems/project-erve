@@ -84,6 +84,54 @@ describe('mobile role-aware dashboard', () => {
     expect(container.querySelector('a[href="/factory-rework"]')).not.toBeNull();
   });
 
+  it('counts only live active job orders: requests LIVE_WORKFLOW and never counts or lists a historical import', async () => {
+    const job = (id: string, status: string, historical: boolean) => ({
+      id,
+      jobOrderNumber: id,
+      status,
+      factory: { name: 'Green Way' },
+      updatedAt: '2026-09-24T00:00:00Z',
+      historicalImport: historical ? { legacyReferenceNumber: 'EI25018', historicalBusinessDate: null, importedAt: null } : null,
+      operationalState: { primaryDisplayState: { label: status } },
+    });
+    vi.mocked(apiClient.get).mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data:
+          url === '/job-orders'
+            ? {
+                items: [
+                  job('HIST-1', 'PRODUCTION_COMPLETE', true),
+                  job('LIVE-PC', 'PRODUCTION_COMPLETE', false),
+                  job('LIVE-SEW', 'IN_PRODUCTION', false),
+                  job('LIVE-CLOSED', 'CLOSED', false),
+                ],
+                pageInfo: { limit: 50, hasMore: false, nextCursor: null },
+              }
+            : url === '/qa/rework'
+              ? []
+              : emptyPage(),
+      },
+    }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <DashboardPage user={user(['ADMIN'])} />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    const tile = () => container.querySelector('a[href="/job-orders"]');
+    await vi.waitFor(() => expect(tile()?.textContent).toContain('2'));
+    expect(tile()?.textContent).not.toContain('3');
+    const jobOrderCall = vi.mocked(apiClient.get).mock.calls.find((call) => call[0] === '/job-orders');
+    expect(jobOrderCall?.[1]).toMatchObject({ params: { recordOrigin: 'LIVE_WORKFLOW' } });
+    expect(container.querySelector('a[href="/job-orders/HIST-1"]')).toBeNull();
+    expect(container.querySelector('a[href="/job-orders/LIVE-SEW"]')).not.toBeNull();
+  });
+
   it('shows operational monitoring and approval entry points to an administrator', async () => {
     await renderDashboard(['ADMIN']);
 
