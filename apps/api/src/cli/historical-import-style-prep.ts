@@ -16,12 +16,12 @@
 import { readFile } from 'node:fs/promises';
 import { prisma } from '../db/prisma.js';
 import { requireVerifiedDevDatabaseTarget, formatDevTargetReport, DevTargetGuardError } from '../modules/historical-import/dev-target-guard.js';
-import { createStyle, addStyleSize, addStyleFactory } from '../modules/master-data/master-data.service.js';
+import { createStyle, updateStyle, addStyleSize, addStyleFactory } from '../modules/master-data/master-data.service.js';
 import { parseFactoryMappingArtifact, type FactoryMappingRow } from '../modules/historical-import/factory-mapping.js';
 import { parseSizeMappingArtifact, resolveApprovedSizeMapping, type SizeMappingRow } from '../modules/historical-import/size-mapping.js';
 import { reconcileMrp, type RequiredStyleIdentity } from '../modules/historical-import/mrp-reconciliation.js';
 import { buildMrpWorkbookManifest, buildEffectiveSourceRecords, buildRequiredIdentities } from './historical-import-mrp-audit.js';
-import type { MrpWorkbookRow } from '../modules/historical-import/mrp-workbook.js';
+import { normalizeMrpCategory, type MrpWorkbookRow } from '../modules/historical-import/mrp-workbook.js';
 import type { ParsedPurchaseOrderRecord } from '../modules/historical-import/po-pdf-parser.types.js';
 import type { CurrentUser } from '../auth/current-user.js';
 import { requireDocumentarySections } from '../modules/historical-import/documentary-sections.js';
@@ -61,6 +61,11 @@ export interface StylePlanEntry {
   hsnCode: string | null;
   ipName: string | null;
   licensor: string | null;
+  /** Raw MRP workbook Category cell, unaltered (audit evidence). */
+  categoryRaw: string | null;
+  /** categoryRaw with a single trailing separator hyphen stripped — see normalizeMrpCategory. This is the value written to Style.categoryDescription. */
+  categoryNormalized: string | null;
+  categoryNormalizationApplied: boolean;
   finalMrp: number | null;
   sizes: SizePlanEntry[];
   factory: FactoryPlanEntry | null;
@@ -72,6 +77,18 @@ export interface StylePrepOptions {
   sourceOverridesFilePath?: string;
   factoryMappingFilePath?: string;
   sizeMappingFilePath?: string;
+  /**
+   * Optional hsnCode override, keyed by sourceChecksumSha256 (NOT
+   * legacyReferenceNumber — see hsn-refresh.ts for why: one source PDF's
+   * raw printed order number is a known typo of another's), re-derived
+   * directly from the source PDFs with the current extractHsnCode
+   * implementation. staging.json is an immutable H2B.1 artifact and is
+   * never rewritten in place, so a parser fix only reaches an
+   * already-staged identity through this override — a fresh future import
+   * needs no override at all, since re-running historical-import:prepare
+   * regenerates staging.json with the fixed parser directly.
+   */
+  hsnRefreshBySourceChecksum?: Map<string, string | null>;
 }
 
 async function loadIdentitiesAndWorkbook(options: StylePrepOptions) {
@@ -155,6 +172,11 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
     const styleNumber = `${mrpRecord.season}-${mrpRecord.lmix.replace(/^LMIX/i, '')}`;
     const effectiveRecord = findEffectiveRecordForIdentity(effectiveRecords, identity);
     const workbookRow = findWorkbookRow(rows, mrpRecord.workbookRow);
+    const category = normalizeMrpCategory(workbookRow?.category ?? null);
+    const refreshedHsn = effectiveRecord
+      ? options.hsnRefreshBySourceChecksum?.get(effectiveRecord.sourceChecksumSha256)
+      : undefined;
+    const hsnCode = refreshedHsn !== undefined ? refreshedHsn : (effectiveRecord?.hsnCode.value ?? null);
 
     if (mrpRecord.disposition !== 'RESOLVED') {
       plan.push({
@@ -169,9 +191,12 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
         styleName: effectiveRecord?.styleName.value ?? null,
         description: effectiveRecord?.description.value ?? null,
         colour: workbookRow?.colour ?? effectiveRecord?.colour.value ?? null,
-        hsnCode: effectiveRecord?.hsnCode.value ?? null,
+        hsnCode,
         ipName: workbookRow?.ipName ?? null,
         licensor: workbookRow?.licensor ?? null,
+        categoryRaw: category.categoryRaw,
+        categoryNormalized: category.categoryNormalized,
+        categoryNormalizationApplied: category.normalizationApplied,
         finalMrp: null,
         sizes: [],
         factory: null,
@@ -192,9 +217,12 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
         styleName: effectiveRecord?.styleName.value ?? null,
         description: effectiveRecord?.description.value ?? null,
         colour: workbookRow?.colour ?? null,
-        hsnCode: effectiveRecord?.hsnCode.value ?? null,
+        hsnCode,
         ipName: workbookRow?.ipName ?? null,
         licensor: workbookRow?.licensor ?? null,
+        categoryRaw: category.categoryRaw,
+        categoryNormalized: category.categoryNormalized,
+        categoryNormalizationApplied: category.normalizationApplied,
         finalMrp: mrpRecord.businessMrp,
         sizes: [],
         factory: null,
@@ -262,9 +290,12 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
       styleName: effectiveRecord?.styleName.value ?? null,
       description: effectiveRecord?.description.value ?? null,
       colour: (workbookRow?.colour ?? effectiveRecord?.colour.value ?? null)?.trim().toUpperCase() ?? null,
-      hsnCode: effectiveRecord?.hsnCode.value ?? null,
+      hsnCode,
       ipName: workbookRow?.ipName?.trim().toUpperCase() ?? null,
       licensor: workbookRow?.licensor?.trim().toUpperCase() ?? null,
+      categoryRaw: category.categoryRaw,
+      categoryNormalized: category.categoryNormalized,
+      categoryNormalizationApplied: category.normalizationApplied,
       finalMrp: mrpRecord.businessMrp,
       sizes,
       factory,
@@ -272,6 +303,27 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
   }
 
   return plan;
+}
+
+export type FieldReconciliationOutcome = 'SET' | 'ALREADY_SET' | 'NO_SOURCE_VALUE' | 'REVIEW_REQUIRED_CONFLICT';
+
+export interface StyleFieldReconciliationDetail {
+  season: string;
+  legacyReference: string | null;
+  lmix: string;
+  styleId: string;
+  styleNumber: string;
+  categoryRaw: string | null;
+  categoryNormalized: string | null;
+  categoryNormalizationApplied: boolean;
+  previousCategoryDescription: string | null;
+  proposedCategoryDescription: string | null;
+  categoryOutcome: FieldReconciliationOutcome;
+  pdfHsnSourceValue: string | null;
+  previousHsnCode: string | null;
+  parsedHsnCode: string | null;
+  hsnChanged: boolean;
+  hsnOutcome: FieldReconciliationOutcome;
 }
 
 export interface ApplyStylesResult {
@@ -283,6 +335,16 @@ export interface ApplyStylesResult {
   styleFactoryMappingsCreated: number;
   styleFactoryMappingsVerified: number;
   styleFactoryMappingsSkipped: number;
+  /** Per-Style categoryDescription/hsnCode reconciliation outcome — CREATE entries are always SET (or NO_SOURCE_VALUE); VERIFY_EXISTING entries only ever set a currently-null field, never overwrite a populated one. */
+  fieldReconciliation: StyleFieldReconciliationDetail[];
+}
+
+/** Never overwrites an existing non-null value that disagrees with the proposed one — that is always REVIEW_REQUIRED_CONFLICT, reported but not applied. */
+function resolveFieldReconciliation(previous: string | null, proposed: string | null): FieldReconciliationOutcome {
+  if (proposed === null) return 'NO_SOURCE_VALUE';
+  if (previous === null) return 'SET';
+  if (previous === proposed) return 'ALREADY_SET';
+  return 'REVIEW_REQUIRED_CONFLICT';
 }
 
 export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): Promise<ApplyStylesResult> {
@@ -295,7 +357,19 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
     styleFactoryMappingsCreated: 0,
     styleFactoryMappingsVerified: 0,
     styleFactoryMappingsSkipped: 0,
+    fieldReconciliation: [],
   };
+
+  const existingStyleIds = plan
+    .map((e) => e.existingStyleId)
+    .filter((id): id is string => id !== null);
+  const existingFieldRows = existingStyleIds.length
+    ? await prisma.style.findMany({
+        where: { id: { in: existingStyleIds } },
+        select: { id: true, categoryDescription: true, hsnCode: true },
+      })
+    : [];
+  const existingFieldsById = new Map(existingFieldRows.map((r) => [r.id, r] as const));
 
   for (const entry of plan) {
     if (entry.action === 'BLOCKED') {
@@ -307,6 +381,34 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
     if (entry.action === 'VERIFY_EXISTING' && entry.existingStyleId) {
       styleId = entry.existingStyleId;
       result.stylesVerified.push(styleId);
+
+      const existingFields = existingFieldsById.get(styleId) ?? { categoryDescription: null, hsnCode: null };
+      const categoryOutcome = resolveFieldReconciliation(existingFields.categoryDescription, entry.categoryNormalized);
+      const hsnOutcome = resolveFieldReconciliation(existingFields.hsnCode, entry.hsnCode);
+      const patch: Record<string, unknown> = {};
+      if (categoryOutcome === 'SET') patch.categoryDescription = entry.categoryNormalized;
+      if (hsnOutcome === 'SET') patch.hsnCode = entry.hsnCode;
+      if (Object.keys(patch).length > 0) {
+        await updateStyle(actor, styleId, patch);
+      }
+      result.fieldReconciliation.push({
+        season: entry.season,
+        legacyReference: entry.legacyReferenceNumbers[0] ?? null,
+        lmix: entry.lmix,
+        styleId,
+        styleNumber: entry.styleNumber,
+        categoryRaw: entry.categoryRaw,
+        categoryNormalized: entry.categoryNormalized,
+        categoryNormalizationApplied: entry.categoryNormalizationApplied,
+        previousCategoryDescription: existingFields.categoryDescription,
+        proposedCategoryDescription: entry.categoryNormalized,
+        categoryOutcome,
+        pdfHsnSourceValue: entry.hsnCode,
+        previousHsnCode: existingFields.hsnCode,
+        parsedHsnCode: entry.hsnCode,
+        hsnChanged: hsnOutcome === 'SET',
+        hsnOutcome,
+      });
     } else {
       if (!entry.styleName || !entry.finalMrp || !entry.seasonId) {
         result.stylesBlocked.push({ season: entry.season, lmix: entry.lmix, reason: 'Missing required field (styleName/finalMrp/seasonId) — not created' });
@@ -319,6 +421,7 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
         colour: entry.colour ?? undefined,
         lmixNumber: entry.lmix,
         hsnCode: entry.hsnCode ?? undefined,
+        categoryDescription: entry.categoryNormalized ?? undefined,
         ipName: entry.ipName ?? undefined,
         licensor: entry.licensor ?? undefined,
         finalMrp: entry.finalMrp,
@@ -327,6 +430,24 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
       });
       styleId = created.id;
       result.stylesCreated.push(styleId);
+      result.fieldReconciliation.push({
+        season: entry.season,
+        legacyReference: entry.legacyReferenceNumbers[0] ?? null,
+        lmix: entry.lmix,
+        styleId,
+        styleNumber: entry.styleNumber,
+        categoryRaw: entry.categoryRaw,
+        categoryNormalized: entry.categoryNormalized,
+        categoryNormalizationApplied: entry.categoryNormalizationApplied,
+        previousCategoryDescription: null,
+        proposedCategoryDescription: entry.categoryNormalized,
+        categoryOutcome: entry.categoryNormalized === null ? 'NO_SOURCE_VALUE' : 'SET',
+        pdfHsnSourceValue: entry.hsnCode,
+        previousHsnCode: null,
+        parsedHsnCode: entry.hsnCode,
+        hsnChanged: entry.hsnCode !== null,
+        hsnOutcome: entry.hsnCode === null ? 'NO_SOURCE_VALUE' : 'SET',
+      });
     }
 
     for (const size of entry.sizes) {
