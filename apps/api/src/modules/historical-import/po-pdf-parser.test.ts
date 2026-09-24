@@ -125,7 +125,8 @@ describe('parsePurchaseOrderBuffer — AW25/SS26 template', () => {
         { text: '*Delivery date needs to be respected to avoid any loss of sales or discounts.', x: 20, y: 249, fontSize: 5 },
       ] : []),
     ]);
-    expect(result.description.value).toBe("Girls Long\nSleeve Hoody\n\n*ST1: Girls Long Sleeve Hoody - Barbie\n*HS 61061000 Girls/ Hoody");
+    expect(result.description.value).toBe("Girls Long Sleeve Hoody\n\n*ST1: Girls Long Sleeve Hoody - Barbie\n*HS 61061000 Girls/ Hoody");
+    expect(result.documentarySections?.tableDescriptionRaw).toBe('Girls Long\nSleeve Hoody');
     expect(result.approvalSampleInstructions.value).toBe('Fitting S: 4 years - 2 Pcs\nPhoto Sample: 2 Pcs\nAbove samples are for approval only');
     expect(result.documentarySections?.reviewReasons).toEqual([]);
     expect(result.documentarySections?.disclaimerText).toBe(
