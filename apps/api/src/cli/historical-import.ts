@@ -205,6 +205,12 @@ export async function runHistoricalImportDryRun(options: RunHistoricalImportDryR
             'RESOLVED. All 91 Style<->Factory mappings were NEW_MAPPING_RATE (no current Dev mapping existed yet) with an unambiguous business workbook rate; a rerun after creation confirms all 91 now MATCH. Historical PO supplier rate is left unaltered as documentary evidence — never overwritten by the new workbook.',
           evidenceFile: 'h2a/ex-factory-reconciliation.json',
         },
+        {
+          topic: 'Style.styleNumber for migration-created historical Styles',
+          resolution:
+            'APPROVED by the project owner. Style.styleNumber for imported historical master preparation is system-generated as `{Season}-{LMIX digits}` (e.g. SS26-25426009) because no authoritative historical Style Number is available. It is not asserted to be a source-document value; LMIX and Season remain the source-backed identity. Bare LMIX digits were rejected because Style.styleNumber is globally unique and three unrelated pre-existing DEFAULT-season Styles already use the bare digits of LMIX39026006/25426015/25426009.',
+          evidenceFile: 'h2a/mrp-reconciliation.json',
+        },
       ],
       pendingUserApprovals: [],
     },

@@ -132,7 +132,9 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
   for (const mrpRecord of mrpRecords) {
     const identity = identities.find((i) => i.season === mrpRecord.season && i.lmix === mrpRecord.lmix)!;
     const seasonId = seasonIdByCode.get(mrpRecord.season) ?? null;
-    // Style.styleNumber is globally unique (not scoped by Season), unlike
+    // SYSTEM-GENERATED, not a source-document value: no authoritative
+    // historical Style Number exists; Season + LMIX remain the source-backed
+    // identity. Style.styleNumber is globally unique (not scoped by Season), unlike
     // the Season+LMIX identity key. Three pre-existing DEFAULT-season
     // sample/verification Styles already occupy the bare LMIX digits for
     // LMIX39026006/25426015/25426009 (discovered when createStyle first
