@@ -1184,6 +1184,15 @@ export interface JobOrderDetail extends JobOrderSummary {
     sizeLabel: string;
     forecastQuantity: number;
   }>;
+  // Present only for recordOrigin=HISTORICAL_IMPORT rows (null for every
+  // live Job Order): the real historical identity and business date, so the
+  // UI can present the row as read-only historical evidence rather than as
+  // live work awaiting factory confirmation.
+  historicalImport?: {
+    legacyReferenceNumber: string | null;
+    historicalBusinessDate: string | null;
+    importedAt: string | null;
+  } | null;
 }
 
 export interface JobOrderAuditEntry {

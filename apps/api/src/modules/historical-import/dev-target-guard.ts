@@ -118,7 +118,14 @@ export function requireVerifiedDevDatabaseTarget(input: DevTargetGuardInput): De
 /** Renders the report block shown in every plan revision, e.g. before `prisma migrate deploy` or the dry-run reconciliation. */
 export function formatDevTargetReport(
   report: DevTargetReport,
-  mode: 'SCHEMA MIGRATION ONLY' | 'READ ONLY BUSINESS DATA' | 'DEV MASTER-DATA PREPARATION',
+  mode:
+    | 'SCHEMA MIGRATION ONLY'
+    | 'READ ONLY BUSINESS DATA'
+    | 'DEV MASTER-DATA PREPARATION'
+    | 'DEV HISTORICAL JOB ORDER PLAN (READ ONLY)'
+    | 'DEV HISTORICAL JOB ORDER COMMIT'
+    | 'DEV HISTORICAL JOB ORDER VERIFY (READ ONLY)'
+    | 'DEV HISTORICAL BATCH RESET',
 ): string {
   return [
     `Expected environment: ${report.expectedEnvironment}`,
@@ -131,4 +138,47 @@ export function formatDevTargetReport(
     `Target validation: ${report.targetValidation}`,
     `Mode: ${mode}`,
   ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// H2B — historical transaction-row writes (commit / batch reset)
+// ---------------------------------------------------------------------------
+
+/** The one database name H2B's historical Job Order commit/reset may ever write to. */
+export const APPROVED_DEV_DATABASE_NAME = 'erve_dev';
+
+export interface DevWriteTargetGuardInput extends DevTargetGuardInput {
+  /** NODE_ENV of this process — anything other than "development" is refused. */
+  nodeEnv?: string;
+  /** Result of `SELECT current_database()` over the live connection this command will write through. */
+  liveCurrentDatabase: string;
+}
+
+/**
+ * H2B write guard. Stricter than requireVerifiedDevDatabaseTarget, which
+ * only proves DATABASE_URL equals the operator's declaration: a write of
+ * historical transaction rows additionally requires (1) the declared
+ * database to be the one approved Dev database by name, (2) this process to
+ * be running with NODE_ENV=development, and (3) the LIVE connection to
+ * report that same database name — so a stale/overridden URL, a pooler
+ * redirect, or a Production NODE_ENV all fail closed.
+ */
+export function requireApprovedDevWriteTarget(input: DevWriteTargetGuardInput): DevTargetReport {
+  const report = requireVerifiedDevDatabaseTarget(input);
+  if (input.nodeEnv !== 'development') {
+    throw new DevTargetGuardError(
+      `Refusing to write: NODE_ENV must be "development" for historical-import writes (got "${input.nodeEnv ?? '(unset)'}")`,
+    );
+  }
+  if (report.expectedDatabase !== APPROVED_DEV_DATABASE_NAME) {
+    throw new DevTargetGuardError(
+      `Refusing to write: the declared Dev database is "${report.expectedDatabase}", not the approved "${APPROVED_DEV_DATABASE_NAME}"`,
+    );
+  }
+  if (input.liveCurrentDatabase !== APPROVED_DEV_DATABASE_NAME) {
+    throw new DevTargetGuardError(
+      `Refusing to write: the live connection reports current_database() = "${input.liveCurrentDatabase}", not "${APPROVED_DEV_DATABASE_NAME}"`,
+    );
+  }
+  return report;
 }

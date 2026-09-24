@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DevTargetGuardError, formatDevTargetReport, requireVerifiedDevDatabaseTarget } from './dev-target-guard.js';
+import { DevTargetGuardError, formatDevTargetReport, requireApprovedDevWriteTarget, requireVerifiedDevDatabaseTarget } from './dev-target-guard.js';
 
 const DEV_URL = 'postgresql://postgres:postgres@localhost:5432/erve_dev?schema=public';
 
@@ -85,5 +85,32 @@ describe('formatDevTargetReport', () => {
     expect(rendered).toContain('Mode: SCHEMA MIGRATION ONLY');
     expect(rendered).toContain('Target validation: PASSED');
     expect(rendered).not.toContain('postgres:postgres');
+  });
+});
+
+describe('requireApprovedDevWriteTarget (H2B writes)', () => {
+  const base = { actualDatabaseUrl: DEV_URL, expectedDevDatabaseUrl: DEV_URL, nodeEnv: 'development', liveCurrentDatabase: 'erve_dev' };
+
+  it('passes only for erve_dev, NODE_ENV=development, and a live connection that reports erve_dev', () => {
+    expect(requireApprovedDevWriteTarget(base).actualDatabase).toBe('erve_dev');
+  });
+
+  it('refuses a correctly-declared but non-approved database name', () => {
+    const other = 'postgresql://postgres:postgres@localhost:5432/erve_docs';
+    expect(() => requireApprovedDevWriteTarget({ ...base, actualDatabaseUrl: other, expectedDevDatabaseUrl: other, liveCurrentDatabase: 'erve_docs' })).toThrow(DevTargetGuardError);
+  });
+
+  it('refuses when NODE_ENV is not development', () => {
+    expect(() => requireApprovedDevWriteTarget({ ...base, nodeEnv: 'production' })).toThrow(DevTargetGuardError);
+    expect(() => requireApprovedDevWriteTarget({ ...base, nodeEnv: undefined })).toThrow(DevTargetGuardError);
+  });
+
+  it('refuses when the live connection reports a different database than the URL claims', () => {
+    expect(() => requireApprovedDevWriteTarget({ ...base, liveCurrentDatabase: 'erve_prod' })).toThrow(DevTargetGuardError);
+  });
+
+  it('still refuses a URL mismatch or a missing declaration', () => {
+    expect(() => requireApprovedDevWriteTarget({ ...base, expectedDevDatabaseUrl: undefined })).toThrow(DevTargetGuardError);
+    expect(() => requireApprovedDevWriteTarget({ ...base, actualDatabaseUrl: 'postgresql://p:p@otherhost:5432/erve_dev' })).toThrow(DevTargetGuardError);
   });
 });

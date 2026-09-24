@@ -1,11 +1,10 @@
 // Write-only historical Job Order import service (H1 plan §13).
 //
 // Deliberately separate from job-orders.service.ts's createJobOrder — no
-// `{ dryRun }` option, no flags added to the live path. In Story H1 this
-// function is invoked only from tests against the disposable test database;
-// no H1 CLI imports or references it. H2 introduces the first command that
-// calls this against Dev, after the staging/reconciliation artifacts this
-// module also builds have been reviewed and approved.
+// `{ dryRun }` option, no flags added to the live path. Its only non-test
+// caller is H2B's historical-job-order-commit.service.ts (driven by the
+// dev-target-guarded `historical-import:commit-job-orders` CLI), after the
+// staging/reconciliation artifacts this module also builds were approved.
 //
 // Every enforced rule below traces to a specific H1 plan requirement:
 //   - ADMIN actor required                        (§13)
@@ -114,6 +113,19 @@ export async function importHistoricalJobOrder(
   }
 
   return prisma.$transaction(async (tx) => {
+    // H2B idempotency backstop: serialize per legacy reference and refuse a
+    // second row for the same reference inside the same batch, so a retried
+    // or concurrent commit can never silently duplicate a historical Job
+    // Order even if the caller's own VERIFY_EXISTING planning were skipped.
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('historical_job_order_legacy:' || ${legacyReferenceNumber}, 0))::text`;
+    const alreadyInBatch = await tx.jobOrder.findFirst({
+      where: { legacyReferenceNumber, importBatchId: input.importBatchId },
+      select: { id: true },
+    });
+    if (alreadyInBatch) {
+      throw HttpError.conflict(`A historical Job Order for "${legacyReferenceNumber}" already exists in this import batch`);
+    }
+
     const [factory, style, processFlowVersion, importBatch] = await Promise.all([
       tx.factory.findUnique({ where: { id: input.factoryId } }),
       tx.style.findUnique({ where: { id: input.styleId } }),

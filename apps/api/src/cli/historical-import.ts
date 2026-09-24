@@ -20,6 +20,7 @@ import {
   resolveApprovedOverridesForRecord,
   applyApprovedOverrides,
   type SourceOverrideEntry,
+  type SourceOverrideFieldEntry,
 } from '../modules/historical-import/source-overrides.js';
 import type { SourceStagingRecord } from '../modules/historical-import/staging.service.js';
 import type { ParsedPurchaseOrderRecord } from '../modules/historical-import/po-pdf-parser.types.js';
@@ -50,6 +51,34 @@ function stagingToImageCandidate(staging: SourceStagingRecord): ExtractedImageCa
     sha256: staging.imageSha256,
     notes: staging.imageNotes,
   };
+}
+
+/**
+ * immutable source-staging + APPROVED checksum-bound overrides -> effective
+ * records, in memory only. Shared by the dry run and the H2B commit so both
+ * always see the identical effective record.
+ */
+export function buildEffectiveReconcileItems(stagingRecords: SourceStagingRecord[], overrideEntries: SourceOverrideEntry[]) {
+  const appliedOverridesByFile: Record<string, string[]> = {};
+  const approvedOverridesByFile: Record<string, SourceOverrideFieldEntry[]> = {};
+  const effectiveParseStatusChangesByFile: Record<string, { from: string; to: string; resolvedWarnings: string[] }> = {};
+  const items = stagingRecords.map((staging) => {
+    const parsed = stagingToParsedRecord(staging);
+    const approvedOverrides = resolveApprovedOverridesForRecord(overrideEntries, {
+      sourceFileName: staging.sourceFileName,
+      sourceChecksumSha256: staging.sourceChecksumSha256,
+    });
+    const { record, appliedFields, resolvedWarnings } = applyApprovedOverrides(parsed, approvedOverrides);
+    if (appliedFields.length > 0) {
+      appliedOverridesByFile[staging.sourceFileName] = appliedFields;
+      approvedOverridesByFile[staging.sourceFileName] = approvedOverrides.filter((o) => appliedFields.includes(o.field));
+    }
+    if (record.parseStatus !== parsed.parseStatus) {
+      effectiveParseStatusChangesByFile[staging.sourceFileName] = { from: parsed.parseStatus, to: record.parseStatus, resolvedWarnings };
+    }
+    return { parsed: record, image: stagingToImageCandidate(staging) };
+  });
+  return { items, appliedOverridesByFile, approvedOverridesByFile, effectiveParseStatusChangesByFile };
 }
 
 export interface RunHistoricalImportDryRunOptions {
@@ -120,21 +149,7 @@ export async function runHistoricalImportDryRun(options: RunHistoricalImportDryR
     overrideEntries = parseSourceOverridesArtifact(raw);
   }
 
-  const appliedOverridesByFile: Record<string, string[]> = {};
-  const effectiveParseStatusChangesByFile: Record<string, { from: string; to: string; resolvedWarnings: string[] }> = {};
-  const items = stagingRecords.map((staging) => {
-    const parsed = stagingToParsedRecord(staging);
-    const approvedOverrides = resolveApprovedOverridesForRecord(overrideEntries, {
-      sourceFileName: staging.sourceFileName,
-      sourceChecksumSha256: staging.sourceChecksumSha256,
-    });
-    const { record, appliedFields, resolvedWarnings } = applyApprovedOverrides(parsed, approvedOverrides);
-    if (appliedFields.length > 0) appliedOverridesByFile[staging.sourceFileName] = appliedFields;
-    if (record.parseStatus !== parsed.parseStatus) {
-      effectiveParseStatusChangesByFile[staging.sourceFileName] = { from: parsed.parseStatus, to: record.parseStatus, resolvedWarnings };
-    }
-    return { parsed: record, image: stagingToImageCandidate(staging) };
-  });
+  const { items, appliedOverridesByFile, effectiveParseStatusChangesByFile } = buildEffectiveReconcileItems(stagingRecords, overrideEntries);
   const reconciledRecords = await reconcileBatch(prisma, items, factoryMappings, sizeMappings);
   // Uses the EFFECTIVE (post-approved-override) legacyReferenceNumber, not
   // the raw staging value — otherwise an approved identity correction (e.g.

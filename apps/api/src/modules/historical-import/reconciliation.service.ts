@@ -228,13 +228,14 @@ export interface LegacyReferenceDuplicateInfo {
 export async function detectDuplicateLegacyReferences(
   client: Client,
   legacyReferenceNumbers: Array<string | null>,
+  options: ReconcileBatchOptions = {},
 ): Promise<LegacyReferenceDuplicateInfo[]> {
   const nonNull = legacyReferenceNumbers.filter((v): v is string => v !== null);
   const withinBatchCounts = new Map<string, number>();
   for (const value of nonNull) withinBatchCounts.set(value, (withinBatchCounts.get(value) ?? 0) + 1);
 
   const existing =
-    nonNull.length > 0
+    nonNull.length > 0 && !options.ignoreExistingJobOrderReferences
       ? await client.jobOrder.findMany({ where: { legacyReferenceNumber: { in: nonNull } }, select: { legacyReferenceNumber: true } })
       : [];
   const existingSet = new Set(existing.map((e) => e.legacyReferenceNumber).filter((v): v is string => v !== null));
@@ -289,15 +290,30 @@ export interface ReconcileBatchItem {
   image: ExtractedImageCandidate;
 }
 
+export interface ReconcileBatchOptions {
+  /**
+   * H2B commit preflight only: skip flagging a reference merely because a
+   * Job Order with it already exists. The commit planner
+   * (historical-job-order-commit.service.ts) then compares every such
+   * existing row field-by-field against the approved record itself —
+   * VERIFY_EXISTING when identical, REVIEW_CONFLICT otherwise — which is
+   * stricter than this generic "already exists" flag. Within-batch repeats
+   * are still always flagged.
+   */
+  ignoreExistingJobOrderReferences?: boolean;
+}
+
 export async function reconcileBatch(
   client: Client,
   items: ReconcileBatchItem[],
   approvedFactoryMappings?: FactoryMappingRow[],
   approvedSizeMappings?: SizeMappingRow[],
+  options: ReconcileBatchOptions = {},
 ): Promise<ReconciledRecord[]> {
   const duplicateInfos = await detectDuplicateLegacyReferences(
     client,
     items.map((item) => item.parsed.legacyReferenceNumber.value),
+    options,
   );
 
   const records: ReconciledRecord[] = [];
