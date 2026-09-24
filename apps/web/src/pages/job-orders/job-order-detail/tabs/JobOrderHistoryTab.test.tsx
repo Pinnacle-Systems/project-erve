@@ -185,3 +185,17 @@ describe('JobOrderHistoryTab audit history', () => {
     expect(panel.textContent).toContain('Final Inspection batch 2 finalized — FAIL');
   });
 });
+
+describe('JobOrderHistoryTab — historical imported Job Order', () => {
+  it('states factory acknowledgement is not applicable instead of pending', async () => {
+    await renderHistory('PRODUCTION_COMPLETE', [], {
+      confirmedAt: null,
+      confirmedBy: null,
+      acknowledgement: null,
+      historicalImport: { legacyReferenceNumber: 'EI25001', historicalBusinessDate: '2025-08-15', importedAt: '2026-09-24T06:03:42.000Z' },
+    });
+    const panel = getActiveTabPanel(container);
+    expect(panel.textContent).toContain('Not applicable — this is a historical imported Job Order');
+    expect(panel.textContent).not.toContain('Factory acknowledgement is pending');
+  });
+});

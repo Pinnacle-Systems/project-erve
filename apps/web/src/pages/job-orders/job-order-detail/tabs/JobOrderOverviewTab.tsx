@@ -23,9 +23,35 @@ export interface JobOrderOverviewTabProps {
 }
 
 function JobOrderOverviewSummary({ jobOrder }: { jobOrder: JobOrder }) {
+  // Historical imports carry ordered quantities and source evidence only —
+  // never live confirmation or prepared/variance tracking, so those items
+  // are stated as not applicable rather than shown as pending/shortfall.
+  const historical = jobOrder.historicalImport ?? null;
   return (
     <Panel title="Job Order Header">
       <DescriptionList columns={4}>
+        {historical && (
+          <>
+            <DescriptionList.Item
+              label="Record Origin"
+              value={<StatusBadge label="Historical import" tone="info" />}
+            />
+            <DescriptionList.Item label="Historical Reference" value={historical.legacyReferenceNumber} />
+            <DescriptionList.Item
+              label="Historical Order Date"
+              value={
+                historical.historicalBusinessDate
+                  ? new Date(historical.historicalBusinessDate).toLocaleDateString('en-IN', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })
+                  : undefined
+              }
+            />
+            <DescriptionList.Item label="Imported At" value={formatDateTime(historical.importedAt)} />
+          </>
+        )}
         <DescriptionList.Item label="Lifecycle" value={JOB_ORDER_STATUS_LABELS[jobOrder.status]} />
         <DescriptionList.Item label="Order Sheets" value={jobOrder.sourceOrderSheetCount} />
         <DescriptionList.Item label="Factory" value={jobOrder.factory.name} />
@@ -53,7 +79,7 @@ function JobOrderOverviewSummary({ jobOrder }: { jobOrder: JobOrder }) {
           label="Process Flow"
           value={`${jobOrder.processFlowVersion.processFlow.name} v${jobOrder.processFlowVersion.versionNumber}`}
         />
-        {jobOrder.factoryConfirmationStatus !== 'CONFIRMED' && (
+        {!historical && jobOrder.factoryConfirmationStatus !== 'CONFIRMED' && (
           <DescriptionList.Item
             label="Confirmation"
             value={
@@ -65,10 +91,17 @@ function JobOrderOverviewSummary({ jobOrder }: { jobOrder: JobOrder }) {
           />
         )}
         <DescriptionList.Item label="Ordered Qty" value={jobOrder.orderedQuantityTotal.toLocaleString()} />
-        <DescriptionList.Item label="Prepared Qty" value={jobOrder.preparedQuantityTotal.toLocaleString()} />
+        <DescriptionList.Item
+          label="Prepared Qty"
+          value={historical ? 'Not recorded (historical)' : jobOrder.preparedQuantityTotal.toLocaleString()}
+        />
         <DescriptionList.Item
           label="Variance"
-          value={(jobOrder.preparedQuantityTotal - jobOrder.orderedQuantityTotal).toLocaleString()}
+          value={
+            historical
+              ? 'Not applicable'
+              : (jobOrder.preparedQuantityTotal - jobOrder.orderedQuantityTotal).toLocaleString()
+          }
         />
         <DescriptionList.Item label="Created" value={formatDateTime(jobOrder.createdAt)} />
         <DescriptionList.Item label="Confirmed By" value={jobOrder.confirmedBy?.name} />

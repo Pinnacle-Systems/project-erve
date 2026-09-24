@@ -635,6 +635,14 @@ function toJobOrderView(
     jobOrderNumber: jobOrder.jobOrderNumber,
     financialYear: jobOrder.financialYear,
     factory: jobOrder.factory,
+    historicalImport:
+      jobOrder.recordOrigin === 'HISTORICAL_IMPORT'
+        ? {
+            legacyReferenceNumber: jobOrder.legacyReferenceNumber,
+            historicalBusinessDate: jobOrder.historicalBusinessDate?.toISOString().slice(0, 10) ?? null,
+            importedAt: jobOrder.importedAt?.toISOString() ?? null,
+          }
+        : null,
     processFlowVersion: {
       id: jobOrder.processFlowVersion.id,
       versionNumber: jobOrder.processFlowVersion.versionNumber,
@@ -657,7 +665,9 @@ function toJobOrderView(
     }),
     factoryConfirmationStatus: jobOrder.factoryConfirmationStatus,
     requiredDeliveryDate: jobOrder.requiredDeliveryDate?.toISOString() ?? null,
-    deliveryDateLocked: jobOrder.factoryConfirmationStatus === 'CONFIRMED',
+    // Historical imports are never factory-confirmed but are read-only evidence.
+    deliveryDateLocked:
+      jobOrder.factoryConfirmationStatus === 'CONFIRMED' || jobOrder.recordOrigin === 'HISTORICAL_IMPORT',
     isDelayed: isJobOrderDelayed({
       status: jobOrder.status,
       requiredDeliveryDate: jobOrder.requiredDeliveryDate,
@@ -1016,6 +1026,11 @@ export async function getProcessFlowQualityWork(user: CurrentUser) {
   const jobs = await prisma.jobOrder.findMany({
     where: {
       factoryConfirmationStatus: 'CONFIRMED',
+      // Historical-import rows never had live quality work. They are kept
+      // out today only incidentally (never factory-confirmed); this makes
+      // the exclusion explicit, like getAssignedFactoryTasks and the QA
+      // queues, so it survives any later change to the filter above.
+      recordOrigin: 'LIVE_WORKFLOW',
       processFlowVersion: {
         stages: { some: { status: 'ACTIVE', activityType: 'QUALITY' } },
       },
@@ -1569,6 +1584,12 @@ export async function updateJobOrderDeliveryDate(
     const jobOrder = await tx.jobOrder.findUnique({ where: { id } });
     if (!jobOrder) throw HttpError.notFound('Job order not found');
     if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+    // A historical import's delivery date is source evidence, not a live
+    // plan — and such a row is never factory-confirmed, so the check below
+    // alone would leave it editable forever.
+    if (jobOrder.recordOrigin === 'HISTORICAL_IMPORT') {
+      throw HttpError.conflict('Historical imported Job Orders are read-only');
+    }
     // Delivery date locks at factory confirmation — a separate, later
     // lifecycle point from the source Order Sheet mapping freeze at
     // SENT_TO_FACTORY (§16).

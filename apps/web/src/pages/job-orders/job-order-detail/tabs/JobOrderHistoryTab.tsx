@@ -48,6 +48,11 @@ export function JobOrderHistoryTab({ jobOrder, auditEntries, auditLoading }: Job
               {jobOrder.acknowledgement.disclaimerTextSnapshot}
             </pre>
           </div>
+        ) : jobOrder.historicalImport ? (
+          <p className="text-sm text-muted-foreground">
+            Not applicable — this is a historical imported Job Order. No live factory acknowledgement or
+            confirmation was recorded for it.
+          </p>
         ) : jobOrder.status === 'DRAFT' ? (
           <p className="text-sm text-muted-foreground">
             No acknowledgement is required while this Job Order is a draft.

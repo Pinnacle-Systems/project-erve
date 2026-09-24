@@ -1590,3 +1590,18 @@ describe('cancellation blocks PP Sample/PPM QA start and finalization (Correctio
     expect(ppm.status).toBe('COMPLETED');
   });
 });
+
+describe('QA quality-work queue isolation from historical-import rows', () => {
+  it('excludes a HISTORICAL_IMPORT Job Order even when it is factory-CONFIRMED with available quality work', async () => {
+    const f = await workflow();
+    await confirmFactory(f);
+    const listed = async () =>
+      (await request(app).get('/job-orders/quality-work').set('Authorization', `Bearer ${f.qa.token}`).expect(200)).body.data.some(
+        (item: { jobOrderId: string }) => item.jobOrderId === f.job.id,
+      );
+    expect(await listed()).toBe(true);
+
+    await prisma.jobOrder.update({ where: { id: f.job.id }, data: { recordOrigin: 'HISTORICAL_IMPORT' } });
+    expect(await listed()).toBe(false);
+  });
+});

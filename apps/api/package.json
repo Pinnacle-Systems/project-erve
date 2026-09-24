@@ -27,7 +27,9 @@
     "historical-import:dry-run": "tsx src/cli/historical-import.cli.ts",
     "historical-import:master-prep": "tsx src/cli/historical-import-master-prep.cli.ts",
     "historical-import:mrp-audit": "tsx src/cli/historical-import-mrp-audit.cli.ts",
-    "historical-import:style-prep": "tsx src/cli/historical-import-style-prep.cli.ts"
+    "historical-import:style-prep": "tsx src/cli/historical-import-style-prep.cli.ts",
+    "historical-import:commit-job-orders": "tsx src/cli/historical-import-commit-job-orders.cli.ts",
+    "historical-import:reset-batch": "tsx src/cli/historical-import-reset-batch.cli.ts"
   },
   "dependencies": {
     "@erve/shared": "workspace:*",

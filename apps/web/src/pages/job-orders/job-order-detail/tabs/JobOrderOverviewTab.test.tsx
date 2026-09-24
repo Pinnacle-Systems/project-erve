@@ -90,3 +90,42 @@ describe('JobOrderOverviewTab', () => {
     expect(JSON.stringify(body)).not.toContain('sizes');
   });
 });
+
+describe('JobOrderOverviewTab — historical imported Job Order', () => {
+  const historicalOverrides = {
+    factoryConfirmationStatus: 'PENDING',
+    confirmedAt: null,
+    confirmedBy: null,
+    deliveryDateLocked: true,
+    sourceOrderSheetCount: 0,
+    sourceOrderSheets: [],
+    historicalImport: {
+      legacyReferenceNumber: 'EI25001',
+      historicalBusinessDate: '2025-08-15',
+      importedAt: '2026-09-24T06:03:42.000Z',
+    },
+  };
+
+  it('shows the historical reference and states confirmation/prepared/variance as not applicable, with no delivery-date editor', async () => {
+    await renderJobOrderDetail(container, root, { status: 'PRODUCTION_COMPLETE', stages: [], overrides: historicalOverrides });
+
+    const panel = getActiveTabPanel(container);
+    expect(panel.textContent).toContain('Historical import');
+    expect(panel.textContent).toContain('EI25001');
+    expect(panel.textContent).toContain('Historical Order Date');
+    expect(panel.textContent).toContain('Not recorded (historical)');
+    expect(panel.textContent).not.toContain('Confirmation');
+    expect(panel.textContent).not.toContain('Save Delivery Date');
+  });
+
+  it('keeps the live presentation for a live Job Order (historicalImport null)', async () => {
+    await renderJobOrderDetail(container, root, {
+      status: 'SENT_TO_FACTORY',
+      stages: standardStages,
+      overrides: { factoryConfirmationStatus: 'PENDING', deliveryDateLocked: false, historicalImport: null },
+    });
+    const panel = getActiveTabPanel(container);
+    expect(panel.textContent).not.toContain('Historical import');
+    expect(panel.textContent).toContain('Confirmation');
+  });
+});

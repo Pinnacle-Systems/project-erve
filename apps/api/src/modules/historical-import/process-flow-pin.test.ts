@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createId } from '@erve/shared';
 import { prisma } from '../../db/prisma.js';
-import { ProcessFlowPinError, resolveProcessFlowVersionPin } from './process-flow-pin.js';
+import { ProcessFlowPinError, resolveProcessFlowVersionByLogicalIdentity, resolveProcessFlowVersionPin } from './process-flow-pin.js';
 import { resetDatabase } from '../../test/helpers.js';
 
 beforeEach(resetDatabase);
@@ -81,5 +81,23 @@ describe('resolveProcessFlowVersionPin', () => {
     const versionId2 = await createActiveFlow('TWIN_B', [{ sequence: 1, name: 'Cutting only', code: 'CUT' }]);
     const pinDifferent = await resolveProcessFlowVersionPin(prisma, versionId2);
     expect(pinDifferent.logicalIdentity.fingerprint).not.toBe(pinFirstRead.logicalIdentity.fingerprint);
+  });
+});
+
+describe('resolveProcessFlowVersionByLogicalIdentity (H2B fresh re-resolution)', () => {
+  it('resolves the one ACTIVE version whose fingerprint matches, even with other ACTIVE flows present', async () => {
+    const wanted = await createActiveFlow('WANTED', [{ sequence: 1, name: 'Cutting', code: 'CUT' }]);
+    await createActiveFlow('OTHER', [{ sequence: 1, name: 'Sewing', code: 'SEW' }]);
+    const approved = (await resolveProcessFlowVersionPin(prisma, wanted)).logicalIdentity;
+
+    const pin = await resolveProcessFlowVersionByLogicalIdentity(prisma, approved);
+    expect(pin.devProcessFlowVersionId).toBe(wanted);
+  });
+
+  it('refuses when the current structure no longer produces the approved fingerprint', async () => {
+    const wanted = await createActiveFlow('DRIFT', [{ sequence: 1, name: 'Cutting', code: 'CUT' }]);
+    const approved = (await resolveProcessFlowVersionPin(prisma, wanted)).logicalIdentity;
+    await prisma.processFlowVersionStage.updateMany({ where: { processFlowVersionId: wanted }, data: { name: 'Renamed' } });
+    await expect(resolveProcessFlowVersionByLogicalIdentity(prisma, approved)).rejects.toBeInstanceOf(ProcessFlowPinError);
   });
 });

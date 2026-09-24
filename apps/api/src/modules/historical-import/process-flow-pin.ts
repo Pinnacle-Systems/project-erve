@@ -141,6 +141,36 @@ async function buildLogicalIdentity(
 }
 
 /**
+ * H2B: re-resolves an already-approved logical identity against the
+ * CURRENT database instead of trusting a persisted Dev id from an older
+ * artifact. Exactly one ACTIVE version must produce the approved
+ * fingerprint; zero or several is an error, never a guess.
+ */
+export async function resolveProcessFlowVersionByLogicalIdentity(
+  client: Client,
+  approved: Pick<ProcessFlowVersionLogicalIdentity, 'processFlowCode' | 'versionNumber' | 'fingerprint'>,
+): Promise<ProcessFlowVersionPin> {
+  const candidates = await client.processFlowVersion.findMany({
+    where: { status: 'ACTIVE', versionNumber: approved.versionNumber, processFlow: { code: approved.processFlowCode } },
+    include: { processFlow: { select: { code: true, name: true } } },
+  });
+  const matches: ProcessFlowVersionPin[] = [];
+  for (const version of candidates) {
+    const logicalIdentity = await buildLogicalIdentity(client, version);
+    if (logicalIdentity.fingerprint === approved.fingerprint) {
+      matches.push({ logicalIdentity, devProcessFlowVersionId: version.id });
+    }
+  }
+  if (matches.length !== 1) {
+    throw new ProcessFlowPinError(
+      `Expected exactly one ACTIVE ${approved.processFlowCode} v${approved.versionNumber} matching approved fingerprint ` +
+        `${approved.fingerprint.slice(0, 16)}..., found ${matches.length} (of ${candidates.length} ACTIVE candidate(s))`,
+    );
+  }
+  return matches[0]!;
+}
+
+/**
  * Resolves once per batch: if exactly one ProcessFlowVersion is ACTIVE
  * across all ProcessFlows, it's pinned automatically. If more than one
  * ProcessFlow has an active version, an explicit versionId is required —
