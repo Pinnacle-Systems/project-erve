@@ -90,6 +90,7 @@ async function main() {
       currentStyleName: style.styleName,
       rawPriorPdfDescription: rawStaging.find((s) => s.sourceChecksumSha256 === record.sourceSha256)!.fields.description.value,
       pdfStyleDescription: sections.styleDescription, pdfTableDescription: sections.tableDescription,
+      pdfTableDescriptionRaw: sections.tableDescriptionRaw,
       pdfSpecificationText: sections.specificationText, mrpWorkbookDescription: mrpRow.description,
       workbookRow: mrpRow.excelRow, pdfMrpClassification: comparePdfMrp(sections.styleDescription, mrpRow.description),
       tablePdfMrpClassification: comparePdfMrp(sections.tableDescription, mrpRow.description),
@@ -102,7 +103,7 @@ async function main() {
       result: sections.reviewReasons.length ? 'REVIEW_REQUIRED' : styleChanged || styleNameChanged || disclaimerChanged ? 'CHANGED' : 'EXACT',
       reason: sections.reviewReasons.length ? sections.reviewReasons.join('; ') :
         'PDF table column and lower specification stanza retained in source order; order-detail instruction above Approval steps is preserved; approval region ends at the title above the table; lower commercial stanza starts at the BOM instruction. Workbook wording differs and is retained as independent evidence, never substituted. ' +
-        (styleChanged || styleNameChanged || disclaimerChanged ? 'Recover missing source text and preserve source line breaks.' : 'Persisted documentary fields already match the canonical extraction.'),
+        (styleChanged || styleNameChanged || disclaimerChanged ? 'Recover missing source text; join physical Description-cell wraps while preserving specification and documentary line breaks.' : 'Persisted documentary fields already match the canonical extraction.'),
     };
   });
   const counts = (values: string[]) => values.reduce<Record<string, number>>((a, value) => ({ ...a, [value]: (a[value] ?? 0) + 1 }), {});

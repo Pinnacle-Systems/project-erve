@@ -2,6 +2,8 @@ import { linesFromItems, type PageLayout, type TextItem } from './pdf-text-layou
 
 export interface DocumentarySections {
   version: 'H2B.1';
+  /** Physical PDF lines in the single Description table cell, for audit. */
+  tableDescriptionRaw: string;
   tableDescription: string;
   tableStyleName: string;
   specificationText: string;
@@ -32,7 +34,7 @@ function text(items: TextItem[]): string {
  */
 export function extractDocumentarySections(layout: PageLayout, pageCount = 1): DocumentarySections {
   const result: DocumentarySections = {
-    version: 'H2B.1', tableDescription: '', tableStyleName: '', specificationText: '', styleDescription: '',
+    version: 'H2B.1', tableDescriptionRaw: '', tableDescription: '', tableStyleName: '', specificationText: '', styleDescription: '',
     approvalText: '', disclaimerText: '', jobOrderDisclaimer: '', reviewReasons: [], boundaries: {}, layoutEvidence: layout,
   };
   const review = (reason: string) => result.reviewReasons.push(reason);
@@ -63,7 +65,10 @@ export function extractDocumentarySections(layout: PageLayout, pageCount = 1): D
   result.boundaries = { approvalHeadingY: approval.y, approvalBottomY: title.y, tableHeaderY: header.y,
     descriptionColumnX: desc.x, descriptionColumnRightX: artwork.x, lowerHeadingY: heading.y, lowerHeadingX: heading.x };
   result.approvalText = text(items.filter((i) => i.y < approval.y - 2.5 && i.y > title.y + 2.5 && i.x < layout.width * 0.6));
-  result.tableDescription = text(items.filter((i) => i.y < header.y - 2.5 && i.y >= heading.y - 2.5 && Math.abs(i.x - desc.x) < 5));
+  result.tableDescriptionRaw = text(items.filter((i) => i.y < header.y - 2.5 && i.y >= heading.y - 2.5 && Math.abs(i.x - desc.x) < 5));
+  // These consecutive lines occupy one visual table cell. Their newlines
+  // come from the column width; retain actual PDF lines in audit evidence.
+  result.tableDescription = result.tableDescriptionRaw.replace(/\s*\n\s*/g, ' ');
   result.tableStyleName = items.filter((i) => i.y < header.y - 2.5 && i.y >= heading.y - 2.5 && i.x >= styleColumn.x - 12 && i.x < (styleColumn.x + colourColumn.x) / 2 && i !== heading)
     .sort((a, b) => b.y - a.y || a.x - b.x).map((i) => i.text).join(' ').replace(/\s+/g, ' ').trim();
   const lower = linesFromItems(items.filter((i) => i.y < heading.y - 2.5));
