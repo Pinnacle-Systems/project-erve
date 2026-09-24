@@ -1,7 +1,8 @@
 import { formatPdfDate, formatPdfDateTime, formatPdfMoney } from '../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../lib/pdf/core/PdfKeyValueSection.js';
+import { NOT_APPLICABLE_LABEL, NOT_RECORDED_LABEL, getRecordedPreparedQuantity } from '@erve/app-components';
 import {
-  CONFIRMATION_LABELS,
+  getJobOrderConfirmationPresentation,
   JOB_ORDER_STATUS_LABELS,
   QUALITY_RUNTIME_STATUS_LABELS,
   STAGE_LABELS,
@@ -45,8 +46,9 @@ export interface JobOrderDetailSizeRow {
   id: string;
   sizeCode: string;
   orderedQuantity: number;
-  preparedQuantity: number;
-  varianceQuantity: number;
+  /** Recorded number, or "Not recorded" / "Not applicable" for a historical import (unknown, never 0). */
+  preparedQuantity: number | string;
+  varianceQuantity: number | string;
 }
 
 export interface JobOrderDetailStageRow {
@@ -121,7 +123,11 @@ export function buildJobOrderDetailViewModel(
   meta: JobOrderDetailPdfMeta,
 ): JobOrderDetailPdfViewModel {
   const line = jobOrder.lines[0];
-  const variance = jobOrder.preparedQuantityTotal - jobOrder.orderedQuantityTotal;
+  // Historical imports have no recorded prepared quantity (unknown, not 0),
+  // hence no variance, and no factory-confirmation event.
+  const recordedPrepared = getRecordedPreparedQuantity(jobOrder, jobOrder.preparedQuantityTotal);
+  const prepared = recordedPrepared ?? NOT_RECORDED_LABEL;
+  const variance = recordedPrepared === null ? NOT_APPLICABLE_LABEL : recordedPrepared - jobOrder.orderedQuantityTotal;
 
   const identityItems: PdfKeyValueItem[] = [
     { label: 'Job Order Number', value: jobOrder.jobOrderNumber },
@@ -142,11 +148,11 @@ export function buildJobOrderDetailViewModel(
         : null,
     },
     { label: 'Delivery Date Locked', value: jobOrder.deliveryDateLocked ? 'Yes' : 'No' },
-    { label: 'Factory Confirmation', value: CONFIRMATION_LABELS[jobOrder.factoryConfirmationStatus] },
+    { label: 'Factory Confirmation', value: getJobOrderConfirmationPresentation(jobOrder).label },
     { label: 'Confirmed By', value: jobOrder.confirmedBy?.name ?? null },
     { label: 'Confirmed At', value: formatPdfDateTime(jobOrder.confirmedAt) },
     { label: 'Ordered Quantity', value: jobOrder.orderedQuantityTotal },
-    { label: 'Prepared Quantity', value: jobOrder.preparedQuantityTotal },
+    { label: 'Prepared Quantity', value: prepared },
     { label: 'Variance', value: variance },
     { label: 'Production Started', value: formatPdfDateTime(jobOrder.productionStartedAt) },
     { label: 'Production Completed', value: formatPdfDateTime(jobOrder.productionCompletedAt) },
@@ -158,8 +164,9 @@ export function buildJobOrderDetailViewModel(
     id: size.id,
     sizeCode: size.sizeCode,
     orderedQuantity: size.orderedQuantity,
-    preparedQuantity: size.preparedQuantity,
-    varianceQuantity: size.varianceQuantity,
+    preparedQuantity: getRecordedPreparedQuantity(jobOrder, size.preparedQuantity) ?? NOT_RECORDED_LABEL,
+    varianceQuantity:
+      recordedPrepared === null ? NOT_APPLICABLE_LABEL : size.varianceQuantity,
   }));
 
   const sourceOrderSheets: JobOrderDetailSourceOrderSheetRow[] | null = jobOrder.sourceOrderSheets
@@ -222,7 +229,7 @@ export function buildJobOrderDetailViewModel(
     identityItems,
     styleNumber: line?.styleNumber ?? '',
     styleName: line?.styleName ?? '',
-    quantityTotalsLine: `Ordered: ${jobOrder.orderedQuantityTotal}  Prepared: ${jobOrder.preparedQuantityTotal}  Variance: ${variance}`,
+    quantityTotalsLine: `Ordered: ${jobOrder.orderedQuantityTotal}  Prepared: ${prepared}  Variance: ${variance}`,
     sizes,
     sourceOrderSheets,
     combinedForecast,

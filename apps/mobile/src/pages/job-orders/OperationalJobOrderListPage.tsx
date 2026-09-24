@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, JobOrderDetail, PaginatedResponse } from '@erve/types';
+import { NOT_RECORDED_LABEL, isHistoricalImportJobOrder } from '@erve/app-components';
 import { apiClient } from '../../lib/api-client.js';
 
 const inactiveStatuses = ['DRAFT', 'CLOSED', 'CANCELLED'];
@@ -85,7 +86,9 @@ export function OperationalJobOrderListPage() {
               </div>
             </div>
             <p className="mt-3 text-sm">
-              Prepared {job.preparedQuantityTotal} of {job.orderedQuantityTotal}
+              {isHistoricalImportJobOrder(job)
+                ? `Prepared: ${NOT_RECORDED_LABEL} · Ordered ${job.orderedQuantityTotal}`
+                : `Prepared ${job.preparedQuantityTotal} of ${job.orderedQuantityTotal}`}
             </p>
           </Link>
         ))}

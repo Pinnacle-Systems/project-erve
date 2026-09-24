@@ -264,4 +264,42 @@ describe('buildJobOrderDetailViewModel', () => {
     expect(serialized).not.toContain('__internalDebugFlag');
     expect(serialized).not.toContain('someAuditInternal');
   });
+
+  // recordOrigin=HISTORICAL_IMPORT: raw PENDING/0 are placeholders, never facts.
+  it('prints Not recorded confirmation/prepared and Not applicable variance for a historical import', () => {
+    const vm = buildJobOrderDetailViewModel(
+      makeJobOrder({
+        status: 'PRODUCTION_COMPLETE',
+        factoryConfirmationStatus: 'PENDING',
+        preparedQuantityTotal: 0,
+        historicalImport: { legacyReferenceNumber: 'EI25018', historicalBusinessDate: '2025-08-15', importedAt: '2026-09-24T00:00:00Z' },
+        lines: [
+          {
+            ...makeJobOrder().lines[0]!,
+            sizes: [{ id: 'sz-1', sizeId: 'size-s', sizeCode: 'S', sizeLabel: 'Small', orderedQuantity: 168, preparedQuantity: 0, varianceQuantity: -168 }],
+          },
+        ],
+      }),
+      { generatedAt: '2026-09-12T10:00:00Z' },
+    );
+    const item = (label: string) => vm.identityItems.find((i) => i.label === label)?.value;
+    expect(item('Factory Confirmation')).toBe('Not recorded');
+    expect(item('Prepared Quantity')).toBe('Not recorded');
+    expect(item('Variance')).toBe('Not applicable');
+    expect(item('Lifecycle Status')).toBe('Production Complete');
+    expect(vm.quantityTotalsLine).toBe('Ordered: 500  Prepared: Not recorded  Variance: Not applicable');
+    expect(vm.sizes[0]).toMatchObject({ orderedQuantity: 168, preparedQuantity: 'Not recorded', varianceQuantity: 'Not applicable' });
+  });
+
+  it('keeps live confirmation labels and a recorded prepared 0 unchanged', () => {
+    const unconfirmed = buildJobOrderDetailViewModel(
+      makeJobOrder({ status: 'SENT_TO_FACTORY', factoryConfirmationStatus: 'PENDING', preparedQuantityTotal: 0, historicalImport: null }),
+      { generatedAt: '2026-09-12T10:00:00Z' },
+    );
+    const item = (label: string) => unconfirmed.identityItems.find((i) => i.label === label)?.value;
+    expect(item('Factory Confirmation')).toBe('Pending');
+    expect(item('Prepared Quantity')).toBe(0);
+    expect(item('Variance')).toBe(-500);
+    expect(unconfirmed.sizes[1]).toMatchObject({ preparedQuantity: 0, varianceQuantity: 0 });
+  });
 });

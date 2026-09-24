@@ -16,7 +16,7 @@ import {
   renderJobOrderDetail,
   switchJobOrderTab,
 } from './job-order-detail/test-utils.js';
-import { mockJobOrder, stage, standardStages } from './job-order-detail/fixtures.js';
+import { draftOverrides, mockJobOrder, stage, standardStages } from './job-order-detail/fixtures.js';
 
 const authState = vi.hoisted(() => ({ roles: ['MERCHANDISER', 'FACTORY_USER'] }));
 
@@ -513,5 +513,47 @@ describe('JobOrderDetailPage load error handling (UXAUTH-018)', () => {
     expect(content(container)).toContain('Unable to load job order');
     expect(content(container)).toContain('Request failed with status code 500');
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  });
+});
+
+describe('JobOrderDetailPage historical import presentation', () => {
+  const historicalImport = { legacyReferenceNumber: 'EI25018', historicalBusinessDate: '2025-08-15', importedAt: '2026-09-24T00:00:00Z' };
+
+  it('Production tab: prepared quantity and per-size prepared/variance read Not recorded / Not applicable, with no live prompt', async () => {
+    await renderJobOrderDetail(container, root, {
+      status: 'PRODUCTION_COMPLETE',
+      overrides: { historicalImport, factoryConfirmationStatus: 'PENDING', preparedQuantityTotal: 0, lines: draftOverrides.lines },
+      initialPath: '/job-orders/jo-1?tab=production',
+    });
+    const panel = getActiveTabPanel(container).textContent ?? '';
+    expect(panel).toContain('Not recorded — this is a historical imported Job Order; no prepared quantity was recorded.');
+    expect(panel).not.toContain('Prepared quantities become available after');
+    expect(panel).not.toContain('Save Prepared Quantity');
+    const planRow = Array.from(getActiveTabPanel(container).querySelectorAll('tbody tr')).at(-1)!;
+    const planCells = Array.from(planRow.querySelectorAll('td')).map((td) => td.textContent);
+    expect(planCells.slice(-2)).toEqual(['Not recorded', 'Not applicable']);
+  });
+
+  it('Overview: no Confirmation Pending item and no confirmation action for a historical import', async () => {
+    await renderJobOrderDetail(container, root, {
+      status: 'PRODUCTION_COMPLETE',
+      overrides: { historicalImport, factoryConfirmationStatus: 'PENDING', preparedQuantityTotal: 0 },
+    });
+    const panel = getActiveTabPanel(container).textContent ?? '';
+    expect(panel).not.toMatch(/Confirmation\s*Pending/);
+    expect(panel).toContain('Not recorded (historical)');
+    expect(panel).toContain('Not applicable');
+    expect(Array.from(container.querySelectorAll('button')).some((b) => /confirm/i.test(b.textContent ?? ''))).toBe(false);
+  });
+
+  it('live Production Plan keeps its numeric prepared and variance values', async () => {
+    await renderJobOrderDetail(container, root, {
+      status: 'SENT_TO_FACTORY',
+      overrides: { historicalImport: null, lines: draftOverrides.lines },
+      initialPath: '/job-orders/jo-1?tab=production',
+    });
+    const planRow = Array.from(getActiveTabPanel(container).querySelectorAll('tbody tr')).at(-1)!;
+    const planCells = Array.from(planRow.querySelectorAll('td')).map((td) => td.textContent);
+    expect(planCells.slice(-2)).toEqual([(0).toLocaleString(), (-10).toLocaleString()]);
   });
 });

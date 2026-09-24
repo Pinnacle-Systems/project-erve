@@ -1,3 +1,4 @@
+import { NOT_RECORDED_LABEL, getRecordedPreparedQuantity } from '@erve/app-components';
 import { formatPdfDate } from '../../../lib/pdf/format.js';
 import { JOB_ORDER_STATUS_LABELS } from '../job-order-ui.js';
 import type { JobOrder, JobOrderStatus } from '../types.js';
@@ -24,7 +25,8 @@ export interface JobOrderListPdfRow {
   sourceOrderSheetCount: number;
   requiredDeliveryDate: string;
   orderedQuantityTotal: number;
-  preparedQuantityTotal: number;
+  /** A recorded number, or "Not recorded" for a historical import (unknown, never 0). */
+  preparedQuantityTotal: number | string;
   status: string;
 }
 
@@ -64,7 +66,8 @@ export function buildJobOrderListViewModel(
       sourceOrderSheetCount: jobOrder.sourceOrderSheetCount,
       requiredDeliveryDate: jobOrder.requiredDeliveryDate ? formatPdfDate(jobOrder.requiredDeliveryDate) : '',
       orderedQuantityTotal: jobOrder.orderedQuantityTotal,
-      preparedQuantityTotal: jobOrder.preparedQuantityTotal,
+      preparedQuantityTotal:
+        getRecordedPreparedQuantity(jobOrder, jobOrder.preparedQuantityTotal) ?? NOT_RECORDED_LABEL,
       status: jobOrder.isDelayed ? `${statusLabel} (Delayed)` : statusLabel,
     };
   });

@@ -123,4 +123,27 @@ describe('buildJobOrderListViewModel', () => {
     expect(serialized).not.toContain('__internalDebugFlag');
     expect(serialized).not.toContain('someAuditInternal');
   });
+
+  it('prints Not recorded for a historical import\'s prepared quantity but keeps live values, including a recorded 0', () => {
+    const vm = buildJobOrderListViewModel(
+      [
+        makeJobOrder({
+          id: 'hist',
+          status: 'PRODUCTION_COMPLETE',
+          factoryConfirmationStatus: 'PENDING',
+          preparedQuantityTotal: 0,
+          historicalImport: { legacyReferenceNumber: 'EI26016', historicalBusinessDate: '2026-02-25', importedAt: '2026-09-24T00:00:00Z' },
+        }),
+        makeJobOrder({ id: 'live-zero', preparedQuantityTotal: 0, historicalImport: null }),
+        makeJobOrder({ id: 'live-prepared', preparedQuantityTotal: 1008 }),
+      ],
+      {},
+      { generatedAt: '2026-09-12T10:00:00Z' },
+    );
+    expect(vm.rows.map((r) => [r.id, r.preparedQuantityTotal])).toEqual([
+      ['hist', 'Not recorded'],
+      ['live-zero', 0],
+      ['live-prepared', 1008],
+    ]);
+  });
 });

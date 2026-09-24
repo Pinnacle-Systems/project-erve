@@ -119,6 +119,15 @@ export {
   getQaStatusPresentation,
   getQaWorkPresentation,
 } from './job-order-operational-presentation.js';
+export {
+  NOT_APPLICABLE_LABEL,
+  NOT_RECORDED_LABEL,
+  formatPreparedQuantity,
+  formatPreparedVariance,
+  getRecordedPreparedQuantity,
+  isHistoricalImportJobOrder,
+} from './job-order-historical-presentation.js';
+export type { HistoricalAwareJobOrder } from './job-order-historical-presentation.js';
 export type {
   JobOrderOperationalPresentation,
   OperationalPresentationLane,
