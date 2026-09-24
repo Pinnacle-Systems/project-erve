@@ -79,6 +79,9 @@ export interface HistoricalCommitRecord {
   sizes: Array<{ sourceSizeCode: string; sizeId: string; quantity: number }>;
   sourceSnapshot: Prisma.InputJsonValue;
   migrationNotes: string;
+  disclaimerText?: string | null;
+  styleDescription?: string;
+  styleName?: string;
   loadSourcePdf: () => Promise<Buffer>;
   /** null when no approved image candidate exists for this record. */
   image: { sha256: string; fileName: string; load: () => Promise<Buffer> } | null;
@@ -107,7 +110,7 @@ function toDate(value: string): Date {
 }
 
 const existingJobOrderInclude = {
-  lines: { include: { sizes: true, style: { select: { lmixNumber: true, season: { select: { code: true } } } } } },
+  lines: { include: { sizes: true, style: { select: { description: true, styleName: true, lmixNumber: true, season: { select: { code: true } } } } } },
   historicalDocuments: { include: { historicalDocument: { include: { file: true } } } },
 } satisfies Prisma.JobOrderInclude;
 type ExistingJobOrder = Prisma.JobOrderGetPayload<{ include: typeof existingJobOrderInclude }>;
@@ -136,12 +139,15 @@ export function compareJobOrderToRecord(
   check('requiredDeliveryDate', isoDate(jobOrder.requiredDeliveryDate), record.requiredDeliveryDate);
   check('unitPrice', Number(jobOrder.unitPrice.toString()), Number(record.unitPrice));
   check('jobOrderSerial', jobOrder.jobOrderSerial, null);
+  if (record.disclaimerText !== undefined) check('disclaimerText', jobOrder.disclaimerText, record.disclaimerText);
 
   if (jobOrder.lines.length !== 1) {
     diffs.push(`lines: expected exactly 1, found ${jobOrder.lines.length}`);
   } else {
     const line = jobOrder.lines[0]!;
     check('styleId', line.styleId, record.styleId);
+    if (record.styleDescription !== undefined) check('style.description', line.style.description, record.styleDescription);
+    if (record.styleName !== undefined) check('style.styleName', line.style.styleName, record.styleName);
     check('season', line.style.season?.code ?? null, record.seasonCode);
     check('lmix', line.style.lmixNumber, record.lmix);
     const expectedTotal = record.sizes.reduce((sum, s) => sum + s.quantity, 0);
@@ -463,6 +469,7 @@ export async function commitHistoricalJobOrders(
         relationshipType: 'PRIMARY_SOURCE',
       },
       migrationNotes: record.migrationNotes,
+      disclaimerText: record.disclaimerText,
     });
     created.push({ legacyReferenceNumber: record.legacyReferenceNumber, jobOrderId: result.jobOrderId, jobOrderNumber: result.jobOrderNumber, sourceFile: outcome });
     log(`  CREATE ${record.legacyReferenceNumber} -> ${result.jobOrderNumber}`);

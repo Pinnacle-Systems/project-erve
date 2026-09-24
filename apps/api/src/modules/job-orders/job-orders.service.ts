@@ -1642,6 +1642,8 @@ export async function updateDraftJobOrderDisclaimer(
     const jobOrder = await tx.jobOrder.findUnique({ where: { id } });
     if (!jobOrder) throw HttpError.notFound('Job order not found');
     if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+    if (jobOrder.recordOrigin === 'HISTORICAL_IMPORT')
+      throw HttpError.conflict('Historical imported Job Orders are read-only');
     if (jobOrder.status !== 'DRAFT')
       throw HttpError.conflict('The disclaimer can only be changed while the job order is a draft');
     const disclaimerText = input.disclaimerText;

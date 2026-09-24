@@ -215,7 +215,9 @@ export function JobOrderProductionTab({
     <div className="space-y-4">
       <Panel
         title="Factory commercial terms / disclaimer"
-        description="Plain-text terms the factory must acknowledge before confirming this Job Order."
+        description={jobOrder.historicalImport
+          ? 'Historical source wording; no factory acknowledgement was recorded.'
+          : 'Plain-text terms the factory must acknowledge before confirming this Job Order.'}
         footer={
           disclaimer.canEdit ? (
             <div className="flex justify-end">

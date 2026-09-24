@@ -22,6 +22,7 @@ import {
   type HistoricalCommitRecord,
 } from './historical-job-order-commit.service.js';
 import { importHistoricalJobOrder } from './historical-import.service.js';
+import { reconcileDocumentaryText } from './documentary-reconciliation.js';
 import { createTestFactory, createTestFinancialYear, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 
 const app = createApp();
@@ -126,6 +127,57 @@ async function tableCounts() {
 }
 
 describe('commitHistoricalJobOrders', () => {
+  it('corrects only documentary fields atomically and is idempotent', async () => {
+    const f = await buildFixture(1);
+    const imported = await commitHistoricalJobOrders(f.actor, { identity: f.identity, records: f.records });
+    const jo = await prisma.jobOrder.findFirstOrThrow({ where: { importBatchId: imported.importBatchId } });
+    const input = [{ jobOrderId: jo.id, styleId: f.records[0]!.styleId, legacyReference: jo.legacyReferenceNumber!,
+      expectedDescription: null, expectedDisclaimer: null, expectedStyleName: 'Synthetic 0', styleName: 'Source style', description: 'Source description\n*ST1: specification',
+      disclaimer: 'Sample: 2 Pcs\n\n*Source clause', sourceSha256: f.records[0]!.sourceSha256,
+      sourceSnapshot: { sourceSha256: f.records[0]!.sourceSha256,
+        effectiveFields: { description: { value: 'Source description\n*ST1: specification' }, styleName: { value: 'Source style' } },
+        documentarySections: { jobOrderDisclaimer: 'Sample: 2 Pcs\n\n*Source clause' } },
+    }];
+    expect(await reconcileDocumentaryText(f.actor, imported.importBatchId, input)).toEqual({ stylesChanged: 1, styleNamesChanged: 1, disclaimersChanged: 1 });
+    const after = await prisma.jobOrder.findUniqueOrThrow({ where: { id: jo.id } });
+    expect(after.disclaimerText).toBe(input[0]!.disclaimer);
+    expect(after.jobOrderNumber).toBe(jo.jobOrderNumber);
+    expect(after.requiredDeliveryDate).toEqual(jo.requiredDeliveryDate);
+    expect(after.unitPrice.toString()).toBe(jo.unitPrice.toString());
+    expect((await prisma.style.findUniqueOrThrow({ where: { id: input[0]!.styleId } })).styleName).toBe('Source style');
+    const source = await prisma.historicalDocumentJobOrder.findFirstOrThrow({ where: { jobOrderId: jo.id }, include: { historicalDocument: true } });
+    expect(source.historicalDocument.sourceSnapshot).toEqual(input[0]!.sourceSnapshot);
+    expect(await reconcileDocumentaryText(f.actor, imported.importBatchId, input)).toEqual({ stylesChanged: 0, styleNamesChanged: 0, disclaimersChanged: 0 });
+    await prisma.style.update({ where: { id: input[0]!.styleId }, data: { description: 'Concurrent edit' } });
+    await expect(reconcileDocumentaryText(f.actor, imported.importBatchId, input)).rejects.toThrow('changed since audit');
+    expect((await prisma.jobOrder.findUniqueOrThrow({ where: { id: jo.id } })).disclaimerText).toBe(input[0]!.disclaimer);
+  });
+
+  it('imports source disclaimer verbatim on the first run and verifies it on rerun', async () => {
+    const f = await buildFixture(1);
+    f.records[0]!.disclaimerText = 'Fitting: 2 Pcs\nPhoto: 3 Pcs\n\n*Source commercial clause.';
+    await commitHistoricalJobOrders(f.actor, { identity: f.identity, records: f.records });
+    const jo = await prisma.jobOrder.findFirstOrThrow({ where: { legacyReferenceNumber: 'EISYN001' } });
+    expect(jo.disclaimerText).toBe('Fitting: 2 Pcs\nPhoto: 3 Pcs\n\n*Source commercial clause.');
+    const again = await commitHistoricalJobOrders(f.actor, { identity: f.identity, records: f.records });
+    expect(again.created).toHaveLength(0);
+    await prisma.jobOrder.update({ where: { id: jo.id }, data: { disclaimerText: 'wrong' } });
+    const v = await verifyCommittedBatch(prisma, { sourceLabel: f.identity.sourceLabel, processFlowVersionId: f.processFlowVersionId, records: f.records });
+    expect(v.mismatch).toBe(1);
+  });
+
+  it('rejects live disclaimer edits for historical origin even if its status is draft', async () => {
+    const f = await buildFixture(1);
+    const result = await commitHistoricalJobOrders(f.actor, { identity: f.identity, records: f.records });
+    const jo = await prisma.jobOrder.findFirstOrThrow({ where: { importBatchId: result.importBatchId } });
+    await prisma.jobOrder.update({ where: { id: jo.id }, data: { status: 'DRAFT', disclaimerText: 'Source evidence' } });
+    const response = await request(app).patch(`/job-orders/${jo.id}/disclaimer`)
+      .set('Authorization', `Bearer ${f.admin.token}`).set('Idempotency-Key', 'historical-disclaimer')
+      .send({ expectedVersion: jo.version, disclaimerText: 'Changed evidence' });
+    expect(response.status).toBe(409);
+    expect((await prisma.jobOrder.findUniqueOrThrow({ where: { id: jo.id } })).disclaimerText).toBe('Source evidence');
+  });
+
   it('first run creates one batch, the Job Orders, source evidence, audit events and images — with no workflow history', async () => {
     const f = await buildFixture();
     const result = await commitHistoricalJobOrders(f.actor, { identity: f.identity, records: f.records });

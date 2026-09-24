@@ -27,6 +27,8 @@ import type { HistoricalBatchIdentity, HistoricalCommitRecord } from '../modules
 import { openPdfDocumentSession } from '../modules/historical-import/pdf-document-session.js';
 import { extractStyleImageCandidate } from '../modules/historical-import/style-image-extractor.js';
 import { buildEffectiveReconcileItems } from './historical-import.js';
+import { reextractDocumentaryStaging } from '../modules/historical-import/documentary-staging.js';
+import { requireDocumentarySections } from '../modules/historical-import/documentary-sections.js';
 
 export class HistoricalImportCommitPreflightError extends Error {}
 
@@ -35,6 +37,8 @@ export interface CommitInputOptions {
   batchLabel: string;
   aw25Dir: string;
   ss26Dir: string;
+  /** Audit can retain ambiguous evidence; write CLIs must leave this false. */
+  auditDocumentaryOnly?: boolean;
 }
 
 export interface PreflightCheck {
@@ -154,7 +158,8 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
   pass('manifest', `91/91 real source PDFs re-hashed and match (AW25 ${manifest.aw25Count}, SS26 ${manifest.ss26Count}); aggregate ${manifest.aggregateSha256.slice(0, 16)}...`);
 
   // --- Staging + approved overrides -> effective records ----------------------
-  const { value: staging } = await readJson<SourceStagingRecord[]>(join(root, 'source-staging.json'));
+  const { value: originalStaging } = await readJson<SourceStagingRecord[]>(join(root, 'source-staging.json'));
+  const staging = await reextractDocumentaryStaging(originalStaging, options, { auditOnly: options.auditDocumentaryOnly });
   if (staging.length !== 91) fail(`source-staging.json has ${staging.length} records, expected 91`);
   const manifestBySha = new Map(manifest.files.map((f) => [`${f.season}|${f.relativeFilename}`, f] as const));
   for (const record of staging) {
@@ -231,6 +236,7 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
   const records: HistoricalCommitRecord[] = [];
   for (let i = 0; i < items.length; i++) {
     const parsed = items[i]!.parsed;
+    const documentary = options.auditDocumentaryOnly ? parsed.documentarySections! : requireDocumentarySections(parsed.documentarySections);
     const stagingRecord = staging[i]!;
     const r = reconciled[i]!;
     const legacyReferenceNumber = parsed.legacyReferenceNumber.value!;
@@ -311,6 +317,7 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
       parserVersion: manifest.parserVersion,
       effectiveParseStatus: parsed.parseStatus,
       effectiveFields,
+      documentarySections: documentary,
       sizeQuantities: parsed.sizeQuantities,
       appliedOverrides,
     } as unknown as Prisma.InputJsonValue;
@@ -330,6 +337,9 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
       historicalBusinessDate: orderDate,
       requiredDeliveryDate: shipmentDate,
       unitPrice: unitRate,
+      disclaimerText: documentary.jobOrderDisclaimer,
+      styleDescription: parsed.description.value!,
+      styleName: parsed.styleName.value!,
       sizes,
       sourceSnapshot,
       migrationNotes:

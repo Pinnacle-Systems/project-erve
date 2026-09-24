@@ -24,6 +24,7 @@ import { buildMrpWorkbookManifest, buildEffectiveSourceRecords, buildRequiredIde
 import type { MrpWorkbookRow } from '../modules/historical-import/mrp-workbook.js';
 import type { ParsedPurchaseOrderRecord } from '../modules/historical-import/po-pdf-parser.types.js';
 import type { CurrentUser } from '../auth/current-user.js';
+import { requireDocumentarySections } from '../modules/historical-import/documentary-sections.js';
 
 export class StylePrepError extends Error {}
 
@@ -76,6 +77,14 @@ export interface StylePrepOptions {
 async function loadIdentitiesAndWorkbook(options: StylePrepOptions) {
   const { rows } = await buildMrpWorkbookManifest(options.workbookPath);
   const effectiveRecords = await buildEffectiveSourceRecords(options.stagingFilePath, options.sourceOverridesFilePath);
+  // A clean future import must not consume the old, incomplete H1 text.
+  // H2B.1 emits a new reconciled staging artifact; the original stays intact.
+  for (const record of effectiveRecords) {
+    const sections = requireDocumentarySections(record.documentarySections);
+    if (record.description.value !== sections.styleDescription && record.description.provenance !== 'OVERRIDE') {
+      throw new StylePrepError('Staged description differs from its documentary extraction');
+    }
+  }
   const identities = buildRequiredIdentities(effectiveRecords);
   return { rows, effectiveRecords, identities };
 }

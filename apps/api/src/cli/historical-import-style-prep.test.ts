@@ -66,6 +66,12 @@ async function writeFixtures(dir: string, opts: FixtureOptions) {
         styleName: { value: 'Test Style', provenance: 'SOURCE_DOCUMENT' },
         colour: { value: 'Test Colour Detailed', provenance: 'SOURCE_DOCUMENT' },
         description: { value: 'Test Description Detailed', provenance: 'SOURCE_DOCUMENT' },
+        documentarySections: {
+          version: 'H2B.1', tableDescription: 'Test Description Detailed', specificationText: '',
+          styleDescription: 'Test Description Detailed', approvalText: 'Sample instruction',
+          disclaimerText: '*Source clause', jobOrderDisclaimer: 'Sample instruction\n\n*Source clause',
+          reviewReasons: [], boundaries: {},
+        },
         hsnCode: { value: '61091000', provenance: 'SOURCE_DOCUMENT' },
         orderDate: { value: '2026-01-01', provenance: 'SOURCE_DOCUMENT' },
         shipmentDate: { value: '2026-02-01', provenance: 'SOURCE_DOCUMENT' },
