@@ -199,21 +199,35 @@ async function waitFor(assertion: () => void, timeoutMs = 3000): Promise<void> {
   }
 }
 
-function triggerByLabel(labelText: string): HTMLButtonElement {
-  const label = Array.from(container.querySelectorAll('label')).find((el) => el.textContent === labelText);
-  if (!label) throw new Error(`Label "${labelText}" not found`);
-  const id = label.getAttribute('for');
-  const el = id ? (document.getElementById(id) as HTMLButtonElement | null) : null;
-  if (!el) throw new Error(`Trigger for label "${labelText}" not found`);
-  return el;
+// Mirrors GET /distributors/options: name/code contains, bounded by limit.
+function searchDistributors(
+  distributors: Array<{ name: string; code: string }>,
+  params: { search?: string; limit?: number } | undefined,
+) {
+  const needle = (params?.search ?? '').toLowerCase();
+  return distributors
+    .filter((d) => [d.name, d.code].some((field) => field.toLowerCase().includes(needle)))
+    .slice(0, params?.limit ?? 20);
 }
 
-async function selectOption(labelText: string, optionText: string): Promise<void> {
-  await act(async () => triggerByLabel(labelText).click());
-  const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
-    (item) => item.textContent?.trim() === optionText,
-  );
-  if (!option) throw new Error(`Option "${optionText}" not found for "${labelText}"`);
+function distributorInput(): HTMLInputElement {
+  const input = document.getElementById('lookup-distributor-*') as HTMLInputElement | null;
+  if (!input) throw new Error('Distributor lookup input not found');
+  return input;
+}
+
+// Types part of the name into the Distributor lookup, waits for fresh
+// results and clicks the matching option.
+async function chooseDistributor(name: string): Promise<void> {
+  await act(async () => {
+    distributorInput().focus();
+    setInputValue(distributorInput(), name.slice(0, 4));
+  });
+  await waitFor(() => {
+    expect(document.body.querySelector('[role="listbox"][aria-busy]')).toBeNull();
+    expect(lookupOptions().some((option) => option.textContent?.includes(name))).toBe(true);
+  });
+  const option = lookupOptions().find((candidate) => candidate.textContent?.includes(name))!;
   await act(async () => option.click());
 }
 
@@ -226,8 +240,8 @@ function baseAdapter(styles: StyleFixture[], overrides: AdapterOverrides = {}): 
     requestLog.push({ method: config.method ?? '', url: config.url ?? '', params: config.params });
     const styleResponse = styleEndpoints(config, styles, overrides);
     if (styleResponse) return styleResponse;
-    if (config.url === '/distributors' && config.method === 'get') {
-      return ok(config, { success: true, data: [distributor] });
+    if (config.url === '/distributors/options' && config.method === 'get') {
+      return ok(config, { success: true, data: searchDistributors([distributor], config.params) });
     }
     if (config.url === '/financial-years/resolve' && config.method === 'get') {
       return ok(config, { success: true, data: { code: '2026-27' } });
@@ -314,9 +328,6 @@ function editAdapter(styles: StyleFixture[], overrides: EditAdapterOverrides = {
     if (config.url === '/purchase-orders/po-1' && config.method === 'get') {
       return overrides.getPO ? overrides.getPO(config) : ok(config, { success: true, data: existingPO });
     }
-    if (config.url === '/distributors' && config.method === 'get') {
-      return ok(config, { success: true, data: [distributor] });
-    }
     if (config.url === '/financial-years/resolve' && config.method === 'get') {
       return ok(config, { success: true, data: { code: '2026-27' } });
     }
@@ -386,7 +397,7 @@ function sizeInput(sizeCode: string): HTMLInputElement | null {
 }
 
 async function fillValidStyleLine(search: string, styleNumber: string, sizeCode: string): Promise<void> {
-  await selectOption('Distributor *', 'Acme Distribution');
+  await chooseDistributor('Acme Distribution');
   await flush();
   await chooseStyle(search, styleNumber);
   await waitFor(() => expect(sizeInput(sizeCode)).not.toBeNull());
@@ -580,8 +591,8 @@ describe('PurchaseOrderFormPage edit-load safety (NEW-AUTH-001)', () => {
 });
 
 // Purchase Mode is owned by the Distributor master and derived on CREATE from
-// the selected option returned by GET /distributors. The API side of this
-// contract (purchaseMode present in the list response) is pinned in
+// the selected option returned by GET /distributors/options. The API side of
+// this contract (purchaseMode present in the option response) is pinned in
 // master-data.test.ts — this test covers the form's derivation only.
 describe('PurchaseOrderFormPage derived Purchase Mode (CREATE)', () => {
   it('shows the selected Distributor purchase mode read-only and follows Distributor changes', async () => {
@@ -594,8 +605,11 @@ describe('PurchaseOrderFormPage derived Purchase Mode (CREATE)', () => {
     };
     const adapter = baseAdapter([testStyle]);
     await renderPage((async (config: InternalAxiosRequestConfig) => {
-      if (config.url === '/distributors' && config.method === 'get') {
-        return ok(config, { success: true, data: [distributor, saleReturnDistributor] });
+      if (config.url === '/distributors/options' && config.method === 'get') {
+        return ok(config, {
+          success: true,
+          data: searchDistributors([distributor, saleReturnDistributor], config.params),
+        });
       }
       return adapter(config);
     }) as AxiosAdapter);
@@ -605,18 +619,21 @@ describe('PurchaseOrderFormPage derived Purchase Mode (CREATE)', () => {
     expect(purchaseMode()?.value).toBe('');
     expect(purchaseMode()?.disabled).toBe(true);
 
-    await selectOption('Distributor *', 'Acme Distribution');
+    await chooseDistributor('Acme Distribution');
     await flush();
     expect(purchaseMode()?.value).toBe('Outright');
 
-    await selectOption('Distributor *', 'Beta Consignment');
+    await chooseDistributor('Beta Consignment');
     await flush();
     expect(purchaseMode()?.value).toBe('Sale or Return');
     expect(purchaseMode()?.disabled).toBe(true);
 
-    await selectOption('Distributor *', 'Select distributor');
+    const clear = container.querySelector<HTMLButtonElement>('button[aria-label="Clear Distributor *"]')!;
+    await act(async () => clear.click());
     await flush();
     expect(purchaseMode()?.value).toBe('');
+    // The Distributor master list is never downloaded for the selector.
+    expect(requestLog.some((request) => request.url === '/distributors')).toBe(false);
   });
 });
 
@@ -696,7 +713,7 @@ describe('PurchaseOrderFormPage Style lookup (P1L1)', () => {
         },
       }),
     );
-    await selectOption('Distributor *', 'Acme Distribution');
+    await chooseDistributor('Acme Distribution');
 
     await chooseStyle('5526022', 'SS26-TEE-2');
 
