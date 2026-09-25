@@ -76,7 +76,10 @@ export const listSeasonsQuerySchema = z.object({
   status: z.string().trim().optional(),
   search: z.string().trim().optional(),
   financialYearId: z.string().trim().optional(),
+  ...optionalPageQueryFields,
 });
+
+export const listProcessFlowsQuerySchema = z.object(optionalPageQueryFields);
 
 export const styleSizeSchema = z.object({
   sizeId: z.string().trim().min(1),

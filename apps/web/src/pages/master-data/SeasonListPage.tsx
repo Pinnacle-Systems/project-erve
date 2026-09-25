@@ -1,12 +1,13 @@
 import { useCallback, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import type { ApiSuccessResponse } from '@erve/types';
 import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
 import {
   FinancialYearSelect,
   toCompactFinancialYearCode,
@@ -54,14 +55,12 @@ export function SeasonListPage() {
   // Only applies while adding (not mid-edit) and the user hasn't picked one.
   const effectiveFinancialYearId =
     form.financialYearId || (editing ? '' : currentFinancialYearQuery.data?.id ?? '');
-  const seasonsQuery = useQuery({
-    queryKey: ['seasons', filterFinancialYearId],
-    queryFn: async () =>
-      (
-        await apiClient.get<ApiSuccessResponse<Season[]>>('/seasons', {
-          params: { financialYearId: filterFinancialYearId || undefined },
-        })
-      ).data.data,
+  // Opt-in cursor pagination (limit sent): Load more appends further pages; a
+  // Financial Year change restarts at page 1. The PDF fetches every page.
+  const { query: seasonsQuery, items: seasons } = useCursorList<Season>({
+    queryKey: ['seasons'],
+    path: '/seasons',
+    params: { financialYearId: filterFinancialYearId || undefined, limit: 25 },
   });
   const generateSeasonListPdf = useCallback(async () => {
     // Dynamically imported so @react-pdf/renderer and the document code load only when a user
@@ -71,11 +70,13 @@ export function SeasonListPage() {
       (fy) => fy.id === filterFinancialYearId,
     );
     return generateSeasonListPdfBlob(
-      seasonsQuery.data ?? [],
+      await fetchAllListPages<Season>('/seasons', {
+        financialYearId: filterFinancialYearId || undefined,
+      }),
       { financialYear: selectedFinancialYear ? toCompactFinancialYearCode(selectedFinancialYear.code) : undefined },
       { generatedAt: new Date().toISOString(), generatedBy: user?.name },
     );
-  }, [seasonsQuery.data, filterFinancialYearId, financialYearsQuery.data, user?.name]);
+  }, [filterFinancialYearId, financialYearsQuery.data, user?.name]);
 
   const seasonListPdfFilename = useCallback(
     () => buildPdfFilename(['ERVE-Seasons', getLocalDateString()]),
@@ -164,7 +165,8 @@ export function SeasonListPage() {
       { key: 'displayName', header: 'Display', accessor: 'displayName' },
       { key: 'status', header: 'Status', render: (season) => <StatusBadge label={season.status} tone={season.status === 'ACTIVE' ? 'success' : 'muted'} /> },
       { key: 'actions', header: 'Actions', render: (season) => <div className="flex gap-2"><Button variant="secondary" onClick={() => beginEdit(season)}>Edit</Button><Button variant="secondary" onClick={() => setConfirmStatusSeason(season)}>{season.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}</Button></div> },
-    ]} data={seasonsQuery.data ?? []} loading={seasonsQuery.isLoading} loadingState={<LoadingState variant="rows" label="Loading Seasons" />} emptyState={<EmptyState title="No Seasons found" description="Create a Season before assigning it to a Style." />} error={seasonsQuery.isError ? <ErrorState title="Unable to load Seasons" description={seasonsQuery.error.message} /> : undefined} />
+    ]} data={seasons} loading={seasonsQuery.isLoading} loadingState={<LoadingState variant="rows" label="Loading Seasons" />} emptyState={<EmptyState title="No Seasons found" description="Create a Season before assigning it to a Style." />} error={seasonsQuery.isError ? <ErrorState title="Unable to load Seasons" description={seasonsQuery.error.message} /> : undefined} />
+      <LoadMoreFooter {...loadMoreProps(seasonsQuery, seasons.length, ['Season', 'Seasons'])} />
     <ConfirmDialog
       open={confirmStatusSeason !== null}
       onOpenChange={(open) => { if (!open) setConfirmStatusSeason(null); }}

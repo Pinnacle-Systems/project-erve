@@ -13,7 +13,7 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleDistributorId, getSoleFactoryId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
-import { listAllOrPage, type OptionalPageQuery } from '../../utils/pagination.js';
+import { listAllOrPage, type OptionalPageQuery, type PageArgs } from '../../utils/pagination.js';
 import { toStyleImageView } from './style-images.service.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 import { toCompactFinancialYearCode } from './financial-year.util.js';
@@ -327,7 +327,19 @@ async function assertFinancialYearExists(financialYearId: string) {
   if (!financialYear) throw HttpError.badRequest('Financial Year not found');
 }
 
-export async function listSeasons(filters: { status?: string; search?: string; financialYearId?: string }) {
+type SeasonListFilters = { status?: string; search?: string; financialYearId?: string };
+
+// The full Season list (internal callers, e.g. historical-import prep).
+export async function listSeasons(filters: SeasonListFilters) {
+  return querySeasons(filters, {});
+}
+
+// GET /seasons: opt-in cursor pagination (see utils/pagination).
+export async function listSeasonsPage(filters: SeasonListFilters & OptionalPageQuery) {
+  return listAllOrPage(filters, (page) => querySeasons(filters, page));
+}
+
+async function querySeasons(filters: SeasonListFilters, page: PageArgs) {
   const seasons = await prisma.season.findMany({
     where: {
       status: filters.status,
@@ -340,7 +352,9 @@ export async function listSeasons(filters: { status?: string; search?: string; f
         : undefined,
     },
     include: seasonInclude,
-    orderBy: [{ financialYear: { startDate: 'desc' } }, { name: 'asc' }],
+    // Newest Financial Year first, then name; id breaks ties for stable pages.
+    orderBy: [{ financialYear: { startDate: 'desc' } }, { name: 'asc' }, { id: 'asc' }],
+    ...page,
   });
   return seasons.map(toSeasonView);
 }
@@ -587,8 +601,9 @@ export async function removeStyleFactory(actor: CurrentUser, styleId: string, fa
   return getStyleById(styleId);
 }
 
-export async function listSizes(filters: { status?: string; search?: string }) {
-  const sizes = await prisma.size.findMany({
+export async function listSizes(filters: { status?: string; search?: string } & OptionalPageQuery) {
+  // sortOrder then code (unique): already a stable order for cursor pages.
+  return listAllOrPage(filters, (page) => prisma.size.findMany({
     where: {
       status: filters.status as SizeStatus | undefined,
       OR: filters.search
@@ -599,8 +614,8 @@ export async function listSizes(filters: { status?: string; search?: string }) {
         : undefined,
     },
     orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
-  });
-  return sizes;
+    ...page,
+  }));
 }
 
 // Size selector options (PAG7): ACTIVE Sizes only (what the Style form
@@ -725,9 +740,26 @@ export async function updateSizeStatus(actor: CurrentUser, id: string, status: S
   return size;
 }
 
+// The full Factory list (internal callers, e.g. Factory Dispatch).
 export async function listFactories(
   actor: CurrentUser,
   filters: { status?: string; search?: string },
+) {
+  return queryFactories(actor, filters, {});
+}
+
+// GET /factories: opt-in cursor pagination (see utils/pagination).
+export async function listFactoriesPage(
+  actor: CurrentUser,
+  filters: { status?: string; search?: string } & OptionalPageQuery,
+) {
+  return listAllOrPage(filters, (page) => queryFactories(actor, filters, page));
+}
+
+async function queryFactories(
+  actor: CurrentUser,
+  filters: { status?: string; search?: string },
+  page: PageArgs,
 ) {
   const factoryIds =
     actor.roles.includes('FACTORY_USER') &&
@@ -746,7 +778,9 @@ export async function listFactories(
           ]
         : undefined,
     },
-    orderBy: { name: 'asc' },
+    // Names are not unique; id breaks ties so cursor pages are stable.
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    ...page,
   });
   return factories;
 }
@@ -1119,12 +1153,18 @@ export function canonicalActivityConfiguration(
   }));
 }
 
-export async function listProcessFlows() {
-  const flows = await prisma.processFlow.findMany({
-    include: processFlowInclude,
-    orderBy: { code: 'asc' },
-  });
-  return flows.map(toProcessFlowView);
+// GET /process-flows: opt-in cursor pagination; code is unique, so it alone
+// gives pages a stable order.
+export async function listProcessFlows(query: OptionalPageQuery = {}) {
+  return listAllOrPage(query, async (page) =>
+    (
+      await prisma.processFlow.findMany({
+        include: processFlowInclude,
+        orderBy: { code: 'asc' },
+        ...page,
+      })
+    ).map(toProcessFlowView),
+  );
 }
 
 // Process Flow Version selector options (PAG7): every flow with only its

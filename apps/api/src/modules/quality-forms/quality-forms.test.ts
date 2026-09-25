@@ -354,3 +354,40 @@ describe('GET /quality-forms/options (PAG7)', () => {
     expect((await request(app).get('/quality-forms/options').set('Authorization', `Bearer ${qa}`)).status).toBe(403);
   });
 });
+
+// PAG8: opt-in cursor pagination for the Quality Form list.
+describe('GET /quality-forms pagination (PAG8)', () => {
+  it('pages every form exactly once in code order; legacy array unchanged', async () => {
+    const { token } = await auth();
+    for (const code of ['PG_C', 'PG_A', 'PG_B']) expect((await create(token, { ...payload, code })).status).toBe(201);
+
+    const legacy = await request(app).get('/quality-forms').set('Authorization', `Bearer ${token}`);
+    expect(Array.isArray(legacy.body.data)).toBe(true);
+    const first = await request(app).get('/quality-forms').query({ limit: 2 }).set('Authorization', `Bearer ${token}`);
+    const second = await request(app)
+      .get('/quality-forms')
+      .query({ limit: 2, cursor: first.body.data.pageInfo.nextCursor })
+      .set('Authorization', `Bearer ${token}`);
+
+    const paged = [...first.body.data.items, ...second.body.data.items].map((form: { code: string }) => form.code);
+    expect(paged).toEqual(['PG_A', 'PG_B', 'PG_C']);
+    expect(paged).toEqual(legacy.body.data.map((form: { code: string }) => form.code));
+    expect(second.body.data.pageInfo.hasMore).toBe(false);
+  });
+
+  it('refuses the in-memory activityType/executionScope filters in paginated mode, keeps them in legacy mode', async () => {
+    const { token } = await auth();
+    await create(token);
+    const paged = await request(app)
+      .get('/quality-forms')
+      .query({ limit: 10, activityType: 'INSPECTION' })
+      .set('Authorization', `Bearer ${token}`);
+    const legacy = await request(app)
+      .get('/quality-forms')
+      .query({ activityType: 'INSPECTION' })
+      .set('Authorization', `Bearer ${token}`);
+    expect(paged.status).toBe(400);
+    expect(legacy.status).toBe(200);
+    expect(legacy.body.data).toHaveLength(1);
+  });
+});

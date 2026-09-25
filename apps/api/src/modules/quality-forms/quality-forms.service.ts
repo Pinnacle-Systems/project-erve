@@ -3,6 +3,7 @@ import { Prisma, prisma } from '../../db/prisma.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { HttpError } from '../../errors/http-error.js';
+import { listAllOrPage, type OptionalPageQuery } from '../../utils/pagination.js';
 import type { QualityFormDefinitionInput } from './quality-forms.validation.js';
 
 const versionInclude = {
@@ -103,13 +104,18 @@ export async function listQualityFormOptions() {
   return forms;
 }
 
-export async function listQualityForms(filters: {
-  search?: string;
-  status?: 'ACTIVE' | 'INACTIVE';
-  activityType?: 'MEETING' | 'INSPECTION';
-  executionScope?: 'JOB_ORDER' | 'SIZE';
-}) {
-  return prisma.qualityForm
+export async function listQualityForms(
+  filters: {
+    search?: string;
+    status?: 'ACTIVE' | 'INACTIVE';
+    activityType?: 'MEETING' | 'INSPECTION';
+    executionScope?: 'JOB_ORDER' | 'SIZE';
+  } & OptionalPageQuery,
+) {
+  // Opt-in cursor pagination (code is unique → stable order). The in-memory
+  // activityType/executionScope filter below only ever runs in legacy
+  // (unpaged) mode — the query schema refuses it with cursor/limit.
+  return listAllOrPage(filters, (page) => prisma.qualityForm
     .findMany({
       where: {
         status: filters.status,
@@ -122,6 +128,7 @@ export async function listQualityForms(filters: {
       },
       include: formInclude,
       orderBy: { code: 'asc' },
+      ...page,
     })
     .then((forms) =>
       forms
@@ -131,7 +138,8 @@ export async function listQualityForms(filters: {
             (!filters.activityType || form.activityType === filters.activityType) &&
             (!filters.executionScope || form.executionScope === filters.executionScope),
         ),
-    );
+    ),
+  );
 }
 
 export async function getQualityForm(id: string) {

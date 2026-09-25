@@ -37,14 +37,17 @@ function flushMicrotasks(): Promise<void> {
 // Clicking a PDF action now triggers a dynamic import() of the PDF generation code (kept out of
 // the eager bundle), which takes an unpredictable number of extra ticks beyond a single
 // flushMicrotasks() to settle — poll instead (same rationale as waitForStylesLoaded below).
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 40; i++) {
-    if (predicate()) return;
+// Time-based rather than a fixed tick count: the list PDF first fetches every
+// page and then dynamically imports the PDF module, which can exceed a few
+// macrotask ticks when the suite runs under load.
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for condition');
     await act(async () => {
       await flushMicrotasks();
     });
   }
-  throw new Error('Timed out waiting for condition');
 }
 
 // React's controlled inputs track the native value setter, so a plain

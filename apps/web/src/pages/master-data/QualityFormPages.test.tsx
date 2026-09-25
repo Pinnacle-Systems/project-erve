@@ -124,17 +124,20 @@ describe('Quality Form pages', () => {
     apiClient.defaults.adapter = vi.fn(async (config) =>
       ok(config, {
         success: true,
-        data: [
-          {
-            id: 'qf-1',
-            code: 'FINAL',
-            name: 'Final Inspection Report',
-            activityType: 'INSPECTION',
-            executionScope: 'JOB_ORDER',
-            status: 'ACTIVE',
-            versions: [{ id: 'v1', versionNumber: 1, status: 'PUBLISHED' }],
-          },
-        ],
+        data: {
+          items: [
+            {
+              id: 'qf-1',
+              code: 'FINAL',
+              name: 'Final Inspection Report',
+              activityType: 'INSPECTION',
+              executionScope: 'JOB_ORDER',
+              status: 'ACTIVE',
+              versions: [{ id: 'v1', versionNumber: 1, status: 'PUBLISHED' }],
+            },
+          ],
+          pageInfo: { limit: 25, hasMore: false, nextCursor: null },
+        },
       }),
     ) satisfies AxiosAdapter;
     act(() =>

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { optionalPageQueryFields } from '../../utils/pagination.js';
 
 export const qualityFormStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const qualityFormActivityTypeSchema = z.enum(['MEETING', 'INSPECTION']);
@@ -36,12 +37,23 @@ export const updateQualityFormSchema = createQualityFormSchema
   .partial()
   .refine((value) => Object.keys(value).length > 0, { message: 'At least one field is required' });
 export const updateQualityFormStatusSchema = z.object({ status: qualityFormStatusSchema });
-export const listQualityFormsQuerySchema = z.object({
-  search: z.string().trim().optional(),
-  status: qualityFormStatusSchema.optional(),
-  activityType: qualityFormActivityTypeSchema.optional(),
-  executionScope: qualityFormExecutionScopeSchema.optional(),
-});
+export const listQualityFormsQuerySchema = z
+  .object({
+    search: z.string().trim().optional(),
+    status: qualityFormStatusSchema.optional(),
+    activityType: qualityFormActivityTypeSchema.optional(),
+    executionScope: qualityFormExecutionScopeSchema.optional(),
+    ...optionalPageQueryFields,
+  })
+  // activityType/executionScope are matched in memory against each form's
+  // current version, after the query — combined with a page they would
+  // yield short or empty pages, so paginated mode does not accept them.
+  .refine(
+    (query) =>
+      (query.cursor === undefined && query.limit === undefined) ||
+      (query.activityType === undefined && query.executionScope === undefined),
+    { message: 'activityType/executionScope cannot be combined with cursor/limit' },
+  );
 
 const keySchema = z
   .string()

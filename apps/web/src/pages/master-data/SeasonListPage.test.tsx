@@ -112,7 +112,7 @@ function baseAdapter(overrides: AdapterOverrides = {}): AxiosAdapter {
       return overrides.current ? overrides.current(config) : ok(config, { success: true, data: currentFinancialYear });
     }
     if (config.url === '/seasons' && config.method === 'get') {
-      return ok(config, { success: true, data: seasons });
+      return ok(config, { success: true, data: { items: seasons, pageInfo: { limit: 25, hasMore: false, nextCursor: null } } });
     }
     if (config.url === '/seasons' && config.method === 'post') {
       return overrides.createSeason
@@ -151,12 +151,15 @@ async function renderPage(adapter: AxiosAdapter): Promise<QueryClient> {
 // Clicking a PDF action triggers a dynamic import() of the PDF generation code (kept out of the
 // eager bundle), which takes an unpredictable number of extra ticks beyond a single flush() to
 // settle — poll instead (same rationale as StyleListPage.test.tsx).
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 40; i++) {
-    if (predicate()) return;
+// Time-based rather than a fixed tick count: the list PDF first fetches every
+// page and then dynamically imports the PDF module, which can exceed a few
+// macrotask ticks when the suite runs under load.
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for condition');
     await flush();
   }
-  throw new Error('Timed out waiting for condition');
 }
 
 describe('SeasonListPage Financial Year integration', () => {

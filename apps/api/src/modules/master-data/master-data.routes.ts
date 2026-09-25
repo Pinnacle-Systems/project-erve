@@ -12,9 +12,9 @@ import {
   createSeasonSchema,
   createStyleSchema,
   distributorOptionsQuerySchema,
+  listProcessFlowsQuerySchema,
   listSeasonsQuerySchema,
   listStatusPageQuerySchema,
-  listStatusQuerySchema,
   listStylesQuerySchema,
   replaceProcessFlowVersionStagesSchema,
   styleFactorySchema,
@@ -82,7 +82,7 @@ seasonsRouter.get(
   canManageMasterData,
   asyncHandler(async (req, res) => {
     res.json(
-      successResponse(await masterDataService.listSeasons(listSeasonsQuerySchema.parse(req.query))),
+      successResponse(await masterDataService.listSeasonsPage(listSeasonsQuerySchema.parse(req.query))),
     );
   }),
 );
@@ -443,7 +443,7 @@ sizesRouter.get(
   '/',
   canManageMasterData,
   asyncHandler(async (req, res) => {
-    const filters = listStatusQuerySchema.parse(req.query);
+    const filters = listStatusPageQuerySchema.parse(req.query);
     const sizes = await masterDataService.listSizes(filters);
     res.status(200).json(successResponse(sizes));
   }),
@@ -504,8 +504,8 @@ factoriesRouter.get(
   '/',
   canViewFactories,
   asyncHandler(async (req, res) => {
-    const filters = listStatusQuerySchema.parse(req.query);
-    const factories = await masterDataService.listFactories(req.user!, filters);
+    const filters = listStatusPageQuerySchema.parse(req.query);
+    const factories = await masterDataService.listFactoriesPage(req.user!, filters);
     res.status(200).json(successResponse(factories));
   }),
 );
@@ -577,8 +577,8 @@ processFlowsRouter.get(
 processFlowsRouter.get(
   '/',
   canManageMasterData,
-  asyncHandler(async (_req, res) => {
-    const flows = await masterDataService.listProcessFlows();
+  asyncHandler(async (req, res) => {
+    const flows = await masterDataService.listProcessFlows(listProcessFlowsQuerySchema.parse(req.query));
     res.status(200).json(successResponse(flows));
   }),
 );

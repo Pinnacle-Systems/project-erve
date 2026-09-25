@@ -1,11 +1,10 @@
 import { useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageFactories } from '../../auth/permissions.js';
 import { getLocalDateString } from '../../lib/dates.js';
@@ -17,23 +16,23 @@ import type { Factory } from './types.js';
 export function FactoryListPage() {
   const { user } = useAuth();
   const canManage = canManageFactories(user);
-  const factoriesQuery = useQuery({
+  // Opt-in cursor pagination (limit sent): Load more appends further pages.
+  // The PDF fetches every page.
+  const { query: factoriesQuery, items: factories } = useCursorList<Factory>({
     queryKey: ['factories'],
-    queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories');
-      return response.data.data;
-    },
+    path: '/factories',
+    params: { limit: 25 },
   });
 
   const generateFactoryListPdf = useCallback(async () => {
     // Dynamically imported so @react-pdf/renderer and the document code load only when a user
     // actually clicks Download/Print, not as part of the app's initial bundle.
     const { generateFactoryListPdfBlob } = await import('./pdf/generateFactoryListPdf.js');
-    return generateFactoryListPdfBlob(factoriesQuery.data ?? [], {
+    return generateFactoryListPdfBlob(await fetchAllListPages<Factory>('/factories'), {
       generatedAt: new Date().toISOString(),
       generatedBy: user?.name,
     });
-  }, [factoriesQuery.data, user?.name]);
+  }, [user?.name]);
 
   const factoryListPdfFilename = useCallback(
     () => buildPdfFilename(['ERVE-Factories', getLocalDateString()]),
@@ -104,7 +103,7 @@ export function FactoryListPage() {
             ),
           },
         ]}
-        data={factoriesQuery.data ?? []}
+        data={factories}
         loading={factoriesQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading factories" />}
         emptyState={
@@ -119,6 +118,7 @@ export function FactoryListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(factoriesQuery, factories.length, ['factory', 'factories'])} />
     </div>
   );
 }

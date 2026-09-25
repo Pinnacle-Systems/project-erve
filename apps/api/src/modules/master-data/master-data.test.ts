@@ -1909,3 +1909,103 @@ describe('selector option endpoints (PAG7)', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// PAG8 — opt-in cursor pagination for the Factory, Size, Season and Process
+// Flow lists
+// ---------------------------------------------------------------------------
+
+describe('small master list pagination (PAG8)', () => {
+  async function adminToken() {
+    const { token } = await createTestUserAndToken({
+      email: `admin-${createId().slice(-8)}@test.local`,
+      password: 'test-password',
+      roles: ['ADMIN'],
+    });
+    return token;
+  }
+
+  // Follows nextCursor to the end and returns every id, in page order.
+  async function walk(token: string, path: string, query: Record<string, string | number> = {}) {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 20; guard += 1) {
+      const res = await request(app)
+        .get(path)
+        .query({ limit: 2, ...query, ...(cursor ? { cursor } : {}) })
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      ids.push(...res.body.data.items.map((item: { id: string }) => item.id));
+      if (!res.body.data.pageInfo.hasMore) return ids;
+      cursor = res.body.data.pageInfo.nextCursor;
+    }
+    throw new Error('pagination did not terminate');
+  }
+
+  async function legacyIds(token: string, path: string, query: Record<string, string> = {}) {
+    const res = await request(app).get(path).query(query).set('Authorization', `Bearer ${token}`);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    return res.body.data.map((item: { id: string }) => item.id);
+  }
+
+  it('Factories: legacy array unchanged; pages cover tied names exactly once in the same order', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 4; index += 1) await createTestFactory({ code: `TIE-${index}`, name: 'Same Mills' });
+    await createTestFactory({ code: 'AAA', name: 'Alpha Mills' });
+
+    const legacy = await legacyIds(token, '/factories');
+    const paged = await walk(token, '/factories');
+    expect(paged).toHaveLength(5);
+    expect(new Set(paged).size).toBe(5);
+    expect(paged).toEqual(legacy);
+  });
+
+  it('Sizes: pages follow sortOrder/code and the status filter applies before paging', async () => {
+    const token = await adminToken();
+    for (let index = 1; index <= 5; index += 1) {
+      await prisma.size.create({
+        data: { id: createId(), code: `AGE_${index}`, label: `AGE ${index}`, sizeType: 'AGE', sortOrder: index, status: index === 3 ? 'INACTIVE' : 'ACTIVE' },
+      });
+    }
+
+    expect(await walk(token, '/sizes')).toEqual(await legacyIds(token, '/sizes'));
+    const active = await walk(token, '/sizes', { status: 'ACTIVE' });
+    expect(active).toHaveLength(4);
+  });
+
+  it('Seasons: pages keep FY/name order with an id tie-breaker and the financialYearId filter', async () => {
+    const token = await adminToken();
+    const fy = await createTestFinancialYear();
+    for (let index = 0; index < 3; index += 1) {
+      await prisma.season.create({
+        data: { id: createId(), code: `SS-${index}`, name: 'Same Season', financialYearId: fy.id },
+      });
+    }
+
+    const paged = await walk(token, '/seasons', { financialYearId: fy.id });
+    expect(paged).toHaveLength(3);
+    expect(paged).toEqual(await legacyIds(token, '/seasons', { financialYearId: fy.id }));
+  });
+
+  it('Process Flows: legacy array unchanged; pages follow code order', async () => {
+    const token = await adminToken();
+    for (const code of ['PF-C', 'PF-A', 'PF-B']) {
+      const res = await request(app)
+        .post('/process-flows')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code, name: code, stages: [{ sequence: 1, name: 'Cutting' }] });
+      expect(res.status).toBe(201);
+    }
+
+    const paged = await walk(token, '/process-flows');
+    expect(paged).toHaveLength(3);
+    expect(paged).toEqual(await legacyIds(token, '/process-flows'));
+  });
+
+  it('rejects an over-max limit on each list', async () => {
+    const token = await adminToken();
+    for (const path of ['/factories', '/sizes', '/seasons', '/process-flows']) {
+      expect((await request(app).get(path).query({ limit: 101 }).set('Authorization', `Bearer ${token}`)).status).toBe(400);
+    }
+  });
+});

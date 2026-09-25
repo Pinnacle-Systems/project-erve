@@ -1,18 +1,17 @@
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
 import type { QualityForm } from './types.js';
 import { componentLabel } from './quality-form-ui.js';
 
 export function QualityFormListPage() {
-  const query = useQuery({
+  // Opt-in cursor pagination (limit sent): Load more appends further pages.
+  const { query, items: forms } = useCursorList<QualityForm>({
     queryKey: ['quality-forms'],
-    queryFn: async () =>
-      (await apiClient.get<ApiSuccessResponse<QualityForm[]>>('/quality-forms')).data.data,
+    path: '/quality-forms',
+    params: { limit: 25 },
   });
   return (
     <div className="space-y-5">
@@ -65,7 +64,7 @@ export function QualityFormListPage() {
             ),
           },
         ]}
-        data={query.data ?? []}
+        data={forms}
         loading={query.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading Quality Forms" />}
         emptyState={
@@ -80,6 +79,7 @@ export function QualityFormListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(query, forms.length, ['quality form', 'quality forms'])} />
     </div>
   );
 }
