@@ -108,7 +108,7 @@ async function renderPage(priceLists: PriceListSummary[] = []) {
     if (url === '/price-lists/distributor-options') {
       return { data: { data: [{ id: 'dist-1', code: 'DIST-1', name: 'Acme Distributors', status: 'ACTIVE' }] } };
     }
-    if (url === '/price-lists') return { data: { data: priceLists } };
+    if (url === '/price-lists') return { data: { data: { items: priceLists, pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected request: ${url}`);
   });
 
@@ -218,7 +218,7 @@ describe('PriceListListPage — ACCOUNTANT distributor lookup (UXAUTH-013, P1L8)
         error.response = { status: 403, data: { error: { message: 'Forbidden' } } };
         throw error;
       }
-      if (url === '/price-lists') return { data: { data: [] } };
+      if (url === '/price-lists') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
       throw new Error(`Unexpected request: ${url}`);
     });
     await waitUntil(() => distributorFilter() !== null);
@@ -242,7 +242,7 @@ describe('PriceListListPage — ACCOUNTANT distributor lookup (UXAUTH-013, P1L8)
           },
         };
       }
-      if (url === '/price-lists') return { data: { data: [] } };
+      if (url === '/price-lists') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
       throw new Error(`Unexpected request: ${url}`);
     });
     await waitUntil(() => distributorFilter() !== null);

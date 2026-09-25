@@ -1,11 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManagePriceLists } from '../../auth/permissions.js';
@@ -39,12 +38,12 @@ export function PriceListListPage() {
     [debouncedSearch, status, distributorId],
   );
 
-  const priceListsQuery = useQuery({
-    queryKey: ['price-lists', params],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PriceListSummary[]>>('/price-lists', { params });
-      return res.data.data;
-    },
+  // Opt-in cursor pagination (limit sent): Load more appends further pages; a
+  // filter change restarts at page 1. The PDF fetches every matching page.
+  const { query: priceListsQuery, items: priceLists } = useCursorList<PriceListSummary>({
+    queryKey: ['price-lists'],
+    path: '/price-lists',
+    params: { ...params, limit: 25 },
   });
 
   const distributorName = distributor?.name;
@@ -54,11 +53,11 @@ export function PriceListListPage() {
     // actually clicks Download/Print, not as part of the app's initial bundle.
     const { generatePriceListListPdfBlob } = await import('./pdf/generatePriceListListPdf.js');
     return generatePriceListListPdfBlob(
-      priceListsQuery.data ?? [],
+      await fetchAllListPages<PriceListSummary>('/price-lists', params),
       { search: debouncedSearch, status, distributorName },
       { generatedAt: new Date().toISOString(), generatedBy: user?.name },
     );
-  }, [priceListsQuery.data, debouncedSearch, status, distributorName, user?.name]);
+  }, [params, debouncedSearch, status, distributorName, user?.name]);
 
   const priceListListPdfFilename = useCallback(
     () => buildPdfFilename(['ERVE-Price-Lists', getLocalDateString()]),
@@ -168,7 +167,7 @@ export function PriceListListPage() {
             ),
           },
         ]}
-        data={priceListsQuery.data ?? []}
+        data={priceLists}
         loading={priceListsQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading price lists" />}
         emptyState={
@@ -183,6 +182,7 @@ export function PriceListListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(priceListsQuery, priceLists.length, ['price list', 'price lists'])} />
     </div>
   );
 }

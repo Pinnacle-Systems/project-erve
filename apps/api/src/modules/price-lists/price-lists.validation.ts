@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { distributorStatusSchema, styleStatusSchema } from '../master-data/master-data.validation.js';
+import { optionalPageQueryFields } from '../../utils/pagination.js';
 
 // Price-list effective dates are day-granular (the columns are @db.Date), so
 // inputs are plain YYYY-MM-DD strings — accepting full timestamps here would
@@ -18,6 +19,7 @@ export const listPriceListsQuerySchema = z.object({
   distributorId: z.string().trim().optional(),
   status: priceListStatusSchema.optional(),
   effectiveOn: dateOnly.optional(),
+  ...optionalPageQueryFields,
 });
 
 export const createPriceListSchema = z.object({
