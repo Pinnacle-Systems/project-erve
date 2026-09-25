@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createId } from '@erve/shared';
 import { prisma } from '../../../db/prisma.js';
 import { createTestFinancialYear, createTestUserAndToken, resetDatabase } from '../../../test/helpers.js';
-import { computeStageStructureFingerprint } from '../process-flow-pin.js';
+import { computeContentStructureFingerprint, computeStageStructureFingerprint } from '../process-flow-pin.js';
 import { H3A_BUNDLE_FORMAT, H3A_MIGRATION_VERSION, type BundleFileRef, type H3aBundle, type LoadedBundle } from './bundle.js';
 import type { TargetProfile } from './target-profiles.js';
 import {
@@ -38,7 +38,11 @@ async function fixture() {
   const sizeA = await prisma.size.create({ data: { id: createId(), code: `T3-${createId()}`, label: '3', sizeType: 'AGE', sortOrder: 3 } });
   const sizeB = await prisma.size.create({ data: { id: createId(), code: `T4-${createId()}`, label: '4', sizeType: 'AGE', sortOrder: 4 } });
   const flowCode = `SYN-FLOW-${createId()}`;
-  await prisma.processFlow.create({ data: { id: createId(), code: flowCode, name: 'Synthetic flow', versions: { create: { id: createId(), versionNumber: 1, status: 'ACTIVE' } } } });
+  const flow = await prisma.processFlow.create({
+    data: { id: createId(), code: flowCode, name: 'Synthetic flow', versions: { create: { id: createId(), versionNumber: 1, status: 'ACTIVE' } } },
+    include: { versions: true },
+  });
+  const contentStructureFingerprint = await computeContentStructureFingerprint(prisma, flow.versions[0]!.id);
 
   const dir = await mkdtemp(join(tmpdir(), 'h3a-bundle-'));
   dirs.push(dir);
@@ -85,7 +89,7 @@ async function fixture() {
     decision: 'test',
     factories: { 'Syn Factory': { code: `SYNF-${createId()}`, name: `Syn Factory ${createId()}`, createIfMissing: true } },
     sizeCodeBySource: { '3': sizeA.code, '4': sizeB.code },
-    processFlow: { processFlowCode: flowCode, versionNumber: 1, acceptedStageDeviations: [] },
+    processFlow: { processFlowCode: flowCode, versionNumber: 1, contentStructureFingerprint },
   };
   return { loaded, profile, adminEmail };
 }

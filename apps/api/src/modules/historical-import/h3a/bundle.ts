@@ -21,6 +21,12 @@ export const H3A_BATCH_LABEL = 'AW25-SS26';
 /** The approved AW25/SS26 slice (H2A/H2B/H2B.2 close-out). A bundle must reproduce these exactly. */
 export const H3A_APPROVED_DATASET = {
   sourceManifestAggregateSha256: 'b942fc08c0362a54d8384a03ab81fa017bead9642881fbdb63ec9726b5dfc749',
+  /**
+   * computeContentStructureFingerprint of the approved Dev ERVE_PRODUCTION_QUALITY v3 (the H2A pin),
+   * which quality-bootstrap confirms is the canonical definition. Quality Forms are identified by
+   * content, not version number, so an environment's equivalent flow matches regardless of numbering.
+   */
+  processFlowContentStructureFingerprint: 'b65a7055746aa17d8d56c1c0e2fdb3872eeaba32f31300b6ef0039d2417db837',
   styles: 91,
   styleSizes: 546,
   styleFactoryMappings: 91,

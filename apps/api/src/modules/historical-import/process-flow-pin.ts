@@ -221,31 +221,75 @@ export async function resolveProcessFlowVersionPin(
   return { logicalIdentity: await buildLogicalIdentity(client, version), devProcessFlowVersionId: version.id };
 }
 
+// ---------------------------------------------------------------------------
+// H3A: content-based structure fingerprint
+// ---------------------------------------------------------------------------
+//
+// Quality Form version NUMBERS are environment-local history: Production's
+// INLINE v1 has exactly the same content as Dev's INLINE v2 (Dev minted and
+// retired an earlier variant first). So equivalence across environments is
+// decided by what each stage's Quality Form version CONTAINS — its ordered
+// sections and components — never by its version number.
+
+/** SHA-256 of a Quality Form version's ordered sections/components (no ids, no timestamps). */
+export async function qualityFormVersionContentSha256(client: Client, qualityFormVersionId: string): Promise<string> {
+  const sections = await client.qualityFormSection.findMany({
+    where: { qualityFormVersionId },
+    orderBy: { sequence: 'asc' },
+    include: { components: { orderBy: { sequence: 'asc' } } },
+  });
+  const canonical = sections.map((s) => ({
+    sequence: s.sequence,
+    title: s.title,
+    description: s.description,
+    components: s.components.map((c) => ({ sequence: c.sequence, type: c.type, title: c.title, description: c.description, config: c.config })),
+  }));
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+/** Ordered stage structure with each Quality Form identified by code + content hash instead of version number. */
+export async function computeContentStructureFingerprint(client: Client, processFlowVersionId: string): Promise<string> {
+  const stages = await client.processFlowVersionStage.findMany({ where: { processFlowVersionId }, include: stageInclude });
+  const ordered = canonicalizeStages(stages);
+  const byId = new Map(stages.map((s) => [s.sequence, s.qualityFormVersionId] as const));
+  const withContent = [];
+  for (const stage of ordered) {
+    const formVersionId = byId.get(stage.sequence) ?? null;
+    withContent.push({
+      ...canonicalStageList([stage])[0]!,
+      qualityFormVersionNumber: null,
+      qualityFormContentSha256: formVersionId ? await qualityFormVersionContentSha256(client, formVersionId) : null,
+    });
+  }
+  return createHash('sha256').update(JSON.stringify({ stages: withContent })).digest('hex');
+}
+
 /**
- * H3A: resolves exactly one ACTIVE version of the named flow + version
- * number whose stage structure matches the approved structure fingerprint.
- * Zero or several matches is an error, never a guess.
+ * H3A: exactly one ACTIVE version of the named flow + version number whose
+ * content structure fingerprint equals the approved one. Zero or several
+ * matches is an error, never a guess.
  */
-export async function resolveProcessFlowVersionByStageStructure(
+export async function resolveProcessFlowVersionByContentStructure(
   client: Client,
-  target: { processFlowCode: string; versionNumber: number; stageStructureFingerprint: string },
-): Promise<ProcessFlowVersionPin & { stageStructureFingerprint: string }> {
+  target: { processFlowCode: string; versionNumber: number; contentStructureFingerprint: string },
+): Promise<ProcessFlowVersionPin & { contentStructureFingerprint: string }> {
   const candidates = await client.processFlowVersion.findMany({
     where: { status: 'ACTIVE', versionNumber: target.versionNumber, processFlow: { code: target.processFlowCode } },
     include: { processFlow: { select: { code: true, name: true } } },
   });
-  const matches: Array<ProcessFlowVersionPin & { stageStructureFingerprint: string }> = [];
+  const matches: Array<ProcessFlowVersionPin & { contentStructureFingerprint: string }> = [];
+  const found: string[] = [];
   for (const version of candidates) {
-    const logicalIdentity = await buildLogicalIdentity(client, version);
-    const stageStructureFingerprint = computeStageStructureFingerprint(logicalIdentity.stages);
-    if (stageStructureFingerprint === target.stageStructureFingerprint) {
-      matches.push({ logicalIdentity, devProcessFlowVersionId: version.id, stageStructureFingerprint });
+    const contentStructureFingerprint = await computeContentStructureFingerprint(client, version.id);
+    found.push(contentStructureFingerprint.slice(0, 16));
+    if (contentStructureFingerprint === target.contentStructureFingerprint) {
+      matches.push({ logicalIdentity: await buildLogicalIdentity(client, version), devProcessFlowVersionId: version.id, contentStructureFingerprint });
     }
   }
   if (matches.length !== 1) {
     throw new ProcessFlowPinError(
-      `Expected exactly one ACTIVE ${target.processFlowCode} v${target.versionNumber} matching the approved stage structure ` +
-        `${target.stageStructureFingerprint.slice(0, 16)}..., found ${matches.length} (of ${candidates.length} ACTIVE candidate(s))`,
+      `Expected exactly one ACTIVE ${target.processFlowCode} v${target.versionNumber} matching the approved content structure ` +
+        `${target.contentStructureFingerprint.slice(0, 16)}..., found ${matches.length} (ACTIVE candidate(s): ${found.join(', ') || 'none'})`,
     );
   }
   return matches[0]!;

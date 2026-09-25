@@ -33,7 +33,7 @@ import {
   type HistoricalCommitRecord,
   type BatchVerification,
 } from '../historical-job-order-commit.service.js';
-import { computeStageStructureFingerprint, resolveProcessFlowVersionByStageStructure } from '../process-flow-pin.js';
+import { resolveProcessFlowVersionByContentStructure } from '../process-flow-pin.js';
 import { H3A_APPROVED_DATASET, H3A_MIGRATION_VERSION, money, readVerifiedBundleFile, type BundleStyleSpec, type LoadedBundle } from './bundle.js';
 import type { TargetProfile } from './target-profiles.js';
 
@@ -105,7 +105,7 @@ export interface H3aPlan {
   targetProfile: string;
   bundleSha256: string;
   admin: { id: string; name: string } | null;
-  processFlow: { versionId: string | null; processFlowCode: string; versionNumber: number; stageStructureFingerprint: string; fingerprint: string | null; detail: string };
+  processFlow: { versionId: string | null; processFlowCode: string; versionNumber: number; contentStructureFingerprint: string; fingerprint: string | null; detail: string };
   factories: FactoryPlan[];
   seasons: SeasonPlan[];
   sizes: SizePlan[];
@@ -142,38 +142,24 @@ export async function planH3aImport(client: Client, loaded: LoadedBundle, profil
   const problems: string[] = [];
   const admin = await resolveAdmin(client, options.adminEmail, problems);
 
-  // --- Process flow: the profile's flow, accepted only on the approved stage
-  // structure with exactly the profile's explicitly accepted deviations.
+  // --- Process flow: the profile's ACTIVE version, accepted only on the
+  // approved CONTENT structure (Quality Forms compared by content).
   const approvedFlow = bundle.provenance.approvedProcessFlow;
-  const deviations = profile.processFlow.acceptedStageDeviations;
-  const expectedStages = approvedFlow.stages.map((stage) => {
-    const deviation = deviations.find((d) => d.sequence === stage.sequence);
-    if (!deviation) return stage;
-    if (stage[deviation.field] !== deviation.approvedValue) problems.push(`Profile deviation for stage ${stage.sequence} expects approved ${deviation.field}=${deviation.approvedValue}, bundle has ${stage[deviation.field]}`);
-    return { ...stage, [deviation.field]: deviation.targetValue };
-  });
-  const expectedStructure = computeStageStructureFingerprint(expectedStages);
   let processFlow: H3aPlan['processFlow'] = {
     versionId: null,
     processFlowCode: profile.processFlow.processFlowCode,
     versionNumber: profile.processFlow.versionNumber,
-    stageStructureFingerprint: expectedStructure,
+    contentStructureFingerprint: profile.processFlow.contentStructureFingerprint,
     fingerprint: null,
     detail: '',
   };
   try {
-    const pin = await resolveProcessFlowVersionByStageStructure(client, {
-      processFlowCode: profile.processFlow.processFlowCode,
-      versionNumber: profile.processFlow.versionNumber,
-      stageStructureFingerprint: expectedStructure,
-    });
+    const pin = await resolveProcessFlowVersionByContentStructure(client, profile.processFlow);
     processFlow = {
       ...processFlow,
       versionId: pin.devProcessFlowVersionId,
       fingerprint: pin.logicalIdentity.fingerprint,
-      detail:
-        `ACTIVE ${profile.processFlow.processFlowCode} v${profile.processFlow.versionNumber} matches the approved v${approvedFlow.versionNumber} stage structure (${pin.logicalIdentity.stages.length} stages)` +
-        (deviations.length ? ` with ${deviations.length} accepted deviation(s): ${deviations.map((d) => `stage ${d.sequence} ${d.field} ${d.approvedValue}->${d.targetValue}`).join(', ')}` : ''),
+      detail: `ACTIVE ${profile.processFlow.processFlowCode} v${profile.processFlow.versionNumber} matches the approved v${approvedFlow.versionNumber} content structure exactly (${pin.logicalIdentity.stages.length} stages, Quality Forms compared by content)`,
     };
   } catch (error) {
     processFlow.detail = error instanceof Error ? error.message : String(error);
