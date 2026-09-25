@@ -26,30 +26,3 @@ export interface Distributor {
 }
 
 export type PurchaseModeValue = 'OUTRIGHT' | 'SALE_RETURN';
-
-export interface StyleSize {
-  id: string;
-  code: string;
-  label: string;
-  sizeType: string;
-  sortOrder: number;
-  status: 'ACTIVE' | 'INACTIVE';
-  mappingStatus: 'ACTIVE' | 'INACTIVE';
-}
-
-export interface StyleSeason {
-  id: string;
-  code: string;
-  name: string;
-  displayName: string;
-  status: 'ACTIVE' | 'INACTIVE';
-}
-
-export interface StyleOption {
-  id: string;
-  styleNumber: string;
-  styleName: string;
-  status: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
-  sizes: StyleSize[];
-  season: StyleSeason;
-}

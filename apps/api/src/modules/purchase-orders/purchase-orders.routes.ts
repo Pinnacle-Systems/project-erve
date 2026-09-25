@@ -6,6 +6,7 @@ import { successResponse } from '../../utils/response.js';
 import {
   createPurchaseOrderSchema,
   listPurchaseOrdersQuerySchema,
+  orderSheetStyleOptionsQuerySchema,
   updatePurchaseOrderSchema,
 } from './purchase-orders.validation.js';
 import * as purchaseOrdersService from './purchase-orders.service.js';
@@ -36,6 +37,29 @@ purchaseOrdersRouter.post(
     const input = createPurchaseOrderSchema.parse(req.body);
     const order = await purchaseOrdersService.createPurchaseOrder(req.user!, input);
     res.status(201).json(successResponse(order));
+  }),
+);
+
+// Registered before '/:id' so 'style-options' isn't read as an Order Sheet
+// id. These serve the Order Sheet form's Style lookup under the Order Sheet
+// manage permission — a bounded slim search plus the one selected Style —
+// so the form never depends on GET /styles returning the whole master.
+purchaseOrdersRouter.get(
+  '/style-options',
+  canManagePOs,
+  asyncHandler(async (req, res) => {
+    const filters = orderSheetStyleOptionsQuerySchema.parse(req.query);
+    const options = await purchaseOrdersService.listOrderSheetStyleOptions(filters);
+    res.status(200).json(successResponse(options));
+  }),
+);
+
+purchaseOrdersRouter.get(
+  '/style-options/:styleId',
+  canManagePOs,
+  asyncHandler(async (req, res) => {
+    const option = await purchaseOrdersService.getOrderSheetStyleOption(req.params.styleId! as string);
+    res.status(200).json(successResponse(option));
   }),
 );
 

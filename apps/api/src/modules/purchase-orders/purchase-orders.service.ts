@@ -1,5 +1,5 @@
 import { createId } from '@erve/shared';
-import type { PurchaseOrderDetail } from '@erve/types';
+import type { OrderSheetStyleDetail, OrderSheetStyleOption, PurchaseOrderDetail } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { PurchaseMode, PurchaseOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
@@ -503,6 +503,87 @@ export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
 // atomically (see job-orders.service.ts createJobOrderFromPO), so
 // "remaining quantity"/"fulfilment progress" no longer means anything at the
 // Order Sheet level. Retired along with their routes and frontend panels.
+
+// ---------------------------------------------------------------------------
+// Style lookup (P1L1)
+// ---------------------------------------------------------------------------
+
+// Slim projection for the Order Sheet Style lookup. Never the Style master's
+// styleInclude: no sizes, images or factory mappings in search results.
+const styleOptionSelect = {
+  id: true,
+  styleNumber: true,
+  styleName: true,
+  lmixNumber: true,
+  status: true,
+  season: { select: { code: true, financialYear: { select: { code: true } } } },
+} satisfies Prisma.StyleSelect;
+
+function toStyleOptionView(
+  style: Prisma.StyleGetPayload<{ select: typeof styleOptionSelect }>,
+): OrderSheetStyleOption {
+  return {
+    id: style.id,
+    styleNumber: style.styleNumber,
+    styleName: style.styleName,
+    lmixNumber: style.lmixNumber,
+    status: style.status,
+    season: {
+      code: style.season.code,
+      displayName: `${style.season.code} ${toCompactFinancialYearCode(style.season.financialYear.code)}`,
+    },
+  };
+}
+
+// New-selection search: ACTIVE Styles only (the same eligibility
+// validateLines enforces on save), matched on LMIX, Style Number or Style
+// Name, and always bounded by `limit` — a broad query is refined by typing
+// more, never paged. LMIX is searched in its own right: UI-created Styles
+// have a Style Number independent of their LMIX.
+export async function listOrderSheetStyleOptions(filters: {
+  search?: string;
+  limit: number;
+}): Promise<OrderSheetStyleOption[]> {
+  const search = filters.search || undefined;
+  const styles = await prisma.style.findMany({
+    where: {
+      status: 'ACTIVE',
+      OR: search
+        ? [
+            { lmixNumber: { contains: search, mode: 'insensitive' } },
+            { styleNumber: { contains: search, mode: 'insensitive' } },
+            { styleName: { contains: search, mode: 'insensitive' } },
+          ]
+        : undefined,
+    },
+    select: styleOptionSelect,
+    orderBy: { styleNumber: 'asc' },
+    take: filters.limit,
+  });
+  return styles.map(toStyleOptionView);
+}
+
+// The selected Style, by id, whatever its status — an Order Sheet saved
+// against a since-retired Style must still display it. Sizes are the
+// orderable ones only; saving still re-validates status and sizes.
+export async function getOrderSheetStyleOption(styleId: string): Promise<OrderSheetStyleDetail> {
+  const style = await prisma.style.findUnique({
+    where: { id: styleId },
+    select: {
+      ...styleOptionSelect,
+      styleSizes: {
+        where: { status: 'ACTIVE', size: { status: 'ACTIVE' } },
+        select: { size: { select: { id: true, code: true, label: true, sortOrder: true } } },
+        orderBy: { size: { sortOrder: 'asc' } },
+      },
+    },
+  });
+  if (!style) throw HttpError.notFound('Style not found');
+  return {
+    ...toStyleOptionView(style),
+    sizes: style.styleSizes.map(({ size }) => size),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Internal validation helper

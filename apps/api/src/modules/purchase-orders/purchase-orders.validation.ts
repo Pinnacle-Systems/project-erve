@@ -77,3 +77,19 @@ export const listPurchaseOrdersQuerySchema = z.object({
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
+
+// Order Sheet Style lookup (P1L1): a bounded server-side search, never the
+// full Style master. No status filter is accepted — eligibility for a new
+// selection is the server's rule (ACTIVE only), not the caller's choice.
+export const STYLE_OPTIONS_DEFAULT_LIMIT = 20;
+export const STYLE_OPTIONS_MAX_LIMIT = 50;
+
+export const orderSheetStyleOptionsQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(STYLE_OPTIONS_MAX_LIMIT)
+    .default(STYLE_OPTIONS_DEFAULT_LIMIT),
+});
