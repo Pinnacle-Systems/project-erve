@@ -394,6 +394,35 @@ jobs:
 
           echo "Financial-year-bootstrap CLI smoke test passed: guard enforced, 9-year window ensured, idempotent — all through the packaged artifact"
 
+      # Proves historical-import-production.js (H3A) is present in and
+      # loadable from the packaged artifact, and that it has no default
+      # action and refuses a database it was not told to expect. It is never
+      # given a bundle here, so it can never write.
+      - name: Smoke-test the packaged historical-import-production CLI guards
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/verify-extract/api
+
+          export NODE_ENV=production
+          export DATABASE_URL="${{ env.TEST_DATABASE_URL }}"
+          export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
+          export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          export FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads"
+
+          echo "--- no mode: must refuse ---"
+          if OUTPUT="$(node historical-import-production.js --expect-database any 2>&1)"; then
+            echo "Expected historical-import-production.js to fail without a mode"; exit 1
+          fi
+          echo "$OUTPUT" | grep -q "Pass exactly one of" || { echo "$OUTPUT"; exit 1; }
+
+          echo "--- wrong expected database: must refuse ---"
+          if OUTPUT="$(node historical-import-production.js --preflight --expect-database not_this_database --profile production --bundle /nonexistent --report-dir "$RUNNER_TEMP/h3a" 2>&1)"; then
+            echo "Expected historical-import-production.js to refuse an unexpected database"; exit 1
+          fi
+          echo "$OUTPUT" | grep -q "Refusing: live current_database()" || { echo "$OUTPUT"; exit 1; }
+
+          echo "historical-import-production CLI smoke test passed: packaged, loadable, guards enforced"
+
       - name: Compute artifact name
         id: artifact-name
         run: echo "value=erve-release-${{ github.sha }}" >> "$GITHUB_OUTPUT"

@@ -750,6 +750,29 @@ pnpm --filter @erve/api financial-year:bootstrap
 
 ---
 
+### 12.6 Historical import (H3A — AW25/SS26 historical Styles + Job Orders)
+
+`historical-import-production.js` imports the sealed, hash-verified historical bundle (91 Styles, 91 historical Job Orders, source PDFs, Style images). It is **forward-only and re-run safe**: it creates only what is missing, verifies what exists, backfills only null fields, and stops with **zero writes** on any conflict. It never deletes anything, never overwrites a populated value, never rewinds a sequence, never creates Sizes or Process Flows, and never creates live workflow (acknowledgements, stages, QA, inventory, dispatch, invoices).
+
+The bundle is built on the operator workstation (`apps/api/src/cli/historical-import-h3a-bundle.cli.ts`, no database access) and copied to the server (outside `releases/`). Record its `bundle.json` SHA-256. Environment resolution (factories, sizes, pinned process flow) comes from the reviewed `production` profile in `apps/api/src/modules/historical-import/h3a/target-profiles.ts`.
+
+Run from `$DEPLOY_ROOT/current/api` as `SITE_USER`, in this order:
+
+```bash
+B=<bundle dir>; H=<bundle.json sha256>; R=<report dir>
+node historical-import-production.js --snapshot $R/before.json --expect-database erve_prod
+node historical-import-production.js --preflight --bundle $B --expect-bundle-sha256 $H --profile production --expect-database erve_prod --report-dir $R
+# review $R/production-preflight-summary.md — the gate must be PASS
+node historical-import-production.js --execute --confirm-write --confirm-production --bundle $B --expect-bundle-sha256 $H --profile production --expect-database erve_prod --report-dir $R
+node historical-import-production.js --verify --bundle $B --expect-bundle-sha256 $H --profile production --expect-database erve_prod --report-dir $R
+node historical-import-production.js --snapshot $R/after.json --expect-database erve_prod
+```
+
+- `--preflight`, `--verify` and `--snapshot` run inside a Postgres `READ ONLY` transaction and cannot write.
+- A second `--execute` must report `Outcome: NO_CHANGE`, and a snapshot taken before and after it must compare with zero differences. Compare snapshots with `historical-import-snapshot-compare.cli.ts` (workstation, no database).
+- Take a `pg_dump --format=custom` backup and record the `shared/uploads/` file manifest immediately before `--execute` (§11).
+- Later historical phases (H2C/H2D) must locate these records by business identity: Job Orders by `legacyReferenceNumber`, Styles by Season + LMIX, source documents by `sourceChecksumSha256`, and the batch by `ImportBatch.sourceLabel` (`AW25-SS26`). Never by a database id copied from an artifact.
+
 ## 13. Troubleshooting
 
 | Symptom                                                                           | Likely cause / first check                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |

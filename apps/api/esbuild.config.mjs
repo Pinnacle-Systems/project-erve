@@ -33,6 +33,8 @@ await build({
     { in: path.join(__dirname, 'src/cli/roles-bootstrap.cli.ts'), out: 'roles-bootstrap' },
     { in: path.join(__dirname, 'src/cli/quality-bootstrap.cli.ts'), out: 'quality-bootstrap' },
     { in: path.join(__dirname, 'src/cli/financial-year-bootstrap.cli.ts'), out: 'financial-year-bootstrap' },
+    // H3A: forward-only historical import of a sealed bundle (DEPLOYMENT.md §12.6).
+    { in: path.join(__dirname, 'src/cli/historical-import-production.cli.ts'), out: 'historical-import-production' },
   ],
   outdir: path.join(__dirname, 'dist-bundle'),
   bundle: true,
