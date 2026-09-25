@@ -3,10 +3,11 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
-import { Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { DistributorLookupField } from '../master-data/DistributorLookupField.js';
 import type { PriceList, PriceListDistributor } from './types.js';
 import { apiErrorMessage } from './price-list-ui.js';
 
@@ -16,7 +17,8 @@ export function PriceListFormPage() {
   const isEdit = Boolean(id);
   const queryClient = useQueryClient();
 
-  const [distributorId, setDistributorId] = useState('');
+  // Create mode only — the distributor is fixed once the price list exists.
+  const [distributor, setDistributor] = useState<PriceListDistributor | null>(null);
   const [name, setName] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState('');
   const [effectiveTo, setEffectiveTo] = useState('');
@@ -31,29 +33,12 @@ export function PriceListFormPage() {
     },
   });
 
-  // Price-List-specific option lookup: ACCOUNTANT can create Price Lists but
-  // is denied on the broad /distributors master endpoint, so the picker must
-  // not depend on it. Edit mode never queries this — the distributor field is
-  // disabled post-creation and hydrated straight from the loaded price list.
-  const distributorOptionsQuery = useQuery({
-    queryKey: ['price-list-distributor-options', 'ACTIVE'],
-    enabled: !isEdit,
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PriceListDistributor[]>>(
-        '/price-lists/distributor-options',
-        { params: { status: 'ACTIVE' } },
-      );
-      return res.data.data;
-    },
-  });
-
   useEffect(() => {
     if (!priceListQuery.data) return;
     const priceList = priceListQuery.data;
     // Hydrates the edit form from an async-loaded record; the data isn't available
     // for a lazy initial-state computation, so this can't be done without an effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDistributorId(priceList.distributor.id);
     setName(priceList.name);
     setEffectiveFrom(priceList.effectiveFrom ?? '');
     setEffectiveTo(priceList.effectiveTo ?? '');
@@ -62,7 +47,7 @@ export function PriceListFormPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!isEdit && !distributorId) throw new Error('Distributor is required');
+      if (!isEdit && !distributor) throw new Error('Distributor is required');
       if (!name.trim()) throw new Error('Name is required');
       if (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom) {
         throw new Error('Effective-to date cannot be before the effective-from date');
@@ -77,7 +62,7 @@ export function PriceListFormPage() {
         return res.data.data;
       }
       const res = await apiClient.post<ApiSuccessResponse<PriceList>>('/price-lists', {
-        distributorId,
+        distributorId: distributor!.id,
         name: name.trim(),
         effectiveFrom: effectiveFrom || null,
         effectiveTo: effectiveTo || null,
@@ -139,45 +124,28 @@ export function PriceListFormPage() {
         >
           <FormSection title="Price List Details">
             <FormGrid layout="content">
-              <div className="flex flex-col gap-1.5">
-                <SelectField
+              {isEdit && priceListQuery.data ? (
+                // The distributor is fixed after creation — shown straight
+                // from the loaded price list, never looked up.
+                <TextField
                   label="Distributor *"
-                  value={distributorId || 'NONE'}
-                  disabled={isEdit}
-                  onValueChange={(value) => setDistributorId(value === 'NONE' ? '' : value)}
+                  value={priceListQuery.data.distributor.name}
+                  disabled
                   width="md"
-                >
-                  <SelectItem value="NONE">Select distributor</SelectItem>
-                  {isEdit && priceListQuery.data ? (
-                    <SelectItem value={priceListQuery.data.distributor.id}>
-                      {priceListQuery.data.distributor.name}
-                    </SelectItem>
-                  ) : (
-                    <>
-                      {distributorOptionsQuery.isLoading && (
-                        <SelectItem value="LOADING" disabled>
-                          Loading distributors…
-                        </SelectItem>
-                      )}
-                      {distributorOptionsQuery.isError && (
-                        <SelectItem value="ERROR" disabled>
-                          Unable to load distributors
-                        </SelectItem>
-                      )}
-                      {(distributorOptionsQuery.data ?? []).map((distributor) => (
-                        <SelectItem key={distributor.id} value={distributor.id}>
-                          {distributor.name}
-                        </SelectItem>
-                      ))}
-                    </>
-                  )}
-                </SelectField>
-                {!isEdit && distributorOptionsQuery.isError ? (
-                  <ValidationMessage tone="error">
-                    {apiErrorMessage(distributorOptionsQuery.error, 'Unable to load distributors')}
-                  </ValidationMessage>
-                ) : null}
-              </div>
+                />
+              ) : (
+                // Price-List-specific lookup: ACCOUNTANT can create Price
+                // Lists but is denied on the broad /distributors master, so
+                // this searches /price-lists/distributor-options (ACTIVE only).
+                <DistributorLookupField<PriceListDistributor>
+                  label="Distributor *"
+                  value={distributor}
+                  onChange={setDistributor}
+                  searchPath="/price-lists/distributor-options"
+                  searchParams={{ status: 'ACTIVE' }}
+                  width="md"
+                />
+              )}
 
               <TextField
                 label="Name *"

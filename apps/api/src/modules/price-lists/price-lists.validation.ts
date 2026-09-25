@@ -55,8 +55,14 @@ export const priceLookupQuerySchema = z.object({
 // endpoints themselves) so ACCOUNTANT — permitted on Price Lists but not on
 // the Style/Distributor masters — can populate these selectors without a
 // grant to browse either master.
+// P1L8: `search`/`limit` let the Price List Distributor lookups run a
+// bounded search. Omitting `limit` keeps the original complete option set.
+export const PRICE_LIST_DISTRIBUTOR_OPTIONS_MAX_LIMIT = 50;
+
 export const priceListDistributorOptionsQuerySchema = z.object({
   status: distributorStatusSchema.optional(),
+  search: z.string().trim().max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(PRICE_LIST_DISTRIBUTOR_OPTIONS_MAX_LIMIT).optional(),
 });
 
 export const priceListStyleOptionsQuerySchema = z.object({

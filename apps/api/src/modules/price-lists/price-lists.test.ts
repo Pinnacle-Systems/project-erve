@@ -1253,3 +1253,65 @@ describe('GET /price-lists/:id/style-options — Add Style lookup (P1L2)', () =>
     expect((await searchCandidates(token, priceListId, { search: 'ST' })).status).toBe(expectedStatus);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P1L8 — bounded Price List Distributor lookup
+// ---------------------------------------------------------------------------
+
+describe('GET /price-lists/distributor-options — bounded search (P1L8)', () => {
+  function searchOptions(token: string, query: Record<string, string | number>) {
+    return request(app)
+      .get('/price-lists/distributor-options')
+      .query(query)
+      .set('Authorization', `Bearer ${token}`);
+  }
+
+  function codes(res: request.Response): string[] {
+    return (res.body.data as Array<{ code: string }>).map((option) => option.code).sort();
+  }
+
+  it('searches code and name case-insensitively and keeps the status filter', async () => {
+    const token = await adminToken();
+    await createTestDistributor({ code: 'KOC-001', name: 'Kerala Kids Wear' });
+    await createTestDistributor({ code: 'KOC-002', name: 'Kochi Retired', status: 'INACTIVE' });
+    await createTestDistributor({ code: 'BLR-001', name: 'Bangalore Apparel' });
+
+    expect(codes(await searchOptions(token, { search: 'koc', limit: 20 }))).toEqual(['KOC-001', 'KOC-002']);
+    expect(codes(await searchOptions(token, { search: 'KIDS', limit: 20 }))).toEqual(['KOC-001']);
+    expect(codes(await searchOptions(token, { search: 'koc', status: 'ACTIVE', limit: 20 }))).toEqual([
+      'KOC-001',
+    ]);
+  });
+
+  it('bounds results when a limit is given, rejects an over-max limit, and keeps the full set without one', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 23; index += 1) {
+      const suffix = String(index).padStart(2, '0');
+      await createTestDistributor({ code: `BULK-${suffix}`, name: `Bulk Distributor ${suffix}` });
+    }
+
+    expect((await searchOptions(token, { search: 'Bulk', limit: 20 })).body.data).toHaveLength(20);
+    expect(codes(await searchOptions(token, { search: 'Bulk', limit: 2 }))).toEqual(['BULK-00', 'BULK-01']);
+    expect((await searchOptions(token, { limit: 51 })).status).toBe(400);
+    expect((await searchOptions(token, {})).body.data).toHaveLength(23);
+  });
+
+  it('keeps the minimal DTO and the Price List read permission', async () => {
+    await createTestDistributor({ code: 'DTO-01', name: 'Dto Distributor' });
+    const { token: accountant } = await createTestUserAndToken({
+      email: 'accountant-pl-dist-search@test.local',
+      password: 'test-password',
+      roles: ['ACCOUNTANT'],
+    });
+    const { token: distributorUser } = await createTestUserAndToken({
+      email: 'distributor-pl-dist-search@test.local',
+      password: 'test-password',
+      roles: ['DISTRIBUTOR'],
+    });
+
+    const res = await searchOptions(accountant, { search: 'DTO', limit: 20 });
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'status']);
+    expect((await searchOptions(distributorUser, { search: 'DTO', limit: 20 })).status).toBe(403);
+  });
+});

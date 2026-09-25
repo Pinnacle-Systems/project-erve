@@ -141,34 +141,77 @@ function stubAuth(user: AuthUser): void {
   } as unknown as ReturnType<typeof AuthContext.useAuth>);
 }
 
-describe('PriceListListPage — ACCOUNTANT distributor lookup (UXAUTH-013)', () => {
-  it('populates the distributor filter for ACCOUNTANT via the Price-List-specific lookup, not the broad master', async () => {
-    stubAuth(mockAuthUser(['ACCOUNTANT']));
+async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for condition');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  }
+}
 
+function distributorFilter(): HTMLInputElement {
+  return document.getElementById('price-list-distributor-filter') as HTMLInputElement;
+}
+
+async function searchDistributorFilter(text: string): Promise<void> {
+  await act(async () => {
+    distributorFilter().focus();
+    setInputValue(distributorFilter(), text);
+  });
+}
+
+function renderWith(getImpl: (url: string) => Promise<unknown>) {
+  vi.spyOn(apiClient, 'get').mockImplementation(getImpl as never);
+  act(() => {
+    root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <PriceListListPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  });
+}
+
+function priceListDistributorFilters(): Array<string | undefined> {
+  return vi
+    .mocked(apiClient.get)
+    .mock.calls.filter((call) => call[0] === '/price-lists')
+    .map((call) => (call[1] as { params?: { distributorId?: string } } | undefined)?.params?.distributorId);
+}
+
+describe('PriceListListPage — ACCOUNTANT distributor lookup (UXAUTH-013, P1L8)', () => {
+  it('searches the Price-List-specific lookup, not the broad master, and filters by the pick', async () => {
+    stubAuth(mockAuthUser(['ACCOUNTANT']));
     await renderPage([makePriceList()]);
 
-    const optionCalls = vi
-      .mocked(apiClient.get)
-      .mock.calls.filter((call) => call[0] === '/price-lists/distributor-options');
-    const masterCalls = vi.mocked(apiClient.get).mock.calls.filter((call) => call[0] === '/distributors');
-    expect(optionCalls.length).toBeGreaterThan(0);
-    expect(masterCalls.length).toBe(0);
+    const calls = () => vi.mocked(apiClient.get).mock.calls;
+    // Nothing is preloaded for the filter.
+    expect(calls().some((call) => call[0] === '/price-lists/distributor-options')).toBe(false);
 
-    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Distributor"]')!;
-    await act(async () => trigger.click());
-    await waitFor(
-      () => document.body.querySelectorAll('[role="option"]').length > 0,
-    );
-    const options = Array.from(document.body.querySelectorAll('[role="option"]')).map((el) =>
-      el.textContent?.trim(),
-    );
-    expect(options).toContain('Acme Distributors');
+    await searchDistributorFilter('acme');
+    await waitUntil(() => document.body.querySelectorAll('[role="option"]').length > 0);
+    expect(calls().find((call) => call[0] === '/price-lists/distributor-options')?.[1]).toMatchObject({
+      params: { search: 'acme', limit: 20 },
+    });
+    expect(calls().some((call) => call[0] === '/distributors')).toBe(false);
+
+    await act(async () => document.body.querySelector<HTMLElement>('[role="option"]')!.click());
+    await waitUntil(() => priceListDistributorFilters().at(-1) === 'dist-1');
+
+    const clearFilters = Array.from(container.querySelectorAll('button')).find((button) =>
+      /clear/i.test(button.textContent ?? ''),
+    )!;
+    await act(async () => clearFilters.click());
+    await waitUntil(() => priceListDistributorFilters().at(-1) === undefined);
+    expect(distributorFilter().value).toBe('');
   });
 
-  it('shows a truthful error instead of an empty distributor filter when the lookup fails for ACCOUNTANT', async () => {
+  it('shows a truthful error in the lookup when the search fails for ACCOUNTANT', async () => {
     stubAuth(mockAuthUser(['ACCOUNTANT']));
-
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    renderWith(async (url: string) => {
       if (url === '/price-lists/distributor-options') {
         const error = new Error('Forbidden') as Error & { isAxiosError: boolean; response: unknown };
         error.isAxiosError = true;
@@ -178,27 +221,17 @@ describe('PriceListListPage — ACCOUNTANT distributor lookup (UXAUTH-013)', () 
       if (url === '/price-lists') return { data: { data: [] } };
       throw new Error(`Unexpected request: ${url}`);
     });
+    await waitUntil(() => distributorFilter() !== null);
 
-    act(() => {
-      root.render(
-        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-          <MemoryRouter>
-            <PriceListListPage />
-          </MemoryRouter>
-        </QueryClientProvider>,
-      );
-    });
-    await waitFor(
-      () => container.textContent?.includes('Unable to load distributors for filtering') ?? false,
+    await searchDistributorFilter('acme');
+    await waitUntil(
+      () => document.body.querySelector('[data-lookup-panel]')?.textContent?.includes('Forbidden') ?? false,
     );
-
-    expect(container.textContent).toContain('Unable to load distributors for filtering');
   });
 
-  it('requests the full distributor option set (no status filter) so an inactive distributor stays filterable', async () => {
+  it('sends no status filter so an inactive distributor stays filterable', async () => {
     stubAuth(mockAuthUser(['ACCOUNTANT']));
-
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    renderWith(async (url: string) => {
       if (url === '/price-lists/distributor-options') {
         return {
           data: {
@@ -212,37 +245,25 @@ describe('PriceListListPage — ACCOUNTANT distributor lookup (UXAUTH-013)', () 
       if (url === '/price-lists') return { data: { data: [] } };
       throw new Error(`Unexpected request: ${url}`);
     });
-
-    act(() => {
-      root.render(
-        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-          <MemoryRouter>
-            <PriceListListPage />
-          </MemoryRouter>
-        </QueryClientProvider>,
-      );
-    });
-    await act(async () => {
-      await flushMicrotasks();
-    });
+    await waitUntil(() => distributorFilter() !== null);
 
     // The list-page filter browses historical Price Lists, so it must not
-    // scope itself to ACTIVE-only the way the create form and the style
-    // picker do — a Price List belonging to a now-inactive Distributor would
-    // otherwise become impossible to filter by.
+    // scope itself to ACTIVE-only the way the create form does — a Price
+    // List belonging to a now-inactive Distributor would otherwise become
+    // impossible to filter by.
+    await searchDistributorFilter('tra');
+    await waitUntil(() => document.body.querySelectorAll('[role="option"]').length > 0);
     const optionCall = vi
       .mocked(apiClient.get)
       .mock.calls.find((call) => call[0] === '/price-lists/distributor-options');
-    expect(optionCall?.[1]).toBeUndefined();
+    expect(optionCall?.[1]).toMatchObject({ params: { search: 'tra', limit: 20 } });
+    expect((optionCall?.[1] as { params: Record<string, unknown> }).params).not.toHaveProperty('status');
 
-    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Distributor"]')!;
-    await act(async () => trigger.click());
-    await waitFor(() => document.body.querySelectorAll('[role="option"]').length > 0);
     const options = Array.from(document.body.querySelectorAll('[role="option"]')).map((el) =>
       el.textContent?.trim(),
     );
-    expect(options).toContain('Acme Distributors');
-    expect(options).toContain('Old Traders (inactive)');
+    expect(options).toContain('Acme DistributorsDIST-1');
+    expect(options).toContain('Old TradersDIST-2(inactive)');
   });
 });
 

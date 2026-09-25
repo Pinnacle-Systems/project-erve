@@ -258,11 +258,27 @@ export async function lookupPriceForActor(
 // complete option set, active and inactive alike, rather than silently
 // hiding an inactive entity a caller still needs to see.
 
-export async function listDistributorOptionsForPriceLists(filters: { status?: DistributorStatus }) {
+// With `limit` (the Price List Distributor lookups, P1L8) this is a bounded
+// search on code or name; without it, the complete option set as before.
+export async function listDistributorOptionsForPriceLists(filters: {
+  status?: DistributorStatus;
+  search?: string;
+  limit?: number;
+}) {
+  const search = filters.search || undefined;
   return prisma.distributor.findMany({
-    where: { status: filters.status },
+    where: {
+      status: filters.status,
+      OR: search
+        ? [
+            { code: { contains: search, mode: 'insensitive' } },
+            { name: { contains: search, mode: 'insensitive' } },
+          ]
+        : undefined,
+    },
     orderBy: { name: 'asc' },
     select: { id: true, code: true, name: true, status: true },
+    take: filters.limit,
   });
 }
 
