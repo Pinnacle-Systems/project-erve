@@ -132,7 +132,6 @@ export function DistributorLookupField<T extends DistributorLookupOption = Distr
       prompt={lookup.belowMinLength ? 'Type to search by distributor name or code' : null}
       emptyMessage={emptyMessage}
       loadingMessage="Searching distributors…"
-      helpText={value && isInactive(value) ? 'This distributor is no longer active.' : undefined}
     />
   );
 }

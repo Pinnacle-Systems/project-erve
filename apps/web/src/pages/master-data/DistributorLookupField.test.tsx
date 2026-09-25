@@ -159,7 +159,6 @@ describe('DistributorLookupField', () => {
     render({ initial: { id: 'dist-9', name: 'Retired Distribution', status: 'INACTIVE' } });
 
     expect(input().value).toBe('Retired Distribution (inactive)');
-    expect(container.textContent).toContain('This distributor is no longer active.');
     expect(requests).toHaveLength(0);
 
     const clear = container.querySelector<HTMLButtonElement>(
