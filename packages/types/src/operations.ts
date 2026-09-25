@@ -151,6 +151,18 @@ export interface OrderSheetStyleDetail extends OrderSheetStyleOption {
   sizes: Array<{ id: string; code: string; label: string; sortOrder: number }>;
 }
 
+// Slim Distributor row for the Distributor lookup (GET /distributors/options
+// and /distributors/options/:id). purchaseMode is part of the contract: the
+// Order Sheet and Dispatch Order forms derive and display it from the
+// selected Distributor.
+export interface DistributorOption {
+  id: string;
+  code: string;
+  name: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  purchaseMode: PurchaseMode;
+}
+
 export interface PurchaseOrderDetail extends PurchaseOrderSummary {
   merchandiser: { id: string; name: string; email: string } | null;
   creator: { id: string; name: string; email: string };

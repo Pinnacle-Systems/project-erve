@@ -1064,3 +1064,254 @@ describe('price lists API', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// P1L2 — Price List "Add Style" lookup
+// ---------------------------------------------------------------------------
+
+describe('GET /price-lists/:id/style-options — Add Style lookup (P1L2)', () => {
+  async function createLookupStyle(input: {
+    styleNumber: string;
+    styleName?: string;
+    lmixNumber?: string | null;
+    status?: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
+  }) {
+    const style = await createStyle({ status: input.status });
+    return prisma.style.update({
+      where: { id: style.id },
+      data: {
+        styleNumber: input.styleNumber,
+        styleName: input.styleName ?? 'Lookup Tee',
+        lmixNumber: input.lmixNumber ?? null,
+      },
+    });
+  }
+
+  async function draftPriceList(token: string) {
+    const dist = await createTestDistributor();
+    const res = await createDraft(token, { distributorId: dist.id, effectiveFrom: '2026-01-01' });
+    expect(res.status).toBe(201);
+    return res.body.data.id as string;
+  }
+
+  function searchCandidates(token: string, priceListId: string, query: Record<string, string | number>) {
+    return request(app)
+      .get(`/price-lists/${priceListId}/style-options`)
+      .query(query)
+      .set('Authorization', `Bearer ${token}`);
+  }
+
+  function styleNumbers(res: request.Response): string[] {
+    return (res.body.data as Array<{ styleNumber: string }>).map((option) => option.styleNumber).sort();
+  }
+
+  it('finds Styles by LMIX (full and partial), independent of the Style Number', async () => {
+    const token = await adminToken();
+    const priceListId = await draftPriceList(token);
+    await createLookupStyle({ styleNumber: 'SS26-TEE-A', lmixNumber: 'LMIX5526011' });
+    await createLookupStyle({ styleNumber: 'SS26-TEE-B', lmixNumber: 'LMIX7700000' });
+
+    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'LMIX5526011' }))).toEqual([
+      'SS26-TEE-A',
+    ]);
+    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'lmix5526' }))).toEqual([
+      'SS26-TEE-A',
+    ]);
+    expect(styleNumbers(await searchCandidates(token, priceListId, { search: '526011' }))).toEqual([
+      'SS26-TEE-A',
+    ]);
+  });
+
+  it('finds Styles by partial Style Number and by partial Style Name, case-insensitively', async () => {
+    const token = await adminToken();
+    const priceListId = await draftPriceList(token);
+    await createLookupStyle({ styleNumber: 'AW25-HOOD-01', styleName: "Girl's Hoody" });
+    await createLookupStyle({ styleNumber: 'SS26-PANT-02', styleName: "Boy's Sweat Pant" });
+
+    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'hood-0' }))).toEqual([
+      'AW25-HOOD-01',
+    ]);
+    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'SWEAT pant' }))).toEqual([
+      'SS26-PANT-02',
+    ]);
+  });
+
+  it('offers only ACTIVE Styles — INACTIVE/DISCONTINUED are excluded and no status override is accepted', async () => {
+    const token = await adminToken();
+    const priceListId = await draftPriceList(token);
+    await createLookupStyle({ styleNumber: 'ELIG-ACTIVE', lmixNumber: 'LMIX2000001' });
+    await createLookupStyle({ styleNumber: 'ELIG-INACTIVE', lmixNumber: 'LMIX2000002', status: 'INACTIVE' });
+    await createLookupStyle({
+      styleNumber: 'ELIG-DISCONTINUED',
+      lmixNumber: 'LMIX2000003',
+      status: 'DISCONTINUED',
+    });
+
+    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'LMIX200000' }))).toEqual([
+      'ELIG-ACTIVE',
+    ]);
+    expect(
+      styleNumbers(await searchCandidates(token, priceListId, { search: 'LMIX200000', status: 'INACTIVE' })),
+    ).toEqual(['ELIG-ACTIVE']);
+  });
+
+  it('excludes Styles already priced on this list, but not those priced only on another list', async () => {
+    const token = await adminToken();
+    const priceListId = await draftPriceList(token);
+    const otherPriceListId = await draftPriceList(token);
+    const priced = await createLookupStyle({ styleNumber: 'PRICED-HERE' });
+    const pricedElsewhere = await createLookupStyle({ styleNumber: 'PRICED-ELSEWHERE' });
+    await createLookupStyle({ styleNumber: 'PRICED-NOWHERE' });
+    expect((await addLine(token, priceListId, priced.id, 100)).status).toBe(201);
+    expect((await addLine(token, otherPriceListId, pricedElsewhere.id, 100)).status).toBe(201);
+
+    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'PRICED' }))).toEqual([
+      'PRICED-ELSEWHERE',
+      'PRICED-NOWHERE',
+    ]);
+  });
+
+  it('applies eligibility before the limit — already-priced matches never crowd addable Styles out of the page', async () => {
+    const token = await adminToken();
+    const priceListId = await draftPriceList(token);
+    // 22 matches sort ahead of the addable ones and are already priced here.
+    for (let index = 0; index < 22; index += 1) {
+      const style = await createLookupStyle({ styleNumber: `CROWD-A${String(index).padStart(2, '0')}` });
+      expect((await addLine(token, priceListId, style.id, 100)).status).toBe(201);
+    }
+    await createLookupStyle({ styleNumber: 'CROWD-Z01' });
+    await createLookupStyle({ styleNumber: 'CROWD-Z02' });
+
+    const res = await searchCandidates(token, priceListId, { search: 'CROWD' });
+
+    expect(res.status).toBe(200);
+    expect(styleNumbers(res)).toEqual(['CROWD-Z01', 'CROWD-Z02']);
+  });
+
+  it('bounds the result count (default 20, caller limit honoured, over-max rejected)', async () => {
+    const token = await adminToken();
+    const priceListId = await draftPriceList(token);
+    for (let index = 0; index < 23; index += 1) {
+      await createLookupStyle({ styleNumber: `BULK-${String(index).padStart(2, '0')}` });
+    }
+
+    const byDefault = await searchCandidates(token, priceListId, { search: 'BULK' });
+    const noSearch = await searchCandidates(token, priceListId, {});
+    const limited = await searchCandidates(token, priceListId, { search: 'BULK', limit: 3 });
+    const overMax = await searchCandidates(token, priceListId, { search: 'BULK', limit: 51 });
+
+    expect(byDefault.body.data).toHaveLength(20);
+    expect(noSearch.body.data).toHaveLength(20);
+    expect(styleNumbers(limited)).toEqual(['BULK-00', 'BULK-01', 'BULK-02']);
+    expect(overMax.status).toBe(400);
+  });
+
+  it('returns a slim option including LMIX', async () => {
+    const token = await adminToken();
+    const priceListId = await draftPriceList(token);
+    const style = await createLookupStyle({ styleNumber: 'SLIM-01', lmixNumber: 'LMIX4000001' });
+
+    const res = await searchCandidates(token, priceListId, { search: 'SLIM' });
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual([
+      'id',
+      'lmixNumber',
+      'status',
+      'styleName',
+      'styleNumber',
+    ]);
+    expect(res.body.data[0]).toMatchObject({ id: style.id, lmixNumber: 'LMIX4000001', status: 'ACTIVE' });
+  });
+
+  it('refuses a non-DRAFT or unknown price list', async () => {
+    const token = await adminToken();
+    const dist = await createTestDistributor();
+    const { priceListId } = await createDraftWithLine(token, dist.id);
+    expect((await activate(token, priceListId)).status).toBe(200);
+
+    expect((await searchCandidates(token, priceListId, { search: 'ST' })).status).toBe(400);
+    expect((await searchCandidates(token, 'does-not-exist', { search: 'ST' })).status).toBe(404);
+  });
+
+  it.each([
+    ['ADMIN', 200],
+    ['MERCHANDISER', 200],
+    ['ACCOUNTANT', 200],
+    ['SENIOR_MANAGEMENT', 403],
+    ['FACTORY_USER', 403],
+    ['QA_USER', 403],
+    ['DISTRIBUTOR', 403],
+  ] as const)('follows the Price List manage permission for %s', async (role, expectedStatus) => {
+    const priceListId = await draftPriceList(await adminToken());
+    const { token } = await createTestUserAndToken({
+      email: `${role.toLowerCase()}-pl-candidates@test.local`,
+      password: 'test-password',
+      roles: [role],
+    });
+
+    expect((await searchCandidates(token, priceListId, { search: 'ST' })).status).toBe(expectedStatus);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1L8 — bounded Price List Distributor lookup
+// ---------------------------------------------------------------------------
+
+describe('GET /price-lists/distributor-options — bounded search (P1L8)', () => {
+  function searchOptions(token: string, query: Record<string, string | number>) {
+    return request(app)
+      .get('/price-lists/distributor-options')
+      .query(query)
+      .set('Authorization', `Bearer ${token}`);
+  }
+
+  function codes(res: request.Response): string[] {
+    return (res.body.data as Array<{ code: string }>).map((option) => option.code).sort();
+  }
+
+  it('searches code and name case-insensitively and keeps the status filter', async () => {
+    const token = await adminToken();
+    await createTestDistributor({ code: 'KOC-001', name: 'Kerala Kids Wear' });
+    await createTestDistributor({ code: 'KOC-002', name: 'Kochi Retired', status: 'INACTIVE' });
+    await createTestDistributor({ code: 'BLR-001', name: 'Bangalore Apparel' });
+
+    expect(codes(await searchOptions(token, { search: 'koc', limit: 20 }))).toEqual(['KOC-001', 'KOC-002']);
+    expect(codes(await searchOptions(token, { search: 'KIDS', limit: 20 }))).toEqual(['KOC-001']);
+    expect(codes(await searchOptions(token, { search: 'koc', status: 'ACTIVE', limit: 20 }))).toEqual([
+      'KOC-001',
+    ]);
+  });
+
+  it('bounds results when a limit is given, rejects an over-max limit, and keeps the full set without one', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 23; index += 1) {
+      const suffix = String(index).padStart(2, '0');
+      await createTestDistributor({ code: `BULK-${suffix}`, name: `Bulk Distributor ${suffix}` });
+    }
+
+    expect((await searchOptions(token, { search: 'Bulk', limit: 20 })).body.data).toHaveLength(20);
+    expect(codes(await searchOptions(token, { search: 'Bulk', limit: 2 }))).toEqual(['BULK-00', 'BULK-01']);
+    expect((await searchOptions(token, { limit: 51 })).status).toBe(400);
+    expect((await searchOptions(token, {})).body.data).toHaveLength(23);
+  });
+
+  it('keeps the minimal DTO and the Price List read permission', async () => {
+    await createTestDistributor({ code: 'DTO-01', name: 'Dto Distributor' });
+    const { token: accountant } = await createTestUserAndToken({
+      email: 'accountant-pl-dist-search@test.local',
+      password: 'test-password',
+      roles: ['ACCOUNTANT'],
+    });
+    const { token: distributorUser } = await createTestUserAndToken({
+      email: 'distributor-pl-dist-search@test.local',
+      password: 'test-password',
+      roles: ['DISTRIBUTOR'],
+    });
+
+    const res = await searchOptions(accountant, { search: 'DTO', limit: 20 });
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'status']);
+    expect((await searchOptions(distributorUser, { search: 'DTO', limit: 20 })).status).toBe(403);
+  });
+});

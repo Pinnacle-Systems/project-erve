@@ -116,6 +116,12 @@ export const dispatchOrderFactoryOptionsQuerySchema = z.object({
   status: factoryStatusSchema.optional(),
 });
 
+// P1L8: `search`/`limit` let the Dispatch Order Distributor filter run a
+// bounded search. Omitting `limit` keeps the original complete option set.
+export const DISPATCH_ORDER_DISTRIBUTOR_OPTIONS_MAX_LIMIT = 50;
+
 export const dispatchOrderDistributorOptionsQuerySchema = z.object({
   status: distributorStatusSchema.optional(),
+  search: z.string().trim().max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(DISPATCH_ORDER_DISTRIBUTOR_OPTIONS_MAX_LIMIT).optional(),
 });

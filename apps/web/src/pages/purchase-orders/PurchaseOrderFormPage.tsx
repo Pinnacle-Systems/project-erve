@@ -1,17 +1,18 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse, OrderSheetStyleDetail } from '@erve/types';
+import type { ApiSuccessResponse, DistributorOption, OrderSheetStyleDetail } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { ErrorState, LoadingState } from '@erve/data-display';
-import { Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import { StyleLookupField, type StyleLookupValue } from './StyleLookupField.js';
-import type { Distributor, PurchaseOrder } from './types.js';
+import { DistributorLookupField } from '../master-data/DistributorLookupField.js';
+import type { PurchaseOrder } from './types.js';
 
 interface SizeRow {
   sizeId: string;
@@ -75,7 +76,9 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
   const isEdit = Boolean(existing);
   const existingLine = existing?.lines[0];
 
-  const [distributorId, setDistributorId] = useState(existing?.distributor.id ?? '');
+  // Create mode only — the Distributor is immutable on edit, which shows the
+  // Order Sheet's own distributor instead.
+  const [selectedDistributor, setSelectedDistributor] = useState<DistributorOption | null>(null);
   const [poDate, setPoDate] = useState(existing ? existing.poDate.slice(0, 10) : getLocalDateString());
   const [requiredDeliveryDate, setRequiredDeliveryDate] = useState(
     existing?.requiredDeliveryDate?.slice(0, 10) ?? '',
@@ -118,19 +121,6 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
     },
   });
 
-  // Only needed to populate the CREATE-mode dropdown. Edit mode shows the
-  // Order Sheet's own (immutable) distributor instead.
-  const distributorsQuery = useQuery({
-    queryKey: ['distributors', 'active'],
-    enabled: !isEdit,
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Distributor[]>>('/distributors', {
-        params: { status: 'ACTIVE' },
-      });
-      return res.data.data;
-    },
-  });
-
   // The one selected Style — its orderable sizes and full lookup label
   // (LMIX, status). Search results stay slim; only this record carries sizes.
   const selectedStyleQuery = useQuery({
@@ -165,9 +155,9 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
   }
 
   // Edit mode reads Purchase Mode straight off the Order Sheet record
-  // (PurchaseOrderSummary already carries its own purchaseMode) rather than
-  // looking it up from distributorsQuery — that list isn't fetched on edit.
-  const selectedDistributor = distributorsQuery.data?.find((d) => d.id === distributorId);
+  // (PurchaseOrderSummary already carries its own purchaseMode); create mode
+  // derives it from the selected lookup option, which carries purchaseMode.
+  const distributorId = isEdit ? existing!.distributor.id : selectedDistributor?.id;
   const purchaseModeCode = isEdit ? existing!.purchaseMode : selectedDistributor?.purchaseMode;
   const purchaseModeLabel =
     purchaseModeCode === 'OUTRIGHT' ? 'Outright' : purchaseModeCode === 'SALE_RETURN' ? 'Sale or Return' : '';
@@ -241,17 +231,12 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
                 // Order's Distributor field for the identical bug.
                 <TextField label="Distributor *" value={existing!.distributor.name} disabled width="md" />
               ) : (
-                <SelectField
+                <DistributorLookupField
                   label="Distributor *"
-                  value={distributorId || 'NONE'}
-                  onValueChange={(value) => setDistributorId(value === 'NONE' ? '' : value)}
+                  value={selectedDistributor}
+                  onChange={setSelectedDistributor}
                   width="md"
-                >
-                  <SelectItem value="NONE">Select distributor</SelectItem>
-                  {(distributorsQuery.data ?? []).map((d) => (
-                    <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                  ))}
-                </SelectField>
+                />
               )}
 
               <TextField label="Purchase Mode" value={purchaseModeLabel} disabled width="sm" />

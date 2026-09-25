@@ -258,11 +258,27 @@ export async function lookupPriceForActor(
 // complete option set, active and inactive alike, rather than silently
 // hiding an inactive entity a caller still needs to see.
 
-export async function listDistributorOptionsForPriceLists(filters: { status?: DistributorStatus }) {
+// With `limit` (the Price List Distributor lookups, P1L8) this is a bounded
+// search on code or name; without it, the complete option set as before.
+export async function listDistributorOptionsForPriceLists(filters: {
+  status?: DistributorStatus;
+  search?: string;
+  limit?: number;
+}) {
+  const search = filters.search || undefined;
   return prisma.distributor.findMany({
-    where: { status: filters.status },
+    where: {
+      status: filters.status,
+      OR: search
+        ? [
+            { code: { contains: search, mode: 'insensitive' } },
+            { name: { contains: search, mode: 'insensitive' } },
+          ]
+        : undefined,
+    },
     orderBy: { name: 'asc' },
     select: { id: true, code: true, name: true, status: true },
+    take: filters.limit,
   });
 }
 
@@ -271,6 +287,44 @@ export async function listStyleOptionsForPriceLists(filters: { status?: StyleSta
     where: { status: filters.status },
     orderBy: { styleNumber: 'asc' },
     select: { id: true, styleNumber: true, styleName: true, status: true },
+  });
+}
+
+// "Add Style" lookup (P1L2): the Styles this DRAFT price list can still add —
+// ACTIVE (the rule addPriceListLine enforces) and not already priced on it
+// (the unique [priceListId, styleId] line) — matched on LMIX, Style Number or
+// Style Name. Eligibility is applied in the query itself, before `limit`, so
+// the bounded page is made only of addable Styles: an already-priced match can
+// never crowd out an addable one.
+export async function listPriceListStyleCandidates(
+  actor: CurrentUser,
+  priceListId: string,
+  filters: { search?: string; limit: number },
+) {
+  const priceList = await prisma.priceList.findUnique({
+    where: { id: priceListId },
+    select: { distributorId: true, status: true },
+  });
+  if (!priceList) throw HttpError.notFound('Price list not found');
+  assertPriceListViewAccess(actor, priceList);
+  assertDraft(priceList);
+
+  const search = filters.search || undefined;
+  return prisma.style.findMany({
+    where: {
+      status: 'ACTIVE',
+      priceListLines: { none: { priceListId } },
+      OR: search
+        ? [
+            { lmixNumber: { contains: search, mode: 'insensitive' } },
+            { styleNumber: { contains: search, mode: 'insensitive' } },
+            { styleName: { contains: search, mode: 'insensitive' } },
+          ]
+        : undefined,
+    },
+    orderBy: { styleNumber: 'asc' },
+    select: { id: true, styleNumber: true, styleName: true, lmixNumber: true, status: true },
+    take: filters.limit,
   });
 }
 

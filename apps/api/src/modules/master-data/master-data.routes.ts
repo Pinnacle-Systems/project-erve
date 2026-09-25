@@ -11,6 +11,7 @@ import {
   createSizeSchema,
   createSeasonSchema,
   createStyleSchema,
+  distributorOptionsQuerySchema,
   listSeasonsQuerySchema,
   listStatusQuerySchema,
   listStylesQuerySchema,
@@ -133,6 +134,29 @@ distributorsRouter.get(
     const filters = listStatusQuerySchema.parse(req.query);
     const distributors = await masterDataService.listDistributors(req.user!, filters);
     res.status(200).json(successResponse(distributors));
+  }),
+);
+
+// Registered before '/:id' so 'options' isn't read as a Distributor id. The
+// Distributor lookup — a bounded slim search plus the one selected
+// Distributor — under the same permission and record scoping as the list,
+// so selectors never need the whole master.
+distributorsRouter.get(
+  '/options',
+  canViewDistributors,
+  asyncHandler(async (req, res) => {
+    const filters = distributorOptionsQuerySchema.parse(req.query);
+    const options = await masterDataService.listDistributorOptions(req.user!, filters);
+    res.status(200).json(successResponse(options));
+  }),
+);
+
+distributorsRouter.get(
+  '/options/:id',
+  canViewDistributors,
+  asyncHandler(async (req, res) => {
+    const option = await masterDataService.getDistributorOption(req.user!, req.params.id! as string);
+    res.status(200).json(successResponse(option));
   }),
 );
 

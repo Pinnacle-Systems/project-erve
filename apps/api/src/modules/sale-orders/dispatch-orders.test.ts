@@ -912,3 +912,51 @@ describe('GET /sale-orders/factory-options & /sale-orders/distributor-options (U
     expect(Array.isArray(distributorOptions.body.data)).toBe(true);
   });
 });
+
+// P1L8: the Dispatch Order Distributor filter searches this endpoint in a
+// bounded way; without `limit` it still returns the complete option set.
+describe('GET /sale-orders/distributor-options — bounded search (P1L8)', () => {
+  function searchOptions(token: string, query: Record<string, string | number>) {
+    return request(app)
+      .get('/sale-orders/distributor-options')
+      .query(query)
+      .set('Authorization', `Bearer ${token}`);
+  }
+
+  function codes(res: request.Response): string[] {
+    return (res.body.data as Array<{ code: string }>).map((option) => option.code).sort();
+  }
+
+  it('searches code and name case-insensitively and includes INACTIVE distributors by default', async () => {
+    const token = await roleToken(['ACCOUNTANT']);
+    await createTestDistributor({ code: 'KOC-001', name: 'Kerala Kids Wear' });
+    await createTestDistributor({ code: 'KOC-002', name: 'Kochi Retired', status: 'INACTIVE' });
+    await createTestDistributor({ code: 'BLR-001', name: 'Bangalore Apparel' });
+
+    const res = await searchOptions(token, { search: 'koc', limit: 20 });
+    expect(res.status).toBe(200);
+    expect(codes(res)).toEqual(['KOC-001', 'KOC-002']);
+    expect(codes(await searchOptions(token, { search: 'apparel', limit: 20 }))).toEqual(['BLR-001']);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'status']);
+  });
+
+  it('bounds results when a limit is given, rejects an over-max limit, and keeps the full set without one', async () => {
+    const token = await roleToken(['ADMIN']);
+    for (let index = 0; index < 23; index += 1) {
+      const suffix = String(index).padStart(2, '0');
+      await createTestDistributor({ code: `BULK-${suffix}`, name: `Bulk Distributor ${suffix}` });
+    }
+
+    expect((await searchOptions(token, { search: 'Bulk', limit: 20 })).body.data).toHaveLength(20);
+    expect(codes(await searchOptions(token, { search: 'Bulk', limit: 2 }))).toEqual(['BULK-00', 'BULK-01']);
+    expect((await searchOptions(token, { limit: 51 })).status).toBe(400);
+    expect((await searchOptions(token, {})).body.data).toHaveLength(23);
+  });
+
+  it('keeps the Dispatch Order filter permission', async () => {
+    for (const role of ['FACTORY_USER', 'DISTRIBUTOR'] as const) {
+      const token = await roleToken([role]);
+      expect((await searchOptions(token, { search: 'x', limit: 20 })).status).toBe(403);
+    }
+  });
+});

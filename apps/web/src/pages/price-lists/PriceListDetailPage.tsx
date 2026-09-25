@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -12,7 +12,8 @@ import { canManagePriceLists } from '../../auth/permissions.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import type { PriceList, PriceListLine, StyleOption } from './types.js';
+import type { PriceList, PriceListLine, PriceListStyleCandidate } from './types.js';
+import { PriceListStyleLookupField } from './PriceListStyleLookupField.js';
 import {
   PRICE_LIST_STATUS_LABELS,
   apiErrorMessage,
@@ -34,7 +35,7 @@ export function PriceListDetailPage() {
 
   const [activateDialogOpen, setActivateDialogOpen] = useState(false);
   const [retireDialogOpen, setRetireDialogOpen] = useState(false);
-  const [newStyleId, setNewStyleId] = useState('');
+  const [newStyle, setNewStyle] = useState<PriceListStyleCandidate | null>(null);
   const [newUnitPrice, setNewUnitPrice] = useState('');
   const [editedPrices, setEditedPrices] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
@@ -72,20 +73,6 @@ export function PriceListDetailPage() {
     filename: priceListDetailPdfFilename,
   });
 
-  // Price-List-specific option lookup: ACCOUNTANT can edit a DRAFT price
-  // list's lines but is denied on the broad /styles master endpoint, so the
-  // "Add Style Price" picker must not depend on it.
-  const styleOptionsQuery = useQuery({
-    queryKey: ['price-list-style-options', 'ACTIVE'],
-    enabled: canEdit,
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<StyleOption[]>>('/price-lists/style-options', {
-        params: { status: 'ACTIVE' },
-      });
-      return res.data.data;
-    },
-  });
-
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ['price-list', id] });
     await queryClient.invalidateQueries({ queryKey: ['price-lists'] });
@@ -94,19 +81,19 @@ export function PriceListDetailPage() {
   const addLineMutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!newStyleId) throw new Error('Select a style to add');
+      if (!newStyle) throw new Error('Select a style to add');
       const unitPrice = Number(newUnitPrice);
       if (!newUnitPrice || Number.isNaN(unitPrice) || unitPrice <= 0) {
         throw new Error('Enter a price greater than 0');
       }
       const res = await apiClient.post<ApiSuccessResponse<PriceList>>(`/price-lists/${id}/lines`, {
-        styleId: newStyleId,
+        styleId: newStyle.id,
         unitPrice,
       });
       return res.data.data;
     },
     onSuccess: async () => {
-      setNewStyleId('');
+      setNewStyle(null);
       setNewUnitPrice('');
       await refresh();
     },
@@ -195,9 +182,6 @@ export function PriceListDetailPage() {
     );
   }
 
-  const pricedStyleIds = new Set(priceList.lines.map((line) => line.styleId));
-  const availableStyles = (styleOptionsQuery.data ?? []).filter((style) => !pricedStyleIds.has(style.id));
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -280,39 +264,10 @@ export function PriceListDetailPage() {
             }}
           >
             <div className="min-w-64 flex-1">
-              <SelectField
-                label="Style"
-                value={newStyleId || 'NONE'}
-                onValueChange={(value) => setNewStyleId(value === 'NONE' ? '' : value)}
-                width="fill"
-              >
-                <SelectItem value="NONE">Select style</SelectItem>
-                {styleOptionsQuery.isLoading && (
-                  <SelectItem value="LOADING" disabled>
-                    Loading styles…
-                  </SelectItem>
-                )}
-                {styleOptionsQuery.isError && (
-                  <SelectItem value="ERROR" disabled>
-                    Unable to load styles
-                  </SelectItem>
-                )}
-                {styleOptionsQuery.isSuccess && availableStyles.length === 0 && (
-                  <SelectItem value="EMPTY" disabled>
-                    No styles available to price
-                  </SelectItem>
-                )}
-                {availableStyles.map((style) => (
-                  <SelectItem key={style.id} value={style.id}>
-                    {style.styleNumber} - {style.styleName}
-                  </SelectItem>
-                ))}
-              </SelectField>
-              {styleOptionsQuery.isError ? (
-                <ValidationMessage tone="error" className="mt-1.5">
-                  {apiErrorMessage(styleOptionsQuery.error, 'Unable to load styles')}
-                </ValidationMessage>
-              ) : null}
+              {/* Price-List-specific lookup: ACCOUNTANT can edit a DRAFT price
+                  list's lines but is denied on the broad /styles master, and
+                  already-priced Styles are excluded server-side. */}
+              <PriceListStyleLookupField priceListId={priceList.id} value={newStyle} onChange={setNewStyle} />
             </div>
             <TextField
               label="Unit Price (INR)"

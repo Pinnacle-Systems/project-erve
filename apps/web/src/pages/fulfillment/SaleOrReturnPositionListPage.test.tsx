@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthUser, Role } from '@erve/types';
+import { AxiosError } from 'axios';
 import { apiClient } from '../../lib/api-client.js';
 import * as AuthContext from '../../auth/AuthContext.js';
 import { SaleOrReturnPositionListPage } from './SaleOrReturnPositionListPage.js';
@@ -82,6 +83,27 @@ function positionRow(overrides: Partial<SaleOrReturnPositionRow> = {}): SaleOrRe
     returnableQuantity: 100,
     ...overrides,
   };
+}
+
+// Mirrors GET /distributors/options(/:id): the by-id hydration returns the
+// Distributor in any status or 404s; the search returns name/code matches.
+function distributorGet(url: string, options: Array<ReturnType<typeof distributorOption>>) {
+  const byId = url.match(/^\/distributors\/options\/(.+)$/);
+  if (byId) {
+    const found = options.find((option) => option.id === decodeURIComponent(byId[1]!));
+    if (found) return Promise.resolve({ data: { data: found } });
+    return Promise.reject(
+      new AxiosError('Not Found', 'ERR_BAD_REQUEST', undefined, undefined, {
+        status: 404,
+        statusText: 'Not Found',
+        data: { error: { message: 'Distributor not found' } },
+        headers: {},
+        config: {} as never,
+      }),
+    );
+  }
+  if (url === '/distributors/options') return Promise.resolve({ data: { data: options } });
+  return Promise.reject(new Error(`Unexpected GET: ${url}`));
 }
 
 type GetImpl = (url: string, config?: { params?: Record<string, unknown> }) => Promise<{ data: { data: unknown } }>;
@@ -197,7 +219,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
   describe('ADMIN — context required', () => {
     it('shows the selector and a context prompt, and issues no positions request before choosing', async () => {
       const { getSpy } = await renderPage('ADMIN', '/fulfillment/sale-or-return', async (url) => {
-        if (url === '/distributors') return { data: { data: [distributorOption()] } };
+        if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption()]);
         throw new Error(`Unexpected GET: ${url}`);
       });
 
@@ -206,19 +228,19 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
       expect(calledUrls(getSpy)).not.toContain('/sale-or-return-positions');
     });
 
-    it('distributorOptionsQuery rejecting shows "Unable to load Distributors" and issues no positions request', async () => {
-      const { getSpy } = await renderPage('ADMIN', '/fulfillment/sale-or-return', async (url) => {
-        if (url === '/distributors') throw new Error('boom');
+    it('the URL Distributor failing to load shows "Unable to load Distributor" and issues no positions request', async () => {
+      const { getSpy } = await renderPage('ADMIN', '/fulfillment/sale-or-return?distributorId=dist-A', async (url) => {
+        if (url.startsWith('/distributors')) throw new Error('boom');
         throw new Error(`Unexpected GET: ${url}`);
       });
 
-      expect(content()).toContain('Unable to load Distributors');
+      expect(content()).toContain('Unable to load Distributor');
       expect(calledUrls(getSpy)).not.toContain('/sale-or-return-positions');
     });
 
     it('an unknown/stale distributorId in the URL shows an invalid-context message and issues no positions request', async () => {
       const { getSpy } = await renderPage('ADMIN', '/fulfillment/sale-or-return?distributorId=unknown-dist', async (url) => {
-        if (url === '/distributors') return { data: { data: [distributorOption()] } };
+        if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption()]);
         throw new Error(`Unexpected GET: ${url}`);
       });
 
@@ -228,10 +250,70 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
     });
   });
 
+  describe('ADMIN — Distributor lookup (P1L7)', () => {
+    it('an INACTIVE Distributor in the URL is treated as stale, as before', async () => {
+      const { getSpy } = await renderPage('ADMIN', '/fulfillment/sale-or-return?distributorId=dist-A', async (url) => {
+        if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption({ status: 'INACTIVE' })]);
+        throw new Error(`Unexpected GET: ${url}`);
+      });
+
+      expect(content()).toContain('Select a valid Distributor');
+      expect(calledUrls(getSpy)).not.toContain('/sale-or-return-positions');
+    });
+
+    it('resolves the URL Distributor by id and never downloads the Distributor master', async () => {
+      const { getSpy } = await renderPage('ADMIN', '/fulfillment/sale-or-return?distributorId=dist-A', async (url) => {
+        if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption()]);
+        if (url === '/sale-or-return-positions') return { data: { data: { items: [positionRow()] } } };
+        throw new Error(`Unexpected GET: ${url}`);
+      });
+
+      expect(calledUrls(getSpy)).toContain('/distributors/options/dist-A');
+      expect(calledUrls(getSpy)).not.toContain('/distributors');
+      expect((document.getElementById('lookup-distributor') as HTMLInputElement).value).toBe('Distributor A');
+    });
+
+    it('choosing a Distributor from the lookup puts it in context and loads its positions', async () => {
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
+      const options = [distributorOption(), distributorOption({ id: 'dist-B', code: 'DIST-B', name: 'Distributor B' })];
+      const { getSpy } = await renderPage('ADMIN', '/fulfillment/sale-or-return', async (url, config) => {
+        if (url.startsWith('/distributors')) return distributorGet(url, options);
+        if (url === '/sale-or-return-positions') {
+          return config?.params?.distributorId === 'dist-B'
+            ? { data: { data: { items: [positionRow({ styleNumber: 'B-STYLE', distributor: { id: 'dist-B', code: 'DIST-B', name: 'Distributor B' } })] } } }
+            : { data: { data: { items: [] } } };
+        }
+        throw new Error(`Unexpected GET: ${url}`);
+      });
+
+      const input = document.getElementById('lookup-distributor') as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      await act(async () => {
+        input.focus();
+        setter.call(input, 'dist');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      for (let i = 0; i < 100 && !document.body.querySelector('[role="option"]'); i += 1) await flush();
+      const optionB = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((option) =>
+        option.textContent?.includes('Distributor B'),
+      )!;
+      await act(async () => optionB.click());
+      await flush();
+      await flush();
+
+      expect(content()).toContain('B-STYLE');
+      const positionsCall = getSpy.mock.calls.find((c) => c[0] === '/sale-or-return-positions')!;
+      expect((positionsCall[1] as { params?: Record<string, unknown> }).params).toEqual({ distributorId: 'dist-B' });
+      // The picked option seeds the by-id cache: no re-fetch, no master download.
+      expect(calledUrls(getSpy)).not.toContain('/distributors/options/dist-B');
+      expect(calledUrls(getSpy)).not.toContain('/distributors');
+    });
+  });
+
   describe('ADMIN — Distributor A selected', () => {
     it('requests carry distributorId=A and A rows render', async () => {
       const { getSpy } = await renderPage('ADMIN', '/fulfillment/sale-or-return?distributorId=dist-A', async (url) => {
-        if (url === '/distributors') return { data: { data: [distributorOption()] } };
+        if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption()]);
         if (url === '/sale-or-return-positions') return { data: { data: { items: [positionRow({ styleNumber: 'A-STYLE' })] } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
@@ -246,7 +328,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
         'ADMIN',
         '/fulfillment/sale-or-return?distributorId=dist-A',
         async (url) => {
-          if (url === '/distributors') return { data: { data: [distributorOption()] } };
+          if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption()]);
           if (url === '/sale-or-return-positions') return { data: { data: { items: [positionRow({ styleNumber: 'A-STYLE' })] } } };
           throw new Error(`Unexpected GET: ${url}`);
         },
@@ -283,7 +365,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
         'ADMIN',
         '/fulfillment/sale-or-return?distributorId=dist-A',
         async (url) => {
-          if (url === '/distributors') return { data: { data: [distributorOption()] } };
+          if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption()]);
           if (url === '/sale-or-return-positions') return { data: { data: { items: [positionRow({ styleNumber: 'A-STYLE' })] } } };
           throw new Error(`Unexpected GET: ${url}`);
         },
@@ -331,7 +413,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
       const options = [distributorOption({ id: 'dist-A', code: 'DIST-A' }), distributorOption({ id: 'dist-B', code: 'DIST-B' })];
 
       const { getSpy: getSpyA } = await renderPage('ADMIN', '/fulfillment/sale-or-return?distributorId=dist-A', async (url, config) => {
-        if (url === '/distributors') return { data: { data: options } };
+        if (url.startsWith('/distributors')) return distributorGet(url, options);
         if (url === '/sale-or-return-positions') {
           const distributorId = config?.params?.distributorId;
           return { data: { data: { items: distributorId === 'dist-A' ? [positionRow({ styleNumber: 'A-STYLE' })] : [] } } };
@@ -345,7 +427,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
       container.innerHTML = '';
       root = createRoot(container);
       const { getSpy: getSpyB } = await renderPage('ADMIN', '/fulfillment/sale-or-return?distributorId=dist-B', async (url, config) => {
-        if (url === '/distributors') return { data: { data: options } };
+        if (url.startsWith('/distributors')) return distributorGet(url, options);
         if (url === '/sale-or-return-positions') {
           const distributorId = config?.params?.distributorId;
           return { data: { data: { items: distributorId === 'dist-B' ? [positionRow({ styleNumber: 'B-STYLE', distributor: { id: 'dist-B', code: 'DIST-B', name: 'Distributor B' } })] : [] } } };
@@ -363,7 +445,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
   describe('ADMIN — successful empty vs. request error', () => {
     it('a genuinely empty [] response shows the legitimate empty state', async () => {
       await renderPage('ADMIN', '/fulfillment/sale-or-return?distributorId=dist-A', async (url) => {
-        if (url === '/distributors') return { data: { data: [distributorOption()] } };
+        if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption()]);
         if (url === '/sale-or-return-positions') return { data: { data: { items: [] } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
@@ -373,7 +455,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
 
     it('positions query rejecting shows ErrorState, never the legitimate empty state', async () => {
       await renderPage('ADMIN', '/fulfillment/sale-or-return?distributorId=dist-A', async (url) => {
-        if (url === '/distributors') return { data: { data: [distributorOption()] } };
+        if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption()]);
         if (url === '/sale-or-return-positions') throw new Error('boom');
         throw new Error(`Unexpected GET: ${url}`);
       });
@@ -393,7 +475,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
         'ADMIN',
         '/fulfillment/sale-or-return?distributorId=dist-B',
         async (url) => {
-          if (url === '/distributors') return { data: { data: [distributorOption({ id: 'dist-A' }), distributorOption({ id: 'dist-B', code: 'DIST-B' })] } };
+          if (url.startsWith('/distributors')) return distributorGet(url, [distributorOption({ id: 'dist-A' }), distributorOption({ id: 'dist-B', code: 'DIST-B' })]);
           if (url === '/sale-or-return-positions') {
             return {
               data: {

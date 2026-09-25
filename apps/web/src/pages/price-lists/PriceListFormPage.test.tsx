@@ -54,34 +54,42 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 40; i++) {
-    if (predicate()) return;
+// Polls with real timers — the lookup debounces (300 ms) before searching.
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for condition');
     await act(async () => {
-      await flushMicrotasks();
+      await new Promise((resolve) => setTimeout(resolve, 20));
     });
   }
-  throw new Error('Timed out waiting for condition');
-}
-
-function triggerByLabel(labelText: string): HTMLButtonElement {
-  const label = Array.from(container.querySelectorAll('label')).find((el) =>
-    el.textContent?.startsWith(labelText),
-  );
-  if (!label) throw new Error(`Label "${labelText}" not found`);
-  const id = label.getAttribute('for');
-  const el = id ? (document.getElementById(id) as HTMLButtonElement | null) : null;
-  if (!el) throw new Error(`Trigger for label "${labelText}" not found`);
-  return el;
 }
 
 function selectOptionEls(): HTMLElement[] {
   return Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'));
 }
 
-async function renderCreatePage(requestedUrls: string[] = []): Promise<void> {
+function lookupPanelText(): string {
+  return document.body.querySelector('[data-lookup-panel]')?.textContent ?? '';
+}
+
+async function typeDistributorSearch(text: string): Promise<void> {
+  const input = document.getElementById('lookup-distributor-*') as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    input.focus();
+    setter.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function renderCreatePage(
+  requestedUrls: string[] = [],
+  requestedParams: unknown[] = [],
+): Promise<void> {
   apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
     requestedUrls.push(config.url ?? '');
+    requestedParams.push(config.params);
     if (config.url === '/price-lists/distributor-options') {
       return ok(config, {
         success: true,
@@ -119,20 +127,31 @@ async function renderCreatePage(requestedUrls: string[] = []): Promise<void> {
   });
 }
 
-describe('PriceListFormPage create — distributor lookup (UXAUTH-013)', () => {
-  it('populates the Distributor selector via the Price-List-specific lookup and allows a selection', async () => {
+describe('PriceListFormPage create — distributor lookup (UXAUTH-013, P1L8)', () => {
+  it('searches the Price-List-specific lookup (bounded, ACTIVE only) and allows a selection', async () => {
     const requestedUrls: string[] = [];
-    await renderCreatePage(requestedUrls);
+    const requestedParams: unknown[] = [];
+    await renderCreatePage(requestedUrls, requestedParams);
+    // No option list is preloaded.
+    expect(requestedUrls).not.toContain('/price-lists/distributor-options');
 
-    await act(async () => triggerByLabel('Distributor *').click());
-    await waitFor(() => selectOptionEls().length > 0);
+    await typeDistributorSearch('tra');
+    await waitFor(
+      () =>
+        selectOptionEls().length > 0 && document.body.querySelector('[role="listbox"][aria-busy]') === null,
+    );
     const labels = selectOptionEls().map((el) => el.textContent?.trim());
-    expect(labels).toEqual(expect.arrayContaining(['Acme Distributors', 'Bravo Traders']));
+    expect(labels).toEqual(expect.arrayContaining(['Acme DistributorsDIST-1', 'Bravo TradersDIST-2']));
+    expect(requestedParams[requestedUrls.indexOf('/price-lists/distributor-options')]).toEqual({
+      status: 'ACTIVE',
+      search: 'tra',
+      limit: 20,
+    });
 
-    const target = selectOptionEls().find((el) => el.textContent?.trim() === 'Bravo Traders')!;
+    const target = selectOptionEls().find((el) => el.textContent?.includes('Bravo Traders'))!;
     await act(async () => target.click());
 
-    expect(requestedUrls).toContain('/price-lists/distributor-options');
+    expect((document.getElementById('lookup-distributor-*') as HTMLInputElement).value).toBe('Bravo Traders');
     expect(requestedUrls).not.toContain('/distributors');
   });
 
@@ -158,8 +177,8 @@ describe('PriceListFormPage create — distributor lookup (UXAUTH-013)', () => {
         </MemoryRouter>,
       );
     });
-    await waitFor(() => container.textContent?.includes('Unable to load distributors') ?? false);
-
-    expect(container.textContent).toContain('Unable to load distributors');
+    await waitFor(() => document.getElementById('lookup-distributor-*') !== null);
+    await typeDistributorSearch('acme');
+    await waitFor(() => lookupPanelText().includes('Unable to load distributors'));
   });
 });

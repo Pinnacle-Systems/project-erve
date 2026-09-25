@@ -14,6 +14,7 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canFilterDispatchOrders, canMutateDispatchOrders } from '../../auth/permissions.js';
+import { DistributorLookupField } from '../master-data/DistributorLookupField.js';
 import type { Distributor, Factory, SaleOrder } from './types.js';
 
 function formatDate(iso: string) {
@@ -31,7 +32,8 @@ export function SaleOrderListPage() {
   const showFilters = canFilterDispatchOrders(user);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
-  const [distributorId, setDistributorId] = useState('');
+  const [distributor, setDistributor] = useState<Distributor | null>(null);
+  const distributorId = distributor?.id ?? '';
   const [factoryId, setFactoryId] = useState('');
 
   const params = useMemo(
@@ -57,16 +59,8 @@ export function SaleOrderListPage() {
   // them. No status filter is passed: Dispatch Order list is historical, and
   // a Distributor/Factory that has since gone INACTIVE must remain
   // selectable so its past Dispatch Orders stay filterable, not just visible
-  // in the unfiltered table.
-  const distributorsQuery = useQuery({
-    queryKey: ['dispatch-order-distributor-options'],
-    enabled: showFilters,
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Distributor[]>>('/sale-orders/distributor-options');
-      return res.data.data;
-    },
-  });
-
+  // in the unfiltered table. The Distributor filter is a bounded lookup
+  // search of /sale-orders/distributor-options (P1L8); Factory stays a list.
   const factoriesQuery = useQuery({
     queryKey: ['dispatch-order-factory-options'],
     enabled: showFilters,
@@ -76,7 +70,7 @@ export function SaleOrderListPage() {
     },
   });
 
-  const distributorName = (distributorsQuery.data ?? []).find((d) => d.id === distributorId)?.name;
+  const distributorName = distributor?.name;
   const factoryName = (factoriesQuery.data ?? []).find((f) => f.id === factoryId)?.name;
 
   const generateDispatchOrderListPdf = useCallback(async () => {
@@ -118,37 +112,23 @@ export function SaleOrderListPage() {
             hasActiveFilters={Boolean(search || distributorId || factoryId)}
             onClearFilters={() => {
               setSearch('');
-              setDistributorId('');
+              setDistributor(null);
               setFactoryId('');
             }}
             actions={
               showFilters ? (
                 <div className="flex gap-2">
-                  <SelectField
+                  <DistributorLookupField<Distributor>
                     aria-label="Distributor"
-                    value={distributorId || 'ALL'}
-                    onValueChange={(value) => setDistributorId(value === 'ALL' ? '' : value)}
+                    id="dispatch-order-distributor-filter"
+                    placeholder="All distributors"
+                    value={distributor}
+                    onChange={setDistributor}
+                    searchPath="/sale-orders/distributor-options"
+                    emptyMessage="No distributors match — try another name or code"
                     density="compact"
                     width="md"
-                  >
-                    <SelectItem value="ALL">All distributors</SelectItem>
-                    {distributorsQuery.isLoading && (
-                      <SelectItem value="LOADING" disabled>
-                        Loading distributors…
-                      </SelectItem>
-                    )}
-                    {distributorsQuery.isError && (
-                      <SelectItem value="ERROR" disabled>
-                        Unable to load distributors
-                      </SelectItem>
-                    )}
-                    {(distributorsQuery.data ?? []).map((d) => (
-                      <SelectItem key={d.id} value={d.id}>
-                        {d.name}
-                        {d.status === 'INACTIVE' ? ' (inactive)' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectField>
+                  />
                   <SelectField
                     aria-label="Factory"
                     value={factoryId || 'ALL'}
@@ -178,13 +158,9 @@ export function SaleOrderListPage() {
               ) : undefined
             }
           />
-          {showFilters && (distributorsQuery.isError || factoriesQuery.isError) ? (
+          {showFilters && factoriesQuery.isError ? (
             <ValidationMessage tone="error" className="mt-2">
-              {distributorsQuery.isError && factoriesQuery.isError
-                ? 'Unable to load distributors or factories for filtering. Try again.'
-                : distributorsQuery.isError
-                  ? 'Unable to load distributors for filtering. Try again.'
-                  : 'Unable to load factories for filtering. Try again.'}
+              Unable to load factories for filtering. Try again.
             </ValidationMessage>
           ) : null}
         </div>

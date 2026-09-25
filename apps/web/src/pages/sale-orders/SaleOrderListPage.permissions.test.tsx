@@ -89,6 +89,25 @@ function getPageContent(): string {
   return container.textContent ?? '';
 }
 
+// Types into the Distributor filter lookup and waits for its fresh results
+// (it debounces before searching, so this polls with real timers).
+async function searchDistributorFilter(text: string): Promise<void> {
+  const input = document.getElementById('dispatch-order-distributor-filter') as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    input.focus();
+    setter.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const deadline = Date.now() + 3000;
+  while (!document.body.querySelector('[data-lookup-panel] [role="status"]')?.textContent?.match(/result|match|Unable|failed/i)) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for the lookup');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  }
+}
+
 function hasDistributorFilter(): boolean {
   return container.querySelector('[aria-label="Distributor"]') !== null;
 }
@@ -143,7 +162,13 @@ describe('SaleOrderListPage Permissions', () => {
       await renderSaleOrderListPage(role);
       expect(hasDistributorFilter()).toBe(true);
       expect(apiClient.get).toHaveBeenCalledWith('/sale-orders/factory-options');
-      expect(apiClient.get).toHaveBeenCalledWith('/sale-orders/distributor-options');
+      // The Distributor filter is a lookup: nothing loads until it is searched.
+      expect(apiClient.get).not.toHaveBeenCalledWith('/sale-orders/distributor-options', expect.anything());
+      await searchDistributorFilter('dist');
+      expect(apiClient.get).toHaveBeenCalledWith(
+        '/sale-orders/distributor-options',
+        expect.objectContaining({ params: { search: 'dist', limit: 20 } }),
+      );
       expect(apiClient.get).not.toHaveBeenCalledWith('/factories', expect.anything());
       expect(apiClient.get).not.toHaveBeenCalledWith('/distributors', expect.anything());
     },
@@ -174,7 +199,8 @@ describe('SaleOrderListPage Permissions', () => {
     });
 
     await renderSaleOrderListPage('ACCOUNTANT');
-    await vi.waitFor(() => expect(getPageContent()).toContain('Unable to load distributors for filtering'));
+    await searchDistributorFilter('dist');
+    expect(document.body.querySelector('[data-lookup-panel] [role="status"]')?.textContent).toBe('Request failed');
   });
 
   it('labels inactive Factory/Distributor options "(inactive)" and keeps them selectable, without an ACTIVE-only status filter', async () => {
@@ -212,7 +238,8 @@ describe('SaleOrderListPage Permissions', () => {
       .mocked(apiClient.get)
       .mock.calls.find((call) => call[0] === '/sale-orders/distributor-options');
     expect(factoryOptionCall?.[1]).toBeUndefined();
-    expect(distributorOptionCall?.[1]).toBeUndefined();
+    // Not searched yet.
+    expect(distributorOptionCall).toBeUndefined();
 
     const factoryTrigger = container.querySelector<HTMLButtonElement>('button[aria-label="Factory"]')!;
     await act(async () => factoryTrigger.click());
@@ -223,11 +250,13 @@ describe('SaleOrderListPage Permissions', () => {
 
     await act(async () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
 
-    const distributorTrigger = container.querySelector<HTMLButtonElement>('button[aria-label="Distributor"]')!;
-    await act(async () => distributorTrigger.click());
-    await waitFor(() => document.body.querySelectorAll('[role="option"]').length > 0);
+    await searchDistributorFilter('dist');
+    const distributorSearch = vi
+      .mocked(apiClient.get)
+      .mock.calls.find((call) => call[0] === '/sale-orders/distributor-options');
+    expect((distributorSearch?.[1] as { params: Record<string, unknown> }).params).toEqual({ search: 'dist', limit: 20 });
     options = Array.from(document.body.querySelectorAll('[role="option"]')).map((el) => el.textContent?.trim());
-    expect(options).toContain('Active Distributor');
-    expect(options).toContain('Old Traders (inactive)');
+    expect(options).toContain('Active DistributorDIST-A');
+    expect(options).toContain('Old TradersDIST-I(inactive)');
   });
 });

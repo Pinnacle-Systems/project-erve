@@ -1,4 +1,5 @@
 import { createId } from '@erve/shared';
+import type { DistributorOption } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type {
   DistributorStatus,
@@ -1494,6 +1495,69 @@ export async function listDistributors(
       city: true,
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Distributor lookup (P1L3)
+// ---------------------------------------------------------------------------
+
+// Slim projection for the Distributor lookup — never the full master record
+// (no GSTIN, contacts or address).
+const distributorOptionSelect = {
+  id: true,
+  code: true,
+  name: true,
+  status: true,
+  purchaseMode: true,
+} satisfies Prisma.DistributorSelect;
+
+// New-selection search: ACTIVE Distributors only, matched on code or name,
+// always bounded by `limit`. Record visibility is exactly listDistributors':
+// a distributor-scoped user only ever sees their own mapped Distributor.
+export async function listDistributorOptions(
+  actor: CurrentUser,
+  filters: { search?: string; limit: number },
+): Promise<DistributorOption[]> {
+  const soleDistributorId = isDistributorScopedUser(actor)
+    ? getSoleDistributorId(actor)
+    : undefined;
+  const search = filters.search || undefined;
+
+  return prisma.distributor.findMany({
+    where: {
+      id: soleDistributorId,
+      status: 'ACTIVE',
+      OR: search
+        ? [
+            { code: { contains: search, mode: 'insensitive' } },
+            { name: { contains: search, mode: 'insensitive' } },
+          ]
+        : undefined,
+    },
+    orderBy: { name: 'asc' },
+    select: distributorOptionSelect,
+    take: filters.limit,
+  });
+}
+
+// The selected Distributor, by id, whatever its status — a saved record or
+// a URL selection must still resolve even once the Distributor is INACTIVE.
+// Visibility is exactly getDistributorById's.
+export async function getDistributorOption(
+  actor: CurrentUser,
+  id: string,
+): Promise<DistributorOption> {
+  if (isDistributorScopedUser(actor) && getSoleDistributorId(actor) !== id) {
+    throw HttpError.forbidden();
+  }
+  const distributor = await prisma.distributor.findUnique({
+    where: { id },
+    select: distributorOptionSelect,
+  });
+  if (!distributor) {
+    throw HttpError.notFound('Distributor not found');
+  }
+  return distributor;
 }
 
 export async function getDistributorById(actor: CurrentUser, id: string) {
