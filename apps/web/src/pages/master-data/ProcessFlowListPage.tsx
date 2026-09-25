@@ -1,19 +1,16 @@
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
 import type { ProcessFlow } from './types.js';
 
 export function ProcessFlowListPage() {
-  const flowsQuery = useQuery({
+  // Opt-in cursor pagination (limit sent): Load more appends further pages.
+  const { query: flowsQuery, items: flows } = useCursorList<ProcessFlow>({
     queryKey: ['process-flows'],
-    queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<ProcessFlow[]>>('/process-flows');
-      return response.data.data;
-    },
+    path: '/process-flows',
+    params: { limit: 25 },
   });
 
   return (
@@ -61,7 +58,7 @@ export function ProcessFlowListPage() {
             ),
           },
         ]}
-        data={flowsQuery.data ?? []}
+        data={flows}
         loading={flowsQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading process flows" />}
         emptyState={
@@ -79,6 +76,7 @@ export function ProcessFlowListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(flowsQuery, flows.length, ['process flow', 'process flows'])} />
     </div>
   );
 }

@@ -21,6 +21,12 @@ const canManage = requireRoles('ADMIN', 'MERCHANDISER');
 qualityFormsRouter.use(requireAuth, canManage);
 qualityFormVersionsRouter.use(requireAuth, canManage);
 
+// Registered before '/:id'. PAG7 selector options — see the service.
+qualityFormsRouter.get(
+  '/options',
+  asyncHandler(async (_req, res) => res.json(successResponse(await service.listQualityFormOptions()))),
+);
+
 qualityFormsRouter.get(
   '/',
   asyncHandler(async (req, res) =>

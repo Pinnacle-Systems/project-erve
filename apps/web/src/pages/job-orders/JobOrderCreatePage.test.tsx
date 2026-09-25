@@ -221,12 +221,12 @@ describe('Job Order Process Flow assignment', () => {
   it('selects supported Production and Quality versions and explains unsupported versions', async () => {
     const po = makePurchaseOrder({ id: 'po-flow-1', poNumber: 'EIOS/26-27/0009' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
+      if (url === '/factories/options') return emptyFactories;
       if (url === '/styles/style-1') return benignStyleLookup;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [po], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
-      if (url === '/process-flows') {
+      if (url === '/process-flows/options') {
         return {
           data: {
             data: [
@@ -342,8 +342,8 @@ describe('Job Order Process Flow assignment', () => {
 describe('Order Sheet multi-select', () => {
   it('searches using the human-readable Order Sheet number, debounced, not per keystroke', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
-      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/factories/options') return emptyFactories;
+      if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
@@ -375,8 +375,8 @@ describe('Order Sheet multi-select', () => {
   it('renders matching results by poNumber with distributor/mode/date context, never a raw id', async () => {
     const poA = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
-      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/factories/options') return emptyFactories;
+      if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [poA], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
@@ -396,8 +396,8 @@ describe('Order Sheet multi-select', () => {
   it('selecting a result adds it to the Source Order Sheets table and clears the search text', async () => {
     const poA = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
-      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/factories/options') return emptyFactories;
+      if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/styles/style-1') return benignStyleLookup;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [poA], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
@@ -421,8 +421,8 @@ describe('Order Sheet multi-select', () => {
 
   it('cannot submit from typed-but-unselected search text', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
-      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/factories/options') return emptyFactories;
+      if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') {
         return {
           data: {
@@ -451,8 +451,8 @@ describe('Order Sheet multi-select', () => {
 
   it('shows an empty state when no Order Sheets match', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
-      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/factories/options') return emptyFactories;
+      if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
@@ -480,8 +480,8 @@ describe('Order Sheet multi-select', () => {
     });
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
-      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/factories/options') return emptyFactories;
+      if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') return { data: { data: await pendingSearch } };
       throw new Error(`Unexpected GET request: ${url}`);
     });
@@ -503,8 +503,8 @@ describe('Order Sheet multi-select', () => {
 
   it('shows an error state when the search fails, without creating a selection', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
-      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/factories/options') return emptyFactories;
+      if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') throw new Error('Search backend unavailable');
       throw new Error(`Unexpected GET request: ${url}`);
     });
@@ -529,8 +529,8 @@ describe('Order Sheet multi-select', () => {
     });
     vi.spyOn(apiClient, 'get').mockImplementation(
       async (url: string, config?: { params?: { search?: string } }) => {
-        if (url === '/factories') return emptyFactories;
-        if (url === '/process-flows') return emptyProcessFlows;
+        if (url === '/factories/options') return emptyFactories;
+        if (url === '/process-flows/options') return emptyProcessFlows;
         if (url === '/styles/style-1') return benignStyleLookup;
         if (url === '/purchase-orders') {
           const search = config?.params?.search ?? '';
@@ -568,8 +568,8 @@ describe('Order Sheet multi-select', () => {
   it('resolves a ?purchaseOrderId= deep link to a pre-selected Order Sheet without requiring a search', async () => {
     const deepLinkedPo = makePurchaseOrder({ id: 'po-deep-1', poNumber: 'EIOS/26-27/0007' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
-      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/factories/options') return emptyFactories;
+      if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/styles/style-1') return benignStyleLookup;
       if (url === `/purchase-orders/${deepLinkedPo.id}`) {
         return { data: { data: deepLinkedPo } };
@@ -593,12 +593,12 @@ describe('Order Sheet multi-select', () => {
   it('pre-fills the Production Plan from the Combined Forecast, allows editing, and submits the new orderSheetIds/sizes payload', async () => {
     const po = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001', orderedQuantity: 10 });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') {
+      if (url === '/factories/options') {
         return {
           data: { data: [{ id: 'factory-1', code: 'F1', name: 'Factory One', status: 'ACTIVE' }] },
         };
       }
-      if (url === '/process-flows') {
+      if (url === '/process-flows/options') {
         return {
           data: {
             data: [
@@ -709,12 +709,12 @@ describe('Order Sheet multi-select', () => {
     });
     vi.spyOn(apiClient, 'get').mockImplementation(
       async (url: string, config?: { params?: { search?: string } }) => {
-        if (url === '/factories') {
+        if (url === '/factories/options') {
           return {
             data: { data: [{ id: 'factory-1', code: 'F1', name: 'Factory One', status: 'ACTIVE' }] },
           };
         }
-        if (url === '/process-flows') {
+        if (url === '/process-flows/options') {
           return {
             data: {
               data: [
@@ -825,8 +825,8 @@ describe('Order Sheet multi-select', () => {
     const poB = makePurchaseOrder({ id: 'po-touch-b', poNumber: 'EIOS/26-27/0021', orderedQuantity: 15 });
     vi.spyOn(apiClient, 'get').mockImplementation(
       async (url: string, config?: { params?: { search?: string } }) => {
-        if (url === '/factories') return emptyFactories;
-        if (url === '/process-flows') return emptyProcessFlows;
+        if (url === '/factories/options') return emptyFactories;
+        if (url === '/process-flows/options') return emptyProcessFlows;
         if (url === '/styles/style-1') return benignStyleLookup;
         if (url === '/purchase-orders') {
           const search = config?.params?.search ?? '';
@@ -877,8 +877,8 @@ describe('Order Sheet multi-select', () => {
       reassignedQuantity: 0,
     });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories') return emptyFactories;
-      if (url === '/process-flows') return emptyProcessFlows;
+      if (url === '/factories/options') return emptyFactories;
+      if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/styles/style-1') return benignStyleLookup;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [po], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };

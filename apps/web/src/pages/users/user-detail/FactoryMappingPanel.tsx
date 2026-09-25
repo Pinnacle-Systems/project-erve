@@ -4,7 +4,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { Badge, Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { apiClient } from '../../../lib/api-client.js';
-import type { AdminUserSummary, Factory } from '../../master-data/types.js';
+import type { AdminUserSummary, FactoryOption } from '../../master-data/types.js';
 import { toErrorMessage } from './toErrorMessage.js';
 
 // A Factory User must always have exactly one factory — there is no valid
@@ -25,11 +25,9 @@ export function FactoryMappingPanel({ user }: { user: AdminUserSummary }) {
   const mapped = user.factories[0];
 
   const factoriesQuery = useQuery({
-    queryKey: ['factories', { status: 'ACTIVE' }],
+    queryKey: ['factories', 'options'],
     queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
-        params: { status: 'ACTIVE' },
-      });
+      const response = await apiClient.get<ApiSuccessResponse<FactoryOption[]>>('/factories/options');
       return response.data.data;
     },
   });

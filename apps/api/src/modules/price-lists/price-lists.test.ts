@@ -1315,3 +1315,58 @@ describe('GET /price-lists/distributor-options — bounded search (P1L8)', () =>
     expect((await searchOptions(distributorUser, { search: 'DTO', limit: 20 })).status).toBe(403);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PAG6 — opt-in cursor pagination for the Price List list
+// ---------------------------------------------------------------------------
+
+describe('GET /price-lists pagination (PAG6)', () => {
+  it('keeps the legacy array without paging params, and pages every list exactly once in the same order', async () => {
+    const token = await adminToken();
+    const dist = await createTestDistributor();
+    const ids: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const res = await createDraft(token, { distributorId: dist.id, name: `List ${index}` });
+      expect(res.status).toBe(201);
+      ids.push(res.body.data.id);
+    }
+    // Identical createdAt for every row: only the id tie-breaker keeps pages stable.
+    await prisma.priceList.updateMany({ data: { createdAt: new Date('2026-01-01T00:00:00Z') } });
+
+    const legacy = await request(app).get('/price-lists').set('Authorization', `Bearer ${token}`);
+    expect(Array.isArray(legacy.body.data)).toBe(true);
+
+    const paged: string[] = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 10; guard += 1) {
+      const res = await request(app)
+        .get('/price-lists')
+        .query({ limit: 2, ...(cursor ? { cursor } : {}) })
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      paged.push(...res.body.data.items.map((item: { id: string }) => item.id));
+      if (!res.body.data.pageInfo.hasMore) break;
+      cursor = res.body.data.pageInfo.nextCursor;
+    }
+
+    expect(paged).toHaveLength(5);
+    expect(new Set(paged)).toEqual(new Set(ids));
+    expect(paged).toEqual(legacy.body.data.map((item: { id: string }) => item.id));
+  });
+
+  it('applies filters before paging and rejects an over-max limit', async () => {
+    const token = await adminToken();
+    const distA = await createTestDistributor({ code: 'PG-A' });
+    const distB = await createTestDistributor({ code: 'PG-B' });
+    await createDraft(token, { distributorId: distA.id, name: 'A list' });
+    await createDraft(token, { distributorId: distB.id, name: 'B list' });
+
+    const res = await request(app)
+      .get('/price-lists')
+      .query({ distributorId: distA.id, limit: 10 })
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.body.data.items.map((item: { name: string }) => item.name)).toEqual(['A list']);
+    expect(res.body.data.pageInfo.hasMore).toBe(false);
+    expect((await request(app).get('/price-lists').query({ limit: 101 }).set('Authorization', `Bearer ${token}`)).status).toBe(400);
+  });
+});

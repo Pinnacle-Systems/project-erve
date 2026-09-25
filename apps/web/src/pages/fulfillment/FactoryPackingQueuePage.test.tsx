@@ -124,7 +124,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
     it('never renders a Factory selector and requests carry no factoryId', async () => {
       const getSpy = await renderPage('FACTORY_USER', '/fulfillment/factory-dispatches', async (url) => {
         if (url === '/factory-dispatches/packing-queue') return { data: { data: [queueLine()] } };
-        if (url === '/factory-dispatches') return { data: { data: { items: [dispatchSummary()] } } };
+        if (url === '/factory-dispatches') return { data: { data: { items: [dispatchSummary()], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
 
@@ -169,7 +169,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
           if (url === '/factory-dispatches/packing-queue') {
             return { data: { data: [queueLine({ styleNumber: 'A-STYLE' })] } };
           }
-          if (url === '/factory-dispatches') return { data: { data: { items: [] } } };
+          if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
           throw new Error(`Unexpected GET: ${url}`);
         },
       );
@@ -196,7 +196,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
           const factoryId = config?.params?.factoryId;
           return { data: { data: factoryId === 'fac-A' ? [queueLine({ styleNumber: 'A-STYLE' })] : [] } };
         }
-        if (url === '/factory-dispatches') return { data: { data: { items: [] } } };
+        if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
       expect(content()).toContain('A-STYLE');
@@ -213,7 +213,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
           const factoryId = config?.params?.factoryId;
           return { data: { data: factoryId === 'fac-B' ? [queueLine({ styleNumber: 'B-STYLE' })] : [queueLine({ styleNumber: 'A-STYLE' })] } };
         }
-        if (url === '/factory-dispatches') return { data: { data: { items: [] } } };
+        if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
 
@@ -229,7 +229,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
       await renderPage('SENIOR_MANAGEMENT', '/fulfillment/factory-dispatches?factoryId=fac-A', async (url) => {
         if (url === '/factory-dispatches/factory-options') return { data: { data: [factoryOption({ id: 'fac-A' })] } };
         if (url === '/factory-dispatches/packing-queue') return { data: { data: [] } };
-        if (url === '/factory-dispatches') return { data: { data: { items: [] } } };
+        if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
 
@@ -241,7 +241,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
       await renderPage('SENIOR_MANAGEMENT', '/fulfillment/factory-dispatches?factoryId=fac-A', async (url) => {
         if (url === '/factory-dispatches/factory-options') return { data: { data: [factoryOption({ id: 'fac-A' })] } };
         if (url === '/factory-dispatches/packing-queue') throw new Error('boom');
-        if (url === '/factory-dispatches') return { data: { data: { items: [] } } };
+        if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
 
@@ -306,7 +306,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
           };
         }
         if (url === '/factory-dispatches/packing-queue') return { data: { data: [] } };
-        if (url === '/factory-dispatches') return { data: { data: { items: [dispatchSummary()] } } };
+        if (url === '/factory-dispatches') return { data: { data: { items: [dispatchSummary()], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
 

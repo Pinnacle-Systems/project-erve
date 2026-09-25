@@ -87,9 +87,9 @@ function makeStyle(overrides: Partial<Style> = {}): Style {
 // per test.
 function mockStyleGets(overrides: Record<string, () => Promise<unknown>> = {}) {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/sizes') return { data: { data: [] } };
-    if (url === '/factories') return { data: { data: [] } };
-    if (url === '/seasons') return { data: { data: [] } };
+    if (url === '/sizes/options') return { data: { data: [] } };
+    if (url === '/factories/options') return { data: { data: [] } };
+    if (url === '/seasons/options') return { data: { data: [] } };
     const handler = overrides[url];
     if (handler) return handler();
     throw new Error(`Unexpected request: ${url}`);

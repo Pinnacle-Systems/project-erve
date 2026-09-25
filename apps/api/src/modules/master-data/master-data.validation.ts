@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { optionalPageQueryFields } from '../../utils/pagination.js';
 
 const optionalText = z.string().trim().optional().nullable();
 const positiveMoney = z.coerce.number().positive();
@@ -75,7 +76,10 @@ export const listSeasonsQuerySchema = z.object({
   status: z.string().trim().optional(),
   search: z.string().trim().optional(),
   financialYearId: z.string().trim().optional(),
+  ...optionalPageQueryFields,
 });
+
+export const listProcessFlowsQuerySchema = z.object(optionalPageQueryFields);
 
 export const styleSizeSchema = z.object({
   sizeId: z.string().trim().min(1),
@@ -352,12 +356,16 @@ export const listStylesQuerySchema = z.object({
   status: styleStatusSchema.optional(),
   ipName: z.string().trim().optional(),
   licensor: z.string().trim().optional(),
+  ...optionalPageQueryFields,
 });
 
 export const listStatusQuerySchema = z.object({
   status: z.string().trim().optional(),
   search: z.string().trim().optional(),
 });
+
+// Master lists that support opt-in cursor pagination (see utils/pagination).
+export const listStatusPageQuerySchema = listStatusQuerySchema.extend(optionalPageQueryFields);
 
 // Distributor lookup (P1L3): a bounded server-side search, never the full
 // Distributor master. No status filter is accepted — a new selection is

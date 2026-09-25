@@ -7,6 +7,7 @@ import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { fetchAllPaginatedRecords } from '../../lib/pdf/fetchAllPaginatedRecords.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
@@ -58,23 +59,28 @@ export function SaleOrderDetailPage() {
   const factoryDispatchesQuery = useQuery({
     queryKey: ['factory-dispatches', 'for-sale-order', id],
     enabled: canSeeFactoryDispatches && Boolean(so),
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<FactoryDispatchSummary>>>('/factory-dispatches', {
-        params: { saleOrderId: id, limit: 50 },
-      });
-      return res.data.data.items;
-    },
+    // Every page: a Dispatch Order's related records are listed in full.
+    queryFn: ({ signal }) =>
+      fetchAllPaginatedRecords<FactoryDispatchSummary>(async (page, pageSignal) => {
+        const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<FactoryDispatchSummary>>>(
+          '/factory-dispatches',
+          { params: { saleOrderId: id, ...page }, signal: pageSignal },
+        );
+        return res.data.data;
+      }, { signal }),
   });
 
   const erveDispatchesQuery = useQuery({
     queryKey: ['erve-dispatches', 'for-sale-order', id],
     enabled: canSeeErveDispatches && Boolean(so),
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<ErveDispatchView>>>('/erve-dispatches', {
-        params: { saleOrderId: id, limit: 50 },
-      });
-      return res.data.data.items;
-    },
+    queryFn: ({ signal }) =>
+      fetchAllPaginatedRecords<ErveDispatchView>(async (page, pageSignal) => {
+        const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<ErveDispatchView>>>(
+          '/erve-dispatches',
+          { params: { saleOrderId: id, ...page }, signal: pageSignal },
+        );
+        return res.data.data;
+      }, { signal }),
   });
 
   const generateDispatchOrderDetailPdf = useCallback(async () => {

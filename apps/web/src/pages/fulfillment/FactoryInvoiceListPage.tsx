@@ -1,18 +1,16 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { FACTORY_INVOICE_STATUS_LABELS, factoryInvoiceStatusTone, formatMoney } from './factory-invoice-ui.js';
-import type { FactoryInvoiceStatus, FactoryInvoiceView, PaginatedResult } from './types.js';
+import type { FactoryInvoiceStatus, FactoryInvoiceView } from './types.js';
 
 const STATUS_TABS: Array<{ value: FactoryInvoiceStatus | 'ALL'; label: string }> = [
   { value: 'GENERATED', label: 'Awaiting Factory Confirmation' },
@@ -26,14 +24,12 @@ export function FactoryInvoiceListPage() {
   const { user } = useAuth();
   const [status, setStatus] = useState<FactoryInvoiceStatus | 'ALL'>('GENERATED');
 
-  const query = useQuery({
-    queryKey: ['factory-invoices', status],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<FactoryInvoiceView>>>('/factory-invoices', {
-        params: { limit: 100, status: status === 'ALL' ? undefined : status },
-      });
-      return res.data.data.items;
-    },
+  // Cursor-paginated: Load more appends every further page (the page size
+  // is only the batch size, never a cap on what the list can reach).
+  const { query, items } = useCursorList<FactoryInvoiceView>({
+    queryKey: ['factory-invoices'],
+    path: '/factory-invoices',
+    params: { limit: 100, status: status === 'ALL' ? undefined : status },
   });
 
   const generateFactoryInvoiceListPdf = useCallback(async () => {
@@ -87,7 +83,7 @@ export function FactoryInvoiceListPage() {
         <Panel padding="none">
           <DataTable
             rowKey="id"
-            data={query.data ?? []}
+            data={items}
             onRowClick={(row) => navigate(`/fulfillment/factory-invoices/${row.id}`)}
             emptyState={<EmptyState title="Nothing here" description="No Factory Invoices match this filter." />}
             error={
@@ -110,6 +106,7 @@ export function FactoryInvoiceListPage() {
           />
         </Panel>
       )}
+      <LoadMoreFooter {...loadMoreProps(query, items.length, ['factory invoice', 'factory invoices'])} />
     </div>
   );
 }

@@ -1699,3 +1699,313 @@ describe('Distributor lookup — GET /distributors/options (P1L3)', () => {
     expect(Array.isArray(res.body.data)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PAG5 — opt-in cursor pagination for the Style and Distributor lists
+// ---------------------------------------------------------------------------
+
+describe('Style/Distributor list pagination (PAG5)', () => {
+  async function adminToken() {
+    const { token } = await createTestUserAndToken({
+      email: `admin-${createId().slice(-8)}@test.local`,
+      password: 'test-password',
+      roles: ['ADMIN'],
+    });
+    return token;
+  }
+
+  // Follows nextCursor until hasMore is false, returning every page.
+  async function walkPages(token: string, path: string, query: Record<string, string | number>) {
+    const pages: Array<{ items: Array<{ id: string }>; pageInfo: { hasMore: boolean; nextCursor: string | null } }> = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 20; guard += 1) {
+      const res = await request(app)
+        .get(path)
+        .query({ ...query, ...(cursor ? { cursor } : {}) })
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      pages.push(res.body.data);
+      if (!res.body.data.pageInfo.hasMore) break;
+      cursor = res.body.data.pageInfo.nextCursor;
+    }
+    return pages;
+  }
+
+  it('keeps the legacy full array for Styles without paging params, and pages every Style exactly once with them', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 7; index += 1) {
+      const res = await createStyle(token, { styleNumber: `PG-${String(index).padStart(2, '0')}` });
+      expect(res.status).toBe(201);
+    }
+
+    const legacy = await request(app).get('/styles').set('Authorization', `Bearer ${token}`);
+    expect(Array.isArray(legacy.body.data)).toBe(true);
+    expect(legacy.body.data).toHaveLength(7);
+
+    const pages = await walkPages(token, '/styles', { limit: 3 });
+    expect(pages.map((page) => page.items.length)).toEqual([3, 3, 1]);
+    const paged = pages.flatMap((page) => page.items.map((item) => item.id));
+    expect(paged).toEqual(legacy.body.data.map((style: { id: string }) => style.id));
+  });
+
+  it('applies Style search before paging', async () => {
+    const token = await adminToken();
+    for (const styleNumber of ['KEEP-1', 'KEEP-2', 'DROP-1', 'KEEP-3']) {
+      expect((await createStyle(token, { styleNumber })).status).toBe(201);
+    }
+
+    const pages = await walkPages(token, '/styles', { search: 'keep', limit: 2 });
+    expect(pages.flatMap((page) => page.items.map((item) => (item as unknown as { styleNumber: string }).styleNumber))).toEqual([
+      'KEEP-1',
+      'KEEP-2',
+      'KEEP-3',
+    ]);
+  });
+
+  it('pages Distributors in name order with an id tie-breaker — tied names are never skipped or repeated', async () => {
+    const token = await adminToken();
+    const created = [];
+    for (let index = 0; index < 5; index += 1) {
+      created.push(await createTestDistributor({ code: `TIE-${index}`, name: 'Same Name Traders' }));
+    }
+    created.push(await createTestDistributor({ code: 'AAA-1', name: 'Alpha Traders' }));
+    created.push(await createTestDistributor({ code: 'ZZZ-1', name: 'Zulu Traders', status: 'INACTIVE' }));
+
+    const legacy = await request(app).get('/distributors').set('Authorization', `Bearer ${token}`);
+    expect(Array.isArray(legacy.body.data)).toBe(true);
+
+    const pages = await walkPages(token, '/distributors', { limit: 2 });
+    const paged = pages.flatMap((page) => page.items.map((item) => item.id));
+    expect(paged).toHaveLength(7);
+    expect(new Set(paged).size).toBe(7);
+    expect(paged).toEqual(legacy.body.data.map((distributor: { id: string }) => distributor.id));
+    expect(paged[0]).toBe(created[5]!.id);
+    expect(paged.at(-1)).toBe(created[6]!.id);
+
+    const activeOnly = await walkPages(token, '/distributors', { status: 'ACTIVE', limit: 4 });
+    expect(activeOnly.flatMap((page) => page.items.map((item) => item.id))).not.toContain(created[6]!.id);
+  });
+
+  it('keeps a DISTRIBUTOR user scoped to its own Distributor in paginated mode', async () => {
+    const own = await createTestDistributor({ code: 'OWN-9', name: 'Own Traders' });
+    await createTestDistributor({ code: 'OTHER-9', name: 'Other Traders' });
+    const { userId, token } = await createTestUserAndToken({
+      email: 'dist-page@test.local',
+      password: 'test-password',
+      roles: ['DISTRIBUTOR'],
+    });
+    await prisma.userDistributor.create({ data: { id: createId(), userId, distributorId: own.id } });
+
+    const res = await request(app).get('/distributors').query({ limit: 10 }).set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.items.map((item: { id: string }) => item.id)).toEqual([own.id]);
+    expect(res.body.data.pageInfo).toEqual({ limit: 10, hasMore: false, nextCursor: null });
+  });
+
+  it('rejects a limit over the maximum', async () => {
+    const token = await adminToken();
+    expect((await request(app).get('/styles').query({ limit: 101 }).set('Authorization', `Bearer ${token}`)).status).toBe(400);
+    expect((await request(app).get('/distributors').query({ limit: 101 }).set('Authorization', `Bearer ${token}`)).status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PAG7 — selector option endpoints for the small masters
+// ---------------------------------------------------------------------------
+
+describe('selector option endpoints (PAG7)', () => {
+  async function tokenFor(role: 'ADMIN' | 'MERCHANDISER' | 'SENIOR_MANAGEMENT' | 'FACTORY_USER') {
+    const { token } = await createTestUserAndToken({
+      email: `${role.toLowerCase()}-${createId().slice(-6)}@test.local`,
+      password: 'test-password',
+      roles: [role],
+    });
+    return token;
+  }
+
+  function get(token: string, path: string) {
+    return request(app).get(path).set('Authorization', `Bearer ${token}`);
+  }
+
+  it('GET /factories/options: ACTIVE Factories only, slim, name order, under the Factory view permission', async () => {
+    const token = await tokenFor('MERCHANDISER');
+    await createTestFactory({ code: 'F-B', name: 'Bravo Mills' });
+    await createTestFactory({ code: 'F-A', name: 'Alpha Mills' });
+    const closed = await createTestFactory({ code: 'F-X', name: 'Closed Mills' });
+    await prisma.factory.update({ where: { id: closed.id }, data: { status: 'INACTIVE' } });
+
+    const res = await get(token, '/factories/options');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((f: { code: string }) => f.code)).toEqual(['F-A', 'F-B']);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'status']);
+    expect((await get(await tokenFor('SENIOR_MANAGEMENT'), '/factories/options')).status).toBe(403);
+  });
+
+  it('GET /sizes/options: ACTIVE Sizes only, in sortOrder', async () => {
+    const token = await tokenFor('ADMIN');
+    const age3 = await createSize('AGE_3');
+    const age1 = await prisma.size.create({
+      data: { id: createId(), code: 'AGE_1', label: 'AGE 1', sizeType: 'AGE', sortOrder: 1 },
+    });
+    await prisma.size.create({
+      data: { id: createId(), code: 'AGE_9', label: 'AGE 9', sizeType: 'AGE', sortOrder: 9, status: 'INACTIVE' },
+    });
+
+    const res = await get(token, '/sizes/options');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((s: { id: string }) => s.id)).toEqual([age1.id, age3.id]);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'label', 'sortOrder', 'status']);
+    expect((await get(await tokenFor('SENIOR_MANAGEMENT'), '/sizes/options')).status).toBe(403);
+  });
+
+  it('GET /seasons/options: every Season including INACTIVE (a saved Style keeps its Season), slim with displayName', async () => {
+    const token = await tokenFor('ADMIN');
+    const active = await createActiveSeason({ code: 'SS27', name: 'Spring' });
+    const inactive = await createActiveSeason({ code: 'AW24', name: 'Autumn' });
+    await prisma.season.update({ where: { id: inactive.id }, data: { status: 'INACTIVE' } });
+
+    const res = await get(token, '/seasons/options');
+
+    expect(res.status).toBe(200);
+    const ids = res.body.data.map((s: { id: string }) => s.id);
+    expect(ids).toEqual(expect.arrayContaining([active.id, inactive.id]));
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'displayName', 'id', 'name', 'status']);
+    expect((await get(await tokenFor('SENIOR_MANAGEMENT'), '/seasons/options')).status).toBe(403);
+  });
+
+  it('GET /process-flows/options: each flow with only its ACTIVE versions and their runtimeSupport', async () => {
+    const token = await tokenFor('ADMIN');
+    const created = await request(app)
+      .post('/process-flows')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: 'OPT', name: 'Options Flow', stages: [{ sequence: 1, name: 'Cutting' }] });
+    expect(created.status).toBe(201);
+    const flowId = created.body.data.id as string;
+    const [v1] = await prisma.processFlowVersion.findMany({ where: { processFlowId: flowId } });
+    await prisma.processFlowVersion.update({ where: { id: v1!.id }, data: { status: 'ACTIVE' } });
+    const retired = await prisma.processFlowVersion.create({
+      data: { id: createId(), processFlowId: flowId, versionNumber: 2, status: 'RETIRED' },
+    });
+
+    const res = await get(token, '/process-flows/options');
+
+    expect(res.status).toBe(200);
+    const flow = res.body.data.find((f: { id: string }) => f.id === flowId);
+    expect(flow.versions.map((v: { id: string }) => v.id)).toEqual([v1!.id]);
+    expect(flow.versions.map((v: { id: string }) => v.id)).not.toContain(retired.id);
+    expect(flow.versions[0]).toHaveProperty('runtimeSupport.supported');
+    expect((await get(await tokenFor('SENIOR_MANAGEMENT'), '/process-flows/options')).status).toBe(403);
+  });
+
+  it("the option routes are not swallowed by '/:id'", async () => {
+    const token = await tokenFor('ADMIN');
+    for (const path of ['/factories/options', '/sizes/options', '/seasons/options', '/process-flows/options']) {
+      const res = await get(token, path);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.data)).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PAG8 — opt-in cursor pagination for the Factory, Size, Season and Process
+// Flow lists
+// ---------------------------------------------------------------------------
+
+describe('small master list pagination (PAG8)', () => {
+  async function adminToken() {
+    const { token } = await createTestUserAndToken({
+      email: `admin-${createId().slice(-8)}@test.local`,
+      password: 'test-password',
+      roles: ['ADMIN'],
+    });
+    return token;
+  }
+
+  // Follows nextCursor to the end and returns every id, in page order.
+  async function walk(token: string, path: string, query: Record<string, string | number> = {}) {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 20; guard += 1) {
+      const res = await request(app)
+        .get(path)
+        .query({ limit: 2, ...query, ...(cursor ? { cursor } : {}) })
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      ids.push(...res.body.data.items.map((item: { id: string }) => item.id));
+      if (!res.body.data.pageInfo.hasMore) return ids;
+      cursor = res.body.data.pageInfo.nextCursor;
+    }
+    throw new Error('pagination did not terminate');
+  }
+
+  async function legacyIds(token: string, path: string, query: Record<string, string> = {}) {
+    const res = await request(app).get(path).query(query).set('Authorization', `Bearer ${token}`);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    return res.body.data.map((item: { id: string }) => item.id);
+  }
+
+  it('Factories: legacy array unchanged; pages cover tied names exactly once in the same order', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 4; index += 1) await createTestFactory({ code: `TIE-${index}`, name: 'Same Mills' });
+    await createTestFactory({ code: 'AAA', name: 'Alpha Mills' });
+
+    const legacy = await legacyIds(token, '/factories');
+    const paged = await walk(token, '/factories');
+    expect(paged).toHaveLength(5);
+    expect(new Set(paged).size).toBe(5);
+    expect(paged).toEqual(legacy);
+  });
+
+  it('Sizes: pages follow sortOrder/code and the status filter applies before paging', async () => {
+    const token = await adminToken();
+    for (let index = 1; index <= 5; index += 1) {
+      await prisma.size.create({
+        data: { id: createId(), code: `AGE_${index}`, label: `AGE ${index}`, sizeType: 'AGE', sortOrder: index, status: index === 3 ? 'INACTIVE' : 'ACTIVE' },
+      });
+    }
+
+    expect(await walk(token, '/sizes')).toEqual(await legacyIds(token, '/sizes'));
+    const active = await walk(token, '/sizes', { status: 'ACTIVE' });
+    expect(active).toHaveLength(4);
+  });
+
+  it('Seasons: pages keep FY/name order with an id tie-breaker and the financialYearId filter', async () => {
+    const token = await adminToken();
+    const fy = await createTestFinancialYear();
+    for (let index = 0; index < 3; index += 1) {
+      await prisma.season.create({
+        data: { id: createId(), code: `SS-${index}`, name: 'Same Season', financialYearId: fy.id },
+      });
+    }
+
+    const paged = await walk(token, '/seasons', { financialYearId: fy.id });
+    expect(paged).toHaveLength(3);
+    expect(paged).toEqual(await legacyIds(token, '/seasons', { financialYearId: fy.id }));
+  });
+
+  it('Process Flows: legacy array unchanged; pages follow code order', async () => {
+    const token = await adminToken();
+    for (const code of ['PF-C', 'PF-A', 'PF-B']) {
+      const res = await request(app)
+        .post('/process-flows')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code, name: code, stages: [{ sequence: 1, name: 'Cutting' }] });
+      expect(res.status).toBe(201);
+    }
+
+    const paged = await walk(token, '/process-flows');
+    expect(paged).toHaveLength(3);
+    expect(paged).toEqual(await legacyIds(token, '/process-flows'));
+  });
+
+  it('rejects an over-max limit on each list', async () => {
+    const token = await adminToken();
+    for (const path of ['/factories', '/sizes', '/seasons', '/process-flows']) {
+      expect((await request(app).get(path).query({ limit: 101 }).set('Authorization', `Bearer ${token}`)).status).toBe(400);
+    }
+  });
+});

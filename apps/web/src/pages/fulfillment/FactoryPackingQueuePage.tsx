@@ -7,13 +7,14 @@ import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { SelectField, SelectItem } from '@erve/primitives';
 import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { needsFactoryDispatchFactorySelector } from '../../auth/permissions.js';
-import type { FactoryDispatchSummary, FactoryPackingQueueLine, PaginatedResult } from './types.js';
+import type { FactoryDispatchSummary, FactoryPackingQueueLine } from './types.js';
 
 interface FactoryOption {
   id: string;
@@ -85,15 +86,13 @@ export function FactoryPackingQueuePage() {
     },
   });
 
-  const dispatchesQuery = useQuery({
+  // Cursor-paginated: Load more reaches every Factory Dispatch, not just
+  // the newest 25.
+  const { query: dispatchesQuery, items: dispatches } = useCursorList<FactoryDispatchSummary>({
     queryKey: ['factory-dispatches', selectedFactoryId ?? 'own'],
+    path: '/factory-dispatches',
+    params: { limit: 25, factoryId: selectedFactoryId },
     enabled: hasValidFactoryContext,
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<FactoryDispatchSummary>>>('/factory-dispatches', {
-        params: { limit: 25, factoryId: selectedFactoryId },
-      });
-      return res.data.data.items;
-    },
   });
 
   const generateFactoryPackingQueueListPdf = useCallback(async () => {
@@ -210,7 +209,7 @@ export function FactoryPackingQueuePage() {
           <Panel title={needsSelector ? 'Factory Dispatches' : 'Your Factory Dispatches'}>
             <DataTable
               rowKey="id"
-              data={dispatchesQuery.data ?? []}
+              data={dispatches}
               loading={dispatchesQuery.isLoading}
               error={
                 dispatchesQuery.isError ? (
@@ -239,6 +238,9 @@ export function FactoryPackingQueuePage() {
                   render: (r) => (r.consolidated ? 'Yes' : '—'),
                 },
               ]}
+            />
+            <LoadMoreFooter
+              {...loadMoreProps(dispatchesQuery, dispatches.length, ['Factory Dispatch', 'Factory Dispatches'])}
             />
           </Panel>
         </>

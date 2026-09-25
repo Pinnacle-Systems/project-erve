@@ -1,17 +1,15 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import type { InvoiceHandoffStatus, InvoiceHandoffView, PaginatedResult } from './types.js';
+import type { InvoiceHandoffStatus, InvoiceHandoffView } from './types.js';
 
 const STATUS_TABS: Array<{ value: InvoiceHandoffStatus | 'ALL'; label: string }> = [
   { value: 'PENDING_TALLY', label: 'Pending Tally Reference' },
@@ -28,14 +26,12 @@ export function InvoiceHandoffListPage() {
   const { user } = useAuth();
   const [status, setStatus] = useState<InvoiceHandoffStatus | 'ALL'>('PENDING_TALLY');
 
-  const query = useQuery({
-    queryKey: ['invoice-handoffs', status],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<InvoiceHandoffView>>>('/invoice-handoffs', {
-        params: { limit: 100, status: status === 'ALL' ? undefined : status },
-      });
-      return res.data.data.items;
-    },
+  // Cursor-paginated: Load more appends every further page (the page size
+  // is only the batch size, never a cap on what the list can reach).
+  const { query, items } = useCursorList<InvoiceHandoffView>({
+    queryKey: ['invoice-handoffs'],
+    path: '/invoice-handoffs',
+    params: { limit: 100, status: status === 'ALL' ? undefined : status },
   });
 
   const generateInvoiceHandoffListPdf = useCallback(async () => {
@@ -89,7 +85,7 @@ export function InvoiceHandoffListPage() {
         <Panel padding="none">
           <DataTable
             rowKey="id"
-            data={query.data ?? []}
+            data={items}
             onRowClick={(row) => navigate(`/fulfillment/invoices/${row.id}`)}
             emptyState={<EmptyState title="Nothing here" description="No invoice handoffs match this filter." />}
             error={
@@ -118,6 +114,7 @@ export function InvoiceHandoffListPage() {
           />
         </Panel>
       )}
+      <LoadMoreFooter {...loadMoreProps(query, items.length, ['invoice handoff', 'invoice handoffs'])} />
     </div>
   );
 }

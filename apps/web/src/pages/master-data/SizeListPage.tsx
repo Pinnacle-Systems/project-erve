@@ -1,11 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -25,12 +26,12 @@ export function SizeListPage() {
   const { user } = useAuth();
   const [form, setForm] = useState({ code: '', label: '', sizeType: 'AGE', sortOrder: '' });
   const [error, setError] = useState('');
-  const sizesQuery = useQuery({
+  // Opt-in cursor pagination (limit sent): Load more appends further pages.
+  // The PDF fetches every page.
+  const { query: sizesQuery, items: sizes } = useCursorList<Size>({
     queryKey: ['sizes'],
-    queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Size[]>>('/sizes');
-      return response.data.data;
-    },
+    path: '/sizes',
+    params: { limit: 25 },
   });
   const createMutation = useMutation({
     mutationFn: () => {
@@ -54,11 +55,11 @@ export function SizeListPage() {
     // Dynamically imported so @react-pdf/renderer and the document code load only when a user
     // actually clicks Download/Print, not as part of the app's initial bundle.
     const { generateSizeListPdfBlob } = await import('./pdf/generateSizeListPdf.js');
-    return generateSizeListPdfBlob(sizesQuery.data ?? [], {
+    return generateSizeListPdfBlob(await fetchAllListPages<Size>('/sizes'), {
       generatedAt: new Date().toISOString(),
       generatedBy: user?.name,
     });
-  }, [sizesQuery.data, user?.name]);
+  }, [user?.name]);
 
   const sizeListPdfFilename = useCallback(
     () => buildPdfFilename(['ERVE-Sizes', getLocalDateString()]),
@@ -158,7 +159,7 @@ export function SizeListPage() {
             ),
           },
         ]}
-        data={sizesQuery.data ?? []}
+        data={sizes}
         loading={sizesQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading sizes" />}
         emptyState={
@@ -173,6 +174,7 @@ export function SizeListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(sizesQuery, sizes.length, ['size', 'sizes'])} />
     </div>
   );
 }

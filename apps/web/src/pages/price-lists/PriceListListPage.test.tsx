@@ -77,14 +77,17 @@ function priceListSearchCalls(): Array<string | undefined> {
     .map((call) => (call[1] as { params?: { search?: string } } | undefined)?.params?.search);
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 40; i++) {
-    if (predicate()) return;
+// Time-based rather than a fixed tick count: the list PDF first fetches every
+// page and then dynamically imports the PDF module, which can exceed a few
+// macrotask ticks when the suite runs under load.
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for condition');
     await act(async () => {
       await flushMicrotasks();
     });
   }
-  throw new Error('Timed out waiting for condition');
 }
 
 function makePriceList(overrides: Partial<PriceListSummary> = {}): PriceListSummary {
@@ -108,7 +111,7 @@ async function renderPage(priceLists: PriceListSummary[] = []) {
     if (url === '/price-lists/distributor-options') {
       return { data: { data: [{ id: 'dist-1', code: 'DIST-1', name: 'Acme Distributors', status: 'ACTIVE' }] } };
     }
-    if (url === '/price-lists') return { data: { data: priceLists } };
+    if (url === '/price-lists') return { data: { data: { items: priceLists, pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected request: ${url}`);
   });
 
@@ -218,7 +221,7 @@ describe('PriceListListPage — ACCOUNTANT distributor lookup (UXAUTH-013, P1L8)
         error.response = { status: 403, data: { error: { message: 'Forbidden' } } };
         throw error;
       }
-      if (url === '/price-lists') return { data: { data: [] } };
+      if (url === '/price-lists') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
       throw new Error(`Unexpected request: ${url}`);
     });
     await waitUntil(() => distributorFilter() !== null);
@@ -242,7 +245,7 @@ describe('PriceListListPage — ACCOUNTANT distributor lookup (UXAUTH-013, P1L8)
           },
         };
       }
-      if (url === '/price-lists') return { data: { data: [] } };
+      if (url === '/price-lists') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
       throw new Error(`Unexpected request: ${url}`);
     });
     await waitUntil(() => distributorFilter() !== null);

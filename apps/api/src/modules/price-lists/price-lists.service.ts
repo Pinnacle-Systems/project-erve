@@ -5,6 +5,7 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
+import { listAllOrPage, type OptionalPageQuery } from '../../utils/pagination.js';
 import {
   lookupDistributorPrice,
   toDateOnly,
@@ -176,7 +177,12 @@ function assertDraft(priceList: { status: PriceListStatus }): void {
 
 export async function listPriceLists(
   actor: CurrentUser,
-  filters: { search?: string; distributorId?: string; status?: PriceListStatus; effectiveOn?: string },
+  filters: {
+    search?: string;
+    distributorId?: string;
+    status?: PriceListStatus;
+    effectiveOn?: string;
+  } & OptionalPageQuery,
 ) {
   const scoped = !canViewAllPriceLists(actor);
   const distributorId = scoped ? getSoleDistributorId(actor) : filters.distributorId;
@@ -200,13 +206,17 @@ export async function listPriceLists(
       : undefined,
   };
 
-  const priceLists = await prisma.priceList.findMany({
-    where,
-    include: priceListSummaryInclude,
-    orderBy: { createdAt: 'desc' },
-  });
-
-  return priceLists.map(toPriceListSummaryView);
+  // Newest first as before; id breaks createdAt ties so cursor pages are stable.
+  return listAllOrPage(filters, async (page) =>
+    (
+      await prisma.priceList.findMany({
+        where,
+        include: priceListSummaryInclude,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        ...page,
+      })
+    ).map(toPriceListSummaryView),
+  );
 }
 
 export async function getPriceListDetail(actor: CurrentUser, id: string) {

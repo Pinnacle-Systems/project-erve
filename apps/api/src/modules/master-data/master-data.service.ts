@@ -13,6 +13,7 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleDistributorId, getSoleFactoryId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
+import { listAllOrPage, type OptionalPageQuery, type PageArgs } from '../../utils/pagination.js';
 import { toStyleImageView } from './style-images.service.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 import { toCompactFinancialYearCode } from './financial-year.util.js';
@@ -190,12 +191,14 @@ function toProcessFlowVersionView(version: ProcessFlowVersionRecord) {
   };
 }
 
-export async function listStyles(filters: {
-  search?: string;
-  status?: StyleStatus;
-  ipName?: string;
-  licensor?: string;
-}) {
+export async function listStyles(
+  filters: {
+    search?: string;
+    status?: StyleStatus;
+    ipName?: string;
+    licensor?: string;
+  } & OptionalPageQuery,
+) {
   const where: Prisma.StyleWhereInput = {
     status: filters.status,
     ipName: filters.ipName ? { contains: filters.ipName, mode: 'insensitive' } : undefined,
@@ -208,12 +211,17 @@ export async function listStyles(filters: {
       : undefined,
   };
 
-  const styles = await prisma.style.findMany({
-    where,
-    include: styleInclude,
-    orderBy: { styleNumber: 'asc' },
-  });
-  return styles.map(toStyleView);
+  // styleNumber is unique, so it alone gives pages a stable order.
+  return listAllOrPage(filters, async (page) =>
+    (
+      await prisma.style.findMany({
+        where,
+        include: styleInclude,
+        orderBy: { styleNumber: 'asc' },
+        ...page,
+      })
+    ).map(toStyleView),
+  );
 }
 
 export async function getStyleById(id: string) {
@@ -319,7 +327,19 @@ async function assertFinancialYearExists(financialYearId: string) {
   if (!financialYear) throw HttpError.badRequest('Financial Year not found');
 }
 
-export async function listSeasons(filters: { status?: string; search?: string; financialYearId?: string }) {
+type SeasonListFilters = { status?: string; search?: string; financialYearId?: string };
+
+// The full Season list (internal callers, e.g. historical-import prep).
+export async function listSeasons(filters: SeasonListFilters) {
+  return querySeasons(filters, {});
+}
+
+// GET /seasons: opt-in cursor pagination (see utils/pagination).
+export async function listSeasonsPage(filters: SeasonListFilters & OptionalPageQuery) {
+  return listAllOrPage(filters, (page) => querySeasons(filters, page));
+}
+
+async function querySeasons(filters: SeasonListFilters, page: PageArgs) {
   const seasons = await prisma.season.findMany({
     where: {
       status: filters.status,
@@ -332,10 +352,26 @@ export async function listSeasons(filters: { status?: string; search?: string; f
         : undefined,
     },
     include: seasonInclude,
-    orderBy: [{ financialYear: { startDate: 'desc' } }, { name: 'asc' }],
+    // Newest Financial Year first, then name; id breaks ties for stable pages.
+    orderBy: [{ financialYear: { startDate: 'desc' } }, { name: 'asc' }, { id: 'asc' }],
+    ...page,
   });
   return seasons.map(toSeasonView);
 }
+// Season selector options (PAG7): every Season, any status — the Style form
+// offers ACTIVE Seasons plus a style's saved (possibly INACTIVE) Season —
+// in the list's order, as a slim row. Keeps the selector off GET /seasons.
+export async function listSeasonOptions() {
+  const seasons = await prisma.season.findMany({
+    include: seasonInclude,
+    orderBy: [{ financialYear: { startDate: 'desc' } }, { name: 'asc' }, { id: 'asc' }],
+  });
+  return seasons.map((season) => {
+    const view = toSeasonView(season);
+    return { id: view.id, code: view.code, name: view.name, displayName: view.displayName, status: view.status };
+  });
+}
+
 export async function getSeasonById(id: string) {
   const season = await prisma.season.findUnique({ where: { id }, include: seasonInclude });
   if (!season) throw HttpError.notFound('Season not found');
@@ -565,8 +601,9 @@ export async function removeStyleFactory(actor: CurrentUser, styleId: string, fa
   return getStyleById(styleId);
 }
 
-export async function listSizes(filters: { status?: string; search?: string }) {
-  const sizes = await prisma.size.findMany({
+export async function listSizes(filters: { status?: string; search?: string } & OptionalPageQuery) {
+  // sortOrder then code (unique): already a stable order for cursor pages.
+  return listAllOrPage(filters, (page) => prisma.size.findMany({
     where: {
       status: filters.status as SizeStatus | undefined,
       OR: filters.search
@@ -577,8 +614,18 @@ export async function listSizes(filters: { status?: string; search?: string }) {
         : undefined,
     },
     orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
+    ...page,
+  }));
+}
+
+// Size selector options (PAG7): ACTIVE Sizes only (what the Style form
+// offers), slim, in the list's order. Keeps the selector off GET /sizes.
+export async function listSizeOptions() {
+  return prisma.size.findMany({
+    where: { status: 'ACTIVE' },
+    select: { id: true, code: true, label: true, sortOrder: true, status: true },
+    orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
   });
-  return sizes;
 }
 
 export async function getSizeById(id: string) {
@@ -693,9 +740,26 @@ export async function updateSizeStatus(actor: CurrentUser, id: string, status: S
   return size;
 }
 
+// The full Factory list (internal callers, e.g. Factory Dispatch).
 export async function listFactories(
   actor: CurrentUser,
   filters: { status?: string; search?: string },
+) {
+  return queryFactories(actor, filters, {});
+}
+
+// GET /factories: opt-in cursor pagination (see utils/pagination).
+export async function listFactoriesPage(
+  actor: CurrentUser,
+  filters: { status?: string; search?: string } & OptionalPageQuery,
+) {
+  return listAllOrPage(filters, (page) => queryFactories(actor, filters, page));
+}
+
+async function queryFactories(
+  actor: CurrentUser,
+  filters: { status?: string; search?: string },
+  page: PageArgs,
 ) {
   const factoryIds =
     actor.roles.includes('FACTORY_USER') &&
@@ -714,9 +778,27 @@ export async function listFactories(
           ]
         : undefined,
     },
-    orderBy: { name: 'asc' },
+    // Names are not unique; id breaks ties so cursor pages are stable.
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    ...page,
   });
   return factories;
+}
+
+// Factory selector options (PAG7): ACTIVE Factories (what every Factory
+// SelectField asks for), slim, with listFactories' FACTORY_USER scoping.
+// Keeps the selectors off GET /factories.
+export async function listFactoryOptions(actor: CurrentUser) {
+  const factoryIds =
+    actor.roles.includes('FACTORY_USER') &&
+    !actor.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER')
+      ? actor.factoryIds
+      : undefined;
+  return prisma.factory.findMany({
+    where: { id: factoryIds ? { in: factoryIds } : undefined, status: 'ACTIVE' },
+    select: { id: true, code: true, name: true, status: true },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+  });
 }
 
 export async function getFactoryById(actor: CurrentUser, id: string) {
@@ -1071,12 +1153,43 @@ export function canonicalActivityConfiguration(
   }));
 }
 
-export async function listProcessFlows() {
+// GET /process-flows: opt-in cursor pagination; code is unique, so it alone
+// gives pages a stable order.
+export async function listProcessFlows(query: OptionalPageQuery = {}) {
+  return listAllOrPage(query, async (page) =>
+    (
+      await prisma.processFlow.findMany({
+        include: processFlowInclude,
+        orderBy: { code: 'asc' },
+        ...page,
+      })
+    ).map(toProcessFlowView),
+  );
+}
+
+// Process Flow Version selector options (PAG7): every flow with only its
+// ACTIVE versions — exactly what the Job Order create selector offers — each
+// with runtimeSupport so unsupported versions stay visible but disabled.
+// Keeps the selector off GET /process-flows.
+export async function listProcessFlowOptions() {
   const flows = await prisma.processFlow.findMany({
-    include: processFlowInclude,
+    include: {
+      versions: { ...processFlowInclude.versions, where: { status: 'ACTIVE' } },
+    },
     orderBy: { code: 'asc' },
   });
-  return flows.map(toProcessFlowView);
+  return flows.map((flow) => ({
+    id: flow.id,
+    code: flow.code,
+    name: flow.name,
+    status: flow.status,
+    versions: flow.versions.map((version) => ({
+      id: version.id,
+      versionNumber: version.versionNumber,
+      status: version.status,
+      runtimeSupport: evaluateProcessFlowRuntimeSupport(version),
+    })),
+  }));
 }
 
 export async function getProcessFlowById(id: string) {
@@ -1465,13 +1578,13 @@ function isDistributorScopedUser(actor: CurrentUser): boolean {
 
 export async function listDistributors(
   actor: CurrentUser,
-  filters: { status?: string; search?: string },
+  filters: { status?: string; search?: string } & OptionalPageQuery,
 ) {
   const soleDistributorId = isDistributorScopedUser(actor)
     ? getSoleDistributorId(actor)
     : undefined;
 
-  return prisma.distributor.findMany({
+  return listAllOrPage(filters, (page) => prisma.distributor.findMany({
     where: {
       id: soleDistributorId,
       status: filters.status as DistributorStatus | undefined,
@@ -1482,7 +1595,8 @@ export async function listDistributors(
           ]
         : undefined,
     },
-    orderBy: { name: 'asc' },
+    // Names are not unique; id breaks ties so cursor pages are stable.
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
     // purchaseMode is part of the option contract: the Order Sheet and Dispatch
     // Order forms derive and display it from the selected Distributor.
     select: {
@@ -1494,7 +1608,8 @@ export async function listDistributors(
       contactName: true,
       city: true,
     },
-  });
+    ...page,
+  }));
 }
 
 // ---------------------------------------------------------------------------

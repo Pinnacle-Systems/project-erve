@@ -168,7 +168,7 @@ describe('process activity authoring', () => {
 
   it('renders sequential and in-process Quality forms with conditional association and percentage fields', async () => {
     apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
-      if (config.url === '/quality-forms')
+      if (config.url === '/quality-forms/options')
         return ok(config, {
           success: true,
           data: [
@@ -263,7 +263,7 @@ describe('process-flow pages', () => {
   it('creates a process flow and submits the authored stage order', async () => {
     let submitted: Record<string, unknown> | undefined;
     apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
-      if (config.url === '/quality-forms' && config.method === 'get')
+      if (config.url === '/quality-forms/options' && config.method === 'get')
         return ok(config, { success: true, data: [] });
       if (config.url === '/process-flows' && config.method === 'post') {
         submitted = JSON.parse(config.data as string) as Record<string, unknown>;

@@ -31,14 +31,17 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 40; i++) {
-    if (predicate()) return;
+// Time-based rather than a fixed tick count: the list PDF first fetches every
+// page and then dynamically imports the PDF module, which can exceed a few
+// macrotask ticks when the suite runs under load.
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for condition');
     await act(async () => {
       await flushMicrotasks();
     });
   }
-  throw new Error('Timed out waiting for condition');
 }
 
 function makeDistributor(overrides: Partial<DistributorSummary> = {}): DistributorSummary {
@@ -55,7 +58,7 @@ function makeDistributor(overrides: Partial<DistributorSummary> = {}): Distribut
 
 async function renderPageWithDistributors(distributors: DistributorSummary[]) {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/distributors') return { data: { data: distributors } };
+    if (url === '/distributors') return { data: { data: { items: distributors, pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected request: ${url}`);
   });
 

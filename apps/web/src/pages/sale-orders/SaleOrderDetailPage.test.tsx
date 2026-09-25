@@ -127,14 +127,17 @@ function buildSaleOrder(): SaleOrder {
   };
 }
 
-async function renderPage(role: Role, factoryDispatchesImpl: () => Promise<{ data: { data: unknown } }>) {
+async function renderPage(
+  role: Role,
+  factoryDispatchesImpl: (config?: { params?: Record<string, unknown> }) => Promise<{ data: { data: unknown } }>,
+) {
   mockAuth(role);
   const saleOrder = buildSaleOrder();
-  vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+  vi.spyOn(apiClient, 'get').mockImplementation(async (url: string, config?: { params?: Record<string, unknown> }) => {
     if (url === '/sale-orders/so-1') return { data: { data: saleOrder } };
     if (url === '/sale-orders/so-1/audit') return { data: { data: [] } };
-    if (url === '/factory-dispatches') return factoryDispatchesImpl();
-    if (url === '/erve-dispatches') return { data: { data: { items: [] } } };
+    if (url === '/factory-dispatches') return factoryDispatchesImpl(config);
+    if (url === '/erve-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected GET: ${url}`);
   });
 
@@ -179,6 +182,7 @@ describe('SaleOrderDetailPage — Factory Dispatches panel (UXAUTH-004 affected 
                 consolidated: false,
               },
             ],
+            pageInfo: { limit: 100, hasMore: false, nextCursor: null },
           },
         },
       }));
@@ -196,8 +200,55 @@ describe('SaleOrderDetailPage — Factory Dispatches panel (UXAUTH-004 affected 
   it.each(['MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
     '%s sees the legitimate empty state only for a genuinely empty result',
     async (role) => {
-      await renderPage(role, async () => ({ data: { data: { items: [] } } }));
+      await renderPage(role, async () => ({ data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } }));
       expect(content()).toContain('Factory DispatchesNone yet.');
     },
   );
+});
+
+// The related Factory Dispatch list is cursor-paginated; the detail page
+// lists every page for this Dispatch Order, not just the first.
+describe('SaleOrderDetailPage — related dispatch lists fetch every page', () => {
+  it('follows nextCursor until hasMore is false', async () => {
+    const summary = (n: number) => ({
+      id: `fd-${n}`,
+      factoryDispatchNumber: `EIFD/26-27/${String(n).padStart(4, '0')}`,
+      factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
+      saleOrder: { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001', distributors: [] },
+      status: 'DRAFT',
+      version: 1,
+      preparedAt: '2026-09-01T00:00:00.000Z',
+      finalizedAt: null,
+      consolidated: false,
+    });
+    const calls: Array<Record<string, unknown> | undefined> = [];
+    await renderPage('MERCHANDISER', async (config) => {
+      calls.push(config?.params);
+      return config?.params?.cursor === 'c1'
+        ? {
+            data: {
+              data: {
+                items: [summary(2)],
+                pageInfo: { limit: 100, hasMore: false, nextCursor: null },
+              },
+            },
+          }
+        : {
+            data: {
+              data: {
+                items: [summary(1)],
+                pageInfo: { limit: 100, hasMore: true, nextCursor: 'c1' },
+              },
+            },
+          };
+    });
+    await flush();
+
+    expect(content()).toContain('EIFD/26-27/0001');
+    expect(content()).toContain('EIFD/26-27/0002');
+    expect(calls).toEqual([
+      { saleOrderId: 'so-1', cursor: undefined, limit: 100 },
+      { saleOrderId: 'so-1', cursor: 'c1', limit: 100 },
+    ]);
+  });
 });

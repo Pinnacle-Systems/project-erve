@@ -12,8 +12,9 @@ import {
   createSeasonSchema,
   createStyleSchema,
   distributorOptionsQuerySchema,
+  listProcessFlowsQuerySchema,
   listSeasonsQuerySchema,
-  listStatusQuerySchema,
+  listStatusPageQuerySchema,
   listStylesQuerySchema,
   replaceProcessFlowVersionStagesSchema,
   styleFactorySchema,
@@ -67,12 +68,21 @@ processFlowVersionsRouter.use(requireAuth);
 distributorsRouter.use(requireAuth);
 seasonsRouter.use(requireAuth);
 
+// Registered before '/:id'. PAG7 selector options — see the service.
+seasonsRouter.get(
+  '/options',
+  canManageMasterData,
+  asyncHandler(async (_req, res) => {
+    res.status(200).json(successResponse(await masterDataService.listSeasonOptions()));
+  }),
+);
+
 seasonsRouter.get(
   '/',
   canManageMasterData,
   asyncHandler(async (req, res) => {
     res.json(
-      successResponse(await masterDataService.listSeasons(listSeasonsQuerySchema.parse(req.query))),
+      successResponse(await masterDataService.listSeasonsPage(listSeasonsQuerySchema.parse(req.query))),
     );
   }),
 );
@@ -131,7 +141,7 @@ distributorsRouter.get(
   '/',
   canViewDistributors,
   asyncHandler(async (req, res) => {
-    const filters = listStatusQuerySchema.parse(req.query);
+    const filters = listStatusPageQuerySchema.parse(req.query);
     const distributors = await masterDataService.listDistributors(req.user!, filters);
     res.status(200).json(successResponse(distributors));
   }),
@@ -422,10 +432,18 @@ stylesRouter.patch(
 );
 
 sizesRouter.get(
+  '/options',
+  canManageMasterData,
+  asyncHandler(async (_req, res) => {
+    res.status(200).json(successResponse(await masterDataService.listSizeOptions()));
+  }),
+);
+
+sizesRouter.get(
   '/',
   canManageMasterData,
   asyncHandler(async (req, res) => {
-    const filters = listStatusQuerySchema.parse(req.query);
+    const filters = listStatusPageQuerySchema.parse(req.query);
     const sizes = await masterDataService.listSizes(filters);
     res.status(200).json(successResponse(sizes));
   }),
@@ -475,11 +493,19 @@ sizesRouter.patch(
 );
 
 factoriesRouter.get(
+  '/options',
+  canViewFactories,
+  asyncHandler(async (req, res) => {
+    res.status(200).json(successResponse(await masterDataService.listFactoryOptions(req.user!)));
+  }),
+);
+
+factoriesRouter.get(
   '/',
   canViewFactories,
   asyncHandler(async (req, res) => {
-    const filters = listStatusQuerySchema.parse(req.query);
-    const factories = await masterDataService.listFactories(req.user!, filters);
+    const filters = listStatusPageQuerySchema.parse(req.query);
+    const factories = await masterDataService.listFactoriesPage(req.user!, filters);
     res.status(200).json(successResponse(factories));
   }),
 );
@@ -541,10 +567,18 @@ factoriesRouter.patch(
 );
 
 processFlowsRouter.get(
-  '/',
+  '/options',
   canManageMasterData,
   asyncHandler(async (_req, res) => {
-    const flows = await masterDataService.listProcessFlows();
+    res.status(200).json(successResponse(await masterDataService.listProcessFlowOptions()));
+  }),
+);
+
+processFlowsRouter.get(
+  '/',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    const flows = await masterDataService.listProcessFlows(listProcessFlowsQuerySchema.parse(req.query));
     res.status(200).json(successResponse(flows));
   }),
 );

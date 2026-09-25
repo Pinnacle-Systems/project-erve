@@ -322,7 +322,7 @@ describe('user detail page', () => {
           success: true,
           data: { ...baseUser, id: 'user-2', roles: ['FACTORY_USER'] },
         });
-      if (config.url === '/factories') return ok(config, { success: true, data: [] });
+      if (config.url === '/factories/options') return ok(config, { success: true, data: [] });
       throw new Error(`Unexpected request: ${config.url}`);
     });
     expect(container.textContent).toContain('Factory Mapping');
@@ -659,7 +659,7 @@ describe('user detail page', () => {
             factories: [{ id: 'fac-1', code: 'FAC-1', name: 'North Factory' }],
           },
         });
-      if (config.url === '/factories')
+      if (config.url === '/factories/options')
         return ok(config, {
           success: true,
           data: [
@@ -688,7 +688,7 @@ describe('user detail page', () => {
           success: true,
           data: { ...baseUser, id: 'user-2', roles: ['FACTORY_USER'], factories: [] },
         });
-      if (config.url === '/factories')
+      if (config.url === '/factories/options')
         return ok(config, {
           success: true,
           data: [{ id: 'fac-1', code: 'FAC-1', name: 'North Factory' }],

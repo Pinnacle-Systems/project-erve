@@ -1,11 +1,9 @@
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
-import type { DistributorReturnStatus, DistributorReturnView, PaginatedResult } from './types.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import type { DistributorReturnStatus, DistributorReturnView } from './types.js';
 
 const statusTone: Record<DistributorReturnStatus, 'submitted' | 'approved' | 'rejected' | 'posted' | 'cancelled'> = {
   SUBMITTED: 'submitted',
@@ -26,14 +24,12 @@ const statusLabel: Record<DistributorReturnStatus, string> = {
 export function DistributorReturnListPage() {
   const navigate = useNavigate();
 
-  const query = useQuery({
+  // Cursor-paginated: Load more appends every further page (the page size
+  // is only the batch size, never a cap on what the list can reach).
+  const { query, items } = useCursorList<DistributorReturnView>({
     queryKey: ['distributor-returns'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<DistributorReturnView>>>('/distributor-returns', {
-        params: { limit: 100 },
-      });
-      return res.data.data.items;
-    },
+    path: '/distributor-returns',
+    params: { limit: 100 },
   });
 
   return (
@@ -46,7 +42,7 @@ export function DistributorReturnListPage() {
         <Panel padding="none">
           <DataTable
             rowKey="id"
-            data={query.data ?? []}
+            data={items}
             onRowClick={(row) => navigate(`/fulfillment/distributor-returns/${row.id}`)}
             emptyState={<EmptyState title="No returns yet" />}
             error={
@@ -71,6 +67,7 @@ export function DistributorReturnListPage() {
           />
         </Panel>
       )}
+      <LoadMoreFooter {...loadMoreProps(query, items.length, ['return', 'returns'])} />
     </div>
   );
 }

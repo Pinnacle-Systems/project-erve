@@ -81,7 +81,7 @@ async function renderCreateForm() {
         },
       };
     }
-    if (url === '/factories') {
+    if (url === '/factories/options') {
       return { data: { data: [{ id: 'fac-1', code: 'FAC1', name: 'Factory One', status: 'ACTIVE' }] } };
     }
     if (url === '/job-orders/pooled-inventory') {
@@ -315,7 +315,7 @@ describe('SaleOrderFormPage edit hydration', () => {
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/sale-orders/so-1') return { data: { data: so } };
-      if (url === '/factories') return factoriesDeferred.promise;
+      if (url === '/factories/options') return factoriesDeferred.promise;
       if (url === '/job-orders/pooled-inventory') return { data: { data: [] } };
       throw new Error(`Unexpected GET: ${url}`);
     });
@@ -375,7 +375,7 @@ describe('SaleOrderFormPage edit hydration', () => {
   it('shows an error state, not a blank create-like form, when the Sale Order fails to load', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/sale-orders/so-1') throw new Error('Network Error');
-      if (url === '/factories') return { data: { data: [] } };
+      if (url === '/factories/options') return { data: { data: [] } };
       throw new Error(`Unexpected GET: ${url}`);
     });
 

@@ -1,6 +1,6 @@
 import { FormGrid, FormSection } from '@erve/layout';
 import { SelectField, SelectItem, TextField } from '@erve/primitives';
-import type { Season, Status } from '../types.js';
+import type { SeasonOption, Status } from '../types.js';
 import {
   fieldLabels,
   identityFieldLayout,
@@ -14,7 +14,7 @@ export interface StyleIdentitySectionProps {
   onFieldChange: (key: StyleFieldKey, value: string) => void;
   seasonId: string;
   onSeasonChange: (value: string) => void;
-  seasons: Season[];
+  seasons: SeasonOption[];
   /** Truthy once a save attempt has failed validation — same "error &&" gating the pre-restructure form used to decide whether to surface field-level errors. */
   error: string;
 }

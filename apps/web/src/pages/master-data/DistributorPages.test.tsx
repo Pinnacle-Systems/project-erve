@@ -134,7 +134,7 @@ describe('distributor management pages', () => {
   it('shows the create action to MERCHANDISER on the distributor list', async () => {
     await renderPage('/master-data/distributors', async (config) => {
       if (config.url === '/distributors') {
-        return ok(config, { success: true, data: [distributor] });
+        return ok(config, { success: true, data: { items: [distributor], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } });
       }
       throw new Error(`Unexpected request: ${config.url}`);
     });
@@ -178,7 +178,7 @@ describe('distributor management pages', () => {
     await renderPage('/master-data/distributors', async (config) => {
       if (config.url === '/distributors') {
         requestedSearches.push((config.params as { search?: string } | undefined)?.search);
-        return ok(config, { success: true, data: [distributor] });
+        return ok(config, { success: true, data: { items: [distributor], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } });
       }
       throw new Error(`Unexpected request: ${config.url}`);
     });
