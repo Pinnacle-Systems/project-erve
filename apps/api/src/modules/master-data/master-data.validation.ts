@@ -359,4 +359,20 @@ export const listStatusQuerySchema = z.object({
   search: z.string().trim().optional(),
 });
 
+// Distributor lookup (P1L3): a bounded server-side search, never the full
+// Distributor master. No status filter is accepted — a new selection is
+// ACTIVE only, the server's rule rather than the caller's choice.
+export const DISTRIBUTOR_OPTIONS_DEFAULT_LIMIT = 20;
+export const DISTRIBUTOR_OPTIONS_MAX_LIMIT = 50;
+
+export const distributorOptionsQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(DISTRIBUTOR_OPTIONS_MAX_LIMIT)
+    .default(DISTRIBUTOR_OPTIONS_DEFAULT_LIMIT),
+});
+
 export const nonNegativePriceSchema = nonNegativeMoney;

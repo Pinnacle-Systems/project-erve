@@ -1549,3 +1549,153 @@ describe('distributors API', () => {
     expect(unknownRes.status).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P1L3 — Distributor lookup
+// ---------------------------------------------------------------------------
+
+describe('Distributor lookup — GET /distributors/options (P1L3)', () => {
+  async function tokenFor(role: 'ADMIN' | 'MERCHANDISER' | 'SENIOR_MANAGEMENT' | 'ACCOUNTANT' | 'FACTORY_USER' | 'QA_USER') {
+    const { token } = await createTestUserAndToken({
+      email: `${role.toLowerCase()}-dist-lookup@test.local`,
+      password: 'test-password',
+      roles: [role],
+    });
+    return token;
+  }
+
+  async function distributorUserToken(distributorId: string) {
+    const { userId, token } = await createTestUserAndToken({
+      email: 'distributor-dist-lookup@test.local',
+      password: 'test-password',
+      roles: ['DISTRIBUTOR'],
+    });
+    await prisma.userDistributor.create({ data: { id: createId(), userId, distributorId } });
+    return token;
+  }
+
+  function searchOptions(token: string, query: Record<string, string | number>) {
+    return request(app).get('/distributors/options').query(query).set('Authorization', `Bearer ${token}`);
+  }
+
+  function codes(res: request.Response): string[] {
+    return (res.body.data as Array<{ code: string }>).map((option) => option.code).sort();
+  }
+
+  it('finds Distributors by partial code and by partial name, case-insensitively', async () => {
+    const token = await tokenFor('MERCHANDISER');
+    await createTestDistributor({ code: 'KOC-001', name: 'Kerala Kids Wear' });
+    await createTestDistributor({ code: 'BLR-002', name: 'Bangalore Apparel' });
+
+    expect(codes(await searchOptions(token, { search: 'koc' }))).toEqual(['KOC-001']);
+    expect(codes(await searchOptions(token, { search: 'KIDS wear' }))).toEqual(['KOC-001']);
+    expect(codes(await searchOptions(token, { search: 'apparel' }))).toEqual(['BLR-002']);
+  });
+
+  it('offers only ACTIVE Distributors and accepts no status override', async () => {
+    const token = await tokenFor('ADMIN');
+    await createTestDistributor({ code: 'ELIG-ACTIVE', name: 'Eligible Active' });
+    await createTestDistributor({ code: 'ELIG-INACTIVE', name: 'Eligible Inactive', status: 'INACTIVE' });
+
+    expect(codes(await searchOptions(token, { search: 'ELIG' }))).toEqual(['ELIG-ACTIVE']);
+    expect(codes(await searchOptions(token, { search: 'ELIG', status: 'INACTIVE' }))).toEqual(['ELIG-ACTIVE']);
+  });
+
+  it('bounds the result count (default 20, caller limit honoured, over-max rejected)', async () => {
+    const token = await tokenFor('ADMIN');
+    for (let index = 0; index < 23; index += 1) {
+      const suffix = String(index).padStart(2, '0');
+      await createTestDistributor({ code: `BULK-${suffix}`, name: `Bulk Distributor ${suffix}` });
+    }
+
+    const byDefault = await searchOptions(token, { search: 'Bulk' });
+    const noSearch = await searchOptions(token, {});
+    const limited = await searchOptions(token, { search: 'Bulk', limit: 3 });
+    const overMax = await searchOptions(token, { search: 'Bulk', limit: 51 });
+
+    expect(byDefault.status).toBe(200);
+    expect(byDefault.body.data).toHaveLength(20);
+    expect(noSearch.body.data).toHaveLength(20);
+    expect(codes(limited)).toEqual(['BULK-00', 'BULK-01', 'BULK-02']);
+    expect(overMax.status).toBe(400);
+  });
+
+  it('returns a slim option — no GSTIN, contacts or address', async () => {
+    const token = await tokenFor('ADMIN');
+    const distributor = await createTestDistributor({
+      code: 'SLIM-01',
+      name: 'Slim Distribution',
+      purchaseMode: 'SALE_RETURN',
+    });
+
+    const res = await searchOptions(token, { search: 'SLIM' });
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'purchaseMode', 'status']);
+    expect(res.body.data[0]).toEqual({
+      id: distributor.id,
+      code: 'SLIM-01',
+      name: 'Slim Distribution',
+      status: 'ACTIVE',
+      purchaseMode: 'SALE_RETURN',
+    });
+  });
+
+  it('returns the selected Distributor by id in any status; 404 for an unknown id', async () => {
+    const token = await tokenFor('MERCHANDISER');
+    const inactive = await createTestDistributor({ code: 'RET-01', name: 'Retired Distribution', status: 'INACTIVE' });
+
+    const res = await request(app).get(`/distributors/options/${inactive.id}`).set('Authorization', `Bearer ${token}`);
+    const missing = await request(app).get('/distributors/options/does-not-exist').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({
+      id: inactive.id,
+      code: 'RET-01',
+      name: 'Retired Distribution',
+      status: 'INACTIVE',
+      purchaseMode: 'OUTRIGHT',
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  it('keeps a DISTRIBUTOR user scoped to its own mapped Distributor for search and hydration', async () => {
+    const own = await createTestDistributor({ code: 'OWN-01', name: 'Scope Own' });
+    const other = await createTestDistributor({ code: 'OTHER-01', name: 'Scope Other' });
+    const token = await distributorUserToken(own.id);
+
+    expect(codes(await searchOptions(token, { search: 'Scope' }))).toEqual(['OWN-01']);
+    expect(codes(await searchOptions(token, {}))).toEqual(['OWN-01']);
+    const ownDetail = await request(app).get(`/distributors/options/${own.id}`).set('Authorization', `Bearer ${token}`);
+    const otherDetail = await request(app)
+      .get(`/distributors/options/${other.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(ownDetail.status).toBe(200);
+    expect(otherDetail.status).toBe(403);
+  });
+
+  it.each([
+    ['ADMIN', 200],
+    ['MERCHANDISER', 200],
+    ['SENIOR_MANAGEMENT', 200],
+    ['ACCOUNTANT', 403],
+    ['FACTORY_USER', 403],
+    ['QA_USER', 403],
+  ] as const)('follows the Distributor view permission for %s', async (role, expectedStatus) => {
+    const distributor = await createTestDistributor({ code: 'RBAC-01', name: 'Rbac Distribution' });
+    const token = await tokenFor(role);
+
+    expect((await searchOptions(token, { search: 'RBAC' })).status).toBe(expectedStatus);
+    const detail = await request(app)
+      .get(`/distributors/options/${distributor.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(detail.status).toBe(expectedStatus);
+  });
+
+  it("is not swallowed by the '/:id' route", async () => {
+    const token = await tokenFor('ADMIN');
+    const res = await searchOptions(token, {});
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+  });
+});
