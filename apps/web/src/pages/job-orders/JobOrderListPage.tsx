@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
 import {
   FilterBar,
@@ -79,16 +79,26 @@ export function JobOrderListPage() {
     [debouncedSearch, status, effectiveFactoryId, financialYearId],
   );
 
-  const jobOrdersQuery = useQuery({
+  // The API pages this list by cursor (25 per page); every page is kept so
+  // "Load more" appends rather than replaces, and any filter change resets
+  // to the first page through the query key.
+  const jobOrdersQuery = useInfiniteQuery({
     queryKey: ['job-orders', params],
-    queryFn: async () => {
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) => {
       const res = await apiClient.get<ApiSuccessResponse<PaginatedResponse<JobOrder>>>(
         '/job-orders',
-        { params },
+        { params: { ...params, cursor: pageParam } },
       );
       return res.data.data;
     },
+    getNextPageParam: (lastPage) =>
+      lastPage.pageInfo.hasMore && lastPage.pageInfo.nextCursor ? lastPage.pageInfo.nextCursor : undefined,
   });
+  const jobOrders = useMemo(
+    () => jobOrdersQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [jobOrdersQuery.data],
+  );
 
   // UXAUTH-014: Job-Order-specific option lookup — QA_USER/SENIOR_MANAGEMENT
   // can list Job Orders but are denied on the broad Factory master
@@ -317,7 +327,7 @@ export function JobOrderListPage() {
             render: (jobOrder) => formatDateTime(jobOrder.createdAt),
           },
         ]}
-        data={jobOrdersQuery.data?.items ?? []}
+        data={jobOrders}
         loading={jobOrdersQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading job orders" />}
         emptyState={
@@ -335,6 +345,26 @@ export function JobOrderListPage() {
           ) : undefined
         }
       />
+      {jobOrders.length > 0 ? (
+        <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+          <span>
+            Showing {jobOrders.length.toLocaleString()} job order{jobOrders.length === 1 ? '' : 's'}
+            {jobOrdersQuery.hasNextPage ? '' : ' (all loaded)'}
+          </span>
+          {jobOrdersQuery.hasNextPage ? (
+            <Button
+              variant="secondary"
+              onClick={() => void jobOrdersQuery.fetchNextPage()}
+              disabled={jobOrdersQuery.isFetchingNextPage}
+            >
+              {jobOrdersQuery.isFetchingNextPage ? 'Loading…' : 'Load more'}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {jobOrdersQuery.isFetchNextPageError ? (
+        <ValidationMessage tone="error">Unable to load more job orders. Try again.</ValidationMessage>
+      ) : null}
     </div>
   );
 }
