@@ -417,3 +417,44 @@ describe('PurchaseOrderFormPage edit-load safety (NEW-AUTH-001)', () => {
     expect(getCallCount).toBe(2);
   });
 });
+
+// Purchase Mode is owned by the Distributor master and derived on CREATE from
+// the selected option returned by GET /distributors. The API side of this
+// contract (purchaseMode present in the list response) is pinned in
+// master-data.test.ts — this test covers the form's derivation only.
+describe('PurchaseOrderFormPage derived Purchase Mode (CREATE)', () => {
+  it('shows the selected Distributor purchase mode read-only and follows Distributor changes', async () => {
+    const saleReturnDistributor = {
+      id: 'dist-2',
+      code: 'DIST-2',
+      name: 'Beta Consignment',
+      purchaseMode: 'SALE_RETURN' as const,
+      status: 'ACTIVE',
+    };
+    const adapter = baseAdapter([testStyle]);
+    await renderPage((async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/distributors' && config.method === 'get') {
+        return ok(config, { success: true, data: [distributor, saleReturnDistributor] });
+      }
+      return adapter(config);
+    }) as AxiosAdapter);
+
+    const purchaseMode = () =>
+      document.getElementById('field-purchase-mode') as HTMLInputElement | null;
+    expect(purchaseMode()?.value).toBe('');
+    expect(purchaseMode()?.disabled).toBe(true);
+
+    await selectOption('Distributor *', 'Acme Distribution');
+    await flush();
+    expect(purchaseMode()?.value).toBe('Outright');
+
+    await selectOption('Distributor *', 'Beta Consignment');
+    await flush();
+    expect(purchaseMode()?.value).toBe('Sale or Return');
+    expect(purchaseMode()?.disabled).toBe(true);
+
+    await selectOption('Distributor *', 'Select distributor');
+    await flush();
+    expect(purchaseMode()?.value).toBe('');
+  });
+});

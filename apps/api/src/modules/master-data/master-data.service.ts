@@ -1482,7 +1482,17 @@ export async function listDistributors(
         : undefined,
     },
     orderBy: { name: 'asc' },
-    select: { id: true, code: true, name: true, status: true, contactName: true, city: true },
+    // purchaseMode is part of the option contract: the Order Sheet and Dispatch
+    // Order forms derive and display it from the selected Distributor.
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      status: true,
+      purchaseMode: true,
+      contactName: true,
+      city: true,
+    },
   });
 }
 
