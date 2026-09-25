@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ApiSuccessResponse, DistributorOption } from '@erve/types';
+import type { Density } from '@erve/theme';
 import { LookupField, type LookupFieldWidth } from '@erve/primitives';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
@@ -37,6 +38,7 @@ export interface DistributorLookupFieldProps {
   id?: string;
   placeholder?: string;
   width?: LookupFieldWidth;
+  density?: Density;
   value: DistributorLookupValue | null;
   onChange: (distributor: DistributorOption | null) => void;
   // Distributors that may not be picked here (e.g. already chosen by another
@@ -60,6 +62,7 @@ export function DistributorLookupField({
   id,
   placeholder = 'Search distributor name or code…',
   width = 'md',
+  density,
   value,
   onChange,
   excludeIds,
@@ -90,6 +93,7 @@ export function DistributorLookupField({
       aria-label={ariaLabel}
       id={id}
       width={width}
+      density={density}
       placeholder={placeholder}
       disabled={disabled}
       errorMessage={errorMessage}

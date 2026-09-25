@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
+import type { ApiSuccessResponse, DistributorOption, PaginatedResponse } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -18,7 +18,8 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManagePurchaseOrders as canManageOrderSheets } from '../../auth/permissions.js';
-import type { Distributor, OrderSheetPlanningState, PurchaseMode, PurchaseOrder } from './types.js';
+import { DistributorLookupField } from '../master-data/DistributorLookupField.js';
+import type { OrderSheetPlanningState, PurchaseMode, PurchaseOrder } from './types.js';
 import { getOrderSheetPlanningState } from './types.js';
 
 const PLANNING_STATE_LABELS: Record<OrderSheetPlanningState, string> = {
@@ -47,7 +48,10 @@ export function PurchaseOrderListPage() {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
   const [planningState, setPlanningState] = useState<OrderSheetPlanningState | ''>('');
-  const [distributorId, setDistributorId] = useState('');
+  // The filter's Distributor, as picked from the lookup — its id filters the
+  // list and its name labels the PDF, with no Distributor master download.
+  const [distributor, setDistributor] = useState<DistributorOption | null>(null);
+  const distributorId = distributor?.id ?? '';
   const [purchaseMode, setPurchaseMode] = useState<PurchaseMode | ''>('');
   const [financialYearId, setFinancialYearId] = useState('');
 
@@ -76,18 +80,8 @@ export function PurchaseOrderListPage() {
     },
   });
 
-  const distributorsQuery = useQuery({
-    queryKey: ['distributors', 'active'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Distributor[]>>('/distributors', {
-        params: { status: 'ACTIVE' },
-      });
-      return res.data.data;
-    },
-  });
-
   const financialYearsQuery = useFinancialYearsQuery();
-  const distributorName = (distributorsQuery.data ?? []).find((d) => d.id === distributorId)?.name;
+  const distributorName = distributor?.name;
   const financialYearLabel = financialYearId
     ? toCompactFinancialYearCode(
         (financialYearsQuery.data ?? []).find((fy) => fy.id === financialYearId)?.code ?? '',
@@ -152,7 +146,7 @@ export function PurchaseOrderListPage() {
             onClearFilters={() => {
               setSearch('');
               setPlanningState('');
-              setDistributorId('');
+              setDistributor(null);
               setPurchaseMode('');
               setFinancialYearId('');
             }}
@@ -164,20 +158,15 @@ export function PurchaseOrderListPage() {
                   onValueChange={setFinancialYearId}
                   allLabel="All Financial Years"
                 />
-                <SelectField
+                <DistributorLookupField
                   aria-label="Distributor"
-                  value={distributorId || 'ALL'}
-                  onValueChange={(value) => setDistributorId(value === 'ALL' ? '' : value)}
+                  id="order-sheet-distributor-filter"
+                  placeholder="All distributors"
+                  value={distributor}
+                  onChange={setDistributor}
                   density="compact"
                   width="md"
-                >
-                  <SelectItem value="ALL">All distributors</SelectItem>
-                  {(distributorsQuery.data ?? []).map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.name}
-                    </SelectItem>
-                  ))}
-                </SelectField>
+                />
                 <SelectField
                   aria-label="Purchase mode"
                   value={purchaseMode || 'ALL'}

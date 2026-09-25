@@ -63,7 +63,13 @@ function purchaseOrderSearchCalls(): Array<string | undefined> {
 
 async function renderPage() {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/distributors') return { data: { data: [] } };
+    if (url === '/distributors/options') {
+      return {
+        data: {
+          data: [{ id: 'dist-1', code: 'DIST-1', name: 'Acme Distribution', status: 'ACTIVE', purchaseMode: 'OUTRIGHT' }],
+        },
+      };
+    }
     if (url === '/financial-years') return { data: { data: [] } };
     if (url === '/purchase-orders') {
       return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
@@ -112,5 +118,57 @@ describe('PurchaseOrderListPage search debounce', () => {
     const searches = purchaseOrderSearchCalls();
     expect(searches.length).toBe(requestsBeforeTyping + 1);
     expect(searches.at(-1)).toBe('EIOS/26');
+  });
+});
+
+function purchaseOrderDistributorFilters(): Array<string | undefined> {
+  return vi
+    .mocked(apiClient.get)
+    .mock.calls.filter((call) => call[0] === '/purchase-orders')
+    .map((call) => (call[1] as { params?: { distributorId?: string } } | undefined)?.params?.distributorId);
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for condition');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  }
+}
+
+describe('PurchaseOrderListPage Distributor filter (P1L5)', () => {
+  it('filters by a Distributor picked from the bounded lookup and clears with Clear filters', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
+    await renderPage();
+
+    const calls = () => vi.mocked(apiClient.get).mock.calls.map((call) => call[0]);
+    // Nothing distributor-related loads until the filter is searched.
+    expect(calls()).not.toContain('/distributors');
+    expect(calls()).not.toContain('/distributors/options');
+    expect(purchaseOrderDistributorFilters().at(-1)).toBeUndefined();
+
+    const input = document.getElementById('order-sheet-distributor-filter') as HTMLInputElement;
+    expect(input.placeholder).toBe('All distributors');
+    await act(async () => {
+      input.focus();
+      setInputValue(input, 'acme');
+    });
+    await waitUntil(() => document.body.querySelector('[role="option"]') !== null);
+    const search = vi.mocked(apiClient.get).mock.calls.find((call) => call[0] === '/distributors/options');
+    expect(search?.[1]).toMatchObject({ params: { search: 'acme', limit: 20 } });
+
+    await act(async () => document.body.querySelector<HTMLElement>('[role="option"]')!.click());
+    await waitUntil(() => purchaseOrderDistributorFilters().at(-1) === 'dist-1');
+    expect(input.value).toBe('Acme Distribution');
+
+    const clearFilters = Array.from(container.querySelectorAll('button')).find((button) =>
+      /clear/i.test(button.textContent ?? ''),
+    )!;
+    await act(async () => clearFilters.click());
+    await waitUntil(() => purchaseOrderDistributorFilters().at(-1) === undefined);
+    expect(input.value).toBe('');
+    expect(calls()).not.toContain('/distributors');
   });
 });
