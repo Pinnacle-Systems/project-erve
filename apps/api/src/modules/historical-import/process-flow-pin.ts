@@ -86,18 +86,11 @@ function canonicalizeStages(
     }));
 }
 
-function computeFingerprint(
-  processFlowCode: string,
-  versionNumber: number,
-  stages: ProcessFlowVersionStageFingerprint[],
-): string {
+function canonicalStageList(stages: ProcessFlowVersionStageFingerprint[]) {
   // Deliberately explicit key order (not spread from an arbitrary source
   // object) so JSON.stringify's output — and therefore the hash — stays
   // stable across environments/runs.
-  const canonical = {
-    processFlowCode,
-    versionNumber,
-    stages: stages.map((s) => ({
+  return stages.map((s) => ({
       sequence: s.sequence,
       code: s.code,
       name: s.name,
@@ -112,9 +105,28 @@ function computeFingerprint(
       gateSatisfactionRequirement: s.gateSatisfactionRequirement,
       executionMultiplicity: s.executionMultiplicity,
       coverageTarget: s.coverageTarget,
-    })),
-  };
+    }));
+}
+
+function computeFingerprint(
+  processFlowCode: string,
+  versionNumber: number,
+  stages: ProcessFlowVersionStageFingerprint[],
+): string {
+  const canonical = { processFlowCode, versionNumber, stages: canonicalStageList(stages) };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+/**
+ * H3A: fingerprint of the ordered stage STRUCTURE only — every stage field
+ * the full fingerprint covers, but without processFlowCode/versionNumber.
+ * Lets an environment whose equivalent flow carries a different version
+ * number (Production's ERVE_PRODUCTION_QUALITY v1 vs Dev's v3) be matched
+ * only when every stage is structurally identical.
+ */
+export function computeStageStructureFingerprint(stages: ProcessFlowVersionStageFingerprint[]): string {
+  const ordered = [...stages].sort((a, b) => a.sequence - b.sequence);
+  return createHash('sha256').update(JSON.stringify({ stages: canonicalStageList(ordered) })).digest('hex');
 }
 
 const stageInclude = {
@@ -207,4 +219,34 @@ export async function resolveProcessFlowVersionPin(
   }
   const version = activeVersions[0]!;
   return { logicalIdentity: await buildLogicalIdentity(client, version), devProcessFlowVersionId: version.id };
+}
+
+/**
+ * H3A: resolves exactly one ACTIVE version of the named flow + version
+ * number whose stage structure matches the approved structure fingerprint.
+ * Zero or several matches is an error, never a guess.
+ */
+export async function resolveProcessFlowVersionByStageStructure(
+  client: Client,
+  target: { processFlowCode: string; versionNumber: number; stageStructureFingerprint: string },
+): Promise<ProcessFlowVersionPin & { stageStructureFingerprint: string }> {
+  const candidates = await client.processFlowVersion.findMany({
+    where: { status: 'ACTIVE', versionNumber: target.versionNumber, processFlow: { code: target.processFlowCode } },
+    include: { processFlow: { select: { code: true, name: true } } },
+  });
+  const matches: Array<ProcessFlowVersionPin & { stageStructureFingerprint: string }> = [];
+  for (const version of candidates) {
+    const logicalIdentity = await buildLogicalIdentity(client, version);
+    const stageStructureFingerprint = computeStageStructureFingerprint(logicalIdentity.stages);
+    if (stageStructureFingerprint === target.stageStructureFingerprint) {
+      matches.push({ logicalIdentity, devProcessFlowVersionId: version.id, stageStructureFingerprint });
+    }
+  }
+  if (matches.length !== 1) {
+    throw new ProcessFlowPinError(
+      `Expected exactly one ACTIVE ${target.processFlowCode} v${target.versionNumber} matching the approved stage structure ` +
+        `${target.stageStructureFingerprint.slice(0, 16)}..., found ${matches.length} (of ${candidates.length} ACTIVE candidate(s))`,
+    );
+  }
+  return matches[0]!;
 }

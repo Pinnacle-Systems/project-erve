@@ -45,13 +45,19 @@ export function historicalDocumentStoragePrefix(importBatchId: string): string {
 }
 
 export interface HistoricalBatchProvenance {
-  story: 'H2B';
+  story: 'H2B' | 'H3A';
   description: string;
   sourceArchives: string[];
   sourceManifestAggregateSha256: string;
   parserVersion: string;
   sourceOverridesSha256: string | null;
   processFlowLogicalIdentity: { processFlowCode: string; versionNumber: number; fingerprint: string };
+  /** H3A only: how this environment's batch was produced — no secrets, no Dev ids. */
+  migrationVersion?: string;
+  bundleSha256?: string;
+  applicationCommit?: string | null;
+  targetProfile?: string;
+  approvedProcessFlow?: { processFlowCode: string; versionNumber: number; fingerprint: string; stageStructureFingerprint: string };
 }
 
 export interface HistoricalBatchIdentity {
