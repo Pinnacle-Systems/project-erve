@@ -1109,3 +1109,195 @@ describe('Order Sheet (purchase orders) API', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// P1L1 — Order Sheet Style lookup
+// ---------------------------------------------------------------------------
+
+describe('Order Sheet Style lookup (P1L1)', () => {
+  // Style Numbers here deliberately do NOT embed the LMIX digits — normal
+  // UI-created Styles have independent values, so LMIX search must hit
+  // lmixNumber itself rather than lean on the historical-import naming.
+  async function createLookupStyle(input: {
+    styleNumber: string;
+    styleName: string;
+    lmixNumber?: string | null;
+    status?: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
+  }) {
+    const style = await createStyle({ status: input.status });
+    return prisma.style.update({
+      where: { id: style.id },
+      data: { styleNumber: input.styleNumber, styleName: input.styleName, lmixNumber: input.lmixNumber ?? null },
+    });
+  }
+
+  async function merchandiserToken() {
+    const { token } = await createTestUserAndToken({
+      email: 'merch@test.local',
+      password: 'pass',
+      roles: ['MERCHANDISER'],
+    });
+    return token;
+  }
+
+  function searchOptions(token: string, query: Record<string, string | number>) {
+    return request(app)
+      .get('/purchase-orders/style-options')
+      .query(query)
+      .set('Authorization', `Bearer ${token}`);
+  }
+
+  function styleNumbers(res: request.Response): string[] {
+    return (res.body.data as Array<{ styleNumber: string }>).map((option) => option.styleNumber).sort();
+  }
+
+  it('finds a Style by its full LMIX number, independent of its Style Number', async () => {
+    const token = await merchandiserToken();
+    await createLookupStyle({ styleNumber: 'SS26-TEE-A', styleName: "Boy's T-Shirt", lmixNumber: 'LMIX5526011' });
+    await createLookupStyle({ styleNumber: 'SS26-TEE-B', styleName: "Boy's T-Shirt", lmixNumber: 'LMIX5526099' });
+
+    const res = await searchOptions(token, { search: 'LMIX5526011' });
+
+    expect(res.status).toBe(200);
+    expect(styleNumbers(res)).toEqual(['SS26-TEE-A']);
+  });
+
+  it('finds a Style by a partial numeric LMIX substring, case-insensitively', async () => {
+    const token = await merchandiserToken();
+    await createLookupStyle({ styleNumber: 'SS26-TEE-A', styleName: 'Tee', lmixNumber: 'LMIX5526011' });
+    await createLookupStyle({ styleNumber: 'SS26-TEE-B', styleName: 'Tee', lmixNumber: 'LMIX7700000' });
+
+    const numeric = await searchOptions(token, { search: '526011' });
+    const lowercasePrefix = await searchOptions(token, { search: 'lmix5526' });
+
+    expect(styleNumbers(numeric)).toEqual(['SS26-TEE-A']);
+    expect(styleNumbers(lowercasePrefix)).toEqual(['SS26-TEE-A']);
+  });
+
+  it('finds a Style by partial Style Number and by partial Style Name', async () => {
+    const token = await merchandiserToken();
+    await createLookupStyle({ styleNumber: 'AW25-HOOD-01', styleName: "Girl's Hoody", lmixNumber: 'LMIX1000001' });
+    await createLookupStyle({ styleNumber: 'SS26-PANT-02', styleName: "Boy's Sweat Pant", lmixNumber: 'LMIX1000002' });
+
+    expect(styleNumbers(await searchOptions(token, { search: 'hood-0' }))).toEqual(['AW25-HOOD-01']);
+    expect(styleNumbers(await searchOptions(token, { search: 'SWEAT pant' }))).toEqual(['SS26-PANT-02']);
+  });
+
+  it('offers only ACTIVE Styles for a new selection — INACTIVE and DISCONTINUED matches are excluded', async () => {
+    const token = await merchandiserToken();
+    await createLookupStyle({ styleNumber: 'LOOK-ACTIVE', styleName: 'Lookup Tee', lmixNumber: 'LMIX2000001' });
+    await createLookupStyle({
+      styleNumber: 'LOOK-INACTIVE',
+      styleName: 'Lookup Tee',
+      lmixNumber: 'LMIX2000002',
+      status: 'INACTIVE',
+    });
+    await createLookupStyle({
+      styleNumber: 'LOOK-DISCONTINUED',
+      styleName: 'Lookup Tee',
+      lmixNumber: 'LMIX2000003',
+      status: 'DISCONTINUED',
+    });
+
+    const res = await searchOptions(token, { search: 'LMIX200000' });
+
+    expect(styleNumbers(res)).toEqual(['LOOK-ACTIVE']);
+    // No caller-supplied status override exists: an extra param is ignored,
+    // eligibility stays server-side.
+    const overridden = await searchOptions(token, { search: 'LMIX200000', status: 'INACTIVE' });
+    expect(styleNumbers(overridden)).toEqual(['LOOK-ACTIVE']);
+  });
+
+  it('bounds the result count (default 20, caller limit honoured, over-max rejected) instead of returning the master', async () => {
+    const token = await merchandiserToken();
+    for (let index = 0; index < 23; index += 1) {
+      await createLookupStyle({
+        styleNumber: `BULK-${String(index).padStart(2, '0')}`,
+        styleName: 'Bulk Tee',
+        lmixNumber: `LMIX30000${String(index).padStart(2, '0')}`,
+      });
+    }
+
+    const byDefault = await searchOptions(token, { search: 'Bulk' });
+    const noSearch = await searchOptions(token, {});
+    const limited = await searchOptions(token, { search: 'Bulk', limit: 5 });
+    const overMax = await searchOptions(token, { search: 'Bulk', limit: 51 });
+
+    expect(byDefault.status).toBe(200);
+    expect(byDefault.body.data).toHaveLength(20);
+    expect(noSearch.body.data).toHaveLength(20);
+    expect(styleNumbers(limited)).toEqual(['BULK-00', 'BULK-01', 'BULK-02', 'BULK-03', 'BULK-04']);
+    expect(overMax.status).toBe(400);
+  });
+
+  it('returns a slim option — no sizes, images or factory mappings', async () => {
+    const token = await merchandiserToken();
+    const style = await createLookupStyle({ styleNumber: 'SLIM-01', styleName: 'Slim Tee', lmixNumber: 'LMIX4000001' });
+    const size = await createSize('AGE_4', 4);
+    await linkStyleSize(style.id, size.id);
+
+    const res = await searchOptions(token, { search: 'SLIM' });
+
+    expect(res.status).toBe(200);
+    const [option] = res.body.data;
+    expect(Object.keys(option).sort()).toEqual(['id', 'lmixNumber', 'season', 'status', 'styleName', 'styleNumber']);
+    expect(Object.keys(option.season).sort()).toEqual(['code', 'displayName']);
+    expect(option).toMatchObject({ id: style.id, lmixNumber: 'LMIX4000001', status: 'ACTIVE' });
+    expect(option.season.displayName).toMatch(/ 26-27$/);
+  });
+
+  it('returns the selected Style by id with only its orderable sizes, even once the Style is INACTIVE', async () => {
+    const token = await merchandiserToken();
+    const style = await createLookupStyle({
+      styleNumber: 'RETIRED-01',
+      styleName: 'Retired Tee',
+      lmixNumber: 'LMIX5000001',
+      status: 'INACTIVE',
+    });
+    const age2 = await createSize('AGE_2', 2);
+    const age1 = await createSize('AGE_1', 1);
+    const unmappedSize = await createSize('AGE_5', 5);
+    const retiredSize = await prisma.size.create({
+      data: { id: createId(), code: 'AGE_6', label: 'AGE_6', sizeType: 'AGE', sortOrder: 6, status: 'INACTIVE' },
+    });
+    await linkStyleSize(style.id, age2.id);
+    await linkStyleSize(style.id, age1.id);
+    await linkStyleSize(style.id, retiredSize.id);
+    const inactiveMapping = await linkStyleSize(style.id, unmappedSize.id);
+    await prisma.styleSize.update({ where: { id: inactiveMapping.id }, data: { status: 'INACTIVE' } });
+
+    const res = await request(app)
+      .get(`/purchase-orders/style-options/${style.id}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ id: style.id, styleNumber: 'RETIRED-01', status: 'INACTIVE' });
+    expect(res.body.data.sizes).toEqual([
+      { id: age1.id, code: 'AGE_1', label: 'AGE_1', sortOrder: 1 },
+      { id: age2.id, code: 'AGE_2', label: 'AGE_2', sortOrder: 2 },
+    ]);
+    expect(res.body.data).not.toHaveProperty('images');
+    expect(res.body.data).not.toHaveProperty('factories');
+
+    const missing = await request(app)
+      .get('/purchase-orders/style-options/does-not-exist')
+      .set('Authorization', `Bearer ${token}`);
+    expect(missing.status).toBe(404);
+  });
+
+  it('is limited to Order Sheet managers — DISTRIBUTOR and SENIOR_MANAGEMENT are refused', async () => {
+    const style = await createLookupStyle({ styleNumber: 'RBAC-01', styleName: 'Rbac Tee', lmixNumber: 'LMIX6000001' });
+    for (const role of ['DISTRIBUTOR', 'SENIOR_MANAGEMENT'] as const) {
+      const { token } = await createTestUserAndToken({
+        email: `${role.toLowerCase()}@test.local`,
+        password: 'pass',
+        roles: [role],
+      });
+      expect((await searchOptions(token, { search: 'RBAC' })).status).toBe(403);
+      const detail = await request(app)
+        .get(`/purchase-orders/style-options/${style.id}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(detail.status).toBe(403);
+    }
+  });
+});

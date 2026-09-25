@@ -130,6 +130,27 @@ export interface PurchaseOrderLine {
   sizes: PurchaseOrderLineSize[];
   totalOrderedQuantity: number;
 }
+// Slim Style row for the Order Sheet Style lookup (GET
+// /purchase-orders/style-options). Deliberately excludes sizes, images and
+// factory mappings — those belong to the selected Style only.
+export interface OrderSheetStyleOption {
+  id: string;
+  styleNumber: string;
+  styleName: string;
+  lmixNumber: string | null;
+  status: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
+  season: { code: string; displayName: string };
+}
+
+// The one selected Style (GET /purchase-orders/style-options/:styleId): the
+// option fields plus only the sizes an Order Sheet line may order today
+// (active StyleSize mapping on an active Size — the same rule
+// validateLines enforces on save). Returned whatever the Style's own status,
+// so a saved Order Sheet can still display a since-retired Style.
+export interface OrderSheetStyleDetail extends OrderSheetStyleOption {
+  sizes: Array<{ id: string; code: string; label: string; sortOrder: number }>;
+}
+
 export interface PurchaseOrderDetail extends PurchaseOrderSummary {
   merchandiser: { id: string; name: string; email: string } | null;
   creator: { id: string; name: string; email: string };

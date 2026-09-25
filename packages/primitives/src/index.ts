@@ -65,6 +65,9 @@ export {
 } from "./components/select-field";
 export type { SelectFieldProps, SelectFieldDensity, SelectFieldWidth } from "./components/select-field";
 
+export { LookupField } from "./components/lookup-field";
+export type { LookupFieldProps, LookupFieldWidth } from "./components/lookup-field";
+
 export { ValidationMessage } from "./components/validation-message";
 export type { ValidationMessageProps } from "./components/validation-message";
 
