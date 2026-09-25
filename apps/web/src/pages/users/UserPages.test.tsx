@@ -306,7 +306,7 @@ describe('user detail page', () => {
   it('shows the distributor mapping panel for a DISTRIBUTOR-role user but not factory mapping', async () => {
     await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
-      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/distributors/options') return ok(config, { success: true, data: [] });
       throw new Error(`Unexpected request: ${config.url}`);
     });
     expect(container.textContent).toContain('Distributor Mapping');
@@ -353,7 +353,7 @@ describe('user detail page', () => {
   it('opens the reset password dialog and validates a short password', async () => {
     await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
-      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/distributors/options') return ok(config, { success: true, data: [] });
       throw new Error(`Unexpected request: ${config.url}`);
     });
 
@@ -390,7 +390,7 @@ describe('user detail page', () => {
   it('shows the revised security-impact copy communicating session revocation', async () => {
     await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
-      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/distributors/options') return ok(config, { success: true, data: [] });
       throw new Error(`Unexpected request: ${config.url}`);
     });
 
@@ -415,7 +415,7 @@ describe('user detail page', () => {
     let resetBody: unknown;
     await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
-      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/distributors/options') return ok(config, { success: true, data: [] });
       if (config.url === '/users/user-1/reset-password' && config.method === 'post') {
         resetBody = JSON.parse(config.data as string);
         return ok(config, { success: true, data: {} });
@@ -454,7 +454,7 @@ describe('user detail page', () => {
   it('shows a server error from the reset-password mutation', async () => {
     await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
-      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/distributors/options') return ok(config, { success: true, data: [] });
       if (config.url === '/users/user-1/reset-password' && config.method === 'post') {
         fail(config, 500, 'Unable to reset password right now');
       }
@@ -492,7 +492,7 @@ describe('user detail page', () => {
     let assignBody: unknown;
     await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
-      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/distributors/options') return ok(config, { success: true, data: [] });
       if (config.url === '/users/user-1/roles' && config.method === 'post') {
         assignBody = JSON.parse(config.data as string);
         return ok(config, { success: true, data: {} });
@@ -529,7 +529,7 @@ describe('user detail page', () => {
     let removeCalled = false;
     await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-1') return ok(config, { success: true, data: baseUser });
-      if (config.url === '/distributors') return ok(config, { success: true, data: [] });
+      if (config.url === '/distributors/options') return ok(config, { success: true, data: [] });
       if (config.url === '/users/user-1/roles/DISTRIBUTOR' && config.method === 'delete') {
         removeCalled = true;
         return ok(config, { success: true, data: {} });
@@ -558,6 +558,7 @@ describe('user detail page', () => {
     let assignBody: unknown;
     let removeCalled = false;
     let mapped = false;
+    let searchParams: unknown;
     await renderPage('/master-data/users/user-1', ['ADMIN'], async (config) => {
       if (config.url === '/users/user-1') {
         return ok(config, {
@@ -568,11 +569,14 @@ describe('user detail page', () => {
           },
         });
       }
-      if (config.url === '/distributors')
+      if (config.url === '/distributors/options') {
+        searchParams = config.params;
         return ok(config, {
           success: true,
-          data: [{ id: 'dist-1', code: 'DIST-1', name: 'Acme Distribution' }],
+          data: [{ id: 'dist-1', code: 'DIST-1', name: 'Acme Distribution', status: 'ACTIVE', purchaseMode: 'OUTRIGHT' }],
         });
+      }
+      if (config.url === '/distributors') throw new Error('The Distributor master must not be downloaded');
       if (config.url === '/users/user-1/distributors' && config.method === 'post') {
         assignBody = JSON.parse(config.data as string);
         mapped = true;
@@ -586,11 +590,17 @@ describe('user detail page', () => {
       throw new Error(`Unexpected request: ${config.url} ${config.method}`);
     });
 
-    const select = container.querySelector<HTMLButtonElement>('#select-assign-distributor')!;
+    const select = container.querySelector<HTMLInputElement>('#lookup-assign-distributor')!;
     await act(async () => {
-      select.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      select.focus();
+      setInputValue(select, 'acme');
     });
+    for (let i = 0; i < 100 && !document.body.querySelector('[role="option"]'); i += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    }
+    expect(searchParams).toEqual({ search: 'acme', limit: 20 });
     const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
       (el) => el.textContent?.includes('Acme Distribution'),
     )!;

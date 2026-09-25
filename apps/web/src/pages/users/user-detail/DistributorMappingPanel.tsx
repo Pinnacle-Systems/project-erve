@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { DistributorOption } from '@erve/types';
 import { ConfirmDialog } from '@erve/app-components';
-import { Badge, Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
+import { Badge, Button, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { apiClient } from '../../../lib/api-client.js';
-import type { AdminUserSummary, DistributorSummary } from '../../master-data/types.js';
+import { DistributorLookupField } from '../../master-data/DistributorLookupField.js';
+import type { AdminUserSummary } from '../../master-data/types.js';
 import { toErrorMessage } from './toErrorMessage.js';
 
 // A Distributor user is capped at exactly one distributor mapping by the
@@ -16,25 +17,11 @@ import { toErrorMessage } from './toErrorMessage.js';
 // rest.
 export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
   const queryClient = useQueryClient();
-  const [selectedDistributorId, setSelectedDistributorId] = useState('');
+  const [selectedDistributor, setSelectedDistributor] = useState<DistributorOption | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [error, setError] = useState('');
 
   const mapped = user.distributors[0];
-
-  const distributorsQuery = useQuery({
-    queryKey: ['distributors', { status: 'ACTIVE' }],
-    enabled: !mapped,
-    queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<DistributorSummary[]>>(
-        '/distributors',
-        {
-          params: { status: 'ACTIVE' },
-        },
-      );
-      return response.data.data;
-    },
-  });
 
   const invalidate = () =>
     Promise.all([
@@ -45,13 +32,13 @@ export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
   const assignMutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!selectedDistributorId) throw new Error('Select a distributor to assign');
+      if (!selectedDistributor) throw new Error('Select a distributor to assign');
       await apiClient.post(`/users/${user.id}/distributors`, {
-        distributorId: selectedDistributorId,
+        distributorId: selectedDistributor.id,
       });
     },
     onSuccess: async () => {
-      setSelectedDistributorId('');
+      setSelectedDistributor(null);
       await invalidate();
     },
     onError: (caught) => setError(toErrorMessage(caught, 'Unable to assign distributor')),
@@ -107,18 +94,14 @@ export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
               assignMutation.mutate();
             }}
           >
-            <SelectField
+            {/* Bounded search over ACTIVE distributors (GET /distributors/options),
+                not the whole Distributor master. */}
+            <DistributorLookupField
               label="Assign distributor"
-              value={selectedDistributorId || 'NONE'}
-              onValueChange={(value) => setSelectedDistributorId(value === 'NONE' ? '' : value)}
-            >
-              <SelectItem value="NONE">Select an active distributor</SelectItem>
-              {(distributorsQuery.data ?? []).map((distributor) => (
-                <SelectItem key={distributor.id} value={distributor.id}>
-                  {distributor.name} ({distributor.code})
-                </SelectItem>
-              ))}
-            </SelectField>
+              placeholder="Search an active distributor…"
+              value={selectedDistributor}
+              onChange={setSelectedDistributor}
+            />
             <Button type="submit" loading={assignMutation.isPending}>
               Assign
             </Button>
