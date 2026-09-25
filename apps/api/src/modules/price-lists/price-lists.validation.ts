@@ -62,3 +62,20 @@ export const priceListDistributorOptionsQuerySchema = z.object({
 export const priceListStyleOptionsQuerySchema = z.object({
   status: styleStatusSchema.optional(),
 });
+
+// Price List "Add Style" lookup (P1L2): a bounded server-side search over the
+// Styles this price list can still price, never the full Style master. No
+// status filter is accepted — eligibility (ACTIVE, not already priced here)
+// is the server's rule, not the caller's choice.
+export const PRICE_LIST_STYLE_CANDIDATES_DEFAULT_LIMIT = 20;
+export const PRICE_LIST_STYLE_CANDIDATES_MAX_LIMIT = 50;
+
+export const priceListStyleCandidatesQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(PRICE_LIST_STYLE_CANDIDATES_MAX_LIMIT)
+    .default(PRICE_LIST_STYLE_CANDIDATES_DEFAULT_LIMIT),
+});

@@ -40,3 +40,9 @@ export interface StyleOption {
   styleName: string;
   status: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
 }
+
+// A Style this DRAFT price list can still add (GET
+// /price-lists/:id/style-options): ACTIVE and not yet priced on it.
+export interface PriceListStyleCandidate extends StyleOption {
+  lmixNumber: string | null;
+}

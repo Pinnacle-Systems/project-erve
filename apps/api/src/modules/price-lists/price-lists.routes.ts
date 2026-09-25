@@ -8,6 +8,7 @@ import {
   createPriceListSchema,
   listPriceListsQuerySchema,
   priceListDistributorOptionsQuerySchema,
+  priceListStyleCandidatesQuerySchema,
   priceListStyleOptionsQuerySchema,
   priceLookupQuerySchema,
   updatePriceListLineSchema,
@@ -101,6 +102,22 @@ priceListsRouter.get(
   asyncHandler(async (req, res) => {
     const priceList = await priceListsService.getPriceListDetail(req.user!, req.params.id! as string);
     res.status(200).json(successResponse(priceList));
+  }),
+);
+
+// P1L2: the "Add Style" lookup — a bounded search over the Styles this price
+// list can still add. Gated like adding a line (manage), not like browsing.
+priceListsRouter.get(
+  '/:id/style-options',
+  canManagePriceLists,
+  asyncHandler(async (req, res) => {
+    const filters = priceListStyleCandidatesQuerySchema.parse(req.query);
+    const options = await priceListsService.listPriceListStyleCandidates(
+      req.user!,
+      req.params.id! as string,
+      filters,
+    );
+    res.status(200).json(successResponse(options));
   }),
 );
 
