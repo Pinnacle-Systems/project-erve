@@ -1,17 +1,15 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import type { PackingAuditQueueItem, PaginatedResult } from './types.js';
+import type { PackingAuditQueueItem } from './types.js';
 
 function auditStateBadge(state: PackingAuditQueueItem['auditState']) {
   if (state === 'INSPECTED') return <StatusBadge label="Inspected" tone="approved" />;
@@ -26,14 +24,12 @@ export function PackingAuditQueuePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const query = useQuery({
+  // Cursor-paginated: Load more reaches every open carton (100 is only the
+  // batch size). The PDF fetches every page itself.
+  const { query, items } = useCursorList<PackingAuditQueueItem>({
     queryKey: ['packing-audit-queue'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<PackingAuditQueueItem>>>('/packing-audit/queue', {
-        params: { limit: 100 },
-      });
-      return res.data.data.items;
-    },
+    path: '/packing-audit/queue',
+    params: { limit: 100 },
   });
 
   const generatePackingAuditListPdf = useCallback(async () => {
@@ -68,7 +64,7 @@ export function PackingAuditQueuePage() {
       <Panel title="Cartons" padding="none">
         <DataTable
           rowKey="id"
-          data={query.data ?? []}
+          data={items}
           emptyState={<EmptyState title="Nothing to inspect" description="No open cartons are currently awaiting Packing Audit." />}
           error={
             query.isError ? (
@@ -85,6 +81,7 @@ export function PackingAuditQueuePage() {
           ]}
         />
       </Panel>
+      <LoadMoreFooter {...loadMoreProps(query, items.length, ['carton', 'cartons'])} />
     </div>
   );
 }

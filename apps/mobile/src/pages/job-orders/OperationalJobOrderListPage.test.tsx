@@ -129,4 +129,49 @@ describe('mobile operational Job Order list', () => {
     expect(liveCard).toContain('Production Complete');
     expect(liveCard).toContain('Prepared 0 of 1008');
   });
+
+  it('follows the cursor with Load more, and never claims "none" while more pages exist', async () => {
+    const liveJob = (n: number, status = 'CONFIRMED_BY_FACTORY') =>
+      ({
+        id: `job-${n}`,
+        jobOrderNumber: `EIJO/26-27/${String(n).padStart(4, '0')}`,
+        status,
+        factory: { name: 'Factory One' },
+        sourceOrderSheetCount: 1,
+        orderedQuantityTotal: 10,
+        preparedQuantityTotal: 0,
+        historicalImport: null,
+        operationalState: { primaryDisplayState: { label: 'Sewing In Progress' } },
+      }) as unknown as JobOrderDetail;
+    const page = (items: JobOrderDetail[], nextCursor: string | null) => ({
+      data: { success: true, data: { items, pageInfo: { limit: 50, hasMore: nextCursor !== null, nextCursor } } },
+    });
+    vi.mocked(apiClient.get).mockImplementation(async (_url, config) =>
+      (config as { params?: { cursor?: string } } | undefined)?.params?.cursor === 'c1'
+        ? page([liveJob(2)], null)
+        : // A first page whose rows are all inactive must not read as "no active job orders".
+          page([liveJob(1, 'CLOSED')], 'c1'),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <QueryClientProvider client={queryClient}>
+            <OperationalJobOrderListPage />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    const loadMore = () => Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Load more');
+    await vi.waitFor(() => expect(loadMore()).toBeDefined());
+    expect(container.textContent).not.toContain('No active job orders match this view.');
+
+    act(() => loadMore()!.click());
+    await vi.waitFor(() => expect(container.textContent).toContain('EIJO/26-27/0002'));
+    expect(vi.mocked(apiClient.get).mock.calls.at(-1)?.[1]).toMatchObject({
+      params: { cursor: 'c1', recordOrigin: 'LIVE_WORKFLOW', limit: 50 },
+    });
+    expect(container.textContent).not.toContain('EIJO/26-27/0001');
+    expect(loadMore()).toBeUndefined();
+  });
 });

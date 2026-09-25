@@ -1,22 +1,39 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, JobOrderDetail, PaginatedResponse } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { ACTIVE_JOB_ORDER_QUERY_PARAMS, isActiveOperationalJobOrder } from './active-job-orders.js';
 
 export function OperationalJobOrderListPage() {
   const [search, setSearch] = useState('');
-  const query = useQuery({
-    queryKey: ['operational-job-orders', search],
-    queryFn: async () =>
+  // GET /job-orders is cursor-paginated; "Load more" follows nextCursor so
+  // every active Job Order is reachable. The active-status guard still runs
+  // per row, so a page can show fewer than 50 — Load more stays offered
+  // while the server has more, and "none" is only claimed once all loaded.
+  const query = useInfiniteQuery({
+    queryKey: ['operational-job-orders', 'list', search],
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) =>
       (
         await apiClient.get<ApiSuccessResponse<PaginatedResponse<JobOrderDetail>>>('/job-orders', {
-          params: { search: search || undefined, limit: 50, ...ACTIVE_JOB_ORDER_QUERY_PARAMS },
+          params: {
+            search: search || undefined,
+            limit: 50,
+            ...ACTIVE_JOB_ORDER_QUERY_PARAMS,
+            cursor: pageParam,
+          },
         })
       ).data.data,
+    getNextPageParam: (lastPage) =>
+      lastPage.pageInfo.hasMore && lastPage.pageInfo.nextCursor
+        ? lastPage.pageInfo.nextCursor
+        : undefined,
   });
-  const jobs = query.data?.items.filter(isActiveOperationalJobOrder) ?? [];
+  const jobs = useMemo(
+    () => query.data?.pages.flatMap((page) => page.items).filter(isActiveOperationalJobOrder) ?? [],
+    [query.data],
+  );
 
   return (
     <main className="min-h-full space-y-4 bg-background px-4 py-5">
@@ -52,7 +69,7 @@ export function OperationalJobOrderListPage() {
           </button>
         </section>
       )}
-      {!query.isLoading && !query.isError && jobs.length === 0 && (
+      {!query.isLoading && !query.isError && jobs.length === 0 && !query.hasNextPage && (
         <p className="rounded-lg border border-border bg-surface p-5">
           No active job orders match this view.
         </p>
@@ -89,9 +106,18 @@ export function OperationalJobOrderListPage() {
           </Link>
         ))}
       </div>
-      {query.data?.pageInfo.hasMore && (
-        <p className="text-sm text-muted-foreground">
-          Showing the 50 most recent records. Use search to find another job order.
+      {query.hasNextPage && (
+        <button
+          className="min-h-11 w-full rounded-md border border-border px-4"
+          onClick={() => void query.fetchNextPage()}
+          disabled={query.isFetchingNextPage}
+        >
+          {query.isFetchingNextPage ? 'Loading…' : 'Load more'}
+        </button>
+      )}
+      {query.isFetchNextPageError && (
+        <p className="text-sm text-danger" role="alert">
+          Unable to load more job orders. Try again.
         </p>
       )}
     </main>
