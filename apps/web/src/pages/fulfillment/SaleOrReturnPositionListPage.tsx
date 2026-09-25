@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
+import { isAxiosError } from 'axios';
+import type { ApiSuccessResponse, DistributorOption } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
-import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -14,13 +15,12 @@ import {
   needsSaleOrReturnPositionDistributorSelector,
 } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import type { Distributor, SaleOrReturnPositionRow } from './types.js';
+import { DistributorLookupField } from '../master-data/DistributorLookupField.js';
+import type { SaleOrReturnPositionRow } from './types.js';
 
 function rowKey(row: SaleOrReturnPositionRow) {
   return `${row.erveDispatchId}:${row.saleOrderLineId}`;
 }
-
-const NO_DISTRIBUTOR_SELECTED = 'NONE';
 
 // UXAUTH-016: ADMIN reads Sale-or-Return positions broadly across every
 // Distributor (see needsSaleOrReturnPositionDistributorSelector) and has no
@@ -53,32 +53,46 @@ export function SaleOrReturnPositionListPage() {
   const [returnReason, setReturnReason] = useState('');
   const [returnFormError, setReturnFormError] = useState('');
 
-  const distributorOptionsQuery = useQuery({
-    queryKey: ['distributors', 'active'],
-    enabled: needsSelector,
+  // The URL's Distributor, resolved by id (GET /distributors/options/:id)
+  // rather than by downloading every Distributor. A 404 means the id is
+  // unknown — a stale/bookmarked/hand-edited link, not a load failure.
+  const distributorOptionQuery = useQuery({
+    queryKey: ['distributor-option', rawDistributorId],
+    enabled: needsSelector && Boolean(rawDistributorId),
+    retry: false,
+    staleTime: 30_000,
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Distributor[]>>('/distributors', {
-        params: { status: 'ACTIVE' },
-      });
-      return res.data.data;
+      try {
+        const res = await apiClient.get<ApiSuccessResponse<DistributorOption>>(
+          `/distributors/options/${encodeURIComponent(rawDistributorId!)}`,
+        );
+        return res.data.data;
+      } catch (caught) {
+        if (isAxiosError(caught) && caught.response?.status === 404) return null;
+        throw caught;
+      }
     },
   });
 
-  // A URL-provided distributorId is only trusted once it's confirmed against
-  // the loaded option set — a stale/bookmarked/hand-edited id must never be
-  // sent to the positions endpoint or treated as "no selection".
-  const selectedDistributor = needsSelector
-    ? (distributorOptionsQuery.data ?? []).find((distributor) => distributor.id === rawDistributorId)
-    : undefined;
+  // A URL-provided distributorId is only trusted once it's confirmed as a
+  // real ACTIVE Distributor (the same set the selector offers) — a
+  // stale/bookmarked/hand-edited id must never be sent to the positions
+  // endpoint or treated as "no selection".
+  const resolvedDistributor = needsSelector && rawDistributorId ? distributorOptionQuery.data : undefined;
+  const selectedDistributor =
+    resolvedDistributor && resolvedDistributor.status === 'ACTIVE' ? resolvedDistributor : undefined;
   const selectedDistributorId = needsSelector ? selectedDistributor?.id : undefined;
-  const hasUnresolvedSelector = needsSelector && (distributorOptionsQuery.isLoading || distributorOptionsQuery.isError);
+  const hasUnresolvedSelector =
+    needsSelector && Boolean(rawDistributorId) && (distributorOptionQuery.isLoading || distributorOptionQuery.isError);
   const hasStaleDistributorId = needsSelector && Boolean(rawDistributorId) && !hasUnresolvedSelector && !selectedDistributor;
   const hasValidDistributorContext = !needsSelector || Boolean(selectedDistributorId);
 
-  const handleDistributorChange = (value: string) => {
+  const handleDistributorChange = (distributor: DistributorOption | null) => {
     const next = new URLSearchParams(searchParams);
-    if (value && value !== NO_DISTRIBUTOR_SELECTED) {
-      next.set('distributorId', value);
+    if (distributor) {
+      // The picked option is already a resolved ACTIVE Distributor.
+      queryClient.setQueryData(['distributor-option', distributor.id], distributor);
+      next.set('distributorId', distributor.id);
     } else {
       next.delete('distributorId');
     }
@@ -209,23 +223,17 @@ export function SaleOrReturnPositionListPage() {
 
       {needsSelector && (
         <Panel padding="sm">
-          {distributorOptionsQuery.isError ? (
-            <ErrorState title="Unable to load Distributors" description="Could not load the list of Distributors to choose from." />
+          {distributorOptionQuery.isError ? (
+            <ErrorState title="Unable to load Distributor" description="Could not load the Distributor in this link." />
           ) : (
-            <SelectField
+            <DistributorLookupField
               label="Distributor"
-              value={rawDistributorId ?? NO_DISTRIBUTOR_SELECTED}
-              onValueChange={handleDistributorChange}
+              placeholder="Select a Distributor"
+              value={selectedDistributor ?? null}
+              onChange={handleDistributorChange}
               width="md"
-              disabled={distributorOptionsQuery.isLoading}
-            >
-              <SelectItem value={NO_DISTRIBUTOR_SELECTED}>Select a Distributor</SelectItem>
-              {(distributorOptionsQuery.data ?? []).map((distributor) => (
-                <SelectItem key={distributor.id} value={distributor.id}>
-                  {distributor.code} — {distributor.name}
-                </SelectItem>
-              ))}
-            </SelectField>
+              disabled={hasUnresolvedSelector}
+            />
           )}
         </Panel>
       )}
@@ -246,7 +254,7 @@ export function SaleOrReturnPositionListPage() {
         />
       )}
 
-      {needsSelector && distributorOptionsQuery.isLoading && <LoadingState label="Loading Distributors" />}
+      {hasUnresolvedSelector && distributorOptionQuery.isLoading && <LoadingState label="Loading Distributor" />}
 
       {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
       {returnFormError && <ValidationMessage tone="error">{returnFormError}</ValidationMessage>}
