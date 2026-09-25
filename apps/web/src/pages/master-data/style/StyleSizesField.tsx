@@ -1,8 +1,8 @@
 import { Checkbox, FieldGroup } from '@erve/primitives';
-import type { Size } from '../types.js';
+import type { SizeOption } from '../types.js';
 
 export interface StyleSizesFieldProps {
-  sizes: Size[];
+  sizes: SizeOption[];
   selectedSizeIds: string[];
   onChange: (sizeIds: string[]) => void;
 }

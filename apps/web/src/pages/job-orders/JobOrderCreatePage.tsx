@@ -7,7 +7,7 @@ import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import type { Factory, ProcessFlow, Style } from '../master-data/types.js';
+import type { FactoryOption, ProcessFlowOption, Style } from '../master-data/types.js';
 import type { PurchaseOrder } from '../purchase-orders/types.js';
 import { OrderSheetMultiSelectField } from './OrderSheetMultiSelectField.js';
 import type { JobOrder } from './types.js';
@@ -90,19 +90,18 @@ export function JobOrderCreatePage() {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const factoriesQuery = useQuery({
-    queryKey: ['factories', 'active'],
+    queryKey: ['factories', 'options'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
-        params: { status: 'ACTIVE' },
-      });
+      const res = await apiClient.get<ApiSuccessResponse<FactoryOption[]>>('/factories/options');
       return res.data.data;
     },
   });
 
   const processFlowsQuery = useQuery({
-    queryKey: ['process-flows'],
+    queryKey: ['process-flows', 'options'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<ProcessFlow[]>>('/process-flows');
+      // ACTIVE versions only, with runtimeSupport (GET /process-flows/options).
+      const res = await apiClient.get<ApiSuccessResponse<ProcessFlowOption[]>>('/process-flows/options');
       return res.data.data;
     },
   });

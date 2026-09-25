@@ -68,6 +68,15 @@ processFlowVersionsRouter.use(requireAuth);
 distributorsRouter.use(requireAuth);
 seasonsRouter.use(requireAuth);
 
+// Registered before '/:id'. PAG7 selector options — see the service.
+seasonsRouter.get(
+  '/options',
+  canManageMasterData,
+  asyncHandler(async (_req, res) => {
+    res.status(200).json(successResponse(await masterDataService.listSeasonOptions()));
+  }),
+);
+
 seasonsRouter.get(
   '/',
   canManageMasterData,
@@ -423,6 +432,14 @@ stylesRouter.patch(
 );
 
 sizesRouter.get(
+  '/options',
+  canManageMasterData,
+  asyncHandler(async (_req, res) => {
+    res.status(200).json(successResponse(await masterDataService.listSizeOptions()));
+  }),
+);
+
+sizesRouter.get(
   '/',
   canManageMasterData,
   asyncHandler(async (req, res) => {
@@ -472,6 +489,14 @@ sizesRouter.patch(
       status,
     );
     res.status(200).json(successResponse(size));
+  }),
+);
+
+factoriesRouter.get(
+  '/options',
+  canViewFactories,
+  asyncHandler(async (req, res) => {
+    res.status(200).json(successResponse(await masterDataService.listFactoryOptions(req.user!)));
   }),
 );
 
@@ -538,6 +563,14 @@ factoriesRouter.patch(
       status,
     );
     res.status(200).json(successResponse(factory));
+  }),
+);
+
+processFlowsRouter.get(
+  '/options',
+  canManageMasterData,
+  asyncHandler(async (_req, res) => {
+    res.status(200).json(successResponse(await masterDataService.listProcessFlowOptions()));
   }),
 );
 

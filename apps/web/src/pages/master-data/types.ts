@@ -254,3 +254,18 @@ export interface QualityFormVersion extends QualityFormVersionSummary {
   sections: QualityFormSection[];
   updatedAt: string;
 }
+
+// Slim selector options (PAG7) — GET /factories|sizes|seasons|process-flows|
+// quality-forms/options. Each is exactly what its SelectField consumers read,
+// so selectors no longer depend on the (paginated) master list endpoints.
+export type FactoryOption = Pick<Factory, 'id' | 'code' | 'name' | 'status'>;
+export type SizeOption = Pick<Size, 'id' | 'code' | 'label' | 'sortOrder' | 'status'>;
+export type SeasonOption = Pick<Season, 'id' | 'code' | 'name' | 'displayName' | 'status'>;
+export interface ProcessFlowOption extends Pick<ProcessFlow, 'id' | 'code' | 'name' | 'status'> {
+  versions: Array<
+    Pick<ProcessFlow['versions'][number], 'id' | 'versionNumber' | 'status' | 'runtimeSupport'>
+  >;
+}
+export interface QualityFormOption extends Pick<QualityForm, 'id' | 'code' | 'name' | 'status'> {
+  versions: Array<Pick<QualityFormVersionSummary, 'id' | 'versionNumber' | 'status'>>;
+}

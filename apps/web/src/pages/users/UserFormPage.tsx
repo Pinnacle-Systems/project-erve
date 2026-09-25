@@ -16,7 +16,7 @@ import {
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import type { AdminUserSummary, Factory } from '../master-data/types.js';
+import type { AdminUserSummary, FactoryOption } from '../master-data/types.js';
 import { PasswordField } from './PasswordField.js';
 
 function toErrorMessage(caught: unknown, fallback: string): string {
@@ -53,12 +53,10 @@ export function UserFormPage() {
   });
 
   const factoriesQuery = useQuery({
-    queryKey: ['factories', { status: 'ACTIVE' }],
+    queryKey: ['factories', 'options'],
     enabled: needsFactory,
     queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
-        params: { status: 'ACTIVE' },
-      });
+      const response = await apiClient.get<ApiSuccessResponse<FactoryOption[]>>('/factories/options');
       return response.data.data;
     },
   });

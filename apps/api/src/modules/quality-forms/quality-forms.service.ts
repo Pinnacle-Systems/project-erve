@@ -81,6 +81,28 @@ function uniqueError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
+// Quality Form Version selector options (PAG7): ACTIVE forms with only their
+// PUBLISHED versions — exactly what the Process Stage editor offers — slim.
+// Keeps the selector off GET /quality-forms.
+export async function listQualityFormOptions() {
+  const forms = await prisma.qualityForm.findMany({
+    where: { status: 'ACTIVE' },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      status: true,
+      versions: {
+        where: { status: 'PUBLISHED' },
+        select: { id: true, versionNumber: true, status: true },
+        orderBy: { versionNumber: 'desc' },
+      },
+    },
+    orderBy: { code: 'asc' },
+  });
+  return forms;
+}
+
 export async function listQualityForms(filters: {
   search?: string;
   status?: 'ACTIVE' | 'INACTIVE';

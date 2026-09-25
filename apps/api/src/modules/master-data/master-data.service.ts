@@ -344,6 +344,20 @@ export async function listSeasons(filters: { status?: string; search?: string; f
   });
   return seasons.map(toSeasonView);
 }
+// Season selector options (PAG7): every Season, any status — the Style form
+// offers ACTIVE Seasons plus a style's saved (possibly INACTIVE) Season —
+// in the list's order, as a slim row. Keeps the selector off GET /seasons.
+export async function listSeasonOptions() {
+  const seasons = await prisma.season.findMany({
+    include: seasonInclude,
+    orderBy: [{ financialYear: { startDate: 'desc' } }, { name: 'asc' }, { id: 'asc' }],
+  });
+  return seasons.map((season) => {
+    const view = toSeasonView(season);
+    return { id: view.id, code: view.code, name: view.name, displayName: view.displayName, status: view.status };
+  });
+}
+
 export async function getSeasonById(id: string) {
   const season = await prisma.season.findUnique({ where: { id }, include: seasonInclude });
   if (!season) throw HttpError.notFound('Season not found');
@@ -589,6 +603,16 @@ export async function listSizes(filters: { status?: string; search?: string }) {
   return sizes;
 }
 
+// Size selector options (PAG7): ACTIVE Sizes only (what the Style form
+// offers), slim, in the list's order. Keeps the selector off GET /sizes.
+export async function listSizeOptions() {
+  return prisma.size.findMany({
+    where: { status: 'ACTIVE' },
+    select: { id: true, code: true, label: true, sortOrder: true, status: true },
+    orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
+  });
+}
+
 export async function getSizeById(id: string) {
   const size = await prisma.size.findUnique({
     where: { id },
@@ -725,6 +749,22 @@ export async function listFactories(
     orderBy: { name: 'asc' },
   });
   return factories;
+}
+
+// Factory selector options (PAG7): ACTIVE Factories (what every Factory
+// SelectField asks for), slim, with listFactories' FACTORY_USER scoping.
+// Keeps the selectors off GET /factories.
+export async function listFactoryOptions(actor: CurrentUser) {
+  const factoryIds =
+    actor.roles.includes('FACTORY_USER') &&
+    !actor.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER')
+      ? actor.factoryIds
+      : undefined;
+  return prisma.factory.findMany({
+    where: { id: factoryIds ? { in: factoryIds } : undefined, status: 'ACTIVE' },
+    select: { id: true, code: true, name: true, status: true },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+  });
 }
 
 export async function getFactoryById(actor: CurrentUser, id: string) {
@@ -1085,6 +1125,31 @@ export async function listProcessFlows() {
     orderBy: { code: 'asc' },
   });
   return flows.map(toProcessFlowView);
+}
+
+// Process Flow Version selector options (PAG7): every flow with only its
+// ACTIVE versions — exactly what the Job Order create selector offers — each
+// with runtimeSupport so unsupported versions stay visible but disabled.
+// Keeps the selector off GET /process-flows.
+export async function listProcessFlowOptions() {
+  const flows = await prisma.processFlow.findMany({
+    include: {
+      versions: { ...processFlowInclude.versions, where: { status: 'ACTIVE' } },
+    },
+    orderBy: { code: 'asc' },
+  });
+  return flows.map((flow) => ({
+    id: flow.id,
+    code: flow.code,
+    name: flow.name,
+    status: flow.status,
+    versions: flow.versions.map((version) => ({
+      id: version.id,
+      versionNumber: version.versionNumber,
+      status: version.status,
+      runtimeSupport: evaluateProcessFlowRuntimeSupport(version),
+    })),
+  }));
 }
 
 export async function getProcessFlowById(id: string) {

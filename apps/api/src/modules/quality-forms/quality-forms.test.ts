@@ -320,3 +320,37 @@ describe('Quality Form Master API', () => {
     expect((await request(app).get('/quality-forms')).status).toBe(401);
   });
 });
+
+// PAG7: the Process Stage editor's selector options.
+describe('GET /quality-forms/options (PAG7)', () => {
+  it('returns ACTIVE forms with only their PUBLISHED versions, slim', async () => {
+    const { token } = await auth();
+    const active = await create(token, { ...payload, code: 'OPT_ACTIVE' });
+    const inactive = await create(token, { ...payload, code: 'OPT_INACTIVE' });
+    expect(active.status).toBe(201);
+    await prisma.qualityFormVersion.updateMany({
+      where: { qualityFormId: { in: [active.body.data.id, inactive.body.data.id] } },
+      data: { status: 'PUBLISHED', publishedAt: new Date() },
+    });
+    await prisma.qualityForm.update({ where: { id: inactive.body.data.id }, data: { status: 'INACTIVE' } });
+
+    const res = await request(app).get('/quality-forms/options').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((form: { code: string }) => form.code)).toEqual(['OPT_ACTIVE']);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'status', 'versions']);
+    expect(res.body.data[0].versions).toEqual([
+      { id: active.body.data.versions[0].id, versionNumber: 1, status: 'PUBLISHED' },
+    ]);
+  });
+
+  it('excludes DRAFT versions and follows the Quality Form permission', async () => {
+    const { token } = await auth();
+    await create(token, { ...payload, code: 'OPT_DRAFT' });
+    const res = await request(app).get('/quality-forms/options').set('Authorization', `Bearer ${token}`);
+    expect(res.body.data).toEqual([expect.objectContaining({ code: 'OPT_DRAFT', versions: [] })]);
+
+    const { token: qa } = await auth(['QA_USER']);
+    expect((await request(app).get('/quality-forms/options').set('Authorization', `Bearer ${qa}`)).status).toBe(403);
+  });
+});

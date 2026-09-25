@@ -5,7 +5,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import type { ProcessFlowActivity, QualityForm } from './types.js';
+import type { ProcessFlowActivity, QualityFormOption } from './types.js';
 
 export interface DraftStage {
   key: string;
@@ -90,9 +90,10 @@ export function ProcessStageEditor({
   error?: string;
 }) {
   const qualityFormsQuery = useQuery({
-    queryKey: ['quality-forms', 'process-flow-selector'],
+    queryKey: ['quality-forms', 'options'],
     queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<QualityForm[]>>('/quality-forms');
+      // ACTIVE forms with PUBLISHED versions only (GET /quality-forms/options).
+      const response = await apiClient.get<ApiSuccessResponse<QualityFormOption[]>>('/quality-forms/options');
       return response.data.data;
     },
   });

@@ -1809,3 +1809,103 @@ describe('Style/Distributor list pagination (PAG5)', () => {
     expect((await request(app).get('/distributors').query({ limit: 101 }).set('Authorization', `Bearer ${token}`)).status).toBe(400);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PAG7 — selector option endpoints for the small masters
+// ---------------------------------------------------------------------------
+
+describe('selector option endpoints (PAG7)', () => {
+  async function tokenFor(role: 'ADMIN' | 'MERCHANDISER' | 'SENIOR_MANAGEMENT' | 'FACTORY_USER') {
+    const { token } = await createTestUserAndToken({
+      email: `${role.toLowerCase()}-${createId().slice(-6)}@test.local`,
+      password: 'test-password',
+      roles: [role],
+    });
+    return token;
+  }
+
+  function get(token: string, path: string) {
+    return request(app).get(path).set('Authorization', `Bearer ${token}`);
+  }
+
+  it('GET /factories/options: ACTIVE Factories only, slim, name order, under the Factory view permission', async () => {
+    const token = await tokenFor('MERCHANDISER');
+    await createTestFactory({ code: 'F-B', name: 'Bravo Mills' });
+    await createTestFactory({ code: 'F-A', name: 'Alpha Mills' });
+    const closed = await createTestFactory({ code: 'F-X', name: 'Closed Mills' });
+    await prisma.factory.update({ where: { id: closed.id }, data: { status: 'INACTIVE' } });
+
+    const res = await get(token, '/factories/options');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((f: { code: string }) => f.code)).toEqual(['F-A', 'F-B']);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'name', 'status']);
+    expect((await get(await tokenFor('SENIOR_MANAGEMENT'), '/factories/options')).status).toBe(403);
+  });
+
+  it('GET /sizes/options: ACTIVE Sizes only, in sortOrder', async () => {
+    const token = await tokenFor('ADMIN');
+    const age3 = await createSize('AGE_3');
+    const age1 = await prisma.size.create({
+      data: { id: createId(), code: 'AGE_1', label: 'AGE 1', sizeType: 'AGE', sortOrder: 1 },
+    });
+    await prisma.size.create({
+      data: { id: createId(), code: 'AGE_9', label: 'AGE 9', sizeType: 'AGE', sortOrder: 9, status: 'INACTIVE' },
+    });
+
+    const res = await get(token, '/sizes/options');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((s: { id: string }) => s.id)).toEqual([age1.id, age3.id]);
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'id', 'label', 'sortOrder', 'status']);
+    expect((await get(await tokenFor('SENIOR_MANAGEMENT'), '/sizes/options')).status).toBe(403);
+  });
+
+  it('GET /seasons/options: every Season including INACTIVE (a saved Style keeps its Season), slim with displayName', async () => {
+    const token = await tokenFor('ADMIN');
+    const active = await createActiveSeason({ code: 'SS27', name: 'Spring' });
+    const inactive = await createActiveSeason({ code: 'AW24', name: 'Autumn' });
+    await prisma.season.update({ where: { id: inactive.id }, data: { status: 'INACTIVE' } });
+
+    const res = await get(token, '/seasons/options');
+
+    expect(res.status).toBe(200);
+    const ids = res.body.data.map((s: { id: string }) => s.id);
+    expect(ids).toEqual(expect.arrayContaining([active.id, inactive.id]));
+    expect(Object.keys(res.body.data[0]).sort()).toEqual(['code', 'displayName', 'id', 'name', 'status']);
+    expect((await get(await tokenFor('SENIOR_MANAGEMENT'), '/seasons/options')).status).toBe(403);
+  });
+
+  it('GET /process-flows/options: each flow with only its ACTIVE versions and their runtimeSupport', async () => {
+    const token = await tokenFor('ADMIN');
+    const created = await request(app)
+      .post('/process-flows')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: 'OPT', name: 'Options Flow', stages: [{ sequence: 1, name: 'Cutting' }] });
+    expect(created.status).toBe(201);
+    const flowId = created.body.data.id as string;
+    const [v1] = await prisma.processFlowVersion.findMany({ where: { processFlowId: flowId } });
+    await prisma.processFlowVersion.update({ where: { id: v1!.id }, data: { status: 'ACTIVE' } });
+    const retired = await prisma.processFlowVersion.create({
+      data: { id: createId(), processFlowId: flowId, versionNumber: 2, status: 'RETIRED' },
+    });
+
+    const res = await get(token, '/process-flows/options');
+
+    expect(res.status).toBe(200);
+    const flow = res.body.data.find((f: { id: string }) => f.id === flowId);
+    expect(flow.versions.map((v: { id: string }) => v.id)).toEqual([v1!.id]);
+    expect(flow.versions.map((v: { id: string }) => v.id)).not.toContain(retired.id);
+    expect(flow.versions[0]).toHaveProperty('runtimeSupport.supported');
+    expect((await get(await tokenFor('SENIOR_MANAGEMENT'), '/process-flows/options')).status).toBe(403);
+  });
+
+  it("the option routes are not swallowed by '/:id'", async () => {
+    const token = await tokenFor('ADMIN');
+    for (const path of ['/factories/options', '/sizes/options', '/seasons/options', '/process-flows/options']) {
+      const res = await get(token, path);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.data)).toBe(true);
+    }
+  });
+});

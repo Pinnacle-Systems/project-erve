@@ -107,9 +107,9 @@ export function SaleOrderFormPage() {
   });
 
   const factoriesQuery = useQuery({
-    queryKey: ['factories', 'active'],
+    queryKey: ['factories', 'options'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', { params: { status: 'ACTIVE' } });
+      const res = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories/options');
       return res.data.data;
     },
   });

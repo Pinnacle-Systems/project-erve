@@ -1,6 +1,6 @@
 import { FormSection, Stack } from '@erve/layout';
 import { Button, SelectField, SelectItem, TextField } from '@erve/primitives';
-import type { Factory } from '../types.js';
+import type { FactoryOption } from '../types.js';
 
 export interface StyleFactoryMappingRow {
   /** Stable per-row id, generated once when the row is added — never the array index, so removing
@@ -12,7 +12,7 @@ export interface StyleFactoryMappingRow {
 
 export interface StyleFactoryMappingsFieldProps {
   mappings: StyleFactoryMappingRow[];
-  availableFactories: Factory[];
+  availableFactories: FactoryOption[];
   onChange: (mappings: StyleFactoryMappingRow[]) => void;
 }
 

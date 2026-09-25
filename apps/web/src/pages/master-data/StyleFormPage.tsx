@@ -17,7 +17,7 @@ import {
   type StyleFactoryMappingRow,
 } from './style/StyleFactoryMappingsField.js';
 import { cleanPayload, emptyForm, validateStyleForm } from './style/style-form-state.js';
-import type { Factory, Season, Size, Style } from './types.js';
+import type { FactoryOption, SeasonOption, SizeOption, Style } from './types.js';
 
 export function StyleFormPage() {
   const navigate = useNavigate();
@@ -45,24 +45,22 @@ export function StyleFormPage() {
     },
   });
   const sizesQuery = useQuery({
-    queryKey: ['sizes', 'active'],
+    queryKey: ['sizes', 'options'],
     queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Size[]>>('/sizes', {
-        params: { status: 'ACTIVE' },
-      });
+      const response = await apiClient.get<ApiSuccessResponse<SizeOption[]>>('/sizes/options');
       return response.data.data;
     },
   });
   const factoriesQuery = useQuery({
-    queryKey: ['factories', 'active'],
+    queryKey: ['factories', 'options'],
     queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
-        params: { status: 'ACTIVE' },
-      });
+      const response = await apiClient.get<ApiSuccessResponse<FactoryOption[]>>('/factories/options');
       return response.data.data;
     },
   });
-  const seasonsQuery = useQuery({ queryKey: ['seasons'], queryFn: async () => (await apiClient.get<ApiSuccessResponse<Season[]>>('/seasons')).data.data });
+  // Every Season, any status (GET /seasons/options): the identity section offers ACTIVE ones plus
+  // this Style's saved Season, even if INACTIVE.
+  const seasonsQuery = useQuery({ queryKey: ['seasons', 'options'], queryFn: async () => (await apiClient.get<ApiSuccessResponse<SeasonOption[]>>('/seasons/options')).data.data });
 
   // Edit mode only: true once the form has been hydrated from the loaded record and is safe to
   // reveal. Gating on this (see the render-time check below), not just styleQuery.isLoading, is

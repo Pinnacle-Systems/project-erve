@@ -6,7 +6,7 @@ import { ConfirmDialog } from '@erve/app-components';
 import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { apiClient } from '../../../lib/api-client.js';
-import type { AdminUserSummary, Factory } from '../../master-data/types.js';
+import type { AdminUserSummary, FactoryOption } from '../../master-data/types.js';
 import { toErrorMessage } from './toErrorMessage.js';
 
 export function RolesPanel({
@@ -25,12 +25,10 @@ export function RolesPanel({
   const needsFactory = selectedRole === 'FACTORY_USER';
 
   const factoriesQuery = useQuery({
-    queryKey: ['factories', { status: 'ACTIVE' }],
+    queryKey: ['factories', 'options'],
     enabled: needsFactory,
     queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Factory[]>>('/factories', {
-        params: { status: 'ACTIVE' },
-      });
+      const response = await apiClient.get<ApiSuccessResponse<FactoryOption[]>>('/factories/options');
       return response.data.data;
     },
   });
