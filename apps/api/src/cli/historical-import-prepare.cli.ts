@@ -8,8 +8,9 @@
 //     --ss26-dir "C:\Users\kalay\Downloads\reerveindiass26po" \
 //     --output "C:\Users\kalay\workspace\project-erve\.artifacts\historical-import\AW25-SS26"
 import { HistoricalImportPrepareError, runHistoricalImportPrepare } from './historical-import-prepare.js';
+import { PrepareOutputError } from '../modules/historical-import/staging.service.js';
 
-function parseArgs(argv: string[]): { aw25Dir: string; ss26Dir: string; outputDir: string } {
+function parseArgs(argv: string[]): { aw25Dir: string; ss26Dir: string; outputDir: string; sourceOverridesPath?: string } {
   const get = (flag: string): string | undefined => {
     const index = argv.indexOf(flag);
     return index >= 0 ? argv[index + 1] : undefined;
@@ -20,7 +21,7 @@ function parseArgs(argv: string[]): { aw25Dir: string; ss26Dir: string; outputDi
   if (!aw25Dir) throw new HistoricalImportPrepareError('--aw25-dir is required');
   if (!ss26Dir) throw new HistoricalImportPrepareError('--ss26-dir is required');
   if (!outputDir) throw new HistoricalImportPrepareError('--output is required');
-  return { aw25Dir, ss26Dir, outputDir };
+  return { aw25Dir, ss26Dir, outputDir, sourceOverridesPath: get('--source-overrides') };
 }
 
 async function main(): Promise<void> {
@@ -39,6 +40,11 @@ async function main(): Promise<void> {
   console.log(`  parse-report.json:    ${result.parseReportPath}`);
   console.log(`  images:               ${result.imagesDir}`);
   console.log(`  aggregate manifest SHA-256: ${result.manifest.aggregateSha256}`);
+  console.log(`  images: ${JSON.stringify(result.imageOutcomes)}`);
+  for (const c of result.imageCollisions) {
+    console.log(`  IMAGE COLLISION (REVIEW_REQUIRED, not overwritten): ${c.sourceFileName} printed=${c.printedLegacyReference} -> ${c.collision.targetRelativePath}`);
+  }
+  if (result.imageCollisions.length > 0) process.exitCode = 1;
   console.log('');
   for (const season of result.numbering.bySeason) {
     console.log(
@@ -52,10 +58,10 @@ async function main(): Promise<void> {
 
 main()
   .then(() => {
-    process.exitCode = 0;
+    process.exitCode ??= 0;
   })
   .catch((error: unknown) => {
-    if (error instanceof HistoricalImportPrepareError) {
+    if (error instanceof HistoricalImportPrepareError || error instanceof PrepareOutputError) {
       console.error(error.message);
     } else {
       console.error('Unexpected error while preparing the historical import batch:');

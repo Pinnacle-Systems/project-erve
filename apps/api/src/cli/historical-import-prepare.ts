@@ -4,11 +4,12 @@
 // source-staging.json, source-manifest.json, a parse report, and the
 // extracted image files. NO database access, NO write-service reference —
 // this file never imports historical-import.service.ts.
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { processHistoricalPurchaseOrderPdf } from '../modules/historical-import/historical-po-pdf-processor.js';
-import { writePrepareOutputs, type PrepareOutput } from '../modules/historical-import/staging.service.js';
+import { writePrepareOutputs, type ImageOutputIdentityResolver, type PrepareOutput } from '../modules/historical-import/staging.service.js';
+import { parseSourceOverridesArtifact, resolveApprovedOverridesForRecord } from '../modules/historical-import/source-overrides.js';
 
 export class HistoricalImportPrepareError extends Error {}
 
@@ -24,6 +25,19 @@ export interface RunHistoricalImportPrepareOptions {
   aw25Dir: string;
   ss26Dir: string;
   outputDir: string;
+  /** Approved checksum-bound source-overrides.json — makes images name by the EFFECTIVE legacy reference, not the printed one. */
+  sourceOverridesPath?: string;
+}
+
+/** Effective legacy reference = an APPROVED checksum-bound override when one exists, else the printed value. */
+async function effectiveIdentityResolver(sourceOverridesPath: string): Promise<ImageOutputIdentityResolver> {
+  const entries = parseSourceOverridesArtifact(JSON.parse(await readFile(sourceOverridesPath, 'utf8')));
+  return (parsed) => {
+    const override = resolveApprovedOverridesForRecord(entries, parsed).find((o) => o.field === 'legacyReferenceNumber');
+    if (override && typeof override.approvedValue === 'string') return { identity: override.approvedValue, source: 'EFFECTIVE_OVERRIDE' };
+    if (parsed.legacyReferenceNumber.value) return { identity: parsed.legacyReferenceNumber.value, source: 'PRINTED_REFERENCE' };
+    return { identity: parsed.sourceFileName.replace(/\.pdf$/i, ''), source: 'SOURCE_FILE_NAME' };
+  };
 }
 
 export async function runHistoricalImportPrepare(options: RunHistoricalImportPrepareOptions): Promise<PrepareOutput> {
@@ -54,5 +68,6 @@ export async function runHistoricalImportPrepare(options: RunHistoricalImportPre
   return writePrepareOutputs(options.outputDir, items, {
     parserVersion: '1.0.0',
     parserGitCommitSha: resolveParserGitCommitSha(),
+    resolveImageIdentity: options.sourceOverridesPath ? await effectiveIdentityResolver(options.sourceOverridesPath) : undefined,
   });
 }
