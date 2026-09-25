@@ -13,17 +13,20 @@
 //   - Sizes: Production's age sizes are coded "3Y".."14Y" (Dev: AGE_3..
 //     AGE_14). Source "3".."14" map to Production's existing "3Y".."14Y";
 //     no Size is ever created.
-//   - Process flow: Production's only flow is ERVE_PRODUCTION_QUALITY v1.
-//     The historical Job Orders pin Production's existing v1. Its stages
-//     equal the approved Dev v3 in every fingerprinted field EXCEPT one,
-//     found by the rehearsal preflight: stage 6 (INLINE INSPECTION) uses the
-//     INLINE quality form v1 in Production vs v2 in Dev. That single
-//     deviation is listed explicitly below; the expected Production
-//     fingerprint is the approved structure with exactly that substitution,
-//     so any OTHER stage difference still fails closed. (Historical Job
-//     Orders never execute QA, so the Inline form version is inert for them.)
+//   - Process flow: Production's ERVE_PRODUCTION_QUALITY v1 carried an older
+//     FINAL Quality Form than the canonical definition. Per the user's
+//     follow-up decision, Production's flow is upgraded with the canonical,
+//     audited quality-bootstrap installer (FINAL v2 + flow v2; v1 retired,
+//     never deleted; existing Job Orders keep their pinned v1). The
+//     historical Job Orders pin Production's ACTIVE v2, accepted only if its
+//     CONTENT structure fingerprint equals the approved Dev v3's — which the
+//     Production-clone rehearsal proved it does exactly. Quality Form version
+//     numbers differ between environments (Production INLINE v1 has the same
+//     content as Dev INLINE v2), so they are deliberately not compared.
 // The DEV profile reproduces the original H2A/H2B resolution, so the same
 // bundle can be preflighted against erve_dev (expected: all EXACT).
+
+import { H3A_APPROVED_DATASET } from './bundle.js';
 
 export interface FactoryTarget {
   code: string;
@@ -32,20 +35,14 @@ export interface FactoryTarget {
   createIfMissing: boolean;
 }
 
-export interface AcceptedStageDeviation {
-  sequence: number;
-  field: 'qualityFormVersionNumber';
-  approvedValue: number | null;
-  targetValue: number | null;
-}
-
 export interface TargetProfile {
   name: 'production' | 'dev';
   decision: string;
   factories: Record<string, FactoryTarget>;
   /** Printed source size code -> this environment's existing Size.code. */
   sizeCodeBySource: Record<string, string>;
-  processFlow: { processFlowCode: string; versionNumber: number; acceptedStageDeviations: AcceptedStageDeviation[] };
+  /** The ACTIVE flow version to pin; it must match the approved content structure fingerprint. */
+  processFlow: { processFlowCode: string; versionNumber: number; contentStructureFingerprint: string };
 }
 
 const AGE_SIZES = ['3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14'];
@@ -53,7 +50,7 @@ const AGE_SIZES = ['3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '1
 export const TARGET_PROFILES: Record<TargetProfile['name'], TargetProfile> = {
   production: {
     name: 'production',
-    decision: 'User decision 2026-09-25: create Clifton/Mass Knit factories; map sizes to Production 3Y..14Y; use existing Production process flow (v1, stage-structure-equivalent to approved v3).',
+    decision: 'User decisions 2026-09-25: create Clifton/Mass Knit factories; map sizes to Production 3Y..14Y; upgrade Production flow to the canonical definition via quality-bootstrap and pin its ACTIVE v2 (content-identical to approved v3).',
     factories: {
       Clifton: { code: 'CLIFTON', name: 'Clifton', createIfMissing: true },
       'Green Way': { code: 'GREEN_WAY', name: 'Green Way', createIfMissing: false },
@@ -62,8 +59,8 @@ export const TARGET_PROFILES: Record<TargetProfile['name'], TargetProfile> = {
     sizeCodeBySource: Object.fromEntries(AGE_SIZES.map((n) => [n, `${n}Y`])),
     processFlow: {
       processFlowCode: 'ERVE_PRODUCTION_QUALITY',
-      versionNumber: 1,
-      acceptedStageDeviations: [{ sequence: 6, field: 'qualityFormVersionNumber', approvedValue: 2, targetValue: 1 }],
+      versionNumber: 2,
+      contentStructureFingerprint: H3A_APPROVED_DATASET.processFlowContentStructureFingerprint,
     },
   },
   dev: {
@@ -75,7 +72,11 @@ export const TARGET_PROFILES: Record<TargetProfile['name'], TargetProfile> = {
       'Mass Knit': { code: 'MASS_KNIT', name: 'Mass Knit', createIfMissing: false },
     },
     sizeCodeBySource: Object.fromEntries(AGE_SIZES.map((n) => [n, `AGE_${n}`])),
-    processFlow: { processFlowCode: 'ERVE_PRODUCTION_QUALITY', versionNumber: 3, acceptedStageDeviations: [] },
+    processFlow: {
+      processFlowCode: 'ERVE_PRODUCTION_QUALITY',
+      versionNumber: 3,
+      contentStructureFingerprint: H3A_APPROVED_DATASET.processFlowContentStructureFingerprint,
+    },
   },
 };
 
