@@ -1,23 +1,19 @@
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
-import type { DistributorSalesReportView, PaginatedResult } from './types.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import type { DistributorSalesReportView } from './types.js';
 
 export function DistributorSalesReportListPage() {
   const navigate = useNavigate();
 
-  const query = useQuery({
+  // Cursor-paginated: Load more appends every further page (the page size
+  // is only the batch size, never a cap on what the list can reach).
+  const { query, items } = useCursorList<DistributorSalesReportView>({
     queryKey: ['distributor-sales-reports'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<DistributorSalesReportView>>>('/distributor-sales-reports', {
-        params: { limit: 100 },
-      });
-      return res.data.data.items;
-    },
+    path: '/distributor-sales-reports',
+    params: { limit: 100 },
   });
 
   return (
@@ -30,7 +26,7 @@ export function DistributorSalesReportListPage() {
         <Panel padding="none">
           <DataTable
             rowKey="id"
-            data={query.data ?? []}
+            data={items}
             onRowClick={(row) => navigate(`/fulfillment/distributor-sales-reports/${row.id}`)}
             emptyState={<EmptyState title="No sales reports yet" />}
             error={
@@ -48,6 +44,7 @@ export function DistributorSalesReportListPage() {
           />
         </Panel>
       )}
+      <LoadMoreFooter {...loadMoreProps(query, items.length, ['sales report', 'sales reports'])} />
     </div>
   );
 }

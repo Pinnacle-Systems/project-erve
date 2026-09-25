@@ -1,19 +1,17 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canMutateErveDispatches } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import type { ErvePackingListSummary, PaginatedResult } from './types.js';
+import type { ErvePackingListSummary } from './types.js';
 
 const STATUS_LABEL: Record<ErvePackingListSummary['status'], string> = {
   OPEN: 'Open',
@@ -25,14 +23,12 @@ export function ErvePackingListListPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const query = useQuery({
+  // Cursor-paginated: Load more appends every further page (the page size
+  // is only the batch size, never a cap on what the list can reach).
+  const { query, items } = useCursorList<ErvePackingListSummary>({
     queryKey: ['erve-packing-lists'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<ErvePackingListSummary>>>('/erve-packing-lists', {
-        params: { limit: 50 },
-      });
-      return res.data.data.items;
-    },
+    path: '/erve-packing-lists',
+    params: { limit: 50 },
   });
 
   const generateErvePackingListListPdf = useCallback(async () => {
@@ -73,7 +69,7 @@ export function ErvePackingListListPage() {
         <Panel padding="none">
           <DataTable
             rowKey="id"
-            data={query.data ?? []}
+            data={items}
             onRowClick={(row) => navigate(`/fulfillment/erve-packing-lists/${row.id}`)}
             emptyState={<EmptyState title="No Erve Packing Lists yet" />}
             error={
@@ -102,6 +98,7 @@ export function ErvePackingListListPage() {
           />
         </Panel>
       )}
+      <LoadMoreFooter {...loadMoreProps(query, items.length, ['packing list', 'packing lists'])} />
     </div>
   );
 }

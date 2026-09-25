@@ -1,30 +1,26 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import type { ErveDispatchView, PaginatedResult } from './types.js';
+import type { ErveDispatchView } from './types.js';
 
 export function ErveDispatchListPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const query = useQuery({
+  // Cursor-paginated: Load more appends every further page (the page size
+  // is only the batch size, never a cap on what the list can reach).
+  const { query, items } = useCursorList<ErveDispatchView>({
     queryKey: ['erve-dispatches'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResult<ErveDispatchView>>>('/erve-dispatches', {
-        params: { limit: 50 },
-      });
-      return res.data.data.items;
-    },
+    path: '/erve-dispatches',
+    params: { limit: 50 },
   });
 
   const generateErveDispatchListPdf = useCallback(async () => {
@@ -60,7 +56,7 @@ export function ErveDispatchListPage() {
         <Panel padding="none">
           <DataTable
             rowKey="id"
-            data={query.data ?? []}
+            data={items}
             onRowClick={(row) => navigate(`/fulfillment/erve-dispatches/${row.id}`)}
             emptyState={<EmptyState title="No dispatches yet" />}
             error={
@@ -80,6 +76,7 @@ export function ErveDispatchListPage() {
           />
         </Panel>
       )}
+      <LoadMoreFooter {...loadMoreProps(query, items.length, ['dispatch', 'dispatches'])} />
     </div>
   );
 }
