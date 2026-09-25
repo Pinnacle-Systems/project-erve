@@ -17,13 +17,13 @@ import type { Prisma } from '../db/prisma.js';
 import { prisma } from '../db/prisma.js';
 import { buildSourceManifest, type SourceManifest } from '../modules/historical-import/source-manifest.js';
 import { parseSourceOverridesArtifact, type SourceOverrideFieldEntry } from '../modules/historical-import/source-overrides.js';
-import { parseFactoryMappingArtifact } from '../modules/historical-import/factory-mapping.js';
-import { parseSizeMappingArtifact } from '../modules/historical-import/size-mapping.js';
-import { reconcileBatch, type ReconciledRecord } from '../modules/historical-import/reconciliation.service.js';
+import { parseFactoryMappingArtifact, type FactoryMappingRow } from '../modules/historical-import/factory-mapping.js';
+import { parseSizeMappingArtifact, type SizeMappingRow } from '../modules/historical-import/size-mapping.js';
+import { reconcileBatch, type ReconcileBatchItem, type ReconciledRecord } from '../modules/historical-import/reconciliation.service.js';
 import { resolveProcessFlowVersionByLogicalIdentity, type ProcessFlowVersionPin } from '../modules/historical-import/process-flow-pin.js';
 import type { SourceStagingRecord } from '../modules/historical-import/staging.service.js';
 import type { ParsedPurchaseOrderRecord } from '../modules/historical-import/po-pdf-parser.types.js';
-import type { HistoricalBatchIdentity, HistoricalCommitRecord } from '../modules/historical-import/historical-job-order-commit.service.js';
+import type { HistoricalBatchIdentity, HistoricalBatchProvenance, HistoricalCommitRecord } from '../modules/historical-import/historical-job-order-commit.service.js';
 import { openPdfDocumentSession } from '../modules/historical-import/pdf-document-session.js';
 import { extractStyleImageCandidate } from '../modules/historical-import/style-image-extractor.js';
 import { buildEffectiveReconcileItems } from './historical-import.js';
@@ -121,7 +121,37 @@ function fieldValue<T>(field: { value: T | null }): T | null {
   return field.value;
 }
 
-export async function prepareApprovedCommitInput(options: CommitInputOptions): Promise<PreparedCommitInput> {
+/**
+ * H3A: one approved source record with business keys only — no database
+ * ids. Shared by the Dev commit (which resolves ids against erve_dev below)
+ * and the Production bundle builder (which resolves nothing).
+ */
+export interface ApprovedSourceRecord extends Omit<HistoricalCommitRecord, 'factoryId' | 'styleId' | 'sizes'> {
+  sourceSeasonFolder: 'AW25' | 'SS26';
+  sourceRelativePath: string;
+  sourceFactoryName: string;
+  sizes: Array<{ sourceSizeCode: string; quantity: number }>;
+  businessMrp: number;
+  businessExFactoryCost: number;
+}
+
+export interface PreparedSourceInput {
+  records: ApprovedSourceRecord[];
+  checks: PreflightCheck[];
+  approvedProcessFlow: MigrationApprovalArtifact['processFlowVersionPin']['logicalIdentity'];
+  provenance: Omit<HistoricalBatchProvenance, 'processFlowLogicalIdentity'>;
+  factoryMapping: FactoryMappingRow[];
+  sizeMapping: SizeMappingRow[];
+  items: ReconcileBatchItem[];
+}
+
+/**
+ * DB-FREE half of the pre-import gate: approval, manifest + real PDF
+ * re-hash, staging + approved overrides, documentary re-extraction, MRP /
+ * ex-factory artifacts, and image hash verification. Never touches a
+ * database, so it runs identically for Dev and for the H3A bundle build.
+ */
+export async function prepareApprovedSourceInput(options: CommitInputOptions): Promise<PreparedSourceInput> {
   const root = options.artifactsRoot;
   const checks: PreflightCheck[] = [];
   const pass = (name: string, detail: string) => checks.push({ name, result: 'PASS', detail });
@@ -181,37 +211,10 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
   if (refs.some((r) => !r) || new Set(refs).size !== 91) fail(`effective legacyReferenceNumber values are not 91 unique non-empty values (${new Set(refs).size} unique)`);
   pass('overrides', `3 approved checksum-bound overrides applied (EI26032 legacyRef, EI26042 LMIX42026010, EI26002 orderDate 2026-02-19); 91 unique effective legacy references`);
 
-  // --- Fresh re-resolution against the CURRENT database -----------------------
   const { value: factoryMappingRaw } = await readJson<unknown>(join(root, 'h2a', 'factory-mapping.json'));
   const { value: sizeMappingRaw } = await readJson<unknown>(join(root, 'h2a', 'size-mapping.json'));
-  const reconciled = await reconcileBatch(prisma, items, parseFactoryMappingArtifact(factoryMappingRaw), parseSizeMappingArtifact(sizeMappingRaw), {
-    ignoreExistingJobOrderReferences: true,
-  });
-  const ready = reconciled.filter((r) => r.classification === 'READY').length;
-  const review = reconciled.filter((r) => r.classification === 'REVIEW_REQUIRED');
-  const blocked = reconciled.filter((r) => r.classification === 'BLOCKED');
-  if (ready !== 91 || review.length || blocked.length) {
-    fail(
-      `current readiness is ${ready} READY / ${review.length} REVIEW_REQUIRED / ${blocked.length} BLOCKED, not 91/0/0:\n` +
-        [...review, ...blocked].map((r) => `  ${r.legacyReferenceNumber}: ${[...r.blockedReasons, ...r.reviewReasons].join('; ')}`).join('\n'),
-    );
-  }
-  const count = (pred: (r: ReconciledRecord) => boolean) => reconciled.filter(pred).length;
-  pass(
-    'readiness',
-    `fresh re-resolution: 91 READY / 0 REVIEW_REQUIRED / 0 BLOCKED — Season ${count((r) => r.season.status === 'MATCHED')}/91, ` +
-      `Factory ${count((r) => r.factory.status === 'MATCHED')}/91, Style ${count((r) => r.style.status === 'MATCHED')}/91, ` +
-      `Size+StyleSize ${reconciled.reduce((n, r) => n + r.sizes.filter((z) => z.status === 'MATCHED').length, 0)}/${reconciled.reduce((n, r) => n + r.sizes.length, 0)}`,
-  );
-
-  let processFlowPin: ProcessFlowVersionPin;
-  try {
-    processFlowPin = await resolveProcessFlowVersionByLogicalIdentity(prisma, approval.processFlowVersionPin.logicalIdentity);
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
-  }
-  const li = processFlowPin.logicalIdentity;
-  pass('processFlow', `${li.processFlowCode} v${li.versionNumber} fingerprint ${li.fingerprint.slice(0, 16)}... -> ${processFlowPin.devProcessFlowVersionId} (freshly resolved)`);
+  const factoryMapping = parseFactoryMappingArtifact(factoryMappingRaw);
+  const sizeMapping = parseSizeMappingArtifact(sizeMappingRaw);
 
   // --- MRP / ex-factory reconciliation, re-checked against the live DB -------
   const { value: mrp } = await readJson<MrpReconciliationArtifact>(join(root, 'h2a', 'mrp-reconciliation.json'));
@@ -232,30 +235,23 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
   for (const rec of staging) if (rec.imageRelativePath) imagePathUseCount.set(rec.imageRelativePath, (imagePathUseCount.get(rec.imageRelativePath) ?? 0) + 1);
   const reextractedImages: string[] = [];
 
-  // --- Build commit records ------------------------------------------------------
-  const records: HistoricalCommitRecord[] = [];
+  // --- Build source records ------------------------------------------------------
+  const records: ApprovedSourceRecord[] = [];
   for (let i = 0; i < items.length; i++) {
     const parsed = items[i]!.parsed;
     const documentary = options.auditDocumentaryOnly ? parsed.documentarySections! : requireDocumentarySections(parsed.documentarySections);
     const stagingRecord = staging[i]!;
-    const r = reconciled[i]!;
     const legacyReferenceNumber = parsed.legacyReferenceNumber.value!;
     const season = parsed.documentSeason.value!;
     const lmix = parsed.licenseStyleLmix.value!;
     const key = `${season}|${lmix}`;
+    const sourceFactoryName = parsed.factoryName.value;
+    if (!sourceFactoryName) fail(`${legacyReferenceNumber}: no source factory name`);
 
-    const style = await prisma.style.findUniqueOrThrow({ where: { id: r.style.styleId! }, select: { finalMrp: true } });
     const mrpRecord = mrpByKey.get(key);
     if (!mrpRecord || mrpRecord.disposition !== 'RESOLVED') fail(`${legacyReferenceNumber}: no RESOLVED MRP reconciliation for ${key}`);
-    if (style.finalMrp === null || Number(style.finalMrp.toString()) !== mrpRecord.businessMrp) {
-      fail(`${legacyReferenceNumber}: current Style.finalMrp ${style.finalMrp?.toString() ?? 'null'} != approved business MRP ${mrpRecord.businessMrp}`);
-    }
-    const mapping = await prisma.styleFactoryMapping.findFirst({ where: { styleId: r.style.styleId!, factoryId: r.factory.factoryId! }, select: { exFactoryPrice: true } });
     const exRecord = exByKey.get(key);
     if (!exRecord) fail(`${legacyReferenceNumber}: no ex-factory reconciliation for ${key}`);
-    if (!mapping || mapping.exFactoryPrice === null || Number(mapping.exFactoryPrice.toString()) !== exRecord.businessExFactoryCost) {
-      fail(`${legacyReferenceNumber}: current Style<->Factory ex-factory price does not match approved ${exRecord.businessExFactoryCost}`);
-    }
 
     const orderDate = fieldValue(parsed.orderDate);
     const shipmentDate = fieldValue(parsed.shipmentDate);
@@ -263,10 +259,11 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
     if (!orderDate || !/^\d{4}-\d{2}-\d{2}$/.test(orderDate)) fail(`${legacyReferenceNumber}: effective order date "${orderDate}" is not YYYY-MM-DD`);
     if (shipmentDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(shipmentDate)) fail(`${legacyReferenceNumber}: shipment date "${shipmentDate}" is not YYYY-MM-DD`);
     if (!unitRate || !Number.isFinite(Number(unitRate))) fail(`${legacyReferenceNumber}: unit rate "${unitRate}" is not numeric`);
-    const sizes = r.sizes.map((z) => {
+    const sizes = parsed.sizeQuantities.map((z) => {
       if (z.quantity === null || !Number.isInteger(z.quantity) || z.quantity <= 0) fail(`${legacyReferenceNumber}: size ${z.sizeCode} quantity ${z.quantity} is not a positive integer`);
-      return { sourceSizeCode: z.sizeCode, sizeId: z.sizeId!, quantity: z.quantity };
+      return { sourceSizeCode: z.sizeCode, quantity: z.quantity };
     });
+    if (new Set(sizes.map((z) => z.sourceSizeCode)).size !== sizes.length) fail(`${legacyReferenceNumber}: repeated size code`);
     const total = sizes.reduce((sum, z) => sum + z.quantity, 0);
     if (parsed.tableTotalQuantity.value !== null && parsed.tableTotalQuantity.value !== total) fail(`${legacyReferenceNumber}: size quantities sum ${total} != table total ${parsed.tableTotalQuantity.value}`);
 
@@ -327,13 +324,16 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
       : '';
     records.push({
       sourceFileName: stagingRecord.sourceFileName,
+      sourceSeasonFolder: stagingRecord.sourceSeasonFolder,
+      sourceRelativePath: stagingRecord.sourceRelativePath,
       sourceSha256: stagingRecord.sourceChecksumSha256,
       sourceSizeBytes: stagingRecord.sourceSizeBytes,
       legacyReferenceNumber,
       seasonCode: season,
       lmix,
-      factoryId: r.factory.factoryId!,
-      styleId: r.style.styleId!,
+      sourceFactoryName,
+      businessMrp: mrpRecord.businessMrp,
+      businessExFactoryCost: exRecord.businessExFactoryCost,
       historicalBusinessDate: orderDate,
       requiredDeliveryDate: shipmentDate,
       unitPrice: unitRate,
@@ -349,16 +349,16 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
       image,
     });
   }
-  pass('mrp/exFactory', '91/91 current Style.finalMrp match approved business MRP; 91/91 current Style<->Factory ex-factory prices match');
   pass(
     'images',
     `${records.filter((r) => r.image).length}/91 approved image candidates hash-verified against source-staging + image-handoff-manifest.json` +
       (reextractedImages.length ? `; re-extracted in memory from the source PDF (exact approved-hash match): ${reextractedImages.join(', ')}` : ''),
   );
 
-  const identity: HistoricalBatchIdentity = {
-    sourceLabel: options.batchLabel,
-    processFlowVersionId: processFlowPin.devProcessFlowVersionId,
+  return {
+    records,
+    checks,
+    approvedProcessFlow: approval.processFlowVersionPin.logicalIdentity,
     provenance: {
       story: 'H2B',
       description: `${options.batchLabel} historical factory orders (AW25/SS26 PO sheets) imported as historical Job Orders — ordered quantities and source evidence only; no live workflow history.`,
@@ -366,6 +366,90 @@ export async function prepareApprovedCommitInput(options: CommitInputOptions): P
       sourceManifestAggregateSha256: manifest.aggregateSha256,
       parserVersion: manifest.parserVersion,
       sourceOverridesSha256: overridesSha256,
+    },
+    factoryMapping,
+    sizeMapping,
+    items,
+  };
+}
+
+/** Dev: the DB-free source gate, then fresh re-resolution of every business key against the CURRENT (erve_dev) database. */
+export async function prepareApprovedCommitInput(options: CommitInputOptions): Promise<PreparedCommitInput> {
+  const source = await prepareApprovedSourceInput(options);
+  const checks = [...source.checks];
+  const pass = (name: string, detail: string) => checks.push({ name, result: 'PASS', detail });
+
+  const reconciled = await reconcileBatch(prisma, source.items, source.factoryMapping, source.sizeMapping, {
+    ignoreExistingJobOrderReferences: true,
+  });
+  const ready = reconciled.filter((r) => r.classification === 'READY').length;
+  const review = reconciled.filter((r) => r.classification === 'REVIEW_REQUIRED');
+  const blocked = reconciled.filter((r) => r.classification === 'BLOCKED');
+  if (ready !== 91 || review.length || blocked.length) {
+    fail(
+      `current readiness is ${ready} READY / ${review.length} REVIEW_REQUIRED / ${blocked.length} BLOCKED, not 91/0/0:\n` +
+        [...review, ...blocked].map((r) => `  ${r.legacyReferenceNumber}: ${[...r.blockedReasons, ...r.reviewReasons].join('; ')}`).join('\n'),
+    );
+  }
+  const count = (pred: (r: ReconciledRecord) => boolean) => reconciled.filter(pred).length;
+  pass(
+    'readiness',
+    `fresh re-resolution: 91 READY / 0 REVIEW_REQUIRED / 0 BLOCKED — Season ${count((r) => r.season.status === 'MATCHED')}/91, ` +
+      `Factory ${count((r) => r.factory.status === 'MATCHED')}/91, Style ${count((r) => r.style.status === 'MATCHED')}/91, ` +
+      `Size+StyleSize ${reconciled.reduce((n, r) => n + r.sizes.filter((z) => z.status === 'MATCHED').length, 0)}/${reconciled.reduce((n, r) => n + r.sizes.length, 0)}`,
+  );
+
+  let processFlowPin: ProcessFlowVersionPin;
+  try {
+    processFlowPin = await resolveProcessFlowVersionByLogicalIdentity(prisma, source.approvedProcessFlow);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+  const li = processFlowPin.logicalIdentity;
+  pass('processFlow', `${li.processFlowCode} v${li.versionNumber} fingerprint ${li.fingerprint.slice(0, 16)}... -> ${processFlowPin.devProcessFlowVersionId} (freshly resolved)`);
+
+  const records: HistoricalCommitRecord[] = [];
+  for (let i = 0; i < source.records.length; i++) {
+    const src = source.records[i]!;
+    const r = reconciled[i]!;
+    const style = await prisma.style.findUniqueOrThrow({ where: { id: r.style.styleId! }, select: { finalMrp: true } });
+    if (style.finalMrp === null || Number(style.finalMrp.toString()) !== src.businessMrp) {
+      fail(`${src.legacyReferenceNumber}: current Style.finalMrp ${style.finalMrp?.toString() ?? 'null'} != approved business MRP ${src.businessMrp}`);
+    }
+    const mapping = await prisma.styleFactoryMapping.findFirst({ where: { styleId: r.style.styleId!, factoryId: r.factory.factoryId! }, select: { exFactoryPrice: true } });
+    if (!mapping || mapping.exFactoryPrice === null || Number(mapping.exFactoryPrice.toString()) !== src.businessExFactoryCost) {
+      fail(`${src.legacyReferenceNumber}: current Style<->Factory ex-factory price does not match approved ${src.businessExFactoryCost}`);
+    }
+    const sizeIdByCode = new Map(r.sizes.map((z) => [z.sizeCode, z.sizeId!] as const));
+    records.push({
+      sourceFileName: src.sourceFileName,
+      sourceSha256: src.sourceSha256,
+      sourceSizeBytes: src.sourceSizeBytes,
+      legacyReferenceNumber: src.legacyReferenceNumber,
+      seasonCode: src.seasonCode,
+      lmix: src.lmix,
+      factoryId: r.factory.factoryId!,
+      styleId: r.style.styleId!,
+      historicalBusinessDate: src.historicalBusinessDate,
+      requiredDeliveryDate: src.requiredDeliveryDate,
+      unitPrice: src.unitPrice,
+      disclaimerText: src.disclaimerText,
+      styleDescription: src.styleDescription,
+      styleName: src.styleName,
+      sizes: src.sizes.map((z) => ({ ...z, sizeId: sizeIdByCode.get(z.sourceSizeCode)! })),
+      sourceSnapshot: src.sourceSnapshot,
+      migrationNotes: src.migrationNotes,
+      loadSourcePdf: src.loadSourcePdf,
+      image: src.image,
+    });
+  }
+  pass('mrp/exFactory', '91/91 current Style.finalMrp match approved business MRP; 91/91 current Style<->Factory ex-factory prices match');
+
+  const identity: HistoricalBatchIdentity = {
+    sourceLabel: options.batchLabel,
+    processFlowVersionId: processFlowPin.devProcessFlowVersionId,
+    provenance: {
+      ...source.provenance,
       processFlowLogicalIdentity: { processFlowCode: li.processFlowCode, versionNumber: li.versionNumber, fingerprint: li.fingerprint },
     },
     counts: { total: 91, ready: 91, reviewRequired: 0, blocked: 0, duplicate: 0 },

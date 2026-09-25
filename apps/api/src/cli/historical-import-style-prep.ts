@@ -130,6 +130,123 @@ function findWorkbookRow(rows: MrpWorkbookRow[], excelRow: number | null): MrpWo
   return rows.find((r) => r.excelRow === excelRow) ?? null;
 }
 
+/** Source-derived Style fields shared by the Dev planner and the H3A DB-free bundle builder — one definition, never two. */
+function deriveStyleSourceFields(
+  mrpRecord: { season: string; lmix: string },
+  identity: RequiredStyleIdentity,
+  effectiveRecords: ParsedPurchaseOrderRecord[],
+  rows: MrpWorkbookRow[],
+  workbookRowNumber: number | null,
+  options: StylePrepOptions,
+) {
+  // SYSTEM-GENERATED, not a source-document value — see planStyles.
+  const styleNumber = `${mrpRecord.season}-${mrpRecord.lmix.replace(/^LMIX/i, '')}`;
+  const effectiveRecord = findEffectiveRecordForIdentity(effectiveRecords, identity);
+  const workbookRow = findWorkbookRow(rows, workbookRowNumber);
+  const category = normalizeMrpCategory(workbookRow?.category ?? null);
+  const refreshedHsn = effectiveRecord ? options.hsnRefreshBySourceChecksum?.get(effectiveRecord.sourceChecksumSha256) : undefined;
+  const hsnCode = refreshedHsn !== undefined ? refreshedHsn : (effectiveRecord?.hsnCode.value ?? null);
+  const hsnDescriptionSource = effectiveRecord
+    ? resolveHsnSourceDescription({
+        specificationText: effectiveRecord.documentarySections?.specificationText,
+        tableDescription: effectiveRecord.documentarySections?.tableDescription,
+        tableStyleName: effectiveRecord.documentarySections?.tableStyleName,
+        expectedHsnCode: hsnCode,
+      })
+    : null;
+  return {
+    styleNumber,
+    effectiveRecord,
+    workbookRow,
+    category,
+    hsnFields: {
+      hsnCode,
+      hsnDescription: hsnDescriptionSource?.proposedHsnDescription ?? null,
+      hsnDescriptionSource,
+      sourceChecksumSha256: effectiveRecord?.sourceChecksumSha256 ?? null,
+      sourceFileName: effectiveRecord?.sourceFileName ?? null,
+    },
+  };
+}
+
+/** H3A: environment-independent Style master spec — business keys and approved values only, no database ids. */
+export interface StyleSourceSpec {
+  season: string;
+  lmix: string;
+  legacyReferenceNumbers: string[];
+  styleNumber: string;
+  styleName: string;
+  description: string | null;
+  colour: string | null;
+  hsnCode: string | null;
+  hsnDescription: string | null;
+  hsnDescriptionClassification: string | null;
+  hsnCodeSourceSuspect: boolean;
+  categoryRaw: string | null;
+  categoryDescription: string | null;
+  categoryNormalizationApplied: boolean;
+  ipName: string | null;
+  licensor: string | null;
+  finalMrp: number;
+  exFactoryPrice: number;
+  /** Raw factory name as printed in the source PO (resolved through the approved factory mapping later). */
+  sourceFactoryName: string;
+  /** Raw size codes as printed in the source PO, in source order. */
+  sourceSizeCodes: string[];
+  sourceChecksumSha256: string;
+  sourceFileName: string;
+}
+
+/**
+ * H3A: the DB-free half of planStyles. Every one of the required identities
+ * must be MRP-RESOLVED with a style name, a factory, sizes and an
+ * ex-factory cost, or this throws — a bundle is never built from a
+ * partially-resolved source set.
+ */
+export async function buildStyleSourceSpecs(options: StylePrepOptions): Promise<StyleSourceSpec[]> {
+  const { rows, effectiveRecords, identities } = await loadIdentitiesAndWorkbook(options);
+  const { records: mrpRecords } = reconcileMrp(identities, rows);
+  const specs: StyleSourceSpec[] = [];
+  for (const mrpRecord of mrpRecords) {
+    const identity = identities.find((i) => i.season === mrpRecord.season && i.lmix === mrpRecord.lmix)!;
+    const label = `${mrpRecord.season} ${mrpRecord.lmix}`;
+    if (mrpRecord.disposition !== 'RESOLVED' || mrpRecord.businessMrp === null || mrpRecord.businessExFactoryCost === null) {
+      throw new StylePrepError(`${label}: MRP/ex-factory not RESOLVED (${mrpRecord.reason ?? mrpRecord.disposition})`);
+    }
+    const { styleNumber, effectiveRecord, workbookRow, category, hsnFields } = deriveStyleSourceFields(
+      mrpRecord, identity, effectiveRecords, rows, mrpRecord.workbookRow, options,
+    );
+    if (!effectiveRecord || !effectiveRecord.styleName.value || !identity.factory || effectiveRecord.sizeQuantities.length === 0) {
+      throw new StylePrepError(`${label}: effective source record is missing styleName, factory or sizes`);
+    }
+    specs.push({
+      season: mrpRecord.season,
+      lmix: mrpRecord.lmix,
+      legacyReferenceNumbers: mrpRecord.legacyReferenceNumbers,
+      styleNumber,
+      styleName: effectiveRecord.styleName.value,
+      description: effectiveRecord.description.value ?? null,
+      colour: (workbookRow?.colour ?? effectiveRecord.colour.value ?? null)?.trim().toUpperCase() ?? null,
+      hsnCode: hsnFields.hsnCode,
+      hsnDescription: hsnFields.hsnDescription,
+      hsnDescriptionClassification: hsnFields.hsnDescriptionSource?.classification ?? null,
+      hsnCodeSourceSuspect: hsnFields.hsnDescriptionSource?.hsnCodeSourceSuspect ?? false,
+      categoryRaw: category.categoryRaw,
+      categoryDescription: category.categoryNormalized,
+      categoryNormalizationApplied: category.normalizationApplied,
+      ipName: workbookRow?.ipName?.trim().toUpperCase() ?? null,
+      licensor: workbookRow?.licensor?.trim().toUpperCase() ?? null,
+      finalMrp: mrpRecord.businessMrp,
+      exFactoryPrice: mrpRecord.businessExFactoryCost,
+      sourceFactoryName: identity.factory,
+      sourceSizeCodes: effectiveRecord.sizeQuantities.map((sq) => sq.sizeCode),
+      sourceChecksumSha256: effectiveRecord.sourceChecksumSha256,
+      sourceFileName: effectiveRecord.sourceFileName,
+    });
+  }
+  return specs;
+}
+
 export async function planStyles(options: StylePrepOptions): Promise<StylePlanEntry[]> {
   const { rows, effectiveRecords, identities } = await loadIdentitiesAndWorkbook(options);
 
@@ -177,29 +294,9 @@ export async function planStyles(options: StylePrepOptions): Promise<StylePlanEn
     // just the 3 that collide today. Prefixing with the Season code
     // guarantees global uniqueness by construction and stays fully
     // traceable to the approved Season+LMIX identity (no invented data).
-    const styleNumber = `${mrpRecord.season}-${mrpRecord.lmix.replace(/^LMIX/i, '')}`;
-    const effectiveRecord = findEffectiveRecordForIdentity(effectiveRecords, identity);
-    const workbookRow = findWorkbookRow(rows, mrpRecord.workbookRow);
-    const category = normalizeMrpCategory(workbookRow?.category ?? null);
-    const refreshedHsn = effectiveRecord
-      ? options.hsnRefreshBySourceChecksum?.get(effectiveRecord.sourceChecksumSha256)
-      : undefined;
-    const hsnCode = refreshedHsn !== undefined ? refreshedHsn : (effectiveRecord?.hsnCode.value ?? null);
-    const hsnDescriptionSource = effectiveRecord
-      ? resolveHsnSourceDescription({
-          specificationText: effectiveRecord.documentarySections?.specificationText,
-          tableDescription: effectiveRecord.documentarySections?.tableDescription,
-          tableStyleName: effectiveRecord.documentarySections?.tableStyleName,
-          expectedHsnCode: hsnCode,
-        })
-      : null;
-    const hsnFields = {
-      hsnCode,
-      hsnDescription: hsnDescriptionSource?.proposedHsnDescription ?? null,
-      hsnDescriptionSource,
-      sourceChecksumSha256: effectiveRecord?.sourceChecksumSha256 ?? null,
-      sourceFileName: effectiveRecord?.sourceFileName ?? null,
-    };
+    const { styleNumber, effectiveRecord, workbookRow, category, hsnFields } = deriveStyleSourceFields(
+      mrpRecord, identity, effectiveRecords, rows, mrpRecord.workbookRow, options,
+    );
 
     if (mrpRecord.disposition !== 'RESOLVED') {
       plan.push({
