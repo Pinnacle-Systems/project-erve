@@ -1,11 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse, DistributorOption, PaginatedResponse } from '@erve/types';
+import type { DistributorOption } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import {
   FinancialYearSelect,
   toCompactFinancialYearCode,
@@ -69,15 +68,12 @@ export function PurchaseOrderListPage() {
     [debouncedSearch, planningState, distributorId, purchaseMode, financialYearId],
   );
 
-  const ordersQuery = useQuery({
-    queryKey: ['purchase-orders', params],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResponse<PurchaseOrder>>>(
-        '/purchase-orders',
-        { params },
-      );
-      return res.data.data;
-    },
+  // Cursor-paginated (25 per page): Load more appends; a filter change
+  // restarts at page 1. The PDF fetches every page itself.
+  const { query: ordersQuery, items: orders } = useCursorList<PurchaseOrder>({
+    queryKey: ['purchase-orders'],
+    path: '/purchase-orders',
+    params,
   });
 
   const financialYearsQuery = useFinancialYearsQuery();
@@ -241,7 +237,7 @@ export function PurchaseOrderListPage() {
           },
           { key: 'createdAt', header: 'Created', render: (po) => formatDate(po.createdAt) },
         ]}
-        data={ordersQuery.data?.items ?? []}
+        data={orders}
         loading={ordersQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading Order Sheets" />}
         emptyState={
@@ -270,6 +266,7 @@ export function PurchaseOrderListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(ordersQuery, orders.length, ['Order Sheet', 'Order Sheets'])} />
     </div>
   );
 }

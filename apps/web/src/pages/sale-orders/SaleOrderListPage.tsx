@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
+import type { ApiSuccessResponse } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { getLocalDateString } from '../../lib/dates.js';
@@ -45,12 +46,12 @@ export function SaleOrderListPage() {
     [debouncedSearch, distributorId, factoryId],
   );
 
-  const ordersQuery = useQuery({
-    queryKey: ['sale-orders', params],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PaginatedResponse<SaleOrder>>>('/sale-orders', { params });
-      return res.data.data;
-    },
+  // Cursor-paginated (25 per page): Load more appends; a filter change
+  // restarts at page 1. The PDF fetches every page itself.
+  const { query: ordersQuery, items: orders } = useCursorList<SaleOrder>({
+    queryKey: ['sale-orders'],
+    path: '/sale-orders',
+    params,
   });
 
   // UXAUTH-015: Dispatch-Order-specific option lookups — ACCOUNTANT is
@@ -222,7 +223,7 @@ export function SaleOrderListPage() {
               ),
           },
         ]}
-        data={ordersQuery.data?.items ?? []}
+        data={orders}
         loading={ordersQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading dispatch orders" />}
         emptyState={
@@ -248,6 +249,7 @@ export function SaleOrderListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(ordersQuery, orders.length, ['dispatch order', 'dispatch orders'])} />
     </div>
   );
 }
