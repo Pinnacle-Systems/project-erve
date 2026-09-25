@@ -1385,6 +1385,28 @@ describe('distributors API', () => {
     expect(res.body.data.map((d: { code: string }) => d.code)).toEqual(['D-ACT']);
   });
 
+  it('returns each distributor purchaseMode in the list used by the Order Sheet form', async () => {
+    const { token } = await createAdmin();
+    await createTestDistributor({ code: 'D-OUT', name: 'Alpha Outright', purchaseMode: 'OUTRIGHT' });
+    await createTestDistributor({ code: 'D-SOR', name: 'Beta Sale Return', purchaseMode: 'SALE_RETURN' });
+
+    const res = await request(app)
+      .get('/distributors')
+      .query({ status: 'ACTIVE' })
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([
+      expect.objectContaining({ code: 'D-OUT', name: 'Alpha Outright', purchaseMode: 'OUTRIGHT' }),
+      expect.objectContaining({ code: 'D-SOR', name: 'Beta Sale Return', purchaseMode: 'SALE_RETURN' }),
+    ]);
+    for (const option of res.body.data) {
+      expect(Object.keys(option).sort()).toEqual(
+        ['city', 'code', 'contactName', 'id', 'name', 'purchaseMode', 'status'],
+      );
+    }
+  });
+
   it('supports searching distributors by code or name', async () => {
     const { token } = await createAdmin();
     await createTestDistributor({ code: 'D-100', name: 'North Traders' });
