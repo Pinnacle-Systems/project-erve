@@ -50,6 +50,7 @@ export interface DistributorLookupFieldProps {
   searchPath?: string;
   errorMessage?: string;
   disabled?: boolean;
+  required?: boolean;
 }
 
 // Distributor lookup: bounded server search over ACTIVE Distributors by name
@@ -69,6 +70,7 @@ export function DistributorLookupField({
   searchPath = DISTRIBUTOR_OPTIONS_PATH,
   errorMessage,
   disabled,
+  required,
 }: DistributorLookupFieldProps) {
   const [searchText, setSearchText] = useState('');
   const lookup = useServerLookup<DistributorOption>({
@@ -96,6 +98,7 @@ export function DistributorLookupField({
       density={density}
       placeholder={placeholder}
       disabled={disabled}
+      required={required}
       errorMessage={errorMessage}
       selectedOption={value}
       // Anything selectable came from `lookup.options`, i.e. a full option.

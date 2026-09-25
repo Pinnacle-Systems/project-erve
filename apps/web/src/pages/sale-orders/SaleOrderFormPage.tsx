@@ -8,7 +8,8 @@ import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
-import type { Distributor, Factory, PooledFactoryInventoryLine, SaleOrder } from './types.js';
+import { DistributorLookupField, type DistributorLookupValue } from '../master-data/DistributorLookupField.js';
+import type { Factory, PooledFactoryInventoryLine, SaleOrder } from './types.js';
 
 interface LineDraft {
   key: string;
@@ -46,6 +47,9 @@ interface DistributorGroupDraft {
   clientKey: string;
   id?: string;
   distributorId: string;
+  // The lookup's displayed value (name, code, purchaseMode) — from the
+  // chosen option, or the saved group on edit. distributorId mirrors its id.
+  distributor: DistributorLookupValue | null;
   destinations: DestinationDraft[];
 }
 
@@ -78,7 +82,7 @@ function emptyLine(): LineDraft {
 }
 
 function emptyDistributorGroup(): DistributorGroupDraft {
-  return { clientKey: nextKey('group'), distributorId: '', destinations: [emptyDestination()] };
+  return { clientKey: nextKey('group'), distributorId: '', distributor: null, destinations: [emptyDestination()] };
 }
 
 export function SaleOrderFormPage() {
@@ -98,16 +102,6 @@ export function SaleOrderFormPage() {
     enabled: isEdit,
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<SaleOrder>>(`/sale-orders/${id}`);
-      return res.data.data;
-    },
-  });
-
-  const distributorsQuery = useQuery({
-    queryKey: ['distributors', 'active'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<Distributor[]>>('/distributors', {
-        params: { status: 'ACTIVE' },
-      });
       return res.data.data;
     },
   });
@@ -132,23 +126,21 @@ export function SaleOrderFormPage() {
     },
   });
 
-  const distributorById = useMemo(() => new Map((distributorsQuery.data ?? []).map((d) => [d.id, d])), [distributorsQuery.data]);
-
   useEffect(() => {
     if (!soQuery.data) return;
-    // Wait for the Distributor/Factory option lists too, not just the Sale
-    // Order itself, before hydrating. Radix Select keeps a hidden native
-    // <select> (SelectBubbleInput) in sync with the controlled value; if we
-    // call setFactoryId (or a group's setDistributorId) while that Select
-    // has zero <option> children yet (distributorsQuery/factoriesQuery
-    // still pending), the browser silently coerces the native element back
-    // to "" and Radix's own change handler then calls onValueChange(""),
-    // clobbering the value we just hydrated with no error and no further
-    // effect re-run (see erve-sale-order-edit-hydration-fix). Gating on
-    // both option queries guarantees their <SelectItem>s already exist in
-    // the same render that first sets the hydrated id, so there is no
-    // window for the race.
-    if (!distributorsQuery.data || !factoriesQuery.data) return;
+    // Wait for the Factory option list too, not just the Sale Order itself,
+    // before hydrating. Radix Select keeps a hidden native <select>
+    // (SelectBubbleInput) in sync with the controlled value; if we call
+    // setFactoryId while that Select has zero <option> children yet
+    // (factoriesQuery still pending), the browser silently coerces the
+    // native element back to "" and Radix's own change handler then calls
+    // onValueChange(""), clobbering the value we just hydrated with no error
+    // and no further effect re-run (see erve-sale-order-edit-hydration-fix).
+    // Gating on the option query guarantees its <SelectItem>s already exist
+    // in the same render that first sets the hydrated id, so there is no
+    // window for the race. The Distributor lookups need no such gate: each
+    // group's value is hydrated from the Sale Order's own group record.
+    if (!factoriesQuery.data) return;
     const so = soQuery.data;
     // Hydrates the edit form from an async-loaded record; the data isn't
     // available for a lazy initial-state computation, so this can't be done
@@ -163,6 +155,7 @@ export function SaleOrderFormPage() {
         clientKey: group.id,
         id: group.id,
         distributorId: group.distributor.id,
+        distributor: { ...group.distributor, purchaseMode: group.purchaseMode },
         destinations: group.destinations.map((dest) => ({
           clientKey: dest.id,
           id: dest.id,
@@ -190,7 +183,7 @@ export function SaleOrderFormPage() {
         })),
       })),
     );
-  }, [soQuery.data, distributorsQuery.data, factoriesQuery.data]);
+  }, [soQuery.data, factoriesQuery.data]);
 
   // Pool key options for the Style/Size selects — the pooled inventory for
   // the selected Factory, plus (edit mode) any style/size already on a line
@@ -475,7 +468,7 @@ export function SaleOrderFormPage() {
                   const otherGroupDistributorIds = new Set(
                     distributorGroups.filter((g) => g.clientKey !== group.clientKey).map((g) => g.distributorId),
                   );
-                  const selectedDistributor = distributorById.get(group.distributorId);
+                  const selectedDistributor = group.distributor;
                   const otherGroups = distributorGroups.filter((g) => g.clientKey !== group.clientKey);
                   return (
                     <Panel
@@ -484,21 +477,16 @@ export function SaleOrderFormPage() {
                     >
                       <div className="space-y-4">
                         <FormGrid layout="content">
-                          <SelectField
+                          <DistributorLookupField
                             id={`group-${group.clientKey}-distributor`}
                             label="Distributor"
-                            value={group.distributorId}
-                            onValueChange={(value) => updateGroup(group.clientKey, { distributorId: value })}
+                            value={group.distributor}
+                            onChange={(distributor) =>
+                              updateGroup(group.clientKey, { distributor, distributorId: distributor?.id ?? '' })
+                            }
+                            excludeIds={otherGroupDistributorIds}
                             required
-                          >
-                            {(distributorsQuery.data ?? [])
-                              .filter((d) => !otherGroupDistributorIds.has(d.id) || d.id === group.distributorId)
-                              .map((d) => (
-                                <SelectItem key={d.id} value={d.id}>
-                                  {d.name}
-                                </SelectItem>
-                              ))}
-                          </SelectField>
+                          />
                           {selectedDistributor?.purchaseMode && (
                             <div className="flex items-end pb-2">
                               <Badge variant="muted">Purchase Mode: {selectedDistributor.purchaseMode}</Badge>
@@ -640,7 +628,7 @@ export function SaleOrderFormPage() {
                                       >
                                         {otherGroups.map((g) => (
                                           <SelectItem key={g.clientKey} value={g.clientKey}>
-                                            {distributorById.get(g.distributorId)?.name ?? 'Select above'}
+                                            {g.distributor?.name ?? 'Select above'}
                                           </SelectItem>
                                         ))}
                                       </SelectField>

@@ -71,11 +71,12 @@ function clickButtonByText(text: string): void {
 
 async function renderCreateForm() {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string, config?: { params?: Record<string, unknown> }) => {
-    if (url === '/distributors') {
+    if (url === '/distributors/options') {
       return {
         data: {
           data: [
             { id: 'dist-1', code: 'D1', name: 'Distributor One', purchaseMode: 'OUTRIGHT', status: 'ACTIVE' },
+            { id: 'dist-2', code: 'D2', name: 'Distributor Two', purchaseMode: 'SALE_RETURN', status: 'ACTIVE' },
           ],
         },
       };
@@ -172,6 +173,66 @@ describe('SaleOrderFormPage destination/line repeater', () => {
   });
 });
 
+function distributorInputs(): HTMLInputElement[] {
+  return Array.from(container.querySelectorAll<HTMLInputElement>('input[role="combobox"][id$="-distributor"]'));
+}
+
+function lookupOptionTexts(): string[] {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).map(
+    (option) => option.textContent ?? '',
+  );
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for condition');
+    await flush();
+  }
+}
+
+async function searchDistributor(input: HTMLInputElement, text: string): Promise<void> {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    input.focus();
+    setter.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await waitUntil(
+    () =>
+      lookupOptionTexts().length > 0 && document.body.querySelector('[role="listbox"][aria-busy]') === null,
+  );
+}
+
+describe('SaleOrderFormPage Distributor lookup (P1L6)', () => {
+  it('picks each group’s Distributor from the bounded lookup and never offers one twice', async () => {
+    await renderCreateForm();
+    const getCalls = () => vi.mocked(apiClient.get).mock.calls;
+    expect(getCalls().some((call) => call[0] === '/distributors')).toBe(false);
+
+    await searchDistributor(distributorInputs()[0]!, 'dist');
+    expect(getCalls().find((call) => call[0] === '/distributors/options')?.[1]).toMatchObject({
+      params: { search: 'dist', limit: 20 },
+    });
+    const one = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((option) =>
+      option.textContent?.includes('Distributor One'),
+    )!;
+    await act(async () => one.click());
+
+    expect(distributorInputs()[0]!.value).toBe('Distributor One');
+    expect(container.textContent).toContain('Distributor 1 — Distributor One');
+    expect(container.textContent).toContain('Purchase Mode: OUTRIGHT');
+
+    clickButtonByText('+ Add Distributor');
+    await flush();
+    await searchDistributor(distributorInputs()[1]!, 'dist');
+    // Distributor One is already group 1's — only Distributor Two is offered.
+    expect(lookupOptionTexts().some((text) => text.includes('Distributor One'))).toBe(false);
+    expect(lookupOptionTexts().some((text) => text.includes('Distributor Two'))).toBe(true);
+    expect(getCalls().some((call) => call[0] === '/distributors')).toBe(false);
+  });
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => {
@@ -192,7 +253,7 @@ describe('SaleOrderFormPage edit hydration', () => {
   // coerces back to "", and Radix's own change handler clobbers the
   // just-hydrated state with onValueChange(""). The fix gates the
   // hydration effect on all three queries being ready.
-  it('hydrates Distributor and Factory even when the Sale Order resolves before their option lists', async () => {
+  it('hydrates Distributor and Factory even when the Sale Order resolves before the Factory option list', async () => {
     const line1 = {
       id: 'line-1',
       destinationId: 'dest-1',
@@ -250,12 +311,10 @@ describe('SaleOrderFormPage edit hydration', () => {
       fulfillment: { stage: 'AWAITING_PACKING', totalQuantity: 25, totalFactoryPackedQuantity: 0 },
     };
 
-    const distributorsDeferred = deferred<{ data: { data: unknown[] } }>();
     const factoriesDeferred = deferred<{ data: { data: unknown[] } }>();
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/sale-orders/so-1') return { data: { data: so } };
-      if (url === '/distributors') return distributorsDeferred.promise;
       if (url === '/factories') return factoriesDeferred.promise;
       if (url === '/job-orders/pooled-inventory') return { data: { data: [] } };
       throw new Error(`Unexpected GET: ${url}`);
@@ -275,26 +334,28 @@ describe('SaleOrderFormPage edit hydration', () => {
     await flush();
 
     // At this point the Sale Order itself has already resolved, but the
-    // Distributor/Factory option lists have not - the exact adverse
-    // ordering that triggered the original bug. Neither select has any
-    // options yet, so there is nothing to assert hydrated correctly still.
-    const distributorTrigger = () => triggerByLabel('Distributor');
+    // Factory option list has not - the exact adverse ordering that
+    // triggered the original bug. The Factory select has no options yet, so
+    // there is nothing to assert hydrated correctly still.
+    const distributorInput = () => distributorInputs()[0]!;
     const factoryTrigger = () => triggerByLabel('Factory');
-    expect(distributorTrigger().textContent).not.toContain('Distributor One');
     expect(factoryTrigger().textContent).not.toContain('Factory One');
 
-    // Now let the option lists resolve late.
+    // Now let the option list resolve late.
     await act(async () => {
-      distributorsDeferred.resolve({
-        data: { data: [{ id: 'dist-1', code: 'D1', name: 'Distributor One', purchaseMode: 'OUTRIGHT', status: 'ACTIVE' }] },
-      });
       factoriesDeferred.resolve({ data: { data: [{ id: 'fac-1', code: 'FAC1', name: 'Factory One', status: 'ACTIVE' }] } });
     });
     await flush();
     await flush();
 
-    expect(distributorTrigger().textContent).toContain('Distributor One');
+    // The Distributor lookup is hydrated from the Sale Order's own group —
+    // no Distributor master or option request is needed.
+    expect(distributorInput().value).toBe('Distributor One');
+    expect(container.textContent).toContain('Purchase Mode: OUTRIGHT');
     expect(factoryTrigger().textContent).toContain('Factory One');
+    expect(
+      vi.mocked(apiClient.get).mock.calls.some((call) => String(call[0]).startsWith('/distributors')),
+    ).toBe(false);
 
     // The rest of the hydration (destination address, line quantity) must
     // have landed too, not just the two selects.
@@ -314,7 +375,6 @@ describe('SaleOrderFormPage edit hydration', () => {
   it('shows an error state, not a blank create-like form, when the Sale Order fails to load', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/sale-orders/so-1') throw new Error('Network Error');
-      if (url === '/distributors') return { data: { data: [] } };
       if (url === '/factories') return { data: { data: [] } };
       throw new Error(`Unexpected GET: ${url}`);
     });
