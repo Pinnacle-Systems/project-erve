@@ -1699,3 +1699,113 @@ describe('Distributor lookup — GET /distributors/options (P1L3)', () => {
     expect(Array.isArray(res.body.data)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PAG5 — opt-in cursor pagination for the Style and Distributor lists
+// ---------------------------------------------------------------------------
+
+describe('Style/Distributor list pagination (PAG5)', () => {
+  async function adminToken() {
+    const { token } = await createTestUserAndToken({
+      email: `admin-${createId().slice(-8)}@test.local`,
+      password: 'test-password',
+      roles: ['ADMIN'],
+    });
+    return token;
+  }
+
+  // Follows nextCursor until hasMore is false, returning every page.
+  async function walkPages(token: string, path: string, query: Record<string, string | number>) {
+    const pages: Array<{ items: Array<{ id: string }>; pageInfo: { hasMore: boolean; nextCursor: string | null } }> = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 20; guard += 1) {
+      const res = await request(app)
+        .get(path)
+        .query({ ...query, ...(cursor ? { cursor } : {}) })
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      pages.push(res.body.data);
+      if (!res.body.data.pageInfo.hasMore) break;
+      cursor = res.body.data.pageInfo.nextCursor;
+    }
+    return pages;
+  }
+
+  it('keeps the legacy full array for Styles without paging params, and pages every Style exactly once with them', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 7; index += 1) {
+      const res = await createStyle(token, { styleNumber: `PG-${String(index).padStart(2, '0')}` });
+      expect(res.status).toBe(201);
+    }
+
+    const legacy = await request(app).get('/styles').set('Authorization', `Bearer ${token}`);
+    expect(Array.isArray(legacy.body.data)).toBe(true);
+    expect(legacy.body.data).toHaveLength(7);
+
+    const pages = await walkPages(token, '/styles', { limit: 3 });
+    expect(pages.map((page) => page.items.length)).toEqual([3, 3, 1]);
+    const paged = pages.flatMap((page) => page.items.map((item) => item.id));
+    expect(paged).toEqual(legacy.body.data.map((style: { id: string }) => style.id));
+  });
+
+  it('applies Style search before paging', async () => {
+    const token = await adminToken();
+    for (const styleNumber of ['KEEP-1', 'KEEP-2', 'DROP-1', 'KEEP-3']) {
+      expect((await createStyle(token, { styleNumber })).status).toBe(201);
+    }
+
+    const pages = await walkPages(token, '/styles', { search: 'keep', limit: 2 });
+    expect(pages.flatMap((page) => page.items.map((item) => (item as unknown as { styleNumber: string }).styleNumber))).toEqual([
+      'KEEP-1',
+      'KEEP-2',
+      'KEEP-3',
+    ]);
+  });
+
+  it('pages Distributors in name order with an id tie-breaker — tied names are never skipped or repeated', async () => {
+    const token = await adminToken();
+    const created = [];
+    for (let index = 0; index < 5; index += 1) {
+      created.push(await createTestDistributor({ code: `TIE-${index}`, name: 'Same Name Traders' }));
+    }
+    created.push(await createTestDistributor({ code: 'AAA-1', name: 'Alpha Traders' }));
+    created.push(await createTestDistributor({ code: 'ZZZ-1', name: 'Zulu Traders', status: 'INACTIVE' }));
+
+    const legacy = await request(app).get('/distributors').set('Authorization', `Bearer ${token}`);
+    expect(Array.isArray(legacy.body.data)).toBe(true);
+
+    const pages = await walkPages(token, '/distributors', { limit: 2 });
+    const paged = pages.flatMap((page) => page.items.map((item) => item.id));
+    expect(paged).toHaveLength(7);
+    expect(new Set(paged).size).toBe(7);
+    expect(paged).toEqual(legacy.body.data.map((distributor: { id: string }) => distributor.id));
+    expect(paged[0]).toBe(created[5]!.id);
+    expect(paged.at(-1)).toBe(created[6]!.id);
+
+    const activeOnly = await walkPages(token, '/distributors', { status: 'ACTIVE', limit: 4 });
+    expect(activeOnly.flatMap((page) => page.items.map((item) => item.id))).not.toContain(created[6]!.id);
+  });
+
+  it('keeps a DISTRIBUTOR user scoped to its own Distributor in paginated mode', async () => {
+    const own = await createTestDistributor({ code: 'OWN-9', name: 'Own Traders' });
+    await createTestDistributor({ code: 'OTHER-9', name: 'Other Traders' });
+    const { userId, token } = await createTestUserAndToken({
+      email: 'dist-page@test.local',
+      password: 'test-password',
+      roles: ['DISTRIBUTOR'],
+    });
+    await prisma.userDistributor.create({ data: { id: createId(), userId, distributorId: own.id } });
+
+    const res = await request(app).get('/distributors').query({ limit: 10 }).set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.items.map((item: { id: string }) => item.id)).toEqual([own.id]);
+    expect(res.body.data.pageInfo).toEqual({ limit: 10, hasMore: false, nextCursor: null });
+  });
+
+  it('rejects a limit over the maximum', async () => {
+    const token = await adminToken();
+    expect((await request(app).get('/styles').query({ limit: 101 }).set('Authorization', `Bearer ${token}`)).status).toBe(400);
+    expect((await request(app).get('/distributors').query({ limit: 101 }).set('Authorization', `Bearer ${token}`)).status).toBe(400);
+  });
+});

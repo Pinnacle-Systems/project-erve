@@ -65,7 +65,7 @@ function styleSearchCalls(): Array<string | undefined> {
 
 async function renderPage() {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/styles') return { data: { data: [] } };
+    if (url === '/styles') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected request: ${url}`);
   });
 
@@ -159,7 +159,7 @@ async function waitForStylesLoaded(): Promise<void> {
 
 async function renderPageWithStyles(styles: Style[]) {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/styles') return { data: { data: styles } };
+    if (url === '/styles') return { data: { data: { items: styles, pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     if (url.includes('/images/')) return { data: new Blob(['bytes']) };
     throw new Error(`Unexpected request: ${url}`);
   });
@@ -282,7 +282,7 @@ function mockAuth(role: Role) {
 async function renderPageAsRole(role: Role) {
   mockAuth(role);
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/styles') return { data: { data: [] } };
+    if (url === '/styles') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected request: ${url}`);
   });
 

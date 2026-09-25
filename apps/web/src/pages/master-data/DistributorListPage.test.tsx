@@ -55,7 +55,7 @@ function makeDistributor(overrides: Partial<DistributorSummary> = {}): Distribut
 
 async function renderPageWithDistributors(distributors: DistributorSummary[]) {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/distributors') return { data: { data: distributors } };
+    if (url === '/distributors') return { data: { data: { items: distributors, pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected request: ${url}`);
   });
 

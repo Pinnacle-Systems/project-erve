@@ -1,11 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageStyles } from '../../auth/permissions.js';
@@ -26,12 +25,12 @@ export function StyleListPage() {
     [debouncedSearch, status],
   );
 
-  const stylesQuery = useQuery({
-    queryKey: ['styles', params],
-    queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Style[]>>('/styles', { params });
-      return response.data.data;
-    },
+  // Opt-in cursor pagination (limit sent): Load more appends further pages; a
+  // filter change restarts at page 1. The PDF fetches every matching page.
+  const { query: stylesQuery, items: styles } = useCursorList<Style>({
+    queryKey: ['styles'],
+    path: '/styles',
+    params: { ...params, limit: 25 },
   });
 
   const generateStyleListPdf = useCallback(async () => {
@@ -39,11 +38,11 @@ export function StyleListPage() {
     // actually clicks Download/Print, not as part of the app's initial bundle.
     const { generateStyleListPdfBlob } = await import('./pdf/generateStyleListPdf.js');
     return generateStyleListPdfBlob(
-      stylesQuery.data ?? [],
+      await fetchAllListPages<Style>('/styles', params),
       { search: debouncedSearch, status },
       { generatedAt: new Date().toISOString(), generatedBy: user?.name },
     );
-  }, [stylesQuery.data, debouncedSearch, status, user?.name]);
+  }, [params, debouncedSearch, status, user?.name]);
 
   const styleListPdfFilename = useCallback(
     () => buildPdfFilename(['ERVE-Styles', getLocalDateString()]),
@@ -130,7 +129,7 @@ export function StyleListPage() {
             ),
           },
         ]}
-        data={stylesQuery.data ?? []}
+        data={styles}
         loading={stylesQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading styles" />}
         emptyState={<EmptyState title="No styles found" description="Style records will appear here." />}
@@ -140,6 +139,7 @@ export function StyleListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(stylesQuery, styles.length, ['style', 'styles'])} />
     </div>
   );
 }

@@ -13,6 +13,7 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleDistributorId, getSoleFactoryId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
+import { listAllOrPage, type OptionalPageQuery } from '../../utils/pagination.js';
 import { toStyleImageView } from './style-images.service.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 import { toCompactFinancialYearCode } from './financial-year.util.js';
@@ -190,12 +191,14 @@ function toProcessFlowVersionView(version: ProcessFlowVersionRecord) {
   };
 }
 
-export async function listStyles(filters: {
-  search?: string;
-  status?: StyleStatus;
-  ipName?: string;
-  licensor?: string;
-}) {
+export async function listStyles(
+  filters: {
+    search?: string;
+    status?: StyleStatus;
+    ipName?: string;
+    licensor?: string;
+  } & OptionalPageQuery,
+) {
   const where: Prisma.StyleWhereInput = {
     status: filters.status,
     ipName: filters.ipName ? { contains: filters.ipName, mode: 'insensitive' } : undefined,
@@ -208,12 +211,17 @@ export async function listStyles(filters: {
       : undefined,
   };
 
-  const styles = await prisma.style.findMany({
-    where,
-    include: styleInclude,
-    orderBy: { styleNumber: 'asc' },
-  });
-  return styles.map(toStyleView);
+  // styleNumber is unique, so it alone gives pages a stable order.
+  return listAllOrPage(filters, async (page) =>
+    (
+      await prisma.style.findMany({
+        where,
+        include: styleInclude,
+        orderBy: { styleNumber: 'asc' },
+        ...page,
+      })
+    ).map(toStyleView),
+  );
 }
 
 export async function getStyleById(id: string) {
@@ -1465,13 +1473,13 @@ function isDistributorScopedUser(actor: CurrentUser): boolean {
 
 export async function listDistributors(
   actor: CurrentUser,
-  filters: { status?: string; search?: string },
+  filters: { status?: string; search?: string } & OptionalPageQuery,
 ) {
   const soleDistributorId = isDistributorScopedUser(actor)
     ? getSoleDistributorId(actor)
     : undefined;
 
-  return prisma.distributor.findMany({
+  return listAllOrPage(filters, (page) => prisma.distributor.findMany({
     where: {
       id: soleDistributorId,
       status: filters.status as DistributorStatus | undefined,
@@ -1482,7 +1490,8 @@ export async function listDistributors(
           ]
         : undefined,
     },
-    orderBy: { name: 'asc' },
+    // Names are not unique; id breaks ties so cursor pages are stable.
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
     // purchaseMode is part of the option contract: the Order Sheet and Dispatch
     // Order forms derive and display it from the selected Distributor.
     select: {
@@ -1494,7 +1503,8 @@ export async function listDistributors(
       contactName: true,
       city: true,
     },
-  });
+    ...page,
+  }));
 }
 
 // ---------------------------------------------------------------------------

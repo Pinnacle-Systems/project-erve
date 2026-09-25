@@ -13,6 +13,7 @@ import {
   createStyleSchema,
   distributorOptionsQuerySchema,
   listSeasonsQuerySchema,
+  listStatusPageQuerySchema,
   listStatusQuerySchema,
   listStylesQuerySchema,
   replaceProcessFlowVersionStagesSchema,
@@ -131,7 +132,7 @@ distributorsRouter.get(
   '/',
   canViewDistributors,
   asyncHandler(async (req, res) => {
-    const filters = listStatusQuerySchema.parse(req.query);
+    const filters = listStatusPageQuerySchema.parse(req.query);
     const distributors = await masterDataService.listDistributors(req.user!, filters);
     res.status(200).json(successResponse(distributors));
   }),

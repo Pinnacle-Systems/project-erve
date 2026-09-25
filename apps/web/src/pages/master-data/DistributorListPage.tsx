@@ -1,11 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageDistributorMaster } from '../../auth/permissions.js';
@@ -26,15 +25,12 @@ export function DistributorListPage() {
     [debouncedSearch, status],
   );
 
-  const distributorsQuery = useQuery({
-    queryKey: ['distributors', params],
-    queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<DistributorSummary[]>>(
-        '/distributors',
-        { params },
-      );
-      return response.data.data;
-    },
+  // Opt-in cursor pagination (limit sent): Load more appends further pages; a
+  // filter change restarts at page 1. The PDF fetches every matching page.
+  const { query: distributorsQuery, items: distributors } = useCursorList<DistributorSummary>({
+    queryKey: ['distributors'],
+    path: '/distributors',
+    params: { ...params, limit: 25 },
   });
 
   const generateDistributorListPdf = useCallback(async () => {
@@ -42,11 +38,11 @@ export function DistributorListPage() {
     // actually clicks Download/Print, not as part of the app's initial bundle.
     const { generateDistributorListPdfBlob } = await import('./pdf/generateDistributorListPdf.js');
     return generateDistributorListPdfBlob(
-      distributorsQuery.data ?? [],
+      await fetchAllListPages<DistributorSummary>('/distributors', params),
       { search: debouncedSearch, status },
       { generatedAt: new Date().toISOString(), generatedBy: user?.name },
     );
-  }, [distributorsQuery.data, debouncedSearch, status, user?.name]);
+  }, [params, debouncedSearch, status, user?.name]);
 
   const distributorListPdfFilename = useCallback(
     () => buildPdfFilename(['ERVE-Distributors', getLocalDateString()]),
@@ -132,7 +128,7 @@ export function DistributorListPage() {
             ),
           },
         ]}
-        data={distributorsQuery.data ?? []}
+        data={distributors}
         loading={distributorsQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading distributors" />}
         emptyState={
@@ -150,6 +146,7 @@ export function DistributorListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(distributorsQuery, distributors.length, ['distributor', 'distributors'])} />
     </div>
   );
 }
