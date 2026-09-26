@@ -7,6 +7,7 @@ import { Badge, Button, DatePicker, SelectField, SelectItem, TextField, Validati
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { DistributorLookupField, type DistributorLookupValue } from '../master-data/DistributorLookupField.js';
 import type { Factory, PooledFactoryInventoryLine, SaleOrder } from './types.js';
@@ -96,6 +97,9 @@ export function SaleOrderFormPage() {
   const [distributorGroups, setDistributorGroups] = useState<DistributorGroupDraft[]>([emptyDistributorGroup()]);
   const [error, setError] = useState('');
   const [expectedVersion, setExpectedVersion] = useState(0);
+  // Edit mode: set together with the hydrated fields, so the unsaved-changes
+  // baseline is the loaded record rather than the blank form.
+  const [hydrated, setHydrated] = useState(!isEdit);
 
   const soQuery = useQuery({
     queryKey: ['sale-order', id],
@@ -183,6 +187,7 @@ export function SaleOrderFormPage() {
         })),
       })),
     );
+    setHydrated(true);
   }, [soQuery.data, factoriesQuery.data]);
 
   // Pool key options for the Style/Size selects — the pooled inventory for
@@ -400,6 +405,8 @@ export function SaleOrderFormPage() {
     onSuccess: (so) => navigate(`/sale-orders/${so.id}`),
     onError: (caught) => setError(getApiErrorMessage(caught, 'Unable to save the Dispatch Order. Please try again.')),
   });
+  const dirty = useFormDirty({ factoryId, soDate, remarks, distributorGroups }, hydrated);
+  useUnsavedChangesWarning(dirty && !mutation.isSuccess);
 
   if (isEdit && soQuery.isLoading) {
     return <LoadingState label="Loading dispatch order" />;
