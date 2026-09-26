@@ -9,6 +9,13 @@ export const loginSchema = z.object({
 
 export type LoginInput = z.infer<typeof loginSchema>;
 
+// See RefreshRequest in @erve/types: omitted `activity` means true.
+export const refreshSchema = z
+  .object({ activity: z.boolean().optional() })
+  .optional()
+  .transform((body) => ({ activity: body?.activity ?? true }));
+
 export const mobileRefreshSchema = z.object({
   refreshToken: z.string().min(1, 'Refresh token is required'),
+  activity: z.boolean().optional(),
 });

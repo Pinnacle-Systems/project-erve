@@ -3,8 +3,7 @@ import { requireAuth } from '../../auth/auth.middleware.js';
 import { HttpError } from '../../errors/http-error.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
-import { loginSchema } from './auth.validation.js';
-import { mobileRefreshSchema } from './auth.validation.js';
+import { loginSchema, mobileRefreshSchema, refreshSchema } from './auth.validation.js';
 import { env } from '../../config/env.js';
 import { getMe, login } from './auth.service.js';
 import { refreshSession, revokeRefreshSession } from './refresh-session.service.js';
@@ -52,10 +51,11 @@ authRouter.post(
     // that newer, valid cookie. A rejected token is already useless (its
     // session is expired or revoked server-side), and /auth/logout still
     // clears the cookie explicitly.
-    const result = await refreshSession(refreshToken);
-    const { refreshToken: nextRefreshToken, accessToken } = result;
+    const { activity } = refreshSchema.parse(req.body);
+    const result = await refreshSession(refreshToken, new Date(), { activity });
+    const { refreshToken: nextRefreshToken, ...body } = result;
     setRefreshTokenCookie(res, nextRefreshToken);
-    res.status(200).json(successResponse({ accessToken }));
+    res.status(200).json(successResponse(body));
   }),
 );
 
@@ -73,8 +73,8 @@ authRouter.post(
   '/mobile/refresh',
   asyncHandler(async (req, res) => {
     requireSecureMobileTransport(req);
-    const { refreshToken } = mobileRefreshSchema.parse(req.body);
-    const result = await refreshSession(refreshToken);
+    const { refreshToken, activity } = mobileRefreshSchema.parse(req.body);
+    const result = await refreshSession(refreshToken, new Date(), { activity: activity ?? true });
     res.status(200).json(successResponse(result));
   }),
 );

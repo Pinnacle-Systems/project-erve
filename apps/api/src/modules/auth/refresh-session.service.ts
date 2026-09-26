@@ -1,8 +1,9 @@
 import { createId } from '@erve/shared';
-import type { AuthUser } from '@erve/types';
+import type { AuthUser, SessionInfo } from '@erve/types';
 import { env } from '../../config/env.js';
 import { HttpError } from '../../errors/http-error.js';
 import {
+  getAccessTokenExpiry,
   signAccessToken,
   signRefreshToken,
   signRotatedRefreshToken,
@@ -52,11 +53,30 @@ export interface TokenResponse {
   accessToken: string;
   refreshToken: string;
   user: AuthUser;
+  session: SessionInfo;
 }
 
 export interface RefreshTokenResponse {
   accessToken: string;
   refreshToken: string;
+  session: SessionInfo;
+}
+
+export interface RefreshSessionOptions {
+  /**
+   * Whether the client observed genuine user activity since its previous
+   * renewal. Only then does the idle expiry slide; otherwise the tokens are
+   * rotated but the session keeps its existing idle deadline, so background
+   * requests alone never keep an unattended session alive. Defaults to true
+   * for clients that do not report activity (older web builds, mobile).
+   */
+  activity?: boolean;
+}
+
+export interface CreatedRefreshSession {
+  refreshToken: string;
+  lastUsedAt: Date;
+  absoluteExpiresAt: Date;
 }
 
 function addMinutes(date: Date, minutes: number): Date {
@@ -79,6 +99,17 @@ export function calculateNextIdleExpiry(absoluteExpiresAt: Date, now = new Date(
   return nextIdleExpiry < absoluteExpiresAt ? nextIdleExpiry : absoluteExpiresAt;
 }
 
+/**
+ * The idle deadline actually enforced by isRefreshSessionExpired — derived
+ * from the last activity and the *current* configuration (so a changed
+ * JWT_REFRESH_IDLE_TIMEOUT_MINUTES applies to existing sessions), capped at
+ * the absolute expiry.
+ */
+export function effectiveIdleExpiry(session: { lastUsedAt: Date; absoluteExpiresAt: Date }): Date {
+  const idleExpiresAt = addMinutes(session.lastUsedAt, env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES);
+  return idleExpiresAt < session.absoluteExpiresAt ? idleExpiresAt : session.absoluteExpiresAt;
+}
+
 export function isRefreshSessionExpired(session: RefreshSessionState, now = new Date()): boolean {
   const idleExpiresAt = addMinutes(session.lastUsedAt, env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES);
   return Boolean(
@@ -86,6 +117,23 @@ export function isRefreshSessionExpired(session: RefreshSessionState, now = new 
     idleExpiresAt.getTime() < now.getTime() ||
     session.absoluteExpiresAt.getTime() <= now.getTime(),
   );
+}
+
+export function buildSessionInfo(input: {
+  userId: string;
+  accessToken: string;
+  lastUsedAt: Date;
+  absoluteExpiresAt: Date;
+  now: Date;
+}): SessionInfo {
+  return {
+    userId: input.userId,
+    serverTime: input.now.toISOString(),
+    accessExpiresAt: getAccessTokenExpiry(input.accessToken).toISOString(),
+    idleExpiresAt: effectiveIdleExpiry(input).toISOString(),
+    absoluteExpiresAt: input.absoluteExpiresAt.toISOString(),
+    idleTimeoutSeconds: env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES * 60,
+  };
 }
 
 function signSessionRefreshToken(userId: string, sessionId: string, authVersion: number): string {
@@ -96,7 +144,7 @@ export async function createRefreshSession(
   userId: string,
   authVersion: number,
   now = new Date(),
-): Promise<string> {
+): Promise<CreatedRefreshSession> {
   const sessionId = createId();
   const refreshToken = signSessionRefreshToken(userId, sessionId, authVersion);
   const expiry = calculateRefreshSessionExpiry(now);
@@ -110,7 +158,7 @@ export async function createRefreshSession(
     absoluteExpiresAt: expiry.absoluteExpiresAt,
   });
 
-  return refreshToken;
+  return { refreshToken, lastUsedAt: now, absoluteExpiresAt: expiry.absoluteExpiresAt };
 }
 
 function successorRefreshToken(
@@ -136,20 +184,25 @@ function isWithinRotationGrace(session: RefreshSessionRecord, now: Date): boolea
 function sessionTokenResponse(
   currentUser: CurrentUser,
   refreshToken: string,
+  state: { lastUsedAt: Date; absoluteExpiresAt: Date },
+  now: Date,
 ): RefreshTokenResponse {
+  const accessToken = signAccessToken({
+    sub: currentUser.id,
+    roles: currentUser.roles,
+    authVersion: currentUser.authVersion,
+  });
   return {
-    accessToken: signAccessToken({
-      sub: currentUser.id,
-      roles: currentUser.roles,
-      authVersion: currentUser.authVersion,
-    }),
+    accessToken,
     refreshToken,
+    session: buildSessionInfo({ userId: currentUser.id, accessToken, ...state, now }),
   };
 }
 
 export async function refreshSession(
   refreshToken: string,
   now = new Date(),
+  { activity = true }: RefreshSessionOptions = {},
 ): Promise<RefreshTokenResponse> {
   let payload: ReturnType<typeof verifyRefreshToken>;
 
@@ -198,7 +251,7 @@ export async function refreshSession(
     // mutation, so this can never slide the session). Everything else is
     // refresh-token reuse and revokes the session.
     if (session.refreshTokenHash === successorHash && isWithinRotationGrace(session, now)) {
-      return sessionTokenResponse(currentUser, successor);
+      return sessionTokenResponse(currentUser, successor, session, now);
     }
 
     await revokeRefreshSessionById(session.id, now);
@@ -210,7 +263,9 @@ export async function refreshSession(
     currentRefreshTokenHash: presentedTokenHash,
     nextRefreshTokenHash: successorHash,
     now,
-    idleExpiresAt: calculateNextIdleExpiry(session.absoluteExpiresAt, now),
+    activity: activity
+      ? { lastUsedAt: now, idleExpiresAt: calculateNextIdleExpiry(session.absoluteExpiresAt, now) }
+      : null,
   });
 
   if (!rotated) {
@@ -220,12 +275,20 @@ export async function refreshSession(
     // credential). Anything else means the session was revoked meanwhile.
     const latest = await findRefreshSessionById(session.id);
     if (latest && !latest.revokedAt && latest.refreshTokenHash === successorHash) {
-      return sessionTokenResponse(currentUser, successor);
+      return sessionTokenResponse(currentUser, successor, latest, now);
     }
     throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
   }
 
-  return sessionTokenResponse(currentUser, successor);
+  return sessionTokenResponse(
+    currentUser,
+    successor,
+    {
+      lastUsedAt: activity ? now : session.lastUsedAt,
+      absoluteExpiresAt: session.absoluteExpiresAt,
+    },
+    now,
+  );
 }
 
 export async function revokeRefreshSession(refreshToken: string, now = new Date()): Promise<void> {
@@ -243,14 +306,20 @@ export async function revokeAllSessionsForUser(userId: string, now = new Date())
   await revokeAllRefreshSessionsForUser(userId, now);
 }
 
-export function issueTokenResponse(currentUser: CurrentUser, refreshToken: string): TokenResponse {
+export function issueTokenResponse(
+  currentUser: CurrentUser,
+  created: CreatedRefreshSession,
+  now = new Date(),
+): TokenResponse {
+  const { accessToken, session } = sessionTokenResponse(
+    currentUser,
+    created.refreshToken,
+    created,
+    now,
+  );
   return {
-    accessToken: signAccessToken({
-      sub: currentUser.id,
-      roles: currentUser.roles,
-      authVersion: currentUser.authVersion,
-    }),
-    refreshToken,
+    accessToken,
+    refreshToken: created.refreshToken,
     user: {
       id: currentUser.id,
       email: currentUser.email,
@@ -258,5 +327,6 @@ export function issueTokenResponse(currentUser: CurrentUser, refreshToken: strin
       name: currentUser.name,
       roles: currentUser.roles,
     },
+    session,
   };
 }
