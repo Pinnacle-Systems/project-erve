@@ -1,48 +1,53 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse, JobOrderQualityActivity } from '@erve/types';
+import type { ApiSuccessResponse, QualityWorkItem } from '@erve/types';
+import type { JobOrderFactoryOption } from '../job-orders/types.js';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
+import { SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import {
   QUALITY_RUNTIME_STATUS_LABELS,
   qualityRuntimeStatusTone,
 } from '../job-orders/job-order-ui.js';
-
-type QualityWorkItem = {
-  jobOrderId: string;
-  jobOrderNumber: string;
-  factory: { id: string; code: string; name: string };
-  activity: JobOrderQualityActivity;
-};
 
 type QualityWorkFilter =
   'AVAILABLE' | 'IN_PROGRESS' | 'FAILED' | 'MISSED' | 'COMPLETED' | 'RECONCILIATION_CONFLICT';
 
 export function QaQueuePage() {
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [filter, setFilter] = useState<QualityWorkFilter | ''>('');
-  const query = useQuery({
+  const [factoryId, setFactoryId] = useState('');
+
+  const params = {
+    search: debouncedSearch || undefined,
+    status: filter && filter !== 'RECONCILIATION_CONFLICT' ? filter : undefined,
+    conflict: filter === 'RECONCILIATION_CONFLICT' ? 'true' : undefined,
+    factoryId: factoryId || undefined,
+  };
+
+  // The API pages this queue by cursor (25 per page, server-filtered) so no
+  // valid QA work is ever silently excluded by a client-side-only window —
+  // see QW1's fix for the old take-100-candidates blind spot.
+  const { query: qualityWorkQuery, items: qualityWork } = useCursorList<QualityWorkItem>({
     queryKey: ['process-flow-quality-work'],
-    queryFn: async () =>
-      (await apiClient.get<ApiSuccessResponse<Array<QualityWorkItem>>>('/job-orders/quality-work'))
-        .data.data,
+    path: '/job-orders/quality-work',
+    params,
   });
-  const normalizedSearch = search.trim().toLocaleLowerCase();
-  const qualityWork = (query.data ?? []).filter((item) => {
-    const matchesSearch =
-      !normalizedSearch ||
-      [item.jobOrderNumber, item.factory.name, item.factory.code, item.activity.name].some(
-        (value) => value.toLocaleLowerCase().includes(normalizedSearch),
+
+  const factoriesQuery = useQuery({
+    queryKey: ['job-order-factory-options'],
+    queryFn: async () => {
+      const res = await apiClient.get<ApiSuccessResponse<JobOrderFactoryOption[]>>(
+        '/job-orders/factory-options',
       );
-    const matchesFilter =
-      !filter ||
-      (filter === 'RECONCILIATION_CONFLICT'
-        ? item.activity.coverage?.reconciliationConflict === true
-        : item.activity.status === filter);
-    return matchesSearch && matchesFilter;
+      return res.data.data;
+    },
   });
 
   return (
@@ -66,11 +71,28 @@ export function QaQueuePage() {
           { label: 'Completed', value: 'COMPLETED' },
           { label: 'Reconciliation conflict', value: 'RECONCILIATION_CONFLICT' },
         ]}
-        hasActiveFilters={Boolean(search || filter)}
+        hasActiveFilters={Boolean(search || filter || factoryId)}
         onClearFilters={() => {
           setSearch('');
           setFilter('');
+          setFactoryId('');
         }}
+        actions={
+          <SelectField
+            aria-label="Factory"
+            value={factoryId || 'ALL'}
+            onValueChange={(value) => setFactoryId(value === 'ALL' ? '' : value)}
+            density="compact"
+            width="md"
+          >
+            <SelectItem value="ALL">All factories</SelectItem>
+            {(factoriesQuery.data ?? []).map((factory) => (
+              <SelectItem key={factory.id} value={factory.id}>
+                {factory.name}
+              </SelectItem>
+            ))}
+          </SelectField>
+        }
       />
       <Panel
         title="Quality activities"
@@ -79,14 +101,17 @@ export function QaQueuePage() {
         <DataTable
           data={qualityWork}
           rowKey={(item) => `${item.jobOrderId}:${item.activity.processFlowVersionStageId}`}
-          loading={query.isLoading}
+          loading={qualityWorkQuery.isLoading}
           loadingState={<LoadingState variant="rows" label="Loading QA work" />}
           emptyState={
             <EmptyState title="No QA work" description="No Quality activities match this view." />
           }
           error={
-            query.isError ? (
-              <ErrorState title="Unable to load QA work" description={query.error.message} />
+            qualityWorkQuery.isError ? (
+              <ErrorState
+                title="Unable to load QA work"
+                description={qualityWorkQuery.error.message}
+              />
             ) : undefined
           }
           columns={[
@@ -133,6 +158,9 @@ export function QaQueuePage() {
               },
             },
           ]}
+        />
+        <LoadMoreFooter
+          {...loadMoreProps(qualityWorkQuery, qualityWork.length, ['activity', 'activities'])}
         />
       </Panel>
     </div>

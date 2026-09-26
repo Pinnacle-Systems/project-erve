@@ -7,7 +7,10 @@ import { createHash } from 'node:crypto';
 import {
   type AssignedFactoryTaskSummary,
   type JobOrderDetail,
+  type JobOrderQualityActivity,
   type PaginatedResponse,
+  type QaWorkStatusBreakdown,
+  type QualityRuntimeStatus,
 } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { FactoryStatus, JobOrderStatus } from '../../db/prisma.js';
@@ -18,6 +21,7 @@ import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 import {
+  buildDelayedJobOrderWhere,
   deriveJobOrderOperationalState,
   isJobOrderDelayed,
 } from './job-order-operational-state.js';
@@ -859,6 +863,9 @@ export async function getJobOrderList(
     factoryId?: string;
     financialYearId?: string;
     recordOrigin?: 'LIVE_WORKFLOW' | 'HISTORICAL_IMPORT';
+    // RPT3 8.9.A — the Dashboard's "Delayed Job Orders" drilldown. Reuses
+    // the RPT0 query predicate, never a separate derivation.
+    delayed?: boolean;
     cursor?: string;
     limit: number;
   },
@@ -892,6 +899,11 @@ export async function getJobOrderList(
             ]
           : undefined,
       },
+      ...(filters.delayed === undefined
+        ? []
+        : filters.delayed
+          ? [buildDelayedJobOrderWhere(toBusinessCalendarDate(new Date()))]
+          : [{ NOT: buildDelayedJobOrderWhere(toBusinessCalendarDate(new Date())) }]),
     ],
   };
 
@@ -1022,38 +1034,249 @@ export async function getJobOrderDetail(user: CurrentUser, id: string) {
   return toJobOrderView(jobOrder, { includeSourceOrderSheets: canViewOrderSheetProvenance(user) });
 }
 
-export async function getProcessFlowQualityWork(user: CurrentUser) {
+export interface QualityWorkQueueItem {
+  jobOrderId: string;
+  jobOrderNumber: string;
+  factory: { id: string; code: string; name: string };
+  activity: JobOrderQualityActivity;
+}
+
+export interface QualityWorkFilters {
+  status?: QualityRuntimeStatus;
+  conflict?: boolean;
+  factoryId?: string;
+  search?: string;
+}
+
+export interface QualityWorkPageArgs {
+  limit: number;
+  cursor?: string;
+}
+
+// Candidate Job Orders are fetched this many at a time (ordered by id desc,
+// the stable tie-breaker — never updatedAt, which is what let the old
+// take-100 window silently drop eligible work). Most candidates in a real
+// queue yield zero visible activities (already fully worked or not yet
+// eligible), so one chunk of results rarely fills a page by itself; the
+// loop below keeps fetching further chunks until the page is full or every
+// candidate has been scanned.
+const QUALITY_WORK_CANDIDATE_CHUNK_SIZE = 200;
+
+// Safety valve on total candidates scanned for a single page request. If
+// this is ever hit under realistic seeded data, that is the QW1 5.9 stop
+// condition — report the timing/query evidence rather than silently
+// returning an incomplete page as if it were complete.
+const QUALITY_WORK_MAX_CANDIDATES_SCANNED = 5000;
+
+function buildQualityWorkCandidateWhere(factoryId?: string): Prisma.JobOrderWhereInput {
+  return {
+    factoryConfirmationStatus: 'CONFIRMED',
+    // Historical-import rows never had live quality work. They are kept
+    // out today only incidentally (never factory-confirmed); this makes
+    // the exclusion explicit, like getAssignedFactoryTasks and the QA
+    // queues, so it survives any later change to the filter above.
+    recordOrigin: 'LIVE_WORKFLOW',
+    processFlowVersion: {
+      stages: { some: { status: 'ACTIVE', activityType: 'QUALITY' } },
+    },
+    ...(factoryId ? { factoryId } : {}),
+  };
+}
+
+function matchesQualityWorkFilters(
+  item: QualityWorkQueueItem,
+  filters: QualityWorkFilters,
+): boolean {
+  if (filters.status && item.activity.status !== filters.status) return false;
+  if (filters.conflict !== undefined) {
+    const conflict = item.activity.coverage?.reconciliationConflict === true;
+    if (conflict !== filters.conflict) return false;
+  }
+  if (filters.search) {
+    const needle = filters.search.toLocaleLowerCase();
+    const haystack = [
+      item.jobOrderNumber,
+      item.factory.name,
+      item.factory.code,
+      item.activity.name,
+    ]
+      .join(' ')
+      .toLocaleLowerCase();
+    if (!haystack.includes(needle)) return false;
+  }
+  return true;
+}
+
+interface QualityWorkCursor {
+  jobOrderId: string;
+  // The stage `sequence` of the last item already returned for jobOrderId —
+  // resuming means only activities with a strictly greater sequence in that
+  // one Job Order are considered again; every Job Order encountered after it
+  // (id < jobOrderId, since candidates are ordered id desc) is unaffected.
+  afterSequence: number;
+}
+
+function encodeQualityWorkCursor(cursor: QualityWorkCursor): string {
+  return Buffer.from(`${cursor.jobOrderId}:${cursor.afterSequence}`, 'utf8').toString(
+    'base64url',
+  );
+}
+
+function decodeQualityWorkCursor(raw: string): QualityWorkCursor {
+  const decoded = Buffer.from(raw, 'base64url').toString('utf8');
+  const separatorIndex = decoded.lastIndexOf(':');
+  const jobOrderId = separatorIndex >= 0 ? decoded.slice(0, separatorIndex) : '';
+  const afterSequence = Number(decoded.slice(separatorIndex + 1));
+  if (!jobOrderId || !Number.isFinite(afterSequence)) {
+    throw HttpError.badRequest('Invalid quality-work cursor');
+  }
+  return { jobOrderId, afterSequence };
+}
+
+/**
+ * Paginated replacement for the old `take: 100` quality-work queue (QW1).
+ * Keeps the exact same candidate predicate and the exact same
+ * `toQualityActivityViews` eligibility derivation as before — only the
+ * candidate-scanning/pagination strategy around them changed, from "the 100
+ * most-recently-updated candidate Job Orders" (which could silently exclude
+ * older, still-eligible work) to "every candidate Job Order, scanned in
+ * stable id-desc chunks until the page is full."
+ */
+export async function getProcessFlowQualityWorkPage(
+  user: CurrentUser,
+  filters: QualityWorkFilters,
+  page: QualityWorkPageArgs,
+): Promise<PaginatedResponse<QualityWorkQueueItem>> {
   if (!canPerformQaOperation(user))
     throw HttpError.forbidden('Only QA operations users may view QA work');
-  const jobs = await prisma.jobOrder.findMany({
-    where: {
-      factoryConfirmationStatus: 'CONFIRMED',
-      // Historical-import rows never had live quality work. They are kept
-      // out today only incidentally (never factory-confirmed); this makes
-      // the exclusion explicit, like getAssignedFactoryTasks and the QA
-      // queues, so it survives any later change to the filter above.
-      recordOrigin: 'LIVE_WORKFLOW',
-      processFlowVersion: {
-        stages: { some: { status: 'ACTIVE', activityType: 'QUALITY' } },
-      },
-    },
-    include: jobOrderInclude,
-    orderBy: { updatedAt: 'desc' },
-    take: 100,
-  });
-  return jobs.flatMap((job) =>
-    toQualityActivityViews(job)
-      .filter(
+
+  const cursor = page.cursor ? decodeQualityWorkCursor(page.cursor) : null;
+  const where = buildQualityWorkCandidateWhere(filters.factoryId);
+
+  const items: QualityWorkQueueItem[] = [];
+  let scanned = 0;
+  let chunkCursor: { id: string } | undefined = cursor ? { id: cursor.jobOrderId } : undefined;
+  let skip = 0;
+
+  while (items.length <= page.limit) {
+    const chunk = await prisma.jobOrder.findMany({
+      where,
+      include: jobOrderInclude,
+      orderBy: { id: 'desc' },
+      cursor: chunkCursor,
+      skip,
+      take: QUALITY_WORK_CANDIDATE_CHUNK_SIZE,
+    });
+    if (chunk.length === 0) break;
+
+    for (const job of chunk) {
+      scanned += 1;
+      const afterSequence = cursor && job.id === cursor.jobOrderId ? cursor.afterSequence : -1;
+      const activities = toQualityActivityViews(job).filter(
         (activity) =>
-          activity.status !== 'NOT_AVAILABLE' || activity.coverage?.reconciliationConflict === true,
-      )
-      .map((activity) => ({
-        jobOrderId: job.id,
-        jobOrderNumber: job.jobOrderNumber,
-        factory: job.factory,
-        activity,
-      })),
-  );
+          activity.sequence > afterSequence &&
+          (activity.status !== 'NOT_AVAILABLE' ||
+            activity.coverage?.reconciliationConflict === true),
+      );
+      for (const activity of activities) {
+        const candidateItem: QualityWorkQueueItem = {
+          jobOrderId: job.id,
+          jobOrderNumber: job.jobOrderNumber,
+          factory: job.factory,
+          activity,
+        };
+        if (matchesQualityWorkFilters(candidateItem, filters)) items.push(candidateItem);
+      }
+      if (items.length > page.limit) break;
+    }
+
+    if (items.length > page.limit || chunk.length < QUALITY_WORK_CANDIDATE_CHUNK_SIZE) break;
+    if (scanned >= QUALITY_WORK_MAX_CANDIDATES_SCANNED) break;
+
+    chunkCursor = { id: chunk[chunk.length - 1]!.id };
+    skip = 1;
+  }
+
+  const hasMore = items.length > page.limit;
+  const pageItems = hasMore ? items.slice(0, page.limit) : items;
+  const last = pageItems.at(-1);
+  return {
+    items: pageItems,
+    pageInfo: {
+      limit: page.limit,
+      hasMore,
+      nextCursor:
+        hasMore && last
+          ? encodeQualityWorkCursor({ jobOrderId: last.jobOrderId, afterSequence: last.activity.sequence })
+          : null,
+    },
+  };
+}
+
+/**
+ * Factual QA runtime status counts (QW1 5.5), derived through the exact
+ * same candidate predicate + eligibility evaluation as
+ * `getProcessFlowQualityWorkPage` — never a separate/approximated
+ * calculation, so the summary and the paginated list can never disagree.
+ * Scans every candidate Job Order (chunked, same as the list) since a
+ * factual count cannot itself be paginated away.
+ */
+export async function getQualityWorkSummary(
+  user: CurrentUser,
+  filters: Pick<QualityWorkFilters, 'factoryId'>,
+): Promise<QaWorkStatusBreakdown> {
+  if (!canPerformQaOperation(user))
+    throw HttpError.forbidden('Only QA operations users may view QA work');
+  return computeQualityWorkSummary(filters);
+}
+
+/**
+ * Permission-free core of getQualityWorkSummary, for callers with their own
+ * RBAC already applied — reports.service.ts's operations summary (RPT1
+ * 6.1) reuses this directly rather than re-deriving the QA status
+ * breakdown, since a report viewer (e.g. SENIOR_MANAGEMENT) may see this
+ * aggregate without holding QA_OPERATION_ROLES itself (RPT0 4.6).
+ */
+export async function computeQualityWorkSummary(
+  filters: Pick<QualityWorkFilters, 'factoryId'>,
+): Promise<QaWorkStatusBreakdown> {
+  const where = buildQualityWorkCandidateWhere(filters.factoryId);
+  const byStatus: Record<Exclude<QualityRuntimeStatus, 'NOT_AVAILABLE'>, number> = {
+    AVAILABLE: 0,
+    IN_PROGRESS: 0,
+    COMPLETED: 0,
+    FAILED: 0,
+    MISSED: 0,
+  };
+  let reconciliationConflict = 0;
+
+  let chunkCursor: { id: string } | undefined;
+  let skip = 0;
+  for (;;) {
+    const chunk = await prisma.jobOrder.findMany({
+      where,
+      include: jobOrderInclude,
+      orderBy: { id: 'desc' },
+      cursor: chunkCursor,
+      skip,
+      take: QUALITY_WORK_CANDIDATE_CHUNK_SIZE,
+    });
+    if (chunk.length === 0) break;
+
+    for (const job of chunk) {
+      for (const activity of toQualityActivityViews(job)) {
+        const conflict = activity.coverage?.reconciliationConflict === true;
+        if (activity.status !== 'NOT_AVAILABLE') byStatus[activity.status] += 1;
+        if (conflict) reconciliationConflict += 1;
+      }
+    }
+
+    if (chunk.length < QUALITY_WORK_CANDIDATE_CHUNK_SIZE) break;
+    chunkCursor = { id: chunk[chunk.length - 1]!.id };
+    skip = 1;
+  }
+
+  return { byStatus, reconciliationConflict };
 }
 
 // Resolves and validates the set of source Order Sheets shared by

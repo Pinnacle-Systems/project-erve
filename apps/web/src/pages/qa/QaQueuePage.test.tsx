@@ -4,7 +4,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { QualityWorkItem } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
+import { expectLoadsEveryPage } from '../../test-support/cursor-list-page.js';
 import { QaQueuePage } from './QaQueuePage.js';
 
 let container: HTMLDivElement;
@@ -22,113 +24,62 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// React's controlled inputs track the native value setter, so a plain
-// `input.value = x` followed by dispatching "input" is not observed —
-// the native property setter must be invoked directly (see UserPages.test.tsx).
 function setInputValue(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
   setter.call(input, value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-describe('QA work list', () => {
-  it('shows configured Quality activities without loading a separate prepared-quantity queue', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/job-orders/quality-work') {
-        return {
-          data: {
-            data: [
-              {
-                jobOrderId: 'job-1',
-                jobOrderNumber: 'JO-001',
-                factory: { id: 'factory-1', code: 'FAC', name: 'Factory One' },
-                activity: {
-                  processFlowVersionStageId: 'quality-1',
-                  sequence: 1,
-                  name: 'Inline Inspection',
-                  status: 'IN_PROGRESS',
-                  coverage: {
-                    preparedQuantityAuthoritative: true,
-                    preparedQuantity: 100,
-                    inspectedQuantity: 70,
-                    remainingQuantity: 30,
-                    complete: false,
-                    reconciliationConflict: false,
-                    state: 'IN_PROGRESS',
-                    passedBatches: 1,
-                    failedBatches: 0,
-                    hasFailedBatches: false,
-                    batches: [],
-                  },
-                },
-              },
-            ],
-          },
-        };
-      }
+function item(n: number): QualityWorkItem {
+  return {
+    jobOrderId: `job-${n}`,
+    jobOrderNumber: `JO-${String(n).padStart(3, '0')}`,
+    factory: { id: 'factory-1', code: 'FAC', name: 'Factory One' },
+    activity: {
+      processFlowVersionStageId: `quality-${n}`,
+      sequence: 1,
+      name: 'Inline Inspection',
+      status: 'IN_PROGRESS',
+      eligible: false,
+      qualityForm: { id: 'form', code: 'FORM', name: 'Inline Inspection', executionScope: 'JOB_ORDER' },
+      qualityFormVersion: { id: 'form-version', versionNumber: 1 },
+      executionMode: 'IN_PROCESS',
+      associatedProductionActivity: null,
+      availabilityPolicy: 'AFTER_ASSOCIATED_ACTIVITY_COMPLETES',
+      progressThresholdPercent: null,
+      gateSatisfactionRequirement: null,
+      executionMultiplicity: 'SINGLE',
+      coverageTarget: null,
+      coverage: null,
+      execution: null,
+      executionHistory: [],
+    },
+  } satisfies QualityWorkItem;
+}
 
-      throw new Error(`Unexpected request: ${url}`);
+describe('QA work list (QW1 paginated contract)', () => {
+  it('loads every page via server-side cursor pagination, never a single unpaginated array', async () => {
+    await expectLoadsEveryPage({
+      element: <QaQueuePage />,
+      path: '/job-orders/quality-work',
+      noun: 'activities',
+      row: item,
+      rowText: (n) => `JO-${String(n).padStart(3, '0')}`,
+      otherGet: () => [],
     });
-
-    act(() => {
-      root.render(
-        <QueryClientProvider
-          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-        >
-          <MemoryRouter>
-            <QaQueuePage />
-          </MemoryRouter>
-        </QueryClientProvider>,
-      );
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
-
-    expect(container.textContent).toContain('JO-001');
-    expect(container.textContent).toContain('Inline Inspection');
-    expect(container.textContent).toContain('In Progress');
-    expect(container.textContent).toContain('70 / 100');
-    expect(container.textContent).not.toContain('Prepared quantity QA work');
-    expect(get).toHaveBeenCalledTimes(1);
-    expect(get).toHaveBeenCalledWith('/job-orders/quality-work');
   });
 
-  it('filters the queue immediately client-side and never issues a second request while typing', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/job-orders/quality-work') {
-        return {
-          data: {
-            data: [
-              {
-                jobOrderId: 'job-1',
-                jobOrderNumber: 'JO-001',
-                factory: { id: 'factory-1', code: 'FAC', name: 'Factory One' },
-                activity: {
-                  processFlowVersionStageId: 'quality-1',
-                  sequence: 1,
-                  name: 'Inline Inspection',
-                  status: 'IN_PROGRESS',
-                },
-              },
-              {
-                jobOrderId: 'job-2',
-                jobOrderNumber: 'JO-002',
-                factory: { id: 'factory-2', code: 'FAC2', name: 'Factory Two' },
-                activity: {
-                  processFlowVersionStageId: 'quality-2',
-                  sequence: 1,
-                  name: 'Final Inspection',
-                  status: 'AVAILABLE',
-                },
-              },
-            ],
-          },
-        };
-      }
-
-      throw new Error(`Unexpected request: ${url}`);
-    });
+  it('sends status, conflict and factory filters to the server rather than filtering a fetched-once array', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    vi.spyOn(apiClient, 'get').mockImplementation(
+      async (url: string, config?: { params?: Record<string, unknown> }) => {
+        if (url === '/job-orders/factory-options') {
+          return { data: { data: [{ id: 'factory-1', code: 'FAC', name: 'Factory One' }] } };
+        }
+        calls.push(config?.params ?? {});
+        return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
+      },
+    );
 
     act(() => {
       root.render(
@@ -144,19 +95,16 @@ describe('QA work list', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
-
-    expect(container.textContent).toContain('JO-001');
-    expect(container.textContent).toContain('JO-002');
+    expect(calls.at(-1)).toMatchObject({ search: undefined, status: undefined, conflict: undefined });
 
     const input = container.querySelector<HTMLInputElement>(
       'input[placeholder="Search job order, activity or factory"]',
     )!;
     act(() => setInputValue(input, 'JO-002'));
-
-    // Client-side filtering must apply on the same synchronous render pass —
-    // no timer/debounce wait is needed or expected here.
-    expect(container.textContent).not.toContain('JO-001');
-    expect(container.textContent).toContain('JO-002');
-    expect(get).toHaveBeenCalledTimes(1); // no additional request triggered by typing
+    // The search value is debounced 300ms before it becomes a query param.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+    expect(calls.at(-1)).toMatchObject({ search: 'JO-002' });
   });
 });

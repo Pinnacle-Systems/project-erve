@@ -89,7 +89,18 @@ export async function listSaleOrReturnPositions(
       // destination's Distributor-group snapshot, never a single
       // order-level value — a Dispatch Order may mix Distributors/Purchase
       // Modes.
-      saleOrderLine: { destination: { saleOrderDistributor: { purchaseMode: 'SALE_RETURN' } } },
+      saleOrderLine: {
+        destination: {
+          saleOrderDistributor: {
+            purchaseMode: 'SALE_RETURN',
+            // RPT1 6.11: pushed into the DB query rather than filtered in
+            // the JS loop below — was `if (distributorId && distributor.id
+            // !== distributorId) continue`, fetching every SALE_RETURN
+            // line for every Distributor even when scoped to one.
+            ...(distributorId ? { distributorId } : {}),
+          },
+        },
+      },
       carton: { retiredAt: null },
     },
     select: {
@@ -122,7 +133,6 @@ export async function listSaleOrReturnPositions(
     if (!dispatch) continue; // packed but not yet Erve-dispatched — no consignment position exists yet
     const so = line.saleOrderLine.saleOrder;
     const distributor = line.saleOrderLine.destination.saleOrderDistributor.distributor;
-    if (distributorId && distributor.id !== distributorId) continue;
 
     const key = `${dispatch.id}:${line.saleOrderLine.id}`;
     const existing = grouped.get(key);

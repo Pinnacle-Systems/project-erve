@@ -22,11 +22,13 @@ import {
   canReceiveDistributorReturn,
   canReadFactoryDispatchBroadly,
   canPerformQaOperation,
+  canViewReports,
   DISPATCH_ORDER_VIEW_ROLES,
   DISPATCH_ORDER_AUDIT_VIEW_ROLES,
   DISPATCH_ORDER_MUTATION_ROLES,
   DISPATCH_ORDER_FILTER_ROLES,
   JOB_ORDER_FACTORY_FILTER_ROLES,
+  REPORT_VIEW_ROLES,
 } from '@erve/shared';
 
 export const MASTER_DATA_DASHBOARD_SHORTCUT_ROLES = [
@@ -158,6 +160,13 @@ function hasRole(user: AuthUser | null | undefined, roles: readonly Role[]): boo
 
 export const canViewMasterDataDashboardShortcut = (user: AuthUser | null | undefined) =>
   hasRole(user, MASTER_DATA_DASHBOARD_SHORTCUT_ROLES);
+
+// RPT0/RPT2: role list lives in @erve/shared's rbac.ts (the single source of
+// truth also used by apps/api's /reports/* route guard) — re-exported here
+// so DashboardPage.tsx's role branch doesn't need a separate import.
+export { REPORT_VIEW_ROLES };
+export const canViewManagementReports = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewReports(user));
 
 export const canViewStyles = (user: AuthUser | null | undefined) => hasRole(user, STYLE_VIEW_ROLES);
 

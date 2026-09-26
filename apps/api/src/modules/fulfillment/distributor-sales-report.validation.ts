@@ -1,8 +1,12 @@
 import { z } from 'zod';
+import { queryBooleanSchema } from '../../utils/query-boolean.js';
 
 export const listSaleOrReturnPositionsQuerySchema = z.object({
   distributorId: z.string().trim().optional(),
-  onlyWithRemaining: z.coerce.boolean().optional(),
+  // RPT1 6.11: was z.coerce.boolean(), which reads ?onlyWithRemaining=false
+  // as true (Boolean('false') === true) — every non-empty query string
+  // coerces truthy.
+  onlyWithRemaining: queryBooleanSchema.optional(),
 });
 
 export const listDistributorSalesReportsQuerySchema = z.object({

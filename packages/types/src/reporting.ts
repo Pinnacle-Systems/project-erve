@@ -1,0 +1,203 @@
+import type { JobOrderQualityActivity, QualityRuntimeStatus } from './operations.js';
+
+// ---------------------------------------------------------------------------
+// Record Origin (RPT0 2.2)
+// ---------------------------------------------------------------------------
+
+/** The persisted origin of a Job Order (and other historical-import-eligible records). */
+export type RecordOrigin = 'LIVE_WORKFLOW' | 'HISTORICAL_IMPORT';
+
+/**
+ * A reporting query's Record Origin filter. Adds `ALL` to the persisted
+ * RecordOrigin values, meaning "no origin filter, include both." Every V1
+ * reporting endpoint defaults to `LIVE_WORKFLOW` (RPT0 2.2): imported Job
+ * Orders are PRODUCTION_COMPLETE with no prepared/QA/downstream rows, which
+ * would otherwise distort current operational comparisons. Reports never
+ * hide this split — see `filtersApplied`/origin breakdowns in the report
+ * response shapes.
+ */
+export type ReportRecordOriginFilter = RecordOrigin | 'ALL';
+
+export const DEFAULT_REPORT_RECORD_ORIGIN: ReportRecordOriginFilter = 'LIVE_WORKFLOW';
+
+// ---------------------------------------------------------------------------
+// Shared filter dimensions (RPT0 4.1)
+// ---------------------------------------------------------------------------
+
+export type ReportPurchaseMode = 'OUTRIGHT' | 'SALE_RETURN';
+
+/**
+ * Reusable reporting filter dimensions. No endpoint is required to support
+ * every field — each report documents its own supported subset (RPT0 4.1).
+ */
+export interface ReportFilters {
+  financialYearId?: string;
+  fromDate?: string;
+  toDate?: string;
+  seasonId?: string;
+  factoryId?: string;
+  distributorId?: string;
+  styleId?: string;
+  purchaseMode?: ReportPurchaseMode;
+  recordOrigin?: ReportRecordOriginFilter;
+  status?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// QA work status (RPT0 2.4 / QW1) — reuses the existing QualityRuntimeStatus
+// union rather than inventing a parallel one, and never synthesizes a
+// "QA Pending" bucket.
+// ---------------------------------------------------------------------------
+
+/**
+ * NOT_AVAILABLE activities are never surfaced as queue rows (they are
+ * filtered out of the quality-work list) unless they carry a
+ * reconciliation conflict, in which case they are counted under
+ * `reconciliationConflict` instead of a status bucket — matching the list's
+ * own display, which shows "Reconciliation Conflict" in place of the
+ * underlying status label for those rows.
+ */
+export type ActionableQualityRuntimeStatus = Exclude<QualityRuntimeStatus, 'NOT_AVAILABLE'>;
+
+export interface QaWorkStatusBreakdown {
+  byStatus: Record<ActionableQualityRuntimeStatus, number>;
+  reconciliationConflict: number;
+}
+
+/** One row of GET /job-orders/quality-work's paginated queue (QW1). */
+export interface QualityWorkItem {
+  jobOrderId: string;
+  jobOrderNumber: string;
+  factory: { id: string; code: string; name: string };
+  activity: JobOrderQualityActivity;
+}
+
+// ---------------------------------------------------------------------------
+// Reporting section omission (RPT0 4.6 / RPT1 6.13)
+// ---------------------------------------------------------------------------
+
+/**
+ * The source domains a V1 reporting aggregate can read from. A viewer who
+ * cannot see a given section's underlying domain never receives that key —
+ * the API omits it and lists it in `sectionsOmitted` instead of returning a
+ * zero or an empty placeholder. Mirrors the `ReportSection` role gate in
+ * `@erve/shared`'s rbac.ts (the source of truth for which roles satisfy
+ * each section); duplicated here only as a plain string-literal union so
+ * `packages/types` does not need to depend on `@erve/shared`.
+ */
+export type ReportSection =
+  | 'production'
+  | 'qa'
+  | 'packingPending'
+  | 'packingAudit'
+  | 'delivery'
+  | 'saleReturn'
+  | 'factoryInvoice';
+
+// ---------------------------------------------------------------------------
+// RPT1 — server-side factual reporting aggregates
+// ---------------------------------------------------------------------------
+
+/** GET /reports/operations/summary. Every section is optional: a section the
+ * viewer cannot see (per REPORT_SECTION rules) is omitted entirely and named
+ * in `sectionsOmitted`, never returned as zero. */
+export interface ReportOperationsSummary {
+  generatedAt: string;
+  businessDate: string;
+  filtersApplied: ReportFilters;
+  sectionsOmitted: string[];
+  production?: {
+    openByStatus: Record<string, number>;
+    openTotal: number;
+    delayed: number;
+  };
+  qa?: {
+    workByStatus: Record<ActionableQualityRuntimeStatus, number>;
+    reconciliationConflicts: number;
+    availableStockPieces: number;
+  };
+  packing?: {
+    piecesAwaitingPacking?: number;
+    packingListsAwaitingCompletion?: number;
+    cartonsNeverAudited?: number;
+    cartonsNeedingReinspection?: number;
+  };
+  delivery?: {
+    awaitingConfirmation: number;
+  };
+  saleReturn?: {
+    remainingWithDistributors: number;
+  };
+}
+
+export interface FactoryProductionWorkload {
+  factory: { id: string; code: string; name: string };
+  openJobOrders: number;
+  delayedJobOrders: number;
+}
+
+export interface FactoryQuantityFlow {
+  factory: { id: string; code: string; name: string };
+  orderedPieces: number;
+  cancelledOrderedPieces: number;
+  preparedPieces: number;
+  qaPassedPieces: number;
+  factoryDispatchedPieces: number;
+}
+
+export interface JobOrderPipelineBucket {
+  status: string;
+  recordOrigin: RecordOrigin;
+  count: number;
+}
+
+/** GET /reports/production */
+export interface ReportProduction {
+  filtersApplied: ReportFilters;
+  pipeline: JobOrderPipelineBucket[];
+  factoryWorkload: FactoryProductionWorkload[];
+  quantityFlow: FactoryQuantityFlow[];
+}
+
+/** GET /reports/fulfillment — entity families kept separate; no fake additive total. */
+export interface ReportFulfillment {
+  filtersApplied: ReportFilters;
+  factoryDispatch: Record<string, number>;
+  packingAudit: { neverAudited: number; needingReinspection: number; currentlyPassed: number };
+  factoryInvoice: Record<string, number>;
+  ervePackingList: Record<string, number>;
+  erveDispatch: Record<string, number>;
+  delivery: { userConfirmed: number; legacyAssumedFullReceipt: number };
+}
+
+export interface SaleOrReturnReportRow {
+  distributor: { id: string; code: string; name: string };
+  style?: { id: string; styleNumber: string; styleName: string };
+  received: number;
+  sold: number;
+  returned: number;
+  approvedAwaitingReceipt: number;
+  pendingRequested: number;
+  remainingWithDistributor: number;
+  availableForNewReturn: number;
+}
+
+/** GET /reports/sale-or-return */
+export interface ReportSaleOrReturn {
+  filtersApplied: ReportFilters;
+  rows: SaleOrReturnReportRow[];
+}
+
+export interface DistributorReturnReportRow {
+  distributor?: { id: string; code: string; name: string };
+  status?: string;
+  requested: number;
+  approvedActive: number;
+  received: number;
+}
+
+/** GET /reports/distributor-returns */
+export interface ReportDistributorReturns {
+  filtersApplied: ReportFilters;
+  rows: DistributorReturnReportRow[];
+}

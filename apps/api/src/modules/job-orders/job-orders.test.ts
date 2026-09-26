@@ -3472,6 +3472,68 @@ describe('Job Order delay indicator (Correction 6)', () => {
         expect(task.isDelayed).toBe(true);
       }),
   );
+
+  it(
+    'GET /job-orders?delayed=true|false filters using the same predicate as isDelayed (RPT3 drilldown)',
+    () =>
+      freeze(async () => {
+        const graph = await createSeedGraph();
+        const overdue = await createJobOrder(graph.admin.token, graph, 4);
+        await request(app)
+          .patch(`/job-orders/${overdue.body.data.id}/delivery-date`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delayed-filter-overdue')
+          .send({ expectedVersion: overdue.body.data.version, requiredDeliveryDate: OVERDUE_DATE })
+          .expect(200);
+        const secondOrderSheet = await createOrderSheet(graph.admin.token, graph, [
+          { sizeId: graph.sizeAId, orderedQuantity: 4 },
+        ]);
+        const notOverdue = await request(app)
+          .post('/job-orders')
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .send({
+            orderSheetIds: [secondOrderSheet.id],
+            sizes: [{ sizeId: graph.sizeAId, quantity: 4 }],
+            factoryId: graph.factory.id,
+            processFlowVersionId: graph.processFlowVersionId,
+            unitPrice: '199.50',
+            disclaimerText: 'Factory commercial terms apply.',
+          });
+        await request(app)
+          .patch(`/job-orders/${notOverdue.body.data.id}/delivery-date`)
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .set('Idempotency-Key', 'delayed-filter-not-overdue')
+          .send({ expectedVersion: notOverdue.body.data.version, requiredDeliveryDate: FUTURE_DATE })
+          .expect(200);
+
+        const delayedOnly = await request(app)
+          .get('/job-orders')
+          .query({ delayed: 'true', factoryId: graph.factory.id })
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .expect(200);
+        const delayedIds = delayedOnly.body.data.items.map((item: { id: string }) => item.id);
+        expect(delayedIds).toContain(overdue.body.data.id);
+        expect(delayedIds).not.toContain(notOverdue.body.data.id);
+
+        const notDelayedOnly = await request(app)
+          .get('/job-orders')
+          .query({ delayed: 'false', factoryId: graph.factory.id })
+          .set('Authorization', `Bearer ${graph.admin.token}`)
+          .expect(200);
+        const notDelayedIds = notDelayedOnly.body.data.items.map((item: { id: string }) => item.id);
+        expect(notDelayedIds).toContain(notOverdue.body.data.id);
+        expect(notDelayedIds).not.toContain(overdue.body.data.id);
+      }),
+  );
+
+  it('rejects a non-explicit delayed value (e.g. "1") — no z.coerce.boolean() footgun', async () => {
+    const graph = await createSeedGraph();
+    await request(app)
+      .get('/job-orders')
+      .query({ delayed: '1' })
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .expect(400);
+  });
 });
 describe('UXAUTH-002: Factory User Job Order List Scope', () => {
   it('enforces Factory User visibility boundaries (Cases 1-6)', async () => {
