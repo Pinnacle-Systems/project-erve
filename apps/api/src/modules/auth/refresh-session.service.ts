@@ -2,7 +2,12 @@ import { createId } from '@erve/shared';
 import type { AuthUser } from '@erve/types';
 import { env } from '../../config/env.js';
 import { HttpError } from '../../errors/http-error.js';
-import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../auth/jwt.js';
+import {
+  signAccessToken,
+  signRefreshToken,
+  signRotatedRefreshToken,
+  verifyRefreshToken,
+} from '../../auth/jwt.js';
 import { hashToken } from '../../auth/token-hash.js';
 import { toCurrentUser, type CurrentUser } from '../../auth/current-user.js';
 import {
@@ -16,6 +21,19 @@ import {
 
 const INVALID_REFRESH_SESSION_MESSAGE = 'Invalid or expired refresh session';
 
+/**
+ * How long after a rotation the immediately previous refresh token is still
+ * answered — with the successor the server already issued, never a new one.
+ * Covers two legitimate cases that previously revoked the whole session:
+ *   - two tabs (or two requests) presenting the same current token at once;
+ *   - a rotation whose response/Set-Cookie never reached the client, so the
+ *     client retries with the token it still holds.
+ * Deliberately narrow: only the single direct predecessor qualifies, only
+ * within this window, and only while the session is otherwise valid. Any
+ * other stale token is still treated as reuse and revokes the session.
+ */
+export const REFRESH_ROTATION_GRACE_SECONDS = 60;
+
 export interface RefreshSessionExpiry {
   idleExpiresAt: Date;
   absoluteExpiresAt: Date;
@@ -27,6 +45,8 @@ interface RefreshSessionState {
   idleExpiresAt: Date;
   absoluteExpiresAt: Date;
 }
+
+type RefreshSessionRecord = NonNullable<Awaited<ReturnType<typeof findRefreshSessionById>>>;
 
 export interface TokenResponse {
   accessToken: string;
@@ -93,6 +113,40 @@ export async function createRefreshSession(
   return refreshToken;
 }
 
+function successorRefreshToken(
+  presentedTokenHash: string,
+  session: RefreshSessionRecord,
+  authVersion: number,
+): string {
+  return signRotatedRefreshToken({
+    previousTokenHash: presentedTokenHash,
+    sub: session.userId,
+    sessionId: session.id,
+    authVersion,
+    absoluteExpiresAt: session.absoluteExpiresAt,
+  });
+}
+
+function isWithinRotationGrace(session: RefreshSessionRecord, now: Date): boolean {
+  // updatedAt is written as the rotation instant by rotateRefreshSessionToken.
+  const elapsedMs = now.getTime() - session.updatedAt.getTime();
+  return elapsedMs >= 0 && elapsedMs <= REFRESH_ROTATION_GRACE_SECONDS * 1000;
+}
+
+function sessionTokenResponse(
+  currentUser: CurrentUser,
+  refreshToken: string,
+): RefreshTokenResponse {
+  return {
+    accessToken: signAccessToken({
+      sub: currentUser.id,
+      roles: currentUser.roles,
+      authVersion: currentUser.authVersion,
+    }),
+    refreshToken,
+  };
+}
+
 export async function refreshSession(
   refreshToken: string,
   now = new Date(),
@@ -111,21 +165,15 @@ export async function refreshSession(
     throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
   }
 
-  const currentRefreshTokenHash = hashToken(refreshToken);
+  const presentedTokenHash = hashToken(refreshToken);
   const session = await findRefreshSessionById(payload.sessionId);
 
   if (!session) {
     throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
   }
 
-  if (
-    session.userId !== payload.sub ||
-    session.refreshTokenHash !== currentRefreshTokenHash ||
-    isRefreshSessionExpired(session, now)
-  ) {
-    if (session) {
-      await revokeRefreshSessionById(session.id, now);
-    }
+  if (session.userId !== payload.sub || isRefreshSessionExpired(session, now)) {
+    await revokeRefreshSessionById(session.id, now);
     throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
   }
 
@@ -140,31 +188,44 @@ export async function refreshSession(
     throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
   }
 
-  const nextRefreshToken = signSessionRefreshToken(
-    currentUser.id,
-    session.id,
-    currentUser.authVersion,
-  );
+  const successor = successorRefreshToken(presentedTokenHash, session, currentUser.authVersion);
+  const successorHash = hashToken(successor);
+
+  if (session.refreshTokenHash !== presentedTokenHash) {
+    // Not the current token. The only stale token still honoured is the
+    // direct predecessor of the current one, shortly after it was rotated:
+    // answer it idempotently with the successor already issued (no DB
+    // mutation, so this can never slide the session). Everything else is
+    // refresh-token reuse and revokes the session.
+    if (session.refreshTokenHash === successorHash && isWithinRotationGrace(session, now)) {
+      return sessionTokenResponse(currentUser, successor);
+    }
+
+    await revokeRefreshSessionById(session.id, now);
+    throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
+  }
+
   const rotated = await rotateRefreshSessionToken({
     sessionId: session.id,
-    currentRefreshTokenHash,
-    nextRefreshTokenHash: hashToken(nextRefreshToken),
+    currentRefreshTokenHash: presentedTokenHash,
+    nextRefreshTokenHash: successorHash,
     now,
     idleExpiresAt: calculateNextIdleExpiry(session.absoluteExpiresAt, now),
   });
 
   if (!rotated) {
+    // Lost a race with a concurrent rotation of the same token. Because the
+    // successor is deterministic, the winner stored exactly this successor —
+    // return it too rather than failing (and never clearing the client's
+    // credential). Anything else means the session was revoked meanwhile.
+    const latest = await findRefreshSessionById(session.id);
+    if (latest && !latest.revokedAt && latest.refreshTokenHash === successorHash) {
+      return sessionTokenResponse(currentUser, successor);
+    }
     throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
   }
 
-  return {
-    accessToken: signAccessToken({
-      sub: currentUser.id,
-      roles: currentUser.roles,
-      authVersion: currentUser.authVersion,
-    }),
-    refreshToken: nextRefreshToken,
-  };
+  return sessionTokenResponse(currentUser, successor);
 }
 
 export async function revokeRefreshSession(refreshToken: string, now = new Date()): Promise<void> {

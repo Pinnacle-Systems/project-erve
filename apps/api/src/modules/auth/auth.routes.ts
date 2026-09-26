@@ -42,19 +42,20 @@ authRouter.post(
     const refreshToken = getRefreshTokenFromCookie(req);
 
     if (!refreshToken) {
-      clearRefreshTokenCookie(res);
       throw HttpError.unauthorized('Invalid or expired refresh session');
     }
 
-    try {
-      const result = await refreshSession(refreshToken);
-      const { refreshToken: nextRefreshToken, accessToken } = result;
-      setRefreshTokenCookie(res, nextRefreshToken);
-      res.status(200).json(successResponse({ accessToken }));
-    } catch (error) {
-      clearRefreshTokenCookie(res);
-      throw error;
-    }
+    // A failed refresh deliberately does NOT clear the cookie. The browser
+    // cookie is shared by every tab, and a failing request may be stale —
+    // e.g. it was sent with an older session's token before another tab
+    // signed in and received a new cookie. Clearing here would then wipe
+    // that newer, valid cookie. A rejected token is already useless (its
+    // session is expired or revoked server-side), and /auth/logout still
+    // clears the cookie explicitly.
+    const result = await refreshSession(refreshToken);
+    const { refreshToken: nextRefreshToken, accessToken } = result;
+    setRefreshTokenCookie(res, nextRefreshToken);
+    res.status(200).json(successResponse({ accessToken }));
   }),
 );
 
