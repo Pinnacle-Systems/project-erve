@@ -34,7 +34,17 @@ type Client = Prisma.TransactionClient | typeof prisma;
 // `quantity` once per matching StockAllocation row.
 export async function getPooledFactoryInventory(
   client: Client,
-  filters?: { factoryId?: string; styleId?: string; sizeId?: string },
+  filters?: {
+    factoryId?: string;
+    styleId?: string;
+    sizeId?: string;
+    // RPT1 6.4 — reporting-only filters. "Current Style Season" (RPT0 2.3):
+    // the pool is grouped by Style, and a Style's Season is a fixed,
+    // point-in-time attribute, so this filters by the Style's own current
+    // seasonId, never a reconstructed transaction-time Season.
+    seasonId?: string;
+    recordOrigin?: 'LIVE_WORKFLOW' | 'HISTORICAL_IMPORT';
+  },
 ): Promise<PooledFactoryInventoryLine[]> {
   const releaseLines = await client.qaReleaseLine.findMany({
     where: {
@@ -42,7 +52,8 @@ export async function getPooledFactoryInventory(
         sizeId: filters?.sizeId,
         jobOrderLine: {
           styleId: filters?.styleId,
-          jobOrder: { factoryId: filters?.factoryId },
+          style: filters?.seasonId ? { seasonId: filters.seasonId } : undefined,
+          jobOrder: { factoryId: filters?.factoryId, recordOrigin: filters?.recordOrigin },
         },
       },
     },

@@ -93,3 +93,111 @@ export type ReportSection =
   | 'delivery'
   | 'saleReturn'
   | 'factoryInvoice';
+
+// ---------------------------------------------------------------------------
+// RPT1 — server-side factual reporting aggregates
+// ---------------------------------------------------------------------------
+
+/** GET /reports/operations/summary. Every section is optional: a section the
+ * viewer cannot see (per REPORT_SECTION rules) is omitted entirely and named
+ * in `sectionsOmitted`, never returned as zero. */
+export interface ReportOperationsSummary {
+  generatedAt: string;
+  businessDate: string;
+  filtersApplied: ReportFilters;
+  sectionsOmitted: string[];
+  production?: {
+    openByStatus: Record<string, number>;
+    openTotal: number;
+    delayed: number;
+  };
+  qa?: {
+    workByStatus: Record<ActionableQualityRuntimeStatus, number>;
+    reconciliationConflicts: number;
+    availableStockPieces: number;
+  };
+  packing?: {
+    piecesAwaitingPacking?: number;
+    packingListsAwaitingCompletion?: number;
+    cartonsNeverAudited?: number;
+    cartonsNeedingReinspection?: number;
+  };
+  delivery?: {
+    awaitingConfirmation: number;
+  };
+  saleReturn?: {
+    remainingWithDistributors: number;
+  };
+}
+
+export interface FactoryProductionWorkload {
+  factory: { id: string; code: string; name: string };
+  openJobOrders: number;
+  delayedJobOrders: number;
+}
+
+export interface FactoryQuantityFlow {
+  factory: { id: string; code: string; name: string };
+  orderedPieces: number;
+  cancelledOrderedPieces: number;
+  preparedPieces: number;
+  qaPassedPieces: number;
+  factoryDispatchedPieces: number;
+}
+
+export interface JobOrderPipelineBucket {
+  status: string;
+  recordOrigin: RecordOrigin;
+  count: number;
+}
+
+/** GET /reports/production */
+export interface ReportProduction {
+  filtersApplied: ReportFilters;
+  pipeline: JobOrderPipelineBucket[];
+  factoryWorkload: FactoryProductionWorkload[];
+  quantityFlow: FactoryQuantityFlow[];
+}
+
+/** GET /reports/fulfillment — entity families kept separate; no fake additive total. */
+export interface ReportFulfillment {
+  filtersApplied: ReportFilters;
+  factoryDispatch: Record<string, number>;
+  packingAudit: { neverAudited: number; needingReinspection: number; currentlyPassed: number };
+  factoryInvoice: Record<string, number>;
+  ervePackingList: Record<string, number>;
+  erveDispatch: Record<string, number>;
+  delivery: { userConfirmed: number; legacyAssumedFullReceipt: number };
+}
+
+export interface SaleOrReturnReportRow {
+  distributor: { id: string; code: string; name: string };
+  style?: { id: string; styleNumber: string; styleName: string };
+  received: number;
+  sold: number;
+  returned: number;
+  approvedAwaitingReceipt: number;
+  pendingRequested: number;
+  remainingWithDistributor: number;
+  availableForNewReturn: number;
+}
+
+/** GET /reports/sale-or-return */
+export interface ReportSaleOrReturn {
+  filtersApplied: ReportFilters;
+  rows: SaleOrReturnReportRow[];
+}
+
+export interface DistributorReturnReportRow {
+  distributor?: { id: string; code: string; name: string };
+  status?: string;
+  requested: number;
+  approvedActive: number;
+  received: number;
+}
+
+/** GET /reports/distributor-returns */
+export interface ReportDistributorReturns {
+  filtersApplied: ReportFilters;
+  rows: DistributorReturnReportRow[];
+}

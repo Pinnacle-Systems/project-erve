@@ -37,6 +37,7 @@ import {
   qualityFormVersionsRouter,
 } from './modules/quality-forms/quality-forms.routes.js';
 import { qualityExecutionsRouter } from './modules/quality-executions/quality-executions.routes.js';
+import { reportsRouter } from './modules/reports/reports.routes.js';
 
 const READY_CHECK_TIMEOUT_MS = 2000;
 
@@ -126,6 +127,7 @@ export function createApp() {
   app.use('/distributor-sales-reports', distributorSalesReportsRouter);
   app.use('/distributor-returns', distributorReturnsRouter);
   app.use('/qa', qaRouter);
+  app.use('/reports', reportsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
