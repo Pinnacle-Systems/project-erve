@@ -296,6 +296,7 @@ describe('QaInspectionForm', () => {
       status: 'authenticated',
       login: vi.fn(),
       logout: vi.fn(),
+      retrySession: vi.fn(),
     });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url) => ({
       data: { data: String(url).includes('/audit') ? [] : data },
@@ -563,6 +564,7 @@ describe('QaInspectionForm', () => {
       status: 'authenticated',
       login: vi.fn(),
       logout: vi.fn(),
+      retrySession: vi.fn(),
     });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url) => ({
       data: { data: String(url).includes('/audit') ? [] : source },

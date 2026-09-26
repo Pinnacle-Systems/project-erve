@@ -9,9 +9,11 @@ import {
   type InternalAxiosRequestConfig,
 } from 'axios';
 import type { AuthUser } from '@erve/types';
+import { configureRefreshCoordinator } from '@erve/client';
 import { apiClient } from '../lib/api-client.js';
+import { createFakeBrowser, sessionInfo } from '../test-support/session.js';
 import { getStoredToken, setStoredToken } from './token-storage.js';
-import { AuthProvider, useAuth } from './AuthContext.js';
+import { AuthProvider, IDENTITY_CHANGED_LOGIN_PATH, useAuth } from './AuthContext.js';
 
 const TEST_USER: AuthUser = {
   id: 'user-1',
@@ -33,6 +35,20 @@ function unauthorized(config: InternalAxiosRequestConfig): never {
     headers: {},
     config,
   });
+}
+
+function httpError(config: InternalAxiosRequestConfig, status: number): never {
+  throw new AxiosError(`HTTP ${status}`, AxiosError.ERR_BAD_RESPONSE, config, undefined, {
+    data: { success: false },
+    status,
+    statusText: String(status),
+    headers: {},
+    config,
+  });
+}
+
+function networkError(config: InternalAxiosRequestConfig): never {
+  throw new AxiosError('Network Error', AxiosError.ERR_NETWORK, config);
 }
 
 let container: HTMLDivElement;
@@ -75,7 +91,12 @@ function Probe({ onAuth }: { onAuth: (value: CapturedAuth) => void }) {
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-async function renderAuth(): Promise<{ latest: () => CapturedAuth; queryClient: QueryClient }> {
+async function renderAuth({
+  onHardNavigate,
+}: { onHardNavigate?: (path: string) => void } = {}): Promise<{
+  latest: () => CapturedAuth;
+  queryClient: QueryClient;
+}> {
   let captured: CapturedAuth | undefined;
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -86,7 +107,7 @@ async function renderAuth(): Promise<{ latest: () => CapturedAuth; queryClient: 
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <AuthProvider>
+        <AuthProvider onHardNavigate={onHardNavigate}>
           <Probe onAuth={(value) => (captured = value)} />
         </AuthProvider>
       </QueryClientProvider>,
@@ -341,22 +362,35 @@ describe('UXAUTH-001 — authenticated-user/query-cache isolation', () => {
   });
 
   it('CASE 6 — AUTH EXPIRY ISOLATION', async () => {
+    // Mid-session expiry keeps the same user's page and cache for in-place
+    // re-authentication; isolation is enforced when a *different* user
+    // signs in over it (the page is discarded with a full reload).
     setStoredToken('valid-token');
     apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
       if (config.url === '/auth/me') return ok(config, { success: true, data: TEST_USER });
       throw new Error(`Unexpected request: ${config.url}`);
     }) satisfies AxiosAdapter;
+    const onHardNavigate = vi.fn();
 
-    const { latest, queryClient } = await renderAuth();
+    const { latest, queryClient } = await renderAuth({ onHardNavigate });
+    queryClient.setQueryDefaults(['sensitive'], { gcTime: Infinity });
     queryClient.setQueryData(['sensitive'], { data: 'account-data' });
-    
+
     await act(async () => {
       window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
-      await flushMicrotasks(); // Allow async event listener to finish
+      await flushMicrotasks();
     });
-    
+
+    expect(latest().status).toBe('reauth-required');
+    expect(latest().user).toEqual(TEST_USER);
+    expect(queryClient.getQueryData(['sensitive'])).toEqual({ data: 'account-data' });
+
+    await act(async () => {
+      await latest().login('other-token', { ...TEST_USER, id: 'someone-else' });
+    });
+
     expect(queryClient.getQueryCache().getAll().length).toBe(0);
-    expect(latest().status).toBe('unauthenticated');
+    expect(onHardNavigate).toHaveBeenCalledWith('/dashboard');
   });
 
   it('CASE 7 — NORMAL SAME-USER CACHING', async () => {
@@ -386,5 +420,194 @@ describe('UXAUTH-001 — authenticated-user/query-cache isolation', () => {
     // Assert the data is gone
     const data = queryClient.getQueryData(['invoice-handoff', '123']);
     expect(data).toBeUndefined();
+  });
+});
+
+describe('web AuthContext — transient startup failures (A4)', () => {
+  it.each([
+    ['a network error', (config: InternalAxiosRequestConfig) => networkError(config)],
+    ['a 500 response', (config: InternalAxiosRequestConfig) => httpError(config, 500)],
+    ['a 503 response', (config: InternalAxiosRequestConfig) => httpError(config, 503)],
+  ])('%s from /auth/me shows a retryable unavailable state, not login', async (_, respond) => {
+    setStoredToken('valid-token');
+    let available = false;
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/auth/me') {
+        if (!available) respond(config);
+        return ok(config, { success: true, data: TEST_USER });
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    }) satisfies AxiosAdapter;
+
+    const { latest } = await renderAuth();
+
+    expect(latest().status).toBe('unavailable');
+    expect(getStoredToken()).toBe('valid-token');
+
+    available = true;
+    await act(async () => {
+      latest().retrySession();
+      await flushMicrotasks();
+    });
+    expect(latest().status).toBe('authenticated');
+    expect(latest().user).toEqual(TEST_USER);
+  });
+
+  it('a network failure of the refresh after a 401 is also unavailable, not signed out', async () => {
+    setStoredToken('expired-token');
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/auth/me') unauthorized(config);
+      if (config.url === '/auth/refresh') networkError(config);
+      throw new Error(`Unexpected request: ${config.url}`);
+    }) satisfies AxiosAdapter;
+
+    const { latest } = await renderAuth();
+    expect(latest().status).toBe('unavailable');
+  });
+});
+
+describe('web AuthContext — mid-session expiry and re-authentication (E1)', () => {
+  async function renderSignedIn(onHardNavigate = vi.fn()) {
+    setStoredToken('valid-token');
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/auth/me') return ok(config, { success: true, data: TEST_USER });
+      throw new Error(`Unexpected request: ${config.url}`);
+    }) satisfies AxiosAdapter;
+    const rendered = await renderAuth({ onHardNavigate });
+    expect(rendered.latest().status).toBe('authenticated');
+    return { ...rendered, onHardNavigate };
+  }
+
+  it('keeps the user (and so the mounted page) when the session expires', async () => {
+    const { latest } = await renderSignedIn();
+
+    await act(async () => {
+      window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+      await flushMicrotasks();
+    });
+
+    expect(latest().status).toBe('reauth-required');
+    expect(latest().user).toEqual(TEST_USER);
+    expect(getStoredToken()).toBeNull();
+  });
+
+  it('re-authenticating as the same user restores the session without a reload', async () => {
+    const { latest, queryClient, onHardNavigate } = await renderSignedIn();
+    queryClient.setQueryDefaults(['kept'], { gcTime: Infinity });
+    queryClient.setQueryData(['kept'], 'form-support-data');
+    await act(async () => {
+      window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+      await flushMicrotasks();
+    });
+
+    await act(async () => {
+      await latest().login('new-token', TEST_USER);
+    });
+
+    expect(latest().status).toBe('authenticated');
+    expect(getStoredToken()).toBe('new-token');
+    expect(queryClient.getQueryData(['kept'])).toBe('form-support-data');
+    expect(onHardNavigate).not.toHaveBeenCalled();
+  });
+
+  it('an explicit logout signs out fully instead of offering re-authentication', async () => {
+    const { latest } = await renderSignedIn();
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
+      ok(config, { success: true, data: {} }),
+    ) satisfies AxiosAdapter;
+
+    await act(async () => {
+      await latest().logout();
+    });
+
+    expect(latest().status).toBe('unauthenticated');
+    expect(latest().user).toBeNull();
+  });
+});
+
+describe('web AuthContext — cross-tab identity (A5)', () => {
+  it('discards the page with a full reload when another tab signs in as a different user', async () => {
+    const browser = createFakeBrowser();
+    configureRefreshCoordinator(browser.tab('this'));
+    try {
+      setStoredToken('valid-token');
+      apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
+        ok(config, { success: true, data: TEST_USER }),
+      ) satisfies AxiosAdapter;
+      const onHardNavigate = vi.fn();
+      const { queryClient } = await renderAuth({ onHardNavigate });
+      queryClient.setQueryDefaults(['a'], { gcTime: Infinity });
+      queryClient.setQueryData(['a'], 'user-a-data');
+
+      await act(async () => {
+        browser.tab('other').publish({
+          type: 'session',
+          source: 'login',
+          accessToken: 'user-b-token',
+          session: sessionInfo('user-b'),
+        });
+        await flushMicrotasks();
+      });
+
+      expect(onHardNavigate).toHaveBeenCalledWith(IDENTITY_CHANGED_LOGIN_PATH);
+      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+      expect(getStoredToken()).toBeNull();
+    } finally {
+      configureRefreshCoordinator(null);
+    }
+  });
+
+  it('recovers a tab awaiting re-authentication when the same user signs in elsewhere', async () => {
+    const browser = createFakeBrowser();
+    configureRefreshCoordinator(browser.tab('this'));
+    try {
+      setStoredToken('valid-token');
+      apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
+        ok(config, { success: true, data: TEST_USER }),
+      ) satisfies AxiosAdapter;
+      const { latest } = await renderAuth();
+      await act(async () => {
+        window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+        await flushMicrotasks();
+      });
+      expect(latest().status).toBe('reauth-required');
+
+      await act(async () => {
+        browser.tab('other').publish({
+          type: 'session',
+          source: 'login',
+          accessToken: 'shared-token',
+          session: sessionInfo(TEST_USER.id),
+        });
+        await flushMicrotasks();
+      });
+
+      expect(latest().status).toBe('authenticated');
+      expect(getStoredToken()).toBe('shared-token');
+    } finally {
+      configureRefreshCoordinator(null);
+    }
+  });
+
+  it('signs this tab out when the same user signs out in another tab', async () => {
+    const browser = createFakeBrowser();
+    configureRefreshCoordinator(browser.tab('this'));
+    try {
+      setStoredToken('valid-token');
+      apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
+        ok(config, { success: true, data: TEST_USER }),
+      ) satisfies AxiosAdapter;
+      const { latest } = await renderAuth();
+
+      await act(async () => {
+        browser.tab('other').publish({ type: 'logout', userId: TEST_USER.id });
+        await flushMicrotasks();
+      });
+
+      expect(latest().status).toBe('unauthenticated');
+      expect(latest().user).toBeNull();
+    } finally {
+      configureRefreshCoordinator(null);
+    }
   });
 });
