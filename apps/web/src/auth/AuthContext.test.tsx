@@ -9,8 +9,8 @@ import {
   type InternalAxiosRequestConfig,
 } from 'axios';
 import type { AuthUser } from '@erve/types';
-import { configureRefreshCoordinator } from '@erve/client';
-import { apiClient } from '../lib/api-client.js';
+import { configureRefreshCoordinator, SESSION_TIMING_STORAGE_KEY } from '@erve/client';
+import { apiClient, refreshAccessToken } from '../lib/api-client.js';
 import { createFakeBrowser, sessionInfo } from '../test-support/session.js';
 import { getStoredToken, setStoredToken } from './token-storage.js';
 import { AuthProvider, IDENTITY_CHANGED_LOGIN_PATH, useAuth } from './AuthContext.js';
@@ -522,6 +522,62 @@ describe('web AuthContext — mid-session expiry and re-authentication (E1)', ()
 
     expect(latest().status).toBe('unauthenticated');
     expect(latest().user).toBeNull();
+  });
+
+  it('a logout racing an in-flight refresh stays signed out, including after a reload', async () => {
+    const { latest } = await renderSignedIn();
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const calls: string[] = [];
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      calls.push(config.url ?? '');
+      if (config.url === '/auth/refresh') {
+        await refreshGate;
+        return ok(config, {
+          success: true,
+          data: { accessToken: 'late-token', session: sessionInfo(TEST_USER.id) },
+        });
+      }
+      return ok(config, { success: true, data: {} });
+    }) satisfies AxiosAdapter;
+
+    // e.g. the Sign out button's pointerdown started an activity refresh,
+    // whose response only arrives after the logout has completed.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const refreshOutcome = refreshAccessToken({ activity: true }).catch(
+        (error: unknown) => error,
+      );
+      await act(async () => {
+        const logout = latest().logout();
+        // Logout's bounded wait for the hung refresh elapses.
+        await vi.advanceTimersByTimeAsync(5_000);
+        await logout;
+      });
+      await act(async () => {
+        releaseRefresh();
+        await refreshOutcome;
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(calls).toEqual(['/auth/refresh', '/auth/logout']);
+    expect(latest().status).toBe('unauthenticated');
+    expect(getStoredToken()).toBeNull();
+    expect(localStorage.getItem(SESSION_TIMING_STORAGE_KEY)).toBeNull();
+
+    // Reload: nothing left in the tab can silently restore the session.
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    calls.length = 0;
+    const reloaded = await renderAuth();
+    expect(reloaded.latest().status).toBe('unauthenticated');
+    expect(calls).toEqual([]);
   });
 });
 

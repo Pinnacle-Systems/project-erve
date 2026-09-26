@@ -89,21 +89,6 @@ export async function rotateRefreshSessionToken(input: {
   return result.count === 1;
 }
 
-export async function revokeRefreshSessionByToken(
-  sessionId: string,
-  refreshTokenHash: string,
-  revokedAt: Date,
-): Promise<void> {
-  await prisma.refreshSession.updateMany({
-    where: {
-      id: sessionId,
-      refreshTokenHash,
-      revokedAt: null,
-    },
-    data: { revokedAt },
-  });
-}
-
 export async function revokeRefreshSessionById(sessionId: string, revokedAt: Date): Promise<void> {
   await prisma.refreshSession.updateMany({
     where: { id: sessionId, revokedAt: null },

@@ -8,6 +8,8 @@ export const AUTH_EXPIRED_EVENT = 'erve:auth-expired';
 
 /** Bounds how long a hung refresh can hold the browser-wide refresh lock. */
 const REFRESH_TIMEOUT_MS = 30_000;
+/** How long logout waits for an in-flight refresh to settle before proceeding anyway. */
+const LOGOUT_REFRESH_SETTLE_MS = 5_000;
 
 interface RetryableAxiosRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean;
@@ -57,6 +59,17 @@ export class SessionIdentityChangedError extends Error {
   }
 }
 
+/**
+ * An explicit logout started after this refresh did. Whatever the refresh
+ * obtained is discarded: logout always wins over a concurrent refresh.
+ */
+export class SessionLoggedOutError extends Error {
+  constructor() {
+    super('Signed out while the session was being refreshed');
+    this.name = 'SessionLoggedOutError';
+  }
+}
+
 export type SessionEvent =
   /** Another tab (or a refresh) revealed a different signed-in user. */
   | { type: 'identity-changed' }
@@ -71,6 +84,9 @@ let unsubscribeCoordinator: (() => void) | null = null;
 let activitySource: (() => boolean) | null = null;
 let expectedUserId: string | null = null;
 let tokenGeneration = 0;
+/** Bumped by every logout; a refresh begun under an older value must not apply its result. */
+let logoutEpoch = 0;
+let loggingOut = false;
 const sessionEventListeners = new Set<(event: SessionEvent) => void>();
 
 export function configureRefreshCredentialProvider(
@@ -116,7 +132,7 @@ function applySessionInfo(accessToken: string, session: SessionInfo | undefined)
 }
 
 function handleBroadcast(message: SessionBroadcast): void {
-  if (!expectedUserId) return;
+  if (!expectedUserId || loggingOut) return;
 
   if (message.type === 'logout') {
     if (message.userId === null || message.userId === expectedUserId) {
@@ -179,7 +195,15 @@ export interface RefreshAccessTokenOptions {
   activity?: boolean;
 }
 
-async function performRefresh(activity: boolean | undefined): Promise<string> {
+function assertNotLoggedOut(epochAtRequest: number): void {
+  if (loggingOut || epochAtRequest !== logoutEpoch) throw new SessionLoggedOutError();
+}
+
+async function performRefresh(
+  activity: boolean | undefined,
+  epochAtRequest: number,
+): Promise<string> {
+  assertNotLoggedOut(epochAtRequest);
   let refreshToken: string | null | undefined;
   try {
     refreshToken = await refreshCredentialProvider?.get();
@@ -215,6 +239,9 @@ async function performRefresh(activity: boolean | undefined): Promise<string> {
     }
     throw error;
   }
+  // A logout that started while this request was in flight has already
+  // revoked the session server-side; never re-store what came back.
+  assertNotLoggedOut(epochAtRequest);
   const { accessToken, refreshToken: nextRefreshToken, session } = response.data.data;
   if (refreshCredentialProvider && nextRefreshToken) {
     await refreshCredentialProvider.set(nextRefreshToken);
@@ -237,10 +264,12 @@ async function performRefresh(activity: boolean | undefined): Promise<string> {
 
 export async function refreshAccessToken(options: RefreshAccessTokenOptions = {}): Promise<string> {
   const generationAtRequest = tokenGeneration;
+  const epochAtRequest = logoutEpoch;
   const activity = options.activity ?? activitySource?.();
 
   refreshPromise ??= (async () => {
     const task = async () => {
+      assertNotLoggedOut(epochAtRequest);
       // While this tab waited for the browser-wide lock, another tab may
       // have refreshed and shared its token — use it instead of rotating
       // the cookie a second time.
@@ -248,7 +277,7 @@ export async function refreshAccessToken(options: RefreshAccessTokenOptions = {}
       if (tokenGeneration !== generationAtRequest && adopted) {
         return adopted;
       }
-      return performRefresh(activity);
+      return performRefresh(activity, epochAtRequest);
     };
     return refreshCoordinator ? refreshCoordinator.withRefreshLock(task) : task();
   })().finally(() => {
@@ -295,6 +324,7 @@ apiClient.interceptors.response.use(
     } catch (refreshError) {
       if (
         !(refreshError instanceof SessionIdentityChangedError) &&
+        !(refreshError instanceof SessionLoggedOutError) &&
         (!axios.isAxiosError(refreshError) || !refreshError.config?.url?.endsWith('/refresh'))
       ) {
         notifyAuthExpired();
@@ -304,9 +334,30 @@ apiClient.interceptors.response.use(
   },
 );
 
+/**
+ * Explicit sign-out. Dominates any concurrent refresh: refreshes are blocked
+ * for its duration and a refresh already in flight has its result discarded
+ * (see assertNotLoggedOut). It waits briefly for such a refresh to settle so
+ * the logout request carries the newest credential and its cookie-clear lands
+ * after the refresh's Set-Cookie; the server also revokes the session when
+ * given the just-rotated predecessor, so a timed-out wait is still safe.
+ */
 export async function logoutSession(): Promise<void> {
   const userId = expectedUserId;
+  loggingOut = true;
+  logoutEpoch += 1;
   try {
+    const pending = refreshPromise;
+    if (pending) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        pending.catch(() => undefined),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, LOGOUT_REFRESH_SETTLE_MS);
+        }),
+      ]);
+      clearTimeout(timer);
+    }
     const refreshToken = await refreshCredentialProvider?.get();
     await apiClient.post(
       refreshCredentialProvider ? '/auth/mobile/logout' : '/auth/logout',
@@ -314,9 +365,14 @@ export async function logoutSession(): Promise<void> {
       { withCredentials: true },
     );
   } finally {
-    await refreshCredentialProvider?.clear();
-    setSessionTiming(null);
-    refreshCoordinator?.publish({ type: 'logout', userId });
-    notifyAuthExpired();
+    try {
+      await refreshCredentialProvider?.clear();
+    } finally {
+      setSessionTiming(null);
+      expectedUserId = null;
+      refreshCoordinator?.publish({ type: 'logout', userId });
+      notifyAuthExpired();
+      loggingOut = false;
+    }
   }
 }

@@ -16,6 +16,7 @@ import {
   publishSignedInSession,
   refreshAccessToken,
   SessionIdentityChangedError,
+  SessionLoggedOutError,
   setExpectedSessionUser,
   subscribeSessionEvents,
   type SessionEvent,
@@ -421,6 +422,8 @@ describe('apiClient session behaviour', () => {
       expect(otherEvents).toEqual([{ type: 'logout', userId: 'user-a' }]);
       expect(getSessionTiming()).toBeNull();
 
+      // The reverse direction: this tab, signed in again, hears the other tab sign out.
+      setExpectedSessionUser('user-a');
       browser.tab('other').publish({ type: 'logout', userId: 'user-a' });
       expect(events).toEqual([{ type: 'remote-logout' }]);
     });
@@ -441,6 +444,180 @@ describe('apiClient session behaviour', () => {
           session: sessionInfo('user-a'),
         },
       ]);
+    });
+  });
+  describe('explicit logout dominates a concurrent refresh', () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    }
+
+    /** Adapter whose /auth/refresh answers only when released; records call order. */
+    function slowRefreshAdapter() {
+      const calls: string[] = [];
+      const release = deferred<void>();
+      apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+        calls.push(config.url ?? '');
+        if (config.url === '/auth/refresh') {
+          await release.promise;
+          return ok(config, {
+            success: true,
+            data: { accessToken: 'late-token', session: sessionInfo('user-a') },
+          });
+        }
+        return ok(config, { success: true, data: {} });
+      }) satisfies AxiosAdapter;
+      return { calls, release: () => release.resolve() };
+    }
+
+    it('waits for an in-flight refresh, sends logout after it, and discards its result', async () => {
+      const thisTab = createFakeBrowser().tab('this');
+      configureRefreshCoordinator(thisTab);
+      setExpectedSessionUser('user-a');
+      setStoredToken('current-token');
+      const { calls, release } = slowRefreshAdapter();
+
+      const refreshOutcome = refreshAccessToken({ activity: true }).catch(
+        (error: unknown) => error,
+      );
+      await vi.waitFor(() => expect(calls).toEqual(['/auth/refresh']));
+      const logout = logoutSession();
+      release();
+      await logout;
+
+      // The logout request went out only after the refresh settled, so it
+      // carried the newest cookie and its clear-cookie lands last.
+      expect(calls).toEqual(['/auth/refresh', '/auth/logout']);
+      expect(await refreshOutcome).toBeInstanceOf(SessionLoggedOutError);
+      expect(getStoredToken()).toBeNull();
+      expect(getSessionTiming()).toBeNull();
+      expect(thisTab.published).toEqual([{ type: 'logout', userId: 'user-a' }]);
+    });
+
+    it('a refresh response arriving after logout completed cannot restore authentication', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const thisTab = createFakeBrowser().tab('this');
+        configureRefreshCoordinator(thisTab);
+        setExpectedSessionUser('user-a');
+        setStoredToken('current-token');
+        const { calls, release } = slowRefreshAdapter();
+
+        const refreshOutcome = refreshAccessToken({ activity: true }).catch(
+          (error: unknown) => error,
+        );
+        await vi.waitFor(() => expect(calls).toEqual(['/auth/refresh']));
+        const logout = logoutSession();
+        // The refresh hangs past logout's bounded wait: logout proceeds anyway.
+        await vi.advanceTimersByTimeAsync(5_000);
+        await logout;
+        expect(calls).toEqual(['/auth/refresh', '/auth/logout']);
+
+        release();
+        expect(await refreshOutcome).toBeInstanceOf(SessionLoggedOutError);
+        expect(getStoredToken()).toBeNull();
+        expect(getSessionTiming()).toBeNull();
+        expect(thisTab.published).toEqual([{ type: 'logout', userId: 'user-a' }]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('refuses to start a refresh while logout is in progress', async () => {
+      configureRefreshCoordinator(createFakeBrowser().tab('this'));
+      setExpectedSessionUser('user-a');
+      const logoutRelease = deferred<void>();
+      const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+        if (config.url === '/auth/logout') await logoutRelease.promise;
+        return ok(config, {
+          success: true,
+          data: { accessToken: 'x', session: sessionInfo('user-a') },
+        });
+      }) satisfies AxiosAdapter;
+      apiClient.defaults.adapter = adapter;
+
+      const logout = logoutSession();
+      await vi.waitFor(() => expect(adapter).toHaveBeenCalledTimes(1));
+      await expect(refreshAccessToken({ activity: true })).rejects.toBeInstanceOf(
+        SessionLoggedOutError,
+      );
+      logoutRelease.resolve();
+      await logout;
+
+      expect(adapter.mock.calls.map(([config]) => config.url)).toEqual(['/auth/logout']);
+      expect(getStoredToken()).toBeNull();
+    });
+
+    it("does not adopt another tab's session broadcast during or after its own logout", async () => {
+      const browser = createFakeBrowser();
+      configureRefreshCoordinator(browser.tab('this'));
+      setExpectedSessionUser('user-a');
+      const logoutRelease = deferred<void>();
+      apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+        await logoutRelease.promise;
+        return ok(config, { success: true, data: {} });
+      }) satisfies AxiosAdapter;
+      const broadcast: SessionBroadcast = {
+        type: 'session',
+        source: 'refresh',
+        accessToken: 'other-tab-token',
+        session: sessionInfo('user-a'),
+      };
+
+      const logout = logoutSession();
+      browser.tab('other').publish(broadcast);
+      logoutRelease.resolve();
+      await logout;
+      browser.tab('other').publish(broadcast);
+
+      expect(getStoredToken()).toBeNull();
+      expect(getSessionTiming()).toBeNull();
+      expect(events).not.toContainEqual({ type: 'session-adopted' });
+    });
+
+    it('mobile: a late successor credential is never stored after logout', async () => {
+      const stored = { value: 'r1' as string | null };
+      const provider = {
+        get: vi.fn(async () => stored.value),
+        set: vi.fn(async (token: string) => {
+          stored.value = token;
+        }),
+        clear: vi.fn(async () => {
+          stored.value = null;
+        }),
+      };
+      configureRefreshCredentialProvider(provider);
+      const calls: Array<{ url?: string; data?: string }> = [];
+      const release = deferred<void>();
+      apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+        calls.push({ url: config.url, data: config.data as string });
+        if (config.url === '/auth/mobile/refresh') {
+          await release.promise;
+          return ok(config, {
+            success: true,
+            data: { accessToken: 'late', refreshToken: 'r2' },
+          });
+        }
+        return ok(config, { success: true, data: {} });
+      }) satisfies AxiosAdapter;
+
+      const refreshOutcome = refreshAccessToken().catch((error: unknown) => error);
+      await vi.waitFor(() => expect(calls).toHaveLength(1));
+      const logout = logoutSession();
+      release.resolve();
+      await logout;
+
+      expect(await refreshOutcome).toBeInstanceOf(SessionLoggedOutError);
+      expect(provider.set).not.toHaveBeenCalled();
+      expect(stored.value).toBeNull();
+      // The logout carried r1; the server revokes the session through the
+      // rotation predecessor (see the API's revokeRefreshSession).
+      expect(calls[1]).toMatchObject({ url: '/auth/mobile/logout' });
+      expect(JSON.parse(calls[1]!.data!)).toEqual({ refreshToken: 'r1' });
+      expect(getStoredToken()).toBeNull();
     });
   });
 });
