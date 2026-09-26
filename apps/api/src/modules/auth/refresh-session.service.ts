@@ -16,7 +16,6 @@ import {
   findRefreshSessionById,
   revokeAllRefreshSessionsForUser,
   revokeRefreshSessionById,
-  revokeRefreshSessionByToken,
   rotateRefreshSessionToken,
 } from './refresh-session.repository.js';
 
@@ -291,10 +290,35 @@ export async function refreshSession(
   );
 }
 
+/**
+ * Explicit logout. Revokes the whole session the presented token belongs to
+ * — whether it is the current token or the direct predecessor still inside
+ * the rotation grace window. The latter matters because a logout can race a
+ * refresh: the refresh rotates R1 → R2 while the logout is already in flight
+ * carrying R1, and matching only the current hash would then revoke nothing.
+ * Revocation is by session id (not by hash), so a rotation landing between
+ * the lookup and the update cannot dodge it either. Any other token — stale,
+ * forged, or from a different session/user — revokes nothing.
+ */
 export async function revokeRefreshSession(refreshToken: string, now = new Date()): Promise<void> {
   try {
     const payload = verifyRefreshToken(refreshToken);
-    await revokeRefreshSessionByToken(payload.sessionId, hashToken(refreshToken), now);
+    if (typeof payload.authVersion !== 'number') return;
+
+    const session = await findRefreshSessionById(payload.sessionId);
+    if (!session || session.revokedAt || session.userId !== payload.sub) return;
+
+    const presentedTokenHash = hashToken(refreshToken);
+    const isCurrent = session.refreshTokenHash === presentedTokenHash;
+    const isGracePredecessor =
+      !isCurrent &&
+      session.refreshTokenHash ===
+        hashToken(successorRefreshToken(presentedTokenHash, session, payload.authVersion)) &&
+      isWithinRotationGrace(session, now);
+
+    if (isCurrent || isGracePredecessor) {
+      await revokeRefreshSessionById(session.id, now);
+    }
   } catch {
     // Logout is intentionally idempotent and does not reveal token validity.
   }

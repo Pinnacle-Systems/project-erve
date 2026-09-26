@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import type { Response } from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
@@ -627,6 +628,126 @@ describe('POST /auth/logout', () => {
     // match the original cookie exactly, otherwise the original cookie
     // remains active.
     expect(getSetCookieHeaders(res).join('\n')).toContain('Path=/;');
+    await expect(prisma.refreshSession.findFirstOrThrow()).resolves.toMatchObject({
+      revokedAt: expect.any(Date),
+    });
+  });
+
+  it('revokes the session when given the just-rotated predecessor (logout raced a refresh)', async () => {
+    const r1 = await loginForRefreshToken('logout-pred@test.local');
+    const rotated = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', refreshCookieHeader(r1))
+      .expect(200);
+    const r2 = getRefreshTokenFromSetCookie(rotated);
+
+    // The logout left the browser before the refresh's Set-Cookie arrived.
+    const res = await request(app).post('/auth/logout').set('Cookie', refreshCookieHeader(r1));
+
+    expect(res.status).toBe(200);
+    expect(clearsRefreshCookie(res)).toBe(true);
+    await expect(prisma.refreshSession.findFirstOrThrow()).resolves.toMatchObject({
+      revokedAt: expect.any(Date),
+    });
+    await request(app).post('/auth/refresh').set('Cookie', refreshCookieHeader(r2)).expect(401);
+    await request(app).post('/auth/refresh').set('Cookie', refreshCookieHeader(r1)).expect(401);
+  });
+
+  it('leaves no live session when logout and refresh race with the same token', async () => {
+    await createTestUser({
+      email: 'race-out@test.local',
+      password: 'correct-password',
+      roles: ['ADMIN'],
+    });
+    for (const delayMs of [0, 5, 25]) {
+      await prisma.refreshSession.deleteMany();
+      const login = await request(app)
+        .post('/auth/login')
+        .send({ identifier: 'race-out@test.local', password: 'correct-password' });
+      const r1 = getRefreshTokenFromSetCookie(login);
+
+      const [refreshed] = await Promise.all([
+        request(app).post('/auth/refresh').set('Cookie', refreshCookieHeader(r1)),
+        new Promise((resolve) => setTimeout(resolve, delayMs)).then(() =>
+          request(app).post('/auth/logout').set('Cookie', refreshCookieHeader(r1)),
+        ),
+      ]);
+
+      await expect(prisma.refreshSession.findFirstOrThrow()).resolves.toMatchObject({
+        revokedAt: expect.any(Date),
+      });
+      if (refreshed.status === 200) {
+        await request(app)
+          .post('/auth/refresh')
+          .set('Cookie', refreshCookieHeader(getRefreshTokenFromSetCookie(refreshed)))
+          .expect(401);
+      }
+    }
+  });
+
+  it('does not revoke on a predecessor outside the grace window or an older token', async () => {
+    const r1 = await loginForRefreshToken('logout-stale@test.local');
+    const r2 = getRefreshTokenFromSetCookie(
+      await request(app).post('/auth/refresh').set('Cookie', refreshCookieHeader(r1)).expect(200),
+    );
+    await request(app).post('/auth/refresh').set('Cookie', refreshCookieHeader(r2)).expect(200);
+
+    // r1 is two rotations old: not the direct predecessor.
+    await request(app).post('/auth/logout').set('Cookie', refreshCookieHeader(r1)).expect(200);
+    const session = await prisma.refreshSession.findFirstOrThrow();
+    expect(session.revokedAt).toBeNull();
+
+    // r2 is the direct predecessor, but its grace window has passed.
+    await ageLastRotation(session.id, REFRESH_ROTATION_GRACE_SECONDS + 1);
+    await request(app).post('/auth/logout').set('Cookie', refreshCookieHeader(r2)).expect(200);
+    await expect(prisma.refreshSession.findFirstOrThrow()).resolves.toMatchObject({
+      revokedAt: null,
+    });
+  });
+
+  it("cannot revoke another user's session with its own, a forged or a garbage token", async () => {
+    const tokenA = await loginForRefreshToken('owner-a@test.local');
+    const tokenB = await loginForRefreshToken('owner-b@test.local');
+    const sessionA = await prisma.refreshSession.findFirstOrThrow({
+      where: { refreshTokenHash: hashToken(tokenA) },
+    });
+
+    // A token correctly naming session A but not signed by this server.
+    const forged = jwt.sign(
+      { sub: sessionA.userId, sessionId: sessionA.id, tokenId: createId(), authVersion: 0 },
+      'x'.repeat(64),
+    );
+    for (const token of [forged, 'not-a-jwt']) {
+      await request(app).post('/auth/logout').set('Cookie', refreshCookieHeader(token)).expect(200);
+    }
+    await expect(
+      prisma.refreshSession.findUniqueOrThrow({ where: { id: sessionA.id } }),
+    ).resolves.toMatchObject({ revokedAt: null });
+
+    await request(app).post('/auth/logout').set('Cookie', refreshCookieHeader(tokenB)).expect(200);
+    await expect(
+      prisma.refreshSession.findUniqueOrThrow({ where: { id: sessionA.id } }),
+    ).resolves.toMatchObject({ revokedAt: null });
+    await expect(
+      prisma.refreshSession.findFirstOrThrow({ where: { refreshTokenHash: hashToken(tokenB) } }),
+    ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
+  });
+
+  it('mobile logout with the just-rotated predecessor also revokes the session', async () => {
+    await createTestUser({
+      email: 'mobile-out@test.local',
+      password: 'pass',
+      roles: ['FACTORY_USER'],
+    });
+    const login = await request(app)
+      .post('/auth/mobile/login')
+      .send({ identifier: 'mobile-out@test.local', password: 'pass' })
+      .expect(200);
+    const r1 = login.body.data.refreshToken as string;
+    await request(app).post('/auth/mobile/refresh').send({ refreshToken: r1 }).expect(200);
+
+    await request(app).post('/auth/mobile/logout').send({ refreshToken: r1 }).expect(200);
+
     await expect(prisma.refreshSession.findFirstOrThrow()).resolves.toMatchObject({
       revokedAt: expect.any(Date),
     });
