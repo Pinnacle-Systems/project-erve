@@ -1230,6 +1230,20 @@ describe('Order Sheet Style lookup (P1L1)', () => {
     expect(overMax.status).toBe(400);
   });
 
+  it('treats an empty search as the initial options — ACTIVE only, filtered before the limit, Style No. order (LU0)', async () => {
+    const token = await merchandiserToken();
+    await createLookupStyle({ styleNumber: 'A-RETIRED-1', styleName: 'Old Tee', status: 'INACTIVE' });
+    await createLookupStyle({ styleNumber: 'A-RETIRED-2', styleName: 'Old Tee', status: 'DISCONTINUED' });
+    await createLookupStyle({ styleNumber: 'C-TEE', styleName: 'Tee' });
+    await createLookupStyle({ styleNumber: 'B-TEE', styleName: 'Tee' });
+    await createLookupStyle({ styleNumber: 'D-TEE', styleName: 'Tee' });
+
+    const res = await searchOptions(token, { search: '', limit: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((row: { styleNumber: string }) => row.styleNumber)).toEqual(['B-TEE', 'C-TEE']);
+  });
+
   it('returns a slim option — no sizes, images or factory mappings', async () => {
     const token = await merchandiserToken();
     const style = await createLookupStyle({ styleNumber: 'SLIM-01', styleName: 'Slim Tee', lmixNumber: 'LMIX4000001' });

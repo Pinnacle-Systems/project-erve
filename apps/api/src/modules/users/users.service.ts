@@ -1,10 +1,11 @@
 import { createId } from '@erve/shared';
-import type { Role } from '@erve/types';
+import type { PaginatedResponse, Role } from '@erve/types';
 import { prisma, Prisma, type UserStatus } from '../../db/prisma.js';
 import { HttpError } from '../../errors/http-error.js';
 import { hashPassword } from '../../auth/password.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
+import { listAllOrPage, type OptionalPageQuery } from '../../utils/pagination.js';
 
 const userWithRelationsInclude = {
   userRoles: { include: { role: true } },
@@ -154,28 +155,38 @@ export async function createUser(actor: CurrentUser, input: CreateUserInput): Pr
   return getUserById(userId);
 }
 
-export interface ListUsersFilters {
+export interface ListUsersFilters extends OptionalPageQuery {
   search?: string;
   status?: UserStatus;
   role?: Role;
 }
 
-export async function listUsers(filters: ListUsersFilters = {}): Promise<UserView[]> {
-  const users = await prisma.user.findMany({
-    where: {
-      status: filters.status,
-      userRoles: filters.role ? { some: { role: { name: filters.role } } } : undefined,
-      OR: filters.search
-        ? [
-            { name: { contains: filters.search, mode: 'insensitive' } },
-            { email: { contains: filters.search, mode: 'insensitive' } },
-          ]
-        : undefined,
-    },
-    include: userWithRelationsInclude,
-    orderBy: { createdAt: 'asc' },
-  });
-  return users.map(toUserView);
+// The full filtered array without `cursor`/`limit` (legacy contract), or one
+// { items, pageInfo } page with them. Filters apply before paging; createdAt
+// stays the visible order and id breaks timestamp ties so pages never skip
+// or repeat a user.
+export async function listUsers(
+  filters: ListUsersFilters = {},
+): Promise<UserView[] | PaginatedResponse<UserView>> {
+  return listAllOrPage(filters, async (page) =>
+    (
+      await prisma.user.findMany({
+        where: {
+          status: filters.status,
+          userRoles: filters.role ? { some: { role: { name: filters.role } } } : undefined,
+          OR: filters.search
+            ? [
+                { name: { contains: filters.search, mode: 'insensitive' } },
+                { email: { contains: filters.search, mode: 'insensitive' } },
+              ]
+            : undefined,
+        },
+        include: userWithRelationsInclude,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        ...page,
+      })
+    ).map(toUserView),
+  );
 }
 
 export async function getUserById(id: string): Promise<UserView> {

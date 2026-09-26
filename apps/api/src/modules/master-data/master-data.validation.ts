@@ -383,4 +383,19 @@ export const distributorOptionsQuerySchema = z.object({
     .default(DISTRIBUTOR_OPTIONS_DEFAULT_LIMIT),
 });
 
+// Distributor/Factory user-assignment lookups (UL): bounded searches over the
+// users eligible for this parent, never the full /users collection.
+export const USER_OPTIONS_DEFAULT_LIMIT = 20;
+export const USER_OPTIONS_MAX_LIMIT = 50;
+
+export const userOptionsQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(USER_OPTIONS_MAX_LIMIT)
+    .default(USER_OPTIONS_DEFAULT_LIMIT),
+});
+
 export const nonNegativePriceSchema = nonNegativeMoney;

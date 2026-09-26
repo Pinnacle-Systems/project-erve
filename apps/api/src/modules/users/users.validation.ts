@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ROLES } from '@erve/types';
 import { normalizeEmail } from '../../utils/email.js';
+import { optionalPageQueryFields } from '../../utils/pagination.js';
 
 // Normalize (trim + lowercase) before validating format, so surrounding
 // whitespace or casing never causes a spurious "invalid email" rejection.
@@ -57,8 +58,11 @@ export const factoryMappingSchema = z.object({
   factoryId: z.string().min(1),
 });
 
+// Opt-in cursor pagination (see utils/pagination): without cursor/limit the
+// full filtered array is returned as before.
 export const listUsersQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: z.enum(['ACTIVE', 'INACTIVE', 'SUSPENDED']).optional(),
   role: roleNameSchema.optional(),
+  ...optionalPageQueryFields,
 });

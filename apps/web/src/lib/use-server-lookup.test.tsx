@@ -28,16 +28,21 @@ function Probe({
   searchText,
   fetchOptions,
   onResult,
+  minLength = 2,
+  enabled,
 }: {
   searchText: string;
   fetchOptions: (search: string, signal: AbortSignal) => Promise<string[]>;
   onResult: (result: ServerLookupResult<string>) => void;
+  minLength?: number;
+  enabled?: boolean;
 }) {
   const result = useServerLookup({
     queryKey: ['probe'],
     searchText,
     fetchOptions,
-    minLength: 2,
+    minLength,
+    enabled,
     debounceMs: 50,
   });
   onResult(result);
@@ -51,11 +56,17 @@ function recordResult(result: ServerLookupResult<string>) {
 function renderProbe(
   searchText: string,
   fetchOptions: (search: string, signal: AbortSignal) => Promise<string[]>,
+  options: { minLength?: number; enabled?: boolean } = {},
 ) {
   act(() =>
     root.render(
       <QueryClientProvider client={queryClient}>
-        <Probe searchText={searchText} fetchOptions={fetchOptions} onResult={recordResult} />
+        <Probe
+          searchText={searchText}
+          fetchOptions={fetchOptions}
+          onResult={recordResult}
+          {...options}
+        />
       </QueryClientProvider>,
     ),
   );
@@ -164,5 +175,73 @@ describe('useServerLookup', () => {
     await waitFor(() => expect(latest.error?.message).toBe('boom'));
     expect(latest.options).toEqual([]);
     expect(latest.loading).toBe(false);
+  });
+
+  describe('initial options (minLength 0, LU0)', () => {
+    it('makes no request while disabled, even for a searchable text', async () => {
+      const fetchOptions = vi.fn(async () => ['x']);
+      renderProbe('', fetchOptions, { minLength: 0, enabled: false });
+      renderProbe('ab', fetchOptions, { minLength: 0, enabled: false });
+      await wait(120);
+
+      expect(fetchOptions).not.toHaveBeenCalled();
+      expect(latest).toMatchObject({ options: [], loading: false, error: null });
+    });
+
+    it('requests the empty search once enabled and reports no belowMinLength', async () => {
+      const fetchOptions = vi.fn(async (search: string) => [`initial:${search}`]);
+      renderProbe('', fetchOptions, { minLength: 0, enabled: false });
+      renderProbe('', fetchOptions, { minLength: 0, enabled: true });
+
+      await waitFor(() =>
+        expect(latest).toMatchObject({
+          options: ['initial:'],
+          loading: false,
+          belowMinLength: false,
+        }),
+      );
+      expect(fetchOptions).toHaveBeenCalledTimes(1);
+      expect(fetchOptions.mock.calls[0]![0]).toBe('');
+    });
+
+    it('opening by typing searches only the typed text, never the stale empty one', async () => {
+      const fetchOptions = vi.fn(async (search: string) => [`${search}-result`]);
+      renderProbe('', fetchOptions, { minLength: 0, enabled: false });
+      renderProbe('ab', fetchOptions, { minLength: 0, enabled: true });
+      expect(latest.loading).toBe(true);
+
+      await waitFor(() => expect(latest).toMatchObject({ options: ['ab-result'], loading: false }));
+      expect(fetchOptions.mock.calls.map(([search]) => search)).toEqual(['ab']);
+    });
+
+    it('clearing back to empty restores the initial options from cache', async () => {
+      const fetchOptions = vi.fn(async (search: string) => [`${search || 'initial'}-result`]);
+      renderProbe('', fetchOptions, { minLength: 0, enabled: true });
+      await waitFor(() =>
+        expect(latest).toMatchObject({ options: ['initial-result'], loading: false }),
+      );
+
+      renderProbe('ab', fetchOptions, { minLength: 0, enabled: true });
+      await waitFor(() => expect(latest).toMatchObject({ options: ['ab-result'], loading: false }));
+
+      renderProbe('', fetchOptions, { minLength: 0, enabled: true });
+      await waitFor(() =>
+        expect(latest).toMatchObject({ options: ['initial-result'], loading: false }),
+      );
+      expect(fetchOptions.mock.calls.map(([search]) => search)).toEqual(['', 'ab']);
+    });
+
+    it('closing (disabling) hides the rows; reopening serves them from cache', async () => {
+      const fetchOptions = vi.fn(async () => ['initial-result']);
+      renderProbe('', fetchOptions, { minLength: 0, enabled: true });
+      await waitFor(() => expect(latest.options).toEqual(['initial-result']));
+
+      renderProbe('', fetchOptions, { minLength: 0, enabled: false });
+      expect(latest).toMatchObject({ options: [], loading: false });
+
+      renderProbe('', fetchOptions, { minLength: 0, enabled: true });
+      expect(latest).toMatchObject({ options: ['initial-result'], loading: false });
+      expect(fetchOptions).toHaveBeenCalledTimes(1);
+    });
   });
 });

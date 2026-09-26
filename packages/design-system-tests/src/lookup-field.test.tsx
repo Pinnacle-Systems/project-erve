@@ -43,6 +43,7 @@ interface HarnessProps {
   disabled?: boolean;
   readOnly?: boolean;
   onSelect?: (item: Item | null) => void;
+  onOpenChange?: (open: boolean) => void;
 }
 
 function Harness({
@@ -55,6 +56,7 @@ function Harness({
   disabled,
   readOnly,
   onSelect,
+  onOpenChange,
 }: HarnessProps) {
   const [selected, setSelected] = useState<Item | null>(initial);
   const [searchText, setSearchText] = useState('');
@@ -78,6 +80,7 @@ function Harness({
         emptyMessage="Nothing found"
         disabled={disabled}
         readOnly={readOnly}
+        onOpenChange={onOpenChange}
       />
     </ThemeProvider>
   );
@@ -309,5 +312,84 @@ describe('LookupField', () => {
     type('a');
     expect(panel()?.parentElement).toBe(document.body);
     expect(container.contains(panel())).toBe(false);
+  });
+
+  describe('onOpenChange (LU0)', () => {
+    function click() {
+      act(() => {
+        input().focus();
+        input().click();
+      });
+    }
+
+    it('reports opening on click, ArrowDown and typing — once per transition', () => {
+      const onOpenChange = vi.fn();
+      render({ onOpenChange });
+      click();
+      expect(onOpenChange.mock.calls).toEqual([[true]]);
+      click(); // already open: no repeat
+      expect(onOpenChange.mock.calls).toEqual([[true]]);
+
+      key('Escape');
+      key('ArrowDown');
+      expect(onOpenChange.mock.calls).toEqual([[true], [false], [true]]);
+
+      key('Escape');
+      type('a');
+      expect(onOpenChange.mock.calls).toEqual([[true], [false], [true], [false], [true]]);
+      type('al'); // still open
+      expect(onOpenChange).toHaveBeenCalledTimes(5);
+    });
+
+    it('does not open (or report) on Tab focus alone, nor on mount', () => {
+      const onOpenChange = vi.fn();
+      render({ onOpenChange });
+      act(() => input().focus());
+
+      expect(panel()).toBeNull();
+      expect(input().getAttribute('aria-expanded')).toBe('false');
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+
+    it('reports closing on Escape, blur, Tab and selection', () => {
+      const onOpenChange = vi.fn();
+      render({ onOpenChange });
+
+      key('ArrowDown');
+      key('Escape');
+      expect(onOpenChange).toHaveBeenLastCalledWith(false);
+
+      act(() => input().focus());
+      key('ArrowDown');
+      act(() => input().blur());
+      expect(panel()).toBeNull();
+      expect(onOpenChange).toHaveBeenLastCalledWith(false);
+
+      type('a');
+      key('Tab');
+      expect(onOpenChange).toHaveBeenLastCalledWith(false);
+
+      type('Bra');
+      act(() => options()[0]!.click());
+      expect(panel()).toBeNull();
+      expect(onOpenChange.mock.calls).toEqual([
+        [true],
+        [false],
+        [true],
+        [false],
+        [true],
+        [false],
+        [true],
+        [false],
+      ]);
+    });
+
+    it('never reports while disabled or read-only', () => {
+      const onOpenChange = vi.fn();
+      render({ readOnly: true, onOpenChange });
+      key('ArrowDown');
+      click();
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
   });
 });

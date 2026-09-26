@@ -117,7 +117,7 @@ export function PriceListListPage() {
                 value={distributor}
                 onChange={setDistributor}
                 searchPath="/price-lists/distributor-options"
-                emptyMessage="No distributors match — try another name or code"
+                emptyMessage="No distributors available"
                 density="compact"
                 width="md"
               />

@@ -29,6 +29,7 @@ import {
   updateSeasonStatusSchema,
   updateStyleSchema,
   updateStyleStatusSchema,
+  userOptionsQuerySchema,
 } from './master-data.validation.js';
 import * as masterDataService from './master-data.service.js';
 import * as styleImagesService from './style-images.service.js';
@@ -226,6 +227,20 @@ distributorsRouter.get(
   asyncHandler(async (req, res) => {
     const users = await masterDataService.listDistributorUsers(req.params.id! as string);
     res.status(200).json(successResponse(users));
+  }),
+);
+
+// Bounded search over the users this Distributor can be assigned (UL).
+distributorsRouter.get(
+  '/:id/user-options',
+  canManageDistributorUsers,
+  asyncHandler(async (req, res) => {
+    const filters = userOptionsQuerySchema.parse(req.query);
+    const options = await masterDataService.listDistributorUserOptions(
+      req.params.id! as string,
+      filters,
+    );
+    res.status(200).json(successResponse(options));
   }),
 );
 
@@ -516,6 +531,20 @@ factoriesRouter.get(
   asyncHandler(async (req, res) => {
     const users = await masterDataService.listFactoryUsers(req.params.id! as string);
     res.status(200).json(successResponse(users));
+  }),
+);
+
+// Bounded search over the users this Factory can be assigned (UL).
+factoriesRouter.get(
+  '/:id/user-options',
+  requireRoles('ADMIN'),
+  asyncHandler(async (req, res) => {
+    const filters = userOptionsQuerySchema.parse(req.query);
+    const options = await masterDataService.listFactoryUserOptions(
+      req.params.id! as string,
+      filters,
+    );
+    res.status(200).json(successResponse(options));
   }),
 );
 

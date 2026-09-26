@@ -208,15 +208,30 @@ describe('distributor management pages', () => {
   });
 });
 
+// Opens the "Assign user" lookup and clicks the candidate named `name`.
+async function pickAssignUser(name: string) {
+  const input = document.getElementById('lookup-assign-user') as HTMLInputElement;
+  await act(async () => {
+    input.focus();
+    input.click();
+  });
+  const deadline = Date.now() + 3000;
+  let option: HTMLElement | undefined;
+  while (!option) {
+    if (Date.now() > deadline) throw new Error(`Candidate ${name} never appeared`);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((el) =>
+      el.textContent?.includes(name),
+    );
+  }
+  await act(async () => option.click());
+}
+
 describe('distributor detail — UserMappingPanel (U3B regression coverage)', () => {
-  const eligibleUser = {
-    id: 'du-1',
-    name: 'Dana Distributor',
-    email: 'dana@test.local',
-    status: 'ACTIVE',
-    roles: ['DISTRIBUTOR'],
-    distributors: [],
-  };
+  // GET /distributors/:id/user-options — already eligible, id/name/email only.
+  const eligibleUser = { id: 'du-1', name: 'Dana Distributor', email: 'dana@test.local' };
   const mappedUser = {
     id: 'du-2',
     name: 'Pat Distributor',
@@ -244,7 +259,8 @@ describe('distributor detail — UserMappingPanel (U3B regression coverage)', ()
       async (config) => {
         if (config.url === '/distributors/dist-1') return ok(config, { success: true, data: distributor });
         if (config.url === '/distributors/dist-1/users') return ok(config, { success: true, data: [] });
-        if (config.url === '/users') return ok(config, { success: true, data: [eligibleUser] });
+        if (config.url === '/distributors/dist-1/user-options')
+          return ok(config, { success: true, data: [eligibleUser] });
         if (config.url === '/users/du-1/distributors' && config.method === 'post') {
           assignCalls.push({ url: config.url, body: config.data ? JSON.parse(config.data) : undefined });
           return ok(config, { success: true, data: {} });
@@ -255,18 +271,7 @@ describe('distributor detail — UserMappingPanel (U3B regression coverage)', ()
     );
 
     expect(container.textContent).toContain('Mapped Users');
-    const select = container.querySelector<HTMLButtonElement>('#select-assign-user')!;
-    await act(async () => {
-      select.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
-    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
-      (el) => el.textContent?.includes('Dana Distributor'),
-    )!;
-    await act(async () => {
-      option.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
+    await pickAssignUser('Dana Distributor');
     const assignButton = Array.from(container.querySelectorAll('button')).find(
       (b) => b.textContent === 'Assign',
     ) as HTMLButtonElement;
@@ -287,7 +292,8 @@ describe('distributor detail — UserMappingPanel (U3B regression coverage)', ()
         if (config.url === '/distributors/dist-1') return ok(config, { success: true, data: distributor });
         if (config.url === '/distributors/dist-1/users')
           return ok(config, { success: true, data: [mappedUser] });
-        if (config.url === '/users') return ok(config, { success: true, data: [] });
+        if (config.url === '/distributors/dist-1/user-options')
+          return ok(config, { success: true, data: [] });
         if (config.url === '/users/du-2/distributors/dist-1' && config.method === 'delete') {
           removeCalled = true;
           return ok(config, { success: true, data: {} });
@@ -322,7 +328,8 @@ describe('distributor detail — UserMappingPanel (U3B regression coverage)', ()
       async (config) => {
         if (config.url === '/distributors/dist-1') return ok(config, { success: true, data: distributor });
         if (config.url === '/distributors/dist-1/users') return ok(config, { success: true, data: [] });
-        if (config.url === '/users') return ok(config, { success: true, data: [eligibleUser] });
+        if (config.url === '/distributors/dist-1/user-options')
+          return ok(config, { success: true, data: [eligibleUser] });
         if (config.url === '/users/du-1/distributors' && config.method === 'post') {
           fail(config, 409, 'User is already mapped to a distributor');
         }
@@ -331,16 +338,7 @@ describe('distributor detail — UserMappingPanel (U3B regression coverage)', ()
       ['ADMIN'],
     );
 
-    const select = container.querySelector<HTMLButtonElement>('#select-assign-user')!;
-    await act(async () => {
-      select.click();
-    });
-    const option = Array.from(document.querySelectorAll('[role="option"]')).find((el) =>
-      el.textContent?.includes('Dana Distributor'),
-    ) as HTMLElement;
-    await act(async () => {
-      option.click();
-    });
+    await pickAssignUser('Dana Distributor');
     const assignButton = Array.from(container.querySelectorAll('button')).find(
       (b) => b.textContent === 'Assign',
     ) as HTMLButtonElement;

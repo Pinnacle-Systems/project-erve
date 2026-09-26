@@ -7,6 +7,7 @@ import {
   createTestDistributor,
   createTestFactory,
   createTestFinancialYear,
+  createTestUser,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -1692,6 +1693,33 @@ describe('Distributor lookup — GET /distributors/options (P1L3)', () => {
     expect(detail.status).toBe(expectedStatus);
   });
 
+  it('treats an empty search as the initial options: ACTIVE only, filtered before the limit, name then id (LU0)', async () => {
+    const token = await tokenFor('ADMIN');
+    // INACTIVE rows sort first by name — they must not consume the limit.
+    for (let index = 0; index < 5; index += 1) {
+      await createTestDistributor({ code: `INIT-OFF-${index}`, name: `AAA Retired ${index}`, status: 'INACTIVE' });
+    }
+    const twins = [];
+    for (let index = 0; index < 3; index += 1) {
+      twins.push(await createTestDistributor({ code: `INIT-TWIN-${index}`, name: 'Bharat Twin' }));
+    }
+    for (let index = 0; index < 20; index += 1) {
+      await createTestDistributor({ code: `INIT-${index}`, name: `Zeta ${String(index).padStart(2, '0')}` });
+    }
+
+    const res = await searchOptions(token, { search: '' });
+
+    expect(res.status).toBe(200);
+    const rows = res.body.data as Array<{ id: string; name: string; status: string }>;
+    expect(rows).toHaveLength(20);
+    expect(rows.every((row) => row.status === 'ACTIVE')).toBe(true);
+    // Identical names fall back to id order, so the bounded page is stable.
+    expect(rows.slice(0, 3).map((row) => row.id)).toEqual(twins.map((twin) => twin.id).sort());
+    expect(rows.slice(3).map((row) => row.name)).toEqual(
+      Array.from({ length: 17 }, (_, index) => `Zeta ${String(index).padStart(2, '0')}`),
+    );
+  });
+
   it("is not swallowed by the '/:id' route", async () => {
     const token = await tokenFor('ADMIN');
     const res = await searchOptions(token, {});
@@ -2007,5 +2035,180 @@ describe('small master list pagination (PAG8)', () => {
     for (const path of ['/factories', '/sizes', '/seasons', '/process-flows']) {
       expect((await request(app).get(path).query({ limit: 101 }).set('Authorization', `Bearer ${token}`)).status).toBe(400);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UL — user-assignment lookups
+// ---------------------------------------------------------------------------
+
+describe('user-assignment lookups (UL)', () => {
+  type CandidateRole = 'DISTRIBUTOR' | 'FACTORY_USER' | 'MERCHANDISER';
+
+  async function candidate(input: {
+    name: string;
+    email?: string;
+    roles?: CandidateRole[];
+    status?: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+  }) {
+    const id = await createTestUser({
+      email: input.email ?? `${input.name.toLowerCase().replace(/\W+/g, '.')}@ul.test.local`,
+      password: 'test-password',
+      roles: input.roles,
+      status: input.status,
+    });
+    await prisma.user.update({ where: { id }, data: { name: input.name } });
+    return id;
+  }
+
+  async function tokenFor(role: 'ADMIN' | 'MERCHANDISER' | 'SENIOR_MANAGEMENT' | 'ACCOUNTANT') {
+    const { token } = await createTestUserAndToken({
+      email: `${role.toLowerCase()}-ul-caller@test.local`,
+      password: 'test-password',
+      roles: [role],
+    });
+    return token;
+  }
+
+  function get(token: string, path: string, query: Record<string, string | number> = {}) {
+    return request(app).get(path).query(query).set('Authorization', `Bearer ${token}`);
+  }
+
+  function names(res: request.Response): string[] {
+    return (res.body.data as Array<{ name: string }>).map((option) => option.name);
+  }
+
+  describe('GET /distributors/:id/user-options', () => {
+    it('offers only ACTIVE, DISTRIBUTOR-role users with no distributor mapping anywhere', async () => {
+      const token = await tokenFor('ADMIN');
+      const distributor = await createTestDistributor({ code: 'UL-D1', name: 'UL Distribution' });
+      const other = await createTestDistributor({ code: 'UL-D2', name: 'UL Other' });
+      await candidate({ name: 'Eligible Dana', roles: ['DISTRIBUTOR'] });
+      await candidate({ name: 'Inactive Ivan', roles: ['DISTRIBUTOR'], status: 'INACTIVE' });
+      await candidate({ name: 'Suspended Sam', roles: ['DISTRIBUTOR'], status: 'SUSPENDED' });
+      await candidate({ name: 'Wrong Role Wes', roles: ['FACTORY_USER'] });
+      await candidate({ name: 'No Role Nia' });
+      const mappedHere = await candidate({ name: 'Mapped Here Mo', roles: ['DISTRIBUTOR'] });
+      const mappedElsewhere = await candidate({ name: 'Mapped Else Mae', roles: ['DISTRIBUTOR'] });
+      await prisma.userDistributor.create({
+        data: { id: createId(), userId: mappedHere, distributorId: distributor.id },
+      });
+      await prisma.userDistributor.create({
+        data: { id: createId(), userId: mappedElsewhere, distributorId: other.id },
+      });
+
+      const res = await get(token, `/distributors/${distributor.id}/user-options`);
+
+      expect(res.status).toBe(200);
+      expect(names(res)).toEqual(['Eligible Dana']);
+    });
+
+    it('returns exactly id/name/email', async () => {
+      const token = await tokenFor('ADMIN');
+      const distributor = await createTestDistributor();
+      const id = await candidate({ name: 'Slim Sue', email: 'slim.sue@ul.test.local', roles: ['DISTRIBUTOR'] });
+
+      const res = await get(token, `/distributors/${distributor.id}/user-options`, { search: '' });
+
+      expect(res.body.data).toEqual([{ id, name: 'Slim Sue', email: 'slim.sue@ul.test.local' }]);
+    });
+
+    it('searches name and email case-insensitively', async () => {
+      const token = await tokenFor('ADMIN');
+      const distributor = await createTestDistributor();
+      await candidate({ name: 'Kerala Kumar', email: 'kk@alpha.example', roles: ['DISTRIBUTOR'] });
+      await candidate({ name: 'Bangalore Bea', email: 'bea@kochi.example', roles: ['DISTRIBUTOR'] });
+
+      const path = `/distributors/${distributor.id}/user-options`;
+      expect(names(await get(token, path, { search: 'KERALA' }))).toEqual(['Kerala Kumar']);
+      expect(names(await get(token, path, { search: 'kochi.EX' }))).toEqual(['Bangalore Bea']);
+      expect(names(await get(token, path, { search: 'zzz' }))).toEqual([]);
+    });
+
+    it('bounds results (default 20, caller limit, max 50) in name then id order', async () => {
+      const token = await tokenFor('ADMIN');
+      const distributor = await createTestDistributor();
+      const twins: string[] = [];
+      for (let index = 0; index < 3; index += 1) {
+        twins.push(
+          await candidate({ name: 'Aaron Twin', email: `twin${index}@ul.test.local`, roles: ['DISTRIBUTOR'] }),
+        );
+      }
+      for (let index = 0; index < 20; index += 1) {
+        await candidate({ name: `Bulk ${String(index).padStart(2, '0')}`, roles: ['DISTRIBUTOR'] });
+      }
+      const path = `/distributors/${distributor.id}/user-options`;
+
+      const initial = await get(token, path);
+      expect(initial.body.data).toHaveLength(20);
+      expect(initial.body.data.slice(0, 3).map((row: { id: string }) => row.id)).toEqual([...twins].sort());
+      expect(names(await get(token, path, { limit: 4 }))).toEqual([
+        'Aaron Twin',
+        'Aaron Twin',
+        'Aaron Twin',
+        'Bulk 00',
+      ]);
+      expect((await get(token, path, { limit: 50 })).body.data).toHaveLength(23);
+      expect((await get(token, path, { limit: 51 })).status).toBe(400);
+    });
+
+    it('is ADMIN only, and 404s for an unknown distributor', async () => {
+      const distributor = await createTestDistributor();
+      for (const role of ['MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT'] as const) {
+        expect((await get(await tokenFor(role), `/distributors/${distributor.id}/user-options`)).status).toBe(403);
+      }
+      const admin = await tokenFor('ADMIN');
+      expect((await get(admin, '/distributors/does-not-exist/user-options')).status).toBe(404);
+      expect((await request(app).get(`/distributors/${distributor.id}/user-options`)).status).toBe(401);
+    });
+  });
+
+  describe('GET /factories/:id/user-options', () => {
+    it('offers ACTIVE FACTORY_USER users not mapped to this factory — users on other factories stay eligible', async () => {
+      const token = await tokenFor('ADMIN');
+      const factory = await createTestFactory({ code: 'UL-F1', name: 'UL Factory' });
+      const other = await createTestFactory({ code: 'UL-F2', name: 'UL Other Factory' });
+      const onThis = await candidate({ name: 'On This Otto', roles: ['FACTORY_USER'] });
+      const onOther = await candidate({ name: 'On Other Olga', roles: ['FACTORY_USER'] });
+      await prisma.userFactory.create({ data: { id: createId(), userId: onThis, factoryId: factory.id } });
+      await prisma.userFactory.create({ data: { id: createId(), userId: onOther, factoryId: other.id } });
+      await candidate({ name: 'Unmapped Una', roles: ['FACTORY_USER'] });
+      await candidate({ name: 'Inactive Ike', roles: ['FACTORY_USER'], status: 'INACTIVE' });
+      await candidate({ name: 'Suspended Sid', roles: ['FACTORY_USER'], status: 'SUSPENDED' });
+      await candidate({ name: 'Distributor Dee', roles: ['DISTRIBUTOR'] });
+
+      const res = await get(token, `/factories/${factory.id}/user-options`);
+
+      expect(res.status).toBe(200);
+      expect(names(res)).toEqual(['On Other Olga', 'Unmapped Una']);
+      expect(Object.keys(res.body.data[0]).sort()).toEqual(['email', 'id', 'name']);
+    });
+
+    it('searches name and email, and bounds results (default 20, max 50) in name then id order', async () => {
+      const token = await tokenFor('ADMIN');
+      const factory = await createTestFactory();
+      await candidate({ name: 'Tiruppur Tara', email: 'tara@knit.example', roles: ['FACTORY_USER'] });
+      for (let index = 0; index < 21; index += 1) {
+        await candidate({ name: `Bulk ${String(index).padStart(2, '0')}`, roles: ['FACTORY_USER'] });
+      }
+      const path = `/factories/${factory.id}/user-options`;
+
+      expect(names(await get(token, path, { search: 'tiruppur' }))).toEqual(['Tiruppur Tara']);
+      expect(names(await get(token, path, { search: 'KNIT.example' }))).toEqual(['Tiruppur Tara']);
+      const initial = await get(token, path, { search: '' });
+      expect(initial.body.data).toHaveLength(20);
+      expect(names(initial)[0]).toBe('Bulk 00');
+      expect(names(await get(token, path, { limit: 2 }))).toEqual(['Bulk 00', 'Bulk 01']);
+      expect((await get(token, path, { limit: 51 })).status).toBe(400);
+    });
+
+    it('is ADMIN only, and 404s for an unknown factory', async () => {
+      const factory = await createTestFactory();
+      for (const role of ['MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT'] as const) {
+        expect((await get(await tokenFor(role), `/factories/${factory.id}/user-options`)).status).toBe(403);
+      }
+      const admin = await tokenFor('ADMIN');
+      expect((await get(admin, '/factories/does-not-exist/user-options')).status).toBe(404);
+    });
   });
 });

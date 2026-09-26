@@ -151,6 +151,15 @@ export interface OrderSheetStyleDetail extends OrderSheetStyleOption {
   sizes: Array<{ id: string; code: string; label: string; sortOrder: number }>;
 }
 
+// A candidate for Distributor/Factory user assignment
+// (GET /distributors/:id/user-options, GET /factories/:id/user-options).
+// Deliberately minimal: role and status eligibility are the endpoint's rule.
+export interface UserOption {
+  id: string;
+  name: string;
+  email: string;
+}
+
 // Slim Distributor row for the Distributor lookup (GET /distributors/options
 // and /distributors/options/:id). purchaseMode is part of the contract: the
 // Order Sheet and Dispatch Order forms derive and display it from the

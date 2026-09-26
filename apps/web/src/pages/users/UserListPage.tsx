@@ -1,12 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
 import { ROLES } from '@erve/types';
 import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { apiClient } from '../../lib/api-client.js';
+import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
+import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { getLocalDateString } from '../../lib/dates.js';
@@ -38,14 +37,13 @@ export function UserListPage() {
     [debouncedSearch, status, role],
   );
 
-  const usersQuery = useQuery({
-    queryKey: ['admin-users', params],
-    queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<AdminUserSummary[]>>('/users', {
-        params,
-      });
-      return response.data.data;
-    },
+  // Opt-in cursor pagination (limit sent): Load more appends further pages; a
+  // filter change restarts at page 1. The 'admin-users' prefix is what the
+  // user detail/mapping screens invalidate. The PDF fetches every matching page.
+  const { query: usersQuery, items: users } = useCursorList<AdminUserSummary>({
+    queryKey: ['admin-users'],
+    path: '/users',
+    params: { ...params, limit: 25 },
   });
 
   const generateUserListPdf = useCallback(async () => {
@@ -53,11 +51,11 @@ export function UserListPage() {
     // actually clicks Download/Print, not as part of the app's initial bundle.
     const { generateUserListPdfBlob } = await import('./pdf/generateUserListPdf.js');
     return generateUserListPdfBlob(
-      usersQuery.data ?? [],
+      await fetchAllListPages<AdminUserSummary>('/users', params),
       { search: debouncedSearch, status, role },
       { generatedAt: new Date().toISOString(), generatedBy: currentUser?.name },
     );
-  }, [usersQuery.data, debouncedSearch, status, role, currentUser?.name]);
+  }, [params, debouncedSearch, status, role, currentUser?.name]);
 
   const userListPdfFilename = useCallback(
     () => buildPdfFilename(['ERVE-Users', getLocalDateString()]),
@@ -170,7 +168,7 @@ export function UserListPage() {
               user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '—',
           },
         ]}
-        data={usersQuery.data ?? []}
+        data={users}
         loading={usersQuery.isLoading}
         loadingState={<LoadingState variant="rows" label="Loading users" />}
         emptyState={
@@ -182,6 +180,7 @@ export function UserListPage() {
           ) : undefined
         }
       />
+      <LoadMoreFooter {...loadMoreProps(usersQuery, users.length, ['user', 'users'])} />
     </div>
   );
 }

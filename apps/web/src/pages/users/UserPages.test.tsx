@@ -146,13 +146,18 @@ describe('user administration — access control', () => {
   });
 });
 
+// GET /users is cursor-paginated for the list (UP1): a single, final page.
+function page<T>(items: T[]) {
+  return { items, pageInfo: { limit: 25, hasMore: false, nextCursor: null } };
+}
+
 describe('user list page', () => {
   it('renders users with search/status/role filters and shows key columns', async () => {
     await renderPage('/master-data/users', ['ADMIN'], async (config) => {
       if (config.url === '/users')
         return ok(config, {
           success: true,
-          data: [
+          data: page([
             {
               id: 'user-1',
               name: 'Jane Admin',
@@ -163,7 +168,7 @@ describe('user list page', () => {
               factories: [],
               createdAt: '2026-01-01T00:00:00.000Z',
             },
-          ],
+          ]),
         });
       throw new Error(`Unexpected request: ${config.url}`);
     });
@@ -186,7 +191,7 @@ describe('user list page', () => {
     await renderPage('/master-data/users', ['ADMIN'], async (config) => {
       if (config.url === '/users') {
         requestedSearches.push((config.params as { search?: string } | undefined)?.search);
-        return ok(config, { success: true, data: [] });
+        return ok(config, { success: true, data: page([]) });
       }
       throw new Error(`Unexpected request: ${config.url}`);
     });
@@ -225,7 +230,7 @@ describe('user list page', () => {
     await renderPage('/master-data/users', ['ADMIN'], async (config) => {
       if (config.url === '/users') {
         requestedSearches.push((config.params as { search?: string } | undefined)?.search);
-        return ok(config, { success: true, data: [] });
+        return ok(config, { success: true, data: page([]) });
       }
       throw new Error(`Unexpected request: ${config.url}`);
     });

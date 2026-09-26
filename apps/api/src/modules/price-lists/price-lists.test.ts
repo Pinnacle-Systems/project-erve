@@ -1188,6 +1188,28 @@ describe('GET /price-lists/:id/style-options — Add Style lookup (P1L2)', () =>
     expect(styleNumbers(res)).toEqual(['CROWD-Z01', 'CROWD-Z02']);
   });
 
+  it('treats an empty search as the initial options — only addable Styles, filtered before the limit (LU0)', async () => {
+    const token = await adminToken();
+    const priceListId = await draftPriceList(token);
+    // Priced and INACTIVE Styles sort first by Style No.
+    for (let index = 0; index < 3; index += 1) {
+      const style = await createLookupStyle({ styleNumber: `A-PRICED-${index}` });
+      expect((await addLine(token, priceListId, style.id, 100)).status).toBe(201);
+    }
+    await createLookupStyle({ styleNumber: 'A-RETIRED', status: 'INACTIVE' });
+    await createLookupStyle({ styleNumber: 'B-ADD-01' });
+    await createLookupStyle({ styleNumber: 'B-ADD-02' });
+    await createLookupStyle({ styleNumber: 'B-ADD-03' });
+
+    const res = await searchCandidates(token, priceListId, { search: '', limit: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((row: { styleNumber: string }) => row.styleNumber)).toEqual([
+      'B-ADD-01',
+      'B-ADD-02',
+    ]);
+  });
+
   it('bounds the result count (default 20, caller limit honoured, over-max rejected)', async () => {
     const token = await adminToken();
     const priceListId = await draftPriceList(token);
@@ -1294,6 +1316,24 @@ describe('GET /price-lists/distributor-options — bounded search (P1L8)', () =>
     expect(codes(await searchOptions(token, { search: 'Bulk', limit: 2 }))).toEqual(['BULK-00', 'BULK-01']);
     expect((await searchOptions(token, { limit: 51 })).status).toBe(400);
     expect((await searchOptions(token, {})).body.data).toHaveLength(23);
+  });
+
+  it('treats an empty search as the bounded initial options, status filter first, name then id (LU0)', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 3; index += 1) {
+      await createTestDistributor({ code: `INIT-OFF-${index}`, name: `AAA Retired ${index}`, status: 'INACTIVE' });
+    }
+    const twins = [];
+    for (let index = 0; index < 3; index += 1) {
+      twins.push(await createTestDistributor({ code: `INIT-TWIN-${index}`, name: 'Bharat Twin' }));
+    }
+
+    const res = await searchOptions(token, { search: '', status: 'ACTIVE', limit: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((row: { id: string }) => row.id)).toEqual(
+      twins.map((twin) => twin.id).sort().slice(0, 2),
+    );
   });
 
   it('keeps the minimal DTO and the Price List read permission', async () => {

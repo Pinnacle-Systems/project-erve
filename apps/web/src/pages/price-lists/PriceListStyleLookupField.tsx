@@ -6,8 +6,7 @@ import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { useServerLookup } from '../../lib/use-server-lookup.js';
 import type { PriceListStyleCandidate } from './types.js';
 
-// Same bounds as the Order Sheet Style lookup (P1L1).
-export const PRICE_LIST_STYLE_LOOKUP_MIN_LENGTH = 2;
+// Same bound as the Order Sheet Style lookup (P1L1).
 export const PRICE_LIST_STYLE_LOOKUP_LIMIT = 20;
 
 function getStyleLabel(style: PriceListStyleCandidate): string {
@@ -38,9 +37,11 @@ export interface PriceListStyleLookupFieldProps {
 
 // Price List "Add Style" lookup: bounded server search over the Styles this
 // price list can still add (GET /price-lists/:id/style-options — ACTIVE and
-// not already priced here, filtered server-side before the limit). Keyed
-// under ['price-list', id] so refreshing the price list after a line change
-// also refreshes these results.
+// not already priced here, filtered server-side before the limit). Opening
+// the panel with no text shows the first addable Styles; typing searches.
+// Nothing is requested until the panel opens. Keyed under ['price-list', id]
+// so refreshing the price list after a line change also refreshes these
+// results.
 export function PriceListStyleLookupField({
   priceListId,
   label = 'Style',
@@ -49,10 +50,12 @@ export function PriceListStyleLookupField({
   onChange,
 }: PriceListStyleLookupFieldProps) {
   const [searchText, setSearchText] = useState('');
+  const [open, setOpen] = useState(false);
   const lookup = useServerLookup<PriceListStyleCandidate>({
     queryKey: ['price-list', priceListId, 'style-options', 'search'],
     searchText,
-    minLength: PRICE_LIST_STYLE_LOOKUP_MIN_LENGTH,
+    minLength: 0,
+    enabled: open,
     fetchOptions: async (search, signal) => {
       const res = await apiClient.get<ApiSuccessResponse<PriceListStyleCandidate[]>>(
         `/price-lists/${priceListId}/style-options`,
@@ -79,9 +82,13 @@ export function PriceListStyleLookupField({
       searchError={
         lookup.error ? getApiErrorMessage(lookup.error, 'Unable to search styles') : null
       }
-      prompt={lookup.belowMinLength ? 'Type to search by LMIX, Style No. or Style Name' : null}
-      emptyMessage="No active, unpriced Styles match — try another LMIX, Style No. or name"
+      emptyMessage={
+        searchText.trim()
+          ? 'No active, unpriced Styles match your search'
+          : 'No active Styles left to add to this price list'
+      }
       loadingMessage="Searching Styles…"
+      onOpenChange={setOpen}
     />
   );
 }

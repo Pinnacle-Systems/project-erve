@@ -6,8 +6,10 @@ import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { useServerLookup } from '../../lib/use-server-lookup.js';
 
-export const DISTRIBUTOR_LOOKUP_MIN_LENGTH = 1;
 export const DISTRIBUTOR_LOOKUP_LIMIT = 20;
+// Every option endpoint's maximum `limit` (/distributors/options,
+// /price-lists/distributor-options, /sale-orders/distributor-options).
+export const DISTRIBUTOR_LOOKUP_MAX_LIMIT = 50;
 export const DISTRIBUTOR_OPTIONS_PATH = '/distributors/options';
 
 // What the field needs to display a value. A saved record often embeds only
@@ -61,16 +63,21 @@ export interface DistributorLookupFieldProps<
   // Extra fixed query parameters for `searchPath` (e.g. a module endpoint's
   // own status filter).
   searchParams?: Readonly<Record<string, string>>;
+  // Shown when the open panel has no rows for an empty search.
   emptyMessage?: string;
+  // Shown when a typed search matches nothing.
+  noMatchMessage?: string;
   errorMessage?: string;
   disabled?: boolean;
   required?: boolean;
 }
 
 // Distributor lookup: bounded server search over ACTIVE Distributors by name
-// or code (GET /distributors/options by default). The current value is shown
-// from `value`, never looked up in the results, so a saved Distributor
-// displays even when it has since become inactive.
+// or code (GET /distributors/options by default). Opening the panel with no
+// text shows the first eligible Distributors; typing searches. Nothing is
+// requested until the panel opens. The current value is shown from `value`,
+// never looked up in the results, so a saved Distributor displays even when
+// it has since become inactive.
 export function DistributorLookupField<T extends DistributorLookupOption = DistributorOption>({
   label,
   'aria-label': ariaLabel,
@@ -83,26 +90,37 @@ export function DistributorLookupField<T extends DistributorLookupOption = Distr
   excludeIds,
   searchPath = DISTRIBUTOR_OPTIONS_PATH,
   searchParams,
-  emptyMessage = 'No active distributors match — try another name or code',
+  emptyMessage = 'No active distributors available',
+  noMatchMessage = 'No distributors match your search',
   errorMessage,
   disabled,
   required,
 }: DistributorLookupFieldProps<T>) {
   const [searchText, setSearchText] = useState('');
+  const [open, setOpen] = useState(false);
+  // Excluded ids are filtered here, after the server's limit, so over-fetch
+  // by that many to still offer up to DISTRIBUTOR_LOOKUP_LIMIT usable rows.
+  const excludedCount = excludeIds
+    ? [...excludeIds].filter((excludedId) => excludedId && excludedId !== value?.id).length
+    : 0;
+  const limit = Math.min(DISTRIBUTOR_LOOKUP_LIMIT + excludedCount, DISTRIBUTOR_LOOKUP_MAX_LIMIT);
   const lookup = useServerLookup<T>({
-    queryKey: ['distributor-lookup', searchPath, searchParams ?? {}],
+    queryKey: ['distributor-lookup', searchPath, searchParams ?? {}, limit],
     searchText,
-    minLength: DISTRIBUTOR_LOOKUP_MIN_LENGTH,
+    minLength: 0,
+    enabled: open,
     fetchOptions: async (search, signal) => {
       const res = await apiClient.get<ApiSuccessResponse<T[]>>(searchPath, {
-        params: { ...searchParams, search, limit: DISTRIBUTOR_LOOKUP_LIMIT },
+        params: { ...searchParams, search, limit },
         signal,
       });
       return res.data.data;
     },
   });
   const options = excludeIds
-    ? lookup.options.filter((option) => !excludeIds.has(option.id) || option.id === value?.id)
+    ? lookup.options
+        .filter((option) => !excludeIds.has(option.id) || option.id === value?.id)
+        .slice(0, DISTRIBUTOR_LOOKUP_LIMIT)
     : lookup.options;
 
   return (
@@ -129,9 +147,9 @@ export function DistributorLookupField<T extends DistributorLookupOption = Distr
       searchError={
         lookup.error ? getApiErrorMessage(lookup.error, 'Unable to search distributors') : null
       }
-      prompt={lookup.belowMinLength ? 'Type to search by distributor name or code' : null}
-      emptyMessage={emptyMessage}
+      emptyMessage={searchText.trim() ? noMatchMessage : emptyMessage}
       loadingMessage="Searching distributors…"
+      onOpenChange={setOpen}
     />
   );
 }

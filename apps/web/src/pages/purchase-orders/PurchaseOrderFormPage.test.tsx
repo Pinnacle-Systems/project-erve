@@ -667,19 +667,46 @@ const retiredPO = {
 };
 
 describe('PurchaseOrderFormPage Style lookup (P1L1)', () => {
-  it('shows a search prompt, not a preloaded list, before anything is typed', async () => {
+  it('fetches nothing on mount or Tab focus, then opens on the first ACTIVE Styles and restores them when the search is cleared (LU0)', async () => {
     await renderPage(baseAdapter(catalog));
+    const styleSearches = () =>
+      requestLog.filter((request) => request.url === '/purchase-orders/style-options');
 
     await act(async () => styleInput().focus());
-    await pressKey('ArrowDown');
-    await typeStyleSearch('5');
     await flush();
-
     expect(styleInput().getAttribute('role')).toBe('combobox');
-    expect(lookupPanelText()).toContain('Type to search by LMIX, Style No. or Style Name');
-    expect(lookupOptions()).toHaveLength(0);
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(requestLog.filter((request) => request.url === '/purchase-orders/style-options')).toHaveLength(0);
+    expect(styleInput().getAttribute('aria-expanded')).toBe('false');
+    expect(styleSearches()).toHaveLength(0);
+
+    await pressKey('ArrowDown');
+    await waitForFreshResults();
+    expect(styleSearches()).toHaveLength(1);
+    expect(styleSearches()[0]!.params).toEqual({ search: '', limit: 20 });
+    expect(lookupPanelText()).not.toContain('Type to search');
+    // ACTIVE only — the retired Style is never offered for a new selection.
+    expect(lookupOptions().map((option) => option.textContent ?? '')).toEqual([
+      expect.stringContaining('ST-001'),
+      expect.stringContaining('SS26-TEE-2'),
+    ]);
+
+    await typeStyleSearch('SS26');
+    await waitFor(() => expect(lookupOptions()).toHaveLength(1));
+    expect(styleSearches().at(-1)!.params).toEqual({ search: 'SS26', limit: 20 });
+
+    await typeStyleSearch('');
+    await waitFor(() => expect(lookupOptions()).toHaveLength(2));
+    // The initial set comes back from cache, not a new request.
+    expect(styleSearches()).toHaveLength(2);
+  });
+
+  it('says no Styles are available, not "type to search", when the open panel has none', async () => {
+    await renderPage(baseAdapter([retiredStyle]));
+    await act(async () => styleInput().focus());
+    await pressKey('ArrowDown');
+    await waitFor(() => expect(lookupPanelText()).toContain('No active Styles available'));
+
+    await typeStyleSearch('zzz');
+    await waitFor(() => expect(lookupPanelText()).toContain('No active Styles match your search'));
   });
 
   it('sends one debounced, bounded server search for the final text and renders LMIX in the results', async () => {
