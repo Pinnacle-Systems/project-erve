@@ -5,13 +5,23 @@ import { Card } from '@erve/layout';
 import { useAuth } from '../auth/AuthContext.js';
 import {
   canNavigateToJobOrders,
+  canViewManagementReports,
   canViewMasterDataDashboardShortcut,
   canViewPurchaseOrders,
 } from '../auth/permissions.js';
+import { ManagementDashboardPage } from './dashboard/ManagementDashboardPage.js';
 
 export function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+
+  // RPT2: the placeholder shortcut dashboard below stays exactly as-is for
+  // every non-reporting role (FACTORY_USER, QA_USER, ACCOUNTANT,
+  // DISTRIBUTOR) — only the V1 reporting audience gets the real KPI
+  // dashboard.
+  if (canViewManagementReports(user)) {
+    return <ManagementDashboardPage />;
+  }
 
   return (
     <div className="space-y-5">
