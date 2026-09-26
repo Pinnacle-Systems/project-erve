@@ -1,18 +1,23 @@
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, ReportOperationsSummary, ReportRecordOriginFilter } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
 import { SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
-import { ErrorState } from '@erve/data-display';
+import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { FinancialYearSelect } from '../../lib/financial-years.js';
 import { JOB_ORDER_STATUS_LABELS, QUALITY_RUNTIME_STATUS_LABELS } from '../job-orders/job-order-ui.js';
-import { canFilterJobOrdersByFactory } from '../../auth/permissions.js';
+import { canFilterJobOrdersByFactory, canNavigateToJobOrders } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { KpiCard } from './KpiCard.js';
 import { useSeasonOptionsQuery } from './use-season-options.js';
 import { useFactoryOptionsQuery } from './use-factory-options.js';
+
+// Recharts (and every chart component) loads only once a viewer actually
+// reaches the Dashboard, and stays out of the app's initial bundle — see
+// the PR description for the before/after bundle-size measurement.
+const ChartsSection = lazy(() => import('./charts/ChartsSection.js'));
 
 const DEFAULT_RECORD_ORIGIN: ReportRecordOriginFilter = 'LIVE_WORKFLOW';
 
@@ -56,6 +61,20 @@ export function ManagementDashboardPage() {
 
   const seasonOptionsQuery = useSeasonOptionsQuery();
   const factoryOptionsQuery = useFactoryOptionsQuery(mayFilterByFactory);
+
+  // RPT3 8.9/8.10 — a drilldown link is rendered only when the viewer can
+  // reach the destination route; otherwise the card/chart shows the
+  // aggregate with no link at all.
+  const canDrillIntoJobOrders = canNavigateToJobOrders(user);
+  function jobOrdersDrilldownHref(extra?: Record<string, string>): string | undefined {
+    if (!canDrillIntoJobOrders) return undefined;
+    const query = new URLSearchParams();
+    if (factoryId) query.set('factoryId', factoryId);
+    if (recordOrigin !== DEFAULT_RECORD_ORIGIN) query.set('recordOrigin', recordOrigin);
+    for (const [key, value] of Object.entries(extra ?? {})) query.set(key, value);
+    const queryString = query.toString();
+    return queryString ? `/job-orders?${queryString}` : '/job-orders';
+  }
 
   const summary = summaryQuery.data;
   const loading = summaryQuery.isLoading;
@@ -133,10 +152,16 @@ export function ManagementDashboardPage() {
                 label: JOB_ORDER_STATUS_LABELS[status as keyof typeof JOB_ORDER_STATUS_LABELS] ?? status,
                 value: count,
               }))}
+              href={jobOrdersDrilldownHref()}
             />
           )}
           {(loading || summary?.production) && (
-            <KpiCard title="Delayed Job Orders" loading={loading} value={summary?.production?.delayed} />
+            <KpiCard
+              title="Delayed Job Orders"
+              loading={loading}
+              value={summary?.production?.delayed}
+              href={jobOrdersDrilldownHref({ delayed: 'true' })}
+            />
           )}
           {(loading || summary?.qa) && (
             <KpiCard
@@ -225,6 +250,17 @@ export function ManagementDashboardPage() {
         <ValidationMessage tone="info">
           Some sections are hidden because your role does not have access to that area.
         </ValidationMessage>
+      ) : null}
+
+      {!summaryQuery.isError ? (
+        <Suspense fallback={<LoadingState variant="rows" label="Loading charts" rows={6} />}>
+          <ChartsSection
+            filters={params}
+            canViewProduction
+            canViewFulfillment
+            canViewSaleReturn
+          />
+        </Suspense>
       ) : null}
     </div>
   );

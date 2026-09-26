@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { Card } from '@erve/layout';
 import { Skeleton } from '@erve/primitives';
 
@@ -15,11 +16,15 @@ export interface KpiCardProps {
   subValues?: KpiCardSubValue[];
   loading?: boolean;
   footnote?: ReactNode;
+  /** A drilldown destination (RPT3 8.9/8.10) — omit entirely when the
+   * viewer cannot reach the destination route, rather than rendering a
+   * disabled or dead link. */
+  href?: string;
 }
 
-export function KpiCard({ title, value, subValues, loading, footnote }: KpiCardProps) {
-  return (
-    <Card padding="md" className="flex flex-col gap-2">
+export function KpiCard({ title, value, subValues, loading, footnote, href }: KpiCardProps) {
+  const content = (
+    <>
       <p className="text-sm font-medium text-muted-foreground">{title}</p>
       {loading ? (
         <Skeleton className="h-8 w-20" />
@@ -37,6 +42,22 @@ export function KpiCard({ title, value, subValues, loading, footnote }: KpiCardP
         </dl>
       ) : null}
       {footnote ? <div className="mt-1 text-xs text-muted-foreground">{footnote}</div> : null}
+    </>
+  );
+
+  if (href && !loading) {
+    return (
+      <Link to={href} className="block">
+        <Card padding="md" className="flex flex-col gap-2 transition-shadow hover:shadow-panel">
+          {content}
+        </Card>
+      </Link>
+    );
+  }
+
+  return (
+    <Card padding="md" className="flex flex-col gap-2">
+      {content}
     </Card>
   );
 }
