@@ -39,6 +39,7 @@ export async function findRefreshSessionByToken(sessionId: string, refreshTokenH
       idleExpiresAt: true,
       absoluteExpiresAt: true,
       revokedAt: true,
+      updatedAt: true,
       user: { select: currentUserSelect },
     },
   });
@@ -55,6 +56,7 @@ export async function findRefreshSessionById(sessionId: string) {
       idleExpiresAt: true,
       absoluteExpiresAt: true,
       revokedAt: true,
+      updatedAt: true,
       user: { select: currentUserSelect },
     },
   });
@@ -77,6 +79,10 @@ export async function rotateRefreshSessionToken(input: {
       refreshTokenHash: input.nextRefreshTokenHash,
       lastUsedAt: input.now,
       idleExpiresAt: input.idleExpiresAt,
+      // Set explicitly (not left to Prisma's @updatedAt clock) because the
+      // rotation grace window in refreshSession() measures from this instant
+      // and must agree with the `now` the rotation was evaluated at.
+      updatedAt: input.now,
     },
   });
 

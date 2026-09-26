@@ -9,6 +9,8 @@ import {
   calculateNextIdleExpiry,
   calculateRefreshSessionExpiry,
   isRefreshSessionExpired,
+  REFRESH_ROTATION_GRACE_SECONDS,
+  refreshSession,
 } from './refresh-session.service.js';
 import { REFRESH_TOKEN_COOKIE_NAME } from './refresh-cookie.js';
 import {
@@ -51,6 +53,29 @@ function getRefreshTokenFromSetCookie(res: Response): string {
 
 function refreshCookieHeader(refreshToken: string): string {
   return `${REFRESH_TOKEN_COOKIE_NAME}=${encodeURIComponent(refreshToken)}`;
+}
+
+function clearsRefreshCookie(res: Response): boolean {
+  return getSetCookieHeaders(res).some((value) =>
+    value.startsWith(`${REFRESH_TOKEN_COOKIE_NAME}=;`),
+  );
+}
+
+/** Moves the session's last rotation instant into the past. */
+async function ageLastRotation(sessionId: string, seconds: number): Promise<void> {
+  const session = await prisma.refreshSession.findUniqueOrThrow({ where: { id: sessionId } });
+  await prisma.refreshSession.update({
+    where: { id: sessionId },
+    data: { updatedAt: new Date(session.updatedAt.getTime() - seconds * 1000) },
+  });
+}
+
+async function loginForRefreshToken(email: string): Promise<string> {
+  await createTestUser({ email, password: 'correct-password', roles: ['ADMIN'] });
+  const login = await request(app)
+    .post('/auth/login')
+    .send({ identifier: email, password: 'correct-password' });
+  return getRefreshTokenFromSetCookie(login);
 }
 
 beforeEach(async () => {
@@ -233,11 +258,15 @@ describe('POST /auth/refresh', () => {
     expect(after.refreshTokenHash).not.toBe(before.refreshTokenHash);
     expect(after.lastUsedAt.getTime()).toBeGreaterThanOrEqual(before.lastUsedAt.getTime());
 
+    // Outside the rotation grace window the previous token is plain reuse.
+    await ageLastRotation(before.id, REFRESH_ROTATION_GRACE_SECONDS + 1);
     const replay = await request(app)
       .post('/auth/refresh')
       .set('Cookie', refreshCookieHeader(firstRefreshToken));
     expect(replay.status).toBe(401);
-    expect(getSetCookieHeaders(replay).join('\n')).toContain(`${REFRESH_TOKEN_COOKIE_NAME}=;`);
+    await expect(
+      prisma.refreshSession.findUniqueOrThrow({ where: { id: before.id } }),
+    ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
   });
 
   it('rejects and revokes an idle-expired refresh session', async () => {
@@ -263,7 +292,7 @@ describe('POST /auth/refresh', () => {
       .set('Cookie', refreshCookieHeader(getRefreshTokenFromSetCookie(login)));
 
     expect(res.status).toBe(401);
-    expect(getSetCookieHeaders(res).join('\n')).toContain(`${REFRESH_TOKEN_COOKIE_NAME}=;`);
+    expect(clearsRefreshCookie(res)).toBe(false);
     await expect(
       prisma.refreshSession.findUniqueOrThrow({ where: { id: session.id } }),
     ).resolves.toMatchObject({
@@ -294,12 +323,116 @@ describe('POST /auth/refresh', () => {
       .set('Cookie', refreshCookieHeader(getRefreshTokenFromSetCookie(login)));
 
     expect(res.status).toBe(401);
-    expect(getSetCookieHeaders(res).join('\n')).toContain(`${REFRESH_TOKEN_COOKIE_NAME}=;`);
+    expect(clearsRefreshCookie(res)).toBe(false);
     await expect(
       prisma.refreshSession.findUniqueOrThrow({ where: { id: session.id } }),
     ).resolves.toMatchObject({
       revokedAt: expect.any(Date),
     });
+  });
+});
+
+describe('refresh rotation races and lost responses', () => {
+  it('lets two concurrent refreshes of the same token both succeed with the same successor', async () => {
+    const token = await loginForRefreshToken('race@test.local');
+
+    const [first, second] = await Promise.all([
+      request(app).post('/auth/refresh').set('Cookie', refreshCookieHeader(token)),
+      request(app).post('/auth/refresh').set('Cookie', refreshCookieHeader(token)),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const firstSuccessor = getRefreshTokenFromSetCookie(first);
+    expect(getRefreshTokenFromSetCookie(second)).toBe(firstSuccessor);
+    // Neither response — including the one that lost the DB race — clears
+    // the cookie the other just set.
+    expect(clearsRefreshCookie(first)).toBe(false);
+    expect(clearsRefreshCookie(second)).toBe(false);
+
+    const session = await prisma.refreshSession.findFirstOrThrow();
+    expect(session.revokedAt).toBeNull();
+    expect(session.refreshTokenHash).toBe(hashToken(firstSuccessor));
+
+    // The session survives the race and keeps rotating normally.
+    const next = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', refreshCookieHeader(firstSuccessor));
+    expect(next.status).toBe(200);
+  });
+
+  it('answers a retry of a lost rotation with the already-issued successor, without sliding the session', async () => {
+    const token = await loginForRefreshToken('lost@test.local');
+    const rotatedAt = new Date(Date.now() + 1000);
+    const issued = await refreshSession(token, rotatedAt);
+    const afterRotation = await prisma.refreshSession.findFirstOrThrow();
+
+    // The response carrying `issued` never reached the client, which retries
+    // with the token it still holds.
+    const retryAt = new Date(rotatedAt.getTime() + 30 * 1000);
+    const retried = await refreshSession(token, retryAt);
+
+    expect(retried.refreshToken).toBe(issued.refreshToken);
+    expect(retried.accessToken).toEqual(expect.any(String));
+    const afterRetry = await prisma.refreshSession.findFirstOrThrow();
+    expect(afterRetry.revokedAt).toBeNull();
+    expect(afterRetry.refreshTokenHash).toBe(afterRotation.refreshTokenHash);
+    expect(afterRetry.lastUsedAt).toEqual(afterRotation.lastUsedAt);
+
+    await expect(
+      refreshSession(issued.refreshToken, new Date(retryAt.getTime() + 1000)),
+    ).resolves.toMatchObject({ refreshToken: expect.any(String) });
+  });
+
+  it('rejects and revokes the previous token once the grace window has passed', async () => {
+    const token = await loginForRefreshToken('late@test.local');
+    const rotatedAt = new Date(Date.now() + 1000);
+    await refreshSession(token, rotatedAt);
+
+    const lateRetry = new Date(rotatedAt.getTime() + (REFRESH_ROTATION_GRACE_SECONDS + 1) * 1000);
+    await expect(refreshSession(token, lateRetry)).rejects.toMatchObject({ statusCode: 401 });
+    await expect(prisma.refreshSession.findFirstOrThrow()).resolves.toMatchObject({
+      revokedAt: expect.any(Date),
+    });
+  });
+
+  it('rejects and revokes a token older than the direct predecessor, even inside the window', async () => {
+    const r1 = await loginForRefreshToken('old@test.local');
+    const t0 = Date.now() + 1000;
+    const r2 = await refreshSession(r1, new Date(t0));
+    await refreshSession(r2.refreshToken, new Date(t0 + 1000));
+
+    await expect(refreshSession(r1, new Date(t0 + 2000))).rejects.toMatchObject({
+      statusCode: 401,
+    });
+    await expect(prisma.refreshSession.findFirstOrThrow()).resolves.toMatchObject({
+      revokedAt: expect.any(Date),
+    });
+  });
+
+  it('does not honour the predecessor of a revoked session', async () => {
+    const token = await loginForRefreshToken('revoked@test.local');
+    const rotatedAt = new Date(Date.now() + 1000);
+    await refreshSession(token, rotatedAt);
+    await prisma.refreshSession.updateMany({ data: { revokedAt: rotatedAt } });
+
+    await expect(refreshSession(token, new Date(rotatedAt.getTime() + 1000))).rejects.toMatchObject(
+      { statusCode: 401 },
+    );
+  });
+
+  it('does not clear the refresh cookie when a stale refresh request fails', async () => {
+    const token = await loginForRefreshToken('stale@test.local');
+    const session = await prisma.refreshSession.findFirstOrThrow();
+    await prisma.refreshSession.update({
+      where: { id: session.id },
+      data: { revokedAt: new Date() },
+    });
+
+    const res = await request(app).post('/auth/refresh').set('Cookie', refreshCookieHeader(token));
+
+    expect(res.status).toBe(401);
+    expect(clearsRefreshCookie(res)).toBe(false);
   });
 });
 
@@ -320,6 +453,17 @@ describe('mobile secure refresh exchange', () => {
       .expect(200);
     expect(refreshResponse.body.data.accessToken).toEqual(expect.any(String));
     expect(refreshResponse.body.data.refreshToken).not.toBe(firstToken);
+
+    // A retry inside the rotation grace window (e.g. the response was lost
+    // before the native bridge stored it) receives the same successor.
+    const retried = await request(app)
+      .post('/auth/mobile/refresh')
+      .send({ refreshToken: firstToken })
+      .expect(200);
+    expect(retried.body.data.refreshToken).toBe(refreshResponse.body.data.refreshToken);
+
+    const session = await prisma.refreshSession.findFirstOrThrow();
+    await ageLastRotation(session.id, REFRESH_ROTATION_GRACE_SECONDS + 1);
     await request(app).post('/auth/mobile/refresh').send({ refreshToken: firstToken }).expect(401);
   });
 });
