@@ -59,7 +59,11 @@ function makeUser(overrides: Partial<AdminUserSummary> = {}): AdminUserSummary {
 
 async function renderPageWithUsers(users: AdminUserSummary[]) {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-    if (url === '/users') return { data: { data: users } };
+    // GET /users is cursor-paginated (UP1): one page, nothing more.
+    if (url === '/users')
+      return {
+        data: { data: { items: users, pageInfo: { limit: 25, hasMore: false, nextCursor: null } } },
+      };
     throw new Error(`Unexpected request: ${url}`);
   });
 

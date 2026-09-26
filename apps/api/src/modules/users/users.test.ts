@@ -831,6 +831,147 @@ describe('GET /users (search/status/role filters)', () => {
   });
 });
 
+describe('GET /users pagination (UP1)', () => {
+  async function adminToken() {
+    const { token } = await createTestUserAndToken({
+      email: 'admin-up1@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    return token;
+  }
+
+  function list(token: string, query: Record<string, string | number> = {}) {
+    return request(app).get('/users').query(query).set('Authorization', `Bearer ${token}`);
+  }
+
+  // Walks every page with `limit`, returning the ids in page order.
+  async function walk(token: string, query: Record<string, string | number>, limit: number) {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 50; guard += 1) {
+      const res = await list(token, { ...query, limit, ...(cursor ? { cursor } : {}) });
+      expect(res.status).toBe(200);
+      expect(res.body.data.items.length).toBeLessThanOrEqual(limit);
+      ids.push(...res.body.data.items.map((item: { id: string }) => item.id));
+      if (!res.body.data.pageInfo.hasMore) {
+        expect(res.body.data.pageInfo.nextCursor).toBeNull();
+        return ids;
+      }
+      cursor = res.body.data.pageInfo.nextCursor;
+    }
+    throw new Error('Pagination never ended');
+  }
+
+  it('keeps the legacy plain array without cursor/limit', async () => {
+    const token = await adminToken();
+    await createTestUser({ email: 'legacy-a@test.local', password: 'pw-legacy-a', roles: ['MERCHANDISER'] });
+
+    const res = await list(token);
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.data).toHaveLength(2);
+    expect(res.body.data[0]).not.toHaveProperty('passwordHash');
+  });
+
+  it('returns items/pageInfo when paged, defaulting the page size with only a cursor', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 3; index += 1) {
+      await createTestUser({ email: `paged-${index}@test.local`, password: 'pw-paged', roles: ['MERCHANDISER'] });
+    }
+
+    const first = await list(token, { limit: 2 });
+    expect(first.status).toBe(200);
+    expect(first.body.data.items).toHaveLength(2);
+    expect(first.body.data.pageInfo).toEqual({
+      limit: 2,
+      hasMore: true,
+      nextCursor: first.body.data.items[1].id,
+    });
+    // Same full user shape as the legacy array.
+    expect(Object.keys(first.body.data.items[0]).sort()).toEqual(
+      Object.keys((await list(token)).body.data[0]).sort(),
+    );
+
+    const rest = await list(token, { cursor: first.body.data.pageInfo.nextCursor });
+    expect(rest.body.data.pageInfo).toEqual({ limit: 25, hasMore: false, nextCursor: null });
+    expect(rest.body.data.items).toHaveLength(2);
+
+    expect((await list(token, { limit: 101 })).status).toBe(400);
+  });
+
+  it('pages stably by createdAt then id when createdAt values tie', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 6; index += 1) {
+      await createTestUser({ email: `tied-${index}@test.local`, password: 'pw-tied', roles: ['MERCHANDISER'] });
+    }
+    // Every user shares one createdAt: only the id tie-breaker orders them.
+    await prisma.user.updateMany({ data: { createdAt: new Date('2026-01-01T00:00:00Z') } });
+
+    const legacy = (await list(token)).body.data.map((user: { id: string }) => user.id);
+    const allIds = (await prisma.user.findMany({ select: { id: true } })).map((user) => user.id);
+
+    expect(legacy).toEqual([...allIds].sort());
+    for (const limit of [1, 2, 4]) {
+      expect(await walk(token, {}, limit)).toEqual(legacy);
+    }
+  });
+
+  it('keeps createdAt as the primary order', async () => {
+    const token = await adminToken();
+    const later = await createTestUser({ email: 'later@test.local', password: 'pw-later' });
+    const earlier = await createTestUser({ email: 'earlier@test.local', password: 'pw-earlier' });
+    await prisma.user.update({ where: { id: later }, data: { createdAt: new Date('2030-01-02T00:00:00Z') } });
+    await prisma.user.update({ where: { id: earlier }, data: { createdAt: new Date('2030-01-01T00:00:00Z') } });
+
+    const ids = await walk(token, {}, 1);
+    expect(ids.slice(-2)).toEqual([earlier, later]);
+  });
+
+  it('applies search, status and role filters before paging', async () => {
+    const token = await adminToken();
+    for (let index = 0; index < 5; index += 1) {
+      await createTestUser({
+        email: `kochi-${index}@test.local`,
+        password: 'pw-kochi',
+        roles: [index % 2 === 0 ? 'DISTRIBUTOR' : 'MERCHANDISER'],
+        status: index === 4 ? 'INACTIVE' : 'ACTIVE',
+      });
+    }
+    await createTestUser({ email: 'other@test.local', password: 'pw-other', roles: ['DISTRIBUTOR'] });
+
+    const emailsFor = async (query: Record<string, string>) => {
+      const ids = await walk(token, query, 2);
+      const legacy = (await list(token, query)).body.data as Array<{ id: string; email: string }>;
+      expect(ids).toEqual(legacy.map((user) => user.id));
+      return legacy.map((user) => user.email);
+    };
+
+    expect(await emailsFor({ search: 'KOCHI' })).toEqual([0, 1, 2, 3, 4].map((i) => `kochi-${i}@test.local`));
+    expect(await emailsFor({ search: 'kochi', status: 'INACTIVE' })).toEqual(['kochi-4@test.local']);
+    expect(await emailsFor({ role: 'DISTRIBUTOR' })).toEqual([
+      'kochi-0@test.local',
+      'kochi-2@test.local',
+      'kochi-4@test.local',
+      'other@test.local',
+    ]);
+    expect(await emailsFor({ search: 'kochi', status: 'ACTIVE', role: 'DISTRIBUTOR' })).toEqual([
+      'kochi-0@test.local',
+      'kochi-2@test.local',
+    ]);
+  });
+
+  it('stays ADMIN only in paged mode', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'merch-up1@test.local',
+      password: 'merch-password',
+      roles: ['MERCHANDISER'],
+    });
+    expect((await list(token, { limit: 10 })).status).toBe(403);
+  });
+});
+
 describe('PATCH /users/:id (profile edit)', () => {
   it('updates name and email, normalizes email, and audits the change', async () => {
     const { token } = await createTestUserAndToken({
