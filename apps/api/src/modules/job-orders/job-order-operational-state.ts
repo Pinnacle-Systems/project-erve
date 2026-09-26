@@ -6,6 +6,7 @@ import type {
   JobOrderQualityActivity,
   OperationalStateValue,
 } from '@erve/types';
+import type { Prisma } from '../../db/prisma.js';
 
 const lifecycleLabels: Record<JobOrderStatus, string> = {
   DRAFT: 'Draft',
@@ -31,7 +32,11 @@ const lifecycleLabels: Record<JobOrderStatus, string> = {
 // to one of these (see job-orders.service.ts's PRODUCTION_COMPLETE
 // evaluation and qa.service.ts's rework loop), and CANCELLED is excluded
 // separately since it is not an active production obligation at all.
-const OPEN_PRODUCTION_STATUSES: readonly JobOrderStatus[] = [
+// Exported so reporting (RPT0/RPT1) reuses this exact list rather than
+// restating it — the moment it drifts from job-orders.service.ts's own
+// PRODUCTION_COMPLETE/rework-loop reasoning above, both the view layer and
+// every report built on it must move together.
+export const OPEN_PRODUCTION_STATUSES: readonly JobOrderStatus[] = [
   'DRAFT',
   'SENT_TO_FACTORY',
   'CONFIRMED_BY_FACTORY',
@@ -53,6 +58,26 @@ export function isJobOrderDelayed(input: {
   if (!input.requiredDeliveryDate) return false;
   if (!OPEN_PRODUCTION_STATUSES.includes(input.status)) return false;
   return input.requiredDeliveryDate.getTime() < input.businessToday.getTime();
+}
+
+/**
+ * The query-level equivalent of `isJobOrderDelayed`, for reporting
+ * aggregates that need Postgres to filter/count delayed Job Orders directly
+ * rather than evaluating every row in application memory (RPT0 4.4). Must
+ * stay logically equivalent to `isJobOrderDelayed` — see
+ * job-order-operational-state.delayed-query.test.ts for the parity tests
+ * that check this against every case `isJobOrderDelayed` itself handles.
+ *
+ * `businessToday` must already be `toBusinessCalendarDate(now)` (Asia/
+ * Kolkata business date, represented as UTC midnight of that calendar day)
+ * — never a raw `new Date()` or Postgres `CURRENT_DATE`, both of which are
+ * UTC/server-timezone and would misclassify Job Orders due at IST midnight.
+ */
+export function buildDelayedJobOrderWhere(businessToday: Date): Prisma.JobOrderWhereInput {
+  return {
+    status: { in: [...OPEN_PRODUCTION_STATUSES] },
+    requiredDeliveryDate: { not: null, lt: businessToday },
+  };
 }
 
 function value(

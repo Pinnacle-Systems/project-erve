@@ -448,3 +448,63 @@ export const FACTORY_INVOICE_FINANCIAL_ROLES = ['ACCOUNTANT'] as const satisfies
 export function canManageFactoryInvoiceFinancials(user: RoleHolder): boolean {
   return hasAnyRole(user, FACTORY_INVOICE_FINANCIAL_ROLES);
 }
+
+/**
+ * V1 management/aggregate reporting audience (RPT0). Distinct from every
+ * transaction domain's own view/mutation roles above — this is who may
+ * reach `/reports/*` and the management Dashboard at all. Being in this
+ * list does NOT itself grant mutation or transaction-detail access to any
+ * underlying domain — see `canViewReportSection` for how a specific
+ * aggregate section is gated, and the Dashboard's drilldown-link rule:
+ * render a link only when the viewer can also reach the destination route.
+ */
+export const REPORT_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'] as const satisfies readonly Role[];
+
+export function canViewReports(user: RoleHolder): boolean {
+  return hasAnyRole(user, REPORT_VIEW_ROLES);
+}
+
+/**
+ * The distinct underlying-domain groupings a reporting aggregate endpoint
+ * may need to omit per viewer, one per source domain the V1 Batch 1 reports
+ * read from (see apps/api's reports.service.ts). Kept separate from any
+ * single JSON response shape so a service can gate at whatever granularity
+ * its response actually groups fields at (e.g. Operations Summary's
+ * "packing" object bundles both packingPending and packingAudit facts,
+ * gated independently below).
+ */
+export type ReportSection =
+  | 'production'
+  | 'qa'
+  | 'packingPending'
+  | 'packingAudit'
+  | 'delivery'
+  | 'saleReturn'
+  | 'factoryInvoice';
+
+/**
+ * Per-section reporting visibility (RPT0 4.6 / RPT1 6.13). SENIOR_MANAGEMENT
+ * is a blanket, explicit product-decision exception: it may see every V1
+ * aggregate section company-wide even where it holds no matching
+ * transaction mutation/detail role ("aggregate reporting permission does
+ * NOT grant mutation permission"). ADMIN already belongs to every domain's
+ * own view-role list below. MERCHANDISER is gated by each section's real
+ * underlying-domain view roles, so a section it has no operational scope
+ * over (QA work, Packing Audit, Factory Invoice) is omitted for it rather
+ * than shown empty or zeroed — never invent a zero.
+ */
+const REPORT_SECTION_DOMAIN_VIEW_ROLES: Record<ReportSection, readonly Role[]> = {
+  production: JOB_ORDER_FACTORY_FILTER_ROLES,
+  qa: QA_OPERATION_ROLES,
+  packingPending: FACTORY_DISPATCH_VIEW_ROLES,
+  packingAudit: PACKING_AUDIT_VIEW_ROLES,
+  delivery: ERVE_DISPATCH_VIEW_ROLES,
+  saleReturn: SALE_OR_RETURN_POSITION_VIEW_ROLES,
+  factoryInvoice: FACTORY_INVOICE_VIEW_ROLES,
+};
+
+export function canViewReportSection(user: RoleHolder, section: ReportSection): boolean {
+  if (!canViewReports(user)) return false;
+  if (hasRole(user, 'SENIOR_MANAGEMENT')) return true;
+  return hasAnyRole(user, REPORT_SECTION_DOMAIN_VIEW_ROLES[section]);
+}
