@@ -1,10 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import type { ApiSuccessResponse } from '@erve/types';
+import type { ApiSuccessResponse, UserOption } from '@erve/types';
 import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
+import { Button, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
@@ -13,7 +13,8 @@ import { apiClient } from '../../lib/api-client.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import type { AdminUserSummary, Factory, FactoryUser } from './types.js';
+import { UserLookupField, userLookupQueryKey } from '../users/UserLookupField.js';
+import type { Factory, FactoryUser } from './types.js';
 
 function errorMessage(error: unknown, fallback: string) {
   if (isAxiosError(error))
@@ -24,14 +25,15 @@ function errorMessage(error: unknown, fallback: string) {
 // A factory user always has exactly one factory, so "assigning" a user here
 // who is already mapped elsewhere reassigns them atomically (the backend
 // replaces their prior mapping, never leaving them briefly unmapped) —
-// unlike DistributorDetailPage's eligible-user list, this one does NOT
-// exclude users already mapped to a different factory. There is no "remove"
+// unlike DistributorDetailPage's candidates, these (GET
+// /factories/:id/user-options) do NOT exclude users already mapped to a
+// different factory. There is no "remove"
 // action here either: revoking factory access is done from the user's own
 // detail page by removing the FACTORY_USER role, which the backend takes
 // the mapping down with atomically.
 function MappedUsers({ factory }: { factory: Factory }) {
   const client = useQueryClient();
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState<UserOption | null>(null);
   const [error, setError] = useState('');
   const mapped = useQuery({
     queryKey: ['factory-users', factory.id],
@@ -39,32 +41,22 @@ function MappedUsers({ factory }: { factory: Factory }) {
       (await apiClient.get<ApiSuccessResponse<FactoryUser[]>>(`/factories/${factory.id}/users`))
         .data.data,
   });
-  const users = useQuery({
-    queryKey: ['users'],
-    queryFn: async () =>
-      (await apiClient.get<ApiSuccessResponse<AdminUserSummary[]>>('/users')).data.data,
-  });
-  const eligible = useMemo(() => {
-    const mappedIds = new Set((mapped.data ?? []).map((user) => user.id));
-    return (users.data ?? []).filter(
-      (user) =>
-        user.status === 'ACTIVE' && user.roles.includes('FACTORY_USER') && !mappedIds.has(user.id),
-    );
-  }, [mapped.data, users.data]);
+  const userOptionsPath = `/factories/${factory.id}/user-options`;
   const refresh = () =>
     Promise.all([
       client.invalidateQueries({ queryKey: ['factory-users', factory.id] }),
-      client.invalidateQueries({ queryKey: ['users'] }),
+      // The newly mapped user is no longer a candidate here.
+      client.invalidateQueries({ queryKey: userLookupQueryKey(userOptionsPath) }),
       client.invalidateQueries({ queryKey: ['factory', factory.id] }),
     ]);
   const assign = useMutation({
     mutationFn: async () => {
       setError('');
       if (!selected) throw new Error('Select a factory user');
-      await apiClient.post(`/users/${selected}/factories`, { factoryId: factory.id });
+      await apiClient.post(`/users/${selected.id}/factories`, { factoryId: factory.id });
     },
     onSuccess: async () => {
-      setSelected('');
+      setSelected(null);
       await refresh();
     },
     onError: (caught) => setError(errorMessage(caught, 'Unable to assign user')),
@@ -79,19 +71,15 @@ function MappedUsers({ factory }: { factory: Factory }) {
             assign.mutate();
           }}
         >
-          <SelectField
+          <UserLookupField
             label="Assign user"
-            value={selected || 'NONE'}
-            onValueChange={(value) => setSelected(value === 'NONE' ? '' : value)}
+            searchPath={userOptionsPath}
+            value={selected}
+            onChange={setSelected}
             disabled={factory.status !== 'ACTIVE'}
-          >
-            <SelectItem value="NONE">Select a factory user</SelectItem>
-            {eligible.map((user) => (
-              <SelectItem key={user.id} value={user.id}>
-                {user.name} ({user.email})
-              </SelectItem>
-            ))}
-          </SelectField>
+            emptyMessage="No active factory users available"
+            noMatchMessage="No active factory users match your search"
+          />
           <Button type="submit" loading={assign.isPending} disabled={factory.status !== 'ACTIVE'}>
             Assign
           </Button>

@@ -1,10 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import type { ApiSuccessResponse } from '@erve/types';
+import type { ApiSuccessResponse, UserOption } from '@erve/types';
 import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
+import { Button, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -13,7 +13,8 @@ import { canManageDistributorMaster } from '../../auth/permissions.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import type { AdminUserSummary, Distributor, DistributorUser } from './types.js';
+import { UserLookupField, userLookupQueryKey } from '../users/UserLookupField.js';
+import type { Distributor, DistributorUser } from './types.js';
 
 function toErrorMessage(caught: unknown, fallback: string): string {
   if (isAxiosError(caught)) {
@@ -25,7 +26,7 @@ function toErrorMessage(caught: unknown, fallback: string): string {
 
 function UserMappingPanel({ distributor }: { distributor: Distributor }) {
   const queryClient = useQueryClient();
-  const [selectedUserId, setSelectedUserId] = useState('');
+  const [selectedUser, setSelectedUser] = useState<UserOption | null>(null);
   const [removeTarget, setRemoveTarget] = useState<DistributorUser | null>(null);
   const [error, setError] = useState('');
 
@@ -39,46 +40,32 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
     },
   });
 
-  const usersQuery = useQuery({
-    queryKey: ['users'],
-    queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<AdminUserSummary[]>>('/users');
-      return response.data.data;
-    },
-  });
-
-  // Eligible: active DISTRIBUTOR-role users not already mapped to any distributor —
-  // the backend enforces exactly one distributor per distributor user.
-  const eligibleUsers = useMemo(
-    () =>
-      (usersQuery.data ?? []).filter(
-        (user) =>
-          user.status === 'ACTIVE' &&
-          user.roles.includes('DISTRIBUTOR') &&
-          user.distributors.length === 0,
-      ),
-    [usersQuery.data],
-  );
+  // Eligible candidates (ACTIVE DISTRIBUTOR-role users with no distributor
+  // mapping — the backend allows exactly one) come from a bounded server
+  // search, never the whole /users collection.
+  const userOptionsPath = `/distributors/${distributor.id}/user-options`;
 
   const invalidateMappings = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['distributor-users', distributor.id] }),
-      queryClient.invalidateQueries({ queryKey: ['users'] }),
+      // Assigning or removing changes who is eligible; the cached initial
+      // candidates must not keep offering (or hiding) them.
+      queryClient.invalidateQueries({ queryKey: userLookupQueryKey(userOptionsPath) }),
     ]);
   };
 
   const assignMutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!selectedUserId) {
+      if (!selectedUser) {
         throw new Error('Select a user to assign');
       }
-      await apiClient.post(`/users/${selectedUserId}/distributors`, {
+      await apiClient.post(`/users/${selectedUser.id}/distributors`, {
         distributorId: distributor.id,
       });
     },
     onSuccess: async () => {
-      setSelectedUserId('');
+      setSelectedUser(null);
       await invalidateMappings();
     },
     onError: (caught) => setError(toErrorMessage(caught, 'Unable to assign user')),
@@ -109,19 +96,15 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
             assignMutation.mutate();
           }}
         >
-          <SelectField
+          <UserLookupField
             label="Assign user"
-            value={selectedUserId || 'NONE'}
-            onValueChange={(value) => setSelectedUserId(value === 'NONE' ? '' : value)}
+            searchPath={userOptionsPath}
+            value={selectedUser}
+            onChange={setSelectedUser}
             disabled={distributor.status !== 'ACTIVE'}
-          >
-            <SelectItem value="NONE">Select a distributor user</SelectItem>
-            {eligibleUsers.map((user) => (
-              <SelectItem key={user.id} value={user.id}>
-                {user.name} ({user.email})
-              </SelectItem>
-            ))}
-          </SelectField>
+            emptyMessage="No unassigned active distributor users available"
+            noMatchMessage="No unassigned active distributor users match your search"
+          />
           <Button
             type="submit"
             loading={assignMutation.isPending}

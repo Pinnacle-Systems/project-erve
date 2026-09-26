@@ -1,5 +1,5 @@
 import { createId } from '@erve/shared';
-import type { DistributorOption } from '@erve/types';
+import type { DistributorOption, UserOption } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type {
   DistributorStatus,
@@ -1780,6 +1780,78 @@ export async function updateDistributorStatus(
   });
 
   return distributor;
+}
+
+// ---------------------------------------------------------------------------
+// User-assignment lookups (UL)
+// ---------------------------------------------------------------------------
+
+const userOptionSelect = { id: true, name: true, email: true } satisfies Prisma.UserSelect;
+
+function userSearchWhere(search: string | undefined): Prisma.UserWhereInput {
+  return search
+    ? {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+        ],
+      }
+    : {};
+}
+
+// Candidates to assign to this Distributor: ACTIVE DISTRIBUTOR-role users
+// with no Distributor mapping at all (a distributor user belongs to exactly
+// one — addDistributorMapping rejects the rest). Filtered before `limit`;
+// name then id keeps the bounded page deterministic.
+export async function listDistributorUserOptions(
+  distributorId: string,
+  filters: { search?: string; limit: number },
+): Promise<UserOption[]> {
+  const distributor = await prisma.distributor.findUnique({
+    where: { id: distributorId },
+    select: { id: true },
+  });
+  if (!distributor) {
+    throw HttpError.notFound('Distributor not found');
+  }
+  return prisma.user.findMany({
+    where: {
+      status: 'ACTIVE',
+      userRoles: { some: { role: { name: 'DISTRIBUTOR' } } },
+      userDistributors: { none: {} },
+      ...userSearchWhere(filters.search || undefined),
+    },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    select: userOptionSelect,
+    take: filters.limit,
+  });
+}
+
+// Candidates to assign to this Factory: ACTIVE FACTORY_USER-role users not
+// already mapped to THIS factory. Users mapped to another factory stay
+// eligible — addFactoryMapping reassigns them atomically.
+export async function listFactoryUserOptions(
+  factoryId: string,
+  filters: { search?: string; limit: number },
+): Promise<UserOption[]> {
+  const factory = await prisma.factory.findUnique({
+    where: { id: factoryId },
+    select: { id: true },
+  });
+  if (!factory) {
+    throw HttpError.notFound('Factory not found');
+  }
+  return prisma.user.findMany({
+    where: {
+      status: 'ACTIVE',
+      userRoles: { some: { role: { name: 'FACTORY_USER' } } },
+      userFactories: { none: { factoryId } },
+      ...userSearchWhere(filters.search || undefined),
+    },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    select: userOptionSelect,
+    take: filters.limit,
+  });
 }
 
 export async function listDistributorUsers(distributorId: string) {

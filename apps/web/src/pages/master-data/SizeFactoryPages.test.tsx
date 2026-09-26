@@ -139,7 +139,6 @@ describe('size and factory management pages', () => {
             },
           ],
         });
-      if (config.url === '/users') return ok(config, { success: true, data: [] });
       throw new Error(`Unexpected request: ${config.url}`);
     });
     expect(container.textContent).toContain('Mapped Factory Users');
