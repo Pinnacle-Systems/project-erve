@@ -7,6 +7,7 @@ import { Button, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { imageErrorMessage, StyleImagesPanel } from './StyleImagesPanel.js';
 import { StyleIdentitySection } from './style/StyleIdentitySection.js';
 import { StyleCommercialSection } from './style/StyleCommercialSection.js';
@@ -201,6 +202,23 @@ export function StyleFormPage() {
     onError: (caught) =>
       setError(caught instanceof Error ? caught.message : 'Unable to save style'),
   });
+
+  // Browser reload/close protection for unsaved input. Baseline is the empty
+  // create form, or the edit form once hydrated from its record.
+  const dirty = useFormDirty(
+    {
+      form,
+      selectedSizeIds,
+      seasonId,
+      factoryMappings: factoryMappings.map(({ factoryId, exFactoryPrice }) => ({
+        factoryId,
+        exFactoryPrice,
+      })),
+      pendingImage: pendingImage?.name ?? null,
+    },
+    hydrated,
+  );
+  useUnsavedChangesWarning(dirty && !mutation.isSuccess);
 
   const availableFactories = useMemo(() => factoriesQuery.data ?? [], [factoriesQuery.data]);
 

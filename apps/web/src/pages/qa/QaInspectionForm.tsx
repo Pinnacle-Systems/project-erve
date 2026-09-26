@@ -39,6 +39,7 @@ import {
 } from '@erve/app-components';
 import { DescriptionList, FormGrid, FormSection, Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
+import { useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
 
 type Draft = {
@@ -191,6 +192,8 @@ export function QaInspectionForm({
   const [ppSampleDecision, setPpSampleDecision] = useState<'PASS' | 'FAIL' | ''>('');
   const [pendingFinalize, setPendingFinalize] = useState<SaveMutationVariables | null>(null);
   const evidenceInputRef = useRef<HTMLInputElement>(null);
+  // Entered-but-unsaved size results live only in `drafts` (cleared per form on save).
+  useUnsavedChangesWarning(Object.keys(drafts).length > 0 || reopenReason.trim() !== '');
   useEffect(() => {
     if (!notice) return;
     const timeout = window.setTimeout(() => setNotice(''), 5000);

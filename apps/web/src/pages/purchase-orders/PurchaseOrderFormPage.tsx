@@ -7,6 +7,7 @@ import { ErrorState, LoadingState } from '@erve/data-display';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
+import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
@@ -107,6 +108,13 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
       : null,
   );
   const [error, setError] = useState('');
+  const dirty = useFormDirty({
+    distributorId: selectedDistributor?.id ?? null,
+    poDate,
+    requiredDeliveryDate,
+    remarks,
+    line,
+  });
 
   // Read-only preview only — the server derives the authoritative Financial
   // Year from poDate itself on submit; the client never supplies it.
@@ -201,6 +209,7 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
     onSuccess: (po) => navigate(`/purchase-orders/${po.id}`),
     onError: (caught) => setError(getApiErrorMessage(caught, 'Unable to save the Order Sheet. Please try again.')),
   });
+  useUnsavedChangesWarning(dirty && !mutation.isSuccess);
 
   return (
     <div className="space-y-5">

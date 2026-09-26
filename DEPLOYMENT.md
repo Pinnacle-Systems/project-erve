@@ -244,6 +244,7 @@ UPLOAD_MAX_IMAGE_BYTES=5242880
 
 Notes:
 
+- `JWT_REFRESH_IDLE_TIMEOUT_MINUTES` is the allowed period of user **inactivity** (it slides only on genuine user activity), still capped by `JWT_REFRESH_ABSOLUTE_TIMEOUT_HOURS`. The values above are the source defaults; override them here as needed. See [docs/SESSION_MANAGEMENT.md](docs/SESSION_MANAGEMENT.md).
 - The web app itself doesn't strictly need to be in `CORS_ORIGIN` (it's served same-origin through Nginx at `/`, calling `/api/...` — no cross-origin request, no CORS preflight), but including it is harmless defense-in-depth.
 - The refresh-token cookie (`apps/api/src/modules/auth/refresh-cookie.ts`) sets `Secure` whenever `NODE_ENV=production`, so HTTPS must be live end-to-end (CloudPanel's cert + this env value) before testing login from a browser.
 - That same cookie is issued with `Path=/`, not an Express-internal path like `/auth`. The public request path the browser actually sees differs by environment — `/auth/refresh` in local dev (direct Express, no proxy) vs. `/api/auth/refresh` in production (behind the Nginx `/api/` proxy, §8) — and `Path=/` is the one value that is correct in both without any environment-specific configuration or an Nginx `proxy_cookie_path` rewrite. Do not change this to a narrower path without re-verifying it against whatever public path the browser/Capacitor WebView actually calls.

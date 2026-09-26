@@ -7,6 +7,7 @@ import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import type { FactoryOption, ProcessFlowOption, Style } from '../master-data/types.js';
 import type { PurchaseOrder } from '../purchase-orders/types.js';
 import { OrderSheetMultiSelectField } from './OrderSheetMultiSelectField.js';
@@ -237,6 +238,21 @@ export function JobOrderCreatePage() {
     },
     onSuccess: (jobOrder) => navigate(`/job-orders/${jobOrder.id}`),
   });
+  // Only user-entered state: quantities that follow the Combined Forecast
+  // default, an auto-derived price and a deep-linked source Order Sheet are
+  // not unsaved work.
+  const dirty = useFormDirty({
+    orderSheetIds: selectedOrderSheets
+      .map((orderSheet) => orderSheet.id)
+      .filter((id) => id !== deepLinkOrderSheetId),
+    touchedQuantities: [...touchedSizeIds].map((sizeId) => [sizeId, quantities[sizeId]]),
+    factoryId,
+    processFlowVersionId,
+    unitPrice: priceEdited ? unitPrice : null,
+    disclaimerText,
+    deliveryDateOverride,
+  });
+  useUnsavedChangesWarning(dirty && !createMutation.isSuccess);
 
   const canSubmit = Boolean(
     selectedOrderSheets.length > 0 &&
