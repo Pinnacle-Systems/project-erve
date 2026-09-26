@@ -67,7 +67,8 @@ export async function rotateRefreshSessionToken(input: {
   currentRefreshTokenHash: string;
   nextRefreshTokenHash: string;
   now: Date;
-  idleExpiresAt: Date;
+  /** Present only when the rotation reports user activity (slides idle expiry). */
+  activity: { lastUsedAt: Date; idleExpiresAt: Date } | null;
 }): Promise<boolean> {
   const result = await prisma.refreshSession.updateMany({
     where: {
@@ -77,8 +78,7 @@ export async function rotateRefreshSessionToken(input: {
     },
     data: {
       refreshTokenHash: input.nextRefreshTokenHash,
-      lastUsedAt: input.now,
-      idleExpiresAt: input.idleExpiresAt,
+      ...input.activity,
       // Set explicitly (not left to Prisma's @updatedAt clock) because the
       // rotation grace window in refreshSession() measures from this instant
       // and must agree with the `now` the rotation was evaluated at.

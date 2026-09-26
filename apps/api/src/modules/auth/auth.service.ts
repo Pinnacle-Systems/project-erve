@@ -37,9 +37,10 @@ export async function login(identifier: string, password: string): Promise<Token
   }
 
   const currentUser = toCurrentUser(record);
-  const refreshToken = await createRefreshSession(currentUser.id, currentUser.authVersion);
+  const now = new Date();
+  const created = await createRefreshSession(currentUser.id, currentUser.authVersion, now);
 
-  return issueTokenResponse(currentUser, refreshToken);
+  return issueTokenResponse(currentUser, created, now);
 }
 
 export interface MeResponse extends AuthUser {

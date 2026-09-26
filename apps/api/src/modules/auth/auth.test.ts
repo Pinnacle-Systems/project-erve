@@ -13,6 +13,7 @@ import {
   refreshSession,
 } from './refresh-session.service.js';
 import { REFRESH_TOKEN_COOKIE_NAME } from './refresh-cookie.js';
+import { env } from '../../config/env.js';
 import {
   resetDatabase,
   createTestUser,
@@ -436,6 +437,140 @@ describe('refresh rotation races and lost responses', () => {
   });
 });
 
+describe('session expiry metadata and activity-based idle expiry', () => {
+  it('returns authoritative session timing from login and refresh', async () => {
+    const userId = await createTestUser({
+      email: 'meta@test.local',
+      password: 'correct-password',
+      roles: ['ADMIN'],
+    });
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ identifier: 'meta@test.local', password: 'correct-password' })
+      .expect(200);
+
+    const session = login.body.data.session;
+    expect(session).toMatchObject({
+      userId,
+      idleTimeoutSeconds: env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES * 60,
+    });
+    const serverTime = Date.parse(session.serverTime);
+    expect(Date.parse(session.idleExpiresAt) - serverTime).toBe(
+      env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES * 60 * 1000,
+    );
+    expect(Date.parse(session.absoluteExpiresAt) - serverTime).toBe(
+      env.JWT_REFRESH_ABSOLUTE_TIMEOUT_HOURS * 60 * 60 * 1000,
+    );
+    expect(Date.parse(session.accessExpiresAt)).toBeGreaterThan(serverTime);
+
+    const refreshed = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', refreshCookieHeader(getRefreshTokenFromSetCookie(login)))
+      .expect(200);
+    expect(refreshed.body.data.session).toMatchObject({
+      userId,
+      absoluteExpiresAt: session.absoluteExpiresAt,
+    });
+  });
+
+  it('slides idle expiry only when the refresh reports user activity', async () => {
+    const token = await loginForRefreshToken('activity@test.local');
+    const created = await prisma.refreshSession.findFirstOrThrow();
+    const t0 = created.lastUsedAt.getTime();
+
+    const quiet = await refreshSession(token, new Date(t0 + 60_000), { activity: false });
+    const afterQuiet = await prisma.refreshSession.findFirstOrThrow();
+    expect(afterQuiet.lastUsedAt).toEqual(created.lastUsedAt);
+    expect(afterQuiet.idleExpiresAt).toEqual(created.idleExpiresAt);
+    expect(quiet.session.idleExpiresAt).toBe(created.idleExpiresAt.toISOString());
+
+    const active = await refreshSession(quiet.refreshToken, new Date(t0 + 120_000), {
+      activity: true,
+    });
+    const afterActive = await prisma.refreshSession.findFirstOrThrow();
+    expect(afterActive.lastUsedAt).toEqual(new Date(t0 + 120_000));
+    expect(active.session.idleExpiresAt).toBe(
+      new Date(t0 + 120_000 + env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES * 60_000).toISOString(),
+    );
+  });
+
+  it('lets an unattended session expire even while background refreshes continue', async () => {
+    const token = await loginForRefreshToken('unattended@test.local');
+    const created = await prisma.refreshSession.findFirstOrThrow();
+    const t0 = created.lastUsedAt.getTime();
+    const idleMs = env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES * 60_000;
+
+    let current = token;
+    for (let at = t0 + 4 * 60_000; at < t0 + idleMs; at += 4 * 60_000) {
+      current = (await refreshSession(current, new Date(at), { activity: false })).refreshToken;
+    }
+
+    await expect(
+      refreshSession(current, new Date(t0 + idleMs + 1000), { activity: false }),
+    ).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it('never slides past the absolute expiry', async () => {
+    const token = await loginForRefreshToken('cap@test.local');
+    const created = await prisma.refreshSession.findFirstOrThrow();
+    const nearCap = new Date(created.absoluteExpiresAt.getTime() - 60_000);
+    await prisma.refreshSession.update({
+      where: { id: created.id },
+      data: { lastUsedAt: new Date(nearCap.getTime() - 60_000) },
+    });
+
+    const result = await refreshSession(token, nearCap, { activity: true });
+    expect(result.session.idleExpiresAt).toBe(created.absoluteExpiresAt.toISOString());
+    await expect(
+      refreshSession(result.refreshToken, created.absoluteExpiresAt, { activity: true }),
+    ).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it('applies a configured JWT_REFRESH_IDLE_TIMEOUT_MINUTES=240 as a 4-hour inactivity window', async () => {
+    const original = env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES;
+    env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES = 240;
+    try {
+      const token = await loginForRefreshToken('four-hours@test.local');
+      const created = await prisma.refreshSession.findFirstOrThrow();
+      const t0 = created.lastUsedAt.getTime();
+
+      // 3h59m of no activity: still valid, and a quiet refresh keeps the deadline.
+      const quiet = await refreshSession(token, new Date(t0 + 239 * 60_000), { activity: false });
+      expect(quiet.session.idleExpiresAt).toBe(new Date(t0 + 240 * 60_000).toISOString());
+      expect(quiet.session.idleTimeoutSeconds).toBe(240 * 60);
+
+      // Activity at that point grants a fresh 4 hours (still under the absolute cap).
+      const active = await refreshSession(quiet.refreshToken, new Date(t0 + 239 * 60_000 + 1000));
+      expect(active.session.idleExpiresAt).toBe(
+        new Date(t0 + 239 * 60_000 + 1000 + 240 * 60_000).toISOString(),
+      );
+
+      // 4h+ with no further activity: expired.
+      await expect(
+        refreshSession(active.refreshToken, new Date(t0 + 239 * 60_000 + 1000 + 241 * 60_000), {
+          activity: false,
+        }),
+      ).rejects.toMatchObject({ statusCode: 401 });
+    } finally {
+      env.JWT_REFRESH_IDLE_TIMEOUT_MINUTES = original;
+    }
+  });
+
+  it('accepts an activity flag on the cookie refresh endpoint', async () => {
+    const token = await loginForRefreshToken('flag@test.local');
+    const created = await prisma.refreshSession.findFirstOrThrow();
+
+    await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', refreshCookieHeader(token))
+      .send({ activity: false })
+      .expect(200);
+    const after = await prisma.refreshSession.findFirstOrThrow();
+    expect(after.lastUsedAt).toEqual(created.lastUsedAt);
+    expect(after.refreshTokenHash).not.toBe(created.refreshTokenHash);
+  });
+});
+
 describe('mobile secure refresh exchange', () => {
   it('returns and rotates a refresh credential in the response body without a cookie', async () => {
     await createTestUser({ email: 'mobile@test.local', password: 'pass', roles: ['FACTORY_USER'] });
@@ -453,6 +588,7 @@ describe('mobile secure refresh exchange', () => {
       .expect(200);
     expect(refreshResponse.body.data.accessToken).toEqual(expect.any(String));
     expect(refreshResponse.body.data.refreshToken).not.toBe(firstToken);
+    expect(refreshResponse.body.data.session.idleExpiresAt).toEqual(expect.any(String));
 
     // A retry inside the rotation grace window (e.g. the response was lost
     // before the native bridge stored it) receives the same successor.
