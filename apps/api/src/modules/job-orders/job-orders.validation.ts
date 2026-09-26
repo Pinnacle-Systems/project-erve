@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { factoryStatusSchema } from '../master-data/master-data.validation.js';
+import { queryBooleanSchema } from '../../utils/query-boolean.js';
 
 export const MAX_JOB_ORDER_DISCLAIMER_LENGTH = 10_000;
 
@@ -170,4 +171,27 @@ export const updatePreparedQuantitySchema = z.object({
       }),
     )
     .min(1),
+});
+
+// QW1 — factual QA runtime statuses only; no synthetic "PENDING" bucket.
+export const qualityRuntimeStatusSchema = z.enum([
+  'NOT_AVAILABLE',
+  'AVAILABLE',
+  'IN_PROGRESS',
+  'COMPLETED',
+  'FAILED',
+  'MISSED',
+]);
+
+export const listQualityWorkQuerySchema = z.object({
+  status: qualityRuntimeStatusSchema.optional(),
+  conflict: queryBooleanSchema.optional(),
+  factoryId: z.string().trim().min(1).optional(),
+  search: z.string().trim().min(1).optional(),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export const qualityWorkSummaryQuerySchema = z.object({
+  factoryId: z.string().trim().min(1).optional(),
 });

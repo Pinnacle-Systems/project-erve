@@ -1,4 +1,4 @@
-import type { QualityRuntimeStatus } from './operations.js';
+import type { JobOrderQualityActivity, QualityRuntimeStatus } from './operations.js';
 
 // ---------------------------------------------------------------------------
 // Record Origin (RPT0 2.2)
@@ -49,9 +49,27 @@ export interface ReportFilters {
 // "QA Pending" bucket.
 // ---------------------------------------------------------------------------
 
+/**
+ * NOT_AVAILABLE activities are never surfaced as queue rows (they are
+ * filtered out of the quality-work list) unless they carry a
+ * reconciliation conflict, in which case they are counted under
+ * `reconciliationConflict` instead of a status bucket — matching the list's
+ * own display, which shows "Reconciliation Conflict" in place of the
+ * underlying status label for those rows.
+ */
+export type ActionableQualityRuntimeStatus = Exclude<QualityRuntimeStatus, 'NOT_AVAILABLE'>;
+
 export interface QaWorkStatusBreakdown {
-  byStatus: Record<QualityRuntimeStatus, number>;
+  byStatus: Record<ActionableQualityRuntimeStatus, number>;
   reconciliationConflict: number;
+}
+
+/** One row of GET /job-orders/quality-work's paginated queue (QW1). */
+export interface QualityWorkItem {
+  jobOrderId: string;
+  jobOrderNumber: string;
+  factory: { id: string; code: string; name: string };
+  activity: JobOrderQualityActivity;
 }
 
 // ---------------------------------------------------------------------------

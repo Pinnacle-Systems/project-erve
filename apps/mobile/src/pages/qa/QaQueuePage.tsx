@@ -1,16 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import type { ApiErrorResponse, ApiSuccessResponse, JobOrderQualityActivity } from '@erve/types';
+import type { ApiErrorResponse, ApiSuccessResponse, PaginatedResponse, QualityWorkItem } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
-
-type QualityWorkItem = {
-  jobOrderId: string;
-  jobOrderNumber: string;
-  factory: { id: string; code: string; name: string };
-  activity: JobOrderQualityActivity;
-};
 
 type QualityWorkFilter =
   'AVAILABLE' | 'IN_PROGRESS' | 'FAILED' | 'MISSED' | 'COMPLETED' | 'RECONCILIATION_CONFLICT';
@@ -38,26 +31,38 @@ export function QaQueuePage() {
     : '';
   const [filter, setFilter] = useState<QualityWorkFilter | ''>(initialFilter);
   const [search, setSearch] = useState('');
-  const query = useQuery({
-    queryKey: ['process-flow-quality-work'],
-    queryFn: async () =>
-      (await apiClient.get<ApiSuccessResponse<Array<QualityWorkItem>>>('/job-orders/quality-work'))
-        .data.data,
+
+  // GET /job-orders/quality-work is cursor-paginated and server-filtered
+  // (QW1) — status/conflict/factory/search are all applied by the server,
+  // never by fetching one unpaginated array and filtering it here, which is
+  // exactly what let the old take-100 window silently hide eligible work.
+  const query = useInfiniteQuery({
+    queryKey: ['process-flow-quality-work', filter, search],
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) =>
+      (
+        await apiClient.get<ApiSuccessResponse<PaginatedResponse<QualityWorkItem>>>(
+          '/job-orders/quality-work',
+          {
+            params: {
+              status: filter && filter !== 'RECONCILIATION_CONFLICT' ? filter : undefined,
+              conflict: filter === 'RECONCILIATION_CONFLICT' ? 'true' : undefined,
+              search: search.trim() || undefined,
+              limit: 25,
+              cursor: pageParam,
+            },
+          },
+        )
+      ).data.data,
+    getNextPageParam: (lastPage) =>
+      lastPage.pageInfo.hasMore && lastPage.pageInfo.nextCursor
+        ? lastPage.pageInfo.nextCursor
+        : undefined,
   });
-  const normalizedSearch = search.trim().toLocaleLowerCase();
-  const qualityWork = (query.data ?? []).filter((item) => {
-    const matchesSearch =
-      !normalizedSearch ||
-      [item.jobOrderNumber, item.factory.name, item.factory.code, item.activity.name].some(
-        (value) => value.toLocaleLowerCase().includes(normalizedSearch),
-      );
-    const matchesFilter =
-      !filter ||
-      (filter === 'RECONCILIATION_CONFLICT'
-        ? item.activity.coverage?.reconciliationConflict === true
-        : item.activity.status === filter);
-    return matchesSearch && matchesFilter;
-  });
+  const qualityWork = useMemo(
+    () => query.data?.pages.flatMap((page) => page.items) ?? [],
+    [query.data],
+  );
 
   return (
     <main className="min-h-full space-y-4 bg-background px-4 py-5">
@@ -95,8 +100,9 @@ export function QaQueuePage() {
       <button
         className="min-h-11 rounded-md border border-border px-4"
         onClick={() => void query.refetch()}
+        disabled={query.isFetching}
       >
-        {query.isFetching ? 'Refreshing…' : 'Refresh'}
+        {query.isFetching && !query.isFetchingNextPage ? 'Refreshing…' : 'Refresh'}
       </button>
       {query.isLoading && <p role="status">Loading QA work…</p>}
       {query.isError && (
@@ -110,7 +116,7 @@ export function QaQueuePage() {
           </button>
         </section>
       )}
-      {!query.isLoading && !query.isError && qualityWork.length === 0 && (
+      {!query.isLoading && !query.isError && qualityWork.length === 0 && !query.hasNextPage && (
         <p className="rounded-lg border border-border bg-surface p-5">
           No Quality activities match this view.
         </p>
@@ -149,6 +155,20 @@ export function QaQueuePage() {
           );
         })}
       </div>
+      {query.hasNextPage && (
+        <button
+          className="min-h-11 w-full rounded-md border border-border px-4"
+          onClick={() => void query.fetchNextPage()}
+          disabled={query.isFetchingNextPage}
+        >
+          {query.isFetchingNextPage ? 'Loading…' : 'Load more'}
+        </button>
+      )}
+      {query.isFetchNextPageError && (
+        <p className="text-sm text-danger" role="alert">
+          Unable to load more QA work. Try again.
+        </p>
+      )}
     </main>
   );
 }

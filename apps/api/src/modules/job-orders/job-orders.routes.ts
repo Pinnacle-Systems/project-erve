@@ -12,6 +12,8 @@ import {
   createJobOrderSchema,
   jobOrderFactoryOptionsQuerySchema,
   listJobOrdersQuerySchema,
+  listQualityWorkQuerySchema,
+  qualityWorkSummaryQuerySchema,
   updatePreparedQuantitySchema,
   updateJobOrderDisclaimerSchema,
   updateJobOrderSourcesSchema,
@@ -165,13 +167,36 @@ jobOrdersRouter.get(
   }),
 );
 
+const canPerformQaOperationRoute = requireRoles('ADMIN', 'QA_USER');
+
+// Must stay registered before "/quality-work" is treated as anything but a
+// literal path segment and before "/:id" below, same as /factory-options.
+jobOrdersRouter.get(
+  '/quality-work/summary',
+  canPerformQaOperationRoute,
+  asyncHandler(async (req, res) => {
+    const filters = qualityWorkSummaryQuerySchema.parse(req.query);
+    const summary = await jobOrdersService.getQualityWorkSummary(req.user!, filters);
+    res.status(200).json(successResponse(summary));
+  }),
+);
+
 jobOrdersRouter.get(
   '/quality-work',
-  requireRoles('ADMIN', 'QA_USER'),
+  canPerformQaOperationRoute,
   asyncHandler(async (req, res) => {
-    res
-      .status(200)
-      .json(successResponse(await jobOrdersService.getProcessFlowQualityWork(req.user!)));
+    const query = listQualityWorkQuerySchema.parse(req.query);
+    const page = await jobOrdersService.getProcessFlowQualityWorkPage(
+      req.user!,
+      {
+        status: query.status,
+        conflict: query.conflict,
+        factoryId: query.factoryId,
+        search: query.search,
+      },
+      { limit: query.limit, cursor: query.cursor },
+    );
+    res.status(200).json(successResponse(page));
   }),
 );
 
