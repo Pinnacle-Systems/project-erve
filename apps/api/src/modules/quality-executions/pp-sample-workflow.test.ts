@@ -1109,7 +1109,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       .set('Authorization', `Bearer ${f.qa.token}`)
       .expect(200);
     expect(
-      qualityWork.body.data.some(
+      qualityWork.body.data.items.some(
         (item: { jobOrderId: string; activity: { processFlowVersionStageId: string } }) =>
           item.jobOrderId === f.job.id && item.activity.processFlowVersionStageId === f.pp.id,
       ),
@@ -1596,7 +1596,7 @@ describe('QA quality-work queue isolation from historical-import rows', () => {
     const f = await workflow();
     await confirmFactory(f);
     const listed = async () =>
-      (await request(app).get('/job-orders/quality-work').set('Authorization', `Bearer ${f.qa.token}`).expect(200)).body.data.some(
+      (await request(app).get('/job-orders/quality-work').set('Authorization', `Bearer ${f.qa.token}`).expect(200)).body.data.items.some(
         (item: { jobOrderId: string }) => item.jobOrderId === f.job.id,
       );
     expect(await listed()).toBe(true);
