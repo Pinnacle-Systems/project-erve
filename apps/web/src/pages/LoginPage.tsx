@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, PasswordField, TextField, ValidationMessage } from '@erve/primitives';
 import { Card } from '@erve/layout';
 import type { ApiSuccessResponse, LoginResponse } from '@erve/types';
 import { apiClient } from '../lib/api-client.js';
 import { useAuth } from '../auth/AuthContext.js';
+import { returnToPath } from '../auth/return-to.js';
 import { PoweredByPinnacleBranding } from '../branding/PoweredByPinnacleBranding.js';
 
 interface LoginFormValues {
@@ -16,16 +17,20 @@ interface LoginFormValues {
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
+  const identityChanged =
+    new URLSearchParams(location.search).get('reason') === 'identity-changed';
   const [values, setValues] = useState<LoginFormValues>({ identifier: '', password: '' });
 
   const mutation = useMutation({
     mutationFn: (values: LoginFormValues) =>
       apiClient.post<ApiSuccessResponse<LoginResponse>>('/auth/login', values),
     onSuccess: async (response) => {
-      const { accessToken, user } = response.data.data;
-      await login(accessToken, user);
-      navigate('/dashboard');
+      const { accessToken, user, session } = response.data.data;
+      await login(accessToken, user, session);
+      // Back to the page that required sign-in, if any (see ProtectedRoute).
+      navigate(returnToPath(location.state), { replace: true });
     },
   });
 
@@ -50,6 +55,12 @@ export function LoginPage() {
           </div>
           <Card>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              {identityChanged ? (
+                <ValidationMessage tone="warning">
+                  A different user signed in from another tab, so this tab was signed out. Sign in
+                  to continue.
+                </ValidationMessage>
+              ) : null}
               <TextField
                 id="identifier"
                 type="text"
