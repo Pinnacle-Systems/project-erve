@@ -5,9 +5,6 @@ import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { useServerLookup } from '../../lib/use-server-lookup.js';
 
-// Two characters is enough for a useful LMIX/Style No. fragment while
-// keeping single keystrokes from matching most of the master.
-export const STYLE_LOOKUP_MIN_LENGTH = 2;
 export const STYLE_LOOKUP_LIMIT = 20;
 
 // What the field needs to display a value. A saved Order Sheet line carries
@@ -51,9 +48,11 @@ export interface StyleLookupFieldProps {
 }
 
 // Order Sheet Style lookup: bounded server search over ACTIVE Styles by
-// LMIX, Style No. or Style Name (GET /purchase-orders/style-options). The
-// current value is shown from `value`, never looked up in the results, so a
-// saved Style displays even when it has since become inactive.
+// LMIX, Style No. or Style Name (GET /purchase-orders/style-options).
+// Opening the panel with no text shows the first ACTIVE Styles by Style No.;
+// typing searches. Nothing is requested until the panel opens. The current
+// value is shown from `value`, never looked up in the results, so a saved
+// Style displays even when it has since become inactive.
 export function StyleLookupField({
   label = 'Style *',
   width = 'lg',
@@ -61,10 +60,12 @@ export function StyleLookupField({
   onChange,
 }: StyleLookupFieldProps) {
   const [searchText, setSearchText] = useState('');
+  const [open, setOpen] = useState(false);
   const lookup = useServerLookup<OrderSheetStyleOption>({
     queryKey: ['purchase-orders', 'style-options', 'search'],
     searchText,
-    minLength: STYLE_LOOKUP_MIN_LENGTH,
+    minLength: 0,
+    enabled: open,
     fetchOptions: async (search, signal) => {
       const res = await apiClient.get<ApiSuccessResponse<OrderSheetStyleOption[]>>(
         '/purchase-orders/style-options',
@@ -92,9 +93,11 @@ export function StyleLookupField({
       searchError={
         lookup.error ? getApiErrorMessage(lookup.error, 'Unable to search Styles.') : null
       }
-      prompt={lookup.belowMinLength ? 'Type to search by LMIX, Style No. or Style Name' : null}
-      emptyMessage="No active Styles match — try another LMIX, Style No. or name"
+      emptyMessage={
+        searchText.trim() ? 'No active Styles match your search' : 'No active Styles available'
+      }
       loadingMessage="Searching Styles…"
+      onOpenChange={setOpen}
       helpText={
         value && isInactive(value)
           ? 'This Style is no longer active — choose an active Style to save.'

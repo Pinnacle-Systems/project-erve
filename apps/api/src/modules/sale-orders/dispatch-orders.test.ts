@@ -953,6 +953,20 @@ describe('GET /sale-orders/distributor-options — bounded search (P1L8)', () =>
     expect((await searchOptions(token, {})).body.data).toHaveLength(23);
   });
 
+  it('treats an empty search as the bounded initial options in name then id order (LU0)', async () => {
+    const token = await roleToken(['ADMIN']);
+    const twins = [];
+    for (let index = 0; index < 3; index += 1) {
+      twins.push(await createTestDistributor({ code: `INIT-TWIN-${index}`, name: 'Acme Twin' }));
+    }
+    await createTestDistributor({ code: 'INIT-LATER', name: 'Zeta Later' });
+
+    const res = await searchOptions(token, { search: '', limit: 3 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((row: { id: string }) => row.id)).toEqual(twins.map((twin) => twin.id).sort());
+  });
+
   it('keeps the Dispatch Order filter permission', async () => {
     for (const role of ['FACTORY_USER', 'DISTRIBUTOR'] as const) {
       const token = await roleToken([role]);

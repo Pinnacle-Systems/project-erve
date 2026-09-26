@@ -126,7 +126,7 @@ export function SaleOrderListPage() {
                     value={distributor}
                     onChange={setDistributor}
                     searchPath="/sale-orders/distributor-options"
-                    emptyMessage="No distributors match — try another name or code"
+                    emptyMessage="No distributors available"
                     density="compact"
                     width="md"
                   />

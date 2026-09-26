@@ -10,7 +10,9 @@ export interface ServerLookupOptions<T> {
   searchText: string;
   fetchOptions: (search: string, signal: AbortSignal) => Promise<T[]>;
   // Below this many (trimmed) characters no request is made and
-  // `belowMinLength` is reported instead — no arbitrary preloaded list.
+  // `belowMinLength` is reported instead. 0 makes the empty text a real
+  // search (the bounded initial options) — pair it with `enabled` tied to
+  // the panel being open so nothing is fetched merely on mount.
   minLength?: number;
   debounceMs?: number;
   enabled?: boolean;
@@ -43,10 +45,13 @@ export function useServerLookup<T>({
   const debounced = useDebouncedValue(trimmed, debounceMs);
   const belowMinLength = trimmed.length < minLength;
   const debouncedSearchable = debounced.length >= minLength;
+  // With minLength 0, typing the first characters would otherwise run the
+  // empty-text search the debounce still holds — a request nobody asked for.
+  const staleEmptySearch = debounced === '' && trimmed !== '';
 
   const query = useQuery({
     queryKey: [...queryKey, debounced],
-    enabled: enabled && debouncedSearchable,
+    enabled: enabled && debouncedSearchable && !staleEmptySearch,
     queryFn: ({ signal }) => fetchOptions(debounced, signal),
     // Keep the previous rows visible (flagged as loading) while the next
     // search runs, instead of flashing an empty panel on every keystroke.

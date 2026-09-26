@@ -1692,6 +1692,33 @@ describe('Distributor lookup — GET /distributors/options (P1L3)', () => {
     expect(detail.status).toBe(expectedStatus);
   });
 
+  it('treats an empty search as the initial options: ACTIVE only, filtered before the limit, name then id (LU0)', async () => {
+    const token = await tokenFor('ADMIN');
+    // INACTIVE rows sort first by name — they must not consume the limit.
+    for (let index = 0; index < 5; index += 1) {
+      await createTestDistributor({ code: `INIT-OFF-${index}`, name: `AAA Retired ${index}`, status: 'INACTIVE' });
+    }
+    const twins = [];
+    for (let index = 0; index < 3; index += 1) {
+      twins.push(await createTestDistributor({ code: `INIT-TWIN-${index}`, name: 'Bharat Twin' }));
+    }
+    for (let index = 0; index < 20; index += 1) {
+      await createTestDistributor({ code: `INIT-${index}`, name: `Zeta ${String(index).padStart(2, '0')}` });
+    }
+
+    const res = await searchOptions(token, { search: '' });
+
+    expect(res.status).toBe(200);
+    const rows = res.body.data as Array<{ id: string; name: string; status: string }>;
+    expect(rows).toHaveLength(20);
+    expect(rows.every((row) => row.status === 'ACTIVE')).toBe(true);
+    // Identical names fall back to id order, so the bounded page is stable.
+    expect(rows.slice(0, 3).map((row) => row.id)).toEqual(twins.map((twin) => twin.id).sort());
+    expect(rows.slice(3).map((row) => row.name)).toEqual(
+      Array.from({ length: 17 }, (_, index) => `Zeta ${String(index).padStart(2, '0')}`),
+    );
+  });
+
   it("is not swallowed by the '/:id' route", async () => {
     const token = await tokenFor('ADMIN');
     const res = await searchOptions(token, {});

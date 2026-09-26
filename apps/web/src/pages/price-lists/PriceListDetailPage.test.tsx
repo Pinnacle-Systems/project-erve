@@ -67,8 +67,11 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 40; i++) {
+// Deadline-based rather than a fixed tick count: the first PDF action
+// dynamically imports the PDF module, whose load time varies with run order.
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
     if (predicate()) return;
     await act(async () => {
       await flushMicrotasks();
@@ -298,12 +301,19 @@ describe('PriceListDetailPage — Add Style lookup (UXAUTH-013, P1L2)', () => {
 
     expect(container.textContent).toContain('Add Style Price');
     expect(buttonLabels()).toContain('Add Line');
-    // Nothing is preloaded: no request until the user types a search.
+    // Nothing is preloaded: no request until the panel opens.
     expect(requestedUrls.some((url) => url.endsWith('/style-options'))).toBe(false);
 
     await act(async () => styleInput().focus());
+    expect(requestedUrls.some((url) => url.endsWith('/style-options'))).toBe(false);
     await act(async () => styleInput().click());
-    expect(lookupPanelText()).toContain('Type to search by LMIX, Style No. or Style Name');
+    // Opening with no text shows the first addable Styles (LU0).
+    await waitUntil(() => lookupOptions().length > 0);
+    expect(requests.find((request) => request.url === '/price-lists/pl-1/style-options')?.params).toEqual({
+      search: '',
+      limit: 20,
+    });
+    expect(lookupPanelText()).not.toContain('Type to search');
 
     await typeStyleSearch('LMIX5526');
     await waitUntil(
@@ -312,7 +322,7 @@ describe('PriceListDetailPage — Add Style lookup (UXAUTH-013, P1L2)', () => {
         document.body.querySelector('[role="listbox"][aria-busy]') === null,
     );
 
-    const search = requests.find((request) => request.url === '/price-lists/pl-1/style-options');
+    const search = requests.filter((request) => request.url === '/price-lists/pl-1/style-options').at(-1);
     expect(search?.params).toEqual({ search: 'LMIX5526', limit: 20 });
 
     const option = lookupOptions().find((candidate) => candidate.textContent?.includes('25426015'))!;

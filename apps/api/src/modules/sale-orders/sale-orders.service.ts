@@ -623,7 +623,8 @@ export async function listDistributorOptionsForDispatchOrders(filters: {
           ]
         : undefined,
     },
-    orderBy: { name: 'asc' },
+    // id breaks name ties so a bounded page is deterministic.
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
     select: { id: true, code: true, name: true, status: true },
     take: filters.limit,
   });

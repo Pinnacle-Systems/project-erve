@@ -21,6 +21,11 @@ import type { Density } from '@erve/theme';
 // the selected record never has to appear in the current results, so an
 // edit form can hydrate a saved (even since-retired) value directly.
 //
+// The panel opens on click, ArrowDown/ArrowUp or typing — never on focus
+// alone, so tabbing through a dense form opens (and fetches) nothing.
+// `onOpenChange` reports each open/close, letting a consumer run its search
+// (including an empty-text initial one) only while the panel is showing.
+//
 // Keyboard: ArrowDown/ArrowUp move the highlight (ArrowDown also opens),
 // Enter selects the highlighted option, Escape closes (a second Escape
 // restores the selected value's text), Tab closes and moves on normally.
@@ -91,6 +96,8 @@ export interface LookupFieldProps<T> {
   prompt?: ReactNode;
   emptyMessage?: ReactNode;
   loadingMessage?: ReactNode;
+  /** Called whenever the results panel opens or closes. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function LookupField<T>({
@@ -119,6 +126,7 @@ export function LookupField<T>({
   prompt,
   emptyMessage = 'No matches',
   loadingMessage = 'Searching…',
+  onOpenChange,
 }: LookupFieldProps<T>) {
   const resolvedDensity = useResolvedDensity(density);
   const generatedId = useId();
@@ -133,7 +141,14 @@ export function LookupField<T>({
 
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpenState] = useState(false);
+  // Every open/close goes through here so `onOpenChange` sees transitions
+  // only (never the initial closed state).
+  const setIsOpen = (open: boolean) => {
+    if (open === isOpen) return;
+    setIsOpenState(open);
+    onOpenChange?.(open);
+  };
   // "Editing" = the textbox shows the user's search text rather than the
   // selected value's label.
   const [isEditing, setIsEditing] = useState(false);

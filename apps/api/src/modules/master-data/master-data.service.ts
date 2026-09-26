@@ -1649,7 +1649,8 @@ export async function listDistributorOptions(
           ]
         : undefined,
     },
-    orderBy: { name: 'asc' },
+    // id breaks name ties so a bounded page is deterministic.
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
     select: distributorOptionSelect,
     take: filters.limit,
   });
