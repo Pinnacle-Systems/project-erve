@@ -21,6 +21,7 @@ import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 import {
+  buildDelayedJobOrderWhere,
   deriveJobOrderOperationalState,
   isJobOrderDelayed,
 } from './job-order-operational-state.js';
@@ -862,6 +863,9 @@ export async function getJobOrderList(
     factoryId?: string;
     financialYearId?: string;
     recordOrigin?: 'LIVE_WORKFLOW' | 'HISTORICAL_IMPORT';
+    // RPT3 8.9.A — the Dashboard's "Delayed Job Orders" drilldown. Reuses
+    // the RPT0 query predicate, never a separate derivation.
+    delayed?: boolean;
     cursor?: string;
     limit: number;
   },
@@ -895,6 +899,11 @@ export async function getJobOrderList(
             ]
           : undefined,
       },
+      ...(filters.delayed === undefined
+        ? []
+        : filters.delayed
+          ? [buildDelayedJobOrderWhere(toBusinessCalendarDate(new Date()))]
+          : [{ NOT: buildDelayedJobOrderWhere(toBusinessCalendarDate(new Date())) }]),
     ],
   };
 

@@ -44,11 +44,20 @@ export function JobOrderListPage() {
 
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
-  const [status, setStatus] = useState<JobOrderStatus | ''>('');
+  // Seeded from the URL so a Dashboard drilldown (RPT3 8.9.A) lands on the
+  // matching filtered view, and back-navigation preserves it.
+  const [status, setStatus] = useState<JobOrderStatus | ''>(
+    () => (searchParams.get('status') as JobOrderStatus | null) ?? '',
+  );
   const [financialYearId, setFinancialYearId] = useState('');
 
   const rawFactoryId = searchParams.get('factoryId');
   const effectiveFactoryId = mayFilterByFactory ? (rawFactoryId ?? undefined) : undefined;
+  // Read-only URL-backed filters (RPT3 8.9.A) — set by a Dashboard drilldown
+  // link, not by a control on this page yet.
+  const rawDelayed = searchParams.get('delayed');
+  const delayed = rawDelayed === 'true' ? true : rawDelayed === 'false' ? false : undefined;
+  const recordOrigin = searchParams.get('recordOrigin') as 'LIVE_WORKFLOW' | 'HISTORICAL_IMPORT' | null;
 
   useEffect(() => {
     if (!mayFilterByFactory && rawFactoryId !== null) {
@@ -76,8 +85,10 @@ export function JobOrderListPage() {
       // Filters by each JO's own Financial Year (derived from its
       // createdAt), never the parent PO's. Optional, defaulting to "All".
       financialYearId: financialYearId || undefined,
+      delayed,
+      recordOrigin: recordOrigin ?? undefined,
     }),
-    [debouncedSearch, status, effectiveFactoryId, financialYearId],
+    [debouncedSearch, status, effectiveFactoryId, financialYearId, delayed, recordOrigin],
   );
 
   // The API pages this list by cursor (25 per page); every page is kept so

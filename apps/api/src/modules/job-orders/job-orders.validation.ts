@@ -109,6 +109,8 @@ export const listJobOrdersQuerySchema = z.object({
   // imports). Operational views (mobile "Active job orders") pass
   // LIVE_WORKFLOW so historical rows can't occupy the page they paginate.
   recordOrigin: z.enum(['LIVE_WORKFLOW', 'HISTORICAL_IMPORT']).optional(),
+  // RPT3 8.9.A — the Dashboard's "Delayed Job Orders" drilldown.
+  delayed: queryBooleanSchema.optional(),
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });

@@ -51,6 +51,30 @@ function fullSummary(): ReportOperationsSummary {
   };
 }
 
+// Empty-but-correctly-shaped responses for the chart-data endpoints
+// ChartsSection also requests, so a test that only cares about the KPI
+// cards/summary doesn't have to know Chart's own response shapes.
+function defaultOtherResponse(url: string): unknown {
+  if (url === '/reports/production') {
+    return { filtersApplied: {}, pipeline: [], factoryWorkload: [], quantityFlow: [] };
+  }
+  if (url === '/reports/fulfillment') {
+    return {
+      filtersApplied: {},
+      factoryDispatch: {},
+      packingAudit: { neverAudited: 0, needingReinspection: 0, currentlyPassed: 0 },
+      factoryInvoice: {},
+      ervePackingList: {},
+      erveDispatch: {},
+      delivery: { userConfirmed: 0, legacyAssumedFullReceipt: 0 },
+    };
+  }
+  if (url === '/reports/sale-or-return' || url === '/reports/distributor-returns') {
+    return { filtersApplied: {}, rows: [] };
+  }
+  return [];
+}
+
 async function render(mockGet: (url: string) => unknown) {
   vi.spyOn(AuthContext, 'useAuth').mockReturnValue({
     user: mockUser(),
@@ -80,7 +104,7 @@ describe('ManagementDashboardPage (RPT2)', () => {
   it('shows every KPI card with correct labels and factual values when every section is present', async () => {
     await render((url) => {
       if (url === '/reports/operations/summary') return fullSummary();
-      return [];
+      return defaultOtherResponse(url);
     });
 
     expect(container.textContent).toContain('Open Job Orders');
@@ -100,6 +124,18 @@ describe('ManagementDashboardPage (RPT2)', () => {
     expect(container.textContent).not.toMatch(/%/);
   });
 
+  it('drills the Open/Delayed Job Orders cards down to the Job Orders list with the matching filter, only when the viewer can reach it', async () => {
+    await render((url) => {
+      if (url === '/reports/operations/summary') return fullSummary();
+      return defaultOtherResponse(url);
+    });
+    const links = Array.from(container.querySelectorAll('a'));
+    const openLink = links.find((a) => a.textContent?.includes('Open Job Orders'));
+    const delayedLink = links.find((a) => a.textContent?.includes('Delayed Job Orders'));
+    expect(openLink?.getAttribute('href')).toBe('/job-orders');
+    expect(delayedLink?.getAttribute('href')).toBe('/job-orders?delayed=true');
+  });
+
   it('sends recordOrigin=LIVE_WORKFLOW by default', async () => {
     const paramsSeen: Array<Record<string, unknown>> = [];
     vi.spyOn(AuthContext, 'useAuth').mockReturnValue({
@@ -116,7 +152,7 @@ describe('ManagementDashboardPage (RPT2)', () => {
           paramsSeen.push(config?.params ?? {});
           return { data: { data: fullSummary() } };
         }
-        return { data: { data: [] } };
+        return { data: { data: defaultOtherResponse(url) } };
       },
     );
     act(() => {
@@ -145,7 +181,7 @@ describe('ManagementDashboardPage (RPT2)', () => {
           sectionsOmitted: ['qa', 'packing.audit'],
         };
       }
-      return [];
+      return defaultOtherResponse(url);
     });
     expect(container.textContent).not.toContain('QA-Passed Available Stock');
     expect(container.textContent).not.toContain('QA Work Status');
@@ -164,7 +200,7 @@ describe('ManagementDashboardPage (RPT2)', () => {
     } as unknown as ReturnType<typeof AuthContext.useAuth>);
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/reports/operations/summary') throw new Error('network down');
-      return { data: { data: [] } };
+      return { data: { data: defaultOtherResponse(url) } };
     });
     act(() => {
       root.render(
@@ -190,7 +226,7 @@ describe('ManagementDashboardPage (RPT2)', () => {
           delivery: { awaitingConfirmation: 0 },
         };
       }
-      return [];
+      return defaultOtherResponse(url);
     });
     expect(container.textContent).toContain('Open Job Orders');
     expect(container.textContent).toContain('Awaiting Delivery Confirmation');
