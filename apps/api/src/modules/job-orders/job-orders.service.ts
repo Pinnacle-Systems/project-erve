@@ -1218,7 +1218,19 @@ export async function getQualityWorkSummary(
 ): Promise<QaWorkStatusBreakdown> {
   if (!canPerformQaOperation(user))
     throw HttpError.forbidden('Only QA operations users may view QA work');
+  return computeQualityWorkSummary(filters);
+}
 
+/**
+ * Permission-free core of getQualityWorkSummary, for callers with their own
+ * RBAC already applied — reports.service.ts's operations summary (RPT1
+ * 6.1) reuses this directly rather than re-deriving the QA status
+ * breakdown, since a report viewer (e.g. SENIOR_MANAGEMENT) may see this
+ * aggregate without holding QA_OPERATION_ROLES itself (RPT0 4.6).
+ */
+export async function computeQualityWorkSummary(
+  filters: Pick<QualityWorkFilters, 'factoryId'>,
+): Promise<QaWorkStatusBreakdown> {
   const where = buildQualityWorkCandidateWhere(filters.factoryId);
   const byStatus: Record<Exclude<QualityRuntimeStatus, 'NOT_AVAILABLE'>, number> = {
     AVAILABLE: 0,
