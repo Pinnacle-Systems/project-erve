@@ -264,7 +264,7 @@ export function JobOrderCreatePage() {
   );
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       <PageHeader
         title="Create Job Order"
         subtitle="Consolidate one or more compatible Order Sheets into one factory production instruction"

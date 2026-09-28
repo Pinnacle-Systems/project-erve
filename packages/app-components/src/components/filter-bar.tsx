@@ -20,6 +20,7 @@ export interface FilterBarProps {
   onDateFromChange?: (value: string) => void;
   dateTo?: string;
   onDateToChange?: (value: string) => void;
+  customFilters?: ReactNode;
   actions?: ReactNode;
   onClearFilters?: () => void;
   hasActiveFilters?: boolean;
@@ -40,6 +41,7 @@ export const FilterBar = ({
   onDateFromChange,
   dateTo,
   onDateToChange,
+  customFilters,
   actions,
   onClearFilters,
   hasActiveFilters,
@@ -74,7 +76,7 @@ export const FilterBar = ({
           onValueChange={onStatusChange}
           placeholder={statusPlaceholder}
           density={resolvedDensity}
-          width="sm"
+          width="xs"
           aria-label={statusAriaLabel}
         >
           {statusOptions.map((opt) => (
@@ -106,6 +108,8 @@ export const FilterBar = ({
           aria-label="To date"
         />
       )}
+
+      {customFilters}
 
       <div className="flex items-center gap-2 ml-auto">
         {hasActiveFilters && onClearFilters && (
