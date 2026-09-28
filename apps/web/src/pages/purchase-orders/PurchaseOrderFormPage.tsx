@@ -212,7 +212,7 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
   useUnsavedChangesWarning(dirty && !mutation.isSuccess);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       <PageHeader
         title={isEdit ? 'Edit Order Sheet' : 'Create Order Sheet'}
         subtitle={isEdit ? 'Update quantities and dates' : 'Create distributor demand as an Order Sheet'}
@@ -285,11 +285,8 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
           </FormSection>
 
           <FormSection title="Style">
-            <Panel variant="bordered" padding="sm">
-              {/* Panel applies className to its outer box, not the body that
-                  holds children — so the vertical rhythm lives here. */}
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-start gap-3">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-start gap-3">
                   <StyleLookupField
                     value={styleDetail ?? selectedStyle}
                     onChange={handleStyleChange}
@@ -335,7 +332,6 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
                   </p>
                 )}
               </div>
-            </Panel>
           </FormSection>
 
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}

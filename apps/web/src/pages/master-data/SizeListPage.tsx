@@ -69,7 +69,7 @@ export function SizeListPage() {
   const pdfAction = usePdfAction({ generate: generateSizeListPdf, filename: sizeListPdfFilename });
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       <PageHeader title="Sizes" subtitle="Size codes available for style mapping" />
 
       <Panel title="Add Size">
@@ -80,24 +80,26 @@ export function SizeListPage() {
             createMutation.mutate();
           }}
         >
-          <FormGrid columns={4}>
+          <FormGrid layout="content" className="items-end">
             <TextField
               label="Code *"
               value={form.code}
               errorMessage={error && !form.code.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, code: event.target.value })}
+              width="sm"
             />
             <TextField
               label="Label *"
               value={form.label}
               errorMessage={error && !form.label.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, label: event.target.value })}
+              width="sm"
             />
             <SelectField
               label="Type *"
               value={form.sizeType}
               onValueChange={(value) => setForm({ ...form, sizeType: value })}
-              width="fill"
+              width="xs"
             >
               <SelectItem value="AGE">Age</SelectItem>
               <SelectItem value="ALPHA">Alpha</SelectItem>
@@ -111,14 +113,15 @@ export function SizeListPage() {
               value={form.sortOrder}
               errorMessage={error && !form.sortOrder.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, sortOrder: event.target.value })}
+              width="xs"
             />
+            <div className="flex">
+              <Button type="submit" loading={createMutation.isPending}>
+                Add Size
+              </Button>
+            </div>
           </FormGrid>
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
-          <div className="flex justify-end">
-            <Button type="submit" loading={createMutation.isPending}>
-              Add
-            </Button>
-          </div>
         </form>
       </Panel>
 

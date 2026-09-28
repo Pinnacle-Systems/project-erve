@@ -124,24 +124,27 @@ export function SeasonListPage() {
     setError('');
     setFormKey((key) => key + 1);
   };
-  return <div className="space-y-5">
+  return <div className="space-y-3">
     <PageHeader title="Seasons" subtitle="Season master records used by Styles. Inactive Seasons remain visible on historical records." />
     <Panel title={editing ? 'Edit Season' : 'Add Season'}>
       <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
-        <FormGrid columns={3}>
-          <TextField label="Season code" value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} errorMessage={error && !form.code.trim() ? 'Required' : undefined} />
-          <TextField label="Season name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} errorMessage={error && !form.name.trim() ? 'Required' : undefined} />
+        <FormGrid layout="content" className="items-end">
+          <TextField label="Season code" value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} errorMessage={error && !form.code.trim() ? 'Required' : undefined} width="sm" />
+          <TextField label="Season name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} errorMessage={error && !form.name.trim() ? 'Required' : undefined} width="md" />
           <FinancialYearSelect
             key={formKey}
             label="Financial Year"
-            width="md"
+            width="xs"
             value={effectiveFinancialYearId}
             onValueChange={(value) => setForm({ ...form, financialYearId: value })}
             errorMessage={error && !effectiveFinancialYearId ? 'Required' : undefined}
           />
+          <div className="flex gap-2">
+            {editing ? <Button type="button" variant="secondary" onClick={beginAdd}>Cancel</Button> : null}
+            <Button type="submit" loading={save.isPending}>{editing ? 'Save Changes' : 'Add Season'}</Button>
+          </div>
         </FormGrid>
         {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
-        <div className="flex justify-end gap-2 border-t border-border-subtle pt-4">{editing ? <Button type="button" variant="secondary" onClick={beginAdd}>Cancel</Button> : null}<Button type="submit" loading={save.isPending}>{editing ? 'Save Changes' : 'Add Season'}</Button></div>
       </form>
     </Panel>
     <div className="flex items-start justify-between gap-3">

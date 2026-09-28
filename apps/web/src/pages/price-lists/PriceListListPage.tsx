@@ -104,7 +104,7 @@ export function PriceListListPage() {
               setStatus('');
               setDistributor(null);
             }}
-            actions={
+            customFilters={
               // Price-List-specific lookup: ACCOUNTANT can manage Price Lists
               // but is denied on the broad /distributors master. No status
               // filter — this filter browses historical Price Lists too, and
