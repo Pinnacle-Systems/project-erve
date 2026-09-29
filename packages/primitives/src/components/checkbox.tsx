@@ -43,6 +43,7 @@ export const Checkbox = forwardRef<React.ElementRef<typeof CheckboxPrimitive.Roo
         required={required}
         aria-describedby={ariaDescribedBy}
         aria-invalid={!!error}
+        data-form-control=""
         data-density={resolvedDensity}
         className={cn(checkboxVariants({ density: resolvedDensity, error: !!error }), className)}
         {...props}

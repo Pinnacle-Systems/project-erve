@@ -103,6 +103,7 @@ export const SelectTrigger = forwardRef<
   return (
     <SelectPrimitive.Trigger
       ref={ref}
+      data-form-control=""
       data-density={resolvedDensity}
       className={cn(triggerVariants({ state, density: resolvedDensity }), className)}
       {...props}

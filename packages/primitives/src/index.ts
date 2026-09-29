@@ -108,5 +108,8 @@ export type {
   SkeletonCardProps,
 } from "./components/skeleton";
 
+export const DATA_FORM_CONTROL = "data-form-control";
+
+
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/tabs";
 export type { TabsListProps, TabsTriggerProps } from "./components/tabs";

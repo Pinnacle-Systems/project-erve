@@ -29,6 +29,7 @@ import {
 import {
   AttachmentList,
   ConfirmDialog,
+  createEnterToNextHandler,
   QualityChecklist,
   QualityChecklistRemark,
   QualityChecklistResult,
@@ -511,7 +512,7 @@ export function QaInspectionForm({
         title="QA Inspection Form"
         description={`Cycle ${session.cycleNumber} · ${forms.filter((form) => form.status === 'FINALIZED').length} of ${forms.length} forms finalized`}
       >
-        <div className="space-y-6">
+        <div className="space-y-6" onKeyDown={createEnterToNextHandler()}>
           {!ppSample && (
             <nav aria-label="Size inspection forms" className="flex flex-wrap gap-2">
               {forms.map((form) => (

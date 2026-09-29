@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import { PageHeader, StatusBadge } from '@erve/app-components';
+import { PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -76,6 +76,7 @@ export function SizeListPage() {
         <form
           noValidate
           className="flex flex-col gap-4"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
             createMutation.mutate();

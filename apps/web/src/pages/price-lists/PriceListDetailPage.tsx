@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
+import { ConfirmDialog, createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
@@ -258,6 +258,7 @@ export function PriceListDetailPage() {
         <Panel title="Add Style Price">
           <form
             className="flex flex-wrap items-end gap-3"
+            onKeyDown={createEnterToNextHandler()}
             onSubmit={(e) => {
               e.preventDefault();
               addLineMutation.mutate();

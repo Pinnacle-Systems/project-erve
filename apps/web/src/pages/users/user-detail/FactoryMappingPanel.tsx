@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
+import { createEnterToNextHandler } from '@erve/app-components';
 import { Badge, Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { apiClient } from '../../../lib/api-client.js';
@@ -69,6 +70,7 @@ export function FactoryMappingPanel({ user }: { user: AdminUserSummary }) {
 
         <form
           className="flex flex-wrap items-end gap-3"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
             assignMutation.mutate();

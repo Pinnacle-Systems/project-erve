@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { ROLES, type Role } from '@erve/types';
-import { ConfirmDialog } from '@erve/app-components';
+import { ConfirmDialog, createEnterToNextHandler } from '@erve/app-components';
 import { Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { apiClient } from '../../../lib/api-client.js';
@@ -104,6 +104,7 @@ export function RolesPanel({
         {assignableRoles.length > 0 ? (
           <form
             className="flex flex-wrap items-end gap-3"
+            onKeyDown={createEnterToNextHandler()}
             onSubmit={(event) => {
               event.preventDefault();
               assignMutation.mutate();

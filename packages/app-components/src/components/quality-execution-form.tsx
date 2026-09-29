@@ -6,6 +6,7 @@ import type {
   QualityExecutionView,
 } from '@erve/types';
 import { ConfirmDialog } from './confirm-dialog.js';
+import { createEnterToNextHandler } from './enter-to-next.js';
 import { displayActivityName } from '../job-order-operational-presentation.js';
 import {
   QualityChecklist,
@@ -169,7 +170,11 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
     : false;
 
   return (
-    <form className="space-y-5" onSubmit={(event) => event.preventDefault()}>
+    <form
+      className="space-y-5"
+      onKeyDown={createEnterToNextHandler()}
+      onSubmit={(event) => event.preventDefault()}
+    >
       <QualityExecutionHeader
         title={displayActivityName(execution.activityName)}
         formName={execution.qualityForm.name}

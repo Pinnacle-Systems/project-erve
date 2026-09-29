@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse } from '@erve/types';
 import { ROLES, type Role } from '@erve/types';
-import { PageHeader } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader } from '@erve/app-components';
 import {
   Button,
   Checkbox,
@@ -139,6 +139,7 @@ export function UserFormPage() {
         <form
           noValidate
           className="space-y-6"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
             mutation.mutate();

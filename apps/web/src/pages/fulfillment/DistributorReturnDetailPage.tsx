@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader, StatusBadge } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -281,7 +281,7 @@ export function DistributorReturnDetailPage() {
 
       {canApprove && (record.status === 'APPROVED' || record.status === 'RECEIVED') && (
         <Panel title={hasCreditNote ? 'Credit Note' : 'Record Credit Note'}>
-          <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-wrap items-end gap-3" onKeyDown={createEnterToNextHandler()}>
             <TextField
               label="Credit Note Reference"
               value={creditNoteReference || record.creditNoteReference || ''}

@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse, DistributorOption } from '@erve/types';
-import { PageHeader } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader } from '@erve/app-components';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -330,7 +330,7 @@ export function SaleOrReturnPositionListPage() {
 
           {canReport && linesToSubmit.length > 0 && (
             <Panel title="Submit Sales Report">
-              <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-wrap items-end gap-3" onKeyDown={createEnterToNextHandler()}>
                 <DatePicker label="Report Date" value={reportDate} onValueChange={(value) => setReportDate(value ?? '')} width="sm" />
                 <Button onClick={() => submitMutation.mutate()} loading={submitMutation.isPending} disabled={!reportDate}>
                   Submit ({linesToSubmit.length} line{linesToSubmit.length === 1 ? '' : 's'})
@@ -341,7 +341,7 @@ export function SaleOrReturnPositionListPage() {
 
           {canReturn && returnLinesToSubmit.length > 0 && (
             <Panel title="Submit Return Request">
-              <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-wrap items-end gap-3" onKeyDown={createEnterToNextHandler()}>
                 <DatePicker label="Return Date" value={returnDate} onValueChange={(value) => setReturnDate(value ?? '')} width="sm" />
                 <TextField
                   label="Return Reason"

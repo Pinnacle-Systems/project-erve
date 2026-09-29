@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
+import { ConfirmDialog, createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -436,7 +436,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
               {isDraft && canMutate && (
                 <div className="rounded-md border border-dashed border-border p-3">
                   {addingForDestination === destination.id ? (
-                    <div className="space-y-3">
+                    <div className="space-y-3" onKeyDown={createEnterToNextHandler()}>
                       <div className="flex flex-wrap gap-3">
                         <TextField label="Carton Number" value={cartonNumber} onChange={(e) => setCartonNumber(e.target.value)} />
                         <TextField label="Package Details (optional)" value={packageDetails} onChange={(e) => setPackageDetails(e.target.value)} />

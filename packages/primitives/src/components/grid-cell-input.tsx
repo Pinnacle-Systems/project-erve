@@ -19,6 +19,7 @@ export const GridCellInput = forwardRef<HTMLInputElement, GridCellInputProps>(
     const resolvedDensity = useResolvedDensity(density);
     return <input
       ref={ref}
+      data-form-control=""
       data-density={resolvedDensity}
       className={cn(
         "h-(--erp-grid-cell-height) w-full bg-transparent text-(length:--erp-font-size-xs) leading-(--erp-line-height-dense) font-sans",

@@ -411,6 +411,7 @@ export function LookupField<T>({
           value={displayValue}
           // A long selected label truncates in the box; keep it readable on hover.
           title={!isEditing && selectedLabel ? selectedLabel : undefined}
+          data-form-control=""
           data-density={resolvedDensity}
           className={cn(
             'w-full truncate rounded-control border bg-surface-raised font-sans text-foreground pr-8',

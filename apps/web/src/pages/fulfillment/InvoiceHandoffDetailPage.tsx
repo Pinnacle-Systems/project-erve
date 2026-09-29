@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader, StatusBadge } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { LoadingState, EmptyState, ErrorState } from '@erve/data-display';
@@ -131,37 +131,39 @@ export function InvoiceHandoffDetailPage() {
 
       {canRecord && (
         <Panel title={handoff.status === 'PENDING_TALLY' ? 'Record Tally Invoice Reference' : 'Correct Tally Invoice Reference'}>
-          <div className="flex flex-wrap gap-3">
-            <TextField
-              label="Tally Invoice Number"
-              value={tallyInvoiceNumber || handoff.tallyInvoiceNumber || ''}
-              onChange={(e) => setTallyInvoiceNumber(e.target.value)}
-            />
-            <DatePicker
-              label="Tally Invoice Date"
-              value={tallyInvoiceDate || handoff.tallyInvoiceDate?.slice(0, 10) || ''}
-              onValueChange={(value) => setTallyInvoiceDate(value ?? '')}
-              width="sm"
-            />
-            <TextField
-              label="Tally Voucher Reference (optional)"
-              value={tallyVoucherReference || handoff.tallyVoucherReference || ''}
-              onChange={(e) => setTallyVoucherReference(e.target.value)}
-            />
-            <TextField
-              label="Remarks (optional)"
-              value={remarks || handoff.remarks || ''}
-              onChange={(e) => setRemarks(e.target.value)}
-            />
-          </div>
-          <div className="mt-3 flex justify-end">
-            <Button
-              onClick={() => recordMutation.mutate()}
-              loading={recordMutation.isPending}
-              disabled={!(tallyInvoiceNumber || handoff.tallyInvoiceNumber) || !(tallyInvoiceDate || handoff.tallyInvoiceDate)}
-            >
-              {handoff.status === 'PENDING_TALLY' ? 'Record' : 'Save Correction'}
-            </Button>
+          <div onKeyDown={createEnterToNextHandler()}>
+            <div className="flex flex-wrap gap-3">
+              <TextField
+                label="Tally Invoice Number"
+                value={tallyInvoiceNumber || handoff.tallyInvoiceNumber || ''}
+                onChange={(e) => setTallyInvoiceNumber(e.target.value)}
+              />
+              <DatePicker
+                label="Tally Invoice Date"
+                value={tallyInvoiceDate || handoff.tallyInvoiceDate?.slice(0, 10) || ''}
+                onValueChange={(value) => setTallyInvoiceDate(value ?? '')}
+                width="sm"
+              />
+              <TextField
+                label="Tally Voucher Reference (optional)"
+                value={tallyVoucherReference || handoff.tallyVoucherReference || ''}
+                onChange={(e) => setTallyVoucherReference(e.target.value)}
+              />
+              <TextField
+                label="Remarks (optional)"
+                value={remarks || handoff.remarks || ''}
+                onChange={(e) => setRemarks(e.target.value)}
+              />
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Button
+                onClick={() => recordMutation.mutate()}
+                loading={recordMutation.isPending}
+                disabled={!(tallyInvoiceNumber || handoff.tallyInvoiceNumber) || !(tallyInvoiceDate || handoff.tallyInvoiceDate)}
+              >
+                {handoff.status === 'PENDING_TALLY' ? 'Record' : 'Save Correction'}
+              </Button>
+            </div>
           </div>
         </Panel>
       )}
