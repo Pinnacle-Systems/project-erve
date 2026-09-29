@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader, StatusBadge } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, LoadingState, EmptyState, ErrorState } from '@erve/data-display';
@@ -240,23 +240,25 @@ export function ErveDispatchDetailPage() {
 
       {canUpdateLr && (
         <Panel title="Update Transport / LR Information">
-          <div className="flex flex-wrap gap-3">
-            <TextField
-              label="Transporter"
-              value={transporter ?? dispatch.transporter ?? ''}
-              onChange={(e) => setTransporter(e.target.value)}
-            />
-            <TextField
-              label="Vehicle Number"
-              value={vehicleNumber ?? dispatch.vehicleNumber ?? ''}
-              onChange={(e) => setVehicleNumber(e.target.value)}
-            />
-            <TextField label="LR Number" value={lrNumber ?? dispatch.lrNumber ?? ''} onChange={(e) => setLrNumber(e.target.value)} />
-          </div>
-          <div className="mt-3 flex justify-end">
-            <Button onClick={() => updateLrMutation.mutate()} loading={updateLrMutation.isPending}>
-              Save
-            </Button>
+          <div onKeyDown={createEnterToNextHandler()}>
+            <div className="flex flex-wrap gap-3">
+              <TextField
+                label="Transporter"
+                value={transporter ?? dispatch.transporter ?? ''}
+                onChange={(e) => setTransporter(e.target.value)}
+              />
+              <TextField
+                label="Vehicle Number"
+                value={vehicleNumber ?? dispatch.vehicleNumber ?? ''}
+                onChange={(e) => setVehicleNumber(e.target.value)}
+              />
+              <TextField label="LR Number" value={lrNumber ?? dispatch.lrNumber ?? ''} onChange={(e) => setLrNumber(e.target.value)} />
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Button onClick={() => updateLrMutation.mutate()} loading={updateLrMutation.isPending}>
+                Save
+              </Button>
+            </div>
           </div>
         </Panel>
       )}

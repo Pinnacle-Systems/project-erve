@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
+import { ConfirmDialog, PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -127,7 +127,7 @@ export function SeasonListPage() {
   return <div className="space-y-3">
     <PageHeader title="Seasons" subtitle="Season master records used by Styles. Inactive Seasons remain visible on historical records." />
     <Panel title={editing ? 'Edit Season' : 'Add Season'}>
-      <form className="space-y-4" noValidate onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
+      <form className="space-y-4" noValidate onKeyDown={createEnterToNextHandler()} onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
         <FormGrid layout="content">
           <TextField required label="Season code" value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} errorMessage={error && !form.code.trim() ? 'Required' : undefined} width="sm" />
           <TextField required label="Season name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} errorMessage={error && !form.name.trim() ? 'Required' : undefined} width="md" />

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, DistributorOption, OrderSheetStyleDetail } from '@erve/types';
-import { PageHeader } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader } from '@erve/app-components';
 import { ErrorState, LoadingState } from '@erve/data-display';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
@@ -227,6 +227,7 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
         <form
           noValidate
           className="space-y-6"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(e) => {
             e.preventDefault();
             mutation.mutate();

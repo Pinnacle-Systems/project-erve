@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader } from '@erve/app-components';
+import { PageHeader, createEnterToNextHandler } from '@erve/app-components';
 import { Button, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { ErrorState, LoadingState } from '@erve/data-display';
@@ -253,6 +253,7 @@ export function StyleFormPage() {
         <form
           noValidate
           className="space-y-6"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
             mutation.mutate();

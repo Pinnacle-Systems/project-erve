@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { DistributorOption } from '@erve/types';
-import { ConfirmDialog } from '@erve/app-components';
+import { ConfirmDialog, createEnterToNextHandler } from '@erve/app-components';
 import { Badge, Button, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { apiClient } from '../../../lib/api-client.js';
@@ -89,6 +89,7 @@ export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
         ) : (
           <form
             className="flex flex-wrap items-end gap-3"
+            onKeyDown={createEnterToNextHandler()}
             onSubmit={(event) => {
               event.preventDefault();
               assignMutation.mutate();

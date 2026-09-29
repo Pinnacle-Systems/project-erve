@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader, StatusBadge } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -130,7 +130,7 @@ export function PackingAuditCartonDetailPage() {
 
       {canConfirm && !carton.retired && !isCurrent && (
         <Panel title="Confirm Inspected">
-          <div className="space-y-3">
+          <div className="space-y-3" onKeyDown={createEnterToNextHandler()}>
             <TextField label="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
             <Button onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>
               Confirm Inspected

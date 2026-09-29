@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader, StatusBadge } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, LoadingState, EmptyState, ErrorState } from '@erve/data-display';
@@ -290,17 +290,19 @@ export function ErvePackingListDetailPage() {
 
       {packingList.status === 'FINALIZED' && canMutate && (
         <Panel title="Record Erve Dispatch">
-          <div className="flex flex-wrap gap-3">
-            <DatePicker label="Dispatch Date" value={dispatchDate} onValueChange={(value) => setDispatchDate(value ?? '')} width="sm" />
-            <TextField label="Transporter (optional)" value={transporter} onChange={(e) => setTransporter(e.target.value)} />
-            <TextField label="Vehicle Number (optional)" value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} />
-            <TextField label="LR Number (optional)" value={lrNumber} onChange={(e) => setLrNumber(e.target.value)} />
-            <TextField label="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-          </div>
-          <div className="mt-3 flex justify-end">
-            <Button onClick={() => dispatchMutation.mutate()} disabled={!dispatchDate} loading={dispatchMutation.isPending}>
-              Record Dispatch
-            </Button>
+          <div onKeyDown={createEnterToNextHandler()}>
+            <div className="flex flex-wrap gap-3">
+              <DatePicker label="Dispatch Date" value={dispatchDate} onValueChange={(value) => setDispatchDate(value ?? '')} width="sm" />
+              <TextField label="Transporter (optional)" value={transporter} onChange={(e) => setTransporter(e.target.value)} />
+              <TextField label="Vehicle Number (optional)" value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} />
+              <TextField label="LR Number (optional)" value={lrNumber} onChange={(e) => setLrNumber(e.target.value)} />
+              <TextField label="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Button onClick={() => dispatchMutation.mutate()} disabled={!dispatchDate} loading={dispatchMutation.isPending}>
+                Record Dispatch
+              </Button>
+            </div>
           </div>
         </Panel>
       )}

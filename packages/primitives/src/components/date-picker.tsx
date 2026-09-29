@@ -640,6 +640,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
           <input
             ref={ref}
             id={inputId}
+            data-form-control=""
             type="text"
             inputMode="numeric"
             autoComplete="off"

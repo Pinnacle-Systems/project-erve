@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader } from '@erve/app-components';
+import { PageHeader, createEnterToNextHandler } from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { ErrorState, LoadingState } from '@erve/data-display';
@@ -234,6 +234,7 @@ export function DistributorFormPage() {
         <form
           noValidate
           className="space-y-6"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
             mutation.mutate();

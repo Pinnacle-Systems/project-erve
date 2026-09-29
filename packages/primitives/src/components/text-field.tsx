@@ -99,6 +99,7 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
       <input
         ref={ref}
         id={inputId}
+        data-form-control=""
         className={cn(
           inputVariants({ state: hasError ? 'error' : 'default', density: resolvedDensity }),
           className,

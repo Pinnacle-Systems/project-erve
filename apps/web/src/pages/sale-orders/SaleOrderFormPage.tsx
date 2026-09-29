@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader } from '@erve/app-components';
 import { Badge, Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { EmptyState, LoadingState } from '@erve/data-display';
@@ -445,6 +445,7 @@ export function SaleOrderFormPage() {
       <Panel>
         <form
           className="space-y-6"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(e) => {
             e.preventDefault();
             mutation.mutate();

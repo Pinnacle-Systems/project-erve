@@ -138,6 +138,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         <textarea
           ref={ref}
           id={textareaId}
+          data-form-control=""
           rows={rows}
           required={required}
           className={cn(

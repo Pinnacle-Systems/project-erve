@@ -134,3 +134,15 @@ export type {
   QaStatusPresentation,
   QaWorkPresentation,
 } from './job-order-operational-presentation.js';
+
+export {
+  useEnterToNextField,
+  createEnterToNextHandler,
+  handleEnterToNext,
+  isControlVisible,
+  isEnterNavigationSource,
+  isEligibleDestination,
+  getFormDestinations,
+  DEFAULT_FORM_CONTROL_SELECTOR,
+} from './components/enter-to-next.js';
+export type { EnterToNextOptions } from './components/enter-to-next.js';

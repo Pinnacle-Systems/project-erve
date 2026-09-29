@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader, StatusBadge } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, DatePicker, SelectField, SelectItem, Textarea, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState } from '@erve/data-display';
@@ -350,7 +350,8 @@ export function JobOrderCreatePage() {
       )}
 
       {selectedOrderSheets.length > 0 && (
-        <Panel title="Factory Assignment">
+        <div onKeyDown={createEnterToNextHandler()} className="space-y-3">
+          <Panel title="Factory Assignment">
           <FormGrid columns={3}>
             <SelectField label="Factory" value={factoryId || undefined} onValueChange={setFactoryId} width="fill">
               {(factoriesQuery.data ?? []).map((factory) => (
@@ -424,10 +425,9 @@ export function JobOrderCreatePage() {
             />
           </FormGrid>
         </Panel>
-      )}
 
-      {selectedOrderSheets.length > 0 && sizeRows.length > 0 && (
-        <Panel
+        {sizeRows.length > 0 && (
+          <Panel
           title="Combined Forecast vs Production Plan"
           description="The Production Plan is the Job Order's own, independent production quantity per size — it defaults to the Combined Forecast but is freely editable and is never re-derived from source Order Sheets once you edit it."
           footer={
@@ -491,6 +491,8 @@ export function JobOrderCreatePage() {
             rowKey="sizeId"
           />
         </Panel>
+      )}
+        </div>
       )}
     </div>
   );

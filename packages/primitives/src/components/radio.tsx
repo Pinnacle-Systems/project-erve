@@ -87,6 +87,7 @@ export const Radio = forwardRef<React.ElementRef<typeof RadioGroupPrimitive.Item
       <RadioGroupPrimitive.Item
         ref={ref}
         id={id}
+        data-form-control=""
         data-density={resolvedDensity}
         className={cn(radioVariants({ density: resolvedDensity, error: !!error }), className)}
         {...props}

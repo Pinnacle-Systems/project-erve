@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader } from '@erve/app-components';
+import { PageHeader, createEnterToNextHandler } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
@@ -85,6 +85,7 @@ export function ProcessFlowCreatePage() {
         <form
           noValidate
           className="space-y-6"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
             setError('');

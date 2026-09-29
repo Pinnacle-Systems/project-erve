@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse, UserOption } from '@erve/types';
-import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
+import { ConfirmDialog, PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
 import { Button, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -91,6 +91,7 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
       <div className="space-y-4">
         <form
           className="flex flex-wrap items-end gap-3"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
             assignMutation.mutate();

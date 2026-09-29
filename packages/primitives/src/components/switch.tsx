@@ -65,6 +65,7 @@ export const Switch = forwardRef<React.ElementRef<typeof SwitchPrimitives.Root>,
         id={id}
         aria-describedby={ariaDescribedBy}
         aria-invalid={!!error}
+        data-form-control=""
         data-density={resolvedDensity}
         className={cn(switchVariants({ density: resolvedDensity }), className)}
         {...props}

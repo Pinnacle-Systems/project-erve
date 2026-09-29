@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader, StatusBadge, TotalsPanel } from '@erve/app-components';
+import { createEnterToNextHandler, PageHeader, StatusBadge, TotalsPanel } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -164,7 +164,7 @@ export function FactoryInvoiceDetailPage() {
         </ValidationMessage>
       )}
 
-      <div className="space-y-6">
+      <div className="space-y-6" onKeyDown={createEnterToNextHandler()}>
         <Panel title="Invoice Details">
           <DescriptionList columns={4}>
             <DescriptionList.Item label="Factory" value={invoice.factory.name} />
