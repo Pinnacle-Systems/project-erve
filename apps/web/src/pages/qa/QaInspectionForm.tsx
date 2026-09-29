@@ -22,6 +22,7 @@ import {
   DialogTitle,
   SelectField,
   SelectItem,
+  Textarea,
   TextField,
   ValidationMessage,
 } from '@erve/primitives';
@@ -662,12 +663,12 @@ export function QaInspectionForm({
             </QualityChecklist>
           </FormSection>
           <FormSection title="Inspection remarks">
-            <textarea
+            <Textarea
               aria-label="Inspection remarks"
-              className="min-h-24 w-full rounded-control border border-[var(--erp-form-field-border)] bg-surface-raised px-[var(--erp-control-padding-x)] py-2 text-control text-foreground focus:border-[var(--erp-form-field-focus-border)] focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)]"
               disabled={readonly}
               value={draft.remarks}
               onChange={(event) => update({ remarks: event.target.value })}
+              className="min-h-24"
             />
           </FormSection>
           {!ppSample && (
@@ -718,33 +719,30 @@ export function QaInspectionForm({
                 ))}
               </SelectField>
               {draft.category === 'OTHER' ? (
-                <label className="flex flex-col gap-1.5 text-sm font-medium text-[var(--erp-form-label-color)]">
-                  Other defect details
-                  <textarea
-                    aria-label="Other defect details"
-                    className="min-h-20 w-full rounded-control border border-[var(--erp-form-field-border)] bg-surface-raised px-[var(--erp-control-padding-x)] py-2 text-control font-normal text-foreground focus:border-[var(--erp-form-field-focus-border)] focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)]"
-                    disabled={readonly}
-                    value={draft.other}
-                    onChange={(event) => {
-                      if (event.target.value.trim()) clearValidationErrors('other');
-                      update({ other: event.target.value });
-                    }}
-                  />
-                </label>
+                <Textarea
+                  label="Other defect details"
+                  aria-label="Other defect details"
+                  disabled={readonly}
+                  value={draft.other}
+                  errorMessage={errors.other}
+                  onChange={(event) => {
+                    if (event.target.value.trim()) clearValidationErrors('other');
+                    update({ other: event.target.value });
+                  }}
+                  className="min-h-20"
+                />
               ) : draft.category ? (
-                <label className="flex flex-col gap-1.5 text-sm font-medium text-[var(--erp-form-label-color)]">
-                  Defect notes
-                  <textarea
-                    aria-label="Defect notes"
-                    className="min-h-20 w-full rounded-control border border-[var(--erp-form-field-border)] bg-surface-raised px-[var(--erp-control-padding-x)] py-2 text-control font-normal text-foreground focus:border-[var(--erp-form-field-focus-border)] focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)]"
-                    disabled={readonly}
-                    value={draft.notes}
-                    onChange={(event) => update({ notes: event.target.value })}
-                  />
-                </label>
+                <Textarea
+                  label="Defect notes"
+                  aria-label="Defect notes"
+                  disabled={readonly}
+                  value={draft.notes}
+                  onChange={(event) => update({ notes: event.target.value })}
+                  className="min-h-20"
+                />
               ) : null}
             </FormGrid>
-            {errors.other && <p role="alert">{errors.other}</p>}
+            {errors.other && draft.category !== 'OTHER' && <p role="alert">{errors.other}</p>}
           </FormSection>
           <FormSection title={`Evidence for size ${selected.sizeLabel}`}>
             {evidence.length ? (

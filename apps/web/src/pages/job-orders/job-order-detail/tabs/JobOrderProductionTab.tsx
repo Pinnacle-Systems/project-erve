@@ -8,7 +8,7 @@ import {
   formatPreparedQuantity,
   formatPreparedVariance,
 } from '@erve/app-components';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, Textarea, TextField, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
 import { apiClient } from '../../../../lib/api-client.js';
@@ -238,41 +238,18 @@ export function JobOrderProductionTab({
         }
       >
         {disclaimer.canEdit ? (
-          <label className="flex flex-col gap-1 text-sm font-medium" htmlFor="job-order-disclaimer">
-            <span>
-              Disclaimer{' '}
-              <span className="text-[var(--erp-form-field-error-text-color)]" aria-hidden="true">
-                *
-              </span>
-            </span>
-            <textarea
-              ref={disclaimerRef}
-              id="job-order-disclaimer"
-              required
-              aria-invalid={Boolean(disclaimer.error) || undefined}
-              aria-describedby={disclaimer.error ? 'job-order-disclaimer-error' : 'job-order-disclaimer-help'}
-              className={`min-h-32 rounded-control border bg-surface-raised px-[var(--erp-control-padding-x)] py-2 font-normal focus:outline-hidden focus:ring-[length:var(--erp-focus-ring-width)] focus:ring-[var(--erp-focus-ring)] ${
-                disclaimer.error
-                  ? 'border-[var(--erp-form-field-error-border)] focus:border-[var(--erp-form-field-error-border)]'
-                  : 'border-[var(--erp-form-field-border)] focus:border-[var(--erp-form-field-focus-border)]'
-              }`}
-              value={disclaimer.text}
-              maxLength={10000}
-              onChange={(event) => disclaimer.onChange(event.target.value)}
-            />
-            {disclaimer.error ? (
-              <span
-                id="job-order-disclaimer-error"
-                className="text-xs font-normal text-[var(--erp-form-field-error-text-color)]"
-                role="alert"
-              >
-                {disclaimer.error}
-              </span>
-            ) : null}
-            <span id="job-order-disclaimer-help" className="text-xs font-normal text-muted-foreground">
-              Required before sending to the factory. {disclaimer.text.length}/10,000
-            </span>
-          </label>
+          <Textarea
+            ref={disclaimerRef}
+            id="job-order-disclaimer"
+            label="Disclaimer"
+            required
+            errorMessage={disclaimer.error || undefined}
+            helpText={`Required before sending to the factory. ${disclaimer.text.length}/10,000`}
+            value={disclaimer.text}
+            maxLength={10000}
+            onChange={(event) => disclaimer.onChange(event.target.value)}
+            className="min-h-32"
+          />
         ) : jobOrder.disclaimerText ? (
           <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 text-sm font-sans">
             {jobOrder.disclaimerText}

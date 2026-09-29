@@ -9,7 +9,7 @@ import type {
   QualityExecutionView,
 } from '@erve/types';
 import { FinalBatchAllocationForm, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, SelectField, SelectItem, Textarea, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
 import { apiClient } from '../../../../lib/api-client.js';
@@ -234,18 +234,16 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                           <p className="text-sm text-muted-foreground">No QA evidence attached.</p>
                         )}
                       </div>
-                      <label className="block text-sm font-medium">
-                        Correction notes
-                        <textarea
-                          className="mt-1 min-h-24 w-full rounded-control border border-border bg-surface-raised px-3 py-2 font-normal"
-                          maxLength={1000}
-                          readOnly={!canPerformQaRework}
-                          value={notes}
-                          onChange={(event) =>
-                            setReworkNotesDrafts((current) => ({ ...current, [task.id]: event.target.value }))
-                          }
-                        />
-                      </label>
+                      <Textarea
+                        label="Correction notes"
+                        maxLength={1000}
+                        readOnly={!canPerformQaRework}
+                        value={notes}
+                        onChange={(event) =>
+                          setReworkNotesDrafts((current) => ({ ...current, [task.id]: event.target.value }))
+                        }
+                        className="min-h-24"
+                      />
                       {canPerformQaRework && (
                         <div className="flex flex-wrap gap-2">
                           <Button
