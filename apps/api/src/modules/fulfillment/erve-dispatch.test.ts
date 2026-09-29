@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
@@ -599,5 +599,36 @@ describe('Inventory integrity through packing/consolidation/dispatch', () => {
       (l: { styleId: string; sizeId: string }) => l.styleId === fixture.stock.styleId && l.sizeId === fixture.stock.sizeId,
     );
     expect(line.availableQuantity).toBe(0);
+  });
+});
+
+describe('DAT-P1-01 — Erve Packing List Financial Year boundary resolution at 1-April IST', () => {
+  it('assigns the new Financial Year (2027-28) when created during 1-April early morning IST (02:00 IST / 20:30Z UTC)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // 2027-04-01 02:00:00 IST is 2027-03-31T20:30:00.000Z UTC.
+    // Pre-fix: new Date() passed directly to ensureFinancialYear reads UTC month March (2026-27).
+    // Post-fix: toBusinessCalendarDate normalizes to 2027-04-01 IST (2027-28).
+    vi.setSystemTime(new Date('2027-03-31T20:30:00.000Z'));
+    try {
+      const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
+      const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+      const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
+
+      const res = await request(app)
+        .post('/erve-packing-lists')
+        .set('Authorization', `Bearer ${fixture.merchToken}`)
+        .send({ cartonIds: [dispatch.cartonId] })
+        .expect(201);
+
+      expect(res.body.data.ervePackingListNumber).toMatch(/^EIPL\/27-28\//);
+
+      const persisted = await prisma.ervePackingList.findUniqueOrThrow({
+        where: { id: res.body.data.id },
+        include: { financialYear: true },
+      });
+      expect(persisted.financialYear.code).toBe('2027-28');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

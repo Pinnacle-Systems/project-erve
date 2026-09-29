@@ -6,6 +6,7 @@ import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
+import { toBusinessCalendarDate } from '../master-data/financial-year.util.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { createInvoiceHandoffsForDispatch } from './invoice-handoff.service.js';
@@ -539,7 +540,7 @@ export async function createErvePackingList(actor: CurrentUser, input: CreateErv
 
     const { distributorId, matchKey, originDestinationId, destinationSnapshot, saleOrderIds } = await loadAndValidateCartonsForConsolidation(tx, cartonIds, null);
 
-    const financialYear = await ensureFinancialYear(tx, new Date());
+    const financialYear = await ensureFinancialYear(tx, toBusinessCalendarDate(new Date()));
     const { ervePackingListNumber, ervePackingListSerial } = await generateErvePackingListNumber(tx, financialYear);
 
     await tx.ervePackingList.create({

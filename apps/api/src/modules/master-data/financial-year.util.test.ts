@@ -61,6 +61,47 @@ describe('toBusinessCalendarDate', () => {
     const window = computeFinancialYearWindow(toBusinessCalendarDate(instant));
     expect(window.code).toBe('2026-27');
   });
+
+  describe('DAT-P1-01 boundary semantics', () => {
+    it('resolves Mar 31 23:59:59 IST to the previous FY (2026-27)', () => {
+      // 2027-03-31 23:59:59 IST == 2027-03-31T18:29:59.000Z UTC
+      const instant = new Date('2027-03-31T18:29:59.000Z');
+      const businessDate = toBusinessCalendarDate(instant);
+      const window = computeFinancialYearWindow(businessDate);
+      expect(window.code).toBe('2026-27');
+    });
+
+    it('resolves Apr 1 00:00:00 IST to the new FY (2027-28)', () => {
+      // 2027-04-01 00:00:00 IST == 2027-03-31T18:30:00.000Z UTC
+      const instant = new Date('2027-03-31T18:30:00.000Z');
+      const businessDate = toBusinessCalendarDate(instant);
+      const window = computeFinancialYearWindow(businessDate);
+      expect(window.code).toBe('2027-28');
+    });
+
+    it('resolves Apr 1 02:00:00 IST to the new FY (2027-28)', () => {
+      // 2027-04-01 02:00:00 IST == 2027-03-31T20:30:00.000Z UTC
+      const instant = new Date('2027-03-31T20:30:00.000Z');
+      const businessDate = toBusinessCalendarDate(instant);
+      const window = computeFinancialYearWindow(businessDate);
+      expect(window.code).toBe('2027-28');
+    });
+
+    it('resolves Apr 1 05:29:59 IST to the new FY (2027-28)', () => {
+      // 2027-04-01 05:29:59 IST == 2027-03-31T23:59:59.000Z UTC
+      const instant = new Date('2027-03-31T23:59:59.000Z');
+      const businessDate = toBusinessCalendarDate(instant);
+      const window = computeFinancialYearWindow(businessDate);
+      expect(window.code).toBe('2027-28');
+    });
+
+    it('resolves a normal mid-year date to the expected FY (2027-28)', () => {
+      const instant = new Date('2027-10-15T10:00:00.000Z');
+      const businessDate = toBusinessCalendarDate(instant);
+      const window = computeFinancialYearWindow(businessDate);
+      expect(window.code).toBe('2027-28');
+    });
+  });
 });
 
 describe('parseStrictCalendarDate', () => {

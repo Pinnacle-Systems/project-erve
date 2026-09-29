@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createId, FACTORY_DISPATCH_BROAD_READ_ROLES, FACTORY_DISPATCH_MUTATION_ROLES } from '@erve/shared';
 import { createApp } from '../../app.js';
@@ -1368,5 +1368,35 @@ describe('Packing List — IDOR (Phase 4 pre-FactoryDispatch read)', () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const { token: qaToken } = await createRoleToken('QA_USER');
     await packingList(qaToken, fixture.saleOrder.id).expect(403);
+  });
+});
+
+describe('DAT-P1-01 — Factory Dispatch Financial Year boundary resolution at 1-April IST', () => {
+  it('assigns the new Financial Year (2027-28) when created during 1-April early morning IST (02:00 IST / 20:30Z UTC)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // 2027-04-01 02:00:00 IST is 2027-03-31T20:30:00.000Z UTC.
+    // Pre-fix: new Date() passed directly to ensureFinancialYear reads UTC month March (2026-27).
+    // Post-fix: toBusinessCalendarDate normalizes to 2027-04-01 IST (2027-28).
+    vi.setSystemTime(new Date('2027-03-31T20:30:00.000Z'));
+    try {
+      const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
+      const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+      const created = await createCarton(factoryToken, fixture.saleOrder.id, {
+        cartonNumber: 'C1',
+        destinationId: destinationOf(fixture.saleOrder),
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }],
+      }).expect(200);
+
+      const dispatch = created.body.data.factoryDispatch;
+      expect(dispatch.factoryDispatchNumber).toMatch(/^EIFD\/27-28\//);
+
+      const persisted = await prisma.factoryDispatch.findUniqueOrThrow({
+        where: { id: dispatch.id },
+        include: { financialYear: true },
+      });
+      expect(persisted.financialYear.code).toBe('2027-28');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
