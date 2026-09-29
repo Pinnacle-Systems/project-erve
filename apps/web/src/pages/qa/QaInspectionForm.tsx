@@ -191,6 +191,8 @@ export function QaInspectionForm({
   const [reopenReason, setReopenReason] = useState('');
   const [ppSampleDecision, setPpSampleDecision] = useState<'PASS' | 'FAIL' | ''>('');
   const [pendingFinalize, setPendingFinalize] = useState<SaveMutationVariables | null>(null);
+  const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const evidenceInputRef = useRef<HTMLInputElement>(null);
   // Entered-but-unsaved size results live only in `drafts` (cleared per form on save).
   useUnsavedChangesWarning(Object.keys(drafts).length > 0 || reopenReason.trim() !== '');
@@ -431,22 +433,33 @@ export function QaInspectionForm({
     }
     mutation.mutate(variables);
   };
-  const reload = async () => {
-    if (
-      drafts[selected.id] &&
-      !window.confirm(`Reloading size ${selected.sizeLabel} discards unsaved edits.`)
-    )
+  const executeReload = async () => {
+    if (!selected) return;
+    setReloading(true);
+    try {
+      const updated = await refresh();
+      setDrafts((all) => {
+        const next = { ...all };
+        delete next[selected.id];
+        return next;
+      });
+      setStale(false);
+      setErrors({});
+      setNotice(`Reloaded size ${selected.sizeLabel}.`);
+      onUpdated(updated);
+    } finally {
+      setReloading(false);
+      setReloadConfirmOpen(false);
+    }
+  };
+
+  const handleReloadClick = async () => {
+    if (!selected) return;
+    if (drafts[selected.id]) {
+      setReloadConfirmOpen(true);
       return;
-    const updated = await refresh();
-    setDrafts((all) => {
-      const next = { ...all };
-      delete next[selected.id];
-      return next;
-    });
-    setStale(false);
-    setErrors({});
-    setNotice(`Reloaded size ${selected.sizeLabel}.`);
-    onUpdated(updated);
+    }
+    await executeReload();
   };
   const formActions = (
     <QualityExecutionActions
@@ -783,7 +796,7 @@ export function QaInspectionForm({
           {stale && (
             <ValidationMessage tone="error" role="alert">
               <span>This size inspection has changed since you opened it.</span>{' '}
-              <Button type="button" variant="ghost" density="compact" onClick={() => void reload()}>
+              <Button type="button" variant="ghost" density="compact" onClick={() => void handleReloadClick()}>
                 Reload latest
               </Button>
             </ValidationMessage>
@@ -844,6 +857,22 @@ export function QaInspectionForm({
           if (pendingFinalize) mutation.mutate(pendingFinalize);
         }}
       />
+      {selected ? (
+        <ConfirmDialog
+          open={reloadConfirmOpen}
+          onOpenChange={(open) => {
+            setReloadConfirmOpen(open);
+            if (!open) setReloading(false);
+          }}
+          title={`Discard unsaved edits for size ${selected.sizeLabel}?`}
+          description={`Reloading size ${selected.sizeLabel} discards unsaved edits.`}
+          confirmLabel="Discard and reload"
+          cancelLabel="Keep editing"
+          destructive
+          loading={reloading}
+          onConfirm={() => void executeReload()}
+        />
+      ) : null}
     </>
   );
 }

@@ -1084,7 +1084,6 @@ describe('QaInspectionForm', () => {
       response: { data: { error: { code: 'STALE_VERSION', message: 'stale' } } },
     });
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: latest } } as never);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await renderHarness(initial);
     await act(async () => button('Finalize size M').click());
     expect(container.textContent).toContain(
@@ -1107,6 +1106,77 @@ describe('QaInspectionForm', () => {
     expect(
       (container.querySelector('[aria-label="Quantity of samples"]') as HTMLInputElement).value,
     ).toBe('3');
+  });
+
+  it('shows shared ConfirmDialog with destructive styling when reloading a size with unsaved edits, keeping edits on cancel and discarding on confirm', async () => {
+    const initial = editableRejectedM();
+    const latest = editableRejectedM();
+    const evidence = {
+      id: 'evidence-m',
+      inspectionLineId: 'form-1',
+      fileName: 'proof.png',
+      contentType: 'image/png',
+      sizeBytes: 1,
+      createdAt: '2026-08-06T11:00:00Z',
+    };
+    initial.sessions[0]!.evidence = [evidence];
+    latest.sessions[0]!.evidence = [evidence];
+    latest.sessions[0]!.forms[0]!.version = 2;
+    latest.sessions[0]!.forms[0]!.inspectionRemarks = 'Original server remarks';
+    initial.sessions[0]!.forms[0]!.inspectionRemarks = 'Original server remarks';
+
+    vi.spyOn(apiClient, 'request').mockRejectedValue({
+      isAxiosError: true,
+      response: { data: { error: { code: 'STALE_VERSION', message: 'stale' } } },
+    });
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: latest } } as never);
+    const confirmSpy = vi.spyOn(window, 'confirm');
+
+    await renderHarness(initial);
+    const remarks = container.querySelector('textarea[aria-label="Inspection remarks"]') as HTMLTextAreaElement;
+    expect(remarks).toBeDefined();
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(remarks, 'Unsaved draft remarks');
+      remarks.dispatchEvent(new Event('input', { bubbles: true }));
+      remarks.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await act(async () => button('Finalize size M').click());
+    expect(container.textContent).toContain('This size inspection has changed since you opened it.');
+
+    await act(async () => button('Reload latest').click());
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    expect(document.body.textContent).toContain('Discard unsaved edits for size M?');
+    expect(document.body.textContent).toContain('Reloading size M discards unsaved edits.');
+
+    const discardBtn = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Discard and reload',
+    ) as HTMLButtonElement;
+    expect(discardBtn).toBeDefined();
+    expect(discardBtn.className).toContain('bg-danger');
+
+    const keepEditingBtn = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Keep editing',
+    ) as HTMLButtonElement;
+    expect(keepEditingBtn).toBeDefined();
+    await act(async () => keepEditingBtn.click());
+
+    expect(get).not.toHaveBeenCalledWith('/qa/job-orders/jo-1');
+    expect((container.querySelector('textarea[aria-label="Inspection remarks"]') as HTMLTextAreaElement).value).toBe('Unsaved draft remarks');
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+
+    await act(async () => button('Reload latest').click());
+    const discardBtn2 = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Discard and reload',
+    ) as HTMLButtonElement;
+    await act(async () => discardBtn2.click());
+
+    expect(get).toHaveBeenCalledWith('/qa/job-orders/jo-1');
+    expect(container.textContent).toContain('Reloaded size M.');
+    expect((container.querySelector('textarea[aria-label="Inspection remarks"]') as HTMLTextAreaElement).value).toBe('Original server remarks');
   });
 
   it.each(['ADMIN', 'MERCHANDISER'])(

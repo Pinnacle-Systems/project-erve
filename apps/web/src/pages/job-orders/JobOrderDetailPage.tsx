@@ -348,6 +348,7 @@ export function JobOrderDetailPage() {
         title="Cancel this Job Order?"
         description="This Job Order will be cancelled and production cannot continue on it. Its source Order Sheets remain locked and mapped to this Job Order — they are not released or made available for another Job Order. This cannot be undone."
         confirmLabel="Yes, cancel Job Order"
+        destructive
         loading={cancelJobOrderMutation.isPending}
         onConfirm={() => cancelJobOrderMutation.mutate()}
       />

@@ -13,6 +13,7 @@ import { setStoredToken } from '../../auth/token-storage.js';
 import { AppRoutes } from '../../routes/AppRoutes.js';
 import { ProcessFlowCreatePage } from './ProcessFlowCreatePage.js';
 import { ProcessFlowDetailPage } from './ProcessFlowDetailPage.js';
+import { ProcessFlowVersionEditorPage } from './ProcessFlowVersionEditorPage.js';
 import {
   newDraftStage,
   ProcessStageEditor,
@@ -470,5 +471,139 @@ describe('process-flow route access', () => {
     await renderRoutes(['FACTORY_USER']);
     expect(container.textContent).toContain('Access denied');
     expect(container.textContent).not.toContain('Create Draft');
+  });
+});
+
+describe('ProcessFlowVersionEditorPage discard confirmation (UX-15)', () => {
+  const draftVersion: ProcessFlowVersion = {
+    id: 'v-draft',
+    processFlowId: 'flow-1',
+    processFlowCode: 'FLOW-1',
+    processFlowName: 'T-Shirt Assembly',
+    versionNumber: 2,
+    status: 'DRAFT',
+    effectiveFrom: null,
+    stages: [
+      productionActivity('act-1', 'Cutting'),
+    ],
+    createdAt: '2026-02-01T00:00:00.000Z',
+    updatedAt: '2026-02-01T00:00:00.000Z',
+  };
+
+  function setupAdapter() {
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/process-flow-versions/v-draft') {
+        return ok(config, { success: true, data: draftVersion });
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    }) satisfies AxiosAdapter;
+  }
+
+  function renderEditor() {
+    setupAdapter();
+    act(() => {
+      root.render(
+        <Providers initialEntry="/master-data/process-flow-versions/v-draft">
+          <Routes>
+            <Route
+              path="/master-data/process-flow-versions/:versionId"
+              element={<ProcessFlowVersionEditorPage />}
+            />
+            <Route
+              path="/master-data/process-flows/:id"
+              element={<div data-testid="detail-destination">Detail Page Destination</div>}
+            />
+          </Routes>
+        </Providers>,
+      );
+    });
+  }
+
+  it('navigates immediately without a confirmation dialog when no edits were made', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    renderEditor();
+    await flush();
+    await flush();
+
+    expect(container.textContent).toContain('Edit T-Shirt Assembly v2');
+    click('Cancel');
+    await flush();
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelector('[data-testid="detail-destination"]')).not.toBeNull();
+  });
+
+  it('opens shared ConfirmDialog with destructive treatment when canceling dirty edits, keeps edits on cancel, and discards on confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    renderEditor();
+    await flush();
+    await flush();
+
+    expect(container.textContent).toContain('Edit T-Shirt Assembly v2');
+
+    // Make an edit
+    const input = container.querySelector<HTMLInputElement>('ol input');
+    expect(input).not.toBeNull();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(input, 'Cutting Modified');
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+
+    // Click Cancel
+    click('Cancel');
+    await flush();
+
+    // Native window.confirm must not be called
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    // Shared ConfirmDialog is open in document.body
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(document.body.textContent).toContain('Discard unsaved stage changes?');
+    expect(document.body.textContent).toContain('Any unsaved changes to activities and sequence will be lost.');
+
+    // Confirm button has destructive styling
+    const discardButton = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Discard changes',
+    ) as HTMLButtonElement;
+    expect(discardButton).toBeDefined();
+    expect(discardButton.className).toContain('bg-danger');
+
+    // Cancel the dialog ("Keep editing")
+    const keepEditingButton = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Keep editing',
+    ) as HTMLButtonElement;
+    expect(keepEditingButton).toBeDefined();
+    await act(async () => {
+      keepEditingButton.click();
+    });
+    await flush();
+
+    // Dialog is closed, edits remain, still on editor
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelector<HTMLInputElement>('ol input')?.value).toBe('Cutting Modified');
+    expect(container.querySelector('[data-testid="detail-destination"]')).toBeNull();
+
+    // Click Cancel again
+    click('Cancel');
+    await flush();
+
+    const discardAgain = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Discard changes',
+    ) as HTMLButtonElement;
+    expect(discardAgain).toBeDefined();
+
+    // Confirm discard
+    await act(async () => {
+      discardAgain.click();
+    });
+    await flush();
+
+    // Discard proceeded: navigated to destination
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelector('[data-testid="detail-destination"]')).not.toBeNull();
   });
 });
