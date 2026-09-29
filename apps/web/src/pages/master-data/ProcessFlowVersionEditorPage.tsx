@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader, StatusBadge } from '@erve/app-components';
+import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, ValidationMessage } from '@erve/primitives';
 import { FormSection, Panel } from '@erve/layout';
 import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -23,6 +23,8 @@ export function ProcessFlowVersionEditorPage() {
   const [stages, setStages] = useState<DraftStage[]>([]);
   const [initialSignature, setInitialSignature] = useState('');
   const [error, setError] = useState('');
+  const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
 
   const versionQuery = useQuery({
     queryKey: ['process-flow-version', versionId],
@@ -55,9 +57,23 @@ export function ProcessFlowVersionEditorPage() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
 
-  const back = () => {
-    if (dirty && !window.confirm('Discard unsaved stage changes?')) return;
+  const navigateBack = () => {
     navigate(`/master-data/process-flows/${versionQuery.data!.processFlowId}?version=${versionId}`);
+  };
+
+  const handleCancelClick = () => {
+    if (dirty) {
+      setDiscardDialogOpen(true);
+      return;
+    }
+    navigateBack();
+  };
+
+  const handleConfirmDiscard = () => {
+    if (discarding) return;
+    setDiscarding(true);
+    setDiscardDialogOpen(false);
+    navigateBack();
   };
 
   const mutation = useMutation({
@@ -140,7 +156,7 @@ export function ProcessFlowVersionEditorPage() {
         subtitle="Changes remain in draft until this version is activated"
         status={<StatusBadge label="DRAFT" tone="pending" />}
         secondaryActions={
-          <Button type="button" variant="secondary" onClick={back}>
+          <Button type="button" variant="secondary" onClick={handleCancelClick}>
             Cancel
           </Button>
         }
@@ -159,7 +175,7 @@ export function ProcessFlowVersionEditorPage() {
           </FormSection>
           {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
           <div className="flex justify-end gap-3 border-t border-border-subtle pt-4">
-            <Button type="button" variant="secondary" onClick={back}>
+            <Button type="button" variant="secondary" onClick={handleCancelClick}>
               Cancel
             </Button>
             <Button type="submit" variant="default" loading={mutation.isPending} disabled={!dirty}>
@@ -168,6 +184,20 @@ export function ProcessFlowVersionEditorPage() {
           </div>
         </form>
       </Panel>
+
+      <ConfirmDialog
+        open={discardDialogOpen}
+        onOpenChange={(open) => {
+          setDiscardDialogOpen(open);
+          if (!open) setDiscarding(false);
+        }}
+        title="Discard unsaved stage changes?"
+        description="Any unsaved changes to activities and sequence will be lost."
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={handleConfirmDiscard}
+      />
     </div>
   );
 }

@@ -418,8 +418,10 @@ describe('JobOrderDetailPage Cancel Job Order (Correction 4)', () => {
         (button) => button.textContent === 'Yes, cancel Job Order',
       ) as HTMLButtonElement;
       expect(confirm).toBeDefined();
+      expect(confirm.className).toContain('bg-danger');
       await act(async () => confirm.click());
 
+      expect(post).toHaveBeenCalledTimes(1);
       expect(post).toHaveBeenCalledWith(
         '/job-orders/jo-1/actions/cancel',
         { expectedVersion: 1 },
@@ -427,6 +429,24 @@ describe('JobOrderDetailPage Cancel Job Order (Correction 4)', () => {
       );
     },
   );
+
+  it('leaves the Job Order unchanged and does not invoke mutation when dialog is cancelled', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: mockJobOrder('CANCELLED') } });
+    await renderJobOrderDetail(container, root, { status: 'DRAFT' });
+    const trigger = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Cancel Job Order',
+    ) as HTMLButtonElement;
+    act(() => trigger.click());
+
+    const cancelAction = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Cancel',
+    ) as HTMLButtonElement;
+    expect(cancelAction).toBeDefined();
+    await act(async () => cancelAction.click());
+
+    expect(post).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
 
   it('shows the consequence of cancellation before confirming', async () => {
     vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: mockJobOrder('CANCELLED') } });
