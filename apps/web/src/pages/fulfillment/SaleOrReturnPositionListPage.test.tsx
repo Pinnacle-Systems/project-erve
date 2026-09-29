@@ -167,7 +167,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
       });
       await flush();
 
-      const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+      const dateInput = container.querySelector('input[placeholder="DD/MM/YYYY"]') as HTMLInputElement;
       act(() => {
         nativeSetter.call(dateInput, '2026-09-01');
         dateInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -341,7 +341,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
         nativeSetter.call(qtyInput, '10');
         qtyInput.dispatchEvent(new Event('input', { bubbles: true }));
       });
-      const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+      const dateInput = container.querySelector('input[placeholder="DD/MM/YYYY"]') as HTMLInputElement;
       act(() => {
         nativeSetter.call(dateInput, '2026-09-01');
         dateInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -378,7 +378,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
         nativeSetter.call(returnQtyInput, '5');
         returnQtyInput.dispatchEvent(new Event('input', { bubbles: true }));
       });
-      const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+      const dateInput = container.querySelector('input[placeholder="DD/MM/YYYY"]') as HTMLInputElement;
       act(() => {
         nativeSetter.call(dateInput, '2026-09-01');
         dateInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -507,7 +507,7 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
         nativeSetter.call(rowBReportInput, '5');
         rowBReportInput.dispatchEvent(new Event('input', { bubbles: true }));
       });
-      const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+      const dateInput = container.querySelector('input[placeholder="DD/MM/YYYY"]') as HTMLInputElement;
       act(() => {
         nativeSetter.call(dateInput, '2026-09-01');
         dateInput.dispatchEvent(new Event('input', { bubbles: true }));

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { StatusBadge } from '@erve/app-components';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
 import { apiClient } from '../../../../lib/api-client.js';
@@ -295,11 +295,10 @@ export function JobOrderOverviewTab({ jobOrder, canManageJobOrders }: JobOrderOv
             </div>
           }
         >
-          <TextField
+          <DatePicker
             label="Required Delivery Date"
-            type="date"
             value={deliveryDateDraft ?? jobOrder.requiredDeliveryDate?.slice(0, 10) ?? ''}
-            onChange={(event) => setDeliveryDateDraft(event.target.value)}
+            onValueChange={(val) => setDeliveryDateDraft(val ?? '')}
             width="fill"
           />
           {deliveryDateMutation.isError && (

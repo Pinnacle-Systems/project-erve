@@ -16,6 +16,17 @@ import { createPortal } from "react-dom";
 import { cn } from "../lib/utils";
 import { useResolvedDensity } from "../lib/density";
 import { ValidationMessage } from "./validation-message";
+import {
+  type DateDisplayFormat,
+  formatCanonicalDate,
+  formatDisplayDate,
+  isDateOutOfRange,
+  isPartialDateInput,
+  parseCanonicalDate,
+  parseDateInput,
+  toCanonicalDateString,
+  toSafeLocalDate,
+} from "../lib/date-utils";
 
 const datePickerFieldVariants = cva(
   [
@@ -91,11 +102,6 @@ const monthFormatter = new Intl.DateTimeFormat("en", {
   month: "long",
   year: "numeric",
 });
-const displayFormatter = new Intl.DateTimeFormat("en", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
 const labelFormatter = new Intl.DateTimeFormat("en", {
   weekday: "long",
   month: "long",
@@ -111,7 +117,7 @@ type PopoverPosition = {
   top: number;
 };
 
-type DateDisplayFormat = "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd" | "short";
+export type { DateDisplayFormat };
 export type DatePickerWidth = "full" | "fill" | "xs" | "sm" | "md" | "lg" | "xl";
 
 const fieldWidthClasses: Record<DatePickerWidth, string> = {
@@ -138,112 +144,46 @@ export interface DatePickerProps
   width?: DatePickerWidth;
 }
 
+function formatDisplayPlaceholder(format: DateDisplayFormat): string {
+  switch (format) {
+    case "dd/mm/yyyy":
+      return "DD/MM/YYYY";
+    case "mm/dd/yyyy":
+      return "MM/DD/YYYY";
+    case "yyyy-mm-dd":
+      return "YYYY-MM-DD";
+    case "short":
+      return "DD/MM/YYYY";
+    default:
+      return "DD/MM/YYYY";
+  }
+}
+
 function formatDateForInput(date: string | Date | undefined): string | undefined {
   if (!date) return undefined;
   if (typeof date === "string") return date;
-  return date.toISOString().split("T")[0];
+  return toCanonicalDateString(date);
 }
 
 function parseInputDate(value: string | undefined): Date | undefined {
   if (!value) return undefined;
-  const [year, month, day] = value.split("-").map(Number);
-  if (year === undefined || month === undefined || day === undefined) return undefined;
-  return createValidDate(year, month, day);
-}
-
-function createValidDate(year: number, month: number, day: number): Date | undefined {
-  if (!year || !month || !day) return undefined;
-  const date = new Date(year, month - 1, day);
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day)
-    return undefined;
-  return date;
-}
-
-function toInputDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  const parts = parseCanonicalDate(value);
+  if (!parts) return undefined;
+  return toSafeLocalDate(parts.year, parts.month, parts.day);
 }
 
 function isSameDate(a: Date | undefined, b: Date | undefined): boolean {
-  return !!a && !!b && toInputDate(a) === toInputDate(b);
-}
-
-function isOutOfRange(
-  date: Date,
-  min: InputHTMLAttributes<HTMLInputElement>["min"],
-  max: InputHTMLAttributes<HTMLInputElement>["max"],
-): boolean {
-  const value = toInputDate(date);
-  const minValue = typeof min === "string" ? min : undefined;
-  const maxValue = typeof max === "string" ? max : undefined;
-
-  return (!!minValue && value < minValue) || (!!maxValue && value > maxValue);
+  return !!a && !!b && toCanonicalDateString(a) === toCanonicalDateString(b);
 }
 
 function toMonthIndex(date: Date): number {
   return date.getFullYear() * 12 + date.getMonth();
 }
 
-function formatDisplayDate(date: Date | undefined, displayFormat: DateDisplayFormat): string {
-  if (!date) return "";
-  const yyyy = String(date.getFullYear());
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const dd = String(date.getDate()).padStart(2, "0");
-
-  switch (displayFormat) {
-    case "dd/mm/yyyy":
-      return `${dd}/${mm}/${yyyy}`;
-    case "mm/dd/yyyy":
-      return `${mm}/${dd}/${yyyy}`;
-    case "yyyy-mm-dd":
-      return `${yyyy}-${mm}-${dd}`;
-    case "short":
-      return displayFormatter.format(date);
-    default:
-      return `${dd}/${mm}/${yyyy}`;
-  }
-}
-
-function parseTypedDate(value: string, displayFormat: DateDisplayFormat): Date | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-
-  const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (isoMatch) {
-    return createValidDate(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
-  }
-
-  const slashMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (slashMatch) {
-    const first = Number(slashMatch[1]);
-    const second = Number(slashMatch[2]);
-    const year = Number(slashMatch[3]);
-    const month = displayFormat === "mm/dd/yyyy" ? first : second;
-    const day = displayFormat === "mm/dd/yyyy" ? second : first;
-    return createValidDate(year, month, day);
-  }
-
-  const parsed = new Date(trimmed);
-  if (!Number.isNaN(parsed.getTime())) {
-    return createValidDate(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
-  }
-
-  return undefined;
-}
-
-function isCompleteTypedDate(value: string): boolean {
-  const trimmed = value.trim();
-  return (
-    /^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed) ||
-    /^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(trimmed) ||
-    /[a-z]/i.test(trimmed)
-  );
-}
-
 function getCalendarDays(monthDate: Date): Date[] {
-  const firstOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstOfMonth = toSafeLocalDate(year, month + 1, 1);
   const start = new Date(firstOfMonth);
   start.setDate(firstOfMonth.getDate() - firstOfMonth.getDay());
 
@@ -301,29 +241,36 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     const [uncontrolledValue, setUncontrolledValue] = useState<string | undefined>(initialValue);
     const selectedValue = formatDateForInput(value) ?? uncontrolledValue;
     const selectedDate = parseInputDate(selectedValue);
-    const selectedDisplayValue = formatDisplayDate(selectedDate, displayFormat);
+    const selectedDisplayValue = selectedDate
+      ? formatDisplayDate(selectedDate, displayFormat)
+      : (selectedValue ?? "");
     const [draftValue, setDraftValue] = useState(selectedDisplayValue);
     const [draftError, setDraftError] = useState<string | undefined>();
+    const lastCommittedValueRef = useRef<string | undefined>(selectedValue);
     const [isOpen, setIsOpen] = useState(false);
-    const [visibleMonth, setVisibleMonth] = useState<Date>(selectedDate ?? new Date());
+    const [visibleMonth, setVisibleMonth] = useState<Date>(
+      selectedDate ?? toSafeLocalDate(new Date().getFullYear(), new Date().getMonth() + 1, 1),
+    );
     const rootRef = useRef<HTMLDivElement>(null);
     const popoverRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
     const dayRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const [popoverPosition, setPopoverPosition] = useState<PopoverPosition>({ left: 0, top: 0 });
+    const minCanonical = typeof props.min === "string" ? props.min : undefined;
+    const maxCanonical = typeof props.max === "string" ? props.max : undefined;
     const days = useMemo(() => getCalendarDays(visibleMonth), [visibleMonth]);
-    const today = parseInputDate(toInputDate(new Date()));
-    const todayDisabled = today ? isOutOfRange(today, props.min, props.max) : true;
+    const todayCanonical = toCanonicalDateString(new Date());
+    const todayDisabled = isDateOutOfRange(todayCanonical, minCanonical, maxCanonical);
+    const today = parseInputDate(todayCanonical);
     const headingId = `${inputId}-heading`;
     const validationError = error ?? draftError;
     const errorId = validationError ? `${inputId}-error` : undefined;
     const ariaDescribedBy =
       [errorId, descId, props["aria-describedby"]].filter(Boolean).join(" ") || undefined;
-    const isDraftDirty = draftValue !== selectedDisplayValue;
-    const normalizedSubmitValue = draftError || isDraftDirty ? "" : (selectedValue ?? "");
-    const effectivePlaceholder = placeholder ?? displayFormat;
-    const minDate = typeof props.min === "string" ? parseInputDate(props.min) : undefined;
-    const maxDate = typeof props.max === "string" ? parseInputDate(props.max) : undefined;
+    const normalizedSubmitValue = draftError ? "" : (selectedValue ?? "");
+    const effectivePlaceholder = placeholder ?? formatDisplayPlaceholder(displayFormat);
+    const minDate = parseInputDate(minCanonical);
+    const maxDate = parseInputDate(maxCanonical);
     const minYear = minDate?.getFullYear() ?? visibleMonth.getFullYear() - 10;
     const maxYear = maxDate?.getFullYear() ?? visibleMonth.getFullYear() + 10;
     const yearOptions = Array.from(
@@ -331,7 +278,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
       (_, index) => minYear + index,
     );
     const canMoveToMonth = (offset: number) => {
-      const nextMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + offset, 1);
+      const nextMonth = toSafeLocalDate(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1 + offset, 1);
       const nextMonthIndex = toMonthIndex(nextMonth);
       const minMonthIndex = minDate ? toMonthIndex(minDate) : undefined;
       const maxMonthIndex = maxDate ? toMonthIndex(maxDate) : undefined;
@@ -348,14 +295,18 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
 
     useEffect(() => {
       if (selectedDate) {
-        setVisibleMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
+        setVisibleMonth(toSafeLocalDate(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1));
       }
     }, [selectedValue]);
 
     useEffect(() => {
-      setDraftValue(selectedDisplayValue);
-      setDraftError(undefined);
-    }, [selectedDisplayValue]);
+      if (selectedValue !== lastCommittedValueRef.current) {
+        lastCommittedValueRef.current = selectedValue;
+        const parsed = parseCanonicalDate(selectedValue);
+        setDraftValue(parsed ? formatDisplayDate(parsed, displayFormat) : (selectedValue ?? ""));
+        setDraftError(undefined);
+      }
+    }, [selectedValue, displayFormat]);
 
     const updatePopoverPosition = () => {
       const rect = triggerRef.current?.getBoundingClientRect();
@@ -388,7 +339,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             (day) =>
               isSameDate(day, preferredDate) &&
               day.getMonth() === visibleMonth.getMonth() &&
-              !isOutOfRange(day, props.min, props.max),
+              !isDateOutOfRange(toCanonicalDateString(day), minCanonical, maxCanonical),
           )
         : -1;
 
@@ -398,14 +349,15 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             (day) =>
               isSameDate(day, today) &&
               day.getMonth() === visibleMonth.getMonth() &&
-              !isOutOfRange(day, props.min, props.max),
+              !isDateOutOfRange(toCanonicalDateString(day), minCanonical, maxCanonical),
           )
         : -1;
       if (todayIndex >= 0) return todayIndex;
 
       return days.findIndex(
         (day) =>
-          day.getMonth() === visibleMonth.getMonth() && !isOutOfRange(day, props.min, props.max),
+          day.getMonth() === visibleMonth.getMonth() &&
+          !isDateOutOfRange(toCanonicalDateString(day), minCanonical, maxCanonical),
       );
     };
 
@@ -486,79 +438,128 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
 
     const moveMonth = (offset: number) => {
       if (!canMoveToMonth(offset)) return;
-      setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+      setVisibleMonth((current) =>
+        toSafeLocalDate(current.getFullYear(), current.getMonth() + 1 + offset, 1),
+      );
     };
 
     const moveYear = (offset: number) => {
       if (!canMoveToMonth(offset * 12)) return;
-      setVisibleMonth((current) => new Date(current.getFullYear() + offset, current.getMonth(), 1));
+      setVisibleMonth((current) =>
+        toSafeLocalDate(current.getFullYear() + offset, current.getMonth() + 1, 1),
+      );
     };
 
     const handleMonthChange = (event: ChangeEvent<HTMLSelectElement>) => {
       const nextMonth = Number(event.target.value);
-      setVisibleMonth((current) => new Date(current.getFullYear(), nextMonth, 1));
+      setVisibleMonth((current) => toSafeLocalDate(current.getFullYear(), nextMonth + 1, 1));
     };
 
     const handleYearChange = (event: ChangeEvent<HTMLSelectElement>) => {
       const nextYear = Number(event.target.value);
-      setVisibleMonth((current) => new Date(nextYear, current.getMonth(), 1));
+      setVisibleMonth((current) => toSafeLocalDate(nextYear, current.getMonth() + 1, 1));
     };
 
     const selectDate = (date: Date) => {
-      if (isOutOfRange(date, props.min, props.max)) return;
-      const nextValue = toInputDate(date);
-      setDraftValue(formatDisplayDate(date, displayFormat));
+      const canonical = toCanonicalDateString(date);
+      if (isDateOutOfRange(canonical, minCanonical, maxCanonical)) return;
+      const parsed = parseCanonicalDate(canonical);
+      setDraftValue(formatDisplayDate(parsed, displayFormat));
       setDraftError(undefined);
-      setDateValue(nextValue);
+      lastCommittedValueRef.current = canonical;
+      setDateValue(canonical);
       closePopover();
-    };
-
-    const validateAndCommitTypedDate = (nextDraftValue: string) => {
-      const trimmed = nextDraftValue.trim();
-      if (!trimmed) {
-        setDraftError(undefined);
-        setDateValue(undefined);
-        return;
-      }
-
-      const parsedDate = parseTypedDate(trimmed, displayFormat);
-      if (!parsedDate) {
-        if (isCompleteTypedDate(trimmed)) {
-          setDraftError(`Enter a valid date in ${displayFormat} format.`);
-        } else {
-          setDraftError(undefined);
-        }
-        return;
-      }
-
-      if (isOutOfRange(parsedDate, props.min, props.max)) {
-        setDraftError("Date is outside the allowed range.");
-        return;
-      }
-
-      setDraftError(undefined);
-      setVisibleMonth(new Date(parsedDate.getFullYear(), parsedDate.getMonth(), 1));
-      setDateValue(toInputDate(parsedDate));
     };
 
     const handleTextInputChange = (event: ChangeEvent<HTMLInputElement>) => {
       const nextDraftValue = event.target.value;
       setDraftValue(nextDraftValue);
-      validateAndCommitTypedDate(nextDraftValue);
+
+      const trimmed = nextDraftValue.trim();
+      if (!trimmed) {
+        setDraftError(undefined);
+        lastCommittedValueRef.current = undefined;
+        setDateValue(undefined);
+        return;
+      }
+
+      const parsed = parseDateInput(trimmed, displayFormat);
+      if (parsed) {
+        const canonical = formatCanonicalDate(parsed);
+        if (isDateOutOfRange(canonical, minCanonical, maxCanonical)) {
+          setDraftError("Date is outside the allowed range.");
+          return;
+        }
+
+        setDraftError(undefined);
+        setVisibleMonth(toSafeLocalDate(parsed.year, parsed.month, 1));
+        lastCommittedValueRef.current = canonical;
+        setDateValue(canonical);
+        return;
+      }
+
+      // Incomplete/partial vs malformed input
+      if (!isPartialDateInput(trimmed)) {
+        setDraftError(`Enter a valid date in ${formatDisplayPlaceholder(displayFormat)} format.`);
+      } else {
+        setDraftError(undefined);
+      }
     };
 
     const handleTextInputBlur = () => {
-      if (draftError) return;
-      const parsedDate = parseTypedDate(draftValue, displayFormat);
-      if (parsedDate) {
-        setDraftValue(formatDisplayDate(parsedDate, displayFormat));
+      const trimmed = draftValue.trim();
+      if (!trimmed) {
+        setDraftError(undefined);
+        lastCommittedValueRef.current = undefined;
+        setDateValue(undefined);
+        return;
       }
+
+      const parsed = parseDateInput(trimmed, displayFormat);
+      if (parsed) {
+        const canonical = formatCanonicalDate(parsed);
+        if (isDateOutOfRange(canonical, minCanonical, maxCanonical)) {
+          setDraftError("Date is outside the allowed range.");
+          lastCommittedValueRef.current = undefined;
+          setDateValue(undefined);
+          return;
+        }
+
+        setDraftError(undefined);
+        const formatted = formatDisplayDate(parsed, displayFormat);
+        setDraftValue(formatted);
+        setVisibleMonth(toSafeLocalDate(parsed.year, parsed.month, 1));
+        lastCommittedValueRef.current = canonical;
+        setDateValue(canonical);
+        return;
+      }
+
+      // Input was not empty and could not be parsed to a valid date
+      setDraftError(`Enter a valid date in ${formatDisplayPlaceholder(displayFormat)} format.`);
+      lastCommittedValueRef.current = undefined;
+      setDateValue(undefined);
     };
 
     const handleTextInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
       if (event.altKey && event.key === "ArrowDown") {
         event.preventDefault();
         openPopover(true);
+      } else if (event.key === "Enter") {
+        const trimmed = draftValue.trim();
+        if (trimmed) {
+          const parsed = parseDateInput(trimmed, displayFormat);
+          if (parsed) {
+            const canonical = formatCanonicalDate(parsed);
+            if (!isDateOutOfRange(canonical, minCanonical, maxCanonical)) {
+              setDraftError(undefined);
+              const formatted = formatDisplayDate(parsed, displayFormat);
+              setDraftValue(formatted);
+              setVisibleMonth(toSafeLocalDate(parsed.year, parsed.month, 1));
+              lastCommittedValueRef.current = canonical;
+              setDateValue(canonical);
+            }
+          }
+        }
       }
     };
 
@@ -624,10 +625,10 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
         <input
           type="hidden"
           id={`${inputId}-value`}
+          name={props.name}
           value={normalizedSubmitValue}
           required={required}
           disabled={disabled}
-          {...props}
           readOnly
         />
         <div
@@ -653,6 +654,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             onBlur={handleTextInputBlur}
             onKeyDown={handleTextInputKeyDown}
             className="min-w-0 flex-1 bg-transparent text-inherit outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed"
+            {...props}
           />
           <button
             ref={triggerRef}
@@ -814,12 +816,13 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                   const inCurrentMonth = day.getMonth() === visibleMonth.getMonth();
                   const isSelected = isSameDate(day, selectedDate);
                   const isToday = isSameDate(day, today);
-                  const isDisabled = !inCurrentMonth || isOutOfRange(day, props.min, props.max);
+                  const isDisabled =
+                    !inCurrentMonth || isDateOutOfRange(toCanonicalDateString(day), minCanonical, maxCanonical);
                   const dayLabel = getDateLabel(day, isToday, isSelected, isDisabled);
                   const focusableDayIndex = getFocusableDayIndex(selectedDate);
                   return (
                     <button
-                      key={toInputDate(day)}
+                      key={toCanonicalDateString(day)}
                       ref={(node) => {
                         dayRefs.current[index] = node;
                       }}
@@ -853,6 +856,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                   onClick={() => {
                     setDraftValue("");
                     setDraftError(undefined);
+                    lastCommittedValueRef.current = undefined;
                     setDateValue(undefined);
                     closePopover();
                   }}
@@ -868,7 +872,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
                     calendarTextActionDensityClasses[resolvedDensity],
                   )}
                   onClick={() => {
-                    if (today) selectDate(today);
+                    if (today && !todayDisabled) selectDate(today);
                   }}
                 >
                   Today
@@ -880,16 +884,14 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
       </div>
     );
 
-    if (!label && !description && !validationError) {
-      return (
-        <div data-width={width} className={fieldWidthClasses[width]}>
-          {dateInput}
-        </div>
-      );
-    }
-
     return (
-      <div data-width={width} className={cn("flex flex-col gap-1.5", fieldWidthClasses[width])}>
+      <div
+        data-width={width}
+        className={cn(
+          (label || description || validationError) && "flex flex-col gap-1.5",
+          fieldWidthClasses[width],
+        )}
+      >
         {label && (
           <label htmlFor={inputId} className="text-sm font-semibold text-foreground">
             {label}
