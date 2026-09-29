@@ -76,6 +76,7 @@ export interface LookupFieldProps<T> {
   helpText?: ReactNode;
   errorMessage?: string;
   error?: boolean;
+  'aria-describedby'?: string;
   /** The current value, independent of the current search results. */
   selectedOption: T | null;
   /** Called with the chosen option, or null when the value is cleared. */
@@ -113,6 +114,7 @@ export function LookupField<T>({
   helpText,
   errorMessage,
   error,
+  'aria-describedby': ariaDescribedBy,
   selectedOption,
   onSelect,
   searchText,
@@ -131,7 +133,10 @@ export function LookupField<T>({
   const resolvedDensity = useResolvedDensity(density);
   const generatedId = useId();
   const inputId =
-    id ?? (label ? `lookup-${label.toLowerCase().replace(/\s+/g, '-')}` : `lookup-${generatedId}`);
+    id ??
+    (label
+      ? `lookup-${label.toLowerCase().replace(/[^a-z0-9_-]/gi, '-')}`
+      : `lookup-${generatedId}`);
   const listboxId = `${inputId}-listbox`;
   const statusId = `${inputId}-status`;
   const helpId = `${inputId}-help`;
@@ -330,7 +335,13 @@ export function LookupField<T>({
   else if (!loading && options.length === 0) statusContent = emptyMessage;
 
   const describedBy =
-    [errorMessage ? errorId : helpText ? helpId : undefined].filter(Boolean).join(' ') || undefined;
+    [
+      errorMessage ? errorId : undefined,
+      !errorMessage && helpText ? helpId : undefined,
+      ariaDescribedBy,
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined;
 
   const clearButton =
     interactive && selectedOption && !isEditing ? (
@@ -371,6 +382,11 @@ export function LookupField<T>({
           className="text-sm font-medium text-[var(--erp-form-label-color)] select-none leading-none"
         >
           {label}
+          {required && (
+            <span className="ml-1 text-danger" aria-hidden="true">
+              *
+            </span>
+          )}
         </label>
       )}
       <div className="relative">

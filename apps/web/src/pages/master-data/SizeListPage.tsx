@@ -74,29 +74,33 @@ export function SizeListPage() {
 
       <Panel title="Add Size">
         <form
+          noValidate
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             createMutation.mutate();
           }}
         >
-          <FormGrid layout="content" className="items-end">
+          <FormGrid layout="content">
             <TextField
-              label="Code *"
+              label="Code"
+              required
               value={form.code}
               errorMessage={error && !form.code.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, code: event.target.value })}
               width="sm"
             />
             <TextField
-              label="Label *"
+              label="Label"
+              required
               value={form.label}
               errorMessage={error && !form.label.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, label: event.target.value })}
               width="sm"
             />
             <SelectField
-              label="Type *"
+              label="Type"
+              required
               value={form.sizeType}
               onValueChange={(value) => setForm({ ...form, sizeType: value })}
               width="xs"
@@ -108,14 +112,15 @@ export function SizeListPage() {
               <SelectItem value="FREE_SIZE">Free Size</SelectItem>
             </SelectField>
             <TextField
-              label="Sort Order *"
+              label="Sort Order"
+              required
               type="number"
               value={form.sortOrder}
               errorMessage={error && !form.sortOrder.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, sortOrder: event.target.value })}
               width="xs"
             />
-            <div className="flex">
+            <div className="flex pt-[1.375rem]">
               <Button type="submit" loading={createMutation.isPending}>
                 Add Size
               </Button>

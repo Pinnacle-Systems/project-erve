@@ -86,8 +86,9 @@ function renderQualityFormPage(path: string, routePath: string) {
 }
 
 function findInputByLabel(label: string): HTMLInputElement | undefined {
+  const clean = label.replace(/\s*\*$/, '');
   return Array.from(container.querySelectorAll('input')).find(
-    (element) => element.labels?.[0]?.textContent?.trim() === label,
+    (element) => element.labels?.[0]?.textContent?.trim().replace(/\s*\*$/, '') === clean,
   );
 }
 

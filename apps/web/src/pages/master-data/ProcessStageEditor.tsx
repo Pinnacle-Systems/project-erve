@@ -172,7 +172,8 @@ export function ProcessStageEditor({
                     <SelectItem value="QUALITY">Quality</SelectItem>
                   </SelectField>
                   <TextField
-                    label={`Activity ${index + 1} name *`}
+                    label={`Activity ${index + 1} name`}
+                    required
                     value={stage.name}
                     maxLength={120}
                     width="fill"
@@ -223,7 +224,8 @@ export function ProcessStageEditor({
                 {stage.activityType === 'QUALITY' ? (
                   <div className="grid gap-3 border-t border-border-subtle pt-3 md:grid-cols-2 lg:grid-cols-4">
                     <SelectField
-                      label="Quality Form version *"
+                      label="Quality Form version"
+                      required
                       value={stage.qualityFormVersionId || undefined}
                       onValueChange={(value) => update(index, { qualityFormVersionId: value })}
                       width="fill"
@@ -274,7 +276,8 @@ export function ProcessStageEditor({
                     {stage.qualityExecutionMode === 'IN_PROCESS' ? (
                       <>
                         <SelectField
-                          label="Associated Production Activity *"
+                          label="Associated Production Activity"
+                          required
                           value={stage.associatedProductionActivityKey || undefined}
                           onValueChange={(value) =>
                             update(index, { associatedProductionActivityKey: value })
@@ -313,7 +316,8 @@ export function ProcessStageEditor({
                         </SelectField>
                         {stage.qualityAvailabilityPolicy === 'PROGRESS_PERCENTAGE' ? (
                           <TextField
-                            label="Progress threshold (%) *"
+                            label="Progress threshold (%)"
+                            required
                             type="number"
                             min="0.01"
                             max="100"

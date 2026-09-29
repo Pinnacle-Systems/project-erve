@@ -5,6 +5,7 @@ import {
   type ElementRef,
   forwardRef,
   type ReactNode,
+  useId,
 } from "react";
 import { cn } from "../lib/utils";
 import { DensityOverrideProvider, useResolvedDensity } from "../lib/density";
@@ -222,6 +223,7 @@ export interface SelectFieldProps
   extends ComponentPropsWithoutRef<typeof SelectPrimitive.Root> {
   label?: string;
   "aria-label"?: string;
+  "aria-describedby"?: string;
   errorMessage?: string;
   helpText?: string;
   density?: SelectFieldDensity;
@@ -233,62 +235,102 @@ export interface SelectFieldProps
   children: ReactNode;
 }
 
-export const SelectField = ({
-  label,
-  "aria-label": ariaLabel,
-  errorMessage,
-  helpText,
-  density,
-  width = "md",
-  error,
-  id,
-  className,
-  placeholder,
-  children,
-  ...rootProps
-}: SelectFieldProps) => {
-  const resolvedDensity = useResolvedDensity(density);
-  const fieldId =
-    id ?? (label ? `select-${label.toLowerCase().replace(/\s+/g, "-")}` : undefined);
-  const hasError = Boolean(error || errorMessage);
+export const SelectField = forwardRef<
+  ElementRef<typeof SelectPrimitive.Trigger>,
+  SelectFieldProps
+>(
+  (
+    {
+      label,
+      "aria-label": ariaLabel,
+      "aria-describedby": ariaDescribedBy,
+      errorMessage,
+      helpText,
+      density,
+      width = "md",
+      error,
+      id,
+      className,
+      placeholder,
+      required,
+      children,
+      ...rootProps
+    },
+    ref,
+  ) => {
+    const resolvedDensity = useResolvedDensity(density);
+    const generatedId = useId();
+    const fieldId =
+      id ??
+      (typeof label === "string" && label.trim().length > 0
+        ? `select-${label.toLowerCase().replace(/[^a-z0-9_-]/gi, "-")}`
+        : generatedId);
+    const hasError = Boolean(error || errorMessage);
+    const errorId = `${fieldId}-error`;
+    const helpId = `${fieldId}-help`;
 
-  return (
-    <div
-      data-width={width}
-      className={cn("flex flex-col gap-1.5", fieldWidthClasses[width], className)}
-    >
-      {label && (
-        <label
-          htmlFor={fieldId}
-          className="text-sm font-medium text-[var(--erp-form-label-color)] select-none leading-none"
-        >
-          {label}
-        </label>
-      )}
-      <DensityOverrideProvider density={resolvedDensity}>
-        <SelectRoot {...rootProps}>
-          <SelectTrigger
-            id={fieldId}
-            state={hasError ? "error" : "default"}
-            density={resolvedDensity}
-            aria-invalid={hasError || undefined}
-            aria-label={!label ? ariaLabel : undefined}
+    const describedByIds = [
+      errorMessage ? errorId : undefined,
+      !errorMessage && helpText ? helpId : undefined,
+      ariaDescribedBy,
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
+    return (
+      <div
+        data-width={width}
+        className={cn("flex flex-col gap-1.5", fieldWidthClasses[width], className)}
+      >
+        {label && (
+          <label
+            htmlFor={fieldId}
+            className="text-sm font-medium text-[var(--erp-form-label-color)] select-none leading-none"
           >
-            <SelectValue placeholder={placeholder ?? "Select..."} />
-          </SelectTrigger>
-          <SelectContent>{children}</SelectContent>
-        </SelectRoot>
-      </DensityOverrideProvider>
-      {errorMessage && (
-        <p className="text-xs text-[var(--erp-form-field-error-text-color)] leading-none" role="alert">
-          {errorMessage}
-        </p>
-      )}
-      {!errorMessage && helpText && (
-        <p className="text-xs text-[var(--erp-form-field-help-text-color)] leading-none">{helpText}</p>
-      )}
-    </div>
-  );
-};
+            {label}
+            {required && (
+              <span className="ml-1 text-danger" aria-hidden="true">
+                *
+              </span>
+            )}
+          </label>
+        )}
+        <DensityOverrideProvider density={resolvedDensity}>
+          <SelectRoot required={required} {...rootProps}>
+            <SelectTrigger
+              ref={ref}
+              id={fieldId}
+              state={hasError ? "error" : "default"}
+              density={resolvedDensity}
+              aria-invalid={hasError || undefined}
+              aria-describedby={describedByIds}
+              aria-label={!label ? ariaLabel : undefined}
+            >
+              <SelectValue placeholder={placeholder ?? "Select..."} />
+            </SelectTrigger>
+            <SelectContent>{children}</SelectContent>
+          </SelectRoot>
+        </DensityOverrideProvider>
+        {errorMessage && (
+          <p
+            id={errorId}
+            className="text-xs text-[var(--erp-form-field-error-text-color)] leading-none"
+            role="alert"
+          >
+            {errorMessage}
+          </p>
+        )}
+        {!errorMessage && helpText && (
+          <p
+            id={helpId}
+            className="text-xs text-[var(--erp-form-field-help-text-color)] leading-none"
+          >
+            {helpText}
+          </p>
+        )}
+      </div>
+    );
+  },
+);
 
 SelectField.displayName = "SelectField";

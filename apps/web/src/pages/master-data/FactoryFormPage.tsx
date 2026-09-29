@@ -38,8 +38,8 @@ const addressFields: Array<keyof FactoryFormFields> = [
 ];
 
 const labels: Record<keyof FactoryFormFields, string> = {
-  code: 'Code *',
-  name: 'Name *',
+  code: 'Code',
+  name: 'Name',
   contactName: 'Contact Name',
   contactEmail: 'Contact Email',
   contactPhone: 'Contact Phone',
@@ -124,6 +124,7 @@ export function FactoryFormPage() {
     <TextField
       key={key}
       label={labels[key]}
+      required={key === 'code' || key === 'name'}
       type={key === 'contactEmail' ? 'email' : 'text'}
       value={form[key]}
       errorMessage={
@@ -148,6 +149,7 @@ export function FactoryFormPage() {
       />
       <Panel>
         <form
+          noValidate
           className="space-y-6"
           onSubmit={(event) => {
             event.preventDefault();

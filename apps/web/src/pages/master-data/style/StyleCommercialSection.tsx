@@ -27,6 +27,7 @@ export function StyleCommercialSection({ form, onFieldChange, error }: StyleComm
             <TextField
               key={fieldKey}
               label={fieldLabels[fieldKey]}
+              required={fieldKey === 'finalMrp'}
               type={fieldKey.includes('Mrp') || fieldKey.includes('Percentage') ? 'number' : 'text'}
               value={form[fieldKey]}
               width={width}

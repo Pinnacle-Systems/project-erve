@@ -211,7 +211,8 @@ function searchDistributors(
 }
 
 function distributorInput(): HTMLInputElement {
-  const input = document.getElementById('lookup-distributor-*') as HTMLInputElement | null;
+  const input = (document.getElementById('lookup-distributor') ??
+    document.getElementById('lookup-distributor-*')) as HTMLInputElement | null;
   if (!input) throw new Error('Distributor lookup input not found');
   return input;
 }
@@ -343,7 +344,8 @@ function saveButton(): HTMLButtonElement | null {
 }
 
 function styleInput(): HTMLInputElement {
-  const input = document.getElementById('lookup-style-*') as HTMLInputElement | null;
+  const input = (document.getElementById('lookup-style') ??
+    document.getElementById('lookup-style-*')) as HTMLInputElement | null;
   if (!input) throw new Error('Style lookup input not found');
   return input;
 }
@@ -537,9 +539,9 @@ describe('PurchaseOrderFormPage edit-load safety (NEW-AUTH-001)', () => {
     expect(remarksInputs.length).toBeGreaterThan(0);
     const qtyInput = document.getElementById('field-m') as HTMLInputElement | null;
     expect(qtyInput?.value).toBe('12');
-    expect((document.getElementById('field-distributor-*') as HTMLInputElement | null)?.value).toBe(
-      'Acme Distribution',
-    );
+    const distributorInputEl = (document.getElementById('field-distributor') ??
+      document.getElementById('field-distributor-*')) as HTMLInputElement | null;
+    expect(distributorInputEl?.value).toBe('Acme Distribution');
     expect((document.getElementById('field-purchase-mode') as HTMLInputElement | null)?.value).toBe('Outright');
     expect(styleInput().value).toContain('ST-001');
     expect(styleInput().value).toContain('Classic Tee');
@@ -628,7 +630,8 @@ describe('PurchaseOrderFormPage derived Purchase Mode (CREATE)', () => {
     expect(purchaseMode()?.value).toBe('Sale or Return');
     expect(purchaseMode()?.disabled).toBe(true);
 
-    const clear = container.querySelector<HTMLButtonElement>('button[aria-label="Clear Distributor *"]')!;
+    const clear = (container.querySelector<HTMLButtonElement>('button[aria-label="Clear Distributor"]') ??
+      container.querySelector<HTMLButtonElement>('button[aria-label="Clear Distributor *"]'))!;
     await act(async () => clear.click());
     await flush();
     expect(purchaseMode()?.value).toBe('');
@@ -847,7 +850,8 @@ describe('PurchaseOrderFormPage Style lookup (P1L1)', () => {
     expect(sizeInput('M')?.value).toBe('7');
 
     // Once cleared, the retired Style is not offered as a new selection.
-    const clear = container.querySelector<HTMLButtonElement>('button[aria-label="Clear Style *"]')!;
+    const clear = (container.querySelector<HTMLButtonElement>('button[aria-label="Clear Style"]') ??
+      container.querySelector<HTMLButtonElement>('button[aria-label="Clear Style *"]'))!;
     await act(async () => clear.click());
     expect(styleInput().value).toBe('');
     expect(sizeInput('M')).toBeNull();

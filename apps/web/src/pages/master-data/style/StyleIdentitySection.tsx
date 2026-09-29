@@ -37,7 +37,8 @@ export function StyleIdentitySection({
             return (
               <SelectField
                 key="season"
-                label="Season *"
+                label="Season"
+                required
                 value={seasonId || 'NONE'}
                 onValueChange={(value) => onSeasonChange(value === 'NONE' ? '' : value)}
                 errorMessage={hasError && !seasonId ? 'Season is required.' : undefined}
@@ -74,6 +75,7 @@ export function StyleIdentitySection({
             <TextField
               key={fieldKey}
               label={fieldLabels[fieldKey]}
+              required={fieldKey === 'styleNumber' || fieldKey === 'styleName'}
               type="text"
               value={form[fieldKey]}
               width={width}

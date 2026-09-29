@@ -83,6 +83,7 @@ export function ProcessFlowCreatePage() {
       />
       <Panel>
         <form
+          noValidate
           className="space-y-6"
           onSubmit={(event) => {
             event.preventDefault();
@@ -93,14 +94,16 @@ export function ProcessFlowCreatePage() {
           <FormSection title="Flow Details">
             <FormGrid columns={2}>
               <TextField
-                label="Code *"
+                label="Code"
+                required
                 value={code}
                 maxLength={50}
                 width="fill"
                 onChange={(event) => setCode(event.target.value)}
               />
               <TextField
-                label="Name *"
+                label="Name"
+                required
                 value={name}
                 maxLength={120}
                 width="fill"

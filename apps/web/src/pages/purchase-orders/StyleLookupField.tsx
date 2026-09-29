@@ -45,6 +45,8 @@ export interface StyleLookupFieldProps {
   width?: LookupFieldWidth;
   value: StyleLookupValue | null;
   onChange: (style: OrderSheetStyleOption | null) => void;
+  required?: boolean;
+  errorMessage?: string;
 }
 
 // Order Sheet Style lookup: bounded server search over ACTIVE Styles by
@@ -54,10 +56,12 @@ export interface StyleLookupFieldProps {
 // value is shown from `value`, never looked up in the results, so a saved
 // Style displays even when it has since become inactive.
 export function StyleLookupField({
-  label = 'Style *',
+  label = 'Style',
   width = 'lg',
   value,
   onChange,
+  required = true,
+  errorMessage,
 }: StyleLookupFieldProps) {
   const [searchText, setSearchText] = useState('');
   const [open, setOpen] = useState(false);
@@ -78,6 +82,8 @@ export function StyleLookupField({
   return (
     <LookupField<StyleLookupValue>
       label={label}
+      required={required}
+      errorMessage={errorMessage}
       width={width}
       placeholder="Search LMIX, Style No. or Style Name…"
       selectedOption={value}

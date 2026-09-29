@@ -183,7 +183,8 @@ export function DistributorFormPage() {
       return (
         <SelectField
           key={key}
-          label="Purchase Mode *"
+          label="Purchase Mode"
+          required
           helpText={PURCHASE_MODE_HELP_TEXT}
           value={form.purchaseMode}
           disabled={isEdit}
@@ -197,11 +198,11 @@ export function DistributorFormPage() {
         </SelectField>
       );
     }
-    const label = requiredFieldKeys.has(key) ? `${fieldLabels[key]} *` : fieldLabels[key];
     return (
       <TextField
         key={key}
-        label={label}
+        label={fieldLabels[key]}
+        required={requiredFieldKeys.has(key)}
         type={key === 'contactEmail' ? 'email' : 'text'}
         value={form[key]}
         errorMessage={
@@ -231,6 +232,7 @@ export function DistributorFormPage() {
 
       <Panel>
         <form
+          noValidate
           className="space-y-6"
           onSubmit={(event) => {
             event.preventDefault();

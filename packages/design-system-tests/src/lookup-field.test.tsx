@@ -392,4 +392,61 @@ describe('LookupField', () => {
       expect(onOpenChange).not.toHaveBeenCalled();
     });
   });
+
+  describe('canonical field contract & validation', () => {
+    it('renders required marker on label and aria-required on combobox when required', () => {
+      act(() => {
+        root.render(
+          <ThemeProvider>
+            <LookupField<Item>
+              label="Distributor"
+              required
+              selectedOption={null}
+              onSelect={() => {}}
+              searchText=""
+              onSearchTextChange={() => {}}
+              options={[]}
+              getOptionKey={(i) => i.id}
+              getOptionLabel={(i) => i.name}
+            />
+          </ThemeProvider>,
+        );
+      });
+
+      const label = container.querySelector('label')!;
+      const asterisk = label.querySelector('[aria-hidden="true"]');
+      const combobox = container.querySelector('input[role="combobox"]')!;
+
+      expect(asterisk?.textContent).toBe('*');
+      expect(combobox.getAttribute('aria-required')).toBe('true');
+    });
+
+    it('renders error message, sets role=alert, and preserves caller aria-describedby', () => {
+      act(() => {
+        root.render(
+          <ThemeProvider>
+            <LookupField<Item>
+              label="Style"
+              errorMessage="Style selection is required"
+              aria-describedby="custom-lookup-hint"
+              selectedOption={null}
+              onSelect={() => {}}
+              searchText=""
+              onSearchTextChange={() => {}}
+              options={[]}
+              getOptionKey={(i) => i.id}
+              getOptionLabel={(i) => i.name}
+            />
+          </ThemeProvider>,
+        );
+      });
+
+      const combobox = container.querySelector('input[role="combobox"]')!;
+      const alert = container.querySelector('[role="alert"]')!;
+
+      expect(alert.textContent).toBe('Style selection is required');
+      expect(combobox.getAttribute('aria-invalid')).toBe('true');
+      expect(combobox.getAttribute('aria-describedby')).toBe('lookup-style-error custom-lookup-hint');
+    });
+  });
 });

@@ -137,6 +137,7 @@ export function UserFormPage() {
 
       <Panel>
         <form
+          noValidate
           className="space-y-6"
           onSubmit={(event) => {
             event.preventDefault();
@@ -147,12 +148,14 @@ export function UserFormPage() {
             <FormGrid columns={2}>
               <TextField
                 label="Name"
+                required
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 errorMessage={error && !name.trim() ? 'Required' : undefined}
               />
               <TextField
                 label="Email"
+                required
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -215,6 +218,7 @@ export function UserFormPage() {
                   <FormGrid columns={2}>
                     <SelectField
                       label="Factory"
+                      required
                       value={factoryId || 'NONE'}
                       onValueChange={(value) => setFactoryId(value === 'NONE' ? '' : value)}
                       errorMessage={error && !factoryId ? 'Required' : undefined}

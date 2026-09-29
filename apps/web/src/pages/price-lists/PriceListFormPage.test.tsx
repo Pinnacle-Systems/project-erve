@@ -74,7 +74,8 @@ function lookupPanelText(): string {
 }
 
 async function typeDistributorSearch(text: string): Promise<void> {
-  const input = document.getElementById('lookup-distributor-*') as HTMLInputElement;
+  const input = (document.getElementById('lookup-distributor') ??
+    document.getElementById('lookup-distributor-*')) as HTMLInputElement;
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
   await act(async () => {
     input.focus();
@@ -151,7 +152,9 @@ describe('PriceListFormPage create — distributor lookup (UXAUTH-013, P1L8)', (
     const target = selectOptionEls().find((el) => el.textContent?.includes('Bravo Traders'))!;
     await act(async () => target.click());
 
-    expect((document.getElementById('lookup-distributor-*') as HTMLInputElement).value).toBe('Bravo Traders');
+    const distributorLookupEl = (document.getElementById('lookup-distributor') ??
+      document.getElementById('lookup-distributor-*')) as HTMLInputElement;
+    expect(distributorLookupEl.value).toBe('Bravo Traders');
     expect(requestedUrls).not.toContain('/distributors');
   });
 
@@ -177,7 +180,11 @@ describe('PriceListFormPage create — distributor lookup (UXAUTH-013, P1L8)', (
         </MemoryRouter>,
       );
     });
-    await waitFor(() => document.getElementById('lookup-distributor-*') !== null);
+    await waitFor(
+      () =>
+        (document.getElementById('lookup-distributor') ??
+          document.getElementById('lookup-distributor-*')) !== null,
+    );
     await typeDistributorSearch('acme');
     await waitFor(() => lookupPanelText().includes('Unable to load distributors'));
   });
