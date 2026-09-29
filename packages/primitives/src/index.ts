@@ -7,6 +7,14 @@ export { TextField } from "./components/text-field";
 export type { TextFieldProps, TextFieldDensity, TextFieldWidth } from "./components/text-field";
 export { PasswordField } from "./components/password-field";
 export type { PasswordFieldProps } from "./components/password-field";
+export { Textarea, Textarea as TextareaField } from "./components/textarea";
+export type {
+  TextareaProps,
+  TextareaProps as TextareaFieldProps,
+  TextareaDensity,
+  TextareaWidth,
+  TextareaResize,
+} from "./components/textarea";
 
 export { GridCellInput } from "./components/grid-cell-input";
 export type { GridCellInputProps } from "./components/grid-cell-input";
