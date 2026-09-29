@@ -55,6 +55,18 @@ describe('ensureFinancialYear', () => {
     const count = await prisma.financialYear.count({ where: { code: results[0]!.code } });
     expect(count).toBe(1);
   });
+
+  it('correctly resolves and ensures rows for already-normalized business calendar dates at the fiscal boundary', async () => {
+    // 31-Mar-2027 23:59:59 IST -> 2026-27
+    const instantPrior = new Date('2027-03-31T18:29:59.000Z');
+    const fyPrior = await ensureFinancialYear(prisma, toBusinessCalendarDate(instantPrior));
+    expect(fyPrior.code).toBe('2026-27');
+
+    // 01-Apr-2027 02:00:00 IST -> 2027-28
+    const instantNew = new Date('2027-03-31T20:30:00.000Z');
+    const fyNew = await ensureFinancialYear(prisma, toBusinessCalendarDate(instantNew));
+    expect(fyNew.code).toBe('2027-28');
+  });
 });
 
 describe('getCurrentFinancialYear', () => {
