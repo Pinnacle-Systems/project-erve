@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -287,11 +287,11 @@ export function DistributorReturnDetailPage() {
               value={creditNoteReference || record.creditNoteReference || ''}
               onChange={(e) => setCreditNoteReference(e.target.value)}
             />
-            <TextField
+            <DatePicker
               label="Credit Note Date"
-              type="date"
               value={creditNoteDate || record.creditNoteDate?.slice(0, 10) || ''}
-              onChange={(e) => setCreditNoteDate(e.target.value)}
+              onValueChange={(value) => setCreditNoteDate(value ?? '')}
+              width="sm"
             />
             <Button
               onClick={() => creditNoteMutation.mutate()}

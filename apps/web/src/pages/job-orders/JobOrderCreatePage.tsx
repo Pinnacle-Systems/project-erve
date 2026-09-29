@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -399,13 +399,13 @@ export function JobOrderCreatePage() {
                 width="fill"
               />
             ) : (
-              <TextField
+              <DatePicker
                 label="Required Delivery Date"
-                type="date"
                 value={deliveryDateOverride}
-                onChange={(event) => setDeliveryDateOverride(event.target.value)}
-                helpText="Selected Order Sheets have different dates — set the Job Order's own target date."
+                onValueChange={(val) => setDeliveryDateOverride(val ?? '')}
+                description="Selected Order Sheets have different dates — set the Job Order's own target date."
                 width="fill"
+                required
               />
             )}
             <label className="col-span-full flex flex-col gap-1 text-sm font-medium">

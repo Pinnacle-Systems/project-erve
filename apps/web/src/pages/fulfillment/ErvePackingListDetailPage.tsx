@@ -3,11 +3,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, LoadingState, EmptyState, ErrorState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
@@ -34,7 +35,7 @@ export function ErvePackingListDetailPage() {
   // never drift from the backend's real authorization.
   const canMutate = canMutateErveDispatches(user);
 
-  const [dispatchDate, setDispatchDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dispatchDate, setDispatchDate] = useState(() => getLocalDateString());
   const [transporter, setTransporter] = useState('');
   const [vehicleNumber, setVehicleNumber] = useState('');
   const [lrNumber, setLrNumber] = useState('');
@@ -290,7 +291,7 @@ export function ErvePackingListDetailPage() {
       {packingList.status === 'FINALIZED' && canMutate && (
         <Panel title="Record Erve Dispatch">
           <div className="flex flex-wrap gap-3">
-            <TextField label="Dispatch Date" type="date" value={dispatchDate} onChange={(e) => setDispatchDate(e.target.value)} />
+            <DatePicker label="Dispatch Date" value={dispatchDate} onValueChange={(value) => setDispatchDate(value ?? '')} width="sm" />
             <TextField label="Transporter (optional)" value={transporter} onChange={(e) => setTransporter(e.target.value)} />
             <TextField label="Vehicle Number (optional)" value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} />
             <TextField label="LR Number (optional)" value={lrNumber} onChange={(e) => setLrNumber(e.target.value)} />

@@ -166,6 +166,7 @@ export function PriceListFormPage() {
                 value={effectiveTo}
                 onValueChange={(value) => setEffectiveTo(value ?? '')}
                 displayFormat="dd/mm/yyyy"
+                min={effectiveFrom || undefined}
                 width="sm"
               />
             </FormGrid>

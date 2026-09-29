@@ -255,6 +255,7 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
                 value={poDate}
                 onValueChange={(value) => setPoDate(value ?? '')}
                 displayFormat="dd/mm/yyyy"
+                required
                 width="sm"
               />
               <DatePicker
@@ -262,6 +263,7 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
                 value={requiredDeliveryDate}
                 onValueChange={(value) => setRequiredDeliveryDate(value ?? '')}
                 displayFormat="dd/mm/yyyy"
+                min={poDate || undefined}
                 width="sm"
               />
               <TextField

@@ -7,6 +7,7 @@ import { Badge, Button, DatePicker, SelectField, SelectItem, TextField, Validati
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { getLocalDateString } from '../../lib/dates.js';
 import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { DistributorLookupField, type DistributorLookupValue } from '../master-data/DistributorLookupField.js';
@@ -92,7 +93,7 @@ export function SaleOrderFormPage() {
   const isEdit = Boolean(id);
 
   const [factoryId, setFactoryId] = useState('');
-  const [soDate, setSoDate] = useState(new Date().toISOString().slice(0, 10));
+  const [soDate, setSoDate] = useState(() => getLocalDateString());
   const [remarks, setRemarks] = useState('');
   const [distributorGroups, setDistributorGroups] = useState<DistributorGroupDraft[]>([emptyDistributorGroup()]);
   const [error, setError] = useState('');
@@ -464,7 +465,14 @@ export function SaleOrderFormPage() {
                   </SelectItem>
                 ))}
               </SelectField>
-              <DatePicker label="Dispatch Order Date" value={soDate} onValueChange={(value) => setSoDate(value ?? '')} required />
+              <DatePicker
+                label="Dispatch Order Date"
+                value={soDate}
+                onValueChange={(value) => setSoDate(value ?? '')}
+                displayFormat="dd/mm/yyyy"
+                width="sm"
+                required
+              />
               <TextField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
             </FormGrid>
           </FormSection>

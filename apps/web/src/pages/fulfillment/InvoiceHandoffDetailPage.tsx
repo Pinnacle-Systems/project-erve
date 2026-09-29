@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { LoadingState, EmptyState, ErrorState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -137,11 +137,11 @@ export function InvoiceHandoffDetailPage() {
               value={tallyInvoiceNumber || handoff.tallyInvoiceNumber || ''}
               onChange={(e) => setTallyInvoiceNumber(e.target.value)}
             />
-            <TextField
+            <DatePicker
               label="Tally Invoice Date"
-              type="date"
               value={tallyInvoiceDate || handoff.tallyInvoiceDate?.slice(0, 10) || ''}
-              onChange={(e) => setTallyInvoiceDate(e.target.value)}
+              onValueChange={(value) => setTallyInvoiceDate(value ?? '')}
+              width="sm"
             />
             <TextField
               label="Tally Voucher Reference (optional)"

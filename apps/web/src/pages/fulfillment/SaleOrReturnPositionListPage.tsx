@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse, DistributorOption } from '@erve/types';
 import { PageHeader } from '@erve/app-components';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -331,7 +331,7 @@ export function SaleOrReturnPositionListPage() {
           {canReport && linesToSubmit.length > 0 && (
             <Panel title="Submit Sales Report">
               <div className="flex flex-wrap items-end gap-3">
-                <TextField label="Report Date" type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
+                <DatePicker label="Report Date" value={reportDate} onValueChange={(value) => setReportDate(value ?? '')} width="sm" />
                 <Button onClick={() => submitMutation.mutate()} loading={submitMutation.isPending} disabled={!reportDate}>
                   Submit ({linesToSubmit.length} line{linesToSubmit.length === 1 ? '' : 's'})
                 </Button>
@@ -342,7 +342,7 @@ export function SaleOrReturnPositionListPage() {
           {canReturn && returnLinesToSubmit.length > 0 && (
             <Panel title="Submit Return Request">
               <div className="flex flex-wrap items-end gap-3">
-                <TextField label="Return Date" type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
+                <DatePicker label="Return Date" value={returnDate} onValueChange={(value) => setReturnDate(value ?? '')} width="sm" />
                 <TextField
                   label="Return Reason"
                   value={returnReason}

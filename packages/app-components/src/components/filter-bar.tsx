@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { TextField, Button, SelectField, SelectItem, cn } from '@erve/primitives';
+import { TextField, Button, SelectField, SelectItem, DatePicker, cn } from '@erve/primitives';
 import { useTheme, type Density } from '@erve/theme';
 
 export interface FilterOption {
@@ -88,24 +88,26 @@ export const FilterBar = ({
       )}
 
       {showDateFrom && (
-        <TextField
-          type="date"
+        <DatePicker
           value={dateFrom ?? ''}
-          onChange={(e) => onDateFromChange?.(e.target.value)}
+          onValueChange={(val) => onDateFromChange?.(val ?? '')}
           density={resolvedDensity}
           width="sm"
           aria-label="From date"
+          placeholder="From date"
+          max={dateTo || undefined}
         />
       )}
 
       {showDateTo && (
-        <TextField
-          type="date"
+        <DatePicker
           value={dateTo ?? ''}
-          onChange={(e) => onDateToChange?.(e.target.value)}
+          onValueChange={(val) => onDateToChange?.(val ?? '')}
           density={resolvedDensity}
           width="sm"
           aria-label="To date"
+          placeholder="To date"
+          min={dateFrom || undefined}
         />
       )}
 
