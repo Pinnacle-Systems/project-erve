@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, SelectField, SelectItem, Textarea, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -408,20 +408,20 @@ export function JobOrderCreatePage() {
                 required
               />
             )}
-            <label className="col-span-full flex flex-col gap-1 text-sm font-medium">
-              Factory commercial terms / disclaimer
-              <textarea
-                className="min-h-28 rounded-md border border-border bg-background px-3 py-2 font-normal"
-                value={disclaimerText}
-                maxLength={10000}
-                onChange={(event) => setDisclaimerText(event.target.value)}
-                aria-describedby="job-order-disclaimer-help"
-              />
-              <span id="job-order-disclaimer-help" className="text-xs font-normal text-muted-foreground">
-                The factory must acknowledge these plain-text terms before confirmation.{' '}
-                {disclaimerText.length}/10,000
-              </span>
-            </label>
+            <Textarea
+              containerClassName="col-span-full"
+              label="Factory commercial terms / disclaimer"
+              value={disclaimerText}
+              maxLength={10000}
+              onChange={(event) => setDisclaimerText(event.target.value)}
+              helpText={
+                <span>
+                  The factory must acknowledge these plain-text terms before confirmation.{' '}
+                  {disclaimerText.length}/10,000
+                </span>
+              }
+              className="min-h-28"
+            />
           </FormGrid>
         </Panel>
       )}

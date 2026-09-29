@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Checkbox, DatePicker, TextField } from '@erve/primitives';
+import { Button, Checkbox, DatePicker, Textarea, TextField } from '@erve/primitives';
 import type {
   QualityExecutionPayload,
   QualityExecutionValidationError,
@@ -27,7 +27,6 @@ import {
   QualityExecutionHeader,
   QualityExecutionSection,
   qualityExecutionControlClass,
-  qualityExecutionTextAreaClass,
 } from './quality-execution-shell.js';
 import { QualityProductionContext } from './quality-production-context.js';
 
@@ -49,7 +48,6 @@ const replace = <T,>(values: T[], match: (value: T) => boolean, next: T) => [
   next,
 ];
 const controlClass = qualityExecutionControlClass;
-const textAreaClass = qualityExecutionTextAreaClass;
 let executionRowSequence = 0;
 const nextRowKey = () => `execution-row-${++executionRowSequence}`;
 const controlId = (componentId: string, fieldKey: string, rowIndex?: number) =>
@@ -1404,21 +1402,15 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                             {config.required === true ? (
                               <span className="sr-only">Required</span>
                             ) : null}
-                            <textarea
+                            <Textarea
                               id={controlId(component.id, 'value')}
                               aria-label={component.title}
-                              aria-invalid={fieldError(component.id, 'value') ? true : undefined}
-                              aria-describedby={
-                                fieldError(component.id, 'value')
-                                  ? `${controlId(component.id, 'value')}-error`
-                                  : undefined
-                              }
-                              className={`${textAreaClass} ${fieldError(component.id, 'value') ? errorClass : ''}`}
+                              required={config.required === true}
+                              errorMessage={fieldError(component.id, 'value')?.message}
                               placeholder={text(config.placeholder) || undefined}
                               maxLength={
                                 typeof config.maxLength === 'number' ? config.maxLength : undefined
                               }
-                              required={config.required === true}
                               value={
                                 draft.comments.find((value) => value.componentId === component.id)
                                   ?.value ?? ''
@@ -1442,16 +1434,8 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                   ),
                                 );
                               }}
+                              className="min-h-24"
                             />
-                            {fieldError(component.id, 'value') ? (
-                              <p
-                                id={`${controlId(component.id, 'value')}-error`}
-                                role="alert"
-                                className="mt-1 text-xs text-danger"
-                              >
-                                {fieldError(component.id, 'value')?.message}
-                              </p>
-                            ) : null}
                           </div>
                         ))}
                       {component.type === 'SIGNATURES' &&
@@ -1573,86 +1557,48 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                   }}
                                 />
                               </div>
-                              <label className="block space-y-1.5 text-sm font-medium">
-                                Outcome remarks
-                                <textarea
-                                  id={controlId(component.id, 'remarks')}
-                                  aria-invalid={
-                                    fieldError(component.id, 'remarks') ? true : undefined
-                                  }
-                                  aria-describedby={
-                                    fieldError(component.id, 'remarks')
-                                      ? `${controlId(component.id, 'remarks')}-error`
-                                      : undefined
-                                  }
-                                  className={`${textAreaClass} ${fieldError(component.id, 'remarks') ? errorClass : ''}`}
-                                  value={draft.outcome?.remarks ?? ''}
+                              <Textarea
+                                id={controlId(component.id, 'remarks')}
+                                label="Outcome remarks"
+                                errorMessage={fieldError(component.id, 'remarks')?.message}
+                                value={draft.outcome?.remarks ?? ''}
+                                onChange={(event) => {
+                                  clearFieldError(
+                                    component.id,
+                                    'remarks',
+                                    undefined,
+                                    Boolean(event.target.value.trim()),
+                                  );
+                                  if (draft.outcome)
+                                    set('outcome', {
+                                      ...draft.outcome,
+                                      remarks: event.target.value,
+                                    });
+                                }}
+                                className="min-h-24"
+                              />
+                              {execution.finalBatch && draft.outcome?.value === 'FAIL' ? (
+                                <Textarea
+                                  id={controlId(component.id, 'rejectionReason')}
+                                  label="Rejection / Defect Reason"
+                                  required
+                                  errorMessage={fieldError(component.id, 'rejectionReason')?.message}
+                                  value={draft.outcome?.rejectionReason ?? ''}
                                   onChange={(event) => {
                                     clearFieldError(
                                       component.id,
-                                      'remarks',
+                                      'rejectionReason',
                                       undefined,
                                       Boolean(event.target.value.trim()),
                                     );
                                     if (draft.outcome)
                                       set('outcome', {
                                         ...draft.outcome,
-                                        remarks: event.target.value,
+                                        rejectionReason: event.target.value,
                                       });
                                   }}
+                                  className="min-h-24"
                                 />
-                              </label>
-                              {fieldError(component.id, 'remarks') ? (
-                                <p
-                                  id={`${controlId(component.id, 'remarks')}-error`}
-                                  role="alert"
-                                  className="text-xs text-danger"
-                                >
-                                  {fieldError(component.id, 'remarks')?.message}
-                                </p>
-                              ) : null}
-                              {execution.finalBatch && draft.outcome?.value === 'FAIL' ? (
-                                <label className="block space-y-1.5 text-sm font-medium">
-                                  Rejection / Defect Reason
-                                  <textarea
-                                    id={controlId(component.id, 'rejectionReason')}
-                                    required
-                                    aria-invalid={
-                                      fieldError(component.id, 'rejectionReason')
-                                        ? true
-                                        : undefined
-                                    }
-                                    aria-describedby={
-                                      fieldError(component.id, 'rejectionReason')
-                                        ? `${controlId(component.id, 'rejectionReason')}-error`
-                                        : undefined
-                                    }
-                                    className={`${textAreaClass} ${fieldError(component.id, 'rejectionReason') ? errorClass : ''}`}
-                                    value={draft.outcome?.rejectionReason ?? ''}
-                                    onChange={(event) => {
-                                      clearFieldError(
-                                        component.id,
-                                        'rejectionReason',
-                                        undefined,
-                                        Boolean(event.target.value.trim()),
-                                      );
-                                      if (draft.outcome)
-                                        set('outcome', {
-                                          ...draft.outcome,
-                                          rejectionReason: event.target.value,
-                                        });
-                                    }}
-                                  />
-                                </label>
-                              ) : null}
-                              {fieldError(component.id, 'rejectionReason') ? (
-                                <p
-                                  id={`${controlId(component.id, 'rejectionReason')}-error`}
-                                  role="alert"
-                                  className="text-xs text-danger"
-                                >
-                                  {fieldError(component.id, 'rejectionReason')?.message}
-                                </p>
                               ) : null}
                             </div>
                           )}
