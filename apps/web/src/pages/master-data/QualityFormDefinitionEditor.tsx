@@ -26,7 +26,8 @@ export function QualityFormDefinitionEditor({
         >
           <div className="flex items-end gap-3">
             <TextField
-              label={`Section ${sectionIndex + 1} title *`}
+              label={`Section ${sectionIndex + 1} title`}
+              required
               value={section.title}
               width="fill"
               onChange={(event) => updateSection(sectionIndex, { title: event.target.value })}
@@ -77,7 +78,8 @@ export function QualityFormDefinitionEditor({
                 ))}
               </SelectField>
               <TextField
-                label="Component title *"
+                label="Component title"
+                required
                 value={component.title}
                 width="fill"
                 onChange={(event) =>

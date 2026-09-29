@@ -44,8 +44,9 @@ function cssEscapeId(id: string): string {
 }
 
 function findLabelledControl<T extends HTMLElement>(label: string): T {
+  const clean = label.replace(/\s*\*$/, '');
   const labelEl = Array.from(container.querySelectorAll('label')).find(
-    (el) => el.textContent === label,
+    (el) => el.textContent?.replace(/\s*\*$/, '') === clean,
   );
   if (!labelEl) throw new Error(`Label "${label}" not found`);
   const forId = labelEl.getAttribute('for');

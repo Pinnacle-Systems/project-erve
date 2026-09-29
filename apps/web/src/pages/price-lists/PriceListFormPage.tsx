@@ -116,6 +116,7 @@ export function PriceListFormPage() {
 
       <Panel>
         <form
+          noValidate
           className="space-y-6"
           onSubmit={(e) => {
             e.preventDefault();
@@ -128,7 +129,8 @@ export function PriceListFormPage() {
                 // The distributor is fixed after creation — shown straight
                 // from the loaded price list, never looked up.
                 <TextField
-                  label="Distributor *"
+                  label="Distributor"
+                  required
                   value={priceListQuery.data.distributor.name}
                   disabled
                   width="md"
@@ -138,7 +140,8 @@ export function PriceListFormPage() {
                 // Lists but is denied on the broad /distributors master, so
                 // this searches /price-lists/distributor-options (ACTIVE only).
                 <DistributorLookupField<PriceListDistributor>
-                  label="Distributor *"
+                  label="Distributor"
+                  required
                   value={distributor}
                   onChange={setDistributor}
                   searchPath="/price-lists/distributor-options"
@@ -148,7 +151,8 @@ export function PriceListFormPage() {
               )}
 
               <TextField
-                label="Name *"
+                label="Name"
+                required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 width="md"
@@ -156,6 +160,7 @@ export function PriceListFormPage() {
 
               <DatePicker
                 label="Effective From"
+                required
                 value={effectiveFrom}
                 onValueChange={(value) => setEffectiveFrom(value ?? '')}
                 displayFormat="dd/mm/yyyy"

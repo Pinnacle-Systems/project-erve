@@ -167,7 +167,7 @@ describe('SeasonListPage Financial Year integration', () => {
     await renderPage(baseAdapter());
 
     const financialYearLabel = Array.from(container.querySelectorAll('label')).find(
-      (el) => el.textContent === 'Financial Year',
+      (el) => el.textContent?.replace(/\s*\*$/, '') === 'Financial Year',
     );
     expect(financialYearLabel).toBeDefined();
     expect(financialYearLabel?.getAttribute('for')).toBe('select-financial-year');
@@ -266,6 +266,22 @@ describe('SeasonListPage Financial Year integration', () => {
     expect(container.textContent).toContain('Season code, name, and Financial Year are required');
     expect(container.querySelector('#field-season-code')?.getAttribute('aria-invalid')).toBe('true');
     expect(container.querySelector('#field-season-name')?.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('U4-AUDIT-NEW-02: maintains top-alignment layout on FormGrid when field errors appear', async () => {
+    await renderPage(baseAdapter());
+    const formGrid = container.querySelector('form > div');
+    expect(formGrid?.className).toContain('items-start');
+    expect(formGrid?.className).not.toContain('items-end');
+
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add Season',
+    );
+    await act(async () => submit!.click());
+    await flush();
+
+    expect(formGrid?.className).toContain('items-start');
+    expect(formGrid?.className).not.toContain('items-end');
   });
 });
 

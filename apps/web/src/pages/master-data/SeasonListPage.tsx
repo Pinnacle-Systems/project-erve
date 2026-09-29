@@ -127,19 +127,20 @@ export function SeasonListPage() {
   return <div className="space-y-3">
     <PageHeader title="Seasons" subtitle="Season master records used by Styles. Inactive Seasons remain visible on historical records." />
     <Panel title={editing ? 'Edit Season' : 'Add Season'}>
-      <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
-        <FormGrid layout="content" className="items-end">
-          <TextField label="Season code" value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} errorMessage={error && !form.code.trim() ? 'Required' : undefined} width="sm" />
-          <TextField label="Season name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} errorMessage={error && !form.name.trim() ? 'Required' : undefined} width="md" />
+      <form className="space-y-4" noValidate onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
+        <FormGrid layout="content">
+          <TextField required label="Season code" value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} errorMessage={error && !form.code.trim() ? 'Required' : undefined} width="sm" />
+          <TextField required label="Season name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} errorMessage={error && !form.name.trim() ? 'Required' : undefined} width="md" />
           <FinancialYearSelect
             key={formKey}
             label="Financial Year"
+            required
             width="xs"
             value={effectiveFinancialYearId}
             onValueChange={(value) => setForm({ ...form, financialYearId: value })}
             errorMessage={error && !effectiveFinancialYearId ? 'Required' : undefined}
           />
-          <div className="flex gap-2">
+          <div className="flex gap-2 pt-[1.375rem]">
             {editing ? <Button type="button" variant="secondary" onClick={beginAdd}>Cancel</Button> : null}
             <Button type="submit" loading={save.isPending}>{editing ? 'Save Changes' : 'Add Season'}</Button>
           </div>

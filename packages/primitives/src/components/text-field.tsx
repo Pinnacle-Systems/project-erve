@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority';
-import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, type InputHTMLAttributes, type ReactNode, useId } from 'react';
 import { useTheme } from '@erve/theme';
 import { cn } from '../lib/utils';
 
@@ -37,11 +37,11 @@ export type TextFieldWidth = 'full' | 'fill' | 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 export interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
   label?: string;
-  errorMessage?: string;
-  helpText?: string;
+  errorMessage?: ReactNode;
+  helpText?: ReactNode;
   density?: TextFieldDensity;
   width?: TextFieldWidth;
-  error?: boolean;
+  error?: boolean | ReactNode;
   endAdornment?: ReactNode;
 }
 
@@ -67,16 +67,34 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
       width = 'md',
       id,
       endAdornment,
+      'aria-describedby': ariaDescribedBy,
       ...props
     },
     ref,
   ) => {
     const { densityName } = useTheme();
     const resolvedDensity = density ?? densityName;
-    const inputId = id ?? (label ? `field-${label.toLowerCase().replace(/\s+/g, '-')}` : undefined);
+    const generatedId = useId();
+    const inputId =
+      id ??
+      (typeof label === 'string' && label.trim().length > 0
+        ? `field-${label.toLowerCase().replace(/[^a-z0-9_-]/gi, '-')}`
+        : generatedId);
     const hasError = Boolean(error || errorMessage);
-    const errorId = inputId ? `${inputId}-error` : undefined;
-    const helpId = inputId ? `${inputId}-help` : undefined;
+    const resolvedError =
+      errorMessage ?? (typeof error !== 'boolean' ? error : undefined);
+    const resolvedHelpText = !hasError ? helpText : undefined;
+    const errorId = `${inputId}-error`;
+    const helpId = `${inputId}-help`;
+
+    const describedByIds = [
+      resolvedError ? errorId : undefined,
+      resolvedHelpText ? helpId : undefined,
+      ariaDescribedBy,
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined;
+
     const inputElement = (
       <input
         ref={ref}
@@ -86,7 +104,7 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
           className,
         )}
         aria-invalid={hasError || undefined}
-        aria-describedby={errorMessage ? errorId : helpText ? helpId : undefined}
+        aria-describedby={describedByIds}
         {...props}
       />
     );
@@ -114,21 +132,21 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
         ) : (
           inputElement
         )}
-        {errorMessage && (
+        {resolvedError && (
           <p
             id={errorId}
             className="text-xs text-[var(--erp-form-field-error-text-color)] leading-none"
             role="alert"
           >
-            {errorMessage}
+            {resolvedError}
           </p>
         )}
-        {!errorMessage && helpText && (
+        {resolvedHelpText && (
           <p
             id={helpId}
             className="text-xs text-[var(--erp-form-field-help-text-color)] leading-none"
           >
-            {helpText}
+            {resolvedHelpText}
           </p>
         )}
       </div>

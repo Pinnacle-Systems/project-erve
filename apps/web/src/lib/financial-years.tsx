@@ -49,6 +49,7 @@ export function useCurrentFinancialYearQuery() {
 interface FinancialYearSelectProps {
   /** Visible field label, styled/positioned like TextField's. Omit for a bare filter control and rely on `aria-label` instead. */
   label?: string;
+  required?: boolean;
   'aria-label'?: string;
   errorMessage?: string;
   value: string;
@@ -61,6 +62,7 @@ interface FinancialYearSelectProps {
 
 export function FinancialYearSelect({
   label,
+  required,
   'aria-label': ariaLabel,
   errorMessage,
   value,
@@ -77,6 +79,7 @@ export function FinancialYearSelect({
   return (
     <SelectField
       label={label}
+      required={required}
       aria-label={ariaLabel}
       errorMessage={errorMessage ?? (loadFailed ? 'Unable to load Financial Years' : undefined)}
       value={value || (allLabel ? 'ALL' : '')}

@@ -72,6 +72,7 @@ export function QualityFormFormPage() {
       />
       <Panel>
         <form
+          noValidate
           className="space-y-6"
           onSubmit={(event) => {
             event.preventDefault();
@@ -82,14 +83,16 @@ export function QualityFormFormPage() {
           <FormSection title="Form identity">
             <FormGrid columns={2}>
               <TextField
-                label="Code *"
+                label="Code"
+                required
                 value={code}
                 maxLength={30}
                 width="fill"
                 onChange={(event) => setCode(event.target.value.toUpperCase())}
               />
               <TextField
-                label="Name *"
+                label="Name"
+                required
                 value={name}
                 maxLength={160}
                 width="fill"

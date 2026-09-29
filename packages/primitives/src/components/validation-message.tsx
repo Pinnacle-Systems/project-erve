@@ -22,10 +22,12 @@ export interface ValidationMessageProps
     VariantProps<typeof validationMessageVariants> {}
 
 export const ValidationMessage = forwardRef<HTMLParagraphElement, ValidationMessageProps>(
-  ({ className, tone, ...props }, ref) => {
+  ({ className, tone = "default", role, ...props }, ref) => {
+    const resolvedRole = role ?? (tone === "error" ? "alert" : undefined);
     return (
       <p
         ref={ref}
+        role={resolvedRole}
         className={cn(validationMessageVariants({ tone }), className)}
         {...props}
       />

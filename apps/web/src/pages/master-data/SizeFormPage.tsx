@@ -98,6 +98,7 @@ export function SizeFormPage() {
       />
       <Panel>
         <form
+          noValidate
           className="space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
@@ -106,20 +107,23 @@ export function SizeFormPage() {
         >
           <FormGrid columns={4}>
             <TextField
-              label="Code *"
+              label="Code"
+              required
               value={form.code}
               disabled={locked}
               errorMessage={error && !form.code.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, code: event.target.value })}
             />
             <TextField
-              label="Label *"
+              label="Label"
+              required
               value={form.label}
               errorMessage={error && !form.label.trim() ? 'Required' : undefined}
               onChange={(event) => setForm({ ...form, label: event.target.value })}
             />
             <SelectField
-              label="Type *"
+              label="Type"
+              required
               value={form.sizeType}
               disabled={locked}
               onValueChange={(value) => setForm({ ...form, sizeType: value })}
@@ -132,7 +136,8 @@ export function SizeFormPage() {
               ))}
             </SelectField>
             <TextField
-              label="Sort Order *"
+              label="Sort Order"
+              required
               type="number"
               value={form.sortOrder}
               errorMessage={error && !form.sortOrder.trim() ? 'Required' : undefined}

@@ -79,6 +79,7 @@ export function styleFieldErrorMessage(
   if (key === 'hsnCode' && !isValidHsnCode(form.hsnCode)) return 'HSN Code must be exactly 8 digits';
   if (key === 'styleNumber' && !form.styleNumber) return 'Required';
   if (key === 'styleName' && !form.styleName) return 'Required';
+  if (key === 'finalMrp' && Number(form.finalMrp) <= 0) return 'Required';
   return undefined;
 }
 

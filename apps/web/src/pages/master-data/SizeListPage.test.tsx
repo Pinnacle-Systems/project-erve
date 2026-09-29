@@ -44,8 +44,9 @@ function cssEscapeId(id: string): string {
 }
 
 function findInput(label: string): HTMLInputElement {
+  const clean = label.replace(/\s*\*$/, '');
   const labelEl = Array.from(container.querySelectorAll('label')).find(
-    (el) => el.textContent === label,
+    (el) => el.textContent?.replace(/\s*\*$/, '') === clean,
   );
   if (!labelEl) throw new Error(`Label "${label}" not found`);
   const forId = labelEl.getAttribute('for');
@@ -170,7 +171,7 @@ describe('SizeListPage inline Create', () => {
     setInputValue(findInput('Label *'), '4 years');
     setInputValue(findInput('Sort Order *'), '4');
     const submit = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Add',
+      (button) => button.textContent === 'Add Size' || button.textContent === 'Add',
     );
     await act(async () => submit!.click());
     await act(async () => {
@@ -199,7 +200,7 @@ describe('SizeListPage inline Create', () => {
     setInputValue(findInput('Label *'), '3 years');
     setInputValue(findInput('Sort Order *'), '3');
     const submit = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Add',
+      (button) => button.textContent === 'Add Size' || button.textContent === 'Add',
     );
     await act(async () => submit!.click());
     await act(async () => {
@@ -217,7 +218,7 @@ describe('SizeListPage inline Create', () => {
     setInputValue(findInput('Label *'), '5 years');
     setInputValue(findInput('Sort Order *'), '5');
     const submit = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Add',
+      (button) => button.textContent === 'Add Size' || button.textContent === 'Add',
     );
     await act(async () => submit!.click());
     await act(async () => {
@@ -234,7 +235,7 @@ describe('SizeListPage inline Create', () => {
     const postSpy = vi.spyOn(apiClient, 'post');
 
     const submit = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Add',
+      (button) => button.textContent === 'Add Size' || button.textContent === 'Add',
     );
     await act(async () => submit!.click());
     await act(async () => {
@@ -244,5 +245,23 @@ describe('SizeListPage inline Create', () => {
     expect(postSpy).not.toHaveBeenCalled();
     expect(container.textContent).toContain('Code, label, and sort order are required');
     expect(findInput('Code *').getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('U4-AUDIT-NEW-02: maintains top-alignment layout on FormGrid when field errors appear', async () => {
+    await renderPageWithSizes([]);
+    const formGrid = container.querySelector('form > div');
+    expect(formGrid?.className).toContain('items-start');
+    expect(formGrid?.className).not.toContain('items-end');
+
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add Size' || button.textContent === 'Add',
+    );
+    await act(async () => submit!.click());
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(formGrid?.className).toContain('items-start');
+    expect(formGrid?.className).not.toContain('items-end');
   });
 });

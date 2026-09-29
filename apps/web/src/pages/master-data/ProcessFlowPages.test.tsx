@@ -75,8 +75,9 @@ function click(label: string): void {
 }
 
 function setInput(label: string, value: string): void {
+  const clean = label.replace(/\s*\*$/, '');
   const input = container.querySelector<HTMLInputElement>(
-    `input[aria-label="${label}"], input[id="field-${label.toLowerCase().replace(/\s+/g, '-')}"]`,
+    `input[aria-label="${label}"], input[aria-label="${clean}"], input[id="field-${label.toLowerCase().replace(/\s+/g, '-')}"], input[id="field-${clean.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}"]`,
   );
   if (!input) throw new Error(`Input not found: ${label}`);
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;

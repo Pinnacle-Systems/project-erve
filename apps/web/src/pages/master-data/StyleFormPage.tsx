@@ -251,6 +251,7 @@ export function StyleFormPage() {
 
       <Panel>
         <form
+          noValidate
           className="space-y-6"
           onSubmit={(event) => {
             event.preventDefault();

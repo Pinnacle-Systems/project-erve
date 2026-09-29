@@ -225,6 +225,7 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
 
       <Panel>
         <form
+          noValidate
           className="space-y-6"
           onSubmit={(e) => {
             e.preventDefault();
@@ -238,10 +239,11 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
                 // interactive Radix Select (and its BubbleSelect hydration
                 // race) entirely, mirroring the fix already applied to Sale
                 // Order's Distributor field for the identical bug.
-                <TextField label="Distributor *" value={existing!.distributor.name} disabled width="md" />
+                <TextField label="Distributor" required value={existing!.distributor.name} disabled width="md" />
               ) : (
                 <DistributorLookupField
-                  label="Distributor *"
+                  label="Distributor"
+                  required
                   value={selectedDistributor}
                   onChange={setSelectedDistributor}
                   width="md"
@@ -251,7 +253,7 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
               <TextField label="Purchase Mode" value={purchaseModeLabel} disabled width="sm" />
 
               <DatePicker
-                label="Order Sheet Date *"
+                label="Order Sheet Date"
                 value={poDate}
                 onValueChange={(value) => setPoDate(value ?? '')}
                 displayFormat="dd/mm/yyyy"
