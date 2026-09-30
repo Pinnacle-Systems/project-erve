@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { StatusBadge } from '@erve/app-components';
+import { StatusBadge, createEnterToNextHandler } from '@erve/app-components';
 import { Button, DatePicker, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
@@ -277,36 +277,38 @@ export function JobOrderOverviewTab({ jobOrder, canManageJobOrders }: JobOrderOv
       )}
 
       {!jobOrder.deliveryDateLocked && canManageJobOrders && (
-        <Panel
-          title="Delivery Date"
-          description="Editable until the factory confirms this Job Order."
-          footer={
-            <div className="flex justify-end">
-              <Button
-                onClick={() =>
-                  deliveryDateMutation.mutate(
-                    (deliveryDateDraft ?? jobOrder.requiredDeliveryDate?.slice(0, 10) ?? '') || null,
-                  )
-                }
-                loading={deliveryDateMutation.isPending}
-              >
-                Save Delivery Date
-              </Button>
-            </div>
-          }
-        >
-          <DatePicker
-            label="Required Delivery Date"
-            value={deliveryDateDraft ?? jobOrder.requiredDeliveryDate?.slice(0, 10) ?? ''}
-            onValueChange={(val) => setDeliveryDateDraft(val ?? '')}
-            width="fill"
-          />
-          {deliveryDateMutation.isError && (
-            <ValidationMessage tone="error">
-              {mutationErrorMessage(deliveryDateMutation.error, 'Unable to update the delivery date.')}
-            </ValidationMessage>
-          )}
-        </Panel>
+        <div onKeyDown={createEnterToNextHandler()}>
+          <Panel
+            title="Delivery Date"
+            description="Editable until the factory confirms this Job Order."
+            footer={
+              <div className="flex justify-end">
+                <Button
+                  onClick={() =>
+                    deliveryDateMutation.mutate(
+                      (deliveryDateDraft ?? jobOrder.requiredDeliveryDate?.slice(0, 10) ?? '') || null,
+                    )
+                  }
+                  loading={deliveryDateMutation.isPending}
+                >
+                  Save Delivery Date
+                </Button>
+              </div>
+            }
+          >
+            <DatePicker
+              label="Required Delivery Date"
+              value={deliveryDateDraft ?? jobOrder.requiredDeliveryDate?.slice(0, 10) ?? ''}
+              onValueChange={(val) => setDeliveryDateDraft(val ?? '')}
+              width="fill"
+            />
+            {deliveryDateMutation.isError && (
+              <ValidationMessage tone="error">
+                {mutationErrorMessage(deliveryDateMutation.error, 'Unable to update the delivery date.')}
+              </ValidationMessage>
+            )}
+          </Panel>
+        </div>
       )}
     </div>
   );

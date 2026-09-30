@@ -10,15 +10,26 @@ import {
   SelectField,
   SelectItem,
   LookupField,
+  Switch,
+  Checkbox,
+  RadioGroup,
+  Radio,
 } from '@erve/primitives';
 import { ThemeProvider } from '@erve/theme';
 import { useEnterToNextField, createEnterToNextHandler } from './enter-to-next';
+
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
 
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -859,5 +870,167 @@ describe('Enter-to-Next Form Navigation Helper (CUR-005)', () => {
     f1.focus();
     fireKey(f1, 'Enter');
     expect(document.activeElement).toBe(f2);
+  });
+
+  it('26. Switch: Enter on switch retains native activation / toggle semantics, does not advance focus, Space toggles', () => {
+    function TestForm() {
+      const handleKeyDown = useEnterToNextField();
+      const [checked, setChecked] = useState(false);
+      return (
+        <form onKeyDown={handleKeyDown}>
+          <TextField id="field1" label="Field 1" />
+          <Switch id="switch1" label="Active" checked={checked} onCheckedChange={setChecked} />
+          <TextField id="field2" label="Field 2" />
+        </form>
+      );
+    }
+
+    act(() => {
+      root.render(
+        <ThemeProvider>
+          <TestForm />
+        </ThemeProvider>
+      );
+    });
+
+    const field1 = container.querySelector('#field1') as HTMLInputElement;
+    const switchBtn = container.querySelector('#switch1') as HTMLButtonElement;
+    const field2 = container.querySelector('#field2') as HTMLInputElement;
+
+    // 1. Enter from field1 moves focus to switchBtn (Switch is an eligible destination)
+    field1.focus();
+    fireKey(field1, 'Enter');
+    expect(document.activeElement).toBe(switchBtn);
+
+    // Initial state is unchecked
+    expect(switchBtn.getAttribute('data-state')).toBe('unchecked');
+
+    // 2. Press Enter on Switch:
+    // Enter-to-next does NOT intercept Enter; defaultPrevented remains false
+    // Focus remains on Switch; does NOT move away to field2
+    const enterEv = fireKey(switchBtn, 'Enter');
+    expect(enterEv.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(switchBtn);
+    expect(document.activeElement).not.toBe(field2);
+
+    // Native browser button activation dispatches click on Enter when not defaultPrevented
+    if (!enterEv.defaultPrevented) {
+      act(() => {
+        switchBtn.click();
+      });
+    }
+    expect(switchBtn.getAttribute('data-state')).toBe('checked');
+
+    // 3. Press Enter when switch is already true: true -> false
+    const enterEv2 = fireKey(switchBtn, 'Enter');
+    expect(enterEv2.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(switchBtn);
+    expect(document.activeElement).not.toBe(field2);
+    if (!enterEv2.defaultPrevented) {
+      act(() => {
+        switchBtn.click();
+      });
+    }
+    expect(switchBtn.getAttribute('data-state')).toBe('unchecked');
+
+    // 4. Space on Switch also activates toggle natively
+    act(() => {
+      switchBtn.click();
+    });
+    expect(switchBtn.getAttribute('data-state')).toBe('checked');
+  });
+
+  it('27. Checkbox: Enter on checkbox is not hijacked, Space toggles state, destination navigation works', () => {
+    function TestForm() {
+      const handleKeyDown = useEnterToNextField();
+      const [checked, setChecked] = useState(false);
+      return (
+        <form onKeyDown={handleKeyDown}>
+          <TextField id="field1" label="Field 1" />
+          <Checkbox id="checkbox1" label="Accept terms" checked={checked} onCheckedChange={(val) => setChecked(Boolean(val))} />
+          <TextField id="field2" label="Field 2" />
+        </form>
+      );
+    }
+
+    act(() => {
+      root.render(
+        <ThemeProvider>
+          <TestForm />
+        </ThemeProvider>
+      );
+    });
+
+    const field1 = container.querySelector('#field1') as HTMLInputElement;
+    const checkboxBtn = container.querySelector('#checkbox1') as HTMLButtonElement;
+    const field2 = container.querySelector('#field2') as HTMLInputElement;
+
+    // 1. Enter from field1 moves focus to Checkbox (Checkbox is an eligible destination)
+    field1.focus();
+    fireKey(field1, 'Enter');
+    expect(document.activeElement).toBe(checkboxBtn);
+
+    // 2. Enter on Checkbox:
+    // Enter-to-next must NOT hijack focus to field2; focus remains on Checkbox
+    fireKey(checkboxBtn, 'Enter');
+    expect(document.activeElement).toBe(checkboxBtn);
+    expect(document.activeElement).not.toBe(field2);
+
+    // 3. Space / click toggles state
+    act(() => {
+      checkboxBtn.click();
+    });
+    expect(checkboxBtn.getAttribute('data-state')).toBe('checked');
+  });
+
+  it('28. Radio: Enter on radio is not hijacked, focus remains on radio, destination navigation works', () => {
+    function TestForm() {
+      const handleKeyDown = useEnterToNextField();
+      const [value, setValue] = useState('opt1');
+      return (
+        <form onKeyDown={handleKeyDown}>
+          <TextField id="field1" label="Field 1" />
+          <RadioGroup value={value} onValueChange={setValue}>
+            <Radio id="radio1" value="opt1" label="Option 1" />
+            <Radio id="radio2" value="opt2" label="Option 2" />
+          </RadioGroup>
+          <TextField id="field2" label="Field 2" />
+        </form>
+      );
+    }
+
+    act(() => {
+      root.render(
+        <ThemeProvider>
+          <TestForm />
+        </ThemeProvider>
+      );
+    });
+
+    const field1 = container.querySelector('#field1') as HTMLInputElement;
+    const radio1 = container.querySelector('#radio1') as HTMLButtonElement;
+    const radio2 = container.querySelector('#radio2') as HTMLButtonElement;
+    const field2 = container.querySelector('#field2') as HTMLInputElement;
+
+    // 1. Enter from field1 moves focus to first Radio (Radio is an eligible destination)
+    act(() => {
+      field1.focus();
+      fireKey(field1, 'Enter');
+    });
+    expect(document.activeElement).toBe(radio1);
+
+    // 2. Enter on Radio:
+    // Enter-to-next must NOT hijack focus to field2; focus remains on Radio
+    act(() => {
+      fireKey(radio1, 'Enter');
+    });
+    expect(document.activeElement).toBe(radio1);
+    expect(document.activeElement).not.toBe(field2);
+
+    // 3. Selection / navigation works
+    act(() => {
+      radio2.click();
+    });
+    expect(radio2.getAttribute('data-state')).toBe('checked');
   });
 });

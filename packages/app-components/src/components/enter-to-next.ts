@@ -63,13 +63,16 @@ export function isEnterNavigationSource(target: HTMLElement): boolean {
     return false;
   }
 
-  // 3. Buttons, links, and comboboxes retain native / widget semantics
+  // 3. Buttons, links, comboboxes, and widget controls (switch, checkbox, radio) retain native / widget semantics
   if (
     target.tagName === 'BUTTON' ||
     target.tagName === 'A' ||
     target.getAttribute('role') === 'button' ||
     target.getAttribute('role') === 'link' ||
-    target.getAttribute('role') === 'combobox'
+    target.getAttribute('role') === 'combobox' ||
+    target.getAttribute('role') === 'switch' ||
+    target.getAttribute('role') === 'checkbox' ||
+    target.getAttribute('role') === 'radio'
   ) {
     return false;
   }

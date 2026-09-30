@@ -5,6 +5,7 @@ import {
   ConfirmDialog,
   NOT_RECORDED_LABEL,
   StatusBadge,
+  createEnterToNextHandler,
   formatPreparedQuantity,
   formatPreparedVariance,
 } from '@erve/app-components';
@@ -430,43 +431,45 @@ export function JobOrderProductionTab({
               {NOT_RECORDED_LABEL} — this is a historical imported Job Order; no prepared quantity was recorded.
             </div>
           ) : canUpdatePrepared ? (
-            <DataTable
-              columns={[
-                { key: 'style', header: 'Style', accessor: 'style' },
-                { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-                {
-                  key: 'orderedQuantity',
-                  header: 'Ordered',
-                  align: 'right',
-                  render: (size) => size.orderedQuantity.toLocaleString(),
-                },
-                {
-                  key: 'preparedInput',
-                  header: 'Prepared',
-                  align: 'right',
-                  render: (size) => (
-                    <TextField
-                      aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
-                      type="number"
-                      min={0}
-                      max={size.orderedQuantity}
-                      value={preparedQuantities[size.id] ?? size.preparedQuantity}
-                      onChange={(event) =>
-                        setPreparedQuantities((current) => ({
-                          ...current,
-                          [size.id]: Number(event.target.value || 0),
-                        }))
-                      }
-                      disabled={!canUpdatePrepared}
-                      density="compact"
-                      width="xs"
-                    />
-                  ),
-                },
-              ]}
-              data={flatSizes}
-              rowKey="id"
-            />
+            <div onKeyDown={createEnterToNextHandler()}>
+              <DataTable
+                columns={[
+                  { key: 'style', header: 'Style', accessor: 'style' },
+                  { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
+                  {
+                    key: 'orderedQuantity',
+                    header: 'Ordered',
+                    align: 'right',
+                    render: (size) => size.orderedQuantity.toLocaleString(),
+                  },
+                  {
+                    key: 'preparedInput',
+                    header: 'Prepared',
+                    align: 'right',
+                    render: (size) => (
+                      <TextField
+                        aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
+                        type="number"
+                        min={0}
+                        max={size.orderedQuantity}
+                        value={preparedQuantities[size.id] ?? size.preparedQuantity}
+                        onChange={(event) =>
+                          setPreparedQuantities((current) => ({
+                            ...current,
+                            [size.id]: Number(event.target.value || 0),
+                          }))
+                        }
+                        disabled={!canUpdatePrepared}
+                        density="compact"
+                        width="xs"
+                      />
+                    ),
+                  },
+                ]}
+                data={flatSizes}
+                rowKey="id"
+              />
+            </div>
           ) : isPreparedQuantitiesUnlocked ? (
             <DataTable
               columns={[
@@ -537,8 +540,9 @@ export function JobOrderProductionTab({
         }
       >
         {canEditProductionPlan ? (
-          <DataTable
-            density="compact"
+          <div onKeyDown={createEnterToNextHandler()}>
+            <DataTable
+              density="compact"
             columns={[
               { key: 'size', header: 'Size', render: (row) => row.sizeLabel },
               {
@@ -573,6 +577,7 @@ export function JobOrderProductionTab({
             data={productionPlanRows}
             rowKey="sizeId"
           />
+          </div>
         ) : (
           <DataTable
             columns={[
