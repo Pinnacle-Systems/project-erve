@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { PageHeader } from '@erve/app-components';
+import { PageHeader, createEnterToNextHandler } from '@erve/app-components';
 import { Button, SelectField, SelectItem } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -72,6 +72,7 @@ export function QualityFormVersionEditorPage() {
       <Panel>
         <form
           className="space-y-5"
+          onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
             setError('');

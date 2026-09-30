@@ -8,7 +8,7 @@ import type {
   QualityCoverageView,
   QualityExecutionView,
 } from '@erve/types';
-import { FinalBatchAllocationForm, StatusBadge } from '@erve/app-components';
+import { FinalBatchAllocationForm, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
 import { Button, SelectField, SelectItem, Textarea, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
@@ -432,7 +432,7 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                       activity.qualityForm.executionScope === 'SIZE' &&
                       user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') && (
                         <Panel variant="subtle" padding="sm" title="New PP Sample required">
-                          <div className="flex flex-wrap items-end gap-3">
+                          <div className="flex flex-wrap items-end gap-3" onKeyDown={createEnterToNextHandler()}>
                             <SelectField
                               label="Sample Size"
                               value={qualityStartContexts[activity.processFlowVersionStageId]?.sizeId || 'NONE'}
@@ -512,7 +512,7 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                   </div>
                 ) : activity.status === 'AVAILABLE' &&
                   user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') ? (
-                  <div className="mt-4 flex flex-wrap items-end gap-3">
+                  <div className="mt-4 flex flex-wrap items-end gap-3" onKeyDown={createEnterToNextHandler()}>
                     {activity.qualityForm.executionScope === 'SIZE' && (
                       <>
                         <SelectField
