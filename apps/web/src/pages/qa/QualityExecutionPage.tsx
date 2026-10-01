@@ -58,11 +58,22 @@ export function QualityExecutionPage() {
     onError: async (error) => {
       const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined;
       const details = api?.details as { validationErrors?: QualityExecutionValidationError[] };
-      setValidationErrors(Array.isArray(details?.validationErrors) ? details.validationErrors : []);
+      const validationErrors = Array.isArray(details?.validationErrors) ? details.validationErrors : [];
+      setValidationErrors(validationErrors);
+      const rawMessage = api?.message;
+      const isRawTransport =
+        !rawMessage ||
+        rawMessage === 'Invalid request data' ||
+        rawMessage.toLowerCase().includes('validation error');
+      const fallbackMessage = isRawTransport
+        ? (validationErrors.length
+            ? 'Please correct the highlighted fields before saving.'
+            : 'Please review and complete the required inspection fields.')
+        : rawMessage;
       setMessage(
         api?.code === 'STALE_VERSION'
           ? 'This inspection changed elsewhere. The latest version has been reloaded.'
-          : (api?.message ?? 'Unable to save inspection.'),
+          : (fallbackMessage ?? 'Unable to save inspection.'),
       );
       if (api?.code === 'STALE_VERSION') await query.refetch();
     },
@@ -111,8 +122,15 @@ export function QualityExecutionPage() {
     },
     onError: (error) => {
       const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined;
+      const rawMessage = api?.message;
+      const isRawTransport =
+        !rawMessage ||
+        rawMessage === 'Invalid request data' ||
+        rawMessage.toLowerCase().includes('validation error');
       setMessage(
-        api?.message ?? (error instanceof Error ? error.message : 'Unable to update batch.'),
+        isRawTransport
+          ? 'Unable to update batch. Please review the details and try again.'
+          : (rawMessage ?? (error instanceof Error ? error.message : 'Unable to update batch.')),
       );
     },
   });

@@ -1265,4 +1265,123 @@ describe('QaInspectionForm', () => {
     );
     expect(button('Reopen size L')).toBeUndefined();
   });
+
+  describe('DEMO-012 QA validation and numeric editing UX', () => {
+    function changeNumericInput(input: HTMLInputElement, value: string) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      act(() => {
+        setter.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
+
+    it('allows numeric inputs to be temporarily cleared to blank and then set to new value', async () => {
+      await renderForm();
+      const acceptedInput = container.querySelector('[aria-label="M accepted"]') as HTMLInputElement;
+      expect(acceptedInput).not.toBeNull();
+      expect(acceptedInput.value).toBe('10');
+
+      // Clear field to empty string - must stay empty and not revert to 0 or previous value
+      changeNumericInput(acceptedInput, '');
+      expect(acceptedInput.value).toBe('');
+
+      // Enter new value
+      changeNumericInput(acceptedInput, '6');
+      expect(acceptedInput.value).toBe('6');
+    });
+
+    it('rejects blank required numeric values on final validation', async () => {
+      await renderForm();
+      const acceptedInput = container.querySelector('[aria-label="M accepted"]') as HTMLInputElement;
+      changeNumericInput(acceptedInput, '');
+
+      const requestSpy = vi.spyOn(apiClient, 'request');
+
+      // Test draft save validation
+      await act(async () => button('Save size form').click());
+      expect(requestSpy).not.toHaveBeenCalled();
+      expect(container.textContent).toContain('Size M was not saved');
+      expect(container.textContent).toContain('Enter a non-negative whole number for each quantity.');
+
+      // Test finalize validation
+      await act(async () => button('Finalize size M').click());
+      expect(requestSpy).not.toHaveBeenCalled();
+      expect(container.textContent).toContain('Size M was not finalized');
+      expect(container.textContent).toContain('Final quantities must reconcile to 10.');
+    });
+
+    it('preserves valid zero behavior for numeric fields', async () => {
+      const formDetail = editableRejectedM();
+      await renderHarness(formDetail);
+      const acceptedInput = container.querySelector('[aria-label="M accepted"]') as HTMLInputElement;
+      const reworkInput = container.querySelector('[aria-label="M rework"]') as HTMLInputElement;
+      const rejectedInput = container.querySelector('[aria-label="M rejected"]') as HTMLInputElement;
+
+      // Set accepted to 0, rework to 8, rejected to 2 (total 10 reconciles to capacity 10)
+      changeNumericInput(acceptedInput, '0');
+      changeNumericInput(reworkInput, '8');
+      changeNumericInput(rejectedInput, '2');
+
+      const requestSpy = vi.spyOn(apiClient, 'request').mockResolvedValue({
+        data: { data: formDetail },
+      } as never);
+
+      await act(async () => button('Save size form').click());
+      expect(requestSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            acceptedQuantity: 0,
+            reworkQuantity: 8,
+            permanentlyRejectedQuantity: 2,
+          }),
+        }),
+      );
+    });
+
+    it('does not display raw "Invalid request data" when API returns field-level issues', async () => {
+      vi.spyOn(apiClient, 'request').mockRejectedValue({
+        isAxiosError: true,
+        response: {
+          data: {
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Invalid request data',
+              details: {
+                issues: [
+                  { field: 'acceptedQuantity', message: 'Quantity exceeds available capacity' },
+                ],
+              },
+            },
+          },
+        },
+      });
+
+      await renderForm();
+      await act(async () => button('Save size form').click());
+
+      expect(container.textContent).not.toContain('Invalid request data');
+      expect(container.textContent).toContain('Quantity exceeds available capacity');
+    });
+
+    it('does not display raw "Invalid request data" when API returns generic validation error without issues', async () => {
+      vi.spyOn(apiClient, 'request').mockRejectedValue({
+        isAxiosError: true,
+        response: {
+          data: {
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Invalid request data',
+            },
+          },
+        },
+      });
+
+      await renderForm();
+      await act(async () => button('Save size form').click());
+
+      expect(container.textContent).not.toContain('Invalid request data');
+      expect(container.textContent).toContain('Please review and correct the highlighted fields before saving.');
+    });
+  });
 });
