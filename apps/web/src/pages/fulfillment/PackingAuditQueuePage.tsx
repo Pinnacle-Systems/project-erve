@@ -73,7 +73,7 @@ export function PackingAuditQueuePage() {
           }
           onRowClick={(row) => navigate(`/fulfillment/packing-audit/cartons/${row.id}`)}
           columns={[
-            { key: 'saleOrder', header: 'Sale Order', render: (r) => r.saleOrder.saleOrderNumber },
+            { key: 'saleOrder', header: 'Dispatch Order', render: (r) => r.saleOrder.saleOrderNumber },
             { key: 'factory', header: 'Factory', render: (r) => r.factory.name },
             { key: 'carton', header: 'Carton #', accessor: 'cartonNumber' },
             { key: 'qty', header: 'Total Qty', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },

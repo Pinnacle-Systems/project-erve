@@ -121,6 +121,8 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
     expect(labels).toContain('Users');
+    expect(labels).toContain('Invoice Handoff');
+    expect(labels).not.toContain('Invoices');
 
     expect(text).toContain('Master Data');
     expect(text).toContain('Orders');
