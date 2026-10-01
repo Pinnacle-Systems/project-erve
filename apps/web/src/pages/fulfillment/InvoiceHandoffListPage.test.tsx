@@ -61,6 +61,7 @@ describe('InvoiceHandoffListPage — request failure handling (UXAUTH-018)', () 
     renderPage();
     await vi.waitFor(() => expect(content()).not.toContain('Loading invoice handoffs'));
 
+    expect(content()).toContain('Invoice Handoff');
     expect(content()).toContain('Nothing here');
     expect(content()).toContain('No invoice handoffs match this filter.');
     expect(content()).not.toContain('Unable to load invoice handoffs');

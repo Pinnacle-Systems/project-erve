@@ -195,7 +195,7 @@ export function FactoryPackingQueuePage() {
               emptyState={<EmptyState title="Nothing to pack" description="No approved goods are currently allocated from this Factory." />}
               onRowClick={(row) => navigate(`/sale-orders/${row.saleOrderId}/packing-list`)}
               columns={[
-                { key: 'saleOrderNumber', header: 'Sale Order', accessor: 'saleOrderNumber' },
+                { key: 'saleOrderNumber', header: 'Dispatch Order', accessor: 'saleOrderNumber' },
                 { key: 'distributor', header: 'Distributor', render: (r) => r.distributor.name },
                 { key: 'style', header: 'Style', render: (r) => `${r.styleNumber} — ${r.styleName}` },
                 { key: 'size', header: 'Size', accessor: 'sizeLabel' },
@@ -220,7 +220,7 @@ export function FactoryPackingQueuePage() {
               onRowClick={(row) => navigate(`/sale-orders/${row.saleOrder.id}/packing-list`)}
               columns={[
                 { key: 'number', header: 'Dispatch #', accessor: 'factoryDispatchNumber' },
-                { key: 'saleOrder', header: 'Sale Order', render: (r) => r.saleOrder.saleOrderNumber },
+                { key: 'saleOrder', header: 'Dispatch Order', render: (r) => r.saleOrder.saleOrderNumber },
                 { key: 'distributor', header: 'Distributors', render: (r) => r.saleOrder.distributors.map((d) => d.name).join(', ') },
                 {
                   key: 'status',

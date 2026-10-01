@@ -110,7 +110,7 @@ export function InvoiceHandoffDetailPage() {
           <DescriptionList.Item label="Erve Dispatch" value={handoff.erveDispatch.erveDispatchNumber} />
           <DescriptionList.Item label="Distributor" value={handoff.distributor.name} />
           <DescriptionList.Item label="Dispatched (Invoiceable) Quantity" value={handoff.quantity.toLocaleString()} />
-          <DescriptionList.Item label="Sale Order" value={handoff.saleOrder.saleOrderNumber} />
+          <DescriptionList.Item label="Dispatch Order" value={handoff.saleOrder.saleOrderNumber} />
           <DescriptionList.Item label="Tally Invoice #" value={handoff.tallyInvoiceNumber} />
           <DescriptionList.Item
             label="Tally Invoice Date"

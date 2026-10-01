@@ -103,6 +103,8 @@ describe('InvoiceHandoffDetailPage load error handling (UXAUTH-018)', () => {
 
     expect(content()).toContain('ST-001');
     expect(content()).toContain('Distributor One');
+    expect(content()).toContain('Dispatch Order');
+    expect(content()).not.toContain('Sale Order');
     expect(content()).not.toContain('Unable to load invoice handoff');
   });
 });

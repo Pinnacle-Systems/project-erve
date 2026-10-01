@@ -52,7 +52,7 @@ export function InvoiceHandoffListPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Invoices"
+        title="Invoice Handoff"
         subtitle="Physically dispatched quantities (both Outright and Sale-or-Return) awaiting a Tally invoice reference"
         secondaryActions={
           <PdfActionButtons
