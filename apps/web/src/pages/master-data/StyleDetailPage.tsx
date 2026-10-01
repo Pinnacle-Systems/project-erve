@@ -114,17 +114,27 @@ export function StyleDetailPage() {
           </div>
         </Panel>
         <Panel title="Factory Mappings">
-          <div className="divide-y divide-border-subtle">
-            {style.factories.map((factory) => (
-              <div
-                key={factory.id}
-                className="flex justify-between gap-3 py-2 text-sm text-foreground"
-              >
-                <span>{factory.name}</span>
-                <span className="font-medium">{factory.exFactoryPrice.toFixed(2)}</span>
+          {style.factories.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No factories mapped.</p>
+          ) : (
+            <div>
+              <div className="flex justify-between gap-3 pb-1 mb-1 text-xs font-semibold text-muted-foreground border-b border-border-subtle">
+                <span>Factory</span>
+                <span>Ex-Factory Rate (₹)</span>
               </div>
-            ))}
-          </div>
+              <div className="divide-y divide-border-subtle">
+                {style.factories.map((factory) => (
+                  <div
+                    key={factory.id}
+                    className="flex justify-between gap-3 py-2 text-sm text-foreground"
+                  >
+                    <span>{factory.name}</span>
+                    <span className="font-medium">₹{factory.exFactoryPrice.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Panel>
       </div>
     </div>

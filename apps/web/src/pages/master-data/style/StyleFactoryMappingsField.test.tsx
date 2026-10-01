@@ -123,4 +123,22 @@ describe('StyleFactoryMappingsField', () => {
     expect(updated[0]!.exFactoryPrice).toBe('');
     expect(updated[1]!.exFactoryPrice).toBe('55');
   });
+
+  it('renders visible column headers Factory | Ex-Factory Rate (₹) | Action and uses Ex-Factory Rate (₹) aria-label', () => {
+    const rows: StyleFactoryMappingRow[] = [
+      { rowId: 'row-1', factoryId: 'f1', exFactoryPrice: '150.00' },
+    ];
+    render(
+      <StyleFactoryMappingsField mappings={rows} availableFactories={[factory()]} onChange={vi.fn()} />,
+    );
+
+    expect(container.textContent).toContain('Factory');
+    expect(container.textContent).toContain('Ex-Factory Rate (₹)');
+    expect(container.textContent).toContain('Action');
+    expect(container.textContent).not.toContain('Production Rate');
+
+    const rateInput = container.querySelector<HTMLInputElement>('input[aria-label="Ex-Factory Rate (₹)"]');
+    expect(rateInput).not.toBeNull();
+    expect(rateInput?.value).toBe('150.00');
+  });
 });

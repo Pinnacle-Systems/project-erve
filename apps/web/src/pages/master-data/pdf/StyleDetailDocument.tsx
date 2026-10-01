@@ -39,7 +39,7 @@ const factoryColumns: PdfTableColumn<StyleDetailFactoryRow>[] = [
   { key: 'name', header: 'Factory', width: '70%', value: (row) => row.name },
   {
     key: 'price',
-    header: 'Ex-Factory Price',
+    header: 'Ex-Factory Rate',
     width: '30%',
     align: 'right',
     value: (row) => row.exFactoryPrice,
