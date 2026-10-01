@@ -103,10 +103,15 @@ describe('JobOrderProductionTab workflow rendering', () => {
 });
 
 describe('JobOrderProductionTab stage completion mutation', () => {
-  it('shows only Start for a not-started Production stage', async () => {
+  it('shows only Start for a not-started Production stage with primary styling', async () => {
     await renderProduction('CONFIRMED_BY_FACTORY', [stage('stage-1', 'Cutting', 1, 'NOT_STARTED')]);
     const panel = getActiveTabPanel(container);
     expect(panel.textContent).toContain('Start Cutting');
+    const startButton = Array.from(panel.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Start Cutting',
+    );
+    expect(startButton).toBeDefined();
+    expect(startButton?.className).toContain('bg-primary');
     expect(
       Array.from(panel.querySelectorAll('button')).some((button) => button.textContent?.trim() === 'Complete Cutting'),
     ).toBe(false);

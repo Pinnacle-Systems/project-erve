@@ -330,7 +330,7 @@ export function JobOrderProductionTab({
                 <div className="flex flex-wrap items-end gap-3">
                   {nextStage.status === 'NOT_STARTED' && (
                     <Button
-                      variant="secondary"
+                      variant="default"
                       onClick={() => startStageMutation.mutate(nextStage.id)}
                       loading={startStageMutation.isPending}
                     >
@@ -339,6 +339,7 @@ export function JobOrderProductionTab({
                   )}
                   {nextStage.status === 'IN_PROGRESS' && (
                     <Button
+                      variant="default"
                       onClick={() => completeStageMutation.mutate(nextStage.id)}
                       loading={completeStageMutation.isPending}
                     >
