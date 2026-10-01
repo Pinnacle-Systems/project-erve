@@ -131,34 +131,74 @@ function validate(
 ): Errors {
   const errors: Errors = {};
   const quantity = (value: string, name: string) => {
-    if (value && !/^\d+$/.test(value)) errors[name] = 'Enter a non-negative whole number.';
-    return Number(value || 0);
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (!/^\d+$/.test(trimmed)) {
+      errors[name] = 'Enter a non-negative whole number.';
+      return null;
+    }
+    const num = Number(trimmed);
+    if (num > 2147483647) {
+      errors[name] = 'Quantity is too large.';
+      return null;
+    }
+    return num;
   };
   const sample = quantity(draft.sample, 'sample');
   const accepted = ppSample ? 0 : quantity(draft.accepted, 'accepted');
   const rework = ppSample ? 0 : quantity(draft.rework, 'rework');
   const rejected = ppSample ? 0 : quantity(draft.rejected, 'rejected');
-  if (sample > 2147483647) errors.sample = 'Sample quantity is too large.';
-  if (!ppSample && accepted + rework + rejected > capacity)
-    errors.quantities = `Quantities cannot exceed ${capacity}, the available capacity for this size.`;
+  if (sample !== null && sample > 2147483647) errors.sample = 'Sample quantity is too large.';
+  if (!ppSample) {
+    if (
+      draft.accepted.trim() === '' ||
+      draft.rework.trim() === '' ||
+      draft.rejected.trim() === ''
+    ) {
+      errors.quantities = 'Enter a non-negative whole number for each quantity.';
+    } else if (
+      accepted !== null &&
+      rework !== null &&
+      rejected !== null &&
+      accepted + rework + rejected > capacity
+    ) {
+      errors.quantities = `Quantities cannot exceed ${capacity}, the available capacity for this size.`;
+    }
+  }
   if (draft.category !== 'OTHER' && draft.other.trim())
     errors.other = 'Clear OTHER details unless OTHER is selected.';
   if (finalizing) {
-    if (!draft.sample) errors.sample = 'Sample quantity is required to finalize.';
+    if (!draft.sample.trim()) errors.sample = 'Sample quantity is required to finalize.';
     for (const item of QA_CHECKLIST_ITEMS)
       if (
         !draft.checks[item.code]?.status ||
         (ppSample && draft.checks[item.code]?.status === 'AVAILABLE')
       )
         errors[`check.${item.code}`] = 'A response is required to finalize.';
-    if (!ppSample && accepted + rework + rejected !== capacity)
-      errors.quantities = `Final quantities must reconcile to ${capacity}.`;
+    if (!ppSample) {
+      if (
+        draft.accepted.trim() === '' ||
+        draft.rework.trim() === '' ||
+        draft.rejected.trim() === ''
+      ) {
+        errors.quantities = 'Final quantities must reconcile to ' + capacity + '.';
+      } else if (
+        accepted !== null &&
+        rework !== null &&
+        rejected !== null &&
+        accepted + rework + rejected !== capacity
+      ) {
+        errors.quantities = `Final quantities must reconcile to ${capacity}.`;
+      }
+    }
     if ((rework || rejected) && !draft.category) errors.category = 'Choose a defect category.';
     if (draft.category === 'OTHER' && !draft.other.trim())
       errors.other = 'Describe the other defect.';
     if (ppSample && evidence === 0)
       errors.evidence = 'Evidence is required before a PP Sample can be finalized.';
-    else if (rejected > 0 && evidence === 0)
+    else if (rejected !== null && rejected > 0 && evidence === 0)
       errors.evidence =
         'Evidence for this size is required before permanent rejection can be finalized.';
   }
@@ -294,23 +334,54 @@ export function QaInspectionForm({
       const issues =
         (
           api?.details as
-            { issues?: Array<{ path?: Array<string | number>; message?: string }> } | undefined
+            { issues?: Array<{ path?: Array<string | number>; field?: string; message?: string }> } | undefined
         )?.issues ?? [];
       const own: Errors = {};
       const others: Record<string, string> = {};
       for (const issue of issues) {
-        const path = issue.path?.map(String) ?? [];
+        const path = issue.path?.map(String) ?? (issue.field ? issue.field.split('.') : []);
         const form = forms.find((candidate) => path.includes(candidate.id));
         const message = issue.message ?? 'Invalid value';
         if (form && form.id !== selected?.id) others[form.id] = message;
-        else
-          own[
-            path.includes('acceptedQuantity') ||
-            path.includes('reworkQuantity') ||
-            path.includes('permanentlyRejectedQuantity')
-              ? 'quantities'
-              : path.join('.') || 'form'
-          ] = message;
+        else {
+          const fieldKey =
+            path.includes('acceptedQuantity') || path.includes('accepted')
+              ? 'accepted'
+              : path.includes('reworkQuantity') || path.includes('rework')
+                ? 'rework'
+                : path.includes('permanentlyRejectedQuantity') || path.includes('rejected')
+                  ? 'rejected'
+                  : path.includes('quantities')
+                    ? 'quantities'
+                    : path.includes('sampleQuantity') || path.includes('sample')
+                      ? 'sample'
+                      : path.includes('defectCategory') || path.includes('category')
+                        ? 'category'
+                        : path.includes('otherDefectDetails') || path.includes('other')
+                          ? 'other'
+                          : path.includes('defectNotes') || path.includes('notes')
+                            ? 'notes'
+                            : path.includes('inspectionRemarks') || path.includes('remarks')
+                              ? 'remarks'
+                              : path.includes('checklist')
+                                ? 'checklist'
+                                : path.join('.') || 'form';
+          own[fieldKey] = message;
+        }
+      }
+      const rawMessage = api?.message;
+      const isRawTransport =
+        !rawMessage ||
+        rawMessage === 'Invalid request data' ||
+        rawMessage.toLowerCase().includes('validation error');
+      if (!issues.length) {
+        own.form = isRawTransport
+          ? 'Please review and correct the highlighted fields before saving.'
+          : rawMessage ?? 'Unable to update the size inspection form.';
+      } else if (!Object.keys(own).length && !Object.keys(others).length) {
+        own.form = isRawTransport
+          ? 'Please review and correct the highlighted fields before saving.'
+          : rawMessage;
       }
       setErrors(own);
       const related = Object.entries(others).map(([id, message]) => {
@@ -318,8 +389,6 @@ export function QaInspectionForm({
         return form ? `Size ${form.sizeLabel}: ${message}` : message;
       });
       if (related.length) setNotice(related.join(' '));
-      if (!issues.length)
-        setErrors({ form: api?.message ?? 'Unable to update the size inspection form.' });
     },
   });
   const upload = useMutation({
@@ -397,10 +466,10 @@ export function QaInspectionForm({
       ? {}
       : {
           inspectedQuantity:
-            Number(draft.accepted || 0) + Number(draft.rework || 0) + Number(draft.rejected || 0),
-          acceptedQuantity: Number(draft.accepted || 0),
-          reworkQuantity: Number(draft.rework || 0),
-          permanentlyRejectedQuantity: Number(draft.rejected || 0),
+            Number(draft.accepted) + Number(draft.rework) + Number(draft.rejected),
+          acceptedQuantity: Number(draft.accepted),
+          reworkQuantity: Number(draft.rework),
+          permanentlyRejectedQuantity: Number(draft.rejected),
         };
     const body = {
       expectedVersion: selected.version,
@@ -686,7 +755,11 @@ export function QaInspectionForm({
                     width="xs"
                     disabled={readonly}
                     value={draft[field]}
-                    onChange={(event) => update({ [field]: event.target.value } as Partial<Draft>)}
+                    errorMessage={errors[field]}
+                    onChange={(event) => {
+                      clearValidationErrors(field, 'quantities');
+                      update({ [field]: event.target.value } as Partial<Draft>);
+                    }}
                   />
                 ))}
               </FormGrid>
