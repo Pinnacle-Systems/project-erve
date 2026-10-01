@@ -255,4 +255,31 @@ describe('StyleDetailPage load error handling (UXAUTH-018)', () => {
     expect(content()).toContain('Request failed with status code 500');
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
   });
+
+  it('renders Factory Mappings with Factory and Ex-Factory Rate (₹) labels and formatted currency', async () => {
+    const styleWithFactories = makeStyle({
+      factories: [
+        {
+          id: 'f-1',
+          code: 'F1',
+          name: 'Apex Garments',
+          exFactoryPrice: 250.5,
+          contactName: null,
+          contactEmail: null,
+          contactPhone: null,
+          city: null,
+          status: 'ACTIVE',
+          mappingStatus: 'ACTIVE',
+        },
+      ],
+    });
+    await renderPage(styleWithFactories);
+
+    expect(content()).toContain('Factory Mappings');
+    expect(content()).toContain('Factory');
+    expect(content()).toContain('Ex-Factory Rate (₹)');
+    expect(content()).toContain('Apex Garments');
+    expect(content()).toContain('₹250.50');
+    expect(content()).not.toContain('Production Rate');
+  });
 });

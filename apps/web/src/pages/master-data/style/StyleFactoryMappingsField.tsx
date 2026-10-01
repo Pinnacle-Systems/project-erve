@@ -46,8 +46,15 @@ export function StyleFactoryMappingsField({
       }
     >
       <Stack gap="sm">
+        {mappings.length > 0 && (
+          <div className="grid gap-3 md:grid-cols-[1fr_160px_100px] text-xs font-semibold text-muted-foreground px-0.5">
+            <span>Factory</span>
+            <span>Ex-Factory Rate (₹)</span>
+            <span>Action</span>
+          </div>
+        )}
         {mappings.map((mapping) => (
-          <div key={mapping.rowId} className="grid gap-3 md:grid-cols-[1fr_160px_100px]">
+          <div key={mapping.rowId} className="grid gap-3 md:grid-cols-[1fr_160px_100px] items-center">
             <SelectField
               aria-label="Factory"
               value={mapping.factoryId || 'NONE'}
@@ -71,7 +78,8 @@ export function StyleFactoryMappingsField({
             </SelectField>
             <TextField
               type="number"
-              aria-label="Ex-factory price"
+              aria-label="Ex-Factory Rate (₹)"
+              placeholder="0.00"
               value={mapping.exFactoryPrice}
               onChange={(event) =>
                 onChange(
