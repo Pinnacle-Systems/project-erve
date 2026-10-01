@@ -18,6 +18,7 @@ const styles = StyleSheet.create({
   lineTitle: { fontSize: 9, fontWeight: 700, color: '#111111' },
   lineSubtitle: { fontSize: 8, color: '#555555', marginTop: 1 },
   lineTotal: { fontSize: 9, fontWeight: 700, color: '#111111' },
+  remarksText: { fontSize: 8, color: '#333333', lineHeight: 1.4 },
 });
 
 const sizeColumns: PdfTableColumn<OrderSheetDetailSizeRow>[] = [
@@ -62,6 +63,12 @@ export function OrderSheetDetailDocument({ viewModel }: OrderSheetDetailDocument
           <LineBlock key={line.id} line={line} />
         ))}
       </PdfSection>
+
+      {viewModel.remarks ? (
+        <PdfSection title="Remarks" wrap>
+          <Text style={styles.remarksText}>{viewModel.remarks}</Text>
+        </PdfSection>
+      ) : null}
 
       <PdfFooter />
     </PdfDocument>
