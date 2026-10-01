@@ -93,4 +93,28 @@ describe('buildOrderSheetDetailViewModel', () => {
     expect(serialized).not.toContain('__internalDebugFlag');
     expect(serialized).not.toContain('someAuditInternal');
   });
+
+  it('maps remarks to viewModel.remarks when present', () => {
+    const order = makeOrder({ remarks: 'Special packing required for distributor' });
+    const vm = buildOrderSheetDetailViewModel(order, { generatedAt: '2026-09-12T10:00:00Z' });
+    expect(vm.remarks).toBe('Special packing required for distributor');
+    expect(vm.identityItems.find((item) => item.label === 'Remarks')).toBeUndefined();
+  });
+
+  it('preserves multiline remarks without truncation or modification', () => {
+    const multilineRemarks = 'Delivery Instructions:\n1. Deliver before 5 PM\n2. Contact warehouse manager on arrival';
+    const order = makeOrder({ remarks: multilineRemarks });
+    const vm = buildOrderSheetDetailViewModel(order, { generatedAt: '2026-09-12T10:00:00Z' });
+    expect(vm.remarks).toBe(multilineRemarks);
+  });
+
+  it('maps null or whitespace-only remarks to null', () => {
+    const nullOrder = makeOrder({ remarks: null });
+    const nullVm = buildOrderSheetDetailViewModel(nullOrder, { generatedAt: '2026-09-12T10:00:00Z' });
+    expect(nullVm.remarks).toBeNull();
+
+    const emptyOrder = makeOrder({ remarks: '   ' });
+    const emptyVm = buildOrderSheetDetailViewModel(emptyOrder, { generatedAt: '2026-09-12T10:00:00Z' });
+    expect(emptyVm.remarks).toBeNull();
+  });
 });

@@ -42,6 +42,7 @@ export interface OrderSheetDetailPdfViewModel {
   generatedAt: string;
   generatedBy?: string | null;
   identityItems: PdfKeyValueItem[];
+  remarks: string | null;
   lines: OrderSheetDetailLineSection[];
 }
 
@@ -78,7 +79,6 @@ export function buildOrderSheetDetailViewModel(
     { label: 'Merchandiser', value: po.merchandiser?.name },
     { label: 'Created By', value: po.creator.name },
     { label: 'Created', value: formatPdfDateTime(po.createdAt) },
-    { label: 'Remarks', value: po.remarks },
   ];
 
   const lines: OrderSheetDetailLineSection[] = po.lines.map((line) => ({
@@ -100,6 +100,7 @@ export function buildOrderSheetDetailViewModel(
     generatedAt: meta.generatedAt,
     generatedBy: meta.generatedBy,
     identityItems,
+    remarks: po.remarks?.trim() ? po.remarks : null,
     lines,
   };
 }

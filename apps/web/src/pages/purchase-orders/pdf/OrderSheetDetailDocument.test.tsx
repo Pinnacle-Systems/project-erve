@@ -22,7 +22,10 @@ function makeLine(overrides: Partial<OrderSheetDetailLineSection> = {}): OrderSh
   };
 }
 
-function makeViewModel(lines: OrderSheetDetailLineSection[]): OrderSheetDetailPdfViewModel {
+function makeViewModel(
+  lines: OrderSheetDetailLineSection[],
+  overrides: Partial<OrderSheetDetailPdfViewModel> = {},
+): OrderSheetDetailPdfViewModel {
   return {
     title: 'ORDER SHEET',
     subtitle: 'EIOS/26-27/0001 — Acme Distributors',
@@ -35,9 +38,10 @@ function makeViewModel(lines: OrderSheetDetailLineSection[]): OrderSheetDetailPd
       { label: 'Total Quantity', value: 500 },
       { label: 'Required Delivery Date', value: null },
       { label: 'Job Order', value: null },
-      { label: 'Remarks', value: null },
     ],
+    remarks: null,
     lines,
+    ...overrides,
   };
 }
 
@@ -62,13 +66,34 @@ describe('OrderSheetDetailDocument', () => {
 
   it('renders a long Style/Distributor name without throwing', async () => {
     const line = makeLine({ styleName: 'A Very Long Style Name That Could Wrap Across Multiple Lines In The PDF Layout' });
-    const vm = { ...makeViewModel([line]), subtitle: 'EIOS/26-27/0001 — A Very Long Distributor Name Private Limited' };
+    const vm = makeViewModel([line], { subtitle: 'EIOS/26-27/0001 — A Very Long Distributor Name Private Limited' });
     const blob = await pdf(<OrderSheetDetailDocument viewModel={vm} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 
   it('renders null identity values as an em dash without throwing', async () => {
     const blob = await pdf(<OrderSheetDetailDocument viewModel={makeViewModel([makeLine()])} />).toBlob();
+    expect(blob.size).toBeGreaterThan(0);
+  });
+
+  it('renders with single-line remarks without throwing', async () => {
+    const vm = makeViewModel([makeLine()], { remarks: 'Urgent shipment needed' });
+    const blob = await pdf(<OrderSheetDetailDocument viewModel={vm} />).toBlob();
+    expect(blob.size).toBeGreaterThan(0);
+    expect(blob.type).toBe('application/pdf');
+  });
+
+  it('renders with multiline remarks without throwing', async () => {
+    const multilineRemarks = 'Line 1: Special tags\nLine 2: Hang bags separately\nLine 3: Delivery window 9am-12pm';
+    const vm = makeViewModel([makeLine()], { remarks: multilineRemarks });
+    const blob = await pdf(<OrderSheetDetailDocument viewModel={vm} />).toBlob();
+    expect(blob.size).toBeGreaterThan(0);
+    expect(blob.type).toBe('application/pdf');
+  });
+
+  it('renders with null remarks without throwing and without empty remarks block', async () => {
+    const vm = makeViewModel([makeLine()], { remarks: null });
+    const blob = await pdf(<OrderSheetDetailDocument viewModel={vm} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 });
