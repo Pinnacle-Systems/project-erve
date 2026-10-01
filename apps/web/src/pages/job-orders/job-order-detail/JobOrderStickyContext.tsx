@@ -88,7 +88,9 @@ export function JobOrderStickyContext({
       <div className="flex flex-wrap items-center gap-2">
         {actions.canSend && (
           <div className="flex flex-col items-end gap-1">
-            <Button onClick={actions.onSend}>Send to Factory</Button>
+            <Button variant="default" onClick={actions.onSend}>
+              Send to Factory
+            </Button>
             {actions.sendError ? (
               <p
                 className="max-w-md text-right text-xs text-[var(--erp-form-field-error-text-color)]"
@@ -102,6 +104,7 @@ export function JobOrderStickyContext({
         {actions.canConfirm && (
           <div className="flex flex-col items-end gap-1">
             <Button
+              variant="default"
               disabled={actions.confirmDisabled}
               onClick={actions.onConfirm}
               loading={actions.confirmPending}
@@ -114,6 +117,10 @@ export function JobOrderStickyContext({
                 role="alert"
               >
                 {actions.confirmError}
+              </p>
+            ) : actions.confirmDisabled ? (
+              <p className="max-w-xs text-right text-xs text-muted-foreground">
+                Complete the acknowledgement below before confirming the Job Order.
               </p>
             ) : null}
           </div>
