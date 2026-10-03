@@ -82,6 +82,10 @@ jobs:
       - name: Run @erve/design-system-tests
         run: pnpm --filter @erve/design-system-tests test
 
+      # Full web test suite execution in PR CI (CI-001 / PDF-001)
+      - name: Run @erve/web tests
+        run: pnpm --filter @erve/web test
+
   api-tests:
     name: API integration tests (Postgres)
     runs-on: ubuntu-latest
