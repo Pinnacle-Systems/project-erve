@@ -550,7 +550,7 @@ export async function executeH3aImport(
     }
     if (!styleId) throw new H3aImportError(`${sp.styleNumber}: no Style id after create`);
     for (const code of sp.sizesToCreate) {
-      await addStyleSize(actor, styleId, { sizeId: ids.sizeIdBySource.get(code)! });
+      await addStyleSize(actor, styleId, { sizeId: ids.sizeIdBySource.get(code)! }, { generateMissing: false });
       created.styleSizes++;
     }
     if (sp.mapping === 'CREATE') {

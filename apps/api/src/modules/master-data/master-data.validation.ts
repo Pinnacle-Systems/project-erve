@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { optionalPageQueryFields } from '../../utils/pagination.js';
+import { SUPPLIED_BARCODE_MESSAGE, SUPPLIED_BARCODE_PATTERN } from './barcode.util.js';
 
 const optionalText = z.string().trim().optional().nullable();
 const positiveMoney = z.coerce.number().positive();
@@ -24,6 +25,25 @@ export const processFlowVersionStatusSchema = z.enum(['DRAFT', 'ACTIVE', 'RETIRE
 export const seasonStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 const seasonIdSchema = z.string().trim().min(1, 'Season is required');
 
+// Optional on entry: blank/omitted means "generate". A supplied value is
+// kept verbatim (trimmed), so it is only bounds-checked, never rewritten.
+const optionalBarcodeSchema = z
+  .string()
+  .trim()
+  .optional()
+  .nullable()
+  .refine((value) => !value || SUPPLIED_BARCODE_PATTERN.test(value), { message: SUPPLIED_BARCODE_MESSAGE });
+
+export const styleSizeSchema = z.object({
+  sizeId: z.string().trim().min(1),
+  importedSizeRangeLabel: optionalText,
+  barcode: optionalBarcodeSchema,
+});
+
+export const updateStyleSizeBarcodeSchema = z.object({
+  barcode: z.string().trim().min(1, 'Barcode cannot be blank').regex(SUPPLIED_BARCODE_PATTERN, SUPPLIED_BARCODE_MESSAGE),
+});
+
 export const createStyleSchema = z.object({
   styleNumber: z.string().trim().min(1),
   styleName: z.string().trim().min(1),
@@ -40,9 +60,12 @@ export const createStyleSchema = z.object({
   royaltyPercentage: z.coerce.number().min(0).max(100).optional().nullable(),
   status: styleStatusSchema.optional(),
   seasonId: seasonIdSchema,
+  // Sizes (with optional manual barcodes) created atomically with the Style.
+  sizes: z.array(styleSizeSchema).optional(),
 });
 
 export const updateStyleSchema = createStyleSchema
+  .omit({ sizes: true })
   .partial()
   .refine((value) => Object.keys(value).length > 0, {
     message: 'At least one field is required',
@@ -61,6 +84,8 @@ const seasonFieldsSchema = z.object({
     )
     .transform((value) => value.toUpperCase()),
   name: z.string().trim().min(1, 'Season name is required').max(80),
+  // Stable numeric prefix of generated barcodes (unique; see barcode.util.ts).
+  barcodeSerial: z.coerce.number().int().positive().max(99999).optional().nullable(),
   // References the shared Financial Year master — not arbitrary free text.
   // Existence is validated server-side against the FinancialYear table.
   financialYearId: z.string().trim().min(1, 'Financial Year is required'),
@@ -80,11 +105,6 @@ export const listSeasonsQuerySchema = z.object({
 });
 
 export const listProcessFlowsQuerySchema = z.object(optionalPageQueryFields);
-
-export const styleSizeSchema = z.object({
-  sizeId: z.string().trim().min(1),
-  importedSizeRangeLabel: optionalText,
-});
 
 export const styleFactorySchema = z.object({
   factoryId: z.string().trim().min(1),
