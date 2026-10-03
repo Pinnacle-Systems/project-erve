@@ -283,3 +283,22 @@ describe('StyleDetailPage load error handling (UXAUTH-018)', () => {
     expect(content()).not.toContain('Production Rate');
   });
 });
+
+describe('StyleDetailPage Style + Size barcodes', () => {
+  it('shows each size with its barcode, or "Not assigned" for a size not yet backfilled', async () => {
+    const size = { sizeType: 'AGE' as const, sortOrder: 3, status: 'ACTIVE' as const, mappingStatus: 'ACTIVE' as const, importedSizeRangeLabel: null };
+    await renderPage(
+      makeStyle({
+        sizes: [
+          { ...size, id: 'sz-3', code: 'AGE_3', label: '3', barcode: '312343' },
+          { ...size, id: 'sz-4', code: 'AGE_4', label: '4', barcode: null },
+        ],
+      }),
+    );
+
+    expect(content()).toContain('Barcode');
+    expect(content()).toContain('AGE_3');
+    expect(content()).toContain('312343');
+    expect(content()).toContain('Not assigned');
+  });
+});

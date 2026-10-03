@@ -75,4 +75,48 @@ describe('StyleSizesField', () => {
 
     expect(onChange).toHaveBeenCalledWith([]);
   });
+
+  it('shows no barcode inputs unless barcode entry is enabled', () => {
+    render(<StyleSizesField sizes={[size()]} selectedSizeIds={['sz-1']} onChange={() => {}} />);
+
+    expect(container.querySelector('input')).toBeNull();
+  });
+
+  it('shows a barcode input only for selected sizes, hinting auto-generation for new ones', () => {
+    render(
+      <StyleSizesField
+        sizes={[size(), size({ id: 'sz-2', code: 'M', sortOrder: 1 })]}
+        selectedSizeIds={['sz-1']}
+        onChange={() => {}}
+        barcodes={{ values: {}, saved: {}, onChange: () => {} }}
+      />,
+    );
+
+    const inputs = container.querySelectorAll<HTMLInputElement>('input');
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]!.placeholder).toBe('Auto-generated on save');
+    expect(container.textContent).toContain('Barcode');
+  });
+
+  it('shows a saved barcode as the value (no auto-generate hint) and reports edits per size', () => {
+    const onBarcodeChange = vi.fn();
+    render(
+      <StyleSizesField
+        sizes={[size()]}
+        selectedSizeIds={['sz-1']}
+        onChange={() => {}}
+        barcodes={{ values: { 'sz-1': '312343' }, saved: { 'sz-1': '312343' }, onChange: onBarcodeChange }}
+      />,
+    );
+
+    const input = container.querySelector<HTMLInputElement>('input')!;
+    expect(input.value).toBe('312343');
+    expect(input.placeholder).toBe('');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(input, 'CUSTOM-3');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(onBarcodeChange).toHaveBeenCalledWith('sz-1', 'CUSTOM-3');
+  });
 });

@@ -17,7 +17,7 @@ import {
   nextFactoryMappingRowId,
   type StyleFactoryMappingRow,
 } from './style/StyleFactoryMappingsField.js';
-import { cleanPayload, emptyForm, validateStyleForm } from './style/style-form-state.js';
+import { cleanPayload, emptyForm, toStyleSizeRequest, validateStyleForm } from './style/style-form-state.js';
 import type { FactoryOption, SeasonOption, SizeOption, Style } from './types.js';
 
 export function StyleFormPage() {
@@ -26,6 +26,9 @@ export function StyleFormPage() {
   const isEdit = Boolean(id);
   const [form, setForm] = useState(emptyForm);
   const [selectedSizeIds, setSelectedSizeIds] = useState<string[]>([]);
+  // Barcode text per size id. Blank on a size with no saved barcode = "generate on save"
+  // (the server generates; nothing is computed here).
+  const [barcodeBySizeId, setBarcodeBySizeId] = useState<Record<string, string>>({});
   const [seasonId, setSeasonId] = useState('');
   const [factoryMappings, setFactoryMappings] = useState<StyleFactoryMappingRow[]>([]);
   const [error, setError] = useState('');
@@ -101,6 +104,9 @@ export function StyleFormPage() {
       status: styleQuery.data.status,
     });
     setSelectedSizeIds(styleQuery.data.sizes.map((size) => size.id));
+    setBarcodeBySizeId(
+      Object.fromEntries(styleQuery.data.sizes.map((size) => [size.id, size.barcode ?? ''])),
+    );
     setSeasonId(styleQuery.data.season.id);
     setFactoryMappings(
       styleQuery.data.factories.map((factory) => ({
@@ -119,9 +125,23 @@ export function StyleFormPage() {
       if (validationError) {
         throw new Error(validationError);
       }
+      const enteredBarcode = (sizeId: string) => (barcodeBySizeId[sizeId] ?? '').trim();
+      if (isEdit) {
+        // An existing barcode is an identifier: it can be replaced, never blanked
+        // (blanking would otherwise look like a request to regenerate it).
+        const blanked = (styleQuery.data?.sizes ?? []).find(
+          (size) => selectedSizeIds.includes(size.id) && size.barcode && enteredBarcode(size.id) === '',
+        );
+        if (blanked) throw new Error(`Barcode cannot be blank for size ${blanked.code}`);
+      }
+      // Create sends the sizes (and any manual barcodes) WITH the style so the server
+      // creates everything in one transaction - a barcode failure leaves no half-created style.
       const response = isEdit
         ? await apiClient.patch<ApiSuccessResponse<Style>>(`/styles/${id}`, cleanPayload(form, seasonId))
-        : await apiClient.post<ApiSuccessResponse<Style>>('/styles', cleanPayload(form, seasonId));
+        : await apiClient.post<ApiSuccessResponse<Style>>('/styles', {
+            ...cleanPayload(form, seasonId),
+            sizes: selectedSizeIds.map((sizeId) => toStyleSizeRequest(sizeId, barcodeBySizeId)),
+          });
       const style = response.data.data;
 
       const currentSizeIds = new Set(style.sizes.map((size) => size.id));
@@ -133,7 +153,16 @@ export function StyleFormPage() {
       await Promise.all(
         selectedSizeIds
           .filter((sizeId) => !currentSizeIds.has(sizeId))
-          .map((sizeId) => apiClient.post(`/styles/${style.id}/sizes`, { sizeId })),
+          .map((sizeId) => apiClient.post(`/styles/${style.id}/sizes`, toStyleSizeRequest(sizeId, barcodeBySizeId))),
+      );
+      // Manual override of an already-mapped size's barcode (only when it actually changed).
+      await Promise.all(
+        style.sizes
+          .filter((size) => selectedSizeIds.includes(size.id))
+          .filter((size) => enteredBarcode(size.id) !== '' && enteredBarcode(size.id) !== size.barcode)
+          .map((size) =>
+            apiClient.patch(`/styles/${style.id}/sizes/${size.id}/barcode`, { barcode: enteredBarcode(size.id) }),
+          ),
       );
 
       const submittedFactories = factoryMappings.filter((mapping) => mapping.factoryId);
@@ -199,8 +228,8 @@ export function StyleFormPage() {
       return style;
     },
     onSuccess: (style) => navigate(`/master-data/styles/${style.id}`),
-    onError: (caught) =>
-      setError(caught instanceof Error ? caught.message : 'Unable to save style'),
+    // Surfaces the API's own message (e.g. "Barcode X is already assigned to Style S / Size Z.").
+    onError: (caught) => setError(imageErrorMessage(caught, 'Unable to save style')),
   });
 
   // Browser reload/close protection for unsaved input. Baseline is the empty
@@ -209,6 +238,7 @@ export function StyleFormPage() {
     {
       form,
       selectedSizeIds,
+      barcodeBySizeId,
       seasonId,
       factoryMappings: factoryMappings.map(({ factoryId, exFactoryPrice }) => ({
         factoryId,
@@ -278,6 +308,11 @@ export function StyleFormPage() {
             sizes={sizesQuery.data ?? []}
             selectedSizeIds={selectedSizeIds}
             onChange={setSelectedSizeIds}
+            barcodes={{
+              values: barcodeBySizeId,
+              saved: Object.fromEntries((styleQuery.data?.sizes ?? []).map((size) => [size.id, size.barcode])),
+              onChange: (sizeId, value) => setBarcodeBySizeId((current) => ({ ...current, [sizeId]: value })),
+            }}
           />
 
           <StyleFactoryMappingsField

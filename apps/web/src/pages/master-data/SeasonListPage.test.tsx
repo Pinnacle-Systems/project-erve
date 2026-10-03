@@ -192,6 +192,52 @@ describe('SeasonListPage Financial Year integration', () => {
     expect(trigger('select-financial-year').textContent).toContain('27-28');
   });
 
+  it('sends the Barcode Serial when entered and omits it when left blank', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    await renderPage(
+      baseAdapter({
+        createSeason: async (config) => {
+          bodies.push(JSON.parse(config.data as string) as Record<string, unknown>);
+          return ok(config, {
+            success: true,
+            data: { id: 'season-1', code: 'SS26', name: 'Summer 26', financialYear: currentFinancialYear, displayName: 'SS26', barcodeSerial: 3, status: 'ACTIVE' },
+          });
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(trigger('select-financial-year').textContent).toContain('26-27'));
+    const submit = () =>
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Add Season')!;
+
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-code')!, 'ss26');
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-name')!, 'Summer 26');
+    await act(async () => submit().click());
+    await flush();
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-code')!, 'ss27');
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-name')!, 'Summer 27');
+    setInputValue(container.querySelector<HTMLInputElement>('#field-barcode-serial')!, '3');
+    await act(async () => submit().click());
+    await flush();
+
+    expect(bodies[0]).not.toHaveProperty('barcodeSerial');
+    expect(bodies[1]).toMatchObject({ code: 'SS27', barcodeSerial: 3 });
+  });
+
+  it('rejects a non-numeric Barcode Serial before calling the API', async () => {
+    let called = false;
+    await renderPage(baseAdapter({ createSeason: async (config) => { called = true; return ok(config, { success: true, data: {} }); } }));
+    await vi.waitFor(() => expect(trigger('select-financial-year').textContent).toContain('26-27'));
+
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-code')!, 'ss26');
+    setInputValue(container.querySelector<HTMLInputElement>('#field-season-name')!, 'Summer 26');
+    setInputValue(container.querySelector<HTMLInputElement>('#field-barcode-serial')!, '12ab');
+    await act(async () => Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Add Season')!.click());
+    await flush();
+
+    expect(called).toBe(false);
+    expect(container.textContent).toContain('Barcode Serial must be a whole number');
+  });
+
   it('keeps the Season list filter defaulted to All Financial Years', async () => {
     await renderPage(baseAdapter());
 

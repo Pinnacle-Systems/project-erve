@@ -103,3 +103,13 @@ export function cleanPayload(form: StyleFormFields, seasonId: string) {
     seasonId,
   };
 }
+
+/**
+ * Request item for one Style + Size. A blank barcode is omitted so the server
+ * generates it; a typed one is sent as a manual override (trimmed). The web
+ * never computes a barcode itself.
+ */
+export function toStyleSizeRequest(sizeId: string, barcodeBySizeId: Record<string, string>) {
+  const barcode = (barcodeBySizeId[sizeId] ?? '').trim();
+  return barcode === '' ? { sizeId } : { sizeId, barcode };
+}

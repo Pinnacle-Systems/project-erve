@@ -180,4 +180,95 @@ describe('StyleFormPage — UXAUTH-019 edit-load gating', () => {
     const styleNumberInput = container.querySelector<HTMLInputElement>('#field-style-number');
     expect(styleNumberInput?.value).toBe('');
   });
+
+  it('EDIT route: shows saved barcodes and saves a changed one through the barcode endpoint without re-adding the size', async () => {
+    const style = makeStyle({
+      sizes: [
+        {
+          id: 'sz-1',
+          code: 'AGE_3',
+          label: '3',
+          sizeType: 'AGE',
+          sortOrder: 3,
+          status: 'ACTIVE',
+          mappingStatus: 'ACTIVE',
+          importedSizeRangeLabel: null,
+          barcode: '312343',
+        },
+      ],
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/sizes/options')
+        return { data: { data: [{ id: 'sz-1', code: 'AGE_3', label: '3', sortOrder: 3, status: 'ACTIVE' }] } };
+      if (url === '/factories/options') return { data: { data: [] } };
+      if (url === '/seasons/options')
+        return { data: { data: [{ id: 's1', code: 'SS27', name: 'Spring Summer 27', displayName: 'SS27', status: 'ACTIVE' }] } };
+      if (url === '/styles/style-1') return { data: { data: style } };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: style } });
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: style } });
+    renderStylePage('/master-data/styles/style-1/edit', '/master-data/styles/:id/edit');
+    await waitFor(() => container.querySelector('#field-barcode') !== null, 'barcode input did not render');
+
+    const input = container.querySelector<HTMLInputElement>('#field-barcode')!;
+    expect(input.value).toBe('312343');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(input, 'CUSTOM-3');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => container.querySelector('form')!.requestSubmit());
+    await waitFor(
+      () => patch.mock.calls.some(([url]) => url === '/styles/style-1/sizes/sz-1/barcode'),
+      'barcode PATCH was not sent',
+    );
+
+    expect(patch).toHaveBeenCalledWith('/styles/style-1/sizes/sz-1/barcode', { barcode: 'CUSTOM-3' });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('EDIT route: refuses to blank an existing barcode (that would read as a request to regenerate it)', async () => {
+    const style = makeStyle({
+      sizes: [
+        {
+          id: 'sz-1',
+          code: 'AGE_3',
+          label: '3',
+          sizeType: 'AGE',
+          sortOrder: 3,
+          status: 'ACTIVE',
+          mappingStatus: 'ACTIVE',
+          importedSizeRangeLabel: null,
+          barcode: '312343',
+        },
+      ],
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/sizes/options')
+        return { data: { data: [{ id: 'sz-1', code: 'AGE_3', label: '3', sortOrder: 3, status: 'ACTIVE' }] } };
+      if (url === '/factories/options') return { data: { data: [] } };
+      if (url === '/seasons/options')
+        return { data: { data: [{ id: 's1', code: 'SS27', name: 'Spring Summer 27', displayName: 'SS27', status: 'ACTIVE' }] } };
+      if (url === '/styles/style-1') return { data: { data: style } };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: style } });
+    renderStylePage('/master-data/styles/style-1/edit', '/master-data/styles/:id/edit');
+    await waitFor(() => container.querySelector('#field-barcode') !== null, 'barcode input did not render');
+
+    const input = container.querySelector<HTMLInputElement>('#field-barcode')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(input, '');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => container.querySelector('form')!.requestSubmit());
+    await waitFor(
+      () => container.textContent!.includes('Barcode cannot be blank for size AGE_3'),
+      'blank-barcode error not shown',
+    );
+
+    expect(patch).not.toHaveBeenCalled();
+  });
 });
