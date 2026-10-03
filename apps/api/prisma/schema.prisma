@@ -617,6 +617,10 @@ model Season {
   name            String
   financialYearId String   @map("financial_year_id")
   status          String   @default("ACTIVE")
+  // Stable numeric prefix for generated Style+Size barcodes. Deliberately
+  // independent of code/name/ordering and never derived from row counts.
+  // Null = not yet assigned (barcodes cannot be generated for its Styles).
+  barcodeSerial   Int?     @unique @map("barcode_serial")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -676,6 +680,11 @@ model StyleSize {
   // imported sheet) — the actual valid-size model is this row existing,
   // not this label.
   importedSizeRangeLabel String?         @map("imported_size_range_label")
+  // Barcode identity is Style + Size, globally unique. Generated server-side
+  // (see barcode.util.ts) when not supplied; a persisted value is an
+  // identifier and is never regenerated. Null only for pre-existing rows
+  // not yet backfilled (Postgres permits many NULLs under a unique index).
+  barcode                String?         @unique
   status                 StyleSizeStatus @default(ACTIVE)
   createdAt              DateTime        @default(now()) @map("created_at")
   updatedAt              DateTime        @updatedAt @map("updated_at")

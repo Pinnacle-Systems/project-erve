@@ -26,9 +26,15 @@ afterAll(async () => {
 
 async function createSize(code = 'AGE_3') {
   return prisma.size.create({
-    data: { id: createId(), code, label: code.replace('_', ' '), sizeType: 'AGE', sortOrder: 3 },
+    // Plain numeric label ("3"), as on the real Size master - what the
+    // barcode generator reads its size number from.
+    data: { id: createId(), code, label: code.replace(/^AGE_/, ''), sizeType: 'AGE', sortOrder: 3 },
   });
 }
+
+// Every fixture Season gets its own Barcode Serial so Styles created under it
+// are barcode-ready (serials are globally unique, so never reuse one).
+let nextBarcodeSerial = 1;
 
 async function createActiveSeason(
   overrides?: Partial<{ code: string; name: string; financialYearId: string }>,
@@ -41,6 +47,7 @@ async function createActiveSeason(
       code: `T-${suffix}`,
       name: `Test Season ${suffix}`,
       financialYearId: financialYear.id,
+      barcodeSerial: nextBarcodeSerial++,
       ...overrides,
     },
   });
@@ -54,6 +61,7 @@ async function createStyle(token: string, overrides?: Record<string, unknown>) {
     .send({
       styleNumber: 'ST-001',
       styleName: 'Boys Regular T-Shirt',
+      lmixNumber: 'LMIX1234',
       finalMrp: 849,
       hsnCode: '61091000',
       royaltyPercentage: 12,

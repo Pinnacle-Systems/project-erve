@@ -28,6 +28,7 @@ import {
   updateSeasonSchema,
   updateSeasonStatusSchema,
   updateStyleSchema,
+  updateStyleSizeBarcodeSchema,
   updateStyleStatusSchema,
   userOptionsQuerySchema,
 } from './master-data.validation.js';
@@ -303,6 +304,21 @@ stylesRouter.post(
   asyncHandler(async (req, res) => {
     const input = styleSizeSchema.parse(req.body);
     const style = await masterDataService.addStyleSize(req.user!, req.params.id! as string, input);
+    res.status(200).json(successResponse(style));
+  }),
+);
+
+stylesRouter.patch(
+  '/:id/sizes/:sizeId/barcode',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    const { barcode } = updateStyleSizeBarcodeSchema.parse(req.body);
+    const style = await masterDataService.updateStyleSizeBarcode(
+      req.user!,
+      req.params.id! as string,
+      req.params.sizeId! as string,
+      barcode,
+    );
     res.status(200).json(successResponse(style));
   }),
 );

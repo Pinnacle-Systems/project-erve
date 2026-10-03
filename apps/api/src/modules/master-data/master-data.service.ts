@@ -17,6 +17,7 @@ import { listAllOrPage, type OptionalPageQuery, type PageArgs } from '../../util
 import { toStyleImageView } from './style-images.service.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 import { toCompactFinancialYearCode } from './financial-year.util.js';
+import { generateStyleSizeBarcode, normalizeSuppliedBarcode } from './barcode.util.js';
 
 const styleInclude = {
   season: { include: { financialYear: { select: { id: true, code: true } } } },
@@ -103,6 +104,7 @@ function toStyleView(style: StyleRecord) {
       status: mapping.size.status,
       mappingStatus: mapping.status,
       importedSizeRangeLabel: mapping.importedSizeRangeLabel,
+      barcode: mapping.barcode,
     })),
     factories: style.styleFactoryMappings.map((mapping) => ({
       id: mapping.factory.id,
@@ -240,21 +242,40 @@ export async function createStyle(
     finalMrp: number;
     status?: StyleStatus;
     seasonId: string;
+    // Optional: when present the Style and all its Style+Size rows (with
+    // supplied or generated barcodes) are created in ONE transaction, so a
+    // barcode failure never leaves a half-created Style behind.
+    sizes?: StyleSizeRequest[];
     [key: string]: unknown;
   },
 ) {
+  const { sizes = [], ...styleFields } = input;
   const styleId = createId();
-  await assertActiveSeason(input.seasonId);
+  const season = await assertActiveSeason(input.seasonId);
+  const plannedSizes = await planStyleSizes(
+    { lmixNumber: styleFields.lmixNumber as string | null | undefined, season },
+    sizes,
+    { generateMissing: true },
+  );
+  const barcodes = plannedSizes.flatMap((planned) => (planned.barcode ? [planned.barcode] : []));
 
   try {
-    await prisma.style.create({
-      data: {
-        id: styleId,
-        ...input,
-        status: input.status ?? 'ACTIVE',
-      } as Prisma.StyleUncheckedCreateInput,
+    await prisma.$transaction(async (tx) => {
+      await tx.style.create({
+        data: {
+          id: styleId,
+          ...styleFields,
+          status: input.status ?? 'ACTIVE',
+        } as Prisma.StyleUncheckedCreateInput,
+      });
+      if (plannedSizes.length > 0) {
+        await tx.styleSize.createMany({
+          data: plannedSizes.map((planned) => ({ id: createId(), styleId, ...planned.data })),
+        });
+      }
     });
   } catch (error) {
+    await throwIfBarcodeConflict(error, barcodes);
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('A style with this style number already exists');
     }
@@ -266,6 +287,7 @@ export async function createStyle(
     action: 'STYLE_CREATED',
     entityType: 'Style',
     entityId: styleId,
+    metadata: plannedSizes.length > 0 ? { sizes: plannedSizes.map((p) => ({ sizeId: p.data.sizeId, barcode: p.barcode })) } : undefined,
   });
 
   return getStyleById(styleId);
@@ -382,13 +404,21 @@ async function assertActiveSeason(id: string) {
   const season = await prisma.season.findUnique({ where: { id } });
   if (!season || season.status !== 'ACTIVE')
     throw HttpError.badRequest('The selected Season must exist and be active');
+  return season;
 }
 
 export async function createSeason(
   actor: CurrentUser,
-  input: { code: string; name: string; financialYearId: string; status?: 'ACTIVE' | 'INACTIVE' },
+  input: {
+    code: string;
+    name: string;
+    financialYearId: string;
+    barcodeSerial?: number | null;
+    status?: 'ACTIVE' | 'INACTIVE';
+  },
 ) {
   await assertFinancialYearExists(input.financialYearId);
+  if (input.barcodeSerial != null) await assertBarcodeSerialAvailable(input.barcodeSerial);
   try {
     const season = await prisma.season.create({
       data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' },
@@ -403,25 +433,55 @@ export async function createSeason(
     });
     return toSeasonView(season);
   } catch (error) {
+    if (input.barcodeSerial != null) await assertBarcodeSerialAvailable(input.barcodeSerial);
     if (isUniqueConstraintError(error))
       throw HttpError.conflict('A Season with this code already exists in that Financial Year');
     throw error;
   }
 }
+
+// Barcode Serial is a unique, stable identifier - never auto-assigned from
+// row counts or list order, so an admin must choose it deliberately.
+async function assertBarcodeSerialAvailable(barcodeSerial: number, exceptSeasonId?: string) {
+  const holder = await prisma.season.findFirst({
+    where: { barcodeSerial, ...(exceptSeasonId ? { id: { not: exceptSeasonId } } : {}) },
+    select: { code: true },
+  });
+  if (holder) {
+    throw HttpError.conflict(`Barcode Serial ${barcodeSerial} is already used by Season ${holder.code}`);
+  }
+}
+
 export async function updateSeason(
   actor: CurrentUser,
   id: string,
-  input: { code?: string; name?: string; financialYearId?: string },
+  input: { code?: string; name?: string; financialYearId?: string; barcodeSerial?: number | null },
 ) {
   const existing = await prisma.season.findUnique({ where: { id }, include: seasonInclude });
   if (!existing) throw HttpError.notFound('Season not found');
   if (
     (input.code === undefined || input.code === existing.code) &&
     (input.name === undefined || input.name === existing.name) &&
-    (input.financialYearId === undefined || input.financialYearId === existing.financialYearId)
+    (input.financialYearId === undefined || input.financialYearId === existing.financialYearId) &&
+    (input.barcodeSerial === undefined || input.barcodeSerial === existing.barcodeSerial)
   )
     return toSeasonView(existing);
   if (input.financialYearId !== undefined) await assertFinancialYearExists(input.financialYearId);
+  if (input.barcodeSerial !== undefined && input.barcodeSerial !== existing.barcodeSerial) {
+    // First assignment is always safe. Once a serial is set and barcodes exist
+    // under it, changing it would make the Season's barcode scheme inconsistent.
+    if (existing.barcodeSerial !== null) {
+      const barcodeCount = await prisma.styleSize.count({
+        where: { style: { seasonId: id }, barcode: { not: null } },
+      });
+      if (barcodeCount > 0) {
+        throw HttpError.conflict(
+          `Barcode Serial cannot be changed: ${barcodeCount} barcode(s) already exist for this Season's Styles`,
+        );
+      }
+    }
+    if (input.barcodeSerial !== null) await assertBarcodeSerialAvailable(input.barcodeSerial, id);
+  }
   try {
     const season = await prisma.season.update({ where: { id }, data: input, include: seasonInclude });
     await recordAuditLog({
@@ -433,6 +493,7 @@ export async function updateSeason(
     });
     return toSeasonView(season);
   } catch (error) {
+    if (input.barcodeSerial != null) await assertBarcodeSerialAvailable(input.barcodeSerial, id);
     if (isUniqueConstraintError(error))
       throw HttpError.conflict('A Season with this code already exists in that Financial Year');
     throw error;
@@ -475,14 +536,136 @@ export async function updateStyleStatus(actor: CurrentUser, styleId: string, sta
   return getStyleById(styleId);
 }
 
+export interface StyleSizeRequest {
+  sizeId: string;
+  importedSizeRangeLabel?: string | null;
+  /** Manual/historical barcode; blank or omitted means "generate". */
+  barcode?: string | null;
+}
+
+interface PlannedStyleSize {
+  barcode: string | null;
+  data: { sizeId: string; importedSizeRangeLabel: string | null; barcode: string | null };
+}
+
+// One resolution path for every new Style + Size (Style create and later
+// size adds): validate the Size, then a supplied barcode wins and is preserved;
+// otherwise the shared generator runs. Duplicates (within the request and
+// against persisted rows) are rejected with an actionable message; the unique
+// index remains the real guard for concurrent writers.
+async function planStyleSizes(
+  style: { lmixNumber: string | null | undefined; season: { code: string; barcodeSerial: number | null } },
+  requests: StyleSizeRequest[],
+  options: { generateMissing: boolean },
+): Promise<PlannedStyleSize[]> {
+  if (requests.length === 0) return [];
+  const seen = new Set<string>();
+  for (const request of requests) {
+    if (seen.has(request.sizeId)) throw HttpError.badRequest('A size can only be listed once per style');
+    seen.add(request.sizeId);
+  }
+  const sizes = await prisma.size.findMany({ where: { id: { in: requests.map((r) => r.sizeId) } } });
+  const sizeById = new Map(sizes.map((size) => [size.id, size] as const));
+
+  const planned: PlannedStyleSize[] = [];
+  const sizeLabelByBarcode = new Map<string, string>();
+  for (const request of requests) {
+    const size = sizeById.get(request.sizeId);
+    if (!size) throw HttpError.badRequest('Unknown size');
+    if (size.status !== 'ACTIVE') throw HttpError.badRequest('Cannot map an inactive size to a style');
+
+    let barcode = normalizeSuppliedBarcode(request.barcode);
+    if (barcode === null && options.generateMissing) {
+      const generated = generateStyleSizeBarcode({
+        seasonSerial: style.season.barcodeSerial,
+        lmixNumber: style.lmixNumber,
+        sizeLabel: size.label,
+        sizeType: size.sizeType,
+      });
+      if (!generated.ok) {
+        throw HttpError.badRequest(
+          `Cannot generate a barcode for size ${size.label} (Season ${style.season.code}): ${generated.message}. ` +
+            'Fix that, or enter the barcode manually.',
+        );
+      }
+      barcode = generated.barcode;
+    }
+    if (barcode !== null) {
+      const clash = sizeLabelByBarcode.get(barcode);
+      if (clash !== undefined) {
+        throw HttpError.badRequest(
+          `Barcode ${barcode} would be assigned to more than one size in this request (${clash}, ${size.label})`,
+        );
+      }
+      sizeLabelByBarcode.set(barcode, size.label);
+    }
+    planned.push({
+      barcode,
+      data: { sizeId: size.id, importedSizeRangeLabel: request.importedSizeRangeLabel ?? null, barcode },
+    });
+  }
+  const holder = await findBarcodeHolder(planned.flatMap((p) => (p.barcode ? [p.barcode] : [])));
+  if (holder) throw barcodeConflictError(holder);
+  return planned;
+}
+
+interface BarcodeHolder {
+  barcode: string;
+  styleNumber: string;
+  sizeLabel: string;
+}
+
+async function findBarcodeHolder(
+  barcodes: string[],
+  ignore?: { styleId: string; sizeId: string },
+): Promise<BarcodeHolder | null> {
+  if (barcodes.length === 0) return null;
+  const rows = await prisma.styleSize.findMany({
+    where: { barcode: { in: barcodes } },
+    select: {
+      barcode: true,
+      styleId: true,
+      sizeId: true,
+      style: { select: { styleNumber: true } },
+      size: { select: { label: true } },
+    },
+  });
+  const row = rows.find((r) => !(ignore && r.styleId === ignore.styleId && r.sizeId === ignore.sizeId));
+  return row ? { barcode: row.barcode!, styleNumber: row.style.styleNumber, sizeLabel: row.size.label } : null;
+}
+
+function barcodeConflictError(holder: BarcodeHolder) {
+  return HttpError.conflict(
+    `Barcode ${holder.barcode} is already assigned to Style ${holder.styleNumber} / Size ${holder.sizeLabel}.`,
+  );
+}
+
+// A concurrent writer can win the race between our pre-check and the insert;
+// the unique index then rejects ours. Translate that into the same actionable
+// error instead of leaking a raw Prisma constraint failure.
+async function throwIfBarcodeConflict(
+  error: unknown,
+  barcodes: string[],
+  ignore?: { styleId: string; sizeId: string },
+): Promise<void> {
+  if (!isUniqueConstraintError(error)) return;
+  const holder = await findBarcodeHolder(barcodes, ignore);
+  if (holder) throw barcodeConflictError(holder);
+}
+
 export async function addStyleSize(
   actor: CurrentUser,
   styleId: string,
-  input: { sizeId: string; importedSizeRangeLabel?: string | null },
+  input: StyleSizeRequest,
+  // Historical import adds sizes with no barcode source; it must never fail
+  // (or invent barcodes) because a Season/LMIX is not barcode-ready - those
+  // rows are filled later by the dry-run-first backfill tool.
+  options: { generateMissing?: boolean } = {},
 ) {
-  const [style, size] = await Promise.all([
-    prisma.style.findUnique({ where: { id: styleId } }),
+  const [style, size, existingMapping] = await Promise.all([
+    prisma.style.findUnique({ where: { id: styleId }, include: { season: true } }),
     prisma.size.findUnique({ where: { id: input.sizeId } }),
+    prisma.styleSize.findUnique({ where: { styleId_sizeId: { styleId, sizeId: input.sizeId } } }),
   ]);
   if (!style) {
     throw HttpError.notFound('Style not found');
@@ -493,17 +676,21 @@ export async function addStyleSize(
   if (size.status !== 'ACTIVE') {
     throw HttpError.badRequest('Cannot map an inactive size to a style');
   }
+  // Checked before barcode resolution: re-adding a mapped size must report a
+  // duplicate size, and must never touch the barcode it already has.
+  if (existingMapping) {
+    throw HttpError.conflict('Style already has this size');
+  }
+
+  const [planned] = await planStyleSizes(style, [input], {
+    generateMissing: options.generateMissing ?? true,
+  });
+  const barcode = planned!.barcode;
 
   try {
-    await prisma.styleSize.create({
-      data: {
-        id: createId(),
-        styleId,
-        sizeId: input.sizeId,
-        importedSizeRangeLabel: input.importedSizeRangeLabel,
-      },
-    });
+    await prisma.styleSize.create({ data: { id: createId(), styleId, ...planned!.data } });
   } catch (error) {
+    await throwIfBarcodeConflict(error, barcode ? [barcode] : [], { styleId, sizeId: input.sizeId });
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('Style already has this size');
     }
@@ -515,13 +702,58 @@ export async function addStyleSize(
     action: 'STYLE_SIZE_ADDED',
     entityType: 'Style',
     entityId: styleId,
-    metadata: { sizeId: input.sizeId },
+    metadata: { sizeId: input.sizeId, barcode },
+  });
+
+  return getStyleById(styleId);
+}
+
+// Manual barcode override on an existing Style + Size. Never blank (that would
+// be a silent regeneration/erasure) and never automatic - only an explicit
+// edit changes a persisted barcode.
+export async function updateStyleSizeBarcode(
+  actor: CurrentUser,
+  styleId: string,
+  sizeId: string,
+  barcodeInput: string,
+) {
+  const mapping = await prisma.styleSize.findUnique({ where: { styleId_sizeId: { styleId, sizeId } } });
+  if (!mapping) {
+    throw HttpError.notFound('Style size mapping not found');
+  }
+  const barcode = normalizeSuppliedBarcode(barcodeInput);
+  if (barcode === null) {
+    throw HttpError.badRequest('Barcode cannot be blank');
+  }
+  if (barcode === mapping.barcode) {
+    return getStyleById(styleId);
+  }
+  const holder = await findBarcodeHolder([barcode], { styleId, sizeId });
+  if (holder) throw barcodeConflictError(holder);
+
+  try {
+    await prisma.styleSize.update({ where: { id: mapping.id }, data: { barcode } });
+  } catch (error) {
+    await throwIfBarcodeConflict(error, [barcode], { styleId, sizeId });
+    throw error;
+  }
+
+  await recordAuditLog({
+    actorId: actor.id,
+    action: 'STYLE_SIZE_BARCODE_UPDATED',
+    entityType: 'Style',
+    entityId: styleId,
+    metadata: { sizeId, from: mapping.barcode, to: barcode },
   });
 
   return getStyleById(styleId);
 }
 
 export async function removeStyleSize(actor: CurrentUser, styleId: string, sizeId: string) {
+  const mapping = await prisma.styleSize.findUnique({
+    where: { styleId_sizeId: { styleId, sizeId } },
+    select: { barcode: true },
+  });
   const deleted = await prisma.styleSize.deleteMany({ where: { styleId, sizeId } });
   if (deleted.count === 0) {
     throw HttpError.notFound('Style size mapping not found');
@@ -532,7 +764,8 @@ export async function removeStyleSize(actor: CurrentUser, styleId: string, sizeI
     action: 'STYLE_SIZE_REMOVED',
     entityType: 'Style',
     entityId: styleId,
-    metadata: { sizeId },
+    // Keep the released barcode on record: it identifies physical stock.
+    metadata: { sizeId, barcode: mapping?.barcode ?? null },
   });
 
   return getStyleById(styleId);

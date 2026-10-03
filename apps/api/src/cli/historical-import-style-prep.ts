@@ -625,7 +625,7 @@ export async function applyStyles(actor: CurrentUser, plan: StylePlanEntry[]): P
         result.styleSizesVerified++;
         continue;
       }
-      await addStyleSize(actor, styleId, { sizeId: size.targetSizeId });
+      await addStyleSize(actor, styleId, { sizeId: size.targetSizeId }, { generateMissing: false });
       result.styleSizesCreated++;
     }
 
