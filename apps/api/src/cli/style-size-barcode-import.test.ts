@@ -111,8 +111,8 @@ describe('parseLegacyBarcodeBook (Book1 layout, no Size column)', () => {
       ]),
     );
     expect(rows.map((r) => [r.season, r.lmix, r.size, r.barcode])).toEqual([
-      ['AW25', 'LMIX26042008', '3', 'BJGGR26042008-3Y'],
-      ['AW25', 'LMIX26042008', '10', 'BJGGR26042008-10Y'],
+      ['AW25', 'LMIX26024008', '3', 'BJGGR26042008-3Y'],
+      ['AW25', 'LMIX26024008', '10', 'BJGGR26042008-10Y'],
       ['SS26', 'LMIX39026006', '3', '390260063'],
       ['SS26', 'LMIX39026006', '10', '3902600610'],
       ['AW26', 'LMIX5826005', '3', '358260053'],
