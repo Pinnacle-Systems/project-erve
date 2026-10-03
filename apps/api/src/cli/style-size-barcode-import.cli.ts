@@ -9,6 +9,9 @@
 //
 // Exactly one of --dry-run / --execute is required (no default). Columns:
 // Barcode, Size, and either "Style Number" or both "Season" + "LMIX".
+// --layout legacy-book reads the business Book1 sheet (Season, Style Number =
+// LMIX digits, Barcode; no Size column) and derives each size from the barcode
+// under the AW25 / SS26 / AW26 regime rules.
 import { readFile } from 'node:fs/promises';
 import { prisma } from '../db/prisma.js';
 import { describeDatabaseTarget } from './describe-database-target.js';
@@ -16,6 +19,7 @@ import {
   executeBarcodeImport,
   loadCatalog,
   parseBarcodeSheet,
+  parseLegacyBarcodeBook,
   planBarcodeImport,
   summarizeImport,
   type ImportRow,
@@ -34,7 +38,10 @@ function parseArgs(argv: string[]) {
   if (execute && process.env.NODE_ENV === 'production' && !argv.includes('--confirm-production')) {
     throw new CliError('Refusing: NODE_ENV=production requires --confirm-production');
   }
-  return { file, execute };
+  const layoutIndex = argv.indexOf('--layout');
+  const layout = layoutIndex >= 0 ? argv[layoutIndex + 1] : 'standard';
+  if (layout !== 'standard' && layout !== 'legacy-book') throw new CliError('--layout must be standard or legacy-book');
+  return { file, execute, layout };
 }
 
 function printRows(title: string, rows: ImportRow[]) {
@@ -45,11 +52,12 @@ function printRows(title: string, rows: ImportRow[]) {
 }
 
 async function main(): Promise<void> {
-  const { file, execute } = parseArgs(process.argv.slice(2));
+  const { file, execute, layout } = parseArgs(process.argv.slice(2));
   console.log(`Target database: ${describeDatabaseTarget(process.env.DATABASE_URL ?? '')}`);
   console.log(execute ? 'Mode: EXECUTE' : 'Mode: DRY RUN (no data is written)');
 
-  const plan = planBarcodeImport(parseBarcodeSheet(await readFile(file)), await loadCatalog());
+  const parse = layout === 'legacy-book' ? parseLegacyBarcodeBook : parseBarcodeSheet;
+  const plan = planBarcodeImport(parse(await readFile(file)), await loadCatalog());
   console.table(summarizeImport(plan));
   for (const [reason, rows] of Object.entries(plan.rejected)) printRows(`Rejected: ${reason}`, rows);
   printRows('Repeated identical rows', plan.duplicateRows);
