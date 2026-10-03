@@ -81,6 +81,56 @@ export function parseBarcodeSheet(buffer: Buffer): SheetRow[] {
   });
 }
 
+// The business "Book1" layout: Season ("AW-25"), Style Number (= the LMIX
+// digits) and Barcode, with NO Size column. The three historical seasons are
+// three barcode regimes, so the size is read back out of the barcode itself:
+//   AW25: <XJGGR><lmix>-<n>Y   (alphanumeric, kept verbatim)
+//   SS26: <lmix><n>            (no season prefix)
+//   AW26: 3<lmix><n>           (Season serial 3 + LMIX + size numeral)
+// A row that does not match its season's regime exactly gets an empty size and
+// is rejected by the plan - the size is never guessed.
+const LEGACY_REGIMES: Record<string, (lmix: string, barcode: string) => string | null> = {
+  AW25: (lmix, barcode) => {
+    const match = /^[A-Z]{5}(\d+)-(\d{1,2})Y$/.exec(barcode);
+    return match && match[1] === lmix ? match[2]! : null;
+  },
+  SS26: (lmix, barcode) => sizeAfterPrefix(lmix, barcode),
+  AW26: (lmix, barcode) => sizeAfterPrefix(`3${lmix}`, barcode),
+};
+
+function sizeAfterPrefix(prefix: string, barcode: string): string | null {
+  if (!barcode.startsWith(prefix)) return null;
+  const rest = barcode.slice(prefix.length);
+  return /^[1-9]\d?$/.test(rest) ? rest : null;
+}
+
+export function parseLegacyBarcodeBook(buffer: Buffer): SheetRow[] {
+  const workbook = XLSX.read(buffer, { type: 'buffer', raw: true });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]!];
+  if (!sheet) throw new Error('The file has no sheets');
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '', blankrows: false });
+  // Header cells can contain line breaks / padding (" Style\r\nNumber ").
+  const header = (raw[0] ?? []).map((cell) => String(cell).replace(/\s+/g, ' ').trim().toLowerCase());
+  const [season, style, barcode] = [header.indexOf('season'), header.indexOf('style number'), header.indexOf('barcode')];
+  if (season < 0 || style < 0 || barcode < 0) {
+    throw new Error('Header row must include "Season", "Style Number" and "Barcode" columns');
+  }
+  return raw.slice(1).map((cells, index) => {
+    const seasonCode = String(cells[season] ?? '').replace(/[\s-]/g, '').toUpperCase();
+    const lmixDigits = String(cells[style] ?? '').trim();
+    const code = String(cells[barcode] ?? '').trim();
+    const derive = LEGACY_REGIMES[seasonCode];
+    return {
+      rowNumber: index + 2,
+      styleNumber: '',
+      season: seasonCode,
+      lmix: lmixDigits ? `LMIX${lmixDigits}` : '',
+      size: (derive && lmixDigits && code ? derive(lmixDigits, code) : null) ?? '',
+      barcode: code,
+    };
+  });
+}
+
 interface Catalog {
   styles: Array<{ id: string; styleNumber: string; lmixNumber: string | null; seasonCode: string }>;
   sizes: Array<{ id: string; code: string; label: string; sizeType: string }>;

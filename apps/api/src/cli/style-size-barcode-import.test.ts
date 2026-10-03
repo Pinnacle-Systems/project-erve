@@ -7,6 +7,7 @@ import {
   executeBarcodeImport,
   loadCatalog,
   parseBarcodeSheet,
+  parseLegacyBarcodeBook,
   planBarcodeImport,
   summarizeImport,
   type SheetRow,
@@ -86,6 +87,65 @@ describe('parseBarcodeSheet', () => {
     expect(parseBarcodeSheet(book([['Barcode', 'Size', 'Season', 'LMIX'], ['1', '3', 'SS26', 'LMIX9']]))).toHaveLength(1);
     expect(() => parseBarcodeSheet(book([['Barcode', 'Size'], ['1', '3']]))).toThrow(/Style Number/);
     expect(() => parseBarcodeSheet(book([['Size', 'Style Number'], ['3', 'A']]))).toThrow(/Barcode/);
+  });
+});
+
+describe('parseLegacyBarcodeBook (Book1 layout, no Size column)', () => {
+  const book = (rows: unknown[][]) => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Sheet1');
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  };
+  const header = [' Season ', ' Style\r\nNumber ', ' Barcode '];
+
+  it('derives each size from the barcode under the AW25 / SS26 / AW26 regime rules', () => {
+    const rows = parseLegacyBarcodeBook(
+      book([
+        header,
+        ['AW-25', '26042008', 'BJGGR26042008-3Y'],
+        ['AW-25', '26042008', 'BJGGR26042008-10Y'],
+        ['SS-26', '39026006', '390260063'],
+        ['SS-26', '39026006', '3902600610'],
+        ['AW-26', '5826005', '358260053'], // 7-digit LMIX
+        ['AW-26', '35126003', '33512600314'],
+      ]),
+    );
+    expect(rows.map((r) => [r.season, r.lmix, r.size, r.barcode])).toEqual([
+      ['AW25', 'LMIX26042008', '3', 'BJGGR26042008-3Y'],
+      ['AW25', 'LMIX26042008', '10', 'BJGGR26042008-10Y'],
+      ['SS26', 'LMIX39026006', '3', '390260063'],
+      ['SS26', 'LMIX39026006', '10', '3902600610'],
+      ['AW26', 'LMIX5826005', '3', '358260053'],
+      ['AW26', 'LMIX35126003', '14', '33512600314'],
+    ]);
+  });
+
+  it('never guesses: a barcode that does not fit its season regime gets no size and is rejected by the plan', async () => {
+    const rows = parseLegacyBarcodeBook(
+      book([
+        header,
+        ['AW-25', '26042008', 'BJGGR99999999-3Y'], // LMIX in barcode differs from the row's
+        ['SS-26', '39026006', '390260063X'],
+        ['AW-26', '35126003', '2351260033'], // wrong serial prefix
+        ['AW-27', '11111111', '1111111113'], // regime unknown
+      ]),
+    );
+    expect(rows.map((r) => r.size)).toEqual(['', '', '', '']);
+    expect(summarizeImport(await plan(rows))).toMatchObject({ wouldSet: 0, rejected: 4 });
+  });
+
+  it('feeds the importer: Season + LMIX identifies the Style, the derived size picks the mapping', async () => {
+    const s = await seed();
+    await s.style(s.ss26, 'SS26-39026006', 'LMIX39026006');
+    const rows = parseLegacyBarcodeBook(book([header, ['SS-26', '39026006', '390260063'], ['SS-26', '39026006', '390260064']]));
+
+    const result = await plan(rows);
+
+    expect(result.wouldSet.map((r) => r.barcode)).toEqual(['390260063', '390260064']);
+  });
+
+  it('requires the Season, Style Number and Barcode headers', () => {
+    expect(() => parseLegacyBarcodeBook(book([['Season', 'Barcode'], ['AW-25', '1']]))).toThrow(/Style Number/);
   });
 });
 
