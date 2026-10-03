@@ -98,6 +98,14 @@ const LEGACY_REGIMES: Record<string, (lmix: string, barcode: string) => string |
   AW26: (lmix, barcode) => sizeAfterPrefix(`3${lmix}`, barcode),
 };
 
+// The Style's true LMIX from the sheet's "Style Number". The AW25 workbook base
+// code has digits 4-5 transposed relative to the LMIX stored on the Style
+// (rule approved in H2A: it resolves all 42 AW25 Styles uniquely). The barcode
+// itself still embeds the sheet's code and is kept verbatim.
+const LEGACY_LMIX: Record<string, (digits: string) => string> = {
+  AW25: (digits) => (digits.length >= 5 ? `${digits.slice(0, 3)}${digits[4]}${digits[3]}${digits.slice(5)}` : digits),
+};
+
 function sizeAfterPrefix(prefix: string, barcode: string): string | null {
   if (!barcode.startsWith(prefix)) return null;
   const rest = barcode.slice(prefix.length);
@@ -124,7 +132,7 @@ export function parseLegacyBarcodeBook(buffer: Buffer): SheetRow[] {
       rowNumber: index + 2,
       styleNumber: '',
       season: seasonCode,
-      lmix: lmixDigits ? `LMIX${lmixDigits}` : '',
+      lmix: lmixDigits ? `LMIX${LEGACY_LMIX[seasonCode]?.(lmixDigits) ?? lmixDigits}` : '',
       size: (derive && lmixDigits && code ? derive(lmixDigits, code) : null) ?? '',
       barcode: code,
     };
