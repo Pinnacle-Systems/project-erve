@@ -81,11 +81,21 @@ function click(label: string) {
   if (!button) throw new Error(`Missing button ${label}`);
   act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 }
-function input(label: string, value: string) {
-  const element = Array.from(container.querySelectorAll('input')).find(
+/** Label text as assistive tech sees it: aria-hidden decorations (the required `*`) excluded. */
+function accessibleLabel(label: HTMLLabelElement): string {
+  const clone = label.cloneNode(true) as HTMLLabelElement;
+  clone.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
+  return (clone.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+function findInput(label: string): HTMLInputElement | undefined {
+  return Array.from(container.querySelectorAll('input')).find(
     (item) =>
-      item.getAttribute('aria-label') === label || item.labels?.[0]?.textContent?.trim() === label,
+      item.getAttribute('aria-label') === label ||
+      (item.labels?.[0] ? accessibleLabel(item.labels[0]) === label : false),
   );
+}
+function input(label: string, value: string) {
+  const element = findInput(label);
   if (!element) throw new Error(`Missing input ${label}`);
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
   act(() => {
@@ -110,12 +120,14 @@ describe('Quality Form definition editor', () => {
     click('Add component');
     expect(container.textContent?.match(/Component type/g)).toHaveLength(2);
     click('Add section');
-    expect(container.textContent).toContain('Section 2 title *');
+    const sectionTitle = findInput('Section 2 title');
+    expect(sectionTitle).toBeDefined();
+    expect(sectionTitle!.required).toBe(true);
     const remove = Array.from(container.querySelectorAll('button')).find(
       (item) => item.textContent === 'Remove section' && !item.hasAttribute('disabled'),
     )!;
     act(() => remove.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(container.textContent).not.toContain('Section 2 title *');
+    expect(findInput('Section 2 title')).toBeUndefined();
   });
 });
 
@@ -170,8 +182,8 @@ describe('Quality Form pages', () => {
         </Providers>,
       ),
     );
-    input('Code *', 'final');
-    input('Name *', 'Final Inspection Report');
+    input('Code', 'final');
+    input('Name', 'Final Inspection Report');
     click('Create Draft');
     await flush();
     expect(submitted).toMatchObject({

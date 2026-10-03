@@ -30,6 +30,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Find a <label> by its accessible text (aria-hidden required `*` excluded). */
+function findLabel(text: string): HTMLLabelElement | undefined {
+  return Array.from(container.querySelectorAll('label')).find((label) => {
+    const clone = label.cloneNode(true) as HTMLLabelElement;
+    clone.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
+    return clone.textContent?.trim() === text;
+  });
+}
+
 function render(ui: ReactNode): void {
   act(() => {
     root.render(ui);
@@ -65,7 +74,7 @@ describe('StyleIdentitySection', () => {
       'Style Number',
       'Style Name',
       'LMIX Number',
-      'Season *',
+      'Season',
       'Status',
       'Category',
       'Item Name Group',
@@ -76,6 +85,10 @@ describe('StyleIdentitySection', () => {
     ]) {
       expect(container.textContent).toContain(label);
     }
+
+    const season = findLabel('Season');
+    expect(season).toBeDefined();
+    expect(season!.querySelector('[aria-hidden="true"]')?.textContent?.trim()).toBe('*');
   });
 
   it('shows Required on Style Number/Name only once a save has failed with them empty', () => {
