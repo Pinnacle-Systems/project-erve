@@ -103,15 +103,24 @@ export function StyleDetailPage() {
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel title="Valid Sizes">
-          <div className="flex flex-wrap gap-2">
-            {style.sizes.map((size) => (
-              <StatusBadge
-                key={size.id}
-                label={size.code}
-                tone={size.mappingStatus === 'ACTIVE' ? 'info' : 'muted'}
-              />
-            ))}
-          </div>
+          {style.sizes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No sizes mapped.</p>
+          ) : (
+            <div>
+              <div className="flex justify-between gap-3 pb-1 mb-1 text-xs font-semibold text-muted-foreground border-b border-border-subtle">
+                <span>Size</span>
+                <span>Barcode</span>
+              </div>
+              <div className="divide-y divide-border-subtle">
+                {style.sizes.map((size) => (
+                  <div key={size.id} className="flex justify-between items-center gap-3 py-2 text-sm text-foreground">
+                    <StatusBadge label={size.code} tone={size.mappingStatus === 'ACTIVE' ? 'info' : 'muted'} />
+                    <span className="font-mono">{size.barcode ?? 'Not assigned'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Panel>
         <Panel title="Factory Mappings">
           {style.factories.length === 0 ? (

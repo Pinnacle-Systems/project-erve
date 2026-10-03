@@ -4,6 +4,7 @@ import {
   emptyForm,
   isValidHsnCode,
   styleFieldErrorMessage,
+  toStyleSizeRequest,
   validateStyleForm,
 } from './style-form-state.js';
 
@@ -80,5 +81,16 @@ describe('cleanPayload', () => {
   it('sends null royalty when left blank', () => {
     const payload = cleanPayload({ ...emptyForm, finalMrp: '499' }, 'season-1');
     expect(payload.royaltyPercentage).toBeNull();
+  });
+});
+
+describe('toStyleSizeRequest', () => {
+  it('omits a blank barcode so the server generates it', () => {
+    expect(toStyleSizeRequest('sz-1', {})).toEqual({ sizeId: 'sz-1' });
+    expect(toStyleSizeRequest('sz-1', { 'sz-1': '   ' })).toEqual({ sizeId: 'sz-1' });
+  });
+
+  it('sends a typed barcode, trimmed, as a manual override', () => {
+    expect(toStyleSizeRequest('sz-1', { 'sz-1': ' CUSTOM-3 ' })).toEqual({ sizeId: 'sz-1', barcode: 'CUSTOM-3' });
   });
 });

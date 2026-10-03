@@ -11,6 +11,7 @@ export interface Season {
   name: string;
   financialYear: { id: string; code: string };
   displayName: string;
+  barcodeSerial?: number | null;
   status: Status;
 }
 
@@ -131,7 +132,7 @@ export interface Style {
   royaltyPercentage: number | null;
   status: Status;
   season: Season;
-  sizes: Array<Size & { mappingStatus: Status; importedSizeRangeLabel: string | null }>;
+  sizes: Array<Size & { mappingStatus: Status; importedSizeRangeLabel: string | null; barcode: string | null }>;
   factories: Array<Factory & { mappingStatus: Status; exFactoryPrice: number }>;
   images: StyleImage[];
 }

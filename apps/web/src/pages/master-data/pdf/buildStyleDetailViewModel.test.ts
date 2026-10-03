@@ -38,7 +38,7 @@ function makeStyle(overrides: Partial<Style> = {}): Style {
 describe('buildStyleDetailViewModel', () => {
   it('maps identity fields, season label, sizes, and factory rows', () => {
     const style = makeStyle({
-      sizes: [{ id: 'sz1', code: 'M', label: 'Medium', sizeType: 'ALPHA', sortOrder: 1, status: 'ACTIVE', mappingStatus: 'ACTIVE', importedSizeRangeLabel: null }],
+      sizes: [{ id: 'sz1', code: 'M', label: 'Medium', sizeType: 'ALPHA', sortOrder: 1, status: 'ACTIVE', mappingStatus: 'ACTIVE', importedSizeRangeLabel: null, barcode: '312343' }],
       factories: [{ id: 'f1', code: 'F1', name: 'Factory One', contactName: null, contactEmail: null, contactPhone: null, city: null, status: 'ACTIVE', mappingStatus: 'ACTIVE', exFactoryPrice: 250.5 }],
     });
     const prepared: PreparedStyleDetailPdfData = { style, primaryImage: { placeholder: true } };

@@ -31,7 +31,7 @@ export function SeasonListPage() {
   const { user } = useAuth();
   const currentFinancialYearQuery = useCurrentFinancialYearQuery();
   const financialYearsQuery = useFinancialYearsQuery();
-  const emptyForm = { code: '', name: '', financialYearId: '' };
+  const emptyForm = { code: '', name: '', financialYearId: '', barcodeSerial: '' };
   const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState<Season | null>(null);
   const [filterFinancialYearId, setFilterFinancialYearId] = useState('');
@@ -89,9 +89,18 @@ export function SeasonListPage() {
   const save = useMutation({
     mutationFn: async () => {
       setError('');
-      const value = { code: form.code.trim().toUpperCase(), name: form.name.trim(), financialYearId: effectiveFinancialYearId };
+      const barcodeSerial = form.barcodeSerial.trim();
+      const value = {
+        code: form.code.trim().toUpperCase(),
+        name: form.name.trim(),
+        financialYearId: effectiveFinancialYearId,
+        // Blank = none yet (never auto-assigned); omitted on edit so an unset field cannot clear a serial.
+        ...(barcodeSerial === '' ? {} : { barcodeSerial: Number(barcodeSerial) }),
+      };
       if (!value.code || !value.name || !value.financialYearId)
         throw new Error('Season code, name, and Financial Year are required');
+      if (barcodeSerial !== '' && !/^[1-9]\d{0,4}$/.test(barcodeSerial))
+        throw new Error('Barcode Serial must be a whole number from 1 to 99999');
       return editing ? apiClient.patch(`/seasons/${editing.id}`, value) : apiClient.post('/seasons', value);
     },
     onSuccess: async () => {
@@ -114,7 +123,12 @@ export function SeasonListPage() {
   });
   const beginEdit = (season: Season) => {
     setEditing(season);
-    setForm({ code: season.code, name: season.name, financialYearId: season.financialYear.id });
+    setForm({
+      code: season.code,
+      name: season.name,
+      financialYearId: season.financialYear.id,
+      barcodeSerial: season.barcodeSerial == null ? '' : String(season.barcodeSerial),
+    });
     setError('');
     setFormKey((key) => key + 1);
   };
@@ -139,6 +153,14 @@ export function SeasonListPage() {
             value={effectiveFinancialYearId}
             onValueChange={(value) => setForm({ ...form, financialYearId: value })}
             errorMessage={error && !effectiveFinancialYearId ? 'Required' : undefined}
+          />
+          <TextField
+            label="Barcode Serial"
+            inputMode="numeric"
+            width="sm"
+            value={form.barcodeSerial}
+            helpText="Unique. Fixed once barcodes exist."
+            onChange={(event) => setForm({ ...form, barcodeSerial: event.target.value })}
           />
           <div className="flex gap-2 pt-[1.375rem]">
             {editing ? <Button type="button" variant="secondary" onClick={beginAdd}>Cancel</Button> : null}
@@ -165,6 +187,7 @@ export function SeasonListPage() {
     <DataTable columns={[
       { key: 'code', header: 'Code', accessor: 'code' },
       { key: 'name', header: 'Season name', accessor: 'name' },
+      { key: 'barcodeSerial', header: 'Barcode serial', render: (season) => season.barcodeSerial ?? '-' },
       { key: 'financialYear', header: 'Financial year', render: (season) => toCompactFinancialYearCode(season.financialYear.code) },
       { key: 'displayName', header: 'Display', accessor: 'displayName' },
       { key: 'status', header: 'Status', render: (season) => <StatusBadge label={season.status} tone={season.status === 'ACTIVE' ? 'success' : 'muted'} /> },
