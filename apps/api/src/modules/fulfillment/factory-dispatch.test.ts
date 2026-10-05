@@ -5,11 +5,13 @@ import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import { createReleasedQaStock, resetDatabase } from '../../test/helpers.js';
 import {
+  consolidateAndDispatch,
   createFactoryUserToken,
   createRoleToken,
   createSingleFactoryApprovedSaleOrder,
   createTwoBatchApprovedSaleOrder,
   ensureStyleFactoryRate,
+  packAndFinalize,
 } from './fulfillment-test-helpers.js';
 
 const app = createApp();
@@ -216,6 +218,73 @@ describe('UXAUTH-004 — Factory Dispatch broad-read scope (MERCHANDISER/SENIOR_
   it.each(['QA_USER', 'ACCOUNTANT', 'DISTRIBUTOR'] as const)('%s cannot list Factory Dispatches', async (role) => {
     const { token } = await createRoleToken(role);
     await listFactoryDispatches(token).expect(403);
+  });
+});
+
+describe('API-P2-01 — GET /factory-dispatches?unconsolidatedOnly strict boolean query parsing', () => {
+  async function oneConsolidatedOneUnconsolidatedDispatch() {
+    const unconsolidatedFixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+    const unconsolidatedFactoryToken = await createFactoryUserToken(unconsolidatedFixture.stock.factoryId);
+    const unconsolidated = await packAndFinalize(
+      app,
+      unconsolidatedFactoryToken,
+      unconsolidatedFixture.saleOrder.id,
+      unconsolidatedFixture.saleOrderLineId,
+      destinationOf(unconsolidatedFixture.saleOrder),
+      10,
+    );
+
+    const consolidatedFixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+    const consolidatedFactoryToken = await createFactoryUserToken(consolidatedFixture.stock.factoryId);
+    const consolidated = await packAndFinalize(
+      app,
+      consolidatedFactoryToken,
+      consolidatedFixture.saleOrder.id,
+      consolidatedFixture.saleOrderLineId,
+      destinationOf(consolidatedFixture.saleOrder),
+      10,
+    );
+    await consolidateAndDispatch(app, consolidatedFixture.merchToken, [consolidated.cartonId]);
+
+    const { token } = await createRoleToken('MERCHANDISER');
+    return { token, unconsolidatedDispatchId: unconsolidated.id as string, consolidatedDispatchId: consolidated.id as string };
+  }
+
+  it('unconsolidatedOnly=true includes only the Factory Dispatch with an unconsolidated active carton', async () => {
+    const { token, unconsolidatedDispatchId, consolidatedDispatchId } = await oneConsolidatedOneUnconsolidatedDispatch();
+
+    const res = await listFactoryDispatches(token, { unconsolidatedOnly: true }).expect(200);
+
+    const ids = res.body.data.items.map((d: { id: string }) => d.id);
+    expect(ids).toContain(unconsolidatedDispatchId);
+    expect(ids).not.toContain(consolidatedDispatchId);
+  });
+
+  it('unconsolidatedOnly=false does not activate the unconsolidated-only filter — the z.coerce.boolean() regression', async () => {
+    const { token, unconsolidatedDispatchId, consolidatedDispatchId } = await oneConsolidatedOneUnconsolidatedDispatch();
+
+    const res = await listFactoryDispatches(token, { unconsolidatedOnly: false }).expect(200);
+
+    // Under the old z.coerce.boolean() parser, the string "false" coerced to
+    // boolean true and wrongly excluded the consolidated dispatch below.
+    const ids = res.body.data.items.map((d: { id: string }) => d.id);
+    expect(ids).toContain(unconsolidatedDispatchId);
+    expect(ids).toContain(consolidatedDispatchId);
+  });
+
+  it('an omitted unconsolidatedOnly preserves the existing default (no filter applied)', async () => {
+    const { token, unconsolidatedDispatchId, consolidatedDispatchId } = await oneConsolidatedOneUnconsolidatedDispatch();
+
+    const res = await listFactoryDispatches(token).expect(200);
+
+    const ids = res.body.data.items.map((d: { id: string }) => d.id);
+    expect(ids).toContain(unconsolidatedDispatchId);
+    expect(ids).toContain(consolidatedDispatchId);
+  });
+
+  it('rejects a non-explicit unconsolidatedOnly value (e.g. "abc") — no z.coerce.boolean() footgun', async () => {
+    const { token } = await createRoleToken('MERCHANDISER');
+    await listFactoryDispatches(token, { unconsolidatedOnly: 'abc' }).expect(400);
   });
 });
 

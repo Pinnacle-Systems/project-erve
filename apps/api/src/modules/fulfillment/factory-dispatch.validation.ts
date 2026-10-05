@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { queryBooleanSchema } from '../../utils/query-boolean.js';
 
 export const versionedActionSchema = z.object({ expectedVersion: z.number().int().nonnegative() });
 
@@ -39,7 +40,10 @@ export const listFactoryDispatchesQuerySchema = z.object({
   status: z.enum(['DRAFT', 'READY_FOR_ERVE']).optional(),
   saleOrderId: z.string().trim().optional(),
   factoryId: z.string().trim().optional(),
-  unconsolidatedOnly: z.coerce.boolean().optional(),
+  // API-P2-01: z.coerce.boolean() calls Boolean(value) on the raw query
+  // string, so ?unconsolidatedOnly=false coerced to true — see
+  // utils/query-boolean.ts.
+  unconsolidatedOnly: queryBooleanSchema.optional(),
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
