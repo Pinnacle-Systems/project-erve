@@ -275,6 +275,28 @@ async function assertFactoryUserFactoryActive(user: CurrentUser, factoryId: stri
   }
 }
 
+// CUR-007: a Job Order's Factory must be an active Factory explicitly
+// mapped to the Job Order's Style via the canonical Style->Factory mapping
+// (StyleFactoryMapping, also the sole source of the fixed Ex-Factory Rate).
+// Factory activity alone is not sufficient — an active-but-unmapped Factory
+// must be rejected here regardless of caller (UI filtering is advisory
+// only). Runs inside the creating transaction so it is evaluated against
+// the same atomic snapshot as the rest of createJobOrder.
+async function assertFactoryEligibleForStyle(
+  tx: Tx,
+  styleId: string,
+  factoryId: string,
+): Promise<void> {
+  const mapping = await tx.styleFactoryMapping.findFirst({
+    where: { styleId, factoryId, status: 'ACTIVE', factory: { status: 'ACTIVE' } },
+  });
+  if (!mapping) {
+    throw HttpError.badRequest(
+      'No active factories are mapped to this Style. Update the Style Master before issuing the Job Order.',
+    );
+  }
+}
+
 function totalOrdered(jobOrder: JobOrderRecord): number {
   return jobOrder.lines.reduce((sum, line) => sum + line.orderedQuantityTotal, 0);
 }
@@ -1460,6 +1482,7 @@ export async function createJobOrder(
   await prisma.$transaction(async (tx) => {
     const orderSheets = await loadAndValidateOrderSheetSources(tx, orderSheetIds);
     const sharedStyleId = orderSheets[0]!.lines[0]!.styleId;
+    await assertFactoryEligibleForStyle(tx, sharedStyleId, input.factoryId);
 
     // Delivery date: an explicit value always wins; otherwise every
     // selected Order Sheet must agree on one date (§7) — no invented
