@@ -422,9 +422,16 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                           )
                         }
                       >
-                        {activity.status === 'COMPLETED' || activity.status === 'FAILED'
-                          ? 'View Inspection'
-                          : 'Continue Inspection'}
+                        {/* DEMO-013: label (and hence read-only-ness of what opens)
+                            must follow the targeted execution's own terminal
+                            state, not the activity-level badge — for a BATCHED
+                            activity (Final Inspection) the badge can still read
+                            "In Progress" while coverage spans multiple batches
+                            even though this specific latest attempt is already
+                            FINALIZED, which previously mislabeled it "Continue"
+                            and opened a read-only form under an actionable
+                            button. */}
+                        {activity.execution.status === 'DRAFT' ? 'Continue Inspection' : 'View Inspection'}
                       </Button>
                     )}
                     {activity.status === 'FAILED' &&

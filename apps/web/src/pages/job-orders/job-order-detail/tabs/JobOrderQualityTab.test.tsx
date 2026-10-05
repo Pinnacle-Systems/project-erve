@@ -198,7 +198,7 @@ describe('JobOrderQualityTab Reinspection Handoff', () => {
 // neither route's guard, so the button itself must not render for it.
 describe('JobOrderQualityTab QA/inspection cross-link (UXAUTH-011)', () => {
   const activityWithExecution = () =>
-    finalQualityActivity({ status: 'IN_PROGRESS', execution: { id: 'execution-1' } });
+    finalQualityActivity({ status: 'IN_PROGRESS', execution: { id: 'execution-1', status: 'DRAFT' } });
 
   it('does not render the View/Continue Inspection cross-link for FACTORY_USER', async () => {
     authState.roles = ['FACTORY_USER'];
@@ -223,9 +223,28 @@ describe('JobOrderQualityTab QA/inspection cross-link (UXAUTH-011)', () => {
   it('still renders View Inspection for QA_USER once the activity is COMPLETED', async () => {
     authState.roles = ['QA_USER'];
     await renderQuality('IN_PRODUCTION', {
-      qualityActivities: [finalQualityActivity({ status: 'COMPLETED', execution: { id: 'execution-1' } })],
+      qualityActivities: [
+        finalQualityActivity({ status: 'COMPLETED', execution: { id: 'execution-1', status: 'FINALIZED' } }),
+      ],
     });
     const link = [...container.querySelectorAll('button')].find((button) => button.textContent === 'View Inspection');
     expect(link).not.toBeUndefined();
+  });
+
+  // DEMO-013: for a BATCHED activity (Final Inspection) the activity-level
+  // badge can still read IN_PROGRESS while coverage spans multiple batches,
+  // even though the specific latest-attempt execution the button targets is
+  // already FINALIZED — the label (and read-only-ness of what opens) must
+  // follow the targeted execution, not the activity badge.
+  it('renders View Inspection — not Continue — when the targeted execution is already FINALIZED, even if the activity badge still reads IN_PROGRESS', async () => {
+    authState.roles = ['QA_USER'];
+    await renderQuality('IN_PRODUCTION', {
+      qualityActivities: [
+        finalQualityActivity({ status: 'IN_PROGRESS', execution: { id: 'execution-1', status: 'FINALIZED' } }),
+      ],
+    });
+    const buttons = [...container.querySelectorAll('button')].map((button) => button.textContent);
+    expect(buttons).toContain('View Inspection');
+    expect(buttons).not.toContain('Continue Inspection');
   });
 });

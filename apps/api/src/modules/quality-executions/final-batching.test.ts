@@ -1336,3 +1336,124 @@ describe('Final Inspection mandatory rejection reason on FAIL', () => {
     expect(view.body.data.attempts).toMatchObject([{ outcome: 'FAIL', rejectionReason: null }]);
   });
 });
+
+// DEMO-013 + DEMO-017: a Job Order observed stuck in Production (EIJO/26-27/0003)
+// had the full ordered quantity prepared and fully resolved through Final QA
+// — recalculateJobOrderStatus correctly promoted JobOrder.status to
+// PRODUCTION_COMPLETE — but nobody had ever clicked "Complete Finishing"
+// first (Correction 3 allows this order), and the automatic path never
+// reconciled productionCompletedAt or the stuck JobOrderStageStatus row.
+// Once status is PRODUCTION_COMPLETE, completeProductionStage permanently
+// refuses to run, so a Job Order in this shape could never self-heal through
+// the UI. These tests cover the fix: deliberately never completing Finishing
+// via the explicit action, exactly reproducing the stuck order.
+describe('Final QA / Production Completion lifecycle consistency (DEMO-013 + DEMO-017)', () => {
+  it('automatically completes the final (Finishing) production stage and stamps productionCompletedAt when Final QA resolves the full quantity before Finishing was ever explicitly completed', async () => {
+    const f = await fixture(840);
+    const first = (await start(f, 500).expect(201)).body.data;
+    await finalize(f, first, 'PASS').expect(200);
+    const second = (await start(f, 340, 500).expect(201)).body.data;
+    await finalize(f, second, 'PASS').expect(200);
+
+    const detail = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('PRODUCTION_COMPLETE');
+    expect(detail.body.data.operationalState.primaryDisplayState.code).toBe('COMPLETED');
+
+    const stage = await prisma.jobOrderStageStatus.findUniqueOrThrow({
+      where: { id: f.job.stageStatuses[0]!.id },
+    });
+    expect(stage.status).toBe('COMPLETED');
+    expect(stage.completedAt).not.toBeNull();
+    // No real Factory user confirmed this — it must not fabricate one.
+    expect(stage.completedBy).toBeNull();
+
+    const jobOrder = await prisma.jobOrder.findUniqueOrThrow({ where: { id: f.job.id } });
+    expect(jobOrder.productionCompletedAt).not.toBeNull();
+
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          entityType: 'JobOrder',
+          entityId: f.job.id,
+          action: 'JOB_ORDER_STAGE_COMPLETED_AUTOMATIC',
+        },
+      }),
+    ).toBe(1);
+
+    const activity = detail.body.data.qualityActivities[0];
+    expect(activity.status).toBe('COMPLETED');
+    expect(activity.coverage.finalQaComplete).toBe(true);
+  });
+
+  it('leaves Finishing open and the Job Order IN_PRODUCTION — still actionable — while Final QA coverage is only partial', async () => {
+    const f = await fixture(840);
+    const first = (await start(f, 500).expect(201)).body.data;
+    await finalize(f, first, 'PASS').expect(200);
+    // 340 of 840 units remain unbatched — coverage is not complete yet, so
+    // nothing must be force-completed.
+
+    const detail = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('IN_PRODUCTION');
+
+    const stage = await prisma.jobOrderStageStatus.findUniqueOrThrow({
+      where: { id: f.job.stageStatuses[0]!.id },
+    });
+    expect(stage.status).toBe('IN_PROGRESS');
+    expect(stage.completedAt).toBeNull();
+
+    expect(
+      await prisma.auditLog.count({
+        where: {
+          entityType: 'JobOrder',
+          entityId: f.job.id,
+          action: 'JOB_ORDER_STAGE_COMPLETED_AUTOMATIC',
+        },
+      }),
+    ).toBe(0);
+
+    const activity = detail.body.data.qualityActivities[0];
+    expect(activity.status).toBe('IN_PROGRESS');
+    // The remaining batch is genuinely startable — the fix must not hide it.
+    expect(activity.coverage.availableForNewFinalBatch).toBe(340);
+  });
+
+  it('still reconciles correctly, and keeps every finalized attempt viewable, when the full quantity is only reached after a FAIL -> reinspect -> PASS cycle', async () => {
+    const f = await fixture(840);
+    const first = (await start(f, 500).expect(201)).body.data;
+    await finalize(f, first, 'PASS').expect(200);
+    const second = (await start(f, 340, 500).expect(201)).body.data;
+    const failed = await finalize(f, second, 'FAIL').expect(200);
+    const batchId = failed.body.data.finalBatch.id as string;
+    const retry = (await reinspect(f, batchId).expect(201)).body.data;
+    await finalize(f, retry, 'PASS').expect(200);
+
+    const detail = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('PRODUCTION_COMPLETE');
+
+    const stage = await prisma.jobOrderStageStatus.findUniqueOrThrow({
+      where: { id: f.job.stageStatuses[0]!.id },
+    });
+    expect(stage.status).toBe('COMPLETED');
+
+    const activity = detail.body.data.qualityActivities[0];
+    expect(activity.status).toBe('COMPLETED');
+    // The targeted "latest attempt" is the PASS reinspection and is
+    // correctly terminal — the web Continue/View button derives its label
+    // from exactly this field (execution.status), never from the
+    // activity-level badge, so a terminal execution is never routed to as
+    // if it were still resumable.
+    expect(activity.execution).toMatchObject({ status: 'FINALIZED', outcome: 'PASS' });
+    expect(
+      activity.executionHistory.map((attempt: { outcome: string | null }) => attempt.outcome),
+    ).toEqual(expect.arrayContaining(['FAIL', 'PASS']));
+  });
+});
