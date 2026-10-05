@@ -6,7 +6,7 @@ import { useAuth } from '../auth/AuthContext.js';
 import type { ReturnToState } from '../auth/return-to.js';
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { user, status, retrySession } = useAuth();
+  const { user, status, retrySession, logoutReason } = useAuth();
   const location = useLocation();
 
   if (status === 'loading') {
@@ -33,9 +33,14 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   // `reauth-required` keeps `user`, so the page stays mounted underneath the
   // in-place sign-in dialog (see SessionManager).
   if (!user) {
-    const state: ReturnToState = {
-      from: { pathname: location.pathname, search: location.search, hash: location.hash },
-    };
+    // An explicit sign-out must not hand the next login — possibly a
+    // different person — this user's protected route: only capture `from`
+    // when the session was lost incidentally (expiry, cross-tab identity
+    // swap, cold load), not when someone chose to leave it.
+    const state: ReturnToState =
+      logoutReason === 'explicit'
+        ? {}
+        : { from: { pathname: location.pathname, search: location.search, hash: location.hash } };
     return <Navigate to="/login" replace state={state} />;
   }
 

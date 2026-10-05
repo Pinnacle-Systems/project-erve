@@ -30,9 +30,20 @@ import { clearStoredToken, getStoredToken } from './token-storage.js';
 export type AuthStatus =
   'loading' | 'authenticated' | 'unauthenticated' | 'unavailable' | 'reauth-required';
 
+/**
+ * Why `status` became `'unauthenticated'`. `ProtectedRoute` uses this to
+ * decide whether the page being left is worth returning to after the next
+ * login: an intentional sign-out (`'explicit'`) must not hand the next
+ * person — possibly a different user — the previous identity's protected
+ * route, while an incidental loss of session (`'expired'`, or `null` at
+ * startup) should still support the existing same-user return-to behavior.
+ */
+export type LogoutReason = 'explicit' | 'expired';
+
 interface AuthContextValue {
   user: AuthUser | null;
   status: AuthStatus;
+  logoutReason: LogoutReason | null;
   login: (accessToken: string, user: AuthUser, session?: SessionInfo) => Promise<void>;
   logout: () => Promise<void>;
   retrySession: () => void;
@@ -74,6 +85,7 @@ export function AuthProvider({
   const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
+  const [logoutReason, setLogoutReason] = useState<LogoutReason | null>(null);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const statusRef = useRef<AuthStatus>(status);
   const userRef = useRef<AuthUser | null>(user);
@@ -120,6 +132,7 @@ export function AuthProvider({
           clearStoredToken();
           setUser(null);
           setStatus('unauthenticated');
+          setLogoutReason('expired');
         } else {
           setStatus('unavailable');
         }
@@ -133,13 +146,17 @@ export function AuthProvider({
     };
   }, [restoreAttempt]);
 
-  const resetToSignedOut = useCallback(async () => {
-    await queryClient.cancelQueries();
-    queryClient.clear();
-    clearStoredToken();
-    setUser(null);
-    setStatus('unauthenticated');
-  }, [queryClient]);
+  const resetToSignedOut = useCallback(
+    async (reason: LogoutReason) => {
+      await queryClient.cancelQueries();
+      queryClient.clear();
+      clearStoredToken();
+      setUser(null);
+      setStatus('unauthenticated');
+      setLogoutReason(reason);
+    },
+    [queryClient],
+  );
 
   useEffect(() => {
     const handleAuthExpired = () => {
@@ -154,7 +171,11 @@ export function AuthProvider({
         setStatus('reauth-required');
         return;
       }
-      void resetToSignedOut();
+      // Either nothing to preserve, or this fired mid-logout (e.g. an
+      // activity refresh racing the explicit /auth/logout call) — in the
+      // latter case the in-flight logout() owns the reason and will set it
+      // again right after this.
+      void resetToSignedOut(loggingOutRef.current ? 'explicit' : 'expired');
     };
 
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
@@ -172,7 +193,10 @@ export function AuthProvider({
           setExpectedSessionUser(null);
           onHardNavigate(IDENTITY_CHANGED_LOGIN_PATH);
         } else if (event.type === 'remote-logout') {
-          void resetToSignedOut();
+          // The same account explicitly signed out from another tab —
+          // treat it like this tab's own explicit logout, not an
+          // interruption: the next login here should not be routed back.
+          void resetToSignedOut('explicit');
         } else if (event.type === 'session-adopted' && statusRef.current === 'reauth-required') {
           setStatus('authenticated');
           refetchFailedQueries(queryClient);
@@ -185,6 +209,7 @@ export function AuthProvider({
     () => ({
       user,
       status,
+      logoutReason,
       login: async (accessToken, nextUser, session) => {
         const previousUser = userRef.current;
         const preservingPage =
@@ -213,6 +238,9 @@ export function AuthProvider({
         publishSignedInSession(accessToken, session);
         setUser(nextUser);
         setStatus('authenticated');
+        // A fresh sign-in consumes whatever sent this tab to /login, so the
+        // next time it becomes unauthenticated it starts from a clean slate.
+        setLogoutReason(null);
       },
       logout: async () => {
         loggingOutRef.current = true;
@@ -220,7 +248,7 @@ export function AuthProvider({
           await logoutSession();
         } finally {
           loggingOutRef.current = false;
-          await resetToSignedOut();
+          await resetToSignedOut('explicit');
         }
       },
       retrySession: () => {
@@ -228,7 +256,7 @@ export function AuthProvider({
         setRestoreAttempt((attempt) => attempt + 1);
       },
     }),
-    [user, status, queryClient, onHardNavigate, resetToSignedOut],
+    [user, status, logoutReason, queryClient, onHardNavigate, resetToSignedOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
