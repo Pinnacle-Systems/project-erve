@@ -8,7 +8,7 @@ import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
-import type { FactoryOption, ProcessFlowOption, Style } from '../master-data/types.js';
+import type { ProcessFlowOption, Style } from '../master-data/types.js';
 import type { PurchaseOrder } from '../purchase-orders/types.js';
 import { OrderSheetMultiSelectField } from './OrderSheetMultiSelectField.js';
 import type { JobOrder } from './types.js';
@@ -90,14 +90,6 @@ export function JobOrderCreatePage() {
   }, [deepLinkQuery.data]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const factoriesQuery = useQuery({
-    queryKey: ['factories', 'options'],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<FactoryOption[]>>('/factories/options');
-      return res.data.data;
-    },
-  });
-
   const processFlowsQuery = useQuery({
     queryKey: ['process-flows', 'options'],
     queryFn: async () => {
@@ -134,6 +126,18 @@ export function JobOrderCreatePage() {
       ? ''
       : String(mappedUnitPrice);
 
+  // CUR-007: a Job Order's Factory must be an active Factory explicitly
+  // mapped to the Job Order's Style — the canonical Style->Factory mapping
+  // already returned by GET /styles/:id (the same source as the Ex-Factory
+  // Rate above), never the unfiltered /factories/options list.
+  const eligibleFactories = useMemo(
+    () =>
+      (styleDetailQuery.data?.factories ?? []).filter(
+        (factory) => factory.status === 'ACTIVE' && factory.mappingStatus === 'ACTIVE',
+      ),
+    [styleDetailQuery.data],
+  );
+
   // Style-change reset (Phase 2.1): clear the Production Plan whenever the
   // effective shared Style actually changes (e.g. every Style-A source is
   // removed and a Style-B one is added) — Style-A quantities/touched state
@@ -143,6 +147,20 @@ export function JobOrderCreatePage() {
     setQuantities({});
     setTouchedSizeIds(new Set());
   }, [styleId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // CUR-007: a Factory selection that is no longer eligible once the shared
+  // Style changes must not be silently submitted — clear it. Gated on the
+  // new Style's own mapping data having loaded (styleDetailQuery.data) so a
+  // selection is never cleared from the transient gap while that data is
+  // still in flight for the new styleId.
+  /* eslint-disable react-hooks/set-state-in-effect -- stale Factory clear on Style change */
+  useEffect(() => {
+    if (!styleDetailQuery.data) return;
+    if (factoryId && !eligibleFactories.some((factory) => factory.id === factoryId)) {
+      setFactoryId('');
+    }
+  }, [styleDetailQuery.data, eligibleFactories, factoryId]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const combinedForecastBySize = useMemo(() => {
@@ -353,8 +371,20 @@ export function JobOrderCreatePage() {
         <div onKeyDown={createEnterToNextHandler()} className="space-y-3">
           <Panel title="Factory Assignment">
           <FormGrid columns={3}>
-            <SelectField label="Factory" value={factoryId || undefined} onValueChange={setFactoryId} width="fill">
-              {(factoriesQuery.data ?? []).map((factory) => (
+            <SelectField
+              label="Factory"
+              value={factoryId || undefined}
+              onValueChange={setFactoryId}
+              width="fill"
+              disabled={!styleId}
+              placeholder={styleId ? 'Select a factory...' : 'Select a Style first'}
+              helpText={
+                styleId && styleDetailQuery.data && eligibleFactories.length === 0
+                  ? 'No active factories are mapped to this Style. Update the Style Master before issuing the Job Order.'
+                  : undefined
+              }
+            >
+              {eligibleFactories.map((factory) => (
                 <SelectItem key={factory.id} value={factory.id}>
                   {factory.name}
                 </SelectItem>
