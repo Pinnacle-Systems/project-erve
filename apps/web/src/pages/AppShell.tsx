@@ -3,6 +3,7 @@ import {
   type ReactNode,
   type RefObject,
   type SVGProps,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -53,6 +54,64 @@ function useObservedHeightPx<T extends HTMLElement>(): [RefObject<T | null>, num
 
   return [ref, height];
 }
+
+/** Subset of MediaQueryList this hook relies on, plus the legacy
+ * addListener/removeListener pair some older WebViews still only support —
+ * mirrors packages/theme/src/system-preference.ts's defensive shape. */
+interface CompatibleMediaQueryList {
+  matches: boolean;
+  addEventListener?: (type: 'change', listener: (event: { matches: boolean }) => void) => void;
+  removeEventListener?: (type: 'change', listener: (event: { matches: boolean }) => void) => void;
+  addListener?: (listener: (event: { matches: boolean }) => void) => void;
+  removeListener?: (listener: (event: { matches: boolean }) => void) => void;
+}
+
+function getMediaQueryList(query: string): CompatibleMediaQueryList | undefined {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return undefined;
+  }
+  return window.matchMedia(query);
+}
+
+/**
+ * Below `COMPACT_SIDEBAR_QUERY`'s threshold there isn't enough width for both
+ * an expanded ~16rem sidebar rail and a comfortable header (user identity +
+ * theme toggle + logout) — so the shell forces the compact icon-only rail in
+ * that range regardless of the user's own expand/collapse preference, which
+ * continues to apply once there's room for it again. Mirrors
+ * subscribeToSystemPreference's modern/legacy-listener handling.
+ */
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => getMediaQueryList(query)?.matches ?? false);
+
+  useEffect(() => {
+    const mediaQueryList = getMediaQueryList(query);
+    if (!mediaQueryList) return;
+
+    // No sync-on-mount call here: the useState lazy initializer above
+    // already reads the current `matches` value for first render — this
+    // effect only needs to subscribe to subsequent changes.
+    const handleChange = (event: { matches: boolean }) => setMatches(event.matches);
+
+    if (typeof mediaQueryList.addEventListener === 'function') {
+      mediaQueryList.addEventListener('change', handleChange);
+      return () => mediaQueryList.removeEventListener?.('change', handleChange);
+    }
+    if (typeof mediaQueryList.addListener === 'function') {
+      mediaQueryList.addListener(handleChange);
+      return () => mediaQueryList.removeListener?.(handleChange);
+    }
+    return undefined;
+  }, [query]);
+
+  return matches;
+}
+
+/** Below 1280px (but at/above the 768px breakpoint where the sidebar exists
+ * at all — see the `aside`'s `md:flex`), force the compact rail. At 1024px
+ * this is always true; at 1280px/1440px it's always false, leaving the
+ * user's own preference in charge. */
+const COMPACT_SIDEBAR_QUERY = '(max-width: 1279px)';
 
 export interface AppShellNavItem {
   to: string;
@@ -186,6 +245,42 @@ function ChevronIcon(props: SVGProps<SVGSVGElement>) {
 }
 
 /**
+ * The header's user-identity block has no natural ceiling on its content
+ * (a long display name, or several roles joined by ", ") — `min-w-0` lets it
+ * actually shrink inside the header's flex row (flex items default to a
+ * content-based min-width otherwise) and `truncate` turns what would
+ * otherwise be an overflow/collision with the theme+logout controls into a
+ * single-line ellipsis. The Tooltip (focusable, same pattern as the
+ * collapsed nav links above) keeps the untruncated name/roles discoverable
+ * rather than silently lost.
+ */
+function UserIdentitySummary({ name, roles }: { name: string | undefined; roles: string[] | undefined }) {
+  const rolesText = roles?.join(', ') ?? '';
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            tabIndex={0}
+            className={cn(
+              'min-w-0 flex-1 cursor-default rounded-sm',
+              'focus-visible:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]',
+            )}
+          >
+            <div className="truncate text-sm font-medium text-foreground">{name}</div>
+            <div className="truncate text-xs text-muted-foreground">{rolesText}</div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          <div className="font-medium">{name}</div>
+          <div className="text-xs opacity-80">{rolesText}</div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/**
  * Collapsed sidebar's Pinnacle branding has no adjacent visible "Powered by"
  * text (no room), so the accessible name lives entirely on the compact
  * logo's `alt`; this tooltip is purely a sighted-hover/focus affordance on
@@ -217,6 +312,8 @@ export function AppShell({ navSections, children }: AppShellProps) {
   const { user, logout } = useAuth();
   const mobileNavItems = navSections.flatMap((section) => section.items);
   const [collapsed, setCollapsed] = useState(getStoredSidebarCollapsed);
+  const isCompactViewport = useMediaQuery(COMPACT_SIDEBAR_QUERY);
+  const effectiveCollapsed = collapsed || isCompactViewport;
   const [headerRef, headerHeight] = useObservedHeightPx<HTMLElement>();
   const mainStyle =
     headerHeight != null
@@ -237,7 +334,7 @@ export function AppShell({ navSections, children }: AppShellProps) {
         className={cn(
           'fixed inset-y-0 left-0 hidden flex-col overflow-hidden border-r border-border bg-shell py-6 md:flex',
           'transition-[width] duration-200 ease-out',
-          collapsed
+          effectiveCollapsed
             ? 'w-[var(--erp-shell-sidebar-collapsed-width)] px-2'
             : 'w-[var(--erp-shell-sidebar-width)] px-5',
         )}
@@ -248,13 +345,13 @@ export function AppShell({ navSections, children }: AppShellProps) {
           aria-label="Erve dashboard"
         >
           <img
-            src={collapsed ? '/erve-favicon.png' : '/erve-logo.png'}
+            src={effectiveCollapsed ? '/erve-favicon.png' : '/erve-logo.png'}
             alt="Erve"
-            className={collapsed ? 'h-8 w-8' : 'h-8 w-auto'}
+            className={effectiveCollapsed ? 'h-8 w-8' : 'h-8 w-auto'}
           />
         </NavLink>
         <nav
-          data-scrollbar-hidden={collapsed || undefined}
+          data-scrollbar-hidden={effectiveCollapsed || undefined}
           className={cn(
             'mt-8 min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden',
             // Hide the native scrollbar ONLY in collapsed mode: a visible OS
@@ -267,7 +364,7 @@ export function AppShell({ navSections, children }: AppShellProps) {
             // Expanded mode keeps the native scrollbar, since it's the only
             // visual cue that more nav items exist below the fold and there
             // is no icon column to overlap in the first place.
-            collapsed
+            effectiveCollapsed
               ? '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'
               : '[scrollbar-color:var(--erp-shell-scrollbar-thumb)_var(--erp-shell-scrollbar-track)] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-[var(--erp-shell-scrollbar-track)] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--erp-shell-scrollbar-thumb)] [&::-webkit-scrollbar-thumb:hover]:bg-[var(--erp-shell-scrollbar-thumb-hover)]',
           )}
@@ -276,39 +373,41 @@ export function AppShell({ navSections, children }: AppShellProps) {
             <div key={section.heading ?? `section-${index}`}>
               {section.heading && (
                 <div
-                  aria-hidden={collapsed || undefined}
-                  className={cn(NAV_SECTION_HEADING_CLASS, collapsed && 'invisible')}
+                  aria-hidden={effectiveCollapsed || undefined}
+                  className={cn(NAV_SECTION_HEADING_CLASS, effectiveCollapsed && 'invisible')}
                 >
                   {section.heading}
                 </div>
               )}
               <div className="space-y-1">
                 {section.items.map((item) => (
-                  <AppShellNavLink key={item.to} item={item} collapsed={collapsed} />
+                  <AppShellNavLink key={item.to} item={item} collapsed={effectiveCollapsed} />
                 ))}
               </div>
             </div>
           ))}
         </nav>
         <div className="mt-4 shrink-0 overflow-hidden border-t border-border pt-4">
-          <button
-            type="button"
-            onClick={toggleCollapsed}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={cn(
-              'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-foreground transition-colors',
-              'hover:bg-surface-muted',
-              'focus-visible:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]',
-              collapsed ? 'mx-auto' : 'ml-auto',
-            )}
-          >
-            <ChevronIcon
-              className={cn('h-4 w-4 transition-transform', collapsed && 'rotate-180')}
-            />
-          </button>
+          {!isCompactViewport && (
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className={cn(
+                'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-foreground transition-colors',
+                'hover:bg-surface-muted',
+                'focus-visible:outline-hidden focus-visible:ring-[length:var(--erp-focus-ring-width)] focus-visible:ring-[var(--erp-focus-ring)] focus-visible:ring-offset-[var(--erp-focus-ring-offset)]',
+                collapsed ? 'mx-auto' : 'ml-auto',
+              )}
+            >
+              <ChevronIcon
+                className={cn('h-4 w-4 transition-transform', collapsed && 'rotate-180')}
+              />
+            </button>
+          )}
           <div className="mt-3 flex h-7 items-center justify-center">
-            {collapsed ? (
+            {effectiveCollapsed ? (
               <SidebarCollapsedBranding />
             ) : (
               <PoweredByPinnacleBranding variant="row" className="justify-center" />
@@ -319,7 +418,7 @@ export function AppShell({ navSections, children }: AppShellProps) {
       <div
         className={cn(
           'transition-[padding-left] duration-200 ease-out',
-          collapsed
+          effectiveCollapsed
             ? 'md:pl-[var(--erp-shell-sidebar-collapsed-width)]'
             : 'md:pl-[var(--erp-shell-sidebar-width)]',
         )}
@@ -329,11 +428,8 @@ export function AppShell({ navSections, children }: AppShellProps) {
           className="sticky top-0 z-10 border-b border-border bg-shell/95 px-4 py-3 backdrop-blur-sm md:px-8"
         >
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-sm font-medium text-foreground">{user?.name}</div>
-              <div className="text-xs text-muted-foreground">{user?.roles.join(', ')}</div>
-            </div>
-            <div className="flex items-center gap-4">
+            <UserIdentitySummary name={user?.name} roles={user?.roles} />
+            <div className="flex shrink-0 items-center gap-4">
               <ThemeModeMenu />
               <Button
                 variant="secondary"

@@ -31,6 +31,38 @@ class ResizeObserverStub {
   disconnect(): void {}
 }
 
+/**
+ * Stubs `window.matchMedia` with a controllable fake so CUR-003's
+ * viewport-driven compact-rail behavior can be tested without a real
+ * layout engine. `setMatches` also fires the 'change' listeners AppShell's
+ * `useMediaQuery` registers, so a test can simulate the viewport actually
+ * crossing the breakpoint live (not just at initial mount).
+ */
+function stubMatchMedia(initialMatches: boolean) {
+  const listeners = new Set<(event: { matches: boolean }) => void>();
+  const state = { matches: initialMatches };
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn((_query: string) => ({
+      get matches() {
+        return state.matches;
+      },
+      addEventListener: (_type: 'change', listener: (event: { matches: boolean }) => void) => {
+        listeners.add(listener);
+      },
+      removeEventListener: (_type: 'change', listener: (event: { matches: boolean }) => void) => {
+        listeners.delete(listener);
+      },
+    })),
+  );
+  return {
+    setMatches(matches: boolean) {
+      state.matches = matches;
+      listeners.forEach((listener) => listener({ matches }));
+    },
+  };
+}
+
 const NAV_SECTIONS: AppShellNavSection[] = [
   { items: [{ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }] },
   {
@@ -360,5 +392,120 @@ describe('AppShell', () => {
     const aside = container.querySelector('aside') as HTMLElement;
     expect(aside.className).toContain('--erp-shell-sidebar-collapsed-width');
     expect(container.querySelector('button[aria-label="Expand sidebar"]')).not.toBeNull();
+  });
+
+  describe('CUR-003 — responsive compact rail below 1280px', () => {
+    it('forces the compact icon rail even when the stored preference is "expanded", and hides the now-meaningless toggle', async () => {
+      localStorage.setItem('erve.sidebarCollapsed', 'false');
+      stubMatchMedia(true); // viewport matches "(max-width: 1279px)"
+      await renderShell();
+
+      const aside = container.querySelector('aside') as HTMLElement;
+      expect(aside.className).toContain('--erp-shell-sidebar-collapsed-width');
+      expect(container.querySelector('button[aria-label="Expand sidebar"]')).toBeNull();
+      expect(container.querySelector('button[aria-label="Collapse sidebar"]')).toBeNull();
+    });
+
+    it('still renders every authorized nav destination (by accessible name) while the compact rail is forced', async () => {
+      localStorage.setItem('erve.sidebarCollapsed', 'false');
+      stubMatchMedia(true);
+      await renderShell();
+
+      const aside = container.querySelector('aside') as HTMLElement;
+      const labels = Array.from(aside.querySelectorAll('nav a')).map((a) =>
+        a.getAttribute('aria-label'),
+      );
+      expect(labels).toEqual(['Dashboard', 'Purchase Orders', 'Job Orders']);
+    });
+
+    it('keeps logout reachable while the compact rail is forced', async () => {
+      localStorage.setItem('erve.sidebarCollapsed', 'false');
+      stubMatchMedia(true);
+      await renderShell();
+
+      const logoutButton = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Log out',
+      );
+      expect(logoutButton).toBeDefined();
+
+      await act(async () => {
+        logoutButton?.click();
+        await flushMicrotasks();
+      });
+      expect(logoutCalls).toBe(1);
+    });
+
+    it('does not force the compact rail at or above 1280px, leaving the stored "expanded" preference in charge', async () => {
+      localStorage.setItem('erve.sidebarCollapsed', 'false');
+      stubMatchMedia(false); // viewport does not match "(max-width: 1279px)"
+      await renderShell();
+
+      const aside = container.querySelector('aside') as HTMLElement;
+      expect(aside.className).not.toContain('--erp-shell-sidebar-collapsed-width');
+      expect(container.querySelector('button[aria-label="Collapse sidebar"]')).not.toBeNull();
+    });
+
+    it('responds live to the viewport crossing the breakpoint, not just at initial mount', async () => {
+      localStorage.setItem('erve.sidebarCollapsed', 'false');
+      const media = stubMatchMedia(false);
+      await renderShell();
+
+      expect(
+        (container.querySelector('aside') as HTMLElement).className,
+      ).not.toContain('--erp-shell-sidebar-collapsed-width');
+
+      act(() => {
+        media.setMatches(true);
+      });
+      expect(
+        (container.querySelector('aside') as HTMLElement).className,
+      ).toContain('--erp-shell-sidebar-collapsed-width');
+      expect(container.querySelector('button[aria-label="Collapse sidebar"]')).toBeNull();
+
+      act(() => {
+        media.setMatches(false);
+      });
+      expect(
+        (container.querySelector('aside') as HTMLElement).className,
+      ).not.toContain('--erp-shell-sidebar-collapsed-width');
+      expect(container.querySelector('button[aria-label="Collapse sidebar"]')).not.toBeNull();
+    });
+  });
+
+  describe('CUR-003 — header user-identity overflow safety net', () => {
+    it('gives the user-identity block room to shrink and truncate instead of colliding with theme/logout controls', async () => {
+      await renderShell();
+
+      const header = container.querySelector('header') as HTMLElement;
+      const nameNode = Array.from(header.querySelectorAll('div')).find(
+        (div) => div.textContent === 'Test Admin',
+      ) as HTMLElement;
+      expect(nameNode.className).toContain('truncate');
+
+      const identityBlock = nameNode.parentElement as HTMLElement;
+      expect(identityBlock.className).toContain('min-w-0');
+      expect(identityBlock.className).toContain('flex-1');
+
+      const controlsGroup = Array.from(header.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Log out')!
+        .closest('div')!;
+      expect(controlsGroup.className).toContain('shrink-0');
+    });
+
+    it('keeps the full name and roles discoverable via a focusable tooltip when truncated', async () => {
+      await renderShell();
+
+      const header = container.querySelector('header') as HTMLElement;
+      const identityTrigger = Array.from(header.querySelectorAll('[tabindex="0"]')).find((el) =>
+        el.textContent?.includes('Test Admin'),
+      ) as HTMLElement;
+      expect(identityTrigger).toBeDefined();
+
+      act(() => {
+        identityTrigger.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+      });
+      expect(document.body.textContent).toContain('Test Admin');
+      expect(document.body.textContent).toContain('ADMIN');
+    });
   });
 });
