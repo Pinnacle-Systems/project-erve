@@ -75,6 +75,11 @@ async function createSeedGraph() {
       { id: createId(), styleId: style.id, sizeId: sizeB.id },
     ],
   });
+  // CUR-007: Job Order creation requires an active Style->Factory mapping
+  // for the seed graph's own Factory (createJobOrder's default factoryId).
+  await prisma.styleFactoryMapping.create({
+    data: { id: createId(), styleId: style.id, factoryId: factory.id, exFactoryPrice: 199.5 },
+  });
   const finalForm = await prisma.qualityForm.create({
     data: {
       id: createId(),
@@ -720,6 +725,11 @@ describe('job orders API', () => {
     await prisma.styleSize.create({
       data: { id: createId(), styleId: secondStyle.id, sizeId: secondSize.id },
     });
+    // CUR-007: this concurrent Job Order also targets graph.factory, so it
+    // needs its own Style->Factory mapping, independent of the seed graph's.
+    await prisma.styleFactoryMapping.create({
+      data: { id: createId(), styleId: secondStyle.id, factoryId: graph.factory.id, exFactoryPrice: 199.5 },
+    });
     const secondPoRes = await request(app)
       .post('/purchase-orders')
       .set('Authorization', `Bearer ${graph.admin.token}`)
@@ -993,6 +1003,63 @@ describe('job orders API', () => {
           processFlowVersionId: graph.processFlowVersionId,
         }),
     ).resolves.toMatchObject({ status: 400 });
+  });
+
+  it('CUR-007: rejects an active Factory that is not mapped to the Job Order Style, including a direct API call', async () => {
+    const graph = await createSeedGraph();
+    const unmappedFactory = await createTestFactory({ code: 'UNMAPPED', name: 'Unmapped Factory' });
+    const res = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        orderSheetIds: [graph.poId],
+        sizes: [{ sizeId: graph.sizeAId, quantity: 4 }],
+        factoryId: unmappedFactory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '199.50',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain('mapped to this Style');
+    // Rejected server-side regardless of caller — not merely a UI filter —
+    // and the Order Sheet must remain unclaimed after the rejected attempt.
+    const po = await prisma.distributorPurchaseOrder.findUniqueOrThrow({ where: { id: graph.poId } });
+    expect(po.jobOrderId).toBeNull();
+  });
+
+  it('CUR-007: rejects a Factory whose mapping to the Job Order Style is INACTIVE, even though the Factory itself is active', async () => {
+    const graph = await createSeedGraph();
+    const inactivelyMappedFactory = await createTestFactory({
+      code: 'INACTIVE-MAP',
+      name: 'Inactively Mapped Factory',
+    });
+    await prisma.styleFactoryMapping.create({
+      data: {
+        id: createId(),
+        styleId: graph.style.id,
+        factoryId: inactivelyMappedFactory.id,
+        exFactoryPrice: 150,
+        status: 'INACTIVE',
+      },
+    });
+    const res = await request(app)
+      .post('/job-orders')
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .send({
+        orderSheetIds: [graph.poId],
+        sizes: [{ sizeId: graph.sizeAId, quantity: 4 }],
+        factoryId: inactivelyMappedFactory.id,
+        processFlowVersionId: graph.processFlowVersionId,
+        unitPrice: '199.50',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain('mapped to this Style');
+  });
+
+  it('CUR-007: accepts a Factory that is active and actively mapped to the Job Order Style', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 4);
+    expect(created.status).toBe(201);
+    expect(created.body.data.factory.id).toBe(graph.factory.id);
   });
 
   it('locks the Order Sheet once a Job Order claims it, regardless of how much of the forecast is consumed', async () => {
