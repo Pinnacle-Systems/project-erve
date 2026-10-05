@@ -435,7 +435,10 @@ export function AppShell({ navSections, children }: AppShellProps) {
                 variant="secondary"
                 onClick={async () => {
                   await logout();
-                  navigate('/login');
+                  // ProtectedRoute already redirects once `user` clears; this
+                  // replaces rather than pushes so a stale `/login` entry
+                  // doesn't pile onto history on repeated logouts.
+                  navigate('/login', { replace: true });
                 }}
               >
                 Log out

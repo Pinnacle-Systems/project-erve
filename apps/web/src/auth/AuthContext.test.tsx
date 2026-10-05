@@ -222,6 +222,10 @@ describe('web AuthContext — failed refresh', () => {
     expect(latest().status).toBe('unauthenticated');
     expect(latest().user).toBeNull();
     expect(getStoredToken()).toBeNull();
+    // SESS-F3: this is an incidental session loss (cold load, no valid
+    // credentials at all) — not an explicit sign-out — so ProtectedRoute
+    // should still be able to return the signer-in to this page.
+    expect(latest().logoutReason).toBe('expired');
   });
 });
 
@@ -252,6 +256,10 @@ describe('web AuthContext — logout', () => {
     expect(latest().status).toBe('unauthenticated');
     expect(latest().user).toBeNull();
     expect(getStoredToken()).toBeNull();
+    // SESS-F3: an explicit logout must mark itself distinctly from an
+    // incidental session loss, so ProtectedRoute knows not to capture the
+    // page being left for return-to.
+    expect(latest().logoutReason).toBe('explicit');
   });
 });
 
@@ -522,6 +530,26 @@ describe('web AuthContext — mid-session expiry and re-authentication (E1)', ()
 
     expect(latest().status).toBe('unauthenticated');
     expect(latest().user).toBeNull();
+    expect(latest().logoutReason).toBe('explicit');
+  });
+
+  it('SESS-F3 — a fresh login after an explicit logout clears the logout reason', async () => {
+    const { latest } = await renderSignedIn();
+    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
+      ok(config, { success: true, data: {} }),
+    ) satisfies AxiosAdapter;
+
+    await act(async () => {
+      await latest().logout();
+    });
+    expect(latest().logoutReason).toBe('explicit');
+
+    await act(async () => {
+      await latest().login('new-token', { ...TEST_USER, id: 'someone-else' });
+    });
+
+    expect(latest().status).toBe('authenticated');
+    expect(latest().logoutReason).toBeNull();
   });
 
   it('a logout racing an in-flight refresh stays signed out, including after a reload', async () => {
@@ -662,6 +690,10 @@ describe('web AuthContext — cross-tab identity (A5)', () => {
 
       expect(latest().status).toBe('unauthenticated');
       expect(latest().user).toBeNull();
+      // SESS-F3: a same-account logout from another tab is an intentional
+      // sign-out from this tab's perspective too, not an interruption — the
+      // next login here should not be routed back to this tab's old page.
+      expect(latest().logoutReason).toBe('explicit');
     } finally {
       configureRefreshCoordinator(null);
     }
