@@ -190,7 +190,6 @@ async function searchAndSelect(poNumber: string) {
 }
 
 // Common non-Order-Sheet endpoints most tests don't care about.
-const emptyFactories = { data: { data: [] } };
 const emptyProcessFlows = { data: { data: [] } };
 // The Production Plan's size columns come from the Style's own canonical
 // valid-size list (Phase 2.1) — matches makePurchaseOrder's default
@@ -217,11 +216,37 @@ const benignStyleLookup = {
   },
 };
 
+// CUR-007: the Factory select's options come from this Style lookup's own
+// `factories` (the canonical Style->Factory mapping), never an unfiltered
+// Factory list — tests that pick a Factory from the dropdown need it listed
+// here, ACTIVE and ACTIVE-mapped, to be selectable at all.
+function styleLookupWithFactory(factory: {
+  id: string;
+  code: string;
+  name: string;
+  exFactoryPrice?: number;
+}) {
+  return {
+    data: {
+      data: {
+        ...benignStyleLookup.data.data,
+        factories: [
+          {
+            ...factory,
+            status: 'ACTIVE',
+            mappingStatus: 'ACTIVE',
+            exFactoryPrice: factory.exFactoryPrice ?? 199.5,
+          },
+        ],
+      },
+    },
+  };
+}
+
 describe('Job Order Process Flow assignment', () => {
   it('selects supported Production and Quality versions and explains unsupported versions', async () => {
     const po = makePurchaseOrder({ id: 'po-flow-1', poNumber: 'EIOS/26-27/0009' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/styles/style-1') return benignStyleLookup;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [po], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
@@ -342,7 +367,6 @@ describe('Job Order Process Flow assignment', () => {
 describe('Order Sheet multi-select', () => {
   it('searches using the human-readable Order Sheet number, debounced, not per keystroke', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
@@ -375,7 +399,6 @@ describe('Order Sheet multi-select', () => {
   it('renders matching results by poNumber with distributor/mode/date context, never a raw id', async () => {
     const poA = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [poA], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
@@ -396,7 +419,6 @@ describe('Order Sheet multi-select', () => {
   it('selecting a result adds it to the Source Order Sheets table and clears the search text', async () => {
     const poA = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/styles/style-1') return benignStyleLookup;
       if (url === '/purchase-orders') {
@@ -421,7 +443,6 @@ describe('Order Sheet multi-select', () => {
 
   it('cannot submit from typed-but-unselected search text', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') {
         return {
@@ -451,7 +472,6 @@ describe('Order Sheet multi-select', () => {
 
   it('shows an empty state when no Order Sheets match', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') {
         return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
@@ -480,7 +500,6 @@ describe('Order Sheet multi-select', () => {
     });
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') return { data: { data: await pendingSearch } };
       throw new Error(`Unexpected GET request: ${url}`);
@@ -503,7 +522,6 @@ describe('Order Sheet multi-select', () => {
 
   it('shows an error state when the search fails, without creating a selection', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/purchase-orders') throw new Error('Search backend unavailable');
       throw new Error(`Unexpected GET request: ${url}`);
@@ -529,7 +547,6 @@ describe('Order Sheet multi-select', () => {
     });
     vi.spyOn(apiClient, 'get').mockImplementation(
       async (url: string, config?: { params?: { search?: string } }) => {
-        if (url === '/factories/options') return emptyFactories;
         if (url === '/process-flows/options') return emptyProcessFlows;
         if (url === '/styles/style-1') return benignStyleLookup;
         if (url === '/purchase-orders') {
@@ -568,7 +585,6 @@ describe('Order Sheet multi-select', () => {
   it('resolves a ?purchaseOrderId= deep link to a pre-selected Order Sheet without requiring a search', async () => {
     const deepLinkedPo = makePurchaseOrder({ id: 'po-deep-1', poNumber: 'EIOS/26-27/0007' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/styles/style-1') return benignStyleLookup;
       if (url === `/purchase-orders/${deepLinkedPo.id}`) {
@@ -593,11 +609,6 @@ describe('Order Sheet multi-select', () => {
   it('pre-fills the Production Plan from the Combined Forecast, allows editing, and submits the new orderSheetIds/sizes payload', async () => {
     const po = makePurchaseOrder({ id: 'po-internal-123', poNumber: 'EIOS/26-27/0001', orderedQuantity: 10 });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') {
-        return {
-          data: { data: [{ id: 'factory-1', code: 'F1', name: 'Factory One', status: 'ACTIVE' }] },
-        };
-      }
       if (url === '/process-flows/options') {
         return {
           data: {
@@ -626,7 +637,9 @@ describe('Order Sheet multi-select', () => {
           },
         };
       }
-      if (url === '/styles/style-1') return benignStyleLookup;
+      if (url === '/styles/style-1') {
+        return styleLookupWithFactory({ id: 'factory-1', code: 'F1', name: 'Factory One' });
+      }
       if (url === '/purchase-orders') {
         return { data: { data: { items: [po], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
       }
@@ -709,11 +722,6 @@ describe('Order Sheet multi-select', () => {
     });
     vi.spyOn(apiClient, 'get').mockImplementation(
       async (url: string, config?: { params?: { search?: string } }) => {
-        if (url === '/factories/options') {
-          return {
-            data: { data: [{ id: 'factory-1', code: 'F1', name: 'Factory One', status: 'ACTIVE' }] },
-          };
-        }
         if (url === '/process-flows/options') {
           return {
             data: {
@@ -742,7 +750,9 @@ describe('Order Sheet multi-select', () => {
             },
           };
         }
-        if (url === '/styles/style-1') return benignStyleLookup;
+        if (url === '/styles/style-1') {
+          return styleLookupWithFactory({ id: 'factory-1', code: 'F1', name: 'Factory One' });
+        }
         if (url === '/purchase-orders') {
           const search = config?.params?.search ?? '';
           const items = [poA, poB].filter((po) => po.poNumber.includes(search));
@@ -825,7 +835,6 @@ describe('Order Sheet multi-select', () => {
     const poB = makePurchaseOrder({ id: 'po-touch-b', poNumber: 'EIOS/26-27/0021', orderedQuantity: 15 });
     vi.spyOn(apiClient, 'get').mockImplementation(
       async (url: string, config?: { params?: { search?: string } }) => {
-        if (url === '/factories/options') return emptyFactories;
         if (url === '/process-flows/options') return emptyProcessFlows;
         if (url === '/styles/style-1') return benignStyleLookup;
         if (url === '/purchase-orders') {
@@ -877,7 +886,6 @@ describe('Order Sheet multi-select', () => {
       reassignedQuantity: 0,
     });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-      if (url === '/factories/options') return emptyFactories;
       if (url === '/process-flows/options') return emptyProcessFlows;
       if (url === '/styles/style-1') return benignStyleLookup;
       if (url === '/purchase-orders') {
@@ -903,5 +911,159 @@ describe('Order Sheet multi-select', () => {
     expect(
       container.querySelector('[aria-label="Production quantity for Small"]'),
     ).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CUR-007 — Job Order Factory choices must be restricted to the active
+// Factories explicitly mapped to the shared Style (StyleFactoryMapping),
+// never an unfiltered Factory list. The server independently enforces the
+// same rule (job-orders.test.ts); these tests cover the web-side filtering,
+// disabling, empty-state guidance, and stale-selection clearing.
+// ---------------------------------------------------------------------------
+describe('CUR-007 — Job Order Factory eligibility', () => {
+  function factoryTrigger(): HTMLButtonElement {
+    return container.querySelector<HTMLButtonElement>('#select-factory')!;
+  }
+
+  async function openFactoryDropdown() {
+    act(() => factoryTrigger().dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flush();
+  }
+
+  function factoryOptionTexts(): string[] {
+    return Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).map(
+      (option) => option.textContent ?? '',
+    );
+  }
+
+  it('renders no Factory control at all before any Order Sheet (and therefore Style) is selected', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/process-flows/options') return emptyProcessFlows;
+      if (url === '/purchase-orders') {
+        return { data: { data: { items: [], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+      }
+      throw new Error(`Unexpected GET request: ${url}`);
+    });
+
+    await renderJobOrderCreatePage();
+
+    expect(container.textContent).not.toContain('Factory Assignment');
+    expect(factoryTrigger()).toBeNull();
+  });
+
+  it('exposes only the active Factories actively mapped to the Style — not an inactive Factory nor an inactively-mapped one', async () => {
+    const po = makePurchaseOrder({ id: 'po-eligible-1', poNumber: 'EIOS/26-27/0040' });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/process-flows/options') return emptyProcessFlows;
+      if (url === '/styles/style-1') {
+        return {
+          data: {
+            data: {
+              ...benignStyleLookup.data.data,
+              factories: [
+                { id: 'factory-1', code: 'F1', name: 'Factory One', status: 'ACTIVE', mappingStatus: 'ACTIVE', exFactoryPrice: 199.5 },
+                { id: 'factory-2', code: 'F2', name: 'Deactivated Factory', status: 'INACTIVE', mappingStatus: 'ACTIVE', exFactoryPrice: 150 },
+                { id: 'factory-3', code: 'F3', name: 'Dropped Mapping Factory', status: 'ACTIVE', mappingStatus: 'INACTIVE', exFactoryPrice: 175 },
+              ],
+            },
+          },
+        };
+      }
+      if (url === '/purchase-orders') {
+        return { data: { data: { items: [po], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+      }
+      throw new Error(`Unexpected GET request: ${url}`);
+    });
+
+    await renderJobOrderCreatePage();
+    await searchAndSelect('EIOS/26-27/0040');
+    await openFactoryDropdown();
+
+    const options = factoryOptionTexts();
+    expect(options.some((text) => text.includes('Factory One'))).toBe(true);
+    expect(options.some((text) => text.includes('Deactivated Factory'))).toBe(false);
+    expect(options.some((text) => text.includes('Dropped Mapping Factory'))).toBe(false);
+  });
+
+  it('shows actionable guidance instead of an empty dropdown when the Style has no eligible Factory mapping', async () => {
+    const po = makePurchaseOrder({ id: 'po-no-mapping', poNumber: 'EIOS/26-27/0041' });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/process-flows/options') return emptyProcessFlows;
+      if (url === '/styles/style-1') return benignStyleLookup; // factories: []
+      if (url === '/purchase-orders') {
+        return { data: { data: { items: [po], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } } };
+      }
+      throw new Error(`Unexpected GET request: ${url}`);
+    });
+
+    await renderJobOrderCreatePage();
+    await searchAndSelect('EIOS/26-27/0041');
+
+    expect(container.textContent).toContain(
+      'No active factories are mapped to this Style. Update the Style Master before issuing the Job Order.',
+    );
+  });
+
+  it('clears a selected Factory that is not eligible once a different-Style Order Sheet replaces the source', async () => {
+    const poStyle1 = makePurchaseOrder({ id: 'po-style-1', poNumber: 'EIOS/26-27/0050' });
+    const poStyle2 = makePurchaseOrder({
+      id: 'po-style-2',
+      poNumber: 'EIOS/26-27/0051',
+      styleId: 'style-2',
+      styleNumber: 'ST-2',
+      styleName: 'Style Two',
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/process-flows/options') return emptyProcessFlows;
+      if (url === '/styles/style-1') {
+        return styleLookupWithFactory({ id: 'factory-1', code: 'F1', name: 'Factory One' });
+      }
+      if (url === '/styles/style-2') {
+        return {
+          data: {
+            data: {
+              ...benignStyleLookup.data.data,
+              id: 'style-2',
+              factories: [
+                { id: 'factory-2', code: 'F2', name: 'Factory Two', status: 'ACTIVE', mappingStatus: 'ACTIVE', exFactoryPrice: 210 },
+              ],
+            },
+          },
+        };
+      }
+      if (url === '/purchase-orders') {
+        return {
+          data: { data: { items: [poStyle1, poStyle2], pageInfo: { limit: 10, hasMore: false, nextCursor: null } } },
+        };
+      }
+      throw new Error(`Unexpected GET request: ${url}`);
+    });
+
+    await renderJobOrderCreatePage();
+    await searchAndSelect('EIOS/26-27/0050');
+    await openFactoryDropdown();
+    const factoryOneOption = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="option"]'),
+    ).find((option) => option.textContent?.includes('Factory One'))!;
+    act(() => factoryOneOption.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flush();
+    expect(factoryTrigger().textContent).toContain('Factory One');
+
+    // Swap the only source to a different Style (style-1 -> style-2):
+    // remove the current Order Sheet, then select the Style-2 one.
+    const removeButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Remove',
+    )!;
+    act(() => removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flush();
+    await searchAndSelect('EIOS/26-27/0051');
+
+    // Factory One (style-1's mapping) is no longer eligible for style-2 —
+    // the stale selection must be cleared, not silently submitted.
+    expect(factoryTrigger().textContent).not.toContain('Factory One');
+
+    await openFactoryDropdown();
+    expect(factoryOptionTexts().some((text) => text.includes('Factory Two'))).toBe(true);
   });
 });

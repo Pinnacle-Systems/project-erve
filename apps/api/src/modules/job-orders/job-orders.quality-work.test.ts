@@ -68,6 +68,16 @@ async function createGraph() {
     },
   });
   await prisma.styleSize.create({ data: { id: createId(), styleId: style.id, sizeId: size.id } });
+  // CUR-007: Job Order creation requires an active Style->Factory mapping —
+  // both Factories are exercised as a Job Order's own factoryId elsewhere
+  // in this file (e.g. the cross-factory quality-work filter test), so both
+  // need a mapping to the shared Style.
+  await prisma.styleFactoryMapping.createMany({
+    data: [
+      { id: createId(), styleId: style.id, factoryId: factory.id, exFactoryPrice: 100 },
+      { id: createId(), styleId: style.id, factoryId: otherFactory.id, exFactoryPrice: 100 },
+    ],
+  });
   const finalForm = await prisma.qualityForm.create({
     data: {
       id: createId(),
