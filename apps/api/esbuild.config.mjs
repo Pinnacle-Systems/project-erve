@@ -35,6 +35,13 @@ await build({
     { in: path.join(__dirname, 'src/cli/financial-year-bootstrap.cli.ts'), out: 'financial-year-bootstrap' },
     // H3A: forward-only historical import of a sealed bundle (DEPLOYMENT.md §12.6).
     { in: path.join(__dirname, 'src/cli/historical-import-production.cli.ts'), out: 'historical-import-production' },
+    // DEMO-013/DEMO-017: one-time repair for Job Orders stuck by the
+    // lifecycle gap fixed in job-orders.service.ts (see
+    // job-order-completion-reconciliation.ts's own header comment).
+    {
+      in: path.join(__dirname, 'src/cli/job-order-completion-reconciliation.cli.ts'),
+      out: 'job-order-completion-reconciliation',
+    },
   ],
   outdir: path.join(__dirname, 'dist-bundle'),
   bundle: true,
