@@ -166,7 +166,7 @@ const jobOrderInclude = {
 type JobOrderRecord = Prisma.JobOrderGetPayload<{ include: typeof jobOrderInclude }>;
 type Tx = Prisma.TransactionClient;
 
-function isProcessFlowFinalActivity(activity: {
+export function isProcessFlowFinalActivity(activity: {
   status: string;
   activityType: string;
   qualityExecutionMode: string | null;
@@ -2133,6 +2133,57 @@ function assertCanMarkJobOrderProductionComplete(user: CurrentUser): void {
     throw HttpError.forbidden('Only Merchandising can mark a Job Order Production Complete');
 }
 
+// Shared by the explicit Factory "Complete Stage" action and the automatic
+// reconciliation below — the only two places a JobOrderStageStatus row may
+// transition to COMPLETED, so both write the identical update + audit shape
+// instead of drifting apart (DEMO-013/DEMO-017 root-cause fix: these had
+// quietly diverged — only the manual path kept productionCompletedAt and
+// stage bookkeeping in sync).
+export async function completeStageStatusRow(
+  tx: Tx,
+  jobOrderId: string,
+  stage: {
+    id: string;
+    processFlowVersionStageId: string;
+    stageSequence: number;
+    stageNameSnapshot: string;
+  },
+  options: {
+    completedBy: string | null;
+    remarks: string | null;
+    now: Date;
+    auditActorId: string;
+    auditAction: string;
+  },
+): Promise<boolean> {
+  const stageUpdated = await tx.jobOrderStageStatus.updateMany({
+    where: { id: stage.id, status: { not: 'COMPLETED' } },
+    data: {
+      status: 'COMPLETED',
+      completedBy: options.completedBy,
+      completedAt: options.now,
+      remarks: options.remarks,
+    },
+  });
+  if (stageUpdated.count !== 1) return false;
+  await recordAuditLog(
+    {
+      actorId: options.auditActorId,
+      action: options.auditAction,
+      entityType: 'JobOrder',
+      entityId: jobOrderId,
+      metadata: {
+        stageStatusId: stage.id,
+        processFlowVersionStageId: stage.processFlowVersionStageId,
+        stageSequence: stage.stageSequence,
+        stageName: stage.stageNameSnapshot,
+      },
+    },
+    tx,
+  );
+  return true;
+}
+
 // Centralized PRODUCTION_COMPLETE evaluation (§ Correction 3). The
 // confirmed rule: production is complete once the entire planned quantity
 // has both been produced/prepared AND been carried through Final QA to a
@@ -2148,6 +2199,22 @@ function assertCanMarkJobOrderProductionComplete(user: CurrentUser): void {
 // duplicating the condition. It is a no-op unless the Job Order is
 // currently IN_PRODUCTION, so repeated/concurrent calls are safe and never
 // produce a duplicate audit entry once PRODUCTION_COMPLETE is reached.
+//
+// DEMO-013/DEMO-017: if the full quantity+QA predicate is satisfied before
+// anyone ever clicked "Complete Finishing" (Correction 3 explicitly allows
+// this order — stage bookkeeping and the quantity/QA predicate are
+// independent facts), this is the ONLY place that can still promote the Job
+// Order, and once it does, `completeProductionStage` permanently refuses to
+// run again (status is no longer CONFIRMED_BY_FACTORY/IN_PRODUCTION) — so
+// without reconciling the final stage here, the JobOrderStageStatus row and
+// productionCompletedAt are left stuck forever with no way for a human to
+// fix them through the UI. Full quantity resolved through Final QA proves
+// there is no remaining physical work on any upstream stage (every ordered
+// unit has already been produced, prepared, inspected, and released), so
+// completing the final stage here is a sound inference, not a guess — it is
+// still scoped to *only* the final stage, and only when it is the sole
+// stage left open, exactly mirroring completeProductionStage's own
+// sequential-completion invariant rather than inventing a new one.
 export async function recalculateJobOrderStatus(
   tx: Tx,
   jobOrderId: string,
@@ -2160,6 +2227,16 @@ export async function recalculateJobOrderStatus(
       processFlowVersion: { include: { stages: { include: { qualityFormVersion: true } } } },
       finalQualityBatches: {
         select: { id: true, processFlowActivityId: true, disposition: true, physicalQuantity: true },
+      },
+      stageStatuses: {
+        select: {
+          id: true,
+          processFlowVersionStageId: true,
+          stageSequence: true,
+          stageNameSnapshot: true,
+          status: true,
+        },
+        orderBy: { stageSequence: 'asc' },
       },
     },
   });
@@ -2182,9 +2259,17 @@ export async function recalculateJobOrderStatus(
     resolvedPhysicalCoverage === jobOrder.preparedQuantityTotal;
   if (!fullyResolved) return jobOrder.version;
 
+  const now = new Date();
   const updated = await tx.jobOrder.updateMany({
     where: { id: jobOrderId, status: 'IN_PRODUCTION', version: jobOrder.version },
-    data: { status: 'PRODUCTION_COMPLETE', version: { increment: 1 } },
+    data: {
+      status: 'PRODUCTION_COMPLETE',
+      // Preserve an already-recorded value (the normal order: Finishing was
+      // manually completed first) — only backfill it when this automatic
+      // path is the one discovering completion first.
+      productionCompletedAt: jobOrder.productionCompletedAt ?? now,
+      version: { increment: 1 },
+    },
   });
   if (updated.count !== 1) return jobOrder.version;
   await recordAuditLog(
@@ -2202,6 +2287,20 @@ export async function recalculateJobOrderStatus(
     },
     tx,
   );
+
+  const openStages = jobOrder.stageStatuses.filter((stage) => stage.status !== 'COMPLETED');
+  const finalStage = jobOrder.stageStatuses.at(-1);
+  if (finalStage && openStages.length === 1 && openStages[0]!.id === finalStage.id) {
+    await completeStageStatusRow(tx, jobOrderId, finalStage, {
+      completedBy: null,
+      remarks:
+        'Automatically completed: the full Job Order quantity was already produced, prepared, and resolved through Final QA before this stage was explicitly completed.',
+      now,
+      auditActorId: actor.id,
+      auditAction: 'JOB_ORDER_STAGE_COMPLETED_AUTOMATIC',
+    });
+  }
+
   return jobOrder.version + 1;
 }
 
@@ -2215,10 +2314,14 @@ export async function recalculateJobOrderStatus(
 // Eligibility is deliberately narrow: only from IN_PRODUCTION, and only when
 // no production stage is currently IN_PROGRESS. A live in-progress stage
 // record left hanging under a terminal production status would be an
-// inconsistent state, and this codebase defines no stage-termination
-// semantics to reconcile it — so rather than inventing one, the action is
-// simply unavailable until the factory stops/completes that stage. It does
-// NOT require every stage to be COMPLETED (NOT_STARTED stages are fine —
+// inconsistent state. Unlike the automatic path in recalculateJobOrderStatus
+// (which may safely infer the final stage is done, because the full ordered
+// quantity already passed through it), this manual "stop/accept short
+// production" action has no such proof available — the Job Order may be
+// deliberately left short, so there is no sound inference to make here. It
+// stays a block rather than an inference: the action is simply unavailable
+// until the factory stops/completes that stage. It does NOT require every
+// stage to be COMPLETED (NOT_STARTED stages are fine —
 // nothing "live" needs reconciling there), and it deliberately does not
 // check for an in-progress Final QA execution: Final QA is independent of
 // Job Order production-completion status by design (see
@@ -2469,16 +2572,14 @@ export async function completeProductionStage(
     if (!currentVersion) throw HttpError.notFound('Job order not found');
     if (currentVersion.version !== input.expectedVersion)
       throw HttpError.staleVersion(currentVersion.version);
-    const stageUpdated = await tx.jobOrderStageStatus.updateMany({
-      where: { id: input.stageStatusId, status: { not: 'COMPLETED' } },
-      data: {
-        status: 'COMPLETED',
-        completedBy: actor.id,
-        completedAt: now,
-        remarks: input.remarks ?? null,
-      },
+    const stageCompleted = await completeStageStatusRow(tx, id, nextStage, {
+      completedBy: actor.id,
+      remarks: input.remarks ?? null,
+      now,
+      auditActorId: actor.id,
+      auditAction: 'JOB_ORDER_STAGE_COMPLETED',
     });
-    if (stageUpdated.count !== 1) throw HttpError.staleVersion(jobOrder.version);
+    if (!stageCompleted) throw HttpError.staleVersion(jobOrder.version);
     // Completing every configured production stage (including Finishing)
     // means production work is done — it does NOT by itself mean the Job
     // Order's production/inspection lifecycle is complete (Correction 3):
@@ -2494,21 +2595,6 @@ export async function completeProductionStage(
         version: { increment: 1 },
       },
     });
-    await recordAuditLog(
-      {
-        actorId: actor.id,
-        action: 'JOB_ORDER_STAGE_COMPLETED',
-        entityType: 'JobOrder',
-        entityId: id,
-        metadata: {
-          stageStatusId: input.stageStatusId,
-          processFlowVersionStageId: nextStage.processFlowVersionStageId,
-          stageSequence: nextStage.stageSequence,
-          stageName: nextStage.stageNameSnapshot,
-        },
-      },
-      tx,
-    );
     const finalVersion = await recalculateJobOrderStatus(tx, id, actor);
     await finishIdempotentOperation(
       tx,
