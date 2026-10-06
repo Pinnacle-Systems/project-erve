@@ -101,7 +101,14 @@ describe('Erve Packing List — carton eligibility (Phase 6)', () => {
     const second = await request(app)
       .post(`/sale-orders/${fixture.saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ cartonNumber: 'C2', destinationId: fixture.saleOrder.destinations[0].id, lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }] })
+      .send({
+        cartonNumber: 'C2',
+        destinationId: fixture.saleOrder.destinations[0].id,
+        netWeight: 5,
+        grossWeight: 6,
+        dimensions: '40 x 30 x 20 cm',
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }],
+      })
       .expect(200);
     const activeCartonId = second.body.data.destinations[0].cartons.find((c: { cartonNumber: string }) => c.cartonNumber === 'C2').id as string;
     await request(app)
@@ -229,14 +236,28 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
     const first = await request(app)
       .post(`/sale-orders/${saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ cartonNumber: 'C1', destinationId: destinations[0].id, lines: [{ saleOrderLineId: lineA.id, quantity: 20 }] })
+      .send({
+        cartonNumber: 'C1',
+        destinationId: destinations[0].id,
+        netWeight: 5,
+        grossWeight: 6,
+        dimensions: '40 x 30 x 20 cm',
+        lines: [{ saleOrderLineId: lineA.id, quantity: 20 }],
+      })
       .expect(200);
     const cartonAId = first.body.data.destinations.find((d: { id: string }) => d.id === destinations[0].id).cartons[0].id as string;
     const factoryDispatchId = first.body.data.factoryDispatch.id as string;
     const second = await request(app)
       .post(`/sale-orders/${saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ cartonNumber: 'C2', destinationId: destinations[1].id, lines: [{ saleOrderLineId: lineB.id, quantity: 20 }] })
+      .send({
+        cartonNumber: 'C2',
+        destinationId: destinations[1].id,
+        netWeight: 7,
+        grossWeight: 8,
+        dimensions: '50 x 35 x 25 cm',
+        lines: [{ saleOrderLineId: lineB.id, quantity: 20 }],
+      })
       .expect(200);
     const cartonBId = second.body.data.destinations.find((d: { id: string }) => d.id === destinations[1].id).cartons[0].id as string;
 
@@ -343,14 +364,28 @@ describe('Erve Packing List — lifecycle (Phase 6)', () => {
     const first = await request(app)
       .post(`/sale-orders/${fixture.saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ cartonNumber: 'C1', destinationId: fixture.saleOrder.destinations[0].id, lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }] })
+      .send({
+        cartonNumber: 'C1',
+        destinationId: fixture.saleOrder.destinations[0].id,
+        netWeight: 5,
+        grossWeight: 6,
+        dimensions: '40 x 30 x 20 cm',
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }],
+      })
       .expect(200);
     const cartonAId = first.body.data.destinations[0].cartons[0].id as string;
     const factoryDispatchId = first.body.data.factoryDispatch.id as string;
     const second = await request(app)
       .post(`/sale-orders/${fixture.saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ cartonNumber: 'C2', destinationId: fixture.saleOrder.destinations[0].id, lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }] })
+      .send({
+        cartonNumber: 'C2',
+        destinationId: fixture.saleOrder.destinations[0].id,
+        netWeight: 7,
+        grossWeight: 8,
+        dimensions: '50 x 35 x 25 cm',
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }],
+      })
       .expect(200);
     const cartonBId = second.body.data.destinations[0].cartons.find((c: { cartonNumber: string }) => c.cartonNumber === 'C2').id as string;
 

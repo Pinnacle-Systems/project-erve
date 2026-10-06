@@ -25,7 +25,14 @@ function destinationOf(saleOrder: { destinations: Array<{ id: string }> }): stri
 function createCarton(
   token: string,
   saleOrderId: string,
-  body: { cartonNumber: string; destinationId: string; lines: Array<{ saleOrderLineId: string; quantity: number }> },
+  body: {
+    cartonNumber: string;
+    destinationId: string;
+    netWeight?: number;
+    grossWeight?: number;
+    dimensions?: string;
+    lines: Array<{ saleOrderLineId: string; quantity: number }>;
+  },
 ) {
   return request(app).post(`/sale-orders/${saleOrderId}/packing-list/cartons`).set('Authorization', `Bearer ${token}`).send(body);
 }
@@ -134,6 +141,9 @@ describe('Factory Invoice — generation from finalized Factory Packing List', (
     const second = await createCarton(factoryToken, fixture.saleOrder.id, {
       cartonNumber: 'C2',
       destinationId,
+      netWeight: 5,
+      grossWeight: 6,
+      dimensions: '40 x 30 x 20 cm',
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
     }).expect(200);
     const cartonB = second.body.data.destinations[0].cartons.find((c: { cartonNumber: string }) => c.cartonNumber === 'C2');
@@ -166,6 +176,9 @@ describe('Factory Invoice — generation from finalized Factory Packing List', (
     const created = await createCarton(factoryToken, fixture.saleOrder.id, {
       cartonNumber: 'C1',
       destinationId,
+      netWeight: 5,
+      grossWeight: 6,
+      dimensions: '40 x 30 x 20 cm',
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
     }).expect(200);
     const factoryDispatchId = created.body.data.factoryDispatch.id;
@@ -202,6 +215,9 @@ describe('Factory Invoice — generation from finalized Factory Packing List', (
     const created = await createCarton(factoryToken, fixture.saleOrder.id, {
       cartonNumber: 'C1',
       destinationId,
+      netWeight: 5,
+      grossWeight: 6,
+      dimensions: '40 x 30 x 20 cm',
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
     }).expect(200);
     const factoryDispatchId = created.body.data.factoryDispatch.id;

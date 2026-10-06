@@ -31,7 +31,15 @@ function packingQueue(token: string, factoryId?: string) {
 function createCarton(
   token: string,
   saleOrderId: string,
-  body: { cartonNumber: string; destinationId: string; packageDetails?: string | null; weight?: number | null; lines: Array<{ saleOrderLineId: string; quantity: number }> },
+  body: {
+    cartonNumber: string;
+    destinationId: string;
+    packageDetails?: string | null;
+    netWeight?: number | null;
+    grossWeight?: number | null;
+    dimensions?: string | null;
+    lines: Array<{ saleOrderLineId: string; quantity: number }>;
+  },
 ) {
   return request(app).post(`/sale-orders/${saleOrderId}/packing-list/cartons`).set('Authorization', `Bearer ${token}`).send(body);
 }
@@ -598,6 +606,9 @@ describe('Factory Dispatch — carton-first packing creation and ceilings', () =
     const created = await createCarton(factoryToken, fixture.saleOrder.id, {
       cartonNumber: 'C1',
       destinationId,
+      netWeight: 5,
+      grossWeight: 6,
+      dimensions: '40 x 30 x 20 cm',
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
     }).expect(200);
     const factoryDispatchId = created.body.data.factoryDispatch.id;
@@ -653,18 +664,321 @@ describe('Factory Packing Cartons', () => {
       cartonNumber: 'CTN-001',
       destinationId: destinationOf(fixture.saleOrder),
       packageDetails: '1 poly bag per unit',
-      weight: 12.5,
+      netWeight: 12.5,
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
     }).expect(200);
 
     const carton = res.body.data.destinations[0].cartons[0];
     expect(carton.cartonNumber).toBe('CTN-001');
     expect(carton.packageDetails).toBe('1 poly bag per unit');
-    expect(carton.weight).toBe('12.5');
+    expect(carton.netWeight).toBe('12.5');
     expect(carton.lines).toEqual([
       expect.objectContaining({ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }),
     ]);
     expect(carton.auditState).toBe('NOT_INSPECTED');
+  });
+
+  // DEMO-018: netWeight/grossWeight/dimensions are never required to create
+  // or edit a carton — a Factory user may save packing progress with any/
+  // all of them blank. They only become mandatory at finalize time.
+  describe('carton packing metadata (DEMO-018)', () => {
+    it('creates a carton with all three metadata fields blank', async () => {
+      const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+      const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+
+      const res = await createCarton(factoryToken, fixture.saleOrder.id, {
+        cartonNumber: 'C1',
+        destinationId: destinationOf(fixture.saleOrder),
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
+      }).expect(200);
+
+      const carton = res.body.data.destinations[0].cartons[0];
+      expect(carton.netWeight).toBeNull();
+      expect(carton.grossWeight).toBeNull();
+      expect(carton.dimensions).toBeNull();
+    });
+
+    it('round-trips entered netWeight, grossWeight and dimensions', async () => {
+      const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+      const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+
+      const res = await createCarton(factoryToken, fixture.saleOrder.id, {
+        cartonNumber: 'C1',
+        destinationId: destinationOf(fixture.saleOrder),
+        netWeight: 5.2,
+        grossWeight: 6.5,
+        dimensions: '60 x 40 x 35 cm',
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
+      }).expect(200);
+
+      const carton = res.body.data.destinations[0].cartons[0];
+      expect(carton.netWeight).toBe('5.2');
+      expect(carton.grossWeight).toBe('6.5');
+      expect(carton.dimensions).toBe('60 x 40 x 35 cm');
+    });
+
+    it('normalizes a whitespace-only dimensions value to null, never storing it as-is', async () => {
+      const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+      const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+
+      const res = await createCarton(factoryToken, fixture.saleOrder.id, {
+        cartonNumber: 'C1',
+        destinationId: destinationOf(fixture.saleOrder),
+        dimensions: '   ',
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
+      }).expect(200);
+
+      const carton = res.body.data.destinations[0].cartons[0];
+      expect(carton.dimensions).toBeNull();
+    });
+
+    async function financeCartonFixture(quantity = 10) {
+      const fixture = await createSingleFactoryApprovedSaleOrder(app, quantity);
+      const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+      const { token: qaToken } = await createRoleToken('QA_USER');
+      const destinationId = destinationOf(fixture.saleOrder);
+      await ensureStyleFactoryRate(fixture.stock.styleId, fixture.stock.factoryId);
+      return { fixture, factoryToken, qaToken, destinationId };
+    }
+
+    async function createAndAuditCarton(
+      factoryToken: string,
+      qaToken: string,
+      saleOrderId: string,
+      destinationId: string,
+      metadata: { cartonNumber: string; netWeight?: number | null; grossWeight?: number | null; dimensions?: string | null },
+      saleOrderLineId: string,
+      quantity: number,
+    ) {
+      const created = await createCarton(factoryToken, saleOrderId, {
+        cartonNumber: metadata.cartonNumber,
+        destinationId,
+        netWeight: metadata.netWeight,
+        grossWeight: metadata.grossWeight,
+        dimensions: metadata.dimensions,
+        lines: [{ saleOrderLineId, quantity }],
+      }).expect(200);
+      const factoryDispatchId = created.body.data.factoryDispatch.id as string;
+      const carton = created.body.data.destinations[0].cartons.find(
+        (c: { cartonNumber: string }) => c.cartonNumber === metadata.cartonNumber,
+      );
+      await confirmAudit(qaToken, factoryDispatchId, carton.id).expect(200);
+      return { factoryDispatchId, cartonId: carton.id as string, version: created.body.data.factoryDispatch.version as number };
+    }
+
+    it('rejects finalize when the only carton is missing all three metadata fields', async () => {
+      const { fixture, factoryToken, qaToken, destinationId } = await financeCartonFixture(10);
+      const { factoryDispatchId, version } = await createAndAuditCarton(
+        factoryToken,
+        qaToken,
+        fixture.saleOrder.id,
+        destinationId,
+        { cartonNumber: 'CTN-001' },
+        fixture.saleOrderLineId,
+        10,
+      );
+
+      const res = await request(app)
+        .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+        .set('Authorization', `Bearer ${factoryToken}`)
+        .send({ expectedVersion: version })
+        .expect(400);
+
+      expect(res.body.error.details.cartonsMissingPackingMetadata).toEqual([
+        { cartonNumber: 'CTN-001', missingFields: ['netWeight', 'grossWeight', 'dimensions'] },
+      ]);
+    });
+
+    it('rejects finalize when a carton is missing only netWeight', async () => {
+      const { fixture, factoryToken, qaToken, destinationId } = await financeCartonFixture(10);
+      const { factoryDispatchId, version } = await createAndAuditCarton(
+        factoryToken,
+        qaToken,
+        fixture.saleOrder.id,
+        destinationId,
+        { cartonNumber: 'CTN-001', grossWeight: 6, dimensions: '60 x 40 x 35 cm' },
+        fixture.saleOrderLineId,
+        10,
+      );
+
+      const res = await request(app)
+        .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+        .set('Authorization', `Bearer ${factoryToken}`)
+        .send({ expectedVersion: version })
+        .expect(400);
+
+      expect(res.body.error.details.cartonsMissingPackingMetadata).toEqual([
+        { cartonNumber: 'CTN-001', missingFields: ['netWeight'] },
+      ]);
+    });
+
+    it('rejects finalize when a carton is missing only grossWeight', async () => {
+      const { fixture, factoryToken, qaToken, destinationId } = await financeCartonFixture(10);
+      const { factoryDispatchId, version } = await createAndAuditCarton(
+        factoryToken,
+        qaToken,
+        fixture.saleOrder.id,
+        destinationId,
+        { cartonNumber: 'CTN-001', netWeight: 5, dimensions: '60 x 40 x 35 cm' },
+        fixture.saleOrderLineId,
+        10,
+      );
+
+      const res = await request(app)
+        .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+        .set('Authorization', `Bearer ${factoryToken}`)
+        .send({ expectedVersion: version })
+        .expect(400);
+
+      expect(res.body.error.details.cartonsMissingPackingMetadata).toEqual([
+        { cartonNumber: 'CTN-001', missingFields: ['grossWeight'] },
+      ]);
+    });
+
+    it('rejects finalize when a carton is missing only dimensions', async () => {
+      const { fixture, factoryToken, qaToken, destinationId } = await financeCartonFixture(10);
+      const { factoryDispatchId, version } = await createAndAuditCarton(
+        factoryToken,
+        qaToken,
+        fixture.saleOrder.id,
+        destinationId,
+        { cartonNumber: 'CTN-001', netWeight: 5, grossWeight: 6 },
+        fixture.saleOrderLineId,
+        10,
+      );
+
+      const res = await request(app)
+        .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+        .set('Authorization', `Bearer ${factoryToken}`)
+        .send({ expectedVersion: version })
+        .expect(400);
+
+      expect(res.body.error.details.cartonsMissingPackingMetadata).toEqual([
+        { cartonNumber: 'CTN-001', missingFields: ['dimensions'] },
+      ]);
+    });
+
+    it('treats whitespace-only dimensions as missing at finalize time', async () => {
+      const { fixture, factoryToken, qaToken, destinationId } = await financeCartonFixture(10);
+      const { factoryDispatchId, version } = await createAndAuditCarton(
+        factoryToken,
+        qaToken,
+        fixture.saleOrder.id,
+        destinationId,
+        { cartonNumber: 'CTN-001', netWeight: 5, grossWeight: 6, dimensions: '   ' },
+        fixture.saleOrderLineId,
+        10,
+      );
+
+      const res = await request(app)
+        .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+        .set('Authorization', `Bearer ${factoryToken}`)
+        .send({ expectedVersion: version })
+        .expect(400);
+
+      expect(res.body.error.details.cartonsMissingPackingMetadata).toEqual([
+        { cartonNumber: 'CTN-001', missingFields: ['dimensions'] },
+      ]);
+    });
+
+    it('blocks finalize when one of several cartons is incomplete, naming only that carton', async () => {
+      const { fixture, factoryToken, qaToken, destinationId } = await financeCartonFixture(10);
+      await createAndAuditCarton(
+        factoryToken,
+        qaToken,
+        fixture.saleOrder.id,
+        destinationId,
+        { cartonNumber: 'CTN-001', netWeight: 5, grossWeight: 6, dimensions: '60 x 40 x 35 cm' },
+        fixture.saleOrderLineId,
+        6,
+      );
+      const { factoryDispatchId, version } = await createAndAuditCarton(
+        factoryToken,
+        qaToken,
+        fixture.saleOrder.id,
+        destinationId,
+        { cartonNumber: 'CTN-002', grossWeight: 6 },
+        fixture.saleOrderLineId,
+        4,
+      );
+
+      const res = await request(app)
+        .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+        .set('Authorization', `Bearer ${factoryToken}`)
+        .send({ expectedVersion: version })
+        .expect(400);
+
+      expect(res.body.error.details.cartonsMissingPackingMetadata).toEqual([
+        { cartonNumber: 'CTN-002', missingFields: ['netWeight', 'dimensions'] },
+      ]);
+    });
+
+    it('finalizes successfully once every active carton has all three metadata fields', async () => {
+      const { fixture, factoryToken, qaToken, destinationId } = await financeCartonFixture(10);
+      const { factoryDispatchId, version } = await createAndAuditCarton(
+        factoryToken,
+        qaToken,
+        fixture.saleOrder.id,
+        destinationId,
+        { cartonNumber: 'CTN-001', netWeight: 5, grossWeight: 6, dimensions: '60 x 40 x 35 cm' },
+        fixture.saleOrderLineId,
+        10,
+      );
+
+      const res = await request(app)
+        .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+        .set('Authorization', `Bearer ${factoryToken}`)
+        .send({ expectedVersion: version })
+        .expect(200);
+
+      expect(res.body.data.factoryDispatch.status).toBe('READY_FOR_ERVE');
+    });
+
+    it('does not block finalize on a retired carton missing all packing metadata', async () => {
+      const { fixture, factoryToken, qaToken, destinationId } = await financeCartonFixture(10);
+
+      // First, an audited-but-metadata-incomplete carton packs the whole
+      // 10-unit line, then is removed. Because it was audited before
+      // removal, it is RETIRED (soft, immutable history) rather than
+      // hard-deleted — see the FactoryPackingCarton doc comment — which
+      // frees its 10 units of capacity back up for a fresh carton.
+      const incomplete = await createAndAuditCarton(
+        factoryToken,
+        qaToken,
+        fixture.saleOrder.id,
+        destinationId,
+        { cartonNumber: 'CTN-001' },
+        fixture.saleOrderLineId,
+        10,
+      );
+      await removeCarton(factoryToken, incomplete.factoryDispatchId, incomplete.cartonId, incomplete.version).expect(200);
+      const retired = await prisma.factoryPackingCarton.findUniqueOrThrow({ where: { id: incomplete.cartonId } });
+      expect(retired.retiredAt).not.toBeNull();
+      expect(retired.netWeight).toBeNull();
+
+      // A second, fully-complete carton now packs the same 10 units.
+      const created = await createCarton(factoryToken, fixture.saleOrder.id, {
+        cartonNumber: 'CTN-002',
+        destinationId,
+        netWeight: 5,
+        grossWeight: 6,
+        dimensions: '60 x 40 x 35 cm',
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
+      }).expect(200);
+      const factoryDispatchId = created.body.data.factoryDispatch.id as string;
+      const cartonB = created.body.data.destinations[0].cartons.find(
+        (c: { cartonNumber: string }) => c.cartonNumber === 'CTN-002',
+      );
+      await confirmAudit(qaToken, factoryDispatchId, cartonB.id).expect(200);
+
+      const res = await request(app)
+        .post(`/factory-dispatches/${factoryDispatchId}/actions/finalize`)
+        .set('Authorization', `Bearer ${factoryToken}`)
+        .send({ expectedVersion: created.body.data.factoryDispatch.version })
+        .expect(200);
+
+      expect(res.body.data.factoryDispatch.status).toBe('READY_FOR_ERVE');
+    });
   });
 
   it('rejects a carton spanning two destinations', async () => {
@@ -791,7 +1105,7 @@ describe('Factory Packing Cartons', () => {
       expectedVersion: carton.version,
       destinationId,
       packageDetails: 'orig',
-      weight: null,
+      netWeight: null,
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
     }).expect(200);
 
@@ -801,6 +1115,43 @@ describe('Factory Packing Cartons', () => {
 
     const auditRows = await prisma.factoryPackingCartonAudit.count({ where: { cartonId: carton.id } });
     expect(auditRows).toBe(1);
+  });
+
+  // DEMO-018: editing netWeight/grossWeight/dimensions is a material change
+  // exactly like editing the pre-existing weight field already was — it
+  // must invalidate a current Packing Audit (Needs Reinspection), the same
+  // direct extension of existing behavior the ticket specifies.
+  it('changing only netWeight/grossWeight/dimensions invalidates the current audit (Needs Reinspection)', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+    const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+    const { token: qaToken } = await createRoleToken('QA_USER');
+    const destinationId = destinationOf(fixture.saleOrder);
+
+    const created = await createCarton(factoryToken, fixture.saleOrder.id, {
+      cartonNumber: 'C1',
+      destinationId,
+      netWeight: 5,
+      grossWeight: 6,
+      dimensions: '40 x 30 x 20 cm',
+      lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
+    }).expect(200);
+    const factoryDispatchId = created.body.data.factoryDispatch.id;
+    const carton = created.body.data.destinations[0].cartons[0];
+    await confirmAudit(qaToken, factoryDispatchId, carton.id).expect(200);
+
+    const updated = await updateCarton(factoryToken, factoryDispatchId, carton.id, {
+      expectedVersion: carton.version,
+      destinationId,
+      netWeight: 9,
+      grossWeight: 6,
+      dimensions: '40 x 30 x 20 cm',
+      lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 10 }],
+    }).expect(200);
+
+    const cartonAfter = updated.body.data.destinations[0].cartons[0];
+    expect(cartonAfter.version).toBe(carton.version + 1);
+    expect(cartonAfter.auditState).toBe('NEEDS_REINSPECTION');
+    expect(cartonAfter.netWeight).toBe('9');
   });
 
   it('changing carton contents invalidates its current audit (Needs Reinspection)', async () => {
@@ -821,7 +1172,7 @@ describe('Factory Packing Cartons', () => {
     const updated = await updateCarton(factoryToken, factoryDispatchId, carton.id, {
       expectedVersion: carton.version,
       destinationId,
-      weight: null,
+      netWeight: null,
       packageDetails: null,
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 6 }],
     }).expect(200);
@@ -1050,6 +1401,9 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
     const packed = await createCarton(factoryToken, fixture.saleOrder.id, {
       cartonNumber: 'C1',
       destinationId: destinationOf(fixture.saleOrder),
+      netWeight: 5,
+      grossWeight: 6,
+      dimensions: '40 x 30 x 20 cm',
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 50 }],
     }).expect(200);
     const factoryDispatchId = packed.body.data.factoryDispatch.id;
@@ -1191,6 +1545,9 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
     const created = await createCarton(factoryToken, fixture.saleOrder.id, {
       cartonNumber: 'C1',
       destinationId,
+      netWeight: 5,
+      grossWeight: 6,
+      dimensions: '40 x 30 x 20 cm',
       lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 30 }],
     }).expect(200);
     const factoryDispatchId = created.body.data.factoryDispatch.id;
