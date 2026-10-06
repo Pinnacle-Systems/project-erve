@@ -21,6 +21,14 @@ function auditStateBadge(state: PackingListDestinationView['cartons'][number]['a
   return <StatusBadge label="Not Inspected" tone="draft" />;
 }
 
+// DEMO-018: per-field labels for the finalize-blocker summary line, in the
+// same order the ticket's example uses ("CTN-001: Net Weight, Dimensions").
+const PACKING_METADATA_FIELD_LABELS: Record<'netWeight' | 'grossWeight' | 'dimensions', string> = {
+  netWeight: 'Net Weight',
+  grossWeight: 'Gross Weight',
+  dimensions: 'Dimensions',
+};
+
 function finalizeIssueSummary(blockers: FinalizeBlockers): string[] {
   const lines: string[] = [];
   for (const c of blockers.cartonsNotAudited) lines.push(`Carton ${c.cartonNumber}: not yet inspected`);
@@ -30,6 +38,9 @@ function finalizeIssueSummary(blockers: FinalizeBlockers): string[] {
   for (const l of blockers.underPackedLines) lines.push(`${l.styleNumber} / ${l.sizeLabel}: packed ${l.packed} of ${l.required} required`);
   for (const l of blockers.overPackedLines) lines.push(`${l.styleNumber} / ${l.sizeLabel}: packed ${l.packed} exceeds ${l.required} required`);
   for (const l of blockers.internalPackingMismatch) lines.push(`${l.styleNumber} / ${l.sizeLabel}: internal packing attribution mismatch — contact support`);
+  for (const c of blockers.cartonsMissingPackingMetadata ?? []) {
+    lines.push(`${c.cartonNumber}: ${c.missingFields.map((f) => PACKING_METADATA_FIELD_LABELS[f]).join(', ')}`);
+  }
   return lines;
 }
 
@@ -48,7 +59,9 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
 
   const [cartonNumber, setCartonNumber] = useState('');
   const [packageDetails, setPackageDetails] = useState('');
-  const [weight, setWeight] = useState('');
+  const [netWeight, setNetWeight] = useState('');
+  const [grossWeight, setGrossWeight] = useState('');
+  const [dimensions, setDimensions] = useState('');
   const [cartonLineQty, setCartonLineQty] = useState<Record<string, string>>({});
   const [addingForDestination, setAddingForDestination] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
@@ -64,7 +77,9 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
   const [editingCartonId, setEditingCartonId] = useState<string | null>(null);
   const [editDestinationId, setEditDestinationId] = useState('');
   const [editPackageDetails, setEditPackageDetails] = useState('');
-  const [editWeight, setEditWeight] = useState('');
+  const [editNetWeight, setEditNetWeight] = useState('');
+  const [editGrossWeight, setEditGrossWeight] = useState('');
+  const [editDimensions, setEditDimensions] = useState('');
   const [editLineQty, setEditLineQty] = useState<Record<string, string>>({});
   const [editOriginalLineQty, setEditOriginalLineQty] = useState<Record<string, number>>({});
 
@@ -88,14 +103,24 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
         .map(([saleOrderLineId, v]) => ({ saleOrderLineId, quantity: Number(v) }));
       const res = await apiClient.post<ApiSuccessResponse<PackingListView>>(
         `/sale-orders/${packingList!.saleOrderId}/packing-list/cartons`,
-        { cartonNumber, destinationId, packageDetails: packageDetails || null, weight: weight ? Number(weight) : null, lines },
+        {
+          cartonNumber,
+          destinationId,
+          packageDetails: packageDetails || null,
+          netWeight: netWeight ? Number(netWeight) : null,
+          grossWeight: grossWeight ? Number(grossWeight) : null,
+          dimensions: dimensions || null,
+          lines,
+        },
       );
       return res.data.data;
     },
     onSuccess: () => {
       setCartonNumber('');
       setPackageDetails('');
-      setWeight('');
+      setNetWeight('');
+      setGrossWeight('');
+      setDimensions('');
       setCartonLineQty({});
       setAddingForDestination(null);
       return invalidate();
@@ -117,7 +142,9 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
     setEditingCartonId(null);
     setEditDestinationId('');
     setEditPackageDetails('');
-    setEditWeight('');
+    setEditNetWeight('');
+    setEditGrossWeight('');
+    setEditDimensions('');
     setEditLineQty({});
     setEditOriginalLineQty({});
   }
@@ -127,7 +154,9 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
     setEditingCartonId(carton.id);
     setEditDestinationId(carton.destinationId);
     setEditPackageDetails(carton.packageDetails ?? '');
-    setEditWeight(carton.weight ?? '');
+    setEditNetWeight(carton.netWeight ?? '');
+    setEditGrossWeight(carton.grossWeight ?? '');
+    setEditDimensions(carton.dimensions ?? '');
     setEditLineQty(Object.fromEntries(carton.lines.map((l) => [l.saleOrderLineId, String(l.quantity)])));
     setEditOriginalLineQty(Object.fromEntries(carton.lines.map((l) => [l.saleOrderLineId, l.quantity])));
   }
@@ -157,7 +186,9 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
           expectedVersion: carton.version,
           destinationId: editDestinationId,
           packageDetails: editPackageDetails || null,
-          weight: editWeight ? Number(editWeight) : null,
+          netWeight: editNetWeight ? Number(editNetWeight) : null,
+          grossWeight: editGrossWeight ? Number(editGrossWeight) : null,
+          dimensions: editDimensions || null,
           lines,
         },
       );
@@ -325,7 +356,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                       {carton.auditState === 'INSPECTED' && (
                         <ValidationMessage tone="warning">
                           This carton is currently Inspected. Saving a change to its destination, contents, package
-                          details, or weight will mark it Needs Reinspection.
+                          details, weight, or dimensions will mark it Needs Reinspection.
                         </ValidationMessage>
                       )}
                       <div className="mt-3 space-y-3">
@@ -343,11 +374,23 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                             onChange={(e) => setEditPackageDetails(e.target.value)}
                           />
                           <TextField
-                            label="Weight, kg (optional)"
+                            label="Net Weight, kg (optional)"
                             type="number"
                             min={0}
-                            value={editWeight}
-                            onChange={(e) => setEditWeight(e.target.value)}
+                            value={editNetWeight}
+                            onChange={(e) => setEditNetWeight(e.target.value)}
+                          />
+                          <TextField
+                            label="Gross Weight, kg (optional)"
+                            type="number"
+                            min={0}
+                            value={editGrossWeight}
+                            onChange={(e) => setEditGrossWeight(e.target.value)}
+                          />
+                          <TextField
+                            label="Dimensions (optional)"
+                            value={editDimensions}
+                            onChange={(e) => setEditDimensions(e.target.value)}
                           />
                         </div>
                         <div className="space-y-2">
@@ -395,7 +438,9 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                       <div className="flex items-center justify-between">
                         <div className="font-medium">
                           Carton {carton.cartonNumber}
-                          {carton.weight && <span className="ml-2 text-sm text-muted-foreground">{carton.weight} kg</span>}
+                          {carton.netWeight && <span className="ml-2 text-sm text-muted-foreground">Net {carton.netWeight} kg</span>}
+                          {carton.grossWeight && <span className="ml-2 text-sm text-muted-foreground">Gross {carton.grossWeight} kg</span>}
+                          {carton.dimensions && <span className="ml-2 text-sm text-muted-foreground">{carton.dimensions}</span>}
                           <span className="ml-2">{auditStateBadge(carton.auditState)}</span>
                           {carton.destinationMismatch && (
                             <span className="ml-2">
@@ -440,7 +485,9 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                       <div className="flex flex-wrap gap-3">
                         <TextField label="Carton Number" value={cartonNumber} onChange={(e) => setCartonNumber(e.target.value)} />
                         <TextField label="Package Details (optional)" value={packageDetails} onChange={(e) => setPackageDetails(e.target.value)} />
-                        <TextField label="Weight, kg (optional)" type="number" min={0} value={weight} onChange={(e) => setWeight(e.target.value)} />
+                        <TextField label="Net Weight, kg (optional)" type="number" min={0} value={netWeight} onChange={(e) => setNetWeight(e.target.value)} />
+                        <TextField label="Gross Weight, kg (optional)" type="number" min={0} value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} />
+                        <TextField label="Dimensions (optional)" value={dimensions} onChange={(e) => setDimensions(e.target.value)} />
                       </div>
                       <div className="space-y-2">
                         {destination.lines.map((line) => {
