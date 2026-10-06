@@ -778,6 +778,18 @@ export async function start(
       (activity.qualityExecutionMode === 'SEQUENTIAL_GATE' && form.activityType === 'MEETING'));
   if (!ppSample && !genericSupported)
     throw HttpError.badRequest('This Quality activity is not supported by the execution runtime');
+  // Consolidated Inline inspection (see process-flow-runtime-capability.ts) —
+  // like PP Sample, a finalized FAIL must allow a later reinspection attempt
+  // rather than permanently exhausting the activity. The batched Final
+  // inspection pattern already has its own dedicated reinspect endpoint
+  // (startFinalBatchReinspection) and is excluded here via executionMultiplicity.
+  const inlineInspection =
+    activity.qualityExecutionMode === 'IN_PROCESS' &&
+    form.activityType === 'INSPECTION' &&
+    form.executionScope === 'JOB_ORDER' &&
+    activity.executionMultiplicity === 'SINGLE' &&
+    activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE';
+  const reinspectable = ppSample || inlineInspection;
   if (ppSample && (!input.sampleJobOrderLineSizeId || !input.sampleQuantity))
     throw HttpError.badRequest('Select one Job Order size and a positive sample quantity');
   if (!ppSample && (input.sampleJobOrderLineSizeId || input.sampleQuantity))
@@ -857,10 +869,10 @@ export async function start(
       throw HttpError.conflict('Inspection context is locked after the execution starts');
     return toView(existing, jobOrder);
   }
-  if (existing && (!ppSample || existing.outcome === 'PASS'))
+  if (existing && (!reinspectable || existing.outcome === 'PASS'))
     throw HttpError.conflict(
-      ppSample
-        ? 'PP Sample gate is already satisfied by a finalized PASS cycle'
+      reinspectable
+        ? `${ppSample ? 'PP Sample' : 'Inline Inspection'} gate is already satisfied by a finalized PASS cycle`
         : 'A finalized initial attempt already exists; reinspection is not implemented',
     );
   if (!eligible(jobOrder, activity))
@@ -895,16 +907,18 @@ export async function start(
           include: executionInclude,
         });
       }
-      if (currentExecutions.length && !ppSample)
+      if (currentExecutions.length && !reinspectable)
         throw HttpError.conflict('This single Quality activity already has an execution');
       if (
-        ppSample &&
+        reinspectable &&
         currentExecutions.some(
           (candidate) => candidate.status === 'FINALIZED' && candidate.outcome === 'PASS',
         )
       )
-        throw HttpError.conflict('PP Sample gate is already satisfied by a finalized PASS cycle');
-      const attemptNumber = ppSample ? (currentExecutions[0]?.attemptNumber ?? 0) + 1 : 1;
+        throw HttpError.conflict(
+          `${ppSample ? 'PP Sample' : 'Inline Inspection'} gate is already satisfied by a finalized PASS cycle`,
+        );
+      const attemptNumber = reinspectable ? (currentExecutions[0]?.attemptNumber ?? 0) + 1 : 1;
       const batchNumber = 1;
       const result = await tx.qualityActivityExecution.create({
         data: {

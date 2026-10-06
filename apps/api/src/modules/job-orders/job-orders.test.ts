@@ -543,6 +543,29 @@ describe('job orders API', () => {
       ).status,
     ).toBe('AVAILABLE');
 
+    // DEMO-009: Sewing cannot complete without an effective Inline Inspection
+    // PASS, even though Inline never gates Sewing starting (asserted above).
+    await request(app)
+      .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .set('Idempotency-Key', 'quality-sewing-complete-blocked')
+      .send({ expectedVersion: sewingStarted.body.data.version, stageStatusId: sewing.id })
+      .expect(409);
+    await prisma.qualityActivityExecution.create({
+      data: {
+        id: createId(),
+        jobOrderId: created.body.data.id,
+        processFlowActivityId: inline.id,
+        qualityFormVersionId: formV1.id,
+        attemptNumber: 1,
+        batchNumber: 1,
+        status: 'FINALIZED',
+        outcome: 'PASS',
+        startedById: graph.admin.userId,
+        finalizedById: graph.admin.userId,
+        finalizedAt: new Date(),
+      },
+    });
     const sewingCompleted = await request(app)
       .post(`/job-orders/${created.body.data.id}/actions/complete-stage`)
       .set('Authorization', `Bearer ${factoryUser.token}`)
@@ -554,7 +577,7 @@ describe('job orders API', () => {
         (item: { processFlowVersionStageId: string }) =>
           item.processFlowVersionStageId === inline.id,
       ).status,
-    ).toBe('MISSED');
+    ).toBe('COMPLETED');
     expect(
       sewingCompleted.body.data.qualityActivities.find(
         (item: { processFlowVersionStageId: string }) =>

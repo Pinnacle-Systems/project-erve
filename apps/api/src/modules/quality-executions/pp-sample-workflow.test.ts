@@ -1211,47 +1211,6 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       qualityState: { label: 'Inline Inspection Pending' },
       primaryDisplayState: { label: 'Sewing In Progress' },
     });
-    const inlineStarted = (
-      await request(app)
-        .post(`/job-orders/${f.job.id}/quality-activities/${f.inline.id}/executions`)
-        .set('Authorization', `Bearer ${f.qa.token}`)
-        .send({})
-        .expect(201)
-    ).body.data;
-    await runStage(f.sewing.id);
-    expect(
-      current.body.data.qualityActivities.find(
-        (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.final.id,
-      ).status,
-    ).toBe('AVAILABLE');
-    expect(current.body.data.operationalState).toMatchObject({
-      productionState: { label: 'Finishing Pending' },
-      qualityState: { label: 'Final Inspection Pending' },
-      primaryDisplayState: { label: 'Finishing Pending' },
-    });
-    current = await request(app)
-      .post(`/job-orders/${f.job.id}/actions/update-prepared-quantity`)
-      .set('Authorization', `Bearer ${f.factoryUser.token}`)
-      .set('Idempotency-Key', createId())
-      .send({
-        expectedVersion: current.body.data.version,
-        sizes: f.job.lines[0]!.sizes.map((size, index) => ({
-          jobOrderLineSizeId: size.id,
-          preparedQuantity: index === 0 ? 5 : 0,
-        })),
-      })
-      .expect(200);
-    const inlineReplay = await request(app)
-      .post(`/job-orders/${f.job.id}/quality-activities/${f.inline.id}/executions`)
-      .set('Authorization', `Bearer ${f.qa.token}`)
-      .send({})
-      .expect(201);
-    expect(inlineReplay.body.data.id).toBe(inlineStarted.id);
-    expect(
-      await prisma.qualityActivityExecution.count({
-        where: { jobOrderId: f.job.id, processFlowActivityId: f.inline.id },
-      }),
-    ).toBe(1);
     const qualityPayload = (
       version: number,
       componentId: string,
@@ -1276,6 +1235,52 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         ...(rejectionReason === undefined ? {} : { rejectionReason }),
       },
     });
+    const sewingRuntimeId = current.body.data.stages.find(
+      (stage: { processFlowVersionStageId: string }) =>
+        stage.processFlowVersionStageId === f.sewing.id,
+    ).id;
+    const attemptCompleteSewing = (expectedStatus: number) =>
+      request(app)
+        .post(`/job-orders/${f.job.id}/actions/complete-stage`)
+        .set('Authorization', `Bearer ${f.factoryUser.token}`)
+        .set('Idempotency-Key', createId())
+        .send({ expectedVersion: current.body.data.version, stageStatusId: sewingRuntimeId })
+        .expect(expectedStatus);
+    const expectSewingInProgress = async () =>
+      expect(
+        (await prisma.jobOrderStageStatus.findUniqueOrThrow({ where: { id: sewingRuntimeId } }))
+          .status,
+      ).toBe('IN_PROGRESS');
+
+    // DEMO-009: Inline QA does not gate Sewing *starting* (asserted above),
+    // but Sewing cannot *complete* without an effective Inline PASS.
+    await attemptCompleteSewing(409);
+    await expectSewingInProgress();
+
+    const inlineStarted = (
+      await request(app)
+        .post(`/job-orders/${f.job.id}/quality-activities/${f.inline.id}/executions`)
+        .set('Authorization', `Bearer ${f.qa.token}`)
+        .send({})
+        .expect(201)
+    ).body.data;
+    const inlineReplay = await request(app)
+      .post(`/job-orders/${f.job.id}/quality-activities/${f.inline.id}/executions`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({})
+      .expect(201);
+    expect(inlineReplay.body.data.id).toBe(inlineStarted.id);
+    expect(
+      await prisma.qualityActivityExecution.count({
+        where: { jobOrderId: f.job.id, processFlowActivityId: f.inline.id },
+      }),
+    ).toBe(1);
+    // Still blocked while the only Inline execution is an unfinalized DRAFT.
+    await attemptCompleteSewing(409);
+    await expectSewingInProgress();
+
+    // A FAIL does not stop or roll back Sewing — it only keeps the
+    // completion gate shut.
     await request(app)
       .post(`/quality-executions/${inlineStarted.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
@@ -1284,6 +1289,48 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     expect((await prisma.jobOrder.findUniqueOrThrow({ where: { id: f.job.id } })).status).toBe(
       'IN_PRODUCTION',
     );
+    await attemptCompleteSewing(409);
+    await expectSewingInProgress();
+
+    // Critical regression: a later reinspection PASS must lift the gate even
+    // though the first Inline attempt FAILed.
+    const inlineRetry = (
+      await request(app)
+        .post(`/job-orders/${f.job.id}/quality-activities/${f.inline.id}/executions`)
+        .set('Authorization', `Bearer ${f.qa.token}`)
+        .send({})
+        .expect(201)
+    ).body.data;
+    expect(inlineRetry.attemptNumber).toBe(2);
+    await request(app)
+      .post(`/quality-executions/${inlineRetry.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send(qualityPayload(inlineRetry.version, f.inlineOutcomeId, 'PASS'))
+      .expect(200);
+
+    await runStage(f.sewing.id);
+    expect(
+      current.body.data.qualityActivities.find(
+        (a: { processFlowVersionStageId: string }) => a.processFlowVersionStageId === f.final.id,
+      ).status,
+    ).toBe('AVAILABLE');
+    expect(current.body.data.operationalState).toMatchObject({
+      productionState: { label: 'Finishing Pending' },
+      qualityState: { label: 'Final Inspection Pending' },
+      primaryDisplayState: { label: 'Finishing Pending' },
+    });
+    current = await request(app)
+      .post(`/job-orders/${f.job.id}/actions/update-prepared-quantity`)
+      .set('Authorization', `Bearer ${f.factoryUser.token}`)
+      .set('Idempotency-Key', createId())
+      .send({
+        expectedVersion: current.body.data.version,
+        sizes: f.job.lines[0]!.sizes.map((size, index) => ({
+          jobOrderLineSizeId: size.id,
+          preparedQuantity: index === 0 ? 5 : 0,
+        })),
+      })
+      .expect(200);
 
     const firstFinal = (
       await request(app)
