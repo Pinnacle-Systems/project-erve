@@ -1099,9 +1099,10 @@ model JobOrder {
   // scanned before assuming uniqueness (see historical-import dry run).
   legacyReferenceNumber  String?      @map("legacy_reference_number")
   // Original historic PO/order date. Independent of createdAt (the actual
-  // import time) and never feeds financialYearId resolution — JobOrder's
-  // financial year always follows createdAt, exactly like a live row (see
-  // ensureFinancialYear usage in generateJobOrderNumber below).
+  // import time). For a HISTORICAL_IMPORT row this IS what financialYearId
+  // is resolved from (HIST-001) — a live row instead follows its own
+  // createdAt, exactly as before (see ensureFinancialYear usage in
+  // generateJobOrderNumber below and importHistoricalJobOrder).
   historicalBusinessDate DateTime?    @map("historical_business_date") @db.Date
   importBatchId          String?      @map("import_batch_id")
   importedById           String?      @map("imported_by_id")

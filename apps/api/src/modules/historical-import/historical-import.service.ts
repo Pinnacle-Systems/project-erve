@@ -14,8 +14,11 @@
 //   - pinned, ACTIVE processFlowVersionId          (§12, §13)
 //   - ordered quantities only, via the same Style/Size/StyleSize validation
 //     live createJobOrder uses (createJobOrderLine, reused not duplicated)
-//   - financialYearId follows createdAt, exactly like a live Job Order,
-//     never historicalBusinessDate                 (§2.1)
+//   - financialYearId is derived from historicalBusinessDate, never the
+//     import's createdAt/current time (HIST-001 — supersedes H1 plan §2.1,
+//     which specified createdAt on purpose; a clean reload performed
+//     outside the historical Financial Year was silently misfiling every
+//     imported record)
 //   - jobOrderSerial stays NULL; jobOrderNumber comes from the isolated
 //     HISTORICAL_JOB_ORDER/EIJOH sequence           (§2)
 //   - a HistoricalDocument is attached (new or existing) via the join table
@@ -147,12 +150,14 @@ export async function importHistoricalJobOrder(
       );
     }
 
-    // Mirrors live createJobOrder exactly: a Job Order's Financial Year
-    // always comes from its own createdAt, never a business/document date —
-    // historicalBusinessDate is stored independently below and never feeds
-    // this resolution (H1 plan §2.1).
+    // Unlike live createJobOrder, a historical Job Order's Financial Year
+    // must come from its historicalBusinessDate, not the import's current
+    // time (HIST-001): the importer's own createdAt/importedAt below stay a
+    // true import timestamp and never feed FY resolution, so re-running the
+    // same historical import in a later Financial Year cannot change which
+    // FY an already-approved record lands in.
     const createdAt = new Date();
-    const financialYear = await ensureFinancialYear(tx, toBusinessCalendarDate(createdAt));
+    const financialYear = await ensureFinancialYear(tx, toBusinessCalendarDate(input.historicalBusinessDate));
     const generated = await generateHistoricalJobOrderNumber(tx, financialYear);
 
     const jobOrderId = createId();

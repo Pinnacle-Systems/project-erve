@@ -1,7 +1,7 @@
 // Required coverage per the H1 plan §14/§27 for the write-only historical
 // importer. Exercised only against the disposable test database — no H1 CLI
 // calls this service; these are the only callers in Story H1.
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createId } from '@erve/shared';
 import { prisma } from '../../db/prisma.js';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -102,11 +102,12 @@ describe('importHistoricalJobOrder', () => {
     expect(jobOrder.legacyReferenceNumber).toBe('EI25001');
     expect(jobOrder.historicalBusinessDate?.toISOString().slice(0, 10)).toBe('2025-08-15');
     expect(jobOrder.requiredDeliveryDate?.toISOString().slice(0, 10)).toBe('2025-09-30');
-    // financialYearId follows import createdAt, NOT historicalBusinessDate
-    // (2025-08-15) — see the service's own comment and H1 plan §2.1.
+    // financialYearId follows historicalBusinessDate (2025-08-15 -> FY
+    // 2025-26), NOT the import's createdAt (HIST-001).
     const financialYear = await prisma.financialYear.findUniqueOrThrow({ where: { id: jobOrder.financialYearId } });
-    expect(jobOrder.createdAt.getTime() >= financialYear.startDate.getTime()).toBe(true);
-    expect(jobOrder.createdAt.getTime() <= financialYear.endDate.getTime()).toBe(true);
+    expect(financialYear.code).toBe('2025-26');
+    expect(jobOrder.historicalBusinessDate!.getTime() >= financialYear.startDate.getTime()).toBe(true);
+    expect(jobOrder.historicalBusinessDate!.getTime() <= financialYear.endDate.getTime()).toBe(true);
     // Zero Order Sheets: no DistributorPurchaseOrder ever references this Job Order.
     const claimedOrderSheets = await prisma.distributorPurchaseOrder.count({ where: { jobOrderId: result.jobOrderId } });
     expect(claimedOrderSheets).toBe(0);
@@ -211,6 +212,41 @@ describe('importHistoricalJobOrder', () => {
     const otherSize = await prisma.size.create({ data: { id: createId(), code: `OTHER-SZ-${createId()}`, label: '9', sizeType: 'AGE', sortOrder: 9 } });
     const input = { ...baseInput(f), sizes: [{ sizeId: otherSize.id, quantity: 10 }] };
     await expect(importHistoricalJobOrder(currentUserFor(f.admin.userId, ['ADMIN']), input)).rejects.toThrow(HttpError);
+  });
+
+  it('derives Financial Year from historicalBusinessDate even when the import runs in a much later Financial Year (HIST-001)', async () => {
+    const f = await buildFixture();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-04-15T10:00:00.000Z')); // FY 2030-31, far past the record's own FY
+    try {
+      const input = { ...baseInput(f), historicalBusinessDate: new Date('2025-08-15') };
+      const result = await importHistoricalJobOrder(currentUserFor(f.admin.userId, ['ADMIN']), input);
+      const jobOrder = await prisma.jobOrder.findUniqueOrThrow({
+        where: { id: result.jobOrderId },
+        include: { financialYear: true },
+      });
+      expect(jobOrder.financialYear.code).toBe('2025-26');
+      // importedAt/createdAt stay the true (mocked) import timestamp, never backdated.
+      expect(jobOrder.importedAt!.toISOString().slice(0, 10)).toBe('2030-04-15');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('places a historicalBusinessDate just before the April FY boundary in the prior Financial Year', async () => {
+    const f = await buildFixture();
+    const input = { ...baseInput(f), historicalBusinessDate: new Date('2025-03-31') };
+    const result = await importHistoricalJobOrder(currentUserFor(f.admin.userId, ['ADMIN']), input);
+    const jobOrder = await prisma.jobOrder.findUniqueOrThrow({ where: { id: result.jobOrderId }, include: { financialYear: true } });
+    expect(jobOrder.financialYear.code).toBe('2024-25');
+  });
+
+  it('places a historicalBusinessDate on the April FY boundary in the new Financial Year', async () => {
+    const f = await buildFixture();
+    const input = { ...baseInput(f), historicalBusinessDate: new Date('2025-04-01') };
+    const result = await importHistoricalJobOrder(currentUserFor(f.admin.userId, ['ADMIN']), input);
+    const jobOrder = await prisma.jobOrder.findUniqueOrThrow({ where: { id: result.jobOrderId }, include: { financialYear: true } });
+    expect(jobOrder.financialYear.code).toBe('2025-26');
   });
 
   it('links to an existing HistoricalDocument instead of creating a new one when mode is "existing"', async () => {
