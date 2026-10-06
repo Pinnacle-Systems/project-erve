@@ -14,11 +14,19 @@ export const cartonLineInputSchema = z.object({
 // Carton create takes no version param — the FactoryDispatch packing root
 // may not exist yet at all; correctness comes from lock ordering, not
 // client-supplied CAS (see the Phase 4 plan §2).
+// DEMO-018: netWeight (renamed from the original `weight` field — same
+// validator, same semantics), grossWeight (new, same validator), and
+// dimensions (new, free text) are all optional/nullable at create AND
+// update — none of the three is ever required to save packing progress.
+// They become mandatory only at Factory Packing List finalization (see
+// finalizeFactoryDispatch's cartonsMissingPackingMetadata blocker).
 export const createCartonSchema = z.object({
   cartonNumber: z.string().trim().min(1).max(100),
   destinationId: z.string().trim().min(1),
   packageDetails: z.string().trim().max(500).optional().nullable(),
-  weight: z.number().positive().max(99999.999).optional().nullable(),
+  netWeight: z.number().positive().max(99999.999).optional().nullable(),
+  grossWeight: z.number().positive().max(99999.999).optional().nullable(),
+  dimensions: z.string().trim().max(500).optional().nullable(),
   lines: z.array(cartonLineInputSchema).min(1, 'A carton must contain at least one line'),
 });
 
@@ -28,7 +36,9 @@ export const updateCartonSchema = z.object({
   expectedVersion: z.number().int().nonnegative(),
   destinationId: z.string().trim().min(1),
   packageDetails: z.string().trim().max(500).optional().nullable(),
-  weight: z.number().positive().max(99999.999).optional().nullable(),
+  netWeight: z.number().positive().max(99999.999).optional().nullable(),
+  grossWeight: z.number().positive().max(99999.999).optional().nullable(),
+  dimensions: z.string().trim().max(500).optional().nullable(),
   lines: z.array(cartonLineInputSchema).min(1, 'A carton must contain at least one line'),
 });
 
