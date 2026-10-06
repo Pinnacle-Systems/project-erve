@@ -8,6 +8,7 @@ import {
   canViewPackingAudit,
   canMutateErveDispatch,
   canViewErveDispatch,
+  canViewErveFactoryProvenance,
   canViewErvePackingList,
   canMutateInvoiceHandoff,
   canViewInvoiceHandoff,
@@ -285,6 +286,10 @@ export const canViewPackingAudits = (user: AuthUser | null | undefined) =>
 
 export const canViewErvePackingLists = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewErvePackingList(user));
+
+/** DEMO-020: whether this user's role is authorized to see factory/supplier provenance on an Erve Packing List. */
+export const canViewErveFactoryProvenanceField = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewErveFactoryProvenance(user));
 
 export const canMutateErveDispatches = (user: AuthUser | null | undefined) =>
   Boolean(user && canMutateErveDispatch(user));

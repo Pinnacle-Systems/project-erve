@@ -14,7 +14,8 @@ export interface ErvePackingListListPdfRow {
   destinationDisplay: string;
   cartonCount: number;
   totalQuantity: number;
-  sourceFactoryCount: number;
+  /** Confidential factory/supplier provenance (DEMO-020) — null when the source record omitted it. */
+  sourceFactoryCount: number | null;
   sourceDispatchOrderCount: number;
   statusLabel: string;
   createdAt: string;
@@ -48,7 +49,10 @@ export function buildErvePackingListListViewModel(
     destinationDisplay: pl.destination.city ? `${pl.destination.city}, ${pl.destination.state ?? ''}` : '',
     cartonCount: pl.cartonCount,
     totalQuantity: pl.totalQuantity,
-    sourceFactoryCount: pl.sourceFactories.length,
+    // DEMO-020: confidential factory/supplier provenance — null (and the
+    // column omitted, see ErvePackingListListDocument) when the source
+    // record omitted it.
+    sourceFactoryCount: pl.sourceFactories ? pl.sourceFactories.length : null,
     sourceDispatchOrderCount: pl.sourceDispatchOrders.length,
     statusLabel: ERVE_PACKING_LIST_STATUS_LABELS[pl.status],
     createdAt: formatPdfDate(pl.createdAt),

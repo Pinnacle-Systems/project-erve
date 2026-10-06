@@ -9,7 +9,7 @@ import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import { canMutateErveDispatches } from '../../auth/permissions.js';
+import { canMutateErveDispatches, canViewErveFactoryProvenanceField } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { ErvePackingListSummary } from './types.js';
 
@@ -42,6 +42,16 @@ export function ErvePackingListListPage() {
     generate: generateErvePackingListListPdf,
     filename: () => buildPdfFilename(['ERVE-Packing-Lists', getLocalDateString()]),
   });
+
+  // DEMO-020: sourceFactories is confidential factory/supplier provenance,
+  // omitted entirely from the API response for any role outside
+  // ERVE_PACKING_LIST_PROVENANCE_ROLES. The actual response is the ground
+  // truth — if the server ever omits the field (whether because this user's
+  // role isn't authorized, or any future change), the column must disappear
+  // regardless of what the client-side role check would otherwise predict.
+  // The role check is used only as a fallback while the list is empty, so
+  // an authorized role with zero packing lists doesn't lose the column.
+  const hasProvenance = items.length > 0 ? items.some((item) => item.sourceFactories !== undefined) : canViewErveFactoryProvenanceField(user);
 
   return (
     <div className="space-y-6">
@@ -83,7 +93,9 @@ export function ErvePackingListListPage() {
               { key: 'destination', header: 'Destination', render: (r) => (r.destination.city ? `${r.destination.city}, ${r.destination.state}` : '—') },
               { key: 'cartons', header: 'Cartons', align: 'right', render: (r) => r.cartonCount.toLocaleString() },
               { key: 'qty', header: 'Pieces', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },
-              { key: 'factories', header: 'Factories', align: 'right', render: (r) => r.sourceFactories.length },
+              ...(hasProvenance
+                ? [{ key: 'factories', header: 'Factories', align: 'right' as const, render: (r: ErvePackingListSummary) => r.sourceFactories?.length ?? 0 }]
+                : []),
               {
                 key: 'status',
                 header: 'Status',

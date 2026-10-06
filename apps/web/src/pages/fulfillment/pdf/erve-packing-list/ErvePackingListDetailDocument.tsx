@@ -28,13 +28,25 @@ const cartonLineColumns: PdfTableColumn<ErvePackingListDetailCartonLineRow>[] = 
   { key: 'quantity', header: 'Quantity', width: '25%', align: 'right', value: (row) => row.quantity },
 ];
 
+// DEMO-020: carton.factoryName/factoryDispatchNumber are confidential
+// factory/supplier provenance and are null (not rendered — no stray
+// separators or placeholder text) whenever the source record omitted them.
+// Exported so the redaction can be asserted directly against the string the
+// PDF prints, rather than only parsing the rendered PDF binary.
+export function cartonHeading(carton: ErvePackingListDetailCartonRow): string {
+  const parts = [`Carton ${carton.cartonNumber}`];
+  if (carton.factoryName) parts.push(carton.factoryName);
+  parts.push(carton.saleOrderNumber);
+  const segments = [parts.join(' — ')];
+  if (carton.factoryDispatchNumber) segments.push(`(${carton.factoryDispatchNumber})`);
+  if (carton.weight) segments.push(`— ${carton.weight}`);
+  return segments.join(' ');
+}
+
 function CartonBlock({ carton }: { carton: ErvePackingListDetailCartonRow }) {
   return (
     <View style={styles.cartonBlock}>
-      <Text style={styles.cartonHeading}>
-        Carton {carton.cartonNumber} — {carton.factoryName} — {carton.saleOrderNumber} ({carton.factoryDispatchNumber})
-        {carton.weight ? ` — ${carton.weight}` : ''}
-      </Text>
+      <Text style={styles.cartonHeading}>{cartonHeading(carton)}</Text>
       {carton.packageDetails ? <Text style={styles.cartonMeta}>{carton.packageDetails}</Text> : null}
       <PdfTable columns={cartonLineColumns} rows={carton.lines} rowKey={(row) => row.saleOrderLineId} />
     </View>

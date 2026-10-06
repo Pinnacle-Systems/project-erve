@@ -1,5 +1,5 @@
 import { createId } from '@erve/shared';
-import { canMutateErveDispatch, canViewErveDispatch, canViewErvePackingList } from '@erve/shared';
+import { canMutateErveDispatch, canViewErveDispatch, canViewErveFactoryProvenance, canViewErvePackingList } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -296,14 +296,22 @@ const packingListInclude = {
 
 type PackingListRecord = Prisma.ErvePackingListGetPayload<{ include: typeof packingListInclude }>;
 
-function toPackingListCartonView(carton: PackingListRecord['cartons'][number]) {
+// DEMO-020: factory/factoryDispatchId/factoryDispatchNumber are confidential
+// factory/supplier provenance — included only for an actor authorized by
+// canViewErveFactoryProvenance, and OMITTED (not nulled) for anyone else, so
+// a redacted response never carries the key at all.
+function toPackingListCartonView(carton: PackingListRecord['cartons'][number], includeProvenance: boolean) {
   const totalQuantity = carton.lines.reduce((sum, line) => sum + line.quantity, 0);
   return {
     id: carton.id,
     cartonNumber: carton.cartonNumber,
-    factory: carton.factoryDispatch.factory,
-    factoryDispatchId: carton.factoryDispatch.id,
-    factoryDispatchNumber: carton.factoryDispatch.factoryDispatchNumber,
+    ...(includeProvenance
+      ? {
+          factory: carton.factoryDispatch.factory,
+          factoryDispatchId: carton.factoryDispatch.id,
+          factoryDispatchNumber: carton.factoryDispatch.factoryDispatchNumber,
+        }
+      : {}),
     saleOrder: carton.factoryDispatch.saleOrder,
     packageDetails: carton.packageDetails,
     // DEMO-018: the underlying FactoryPackingCarton column was renamed
@@ -376,7 +384,10 @@ function destinationSnapshotOf(record: PackingListRecord) {
   };
 }
 
-function toPackingListSummary(record: PackingListRecord) {
+// DEMO-020: sourceFactories is confidential factory/supplier provenance —
+// included only when includeProvenance is true (see canViewErveFactoryProvenance),
+// and OMITTED (not nulled/emptied) otherwise.
+export function toPackingListSummary(record: PackingListRecord, includeProvenance: boolean) {
   return {
     id: record.id,
     ervePackingListNumber: record.ervePackingListNumber,
@@ -388,18 +399,18 @@ function toPackingListSummary(record: PackingListRecord) {
     createdAt: record.createdAt.toISOString(),
     cartonCount: record.cartons.length,
     totalQuantity: totalQuantityOf(record),
-    sourceFactories: sourceFactoriesOf(record),
+    ...(includeProvenance ? { sourceFactories: sourceFactoriesOf(record) } : {}),
     sourceDispatchOrders: sourceDispatchOrdersOf(record),
     dispatch: record.dispatch,
   };
 }
 
-function toPackingListDetail(record: PackingListRecord) {
+export function toPackingListDetail(record: PackingListRecord, includeProvenance: boolean) {
   return {
-    ...toPackingListSummary(record),
+    ...toPackingListSummary(record, includeProvenance),
     finalizedBy: record.finalizedBy,
     finalizedAt: record.finalizedAt?.toISOString() ?? null,
-    cartons: record.cartons.map(toPackingListCartonView),
+    cartons: record.cartons.map((carton) => toPackingListCartonView(carton, includeProvenance)),
     styleSizeSummary: toStyleSizeSummary(record),
   };
 }
@@ -412,7 +423,7 @@ async function loadPackingList(id: string): Promise<PackingListRecord> {
 
 export async function getErvePackingListDetail(actor: CurrentUser, id: string) {
   assertPackingListViewAccess(actor);
-  return toPackingListDetail(await loadPackingList(id));
+  return toPackingListDetail(await loadPackingList(id), canViewErveFactoryProvenance(actor));
 }
 
 export async function getErvePackingListList(
@@ -430,8 +441,9 @@ export async function getErvePackingListList(
   });
   const hasMore = records.length > filters.limit;
   const page = hasMore ? records.slice(0, filters.limit) : records;
+  const includeProvenance = canViewErveFactoryProvenance(actor);
   return {
-    items: page.map(toPackingListSummary),
+    items: page.map((record) => toPackingListSummary(record, includeProvenance)),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }

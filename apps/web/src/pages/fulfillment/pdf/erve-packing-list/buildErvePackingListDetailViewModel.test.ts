@@ -128,4 +128,34 @@ describe('buildErvePackingListDetailViewModel', () => {
     expect(serialized).not.toContain('internalId');
     expect(serialized).not.toContain('auditInternal');
   });
+
+  // DEMO-020: sourceFactories/carton.factory*/factoryDispatch* are
+  // confidential factory/supplier provenance, omitted entirely (not nulled)
+  // by the API for any role outside ERVE_PACKING_LIST_PROVENANCE_ROLES. This
+  // page's download/print are only ever reachable by that same authorized
+  // role set today, so there is no real request that omits these fields yet
+  // — but if the input ever lacks them, the PDF view model (and therefore
+  // the printed/downloaded document, which is built purely from this model)
+  // must not surface them anyway.
+  it('omits Source Factories and every carton factory/Factory-Packing-List field when the source record lacks provenance', () => {
+    const full = makePackingList();
+    const { sourceFactories: _sourceFactories, ...withoutSourceFactories } = full;
+    const packingList: ErvePackingListDetail = {
+      ...withoutSourceFactories,
+      cartons: full.cartons.map(({ factory: _factory, factoryDispatchId: _factoryDispatchId, factoryDispatchNumber: _factoryDispatchNumber, ...carton }) => carton),
+    };
+
+    const vm = buildErvePackingListDetailViewModel(packingList, { generatedAt: '2026-07-01T10:00:00Z' });
+
+    expect(vm.identityItems.find((i) => i.label === 'Source Factories')).toBeUndefined();
+    expect(vm.cartons[0]?.factoryName).toBeNull();
+    expect(vm.cartons[0]?.factoryDispatchNumber).toBeNull();
+    const serialized = JSON.stringify(vm);
+    expect(serialized).not.toContain('Acme Factory');
+    expect(serialized).not.toContain('FD/26-27/0001');
+
+    // Non-confidential fields are unaffected.
+    expect(vm.identityItems.find((i) => i.label === 'Source Dispatch Orders')?.value).toBe('EISO/26-27/0001');
+    expect(vm.cartons[0]?.cartonNumber).toBe('CTN-001');
+  });
 });

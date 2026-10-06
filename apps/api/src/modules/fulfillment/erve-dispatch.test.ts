@@ -355,6 +355,28 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
       .send({ cartonIds: [dispatch.cartonId] })
       .expect(403);
   });
+
+  // DEMO-020: confirms the route/middleware boundary a DISTRIBUTOR hits
+  // today — it never reaches the DTO-building code at all, so this is
+  // necessary but not sufficient; see erve-dispatch.provenance.test.ts for
+  // the DTO-level redaction test that would catch a regression even if
+  // ERVE_PACKING_LIST_VIEW_ROLES were ever widened.
+  it('forbids DISTRIBUTOR and ACCOUNTANT from viewing the Erve Packing List list and detail endpoints', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
+    const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
+    const created = await request(app)
+      .post('/erve-packing-lists')
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
+      .send({ cartonIds: [dispatch.cartonId] })
+      .expect(201);
+
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    for (const token of [fixture.distributorToken, accountantToken]) {
+      await request(app).get('/erve-packing-lists').set('Authorization', `Bearer ${token}`).expect(403);
+      await request(app).get(`/erve-packing-lists/${created.body.data.id}`).set('Authorization', `Bearer ${token}`).expect(403);
+    }
+  });
 });
 
 describe('Erve Packing List — lifecycle (Phase 6)', () => {

@@ -276,6 +276,28 @@ export function canViewErvePackingList(user: RoleHolder): boolean {
   return hasAnyRole(user, ERVE_PACKING_LIST_VIEW_ROLES);
 }
 
+/**
+ * Roles authorized to see factory/supplier provenance on an Erve Packing
+ * List — its "Source Factories" summary and each carton's originating
+ * Factory/Factory Dispatch (DEMO-020). Deliberately a SEPARATE,
+ * explicitly-named list from ERVE_PACKING_LIST_VIEW_ROLES, even though it
+ * holds the same roles today: ERVE_PACKING_LIST_VIEW_ROLES already excludes
+ * DISTRIBUTOR, so this check is unreachable by an unauthorized role through
+ * the route gate alone. It exists as a second, independent lock on the DTO
+ * itself — if ERVE_PACKING_LIST_VIEW_ROLES is ever widened for an unrelated
+ * reason (e.g. letting DISTRIBUTOR see packing/dispatch status), factory and
+ * supplier identity must be widened on purpose, not swept along by accident.
+ */
+export const ERVE_PACKING_LIST_PROVENANCE_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+] as const satisfies readonly Role[];
+
+export function canViewErveFactoryProvenance(user: RoleHolder): boolean {
+  return hasAnyRole(user, ERVE_PACKING_LIST_PROVENANCE_ROLES);
+}
+
 /** Roles that may view Erve Packing Lists / Erve Dispatch history (row-level Sale Order/Distributor scoping still applies). */
 export const ERVE_DISPATCH_VIEW_ROLES = [
   'ADMIN',

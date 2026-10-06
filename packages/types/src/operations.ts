@@ -515,13 +515,18 @@ export interface EligibleErveCartonView {
   lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>;
 }
 
-/** A carton consolidated into one Erve Packing List — the physical authority for the Consolidated Packing List (Phase 6 plan §7/§8). */
+/**
+ * A carton consolidated into one Erve Packing List — the physical authority for the Consolidated
+ * Packing List (Phase 6 plan §7/§8). factory/factoryDispatchId/factoryDispatchNumber are confidential
+ * factory/supplier provenance (DEMO-020) and are omitted entirely — not nulled — from any response
+ * built for a role outside ERVE_PACKING_LIST_PROVENANCE_ROLES.
+ */
 export interface ErvePackingListCartonView {
   id: string;
   cartonNumber: string;
-  factory: { id: string; code: string; name: string };
-  factoryDispatchId: string;
-  factoryDispatchNumber: string;
+  factory?: { id: string; code: string; name: string };
+  factoryDispatchId?: string;
+  factoryDispatchNumber?: string;
   saleOrder: { id: string; saleOrderNumber: string };
   packageDetails: string | null;
   weight: string | null;
@@ -567,7 +572,8 @@ export interface ErvePackingListSummary {
   createdAt: string;
   cartonCount: number;
   totalQuantity: number;
-  sourceFactories: Array<{ id: string; code: string; name: string }>;
+  /** Confidential factory/supplier provenance (DEMO-020) — omitted entirely for a role outside ERVE_PACKING_LIST_PROVENANCE_ROLES. */
+  sourceFactories?: Array<{ id: string; code: string; name: string }>;
   sourceDispatchOrders: Array<{ id: string; saleOrderNumber: string }>;
   dispatch: { id: string; erveDispatchNumber: string; status: ErveDispatchStatus } | null;
 }

@@ -60,4 +60,16 @@ describe('ErvePackingListListDocument', () => {
     ]);
     expect(blob.size).toBeGreaterThan(0);
   }, 10000);
+
+  // DEMO-020: sourceFactoryCount is confidential factory/supplier
+  // provenance. buildErvePackingListListViewModel.test.ts proves the count
+  // itself comes through as null when the source API response omitted it;
+  // this proves the PDF still renders cleanly (and, by the hasProvenance
+  // check in this component, drops the whole "Factories" column rather than
+  // printing a blank/null cell) in that case.
+  it('renders without throwing when every row lacks factory/supplier provenance', async () => {
+    const rows = [makeRow({ sourceFactoryCount: null }), makeRow({ id: 'epl-2', sourceFactoryCount: null })];
+    const blob = await pdf(<ErvePackingListListDocument viewModel={makeViewModel(rows)} />).toBlob();
+    expect(blob.size).toBeGreaterThan(0);
+  });
 });

@@ -5,13 +5,26 @@ import { PdfMetaSection } from '../../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfTable, type PdfTableColumn } from '../../../../lib/pdf/core/PdfTable.js';
 import type { ErvePackingListListPdfRow, ErvePackingListListPdfViewModel } from './buildErvePackingListListViewModel.js';
 
-const columns: PdfTableColumn<ErvePackingListListPdfRow>[] = [
+const baseColumns: PdfTableColumn<ErvePackingListListPdfRow>[] = [
   { key: 'ervePackingListNumber', header: 'EIPL Number', width: '12%', value: (row) => row.ervePackingListNumber },
   { key: 'distributorName', header: 'Distributor', width: '16%', value: (row) => row.distributorName },
   { key: 'destinationDisplay', header: 'Destination', width: '16%', value: (row) => row.destinationDisplay },
   { key: 'cartonCount', header: 'Cartons', width: '8%', align: 'right', value: (row) => row.cartonCount },
   { key: 'totalQuantity', header: 'Total Pieces', width: '10%', align: 'right', value: (row) => row.totalQuantity },
-  { key: 'sourceFactoryCount', header: 'Factories', width: '8%', align: 'right', value: (row) => row.sourceFactoryCount },
+];
+
+// DEMO-020: sourceFactoryCount is confidential factory/supplier provenance —
+// null (and the whole column omitted, not shown as a blank/dash) when the
+// source record omitted it.
+const factoryProvenanceColumn: PdfTableColumn<ErvePackingListListPdfRow> = {
+  key: 'sourceFactoryCount',
+  header: 'Factories',
+  width: '8%',
+  align: 'right',
+  value: (row) => row.sourceFactoryCount ?? '',
+};
+
+const trailingColumns: PdfTableColumn<ErvePackingListListPdfRow>[] = [
   { key: 'sourceDispatchOrderCount', header: 'Dispatch Orders', width: '10%', align: 'right', value: (row) => row.sourceDispatchOrderCount },
   { key: 'statusLabel', header: 'Status', width: '9%', value: (row) => row.statusLabel },
   { key: 'createdAt', header: 'Created', width: '11%', value: (row) => row.createdAt },
@@ -23,6 +36,8 @@ export interface ErvePackingListListDocumentProps {
 
 /** Landscape — Distributor/Destination text plus Factory/Dispatch Order consolidation counts would cramp badly in Portrait. */
 export function ErvePackingListListDocument({ viewModel }: ErvePackingListListDocumentProps) {
+  const hasProvenance = viewModel.rows.some((row) => row.sourceFactoryCount !== null);
+  const columns = [...baseColumns, ...(hasProvenance ? [factoryProvenanceColumn] : []), ...trailingColumns];
   return (
     <PdfDocument orientation="landscape">
       <PdfHeader title={viewModel.title} subtitle={viewModel.subtitle} />

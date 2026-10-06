@@ -52,6 +52,12 @@ export function ErvePackingListDetailPage() {
   });
   const packingList = query.data;
   const isOpen = packingList?.status === 'OPEN';
+  // DEMO-020: sourceFactories/carton.factory are confidential factory/supplier
+  // provenance, omitted entirely from the API response for any role outside
+  // ERVE_PACKING_LIST_PROVENANCE_ROLES — this page is only ever route-gated to
+  // that same role set today, so hasProvenance is always true in practice,
+  // but the rendering below must not assume the key exists.
+  const hasProvenance = packingList?.sourceFactories !== undefined;
 
   const eligibleQuery = useQuery({
     enabled: isOpen && canMutate,
@@ -183,7 +189,9 @@ export function ErvePackingListDetailPage() {
             <DescriptionList.Item label="Created At" value={new Date(packingList.createdAt).toLocaleString()} />
             <DescriptionList.Item label="Cartons" value={packingList.cartonCount.toLocaleString()} />
             <DescriptionList.Item label="Total Quantity" value={packingList.totalQuantity.toLocaleString()} />
-            <DescriptionList.Item label="Source Factories" value={packingList.sourceFactories.map((f) => f.name).join(', ') || '—'} />
+            {packingList.sourceFactories && (
+              <DescriptionList.Item label="Source Factories" value={packingList.sourceFactories.map((f) => f.name).join(', ') || '—'} />
+            )}
             <DescriptionList.Item label="Source Dispatch Orders" value={packingList.sourceDispatchOrders.map((s) => s.saleOrderNumber).join(', ') || '—'} />
           </DescriptionList>
         </Panel>
@@ -195,9 +203,13 @@ export function ErvePackingListDetailPage() {
             emptyState={<EmptyState title="No cartons selected yet" />}
             columns={[
               { key: 'carton', header: 'Carton #', accessor: 'cartonNumber' },
-              { key: 'factory', header: 'Factory', render: (r) => r.factory.name },
+              ...(hasProvenance
+                ? [
+                    { key: 'factory', header: 'Factory', render: (r: ErvePackingListDetail['cartons'][number]) => r.factory?.name ?? '—' },
+                    { key: 'factoryDispatch', header: 'Factory Packing List', accessor: 'factoryDispatchNumber' as const },
+                  ]
+                : []),
               { key: 'dispatchOrder', header: 'Dispatch Order', render: (r) => r.saleOrder.saleOrderNumber },
-              { key: 'factoryDispatch', header: 'Factory Packing List', accessor: 'factoryDispatchNumber' },
               { key: 'lines', header: 'Contents', render: (r) => r.lines.map((l) => `${l.styleNumber}/${l.sizeCode}: ${l.quantity}`).join(', ') },
               { key: 'qty', header: 'Total Qty', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },
               ...(isOpen && canMutate
