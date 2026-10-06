@@ -436,49 +436,71 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                     )}
                     {activity.status === 'FAILED' &&
                       activity.eligible &&
-                      activity.qualityForm.executionScope === 'SIZE' &&
+                      (activity.qualityForm.executionScope === 'SIZE' ||
+                        (activity.qualityForm.executionScope === 'JOB_ORDER' &&
+                          activity.executionMode === 'IN_PROCESS' &&
+                          activity.executionMultiplicity !== 'BATCHED')) &&
                       user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') && (
-                        <Panel variant="subtle" padding="sm" title="New PP Sample required">
+                        <Panel
+                          variant="subtle"
+                          padding="sm"
+                          title={
+                            activity.qualityForm.executionScope === 'SIZE'
+                              ? 'New PP Sample required'
+                              : 'Reinspection required'
+                          }
+                        >
                           <div className="flex flex-wrap items-end gap-3" onKeyDown={createEnterToNextHandler()}>
-                            <SelectField
-                              label="Sample Size"
-                              value={qualityStartContexts[activity.processFlowVersionStageId]?.sizeId || 'NONE'}
-                              onValueChange={(value) =>
-                                setQualityStartContexts((current) => ({
-                                  ...current,
-                                  [activity.processFlowVersionStageId]: {
-                                    sizeId: value === 'NONE' ? '' : value,
-                                    quantity: current[activity.processFlowVersionStageId]?.quantity ?? '',
-                                  },
-                                }))
-                              }
-                            >
-                              <SelectItem value="NONE">Select one size</SelectItem>
-                              {flatSizes.map((size) => (
-                                <SelectItem key={size.id} value={size.id}>
-                                  {size.style} — {size.sizeLabel}
-                                </SelectItem>
-                              ))}
-                            </SelectField>
-                            <TextField
-                              label="Sample Quantity"
-                              type="number"
-                              min="1"
-                              width="xs"
-                              value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
-                              onChange={(event) =>
-                                setQualityStartContexts((current) => ({
-                                  ...current,
-                                  [activity.processFlowVersionStageId]: {
-                                    sizeId: current[activity.processFlowVersionStageId]?.sizeId ?? '',
-                                    quantity: event.target.value,
-                                  },
-                                }))
-                              }
-                            />
+                            {activity.qualityForm.executionScope === 'SIZE' && (
+                              <>
+                                <SelectField
+                                  label="Sample Size"
+                                  value={qualityStartContexts[activity.processFlowVersionStageId]?.sizeId || 'NONE'}
+                                  onValueChange={(value) =>
+                                    setQualityStartContexts((current) => ({
+                                      ...current,
+                                      [activity.processFlowVersionStageId]: {
+                                        sizeId: value === 'NONE' ? '' : value,
+                                        quantity: current[activity.processFlowVersionStageId]?.quantity ?? '',
+                                      },
+                                    }))
+                                  }
+                                >
+                                  <SelectItem value="NONE">Select one size</SelectItem>
+                                  {flatSizes.map((size) => (
+                                    <SelectItem key={size.id} value={size.id}>
+                                      {size.style} — {size.sizeLabel}
+                                    </SelectItem>
+                                  ))}
+                                </SelectField>
+                                <TextField
+                                  label="Sample Quantity"
+                                  type="number"
+                                  min="1"
+                                  width="xs"
+                                  value={qualityStartContexts[activity.processFlowVersionStageId]?.quantity ?? ''}
+                                  onChange={(event) =>
+                                    setQualityStartContexts((current) => ({
+                                      ...current,
+                                      [activity.processFlowVersionStageId]: {
+                                        sizeId: current[activity.processFlowVersionStageId]?.sizeId ?? '',
+                                        quantity: event.target.value,
+                                      },
+                                    }))
+                                  }
+                                />
+                              </>
+                            )}
                             <Button
                               loading={qualityStartMutation.isPending}
                               onClick={() => {
+                                if (activity.qualityForm.executionScope !== 'SIZE') {
+                                  qualityStartMutation.mutate({
+                                    activityId: activity.processFlowVersionStageId,
+                                    body: {},
+                                  });
+                                  return;
+                                }
                                 const context = qualityStartContexts[activity.processFlowVersionStageId];
                                 qualityStartMutation.mutate({
                                   activityId: activity.processFlowVersionStageId,
@@ -489,7 +511,9 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                                 });
                               }}
                             >
-                              Start New PP Sample
+                              {activity.qualityForm.executionScope === 'SIZE'
+                                ? 'Start New PP Sample'
+                                : 'Start New Inspection'}
                             </Button>
                           </div>
                         </Panel>

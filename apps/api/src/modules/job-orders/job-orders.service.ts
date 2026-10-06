@@ -185,6 +185,30 @@ export function isProcessFlowFinalActivity(activity: {
   );
 }
 
+// The consolidated Inline inspection pattern (see
+// process-flow-runtime-capability.ts's "Consolidated Inline inspection"
+// branch) — the counterpart of isProcessFlowFinalActivity above for the
+// SINGLE, non-batched in-process inspection tied to one production activity
+// (e.g. Sewing).
+export function isInlineInspectionActivity(activity: {
+  status: string;
+  activityType: string;
+  qualityExecutionMode: string | null;
+  executionMultiplicity: string | null;
+  qualityAvailabilityPolicy: string | null;
+  qualityFormVersion: { activityType: string; executionScope: string } | null;
+}) {
+  return (
+    activity.status === 'ACTIVE' &&
+    activity.activityType === 'QUALITY' &&
+    activity.qualityExecutionMode === 'IN_PROCESS' &&
+    activity.executionMultiplicity === 'SINGLE' &&
+    activity.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' &&
+    activity.qualityFormVersion?.activityType === 'INSPECTION' &&
+    activity.qualityFormVersion.executionScope === 'JOB_ORDER'
+  );
+}
+
 function isPreparedQuantityEntryAvailable(
   associated: { status: string } | undefined,
 ): boolean {
@@ -451,7 +475,8 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
         status: execution
           ? execution.status === 'DRAFT'
             ? ('IN_PROGRESS' as const)
-            : activity.gateSatisfactionRequirement === 'OUTCOME_PASS' &&
+            : (activity.gateSatisfactionRequirement === 'OUTCOME_PASS' ||
+                  isInlineInspectionActivity(activity)) &&
                 execution.outcome !== 'PASS'
               ? ('FAILED' as const)
               : activity.executionMultiplicity === 'BATCHED' && !finalQaComplete
@@ -2521,7 +2546,7 @@ export async function completeProductionStage(
       lines: { select: { orderedQuantityTotal: true } },
       processFlowVersion: { include: { stages: true } },
       qualityExecutions: {
-        select: { processFlowActivityId: true, status: true, outcome: true },
+        select: { processFlowActivityId: true, status: true, outcome: true, attemptNumber: true },
       },
     },
   });
@@ -2558,6 +2583,33 @@ export async function completeProductionStage(
     throw HttpError.badRequest('Production stages must be completed in sequence');
   if (nextStage.status !== 'IN_PROGRESS')
     throw HttpError.badRequest('Production stage must be started before it can be completed');
+  // An in-process Inline Inspection (the "WHILE_ASSOCIATED_ACTIVITY_ACTIVE" /
+  // SINGLE pattern — see process-flow-runtime-capability.ts) does not gate
+  // this production activity starting, but it must have an effective
+  // (latest, finalized) PASS before this production activity can complete.
+  // A FAIL does not roll back or block the activity continuing, only its
+  // completion; a later finalized PASS from a reinspection attempt lifts
+  // this gate.
+  const inlineInspectionActivity = jobOrder.processFlowVersion.stages.find(
+    (stage) =>
+      stage.status === 'ACTIVE' &&
+      stage.activityType === 'QUALITY' &&
+      stage.qualityExecutionMode === 'IN_PROCESS' &&
+      stage.executionMultiplicity === 'SINGLE' &&
+      stage.qualityAvailabilityPolicy === 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' &&
+      stage.associatedProductionActivityId === nextStage.processFlowVersionStageId,
+  );
+  if (inlineInspectionActivity) {
+    const latestInlineExecution = jobOrder.qualityExecutions
+      .filter((execution) => execution.processFlowActivityId === inlineInspectionActivity.id)
+      .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
+    if (
+      !latestInlineExecution ||
+      latestInlineExecution.status !== 'FINALIZED' ||
+      latestInlineExecution.outcome !== 'PASS'
+    )
+      throw HttpError.conflict('Sewing cannot be completed until Inline QA has passed.');
+  }
   const isFinalStage = nextStage.id === blockingStages[blockingStages.length - 1]?.id;
   const now = new Date();
 
