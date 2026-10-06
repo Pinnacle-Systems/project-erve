@@ -16,7 +16,11 @@ export interface FactoryPackingListCartonLineRow {
 export interface FactoryPackingListCartonRow {
   id: string;
   cartonNumber: string;
-  weight: string | null;
+  // DEMO-018: renamed from `weight` (source: carton.netWeight) — still
+  // formatted as "X kg". Scope guard: grossWeight/dimensions are captured
+  // and finalize-gated but deliberately NOT yet printed on this PDF — see
+  // the DEMO-018 PR description's forward pointer for DEMO-019 carton labels.
+  netWeight: string | null;
   packageDetails: string | null;
   auditStateLabel: string;
   destinationMismatch: boolean;
@@ -63,7 +67,7 @@ function buildCartonRow(carton: FactoryPackingCartonView): FactoryPackingListCar
   return {
     id: carton.id,
     cartonNumber: carton.cartonNumber,
-    weight: carton.weight ? `${carton.weight} kg` : null,
+    netWeight: carton.netWeight ? `${carton.netWeight} kg` : null,
     packageDetails: carton.packageDetails,
     auditStateLabel: PACKING_AUDIT_STATE_LABELS[carton.auditState],
     destinationMismatch: carton.destinationMismatch,

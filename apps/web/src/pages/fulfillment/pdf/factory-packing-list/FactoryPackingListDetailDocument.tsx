@@ -43,7 +43,7 @@ function CartonBlock({ carton }: { carton: FactoryPackingListCartonRow }) {
     <View style={styles.cartonBlock}>
       <Text style={styles.cartonHeading}>
         Carton {carton.cartonNumber}
-        {carton.weight ? ` — ${carton.weight}` : ''} — {carton.auditStateLabel}
+        {carton.netWeight ? ` — Net Weight ${carton.netWeight}` : ''} — {carton.auditStateLabel}
         {carton.destinationMismatch ? ' — Destination mismatch (repack required)' : ''}
       </Text>
       {carton.packageDetails ? <Text style={styles.cartonMeta}>{carton.packageDetails}</Text> : null}
