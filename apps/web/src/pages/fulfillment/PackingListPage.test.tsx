@@ -78,7 +78,9 @@ function buildCarton(overrides: Partial<FactoryPackingCartonView> = {}): Factory
     cartonNumber: 'C1',
     destinationId: 'dest-1',
     packageDetails: '1 poly bag per unit',
-    weight: '12.5',
+    netWeight: '12.5',
+    grossWeight: '13.2',
+    dimensions: '60 x 40 x 35 cm',
     version: 1,
     totalQuantity: 10,
     destinationMismatch: false,
@@ -176,7 +178,7 @@ describe('PackingListPage carton edit (Phase 4)', () => {
     expect(buttonByText('Edit')).not.toBeNull();
   });
 
-  it('hydrates the edit form from the existing carton (destination, contents, package details, weight)', async () => {
+  it('hydrates the edit form from the existing carton (destination, contents, package details, net/gross weight, dimensions)', async () => {
     await renderPage(buildPackingList());
     buttonByText('Edit')!.click();
     await flush();
@@ -187,10 +189,18 @@ describe('PackingListPage carton edit (Phase 4)', () => {
       (i) => (i as HTMLInputElement).value === '1 poly bag per unit',
     );
     expect(packageInput).toBeTruthy();
-    const weightInput = Array.from(container.querySelectorAll('input')).find(
+    const netWeightInput = Array.from(container.querySelectorAll('input')).find(
       (i) => (i as HTMLInputElement).value === '12.5',
     );
-    expect(weightInput).toBeTruthy();
+    expect(netWeightInput).toBeTruthy();
+    const grossWeightInput = Array.from(container.querySelectorAll('input')).find(
+      (i) => (i as HTMLInputElement).value === '13.2',
+    );
+    expect(grossWeightInput).toBeTruthy();
+    const dimensionsInput = Array.from(container.querySelectorAll('input')).find(
+      (i) => (i as HTMLInputElement).value === '60 x 40 x 35 cm',
+    );
+    expect(dimensionsInput).toBeTruthy();
     const qtyInput = container.querySelector(
       'input[aria-label="Quantity for ST-001 Medium"]',
     ) as HTMLInputElement | null;
@@ -240,7 +250,7 @@ describe('PackingListPage carton edit (Phase 4)', () => {
         {
           ...buildPackingList().destinations[0]!,
           cartons: [
-            buildCarton({ version: 2, weight: '15', auditState: 'NEEDS_REINSPECTION', auditHistory: inspectedCarton.auditHistory }),
+            buildCarton({ version: 2, netWeight: '15', auditState: 'NEEDS_REINSPECTION', auditHistory: inspectedCarton.auditHistory }),
           ],
         },
       ],
@@ -325,6 +335,89 @@ describe('PackingListPage carton edit (Phase 4)', () => {
     expect(html).not.toMatch(/stockAllocation/i);
     expect(html).not.toMatch(/qaReleaseLine/i);
     expect(html).not.toMatch(/factoryDispatchLineId/i);
+  });
+});
+
+// DEMO-018: carton Net Weight / Gross Weight / Dimensions are captured but
+// never required to save packing progress; they are only enforced at
+// Factory Packing List finalization, where the API returns a dedicated
+// cartonsMissingPackingMetadata blocker this page must render.
+describe('PackingListPage carton packing metadata (DEMO-018)', () => {
+  it('renders Net Weight, Gross Weight and Dimensions fields on the Add Carton form, all optional', async () => {
+    await renderPage(buildPackingList());
+    buttonByText('Add Carton')!.click();
+    await flush();
+
+    expect(triggerByLabel('Net Weight, kg (optional)')).toBeTruthy();
+    expect(triggerByLabel('Gross Weight, kg (optional)')).toBeTruthy();
+    expect(triggerByLabel('Dimensions (optional)')).toBeTruthy();
+  });
+
+  it('does not block Add Carton when Net Weight/Gross Weight/Dimensions are left blank', async () => {
+    // The default fixture's line is already fully packed (packedQuantity ===
+    // requiredQuantity), so the Add Carton form renders no quantity input
+    // for it at all ("remaining" <= 0). Give the line open capacity so the
+    // quantity input actually renders.
+    await renderPage(
+      buildPackingList({
+        destinations: [
+          {
+            ...buildPackingList().destinations[0]!,
+            lines: [{ ...buildPackingList().destinations[0]!.lines[0]!, packedQuantity: 0 }],
+          },
+        ],
+      }),
+    );
+    buttonByText('Add Carton')!.click();
+    await flush();
+
+    const cartonNumberInput = triggerByLabel('Carton Number') as unknown as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(cartonNumberInput, 'C2');
+      cartonNumberInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const qtyInput = container.querySelector('input[aria-label="Quantity for ST-001 Medium"]') as HTMLInputElement;
+    await act(async () => {
+      setter.call(qtyInput, '1');
+      qtyInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(buttonByText('Add Carton')!.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('renders the cartonsMissingPackingMetadata finalize error in "CTN-001: Net Weight, Dimensions" style', async () => {
+    await renderPage(
+      buildPackingList({
+        destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'INSPECTED' })] }],
+      }),
+    );
+
+    vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        data: {
+          error: {
+            message: 'Cannot finalize: Factory Dispatch has outstanding packing/audit issues',
+            details: {
+              cartonsNotAudited: [],
+              cartonsNeedingReinspection: [],
+              emptyCartons: [],
+              destinationMismatchCartons: [],
+              underPackedLines: [],
+              overPackedLines: [],
+              internalPackingMismatch: [],
+              cartonsMissingPackingMetadata: [{ cartonNumber: 'CTN-001', missingFields: ['netWeight', 'dimensions'] }],
+            },
+          },
+        },
+      },
+    });
+
+    buttonByText('Finalize (Ready for Erve)')!.click();
+    await flush();
+
+    expect(content()).toContain('CTN-001: Net Weight, Dimensions');
   });
 });
 

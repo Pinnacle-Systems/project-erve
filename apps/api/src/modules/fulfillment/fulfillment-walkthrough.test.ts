@@ -39,7 +39,14 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
     const carton1 = await request(app)
       .post(`/sale-orders/${fixture.saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ cartonNumber: 'C1', destinationId, lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 40 }] })
+      .send({
+        cartonNumber: 'C1',
+        destinationId,
+        netWeight: 5,
+        grossWeight: 6,
+        dimensions: '40 x 30 x 20 cm',
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 40 }],
+      })
       .expect(200);
     const factoryDispatchId = carton1.body.data.factoryDispatch.id as string;
     const carton1Id = carton1.body.data.destinations[0].cartons[0].id as string;
@@ -72,7 +79,14 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
     const carton2 = await request(app)
       .post(`/sale-orders/${fixture.saleOrder.id}/packing-list/cartons`)
       .set('Authorization', `Bearer ${factoryToken}`)
-      .send({ cartonNumber: 'C2', destinationId, lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 60 }] })
+      .send({
+        cartonNumber: 'C2',
+        destinationId,
+        netWeight: 7,
+        grossWeight: 8,
+        dimensions: '50 x 35 x 25 cm',
+        lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 60 }],
+      })
       .expect(200);
     expect(carton2.body.data.factoryDispatch.id).toBe(factoryDispatchId); // one packing root, reused
     expect(carton2.body.data.destinations[0].lines[0].packedQuantity).toBe(100);

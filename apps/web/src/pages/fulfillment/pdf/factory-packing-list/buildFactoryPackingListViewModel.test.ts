@@ -8,7 +8,9 @@ function makeCarton(overrides: Partial<FactoryPackingCartonView> = {}): FactoryP
     cartonNumber: 'C1',
     destinationId: 'dest-1',
     packageDetails: '1 poly bag per unit',
-    weight: '12.5',
+    netWeight: '12.5',
+    grossWeight: '13.2',
+    dimensions: '60 x 40 x 35 cm',
     version: 1,
     totalQuantity: 10,
     destinationMismatch: false,
@@ -112,7 +114,7 @@ describe('buildFactoryPackingListViewModel', () => {
     expect(printedLine?.packedQuantity).not.toBe(FACTORY_DISPATCH_LINE_QUANTITY);
   });
 
-  it('maps carton weight, package details, audit state label and destination-mismatch flag', () => {
+  it('maps carton net weight, package details, audit state label and destination-mismatch flag', () => {
     const vm = buildFactoryPackingListViewModel(
       makePackingList({
         destinations: [
@@ -123,11 +125,18 @@ describe('buildFactoryPackingListViewModel', () => {
     );
     expect(vm.destinations[0]?.cartons[0]).toMatchObject({
       cartonNumber: 'C1',
-      weight: '12.5 kg',
+      netWeight: '12.5 kg',
       packageDetails: '1 poly bag per unit',
       auditStateLabel: 'Needs Reinspection',
       destinationMismatch: true,
     });
+  });
+
+  it('does not yet print grossWeight or dimensions on the Factory Packing List PDF (DEMO-019 forward pointer)', () => {
+    const vm = buildFactoryPackingListViewModel(makePackingList(), { generatedAt: '2026-09-15T10:00:00Z' });
+    const cartonRow = vm.destinations[0]?.cartons[0] as unknown as Record<string, unknown>;
+    expect(cartonRow).not.toHaveProperty('grossWeight');
+    expect(cartonRow).not.toHaveProperty('dimensions');
   });
 
   it('never invents a PASS/FAIL audit outcome', () => {

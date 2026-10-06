@@ -12,7 +12,7 @@ function makeCarton(overrides: Partial<FactoryPackingListCartonRow> = {}): Facto
   return {
     id: 'carton-1',
     cartonNumber: 'C1',
-    weight: '12.5 kg',
+    netWeight: '12.5 kg',
     packageDetails: '1 poly bag per unit',
     auditStateLabel: 'Not Inspected',
     destinationMismatch: false,

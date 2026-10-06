@@ -160,7 +160,17 @@ export async function packAndFinalize(
   const created = await request(app)
     .post(`/sale-orders/${saleOrderId}/packing-list/cartons`)
     .set('Authorization', `Bearer ${factoryToken}`)
-    .send({ cartonNumber: 'C1', destinationId, lines: [{ saleOrderLineId, quantity }] })
+    .send({
+      cartonNumber: 'C1',
+      destinationId,
+      // DEMO-018: finalize now blocks on missing carton packing metadata —
+      // every caller of this shared "finalize a Factory Dispatch" fixture
+      // needs a complete carton, not just an audited/fully-packed one.
+      netWeight: 5,
+      grossWeight: 6,
+      dimensions: '40 x 30 x 20 cm',
+      lines: [{ saleOrderLineId, quantity }],
+    })
     .expect(200);
   const factoryDispatchId = created.body.data.factoryDispatch.id as string;
   const cartonId = created.body.data.destinations[0].cartons[0].id as string;
