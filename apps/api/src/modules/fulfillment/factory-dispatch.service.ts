@@ -115,7 +115,9 @@ export interface PackingListCartonView {
   cartonNumber: string;
   destinationId: string;
   packageDetails: string | null;
-  weight: string | null;
+  netWeight: string | null;
+  grossWeight: string | null;
+  dimensions: string | null;
   version: number;
   totalQuantity: number;
   destinationMismatch: boolean;
@@ -241,7 +243,9 @@ function toPackingListCartonView(carton: CartonRecord): PackingListCartonView {
     cartonNumber: carton.cartonNumber,
     destinationId: carton.destinationId,
     packageDetails: carton.packageDetails,
-    weight: carton.weight?.toString() ?? null,
+    netWeight: carton.netWeight?.toString() ?? null,
+    grossWeight: carton.grossWeight?.toString() ?? null,
+    dimensions: carton.dimensions,
     version: carton.version,
     totalQuantity: carton.lines.reduce((sum, l) => sum + l.quantity, 0),
     destinationMismatch,
@@ -632,8 +636,20 @@ export interface CreateCartonInput {
   cartonNumber: string;
   destinationId: string;
   packageDetails?: string | null;
-  weight?: number | null;
+  netWeight?: number | null;
+  grossWeight?: number | null;
+  dimensions?: string | null;
   lines: CartonLineInput[];
+}
+
+// DEMO-018: a blank/whitespace-only dimensions value is always normalized to
+// null — never stored as "", "0", "N/A", "-" or similar placeholders — so
+// finalize's blank-check (see finalizeFactoryDispatch) can treat `=== null`
+// as the sole "missing" signal without re-trimming at read time.
+function normalizeDimensions(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function validateCartonLinesShape(lines: CartonLineInput[]): void {
@@ -732,7 +748,9 @@ export async function addFactoryPackingCarton(actor: CurrentUser, saleOrderId: s
         destinationId: input.destinationId,
         cartonNumber: input.cartonNumber,
         packageDetails: input.packageDetails ?? null,
-        weight: input.weight ?? null,
+        netWeight: input.netWeight ?? null,
+        grossWeight: input.grossWeight ?? null,
+        dimensions: normalizeDimensions(input.dimensions),
         createdById: actor.id,
         lines: {
           create: input.lines.map((entry) => ({ id: createId(), saleOrderLineId: entry.saleOrderLineId, quantity: entry.quantity })),
@@ -763,7 +781,9 @@ export interface UpdateCartonInput {
   expectedVersion: number;
   destinationId: string;
   packageDetails?: string | null;
-  weight?: number | null;
+  netWeight?: number | null;
+  grossWeight?: number | null;
+  dimensions?: string | null;
   lines: CartonLineInput[];
 }
 
@@ -777,9 +797,9 @@ function normalizedLineKey(lines: CartonLineInput[]): string {
 // Desired-state carton update. Normalizes and diffs current vs. desired
 // state FIRST — bumps carton.version (invalidating a current Packing Audit)
 // only when something inspection-relevant actually changed (destination,
-// packageDetails, weight, content-line membership/quantities). A no-op/
-// retry PATCH is inert: no version bump, no audit invalidation, no
-// CARTON_UPDATED/CARTON_CONTENT_CHANGED log entry.
+// packageDetails, netWeight, grossWeight, dimensions, content-line
+// membership/quantities). A no-op/retry PATCH is inert: no version bump, no
+// audit invalidation, no CARTON_UPDATED/CARTON_CONTENT_CHANGED log entry.
 export async function updateFactoryPackingCarton(
   actor: CurrentUser,
   factoryDispatchId: string,
@@ -843,18 +863,31 @@ export async function updateFactoryPackingCarton(
       }
     }
 
-    const oldWeight = carton.weight?.toString() ?? null;
-    const newWeight = input.weight != null ? input.weight.toString() : null;
+    const oldNetWeight = carton.netWeight?.toString() ?? null;
+    const newNetWeight = input.netWeight != null ? input.netWeight.toString() : null;
+    const oldGrossWeight = carton.grossWeight?.toString() ?? null;
+    const newGrossWeight = input.grossWeight != null ? input.grossWeight.toString() : null;
+    const oldDimensions = carton.dimensions ?? null;
+    const newDimensions = normalizeDimensions(input.dimensions);
     const oldPackageDetails = carton.packageDetails ?? null;
     const newPackageDetails = input.packageDetails ?? null;
     const destinationChanged = carton.destinationId !== input.destinationId;
     const packageDetailsChanged = oldPackageDetails !== newPackageDetails;
-    const weightChanged = oldWeight !== newWeight;
+    const netWeightChanged = oldNetWeight !== newNetWeight;
+    const grossWeightChanged = oldGrossWeight !== newGrossWeight;
+    const dimensionsChanged = oldDimensions !== newDimensions;
     const oldLineKey = normalizedLineKey(carton.lines.map((l) => ({ saleOrderLineId: l.saleOrderLineId, quantity: l.quantity })));
     const newLineKey = normalizedLineKey(input.lines);
     const contentChanged = oldLineKey !== newLineKey;
 
-    if (!destinationChanged && !packageDetailsChanged && !weightChanged && !contentChanged) {
+    if (
+      !destinationChanged &&
+      !packageDetailsChanged &&
+      !netWeightChanged &&
+      !grossWeightChanged &&
+      !dimensionsChanged &&
+      !contentChanged
+    ) {
       // No-op/retry: leave version, audit, and content untouched.
       return;
     }
@@ -865,7 +898,9 @@ export async function updateFactoryPackingCarton(
       data: {
         destinationId: input.destinationId,
         packageDetails: newPackageDetails,
-        weight: input.weight ?? null,
+        netWeight: input.netWeight ?? null,
+        grossWeight: input.grossWeight ?? null,
+        dimensions: newDimensions,
         version: { increment: 1 },
         lines: { create: input.lines.map((l) => ({ id: createId(), saleOrderLineId: l.saleOrderLineId, quantity: l.quantity })) },
       },
@@ -886,7 +921,9 @@ export async function updateFactoryPackingCarton(
           cartonNumber: carton.cartonNumber,
           destinationChanged,
           packageDetailsChanged,
-          weightChanged,
+          netWeightChanged,
+          grossWeightChanged,
+          dimensionsChanged,
           contentChanged,
         },
       },
@@ -1137,6 +1174,15 @@ export interface FinalizeIssueCarton {
   destinationId: string;
 }
 
+// DEMO-018: per-carton list of which of the three packing-metadata fields
+// are missing (null or whitespace-only) — cartonNumber only (the
+// user-facing identifier), never the internal id, per the resolved ticket
+// decision.
+export interface FinalizeIssueCartonMetadata {
+  cartonNumber: string;
+  missingFields: Array<'netWeight' | 'grossWeight' | 'dimensions'>;
+}
+
 export interface FinalizeBlockers {
   cartonsNotAudited: FinalizeIssueCarton[];
   cartonsNeedingReinspection: FinalizeIssueCarton[];
@@ -1145,6 +1191,7 @@ export interface FinalizeBlockers {
   underPackedLines: FinalizeIssueLine[];
   overPackedLines: FinalizeIssueLine[];
   internalPackingMismatch: FinalizeIssueLine[];
+  cartonsMissingPackingMetadata: FinalizeIssueCartonMetadata[];
 }
 
 export async function finalizeFactoryDispatch(actor: CurrentUser, id: string, input: { expectedVersion: number }) {
@@ -1177,6 +1224,11 @@ export async function finalizeFactoryDispatch(actor: CurrentUser, id: string, in
         lines: { include: { saleOrderLine: { select: { destinationId: true } } } },
         audits: { select: { cartonVersion: true } },
       },
+      // Deterministic ordering (by the user-facing cartonNumber) so every
+      // blocker list — including DEMO-018's cartonsMissingPackingMetadata —
+      // has a stable, testable order instead of relying on incidental
+      // Postgres/insertion order.
+      orderBy: { cartonNumber: 'asc' },
     });
     const activeCartons = cartons.filter((c) => c.retiredAt === null);
 
@@ -1199,10 +1251,25 @@ export async function finalizeFactoryDispatch(actor: CurrentUser, id: string, in
       underPackedLines: [],
       overPackedLines: [],
       internalPackingMismatch: [],
+      cartonsMissingPackingMetadata: [],
     };
 
     for (const carton of activeCartons) {
       const cartonRef = { cartonId: carton.id, cartonNumber: carton.cartonNumber, destinationId: carton.destinationId };
+
+      // DEMO-018: netWeight/grossWeight/dimensions are never required to
+      // create/edit a carton, but every active (non-retired) carton must
+      // have all three before the Factory Packing List can finalize.
+      // Checked independently of the empty/audit/mismatch checks below so a
+      // carton can report every outstanding issue at once.
+      const missingFields: FinalizeIssueCartonMetadata['missingFields'] = [];
+      if (carton.netWeight == null) missingFields.push('netWeight');
+      if (carton.grossWeight == null) missingFields.push('grossWeight');
+      if (carton.dimensions == null || carton.dimensions.trim().length === 0) missingFields.push('dimensions');
+      if (missingFields.length > 0) {
+        blockers.cartonsMissingPackingMetadata.push({ cartonNumber: carton.cartonNumber, missingFields });
+      }
+
       if (carton.lines.length === 0) {
         blockers.emptyCartons.push(cartonRef);
         continue;

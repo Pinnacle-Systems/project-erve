@@ -204,7 +204,11 @@ function toEligibleCartonView(carton: EligibilityCarton) {
       state: carton.destination.state,
     },
     packageDetails: carton.packageDetails,
-    weight: carton.weight?.toString() ?? null,
+    // DEMO-018: the underlying FactoryPackingCarton column was renamed
+    // weight -> netWeight (gaining sibling grossWeight/dimensions fields
+    // scoped to the Factory Packing List only) — this Erve-side view's own
+    // external `weight` contract is unchanged and out of scope here.
+    weight: carton.netWeight?.toString() ?? null,
     totalQuantity,
     lines: carton.lines.map((line) => ({
       saleOrderLineId: line.saleOrderLineId,
@@ -302,7 +306,11 @@ function toPackingListCartonView(carton: PackingListRecord['cartons'][number]) {
     factoryDispatchNumber: carton.factoryDispatch.factoryDispatchNumber,
     saleOrder: carton.factoryDispatch.saleOrder,
     packageDetails: carton.packageDetails,
-    weight: carton.weight?.toString() ?? null,
+    // DEMO-018: the underlying FactoryPackingCarton column was renamed
+    // weight -> netWeight (gaining sibling grossWeight/dimensions fields
+    // scoped to the Factory Packing List only) — this Erve-side view's own
+    // external `weight` contract is unchanged and out of scope here.
+    weight: carton.netWeight?.toString() ?? null,
     totalQuantity,
     lines: carton.lines.map((line) => ({
       saleOrderLineId: line.saleOrderLineId,

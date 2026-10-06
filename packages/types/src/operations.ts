@@ -348,7 +348,12 @@ export interface FactoryPackingCartonView {
   cartonNumber: string;
   destinationId: string;
   packageDetails: string | null;
-  weight: string | null;
+  /** DEMO-018: renamed from the original `weight` field — same Decimal-as-string convention, never required to create/edit a carton. */
+  netWeight: string | null;
+  /** DEMO-018: new sibling to netWeight, same convention. */
+  grossWeight: string | null;
+  /** DEMO-018: free text (e.g. "60 x 40 x 35 cm") — never numerically parsed; blank/whitespace-only is always null, never "", "0", "N/A", "-". */
+  dimensions: string | null;
   version: number;
   totalQuantity: number;
   destinationMismatch: boolean;
@@ -422,6 +427,12 @@ export interface FinalizeIssueCarton {
   destinationId: string;
 }
 
+/** DEMO-018: which of the three packing-metadata fields are missing on a given (non-retired) carton — identified by cartonNumber, never the internal id. */
+export interface FinalizeIssueCartonMetadata {
+  cartonNumber: string;
+  missingFields: Array<'netWeight' | 'grossWeight' | 'dimensions'>;
+}
+
 export interface FinalizeBlockers {
   cartonsNotAudited: FinalizeIssueCarton[];
   cartonsNeedingReinspection: FinalizeIssueCarton[];
@@ -430,6 +441,7 @@ export interface FinalizeBlockers {
   underPackedLines: FinalizeIssueLine[];
   overPackedLines: FinalizeIssueLine[];
   internalPackingMismatch: FinalizeIssueLine[];
+  cartonsMissingPackingMetadata: FinalizeIssueCartonMetadata[];
 }
 
 // ---------------------------------------------------------------------------

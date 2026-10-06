@@ -1676,21 +1676,32 @@ model FactoryDispatchLine {
 }
 
 // Minimal carton/package record per the original scope (carton number,
-// package details, weight only) — deliberately no barcode/dimensions/rates/
-// warehouse bin. Phase 4: cartons are the sole BUSINESS physical-packing
-// authority (see packing-reconciliation.ts) — FactoryDispatchLine is derived
-// StockAllocation provenance only, reconciled FROM carton totals. A carton
-// belongs to exactly one destination; contents (FactoryPackingCartonLine)
-// reference SaleOrderLine directly, never the internal per-allocation
-// FactoryDispatchLine, so the Factory/QA user never sees an allocation split.
+// package details, net/gross weight, dimensions) — deliberately no
+// barcode/rates/warehouse bin. Phase 4: cartons are the sole BUSINESS
+// physical-packing authority (see packing-reconciliation.ts) —
+// FactoryDispatchLine is derived StockAllocation provenance only,
+// reconciled FROM carton totals. A carton belongs to exactly one
+// destination; contents (FactoryPackingCartonLine) reference SaleOrderLine
+// directly, never the internal per-allocation FactoryDispatchLine, so the
+// Factory/QA user never sees an allocation split.
 // version bumps only on an actual, normalized-diff material change
-// (destination/contents/packageDetails/weight) — that's what invalidates the
-// current FactoryPackingCartonAudit. retiredAt/retiredById mark a carton that
-// was ever audited and then removed: it becomes an immutable historical
-// record, excluded from physical packed totals, READY_FOR_ERVE validation,
-// and the current Packing List/print, but its audit history remains
-// queryable. A never-audited carton is hard-deleted instead (no retirement
-// needed).
+// (destination/contents/packageDetails/netWeight/grossWeight/dimensions) —
+// that's what invalidates the current FactoryPackingCartonAudit.
+// retiredAt/retiredById mark a carton that was ever audited and then
+// removed: it becomes an immutable historical record, excluded from
+// physical packed totals, READY_FOR_ERVE validation, and the current
+// Packing List/print, but its audit history remains queryable. A
+// never-audited carton is hard-deleted instead (no retirement needed).
+//
+// DEMO-018: netWeight (renamed from the original `weight` column — a plain
+// column rename, no type/semantic change), grossWeight, and dimensions are
+// never required to create or edit a carton — a Factory user may save
+// packing progress with any/all of them blank. They become mandatory only
+// at Factory Packing List finalization (finalizeFactoryDispatch), scoped to
+// non-retired cartons only (see cartonsMissingPackingMetadata). dimensions
+// is free text (e.g. "60 x 40 x 35 cm") — never numerically parsed, and a
+// blank/whitespace-only value is always normalized to null, never stored as
+// "0"/"N/A"/"-".
 //
 // Phase 6: ervePackingListId is the physical no-double-dispatch authority —
 // a plain nullable FK rather than a join table, since a scalar column is
@@ -1710,7 +1721,9 @@ model FactoryPackingCarton {
   ervePackingListId String?   @map("erve_packing_list_id")
   cartonNumber      String    @map("carton_number")
   packageDetails    String?   @map("package_details")
-  weight            Decimal?  @db.Decimal(10, 3)
+  netWeight         Decimal?  @map("net_weight") @db.Decimal(10, 3)
+  grossWeight       Decimal?  @map("gross_weight") @db.Decimal(10, 3)
+  dimensions        String?
   version           Int       @default(1)
   createdById       String    @map("created_by_id")
   createdAt         DateTime  @default(now()) @map("created_at")
