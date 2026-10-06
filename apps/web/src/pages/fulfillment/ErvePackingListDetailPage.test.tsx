@@ -212,3 +212,47 @@ describe('ErvePackingListDetailPage load error handling (UXAUTH-018)', () => {
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
   });
 });
+
+// DEMO-020: sourceFactories/carton.factory*/factoryDispatch* are confidential
+// factory/supplier provenance, omitted entirely (not nulled) by the API for
+// any role outside ERVE_PACKING_LIST_PROVENANCE_ROLES — see
+// erve-dispatch.provenance.test.ts for the API-side redaction proof. This
+// page is only ever route-gated to that same authorized role set today, so
+// there is no real request that omits these fields yet, but the rendering
+// must stay correct if that ever changes (e.g. ERVE_PACKING_LIST_VIEW_ROLES
+// widened for an unrelated reason): no "Source Factories" row, no "Factory"
+// or "Factory Packing List" column, and no stray undefined/placeholder text.
+describe('ErvePackingListDetailPage factory/supplier provenance redaction (DEMO-020)', () => {
+  function buildPackingListWithoutProvenance(overrides: Partial<ErvePackingListDetail> = {}): ErvePackingListDetail {
+    const full = buildPackingList(overrides);
+    const { sourceFactories: _sourceFactories, ...withoutSourceFactories } = full;
+    return {
+      ...withoutSourceFactories,
+      cartons: full.cartons.map(({ factory: _factory, factoryDispatchId: _factoryDispatchId, factoryDispatchNumber: _factoryDispatchNumber, ...carton }) => carton),
+    };
+  }
+
+  it('renders no "Source Factories" row and no Factory/Factory Packing List columns when the API omits provenance', async () => {
+    await renderPage(buildPackingListWithoutProvenance({ status: 'OPEN' }), 'ADMIN');
+
+    expect(content()).toContain('EIPL/26-27/0001');
+    expect(content()).toContain('C1');
+    expect(content()).not.toContain('Source Factories');
+    expect(content()).not.toContain('Factory One');
+    expect(content()).not.toContain('Factory Packing List');
+    expect(content()).not.toContain('undefined');
+
+    // The ordinary, non-confidential fields stay visible.
+    expect(content()).toContain('Source Dispatch Orders');
+    expect(content()).toContain('EISO/26-27/0001');
+  });
+
+  it('still renders Source Factories and the Factory column when the API includes provenance (ADMIN/MERCHANDISER/SENIOR_MANAGEMENT must not regress)', async () => {
+    await renderPage(buildPackingList({ status: 'OPEN' }), 'ADMIN');
+
+    expect(content()).toContain('Source Factories');
+    expect(content()).toContain('Factory One');
+    expect(content()).toContain('Factory Packing List');
+    expect(content()).toContain('EIFD/26-27/0001');
+  });
+});

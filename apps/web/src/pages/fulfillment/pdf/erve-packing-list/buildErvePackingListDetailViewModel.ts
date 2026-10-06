@@ -18,9 +18,11 @@ export interface ErvePackingListDetailCartonLineRow {
 export interface ErvePackingListDetailCartonRow {
   id: string;
   cartonNumber: string;
-  factoryName: string;
+  /** Confidential factory/supplier provenance (DEMO-020) — null when the source record omitted it. */
+  factoryName: string | null;
   saleOrderNumber: string;
-  factoryDispatchNumber: string;
+  /** Confidential factory/supplier provenance (DEMO-020) — null when the source record omitted it. */
+  factoryDispatchNumber: string | null;
   packageDetails: string | null;
   weight: string | null;
   totalQuantity: number;
@@ -77,7 +79,12 @@ export function buildErvePackingListDetailViewModel(
     { label: 'Finalized At', value: packingList.finalizedAt ? formatPdfDateTime(packingList.finalizedAt) : null },
     { label: 'Cartons', value: packingList.cartonCount },
     { label: 'Total Quantity', value: packingList.totalQuantity },
-    { label: 'Source Factories', value: packingList.sourceFactories.map((f) => f.name).join(', ') || null },
+    // DEMO-020: confidential factory/supplier provenance — omitted from
+    // identityItems entirely (not just a blank value) when the source
+    // record didn't include it (see ErvePackingListSummary.sourceFactories).
+    ...(packingList.sourceFactories
+      ? [{ label: 'Source Factories', value: packingList.sourceFactories.map((f) => f.name).join(', ') || null }]
+      : []),
     { label: 'Source Dispatch Orders', value: packingList.sourceDispatchOrders.map((s) => s.saleOrderNumber).join(', ') || null },
   ];
 
@@ -105,9 +112,12 @@ export function buildErvePackingListDetailViewModel(
   const cartons: ErvePackingListDetailCartonRow[] = packingList.cartons.map((carton) => ({
     id: carton.id,
     cartonNumber: carton.cartonNumber,
-    factoryName: carton.factory.name,
+    // DEMO-020: confidential factory/supplier provenance — null (and never
+    // rendered, see ErvePackingListDetailDocument) when the source record
+    // omitted it.
+    factoryName: carton.factory?.name ?? null,
     saleOrderNumber: carton.saleOrder.saleOrderNumber,
-    factoryDispatchNumber: carton.factoryDispatchNumber,
+    factoryDispatchNumber: carton.factoryDispatchNumber ?? null,
     packageDetails: carton.packageDetails,
     weight: carton.weight,
     totalQuantity: carton.totalQuantity,

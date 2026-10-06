@@ -1,6 +1,6 @@
 import { pdf } from '@react-pdf/renderer';
 import { describe, expect, it } from 'vitest';
-import { ErvePackingListDetailDocument } from './ErvePackingListDetailDocument.js';
+import { cartonHeading, ErvePackingListDetailDocument } from './ErvePackingListDetailDocument.js';
 import type { ErvePackingListDetailCartonRow, ErvePackingListDetailPdfViewModel } from './buildErvePackingListDetailViewModel.js';
 
 function makeCarton(overrides: Partial<ErvePackingListDetailCartonRow> = {}): ErvePackingListDetailCartonRow {
@@ -73,4 +73,30 @@ describe('ErvePackingListDetailDocument', () => {
     ]);
     expect(blob.size).toBeGreaterThan(0);
   }, 10000);
+
+  // DEMO-020: proves the exact printed text omits the Factory/Factory
+  // Packing List segments — not just that some element is conditionally
+  // hidden — and leaves no stray separators behind.
+  describe('cartonHeading — factory/supplier provenance redaction (DEMO-020)', () => {
+    it('includes the Factory and Factory Packing List segments when provenance is present', () => {
+      expect(cartonHeading(makeCarton())).toBe('Carton CTN-001 — Acme Factory — EISO/26-27/0001 (FD/26-27/0001) — 5kg');
+    });
+
+    it('omits the Factory and Factory Packing List segments — and their separators — when provenance is absent', () => {
+      const carton = makeCarton({ factoryName: null, factoryDispatchNumber: null });
+      const heading = cartonHeading(carton);
+      expect(heading).toBe('Carton CTN-001 — EISO/26-27/0001 — 5kg');
+      expect(heading).not.toContain('Acme Factory');
+      expect(heading).not.toContain('FD/26-27/0001');
+      expect(heading).not.toContain('()'); // no empty parens left behind
+      expect(heading).not.toContain('null');
+      expect(heading).not.toContain('undefined');
+    });
+
+    it('renders a PDF without throwing when provenance is absent on every carton', async () => {
+      const cartons = [makeCarton({ factoryName: null, factoryDispatchNumber: null })];
+      const blob = await pdf(<ErvePackingListDetailDocument viewModel={makeViewModel({ cartons })} />).toBlob();
+      expect(blob.size).toBeGreaterThan(0);
+    });
+  });
 });

@@ -92,4 +92,18 @@ describe('buildErvePackingListListViewModel', () => {
     expect(serialized).not.toContain('internalId');
     expect(serialized).not.toContain('rawSnapshotJson');
   });
+
+  // DEMO-020: sourceFactories is confidential factory/supplier provenance,
+  // omitted entirely (not nulled) by the API for any role outside
+  // ERVE_PACKING_LIST_PROVENANCE_ROLES. This page is only ever route-gated
+  // to that same authorized role set today, so there is no real request
+  // that omits it yet — but the view model must degrade to null (and the
+  // "Factories" column must disappear, see ErvePackingListListDocument)
+  // rather than throwing or exposing a stale count.
+  it('maps sourceFactoryCount to null (not 0 or a throw) when the source record lacks provenance', () => {
+    const full = makePackingList();
+    const { sourceFactories: _sourceFactories, ...withoutProvenance } = full;
+    const vm = buildErvePackingListListViewModel([withoutProvenance], { generatedAt: '2026-07-01T10:00:00Z' });
+    expect(vm.rows[0]?.sourceFactoryCount).toBeNull();
+  });
 });
