@@ -241,10 +241,41 @@ describe('GST Rule Sets', () => {
     expect(listRes.status).toBe(403);
   });
 
-  it('allows ACCOUNTANT to manage GST Rule Sets (explicit business exception, mirrors Price Lists)', async () => {
+  it('allows ACCOUNTANT (finance) to manage GST Rule Sets', async () => {
     const accountantToken = await tokenWithRoles(['ACCOUNTANT']);
     const res = await createRuleSet(accountantToken);
     expect(res.status).toBe(201);
+  });
+
+  describe('RBAC finalization: GST Rule Set maintenance is finance-only (ADMIN/ACCOUNTANT), not MERCHANDISER', () => {
+    it('lets MERCHANDISER view GST Rule Sets but rejects every mutation', async () => {
+      const adminToken = await tokenWithRoles(['ADMIN']);
+      const ruleSetRes = await createRuleSet(adminToken);
+      const ruleSetId = ruleSetRes.body.data.id as string;
+      const versionRes = await createVersion(adminToken, ruleSetId, { effectiveFrom: '2020-01-01' });
+      const versionId = versionRes.body.data.versions[0].id as string;
+      await addBand(adminToken, ruleSetId, versionId, { minValue: null, maxValue: null, gstPercent: 5 });
+
+      const merchToken = await tokenWithRoles(['MERCHANDISER']);
+
+      expect((await request(app).get('/gst-rule-sets').set('Authorization', auth(merchToken))).status).toBe(200);
+      expect((await request(app).get(`/gst-rule-sets/${ruleSetId}`).set('Authorization', auth(merchToken))).status).toBe(200);
+
+      expect((await createRuleSet(merchToken)).status).toBe(403);
+      expect(
+        (await request(app).patch(`/gst-rule-sets/${ruleSetId}`).set('Authorization', auth(merchToken)).send({ name: 'Hijacked' }))
+          .status,
+      ).toBe(403);
+      expect((await createVersion(merchToken, ruleSetId, { effectiveFrom: '2021-01-01' })).status).toBe(403);
+      expect(
+        (await addBand(merchToken, ruleSetId, versionId, { minValue: null, maxValue: null, gstPercent: 12 })).status,
+      ).toBe(403);
+      expect((await activateVersion(merchToken, ruleSetId, versionId)).status).toBe(403);
+      expect(
+        (await request(app).delete(`/gst-rule-sets/${ruleSetId}/versions/${versionId}`).set('Authorization', auth(merchToken)))
+          .status,
+      ).toBe(403);
+    });
   });
 });
 

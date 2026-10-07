@@ -1,10 +1,24 @@
-import { createId } from '@erve/shared';
+import { createId, hasAnyRole } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { HsnStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { listAllOrPage, type OptionalPageQuery } from '../../utils/pagination.js';
+
+// RBAC finalization review: the HSN -> GST Rule Set assignment is statutory
+// tax configuration, not operational master data — MERCHANDISER keeps full
+// read/write on HSN identity (code/description/status) via the route-level
+// gate in hsn.routes.ts, but must NOT assign or change gstRuleSetId. That
+// narrower rule can only be enforced here, at the field level, since the
+// route gate is all-or-nothing for the whole PATCH/POST body.
+const GST_ASSIGNMENT_ROLES = ['ADMIN', 'ACCOUNTANT'] as const;
+
+function assertCanAssignGstRuleSet(actor: CurrentUser): void {
+  if (!hasAnyRole(actor, GST_ASSIGNMENT_ROLES)) {
+    throw HttpError.forbidden("Only ADMIN or ACCOUNTANT may assign or change an HSN's GST Rule Set");
+  }
+}
 
 const hsnInclude = {
   gstRuleSet: { select: { id: true, code: true, name: true, status: true } },
@@ -99,6 +113,7 @@ export async function createHsn(
   input: { code: string; description?: string | null; status?: HsnStatus; gstRuleSetId?: string | null },
 ) {
   if (input.gstRuleSetId) {
+    assertCanAssignGstRuleSet(actor);
     await assertGstRuleSetExists(input.gstRuleSetId);
   }
 
@@ -139,8 +154,15 @@ export async function updateHsn(
   const existing = await prisma.hsn.findUnique({ where: { id } });
   if (!existing) throw HttpError.notFound('HSN not found');
 
-  if (input.gstRuleSetId !== undefined && input.gstRuleSetId !== null && input.gstRuleSetId !== existing.gstRuleSetId) {
-    await assertGstRuleSetExists(input.gstRuleSetId);
+  if (input.gstRuleSetId !== undefined && input.gstRuleSetId !== existing.gstRuleSetId) {
+    // Re-sending the same value (even null) is not a change and never
+    // reaches here — only an actual assignment/reassignment/unassignment
+    // is finance-gated, same "no-op resend" philosophy as createStyle's
+    // HSN handling.
+    assertCanAssignGstRuleSet(actor);
+    if (input.gstRuleSetId !== null) {
+      await assertGstRuleSetExists(input.gstRuleSetId);
+    }
   }
 
   try {

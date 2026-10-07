@@ -105,11 +105,14 @@ export const PRICE_LIST_MANAGE_ROLES = [
   'ACCOUNTANT',
 ] as const satisfies readonly Role[];
 
-// INV-002: HSN is Style master data with a tax-configuration dimension
-// grafted on (its GST Rule Set assignment) — same role charter as Price
-// Lists (ADMIN + MERCHANDISER as master-data owners, ACCOUNTANT as the
-// explicit business exception for tax-rule work), reused for GST Rule Sets
-// too since the two are the same tax-configuration domain.
+// INV-002, RBAC finalization review: HSN identity (code/description/status)
+// is operational master data MERCHANDISER owns, same as Style — so this
+// stays broad. GST rule maintenance is statutory tax configuration and is
+// deliberately NARROWER (see GST_RULE_SET_MANAGE_ROLES below): HSN_MANAGE_ROLES
+// covers identity edits only. The HSN -> GST Rule Set *assignment* is its
+// own, narrower permission (HSN_GST_ASSIGNMENT_ROLES) — enforced server-side
+// in hsn.service.ts; here it only disables that one field in the HSN form
+// for a MERCHANDISER who can otherwise still edit everything else on it.
 export const HSN_VIEW_ROLES = [
   'ADMIN',
   'MERCHANDISER',
@@ -117,9 +120,19 @@ export const HSN_VIEW_ROLES = [
   'ACCOUNTANT',
 ] as const satisfies readonly Role[];
 export const HSN_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER', 'ACCOUNTANT'] as const satisfies readonly Role[];
+export const HSN_GST_ASSIGNMENT_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
 
-export const GST_RULE_SET_VIEW_ROLES = HSN_VIEW_ROLES;
-export const GST_RULE_SET_MANAGE_ROLES = HSN_MANAGE_ROLES;
+// GST rate/version configuration affects statutory tax treatment — finance
+// (ADMIN + ACCOUNTANT) only. MERCHANDISER and SENIOR_MANAGEMENT may view
+// (every role that can see/edit an HSN can see the rule sets it may
+// reference) but never create/version/activate one.
+export const GST_RULE_SET_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'ACCOUNTANT',
+] as const satisfies readonly Role[];
+export const GST_RULE_SET_MANAGE_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
 
 // Order Sheet planning belongs to Merchandising: DISTRIBUTOR has no access at
 // all (view or manage) — mirrors DISTRIBUTOR's existing full exclusion from
@@ -243,6 +256,10 @@ export const canManagePriceLists = (user: AuthUser | null | undefined) =>
 
 export const canViewHsns = (user: AuthUser | null | undefined) => hasRole(user, HSN_VIEW_ROLES);
 export const canManageHsns = (user: AuthUser | null | undefined) => hasRole(user, HSN_MANAGE_ROLES);
+// The HSN form's GST Rule Set field specifically — narrower than
+// canManageHsns, which still lets MERCHANDISER edit everything else on it.
+export const canAssignHsnGstRuleSet = (user: AuthUser | null | undefined) =>
+  hasRole(user, HSN_GST_ASSIGNMENT_ROLES);
 
 export const canViewGstRuleSets = (user: AuthUser | null | undefined) =>
   hasRole(user, GST_RULE_SET_VIEW_ROLES);
