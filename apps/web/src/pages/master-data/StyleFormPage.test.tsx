@@ -181,7 +181,7 @@ describe('StyleFormPage — UXAUTH-019 edit-load gating', () => {
     expect(styleNumberInput?.value).toBe('');
   });
 
-  it('EDIT route: shows saved barcodes and saves a changed one through the barcode endpoint without re-adding the size', async () => {
+  it('EDIT route: shows saved barcodes and saves a changed one as part of the single Style save call', async () => {
     const style = makeStyle({
       sizes: [
         {
@@ -219,12 +219,15 @@ describe('StyleFormPage — UXAUTH-019 edit-load gating', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await act(async () => container.querySelector('form')!.requestSubmit());
-    await waitFor(
-      () => patch.mock.calls.some(([url]) => url === '/styles/style-1/sizes/sz-1/barcode'),
-      'barcode PATCH was not sent',
-    );
+    await waitFor(() => patch.mock.calls.some(([url]) => url === '/styles/style-1'), 'style PATCH was not sent');
 
-    expect(patch).toHaveBeenCalledWith('/styles/style-1/sizes/sz-1/barcode', { barcode: 'CUSTOM-3' });
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch).toHaveBeenCalledWith(
+      '/styles/style-1',
+      expect.objectContaining({
+        sizes: [{ sizeId: 'sz-1', barcode: 'CUSTOM-3' }],
+      }),
+    );
     expect(post).not.toHaveBeenCalled();
   });
 

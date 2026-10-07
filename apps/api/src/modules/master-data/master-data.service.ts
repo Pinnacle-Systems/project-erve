@@ -242,14 +242,16 @@ export async function createStyle(
     finalMrp: number;
     status?: StyleStatus;
     seasonId: string;
-    // Optional: when present the Style and all its Style+Size rows (with
-    // supplied or generated barcodes) are created in ONE transaction, so a
-    // barcode failure never leaves a half-created Style behind.
+    // Optional: when present the Style, its Style+Size rows (with supplied or
+    // generated barcodes), and its Factory mappings are all created in ONE
+    // transaction (SESS-008), so a failure anywhere never leaves a
+    // half-created Style behind.
     sizes?: StyleSizeRequest[];
+    factoryMappings?: StyleFactoryMappingRequest[];
     [key: string]: unknown;
   },
 ) {
-  const { sizes = [], ...styleFields } = input;
+  const { sizes = [], factoryMappings = [], ...styleFields } = input;
   const styleId = createId();
   const season = await assertActiveSeason(input.seasonId);
   const plannedSizes = await planStyleSizes(
@@ -257,6 +259,7 @@ export async function createStyle(
     sizes,
     { generateMissing: true },
   );
+  const plannedFactories = await planStyleFactoryMappings(factoryMappings);
   const barcodes = plannedSizes.flatMap((planned) => (planned.barcode ? [planned.barcode] : []));
 
   try {
@@ -273,6 +276,16 @@ export async function createStyle(
           data: plannedSizes.map((planned) => ({ id: createId(), styleId, ...planned.data })),
         });
       }
+      if (plannedFactories.length > 0) {
+        await tx.styleFactoryMapping.createMany({
+          data: plannedFactories.map((mapping) => ({
+            id: createId(),
+            styleId,
+            factoryId: mapping.factoryId,
+            exFactoryPrice: mapping.exFactoryPrice,
+          })),
+        });
+      }
     });
   } catch (error) {
     await throwIfBarcodeConflict(error, barcodes);
@@ -287,34 +300,119 @@ export async function createStyle(
     action: 'STYLE_CREATED',
     entityType: 'Style',
     entityId: styleId,
-    metadata: plannedSizes.length > 0 ? { sizes: plannedSizes.map((p) => ({ sizeId: p.data.sizeId, barcode: p.barcode })) } : undefined,
+    metadata:
+      plannedSizes.length > 0 || plannedFactories.length > 0
+        ? {
+            sizes: plannedSizes.map((p) => ({ sizeId: p.data.sizeId, barcode: p.barcode })),
+            factories: plannedFactories.map((f) => f.factoryId),
+          }
+        : undefined,
   });
 
   return getStyleById(styleId);
 }
 
+// A Style save is one logical operation from the user's point of view, even
+// though it can touch the Style row, its Size mappings, and its Factory
+// mappings. `sizes`/`factoryMappings` are each the COMPLETE desired set for
+// that part of the Style (never a delta) - same contract `createStyle` uses.
+// Omitting a key entirely leaves that part untouched. Every write below runs
+// in ONE transaction, so a failure partway through (a barcode conflict, an
+// inactive factory, a DB error) rolls back everything, including the Style
+// field changes - never a half-applied save (SESS-008).
 export async function updateStyle(
   actor: CurrentUser,
   styleId: string,
-  input: Record<string, unknown>,
+  input: Record<string, unknown> & {
+    sizes?: StyleSizeRequest[];
+    factoryMappings?: StyleFactoryMappingRequest[];
+  },
 ) {
-  const existing = await prisma.style.findUnique({ where: { id: styleId } });
+  const { sizes, factoryMappings, ...styleFields } = input;
+  const existing = await prisma.style.findUnique({
+    where: { id: styleId },
+    include: { styleSizes: true, styleFactoryMappings: true },
+  });
   if (!existing) {
     throw HttpError.notFound('Style not found');
   }
 
-  const seasonId = input.seasonId as string | undefined;
+  const seasonId = styleFields.seasonId as string | undefined;
   // An inactive master can remain on an already-assigned Style during
   // unrelated edits, but a Season change must land on an active Season.
   if (seasonId && seasonId !== existing.seasonId) {
     await assertActiveSeason(seasonId);
   }
+
+  const sizesPlan = sizes
+    ? await planStyleSizeUpdate(
+        styleId,
+        {
+          lmixNumber: (styleFields.lmixNumber as string | null | undefined) ?? existing.lmixNumber,
+          season: await assertActiveSeasonOrCurrent(seasonId ?? existing.seasonId),
+        },
+        existing.styleSizes,
+        sizes,
+      )
+    : null;
+  const factoriesPlan = factoryMappings
+    ? await planStyleFactoryMappingUpdate(existing.styleFactoryMappings, factoryMappings)
+    : null;
+
+  const touchedBarcodes = sizesPlan
+    ? [
+        ...sizesPlan.toCreate.flatMap((p) => (p.barcode ? [p.barcode] : [])),
+        ...sizesPlan.toUpdateBarcode.map((u) => u.barcode),
+      ]
+    : [];
+
   try {
-    await prisma.style.update({
-      where: { id: styleId },
-      data: input as Prisma.StyleUncheckedUpdateInput,
+    await prisma.$transaction(async (tx) => {
+      if (Object.keys(styleFields).length > 0) {
+        await tx.style.update({
+          where: { id: styleId },
+          data: styleFields as Prisma.StyleUncheckedUpdateInput,
+        });
+      }
+      if (sizesPlan) {
+        if (sizesPlan.toRemove.length > 0) {
+          await tx.styleSize.deleteMany({ where: { id: { in: sizesPlan.toRemove.map((r) => r.id) } } });
+        }
+        if (sizesPlan.toCreate.length > 0) {
+          await tx.styleSize.createMany({
+            data: sizesPlan.toCreate.map((planned) => ({ id: createId(), styleId, ...planned.data })),
+          });
+        }
+        for (const update of sizesPlan.toUpdateBarcode) {
+          await tx.styleSize.update({ where: { id: update.id }, data: { barcode: update.barcode } });
+        }
+      }
+      if (factoriesPlan) {
+        if (factoriesPlan.toRemove.length > 0) {
+          await tx.styleFactoryMapping.deleteMany({
+            where: { id: { in: factoriesPlan.toRemove.map((r) => r.id) } },
+          });
+        }
+        if (factoriesPlan.toCreate.length > 0) {
+          await tx.styleFactoryMapping.createMany({
+            data: factoriesPlan.toCreate.map((mapping) => ({
+              id: createId(),
+              styleId,
+              factoryId: mapping.factoryId,
+              exFactoryPrice: mapping.exFactoryPrice,
+            })),
+          });
+        }
+        for (const update of factoriesPlan.toUpdatePrice) {
+          await tx.styleFactoryMapping.update({
+            where: { id: update.id },
+            data: { exFactoryPrice: update.exFactoryPrice },
+          });
+        }
+      }
     });
   } catch (error) {
+    await throwIfBarcodeConflict(error, touchedBarcodes);
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('A style with this style number already exists');
     }
@@ -330,6 +428,17 @@ export async function updateStyle(
   });
 
   return getStyleById(styleId);
+}
+
+// assertActiveSeason requires the season to be ACTIVE - correct when the
+// Season is actually changing, but a Style's sizes can be edited without
+// touching its (possibly already-INACTIVE) Season. This resolves the Season
+// to use for barcode generation either way, without rejecting an otherwise
+// valid edit over an unrelated master's status.
+async function assertActiveSeasonOrCurrent(seasonId: string) {
+  const season = await prisma.season.findUnique({ where: { id: seasonId } });
+  if (!season) throw HttpError.badRequest('The selected Season must exist');
+  return season;
 }
 
 const seasonInclude = { financialYear: { select: { id: true, code: true } } } satisfies Prisma.SeasonInclude;
@@ -651,6 +760,141 @@ async function throwIfBarcodeConflict(
   if (!isUniqueConstraintError(error)) return;
   const holder = await findBarcodeHolder(barcodes, ignore);
   if (holder) throw barcodeConflictError(holder);
+}
+
+interface ExistingStyleSizeRow {
+  id: string;
+  sizeId: string;
+  barcode: string | null;
+}
+
+interface StyleSizeUpdatePlan {
+  toRemove: ExistingStyleSizeRow[];
+  toCreate: PlannedStyleSize[];
+  toUpdateBarcode: { id: string; sizeId: string; barcode: string }[];
+}
+
+// `desired` is the Style's COMPLETE desired Size set (see updateStyle). Diffs
+// it against the persisted rows: sizes missing from `desired` are removed,
+// sizes with no persisted row are created (barcode supplied or generated,
+// same as create), and sizes present in both get their barcode updated only
+// when it actually changed. An existing non-blank barcode can be replaced
+// but never silently blanked - that would read as "regenerate it".
+async function planStyleSizeUpdate(
+  styleId: string,
+  context: { lmixNumber: string | null | undefined; season: { code: string; barcodeSerial: number | null } },
+  existingRows: ExistingStyleSizeRow[],
+  desired: StyleSizeRequest[],
+): Promise<StyleSizeUpdatePlan> {
+  const seen = new Set<string>();
+  for (const request of desired) {
+    if (seen.has(request.sizeId)) throw HttpError.badRequest('A size can only be listed once per style');
+    seen.add(request.sizeId);
+  }
+
+  const existingBySizeId = new Map(existingRows.map((row) => [row.sizeId, row] as const));
+  const desiredSizeIds = new Set(desired.map((r) => r.sizeId));
+  const toRemove = existingRows.filter((row) => !desiredSizeIds.has(row.sizeId));
+
+  const newRequests = desired.filter((r) => !existingBySizeId.has(r.sizeId));
+  const toCreate = await planStyleSizes(context, newRequests, { generateMissing: true });
+
+  const toUpdateBarcode: { id: string; sizeId: string; barcode: string }[] = [];
+  const existingRequests = desired.filter((r) => existingBySizeId.has(r.sizeId));
+  if (existingRequests.length > 0) {
+    const sizes = await prisma.size.findMany({ where: { id: { in: existingRequests.map((r) => r.sizeId) } } });
+    const sizeById = new Map(sizes.map((size) => [size.id, size] as const));
+    for (const request of existingRequests) {
+      const row = existingBySizeId.get(request.sizeId)!;
+      const desiredBarcode = normalizeSuppliedBarcode(request.barcode);
+      if (desiredBarcode === row.barcode) continue;
+      if (desiredBarcode === null) {
+        if (row.barcode !== null) {
+          const size = sizeById.get(request.sizeId);
+          throw HttpError.badRequest(`Barcode cannot be blank for size ${size?.label ?? request.sizeId}`);
+        }
+        continue;
+      }
+      const holder = await findBarcodeHolder([desiredBarcode], { styleId, sizeId: request.sizeId });
+      if (holder) throw barcodeConflictError(holder);
+      toUpdateBarcode.push({ id: row.id, sizeId: request.sizeId, barcode: desiredBarcode });
+    }
+  }
+
+  return { toRemove, toCreate, toUpdateBarcode };
+}
+
+export interface StyleFactoryMappingRequest {
+  factoryId: string;
+  exFactoryPrice: number;
+}
+
+// Shared validation for a Style's Factory mappings, used both by createStyle
+// (full set, atomic with the Style) and by the update diff below (new
+// mappings only - existing ones are already known-valid).
+async function planStyleFactoryMappings(
+  requests: StyleFactoryMappingRequest[],
+): Promise<StyleFactoryMappingRequest[]> {
+  if (requests.length === 0) return [];
+  const seen = new Set<string>();
+  for (const request of requests) {
+    if (seen.has(request.factoryId)) throw HttpError.badRequest('A factory can only be listed once per style');
+    seen.add(request.factoryId);
+  }
+  const factories = await prisma.factory.findMany({ where: { id: { in: requests.map((r) => r.factoryId) } } });
+  const factoryById = new Map(factories.map((factory) => [factory.id, factory] as const));
+  for (const request of requests) {
+    const factory = factoryById.get(request.factoryId);
+    if (!factory) throw HttpError.badRequest('Unknown factory');
+    if (factory.status !== 'ACTIVE') throw HttpError.badRequest('Cannot map an inactive factory to a style');
+  }
+  return requests;
+}
+
+interface ExistingStyleFactoryMappingRow {
+  id: string;
+  factoryId: string;
+  exFactoryPrice: Prisma.Decimal;
+}
+
+interface StyleFactoryMappingUpdatePlan {
+  toRemove: ExistingStyleFactoryMappingRow[];
+  toCreate: StyleFactoryMappingRequest[];
+  toUpdatePrice: { id: string; exFactoryPrice: number }[];
+}
+
+// Same "desired is the complete set" contract as planStyleSizeUpdate, for
+// Factory mappings: missing from `desired` -> removed, no persisted row ->
+// created, persisted with a changed price -> price updated in place (no
+// delete+recreate - the mapping's identity doesn't need to churn just
+// because its price changed).
+async function planStyleFactoryMappingUpdate(
+  existingRows: ExistingStyleFactoryMappingRow[],
+  desired: StyleFactoryMappingRequest[],
+): Promise<StyleFactoryMappingUpdatePlan> {
+  const seen = new Set<string>();
+  for (const request of desired) {
+    if (seen.has(request.factoryId)) throw HttpError.badRequest('A factory can only be listed once per style');
+    seen.add(request.factoryId);
+  }
+
+  const existingByFactoryId = new Map(existingRows.map((row) => [row.factoryId, row] as const));
+  const desiredFactoryIds = new Set(desired.map((r) => r.factoryId));
+  const toRemove = existingRows.filter((row) => !desiredFactoryIds.has(row.factoryId));
+
+  const newRequests = desired.filter((r) => !existingByFactoryId.has(r.factoryId));
+  const toCreate = await planStyleFactoryMappings(newRequests);
+
+  const toUpdatePrice: { id: string; exFactoryPrice: number }[] = [];
+  for (const request of desired) {
+    const row = existingByFactoryId.get(request.factoryId);
+    if (!row) continue;
+    if (row.exFactoryPrice.toNumber() !== request.exFactoryPrice) {
+      toUpdatePrice.push({ id: row.id, exFactoryPrice: request.exFactoryPrice });
+    }
+  }
+
+  return { toRemove, toCreate, toUpdatePrice };
 }
 
 export async function addStyleSize(
