@@ -1,7 +1,9 @@
 import {
   canMarkJobOrderProductionComplete,
   canPerformQaOperation,
+  canUndoJobOrderProductionStage,
   createId,
+  hasRole,
 } from '@erve/shared';
 import { createHash } from 'node:crypto';
 import {
@@ -2158,6 +2160,29 @@ function assertCanMarkJobOrderProductionComplete(user: CurrentUser): void {
     throw HttpError.forbidden('Only Merchandising can mark a Job Order Production Complete');
 }
 
+const STAGE_UNDO_MERCHANDISER_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// DEMO-010: controlled undo of a completed production stage. FACTORY_USER
+// can never undo (enforced again here even though the route already gates
+// on JOB_ORDER_STAGE_UNDO_ROLES, matching this module's existing
+// defense-in-depth convention — see assertJobOrderWorkflowAuthorization).
+// MERCHANDISER may only act within 24 hours of the stage's own
+// completedAt; ADMIN has no time limit. The 24-hour boundary is inclusive
+// (exactly 24h0m0s since completion is still allowed) so it is a
+// deterministic, testable cutoff rather than a fuzzy "around a day".
+function assertCanUndoProductionStage(user: CurrentUser, stageCompletedAt: Date, now: Date): void {
+  if (!canUndoJobOrderProductionStage(user)) {
+    throw HttpError.forbidden('Only Merchandising or Admin can undo a completed production stage');
+  }
+  if (hasRole(user, 'ADMIN')) return;
+  const elapsedMs = now.getTime() - stageCompletedAt.getTime();
+  if (elapsedMs > STAGE_UNDO_MERCHANDISER_WINDOW_MS) {
+    throw HttpError.forbidden(
+      'Merchandising can only undo a completed production stage within 24 hours of its completion',
+    );
+  }
+}
+
 // Shared by the explicit Factory "Complete Stage" action and the automatic
 // reconciliation below — the only two places a JobOrderStageStatus row may
 // transition to COMPLETED, so both write the identical update + audit shape
@@ -2656,6 +2681,186 @@ export async function completeProductionStage(
       idempotencyKey,
       hash,
       finalVersion,
+    );
+  });
+  return getJobOrderDetail(actor, id);
+}
+
+// DEMO-010: controlled undo of a completed production stage. The smallest
+// safe counterpart of completeProductionStage/completeStageStatusRow above
+// — reuses the same idempotency + advisory-lock transaction shape, and is
+// deliberately restricted to only the single most-recently-completed stage
+// (the next stage, if any, must still be NOT_STARTED) so it can never
+// "accidentally" reopen an unrelated earlier stage or race a concurrent
+// start-stage call. See assertCanUndoProductionStage for the
+// role/24-hour-window rule.
+//
+// Finishing (the final production stage) gets one extra guard that the
+// others don't need: completing it can also promote JobOrder.status to
+// PRODUCTION_COMPLETE (recalculateJobOrderStatus), and once any Final QA
+// batch exists against it, undoing "Finishing complete" is exactly the
+// ambiguous downstream-state case this story's spec calls out — rather than
+// inventing a QA rollback, this refuses the undo outright when any
+// non-cancelled FinalQualityBatch already references the final activity.
+export async function undoCompletedProductionStage(
+  actor: CurrentUser,
+  id: string,
+  input: { expectedVersion: number; stageStatusId: string; reason: string },
+  idempotencyKey: string,
+) {
+  const hash = requestHash(input);
+  const replay = await prisma.jobOrderIdempotencyRecord.findUnique({
+    where: {
+      actorId_operation_idempotencyKey: {
+        actorId: actor.id,
+        operation: 'UNDO_STAGE',
+        idempotencyKey,
+      },
+    },
+  });
+  if (replay) {
+    if (replay.jobOrderId !== id || replay.requestHash !== hash)
+      throw HttpError.idempotencyKeyReused();
+    return getJobOrderDetail(actor, id);
+  }
+
+  const jobOrder = await prisma.jobOrder.findUnique({
+    where: { id },
+    include: {
+      stageStatuses: { orderBy: { stageSequence: 'asc' } },
+      processFlowVersion: { include: { stages: { include: { qualityFormVersion: true } } } },
+      finalQualityBatches: {
+        select: { id: true, processFlowActivityId: true, disposition: true },
+      },
+    },
+  });
+  if (!jobOrder) throw HttpError.notFound('Job order not found');
+  if (jobOrder.version !== input.expectedVersion) throw HttpError.staleVersion(jobOrder.version);
+  if (!['IN_PRODUCTION', 'PRODUCTION_COMPLETE'].includes(jobOrder.status)) {
+    throw HttpError.conflict(
+      'A production stage can only be undone while the Job Order is In Production or Production Complete',
+    );
+  }
+
+  const stages = jobOrder.stageStatuses;
+  const targetStage = stages.find((stage) => stage.id === input.stageStatusId);
+  if (!targetStage) throw HttpError.badRequest('Production stage does not belong to this job order');
+  if (targetStage.status !== 'COMPLETED' || !targetStage.completedAt) {
+    throw HttpError.badRequest('Only a completed production stage can be undone');
+  }
+
+  const now = new Date();
+  assertCanUndoProductionStage(actor, targetStage.completedAt, now);
+
+  const nextStage = stages.find((stage) => stage.stageSequence === targetStage.stageSequence + 1);
+  if (nextStage && nextStage.status !== 'NOT_STARTED') {
+    throw HttpError.conflict('Cannot undo: the next production stage has already started');
+  }
+
+  const isFinalStage = targetStage.id === stages[stages.length - 1]?.id;
+  if (isFinalStage) {
+    const finalActivity = jobOrder.processFlowVersion.stages.find(isProcessFlowFinalActivity);
+    const hasFinalQualityWork = finalActivity
+      ? jobOrder.finalQualityBatches.some(
+          (batch) => batch.processFlowActivityId === finalActivity.id && batch.disposition !== 'CANCELLED',
+        )
+      : false;
+    if (hasFinalQualityWork) {
+      throw HttpError.conflict(
+        'Cannot undo this stage: Final QA has already recorded batches against it. Resolve this through the QA workflow instead.',
+      );
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (await beginIdempotentOperation(tx, actor.id, id, 'UNDO_STAGE', idempotencyKey, hash)) return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    const current = await tx.jobOrder.findUnique({
+      where: { id },
+      select: { version: true, status: true, productionCompletedAt: true },
+    });
+    if (!current) throw HttpError.notFound('Job order not found');
+    if (current.version !== input.expectedVersion) throw HttpError.staleVersion(current.version);
+
+    const freshTarget = await tx.jobOrderStageStatus.findUniqueOrThrow({
+      where: { id: targetStage.id },
+    });
+    if (freshTarget.status !== 'COMPLETED' || !freshTarget.completedAt) {
+      throw HttpError.conflict('Production stage is no longer completed');
+    }
+    if (nextStage) {
+      const freshNext = await tx.jobOrderStageStatus.findUniqueOrThrow({ where: { id: nextStage.id } });
+      if (freshNext.status !== 'NOT_STARTED') {
+        throw HttpError.conflict('Cannot undo: the next production stage has already started');
+      }
+    }
+
+    const beforeState = {
+      stageStatus: freshTarget.status,
+      completedBy: freshTarget.completedBy,
+      completedAt: freshTarget.completedAt.toISOString(),
+      remarks: freshTarget.remarks,
+      jobOrderStatus: current.status,
+      productionCompletedAt: current.productionCompletedAt?.toISOString() ?? null,
+    };
+
+    await tx.jobOrderStageStatus.update({
+      where: { id: targetStage.id },
+      data: { status: 'IN_PROGRESS', completedBy: null, completedAt: null, remarks: null },
+    });
+
+    // completeProductionStage stamps productionCompletedAt the moment
+    // Finishing itself completes (independent of whether JobOrder.status has
+    // actually reached PRODUCTION_COMPLETE yet — see its own isFinalStage
+    // branch) — so undoing Finishing must always clear it, not only when
+    // status was promoted. Status itself is only ever reverted when it was
+    // actually PRODUCTION_COMPLETE: Finishing's completion is the only thing
+    // that can have promoted it there (see recalculateJobOrderStatus), and
+    // leaving it stuck there with the final stage back at IN_PROGRESS and no
+    // way to re-complete it is exactly the DEMO-013/DEMO-017 class of drift
+    // completeStageStatusRow's own comment warns about.
+    const revertingProductionComplete = isFinalStage && current.status === 'PRODUCTION_COMPLETE';
+    const updated = await tx.jobOrder.update({
+      where: { id },
+      data: {
+        status: revertingProductionComplete ? 'IN_PRODUCTION' : undefined,
+        productionCompletedAt: isFinalStage ? null : undefined,
+        version: { increment: 1 },
+      },
+    });
+
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'JOB_ORDER_STAGE_COMPLETION_UNDONE',
+        entityType: 'JobOrder',
+        entityId: id,
+        metadata: {
+          stageStatusId: targetStage.id,
+          processFlowVersionStageId: targetStage.processFlowVersionStageId,
+          stageSequence: targetStage.stageSequence,
+          stageName: targetStage.stageNameSnapshot,
+          actorRole: hasRole(actor, 'ADMIN') ? 'ADMIN' : 'MERCHANDISER',
+          reason: input.reason,
+          before: beforeState,
+          after: {
+            stageStatus: 'IN_PROGRESS',
+            jobOrderStatus: updated.status,
+            productionCompletedAt: updated.productionCompletedAt?.toISOString() ?? null,
+          },
+        },
+      },
+      tx,
+    );
+
+    await finishIdempotentOperation(
+      tx,
+      actor.id,
+      id,
+      'UNDO_STAGE',
+      idempotencyKey,
+      hash,
+      updated.version,
     );
   });
   return getJobOrderDetail(actor, id);
