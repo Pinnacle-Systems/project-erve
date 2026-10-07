@@ -2,37 +2,22 @@ import { describe, expect, it } from 'vitest';
 import {
   cleanPayload,
   emptyForm,
-  isValidHsnCode,
   styleFieldErrorMessage,
   toStyleSizeRequest,
   validateStyleForm,
 } from './style-form-state.js';
 
-describe('isValidHsnCode', () => {
-  it('accepts an empty value (optional field)', () => {
-    expect(isValidHsnCode('')).toBe(true);
-  });
-  it('accepts exactly 8 digits', () => {
-    expect(isValidHsnCode('12345678')).toBe(true);
-  });
-  it('rejects anything else', () => {
-    expect(isValidHsnCode('1234567')).toBe(false);
-    expect(isValidHsnCode('123456789')).toBe(false);
-    expect(isValidHsnCode('abcd5678')).toBe(false);
-  });
-});
+// HSN is no longer a free-text StyleFormFields field (INV-002 review
+// correction) — it's selected via a separate hsnId state, mirroring
+// seasonId, and passed into cleanPayload as its own argument. There is no
+// form-level HSN validation any more: any value the HSN SelectField offers
+// is, by construction, either empty or an existing HSN's id.
 
 describe('validateStyleForm', () => {
   const validForm = { ...emptyForm, styleNumber: 'STY-1', styleName: 'Tee', finalMrp: '100' };
 
   it('passes for a fully valid form', () => {
     expect(validateStyleForm(validForm, 'season-1')).toBeNull();
-  });
-
-  it('requires an 8-digit HSN code when one is entered', () => {
-    expect(validateStyleForm({ ...validForm, hsnCode: '123' }, 'season-1')).toBe(
-      'HSN Code must be exactly 8 digits.',
-    );
   });
 
   it('requires style number, style name, a positive final MRP and a season', () => {
@@ -56,31 +41,32 @@ describe('styleFieldErrorMessage', () => {
     expect(styleFieldErrorMessage('styleName', form, true)).toBe('Required');
   });
 
-  it('flags an invalid HSN code once an error is active', () => {
-    expect(styleFieldErrorMessage('hsnCode', { ...form, hsnCode: '123' }, true)).toBe(
-      'HSN Code must be exactly 8 digits',
-    );
-  });
-
   it('leaves unrelated fields alone', () => {
     expect(styleFieldErrorMessage('colour', form, true)).toBeUndefined();
   });
 });
 
 describe('cleanPayload', () => {
-  it('coerces MRP/royalty to numbers and attaches the season id', () => {
+  it('coerces MRP/royalty to numbers and attaches the season id and hsnId', () => {
     const payload = cleanPayload(
       { ...emptyForm, finalMrp: '499', royaltyPercentage: '5' },
       'season-1',
+      'hsn-1',
     );
     expect(payload.finalMrp).toBe(499);
     expect(payload.royaltyPercentage).toBe(5);
     expect(payload.seasonId).toBe('season-1');
+    expect(payload.hsnId).toBe('hsn-1');
   });
 
   it('sends null royalty when left blank', () => {
-    const payload = cleanPayload({ ...emptyForm, finalMrp: '499' }, 'season-1');
+    const payload = cleanPayload({ ...emptyForm, finalMrp: '499' }, 'season-1', null);
     expect(payload.royaltyPercentage).toBeNull();
+  });
+
+  it('sends null hsnId when no HSN is selected', () => {
+    const payload = cleanPayload({ ...emptyForm, finalMrp: '499' }, 'season-1', null);
+    expect(payload.hsnId).toBeNull();
   });
 });
 

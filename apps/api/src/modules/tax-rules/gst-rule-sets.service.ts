@@ -737,19 +737,55 @@ export async function resolveGstRuleForHsn(input: GstRuleResolutionInput): Promi
 // Current garment GST rule bootstrap — idempotent, shared by prisma/seed.ts
 // (dev/test) and the gst-rule-set-bootstrap CLI (production), same spirit as
 // quality-bootstrap-definitions.ts sharing one definition between dev
-// seeding and the production installer. Deliberately simple (no
-// version-diffing): if the rule set or its current ACTIVE version is
-// already present, nothing is written.
+// seeding and the production installer.
+//
+// Deliberately does NOT assert an effective date. The <=2500: 5% / >2500:
+// 18% slab is a confirmed CURRENT rate, but no authoritative project data
+// establishes when it became effective — asserting one (GST rollout date,
+// deploy date, migration date, financial-year start, or any other inferred
+// date) would encode an unsupported historical tax fact into a model this
+// story explicitly built to be effective-dated and later used for
+// statutory invoice calculation (INV-006). So this seeds the reusable
+// identity and band DEFINITION only, as a DRAFT version with effectiveFrom
+// left unset: an authorized master-data user must supply the real
+// effectiveFrom and explicitly activate it (activateGstRuleSetVersion
+// above already refuses activation without one — see
+// gst_rule_set_versions_active_requires_effective_from). Idempotency is by
+// band CONTENT, not status: once a version (DRAFT, ACTIVE, or EXPIRED) with
+// this exact band definition exists for this rule set, re-running never
+// creates a duplicate — including after an admin has since activated it
+// with a real date, or moved on to a later version.
 // ---------------------------------------------------------------------------
 
 export const CURRENT_GARMENT_GST_RULE_SET_CODE = 'GST-GARMENT-STD';
-// India's GST rollout date — the earliest date this slab could ever apply.
-export const CURRENT_GARMENT_GST_RULE_EFFECTIVE_FROM = '2017-07-01';
+export const CURRENT_GARMENT_GST_BANDS = [
+  { minValue: null, maxValue: 2500, gstPercent: 5 },
+  { minValue: 2500, maxValue: null, gstPercent: 18 },
+] as const;
 
 export interface GarmentGstRuleSetBootstrapResult {
   gstRuleSetId: string;
-  action: 'unchanged' | 'created';
+  action: 'unchanged' | 'created_draft';
   versionId: string;
+}
+
+function bandsMatchCanonical(
+  bands: Array<{ minValue: Prisma.Decimal | null; maxValue: Prisma.Decimal | null; gstPercent: Prisma.Decimal }>,
+): boolean {
+  if (bands.length !== CURRENT_GARMENT_GST_BANDS.length) return false;
+  const normalized = [...bands]
+    .map((band) => ({
+      min: decimalToNumber(band.minValue),
+      max: decimalToNumber(band.maxValue),
+      pct: decimalToNumber(band.gstPercent),
+    }))
+    .sort((a, b) => (a.min ?? -Infinity) - (b.min ?? -Infinity));
+  return CURRENT_GARMENT_GST_BANDS.every(
+    (canonical, index) =>
+      normalized[index]!.min === canonical.minValue &&
+      normalized[index]!.max === canonical.maxValue &&
+      normalized[index]!.pct === canonical.gstPercent,
+  );
 }
 
 export async function ensureCurrentGarmentGstRuleSet(
@@ -769,49 +805,52 @@ export async function ensureCurrentGarmentGstRuleSet(
       },
     });
 
-    const existingActive = await tx.gstRuleSetVersion.findFirst({
-      where: { gstRuleSetId: ruleSet.id, status: 'ACTIVE' },
+    const existingVersions = await tx.gstRuleSetVersion.findMany({
+      where: { gstRuleSetId: ruleSet.id },
+      include: { bands: true },
+      orderBy: { versionNumber: 'desc' },
     });
-    if (existingActive) {
-      return { gstRuleSetId: ruleSet.id, action: 'unchanged', versionId: existingActive.id };
+    const matching = existingVersions.find((version) => bandsMatchCanonical(version.bands));
+    if (matching) {
+      return { gstRuleSetId: ruleSet.id, action: 'unchanged', versionId: matching.id };
     }
 
     const versionId = createId();
+    const nextVersionNumber = (existingVersions[0]?.versionNumber ?? 0) + 1;
     await tx.gstRuleSetVersion.create({
       data: {
         id: versionId,
         gstRuleSetId: ruleSet.id,
-        versionNumber: 1,
-        status: 'ACTIVE',
-        effectiveFrom: toDateOnly(CURRENT_GARMENT_GST_RULE_EFFECTIVE_FROM),
+        versionNumber: nextVersionNumber,
+        status: 'DRAFT',
+        // effectiveFrom deliberately omitted — see header comment.
       },
     });
     await tx.gstValueBand.createMany({
-      data: [
-        { id: createId(), gstRuleSetVersionId: versionId, minValue: null, maxValue: 2500, gstPercent: 5 },
-        { id: createId(), gstRuleSetVersionId: versionId, minValue: 2500, maxValue: null, gstPercent: 18 },
-      ],
+      data: CURRENT_GARMENT_GST_BANDS.map((band) => ({
+        id: createId(),
+        gstRuleSetVersionId: versionId,
+        ...band,
+      })),
     });
 
     await recordAuditLog(
       {
         actorId,
-        action: 'GST_RULE_SET_VERSION_ACTIVATED',
+        action: 'GST_RULE_SET_VERSION_CREATED',
         entityType: 'GstRuleSet',
         entityId: ruleSet.id,
         metadata: {
           versionId,
           bootstrap: true,
-          effectiveFrom: CURRENT_GARMENT_GST_RULE_EFFECTIVE_FROM,
-          bands: [
-            { minValue: null, maxValue: 2500, gstPercent: 5 },
-            { minValue: 2500, maxValue: null, gstPercent: 18 },
-          ],
+          status: 'DRAFT',
+          effectiveFrom: null,
+          bands: CURRENT_GARMENT_GST_BANDS,
         },
       },
       tx,
     );
 
-    return { gstRuleSetId: ruleSet.id, action: 'created', versionId };
+    return { gstRuleSetId: ruleSet.id, action: 'created_draft', versionId };
   });
 }

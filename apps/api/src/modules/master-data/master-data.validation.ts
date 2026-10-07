@@ -5,17 +5,13 @@ import { SUPPLIED_BARCODE_MESSAGE, SUPPLIED_BARCODE_PATTERN } from './barcode.ut
 const optionalText = z.string().trim().optional().nullable();
 const positiveMoney = z.coerce.number().positive();
 const nonNegativeMoney = z.coerce.number().nonnegative();
-// A Style's HSN is optional, but when entered must be exactly 8 numeric
-// digits — kept as a string (never coerced to a number) so leading zeroes
-// survive.
-const hsnCodeSchema = z
-  .string()
-  .trim()
-  .optional()
-  .nullable()
-  .refine((value) => !value || /^\d{8}$/.test(value), {
-    message: 'HSN Code must be exactly 8 digits',
-  });
+// A Style's HSN is optional, but when assigned must reference an existing
+// Hsn master record (INV-002 review correction) — Style no longer accepts
+// free-text hsnCode/hsnDescription from the web/API create/update path.
+// Those legacy columns are preserved and kept in sync from the referenced
+// Hsn (see createStyle/updateStyle in master-data.service.ts); historical
+// import writes them directly and does not go through this schema.
+const hsnIdSchema = z.string().trim().min(1).optional().nullable();
 
 export const styleStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export const sizeStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
@@ -59,8 +55,7 @@ export const createStyleSchema = z.object({
   licensor: optionalText,
   colour: optionalText,
   lmixNumber: optionalText,
-  hsnCode: hsnCodeSchema,
-  hsnDescription: optionalText,
+  hsnId: hsnIdSchema,
   finalMrp: positiveMoney,
   royaltyPercentage: z.coerce.number().min(0).max(100).optional().nullable(),
   status: styleStatusSchema.optional(),

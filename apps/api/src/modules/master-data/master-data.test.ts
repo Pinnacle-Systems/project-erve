@@ -53,8 +53,29 @@ async function createActiveSeason(
   });
 }
 
-async function createStyle(token: string, overrides?: Record<string, unknown>) {
+// INV-002 review correction: a Style's HSN is a canonical Hsn master
+// reference (hsnId), not free text — createStyle below defaults to a
+// fresh ACTIVE Hsn fixture unless the caller explicitly supplies its own
+// `hsnId` (including `null`, for "no HSN") via overrides. Each default
+// fixture gets its own generated 8-digit code (Hsn.code is globally
+// unique) — a fixed literal would collide the moment any single test
+// calls createStyle more than once without overriding hsnId.
+let nextHsnFixtureSuffix = 1;
+async function createHsnFixture(overrides?: { code?: string; description?: string | null; status?: 'ACTIVE' | 'INACTIVE' }) {
+  const code = overrides?.code ?? `6109${String(nextHsnFixtureSuffix++).padStart(4, '0')}`;
+  return prisma.hsn.create({
+    data: {
+      id: createId(),
+      code,
+      description: overrides?.description ?? null,
+      status: overrides?.status ?? 'ACTIVE',
+    },
+  });
+}
+
+async function createStyle(token: string, overrides: Record<string, unknown> = {}) {
   const season = await createActiveSeason();
+  const hsnId = 'hsnId' in overrides ? (overrides.hsnId as string | null) : (await createHsnFixture()).id;
   return request(app)
     .post('/styles')
     .set('Authorization', `Bearer ${token}`)
@@ -63,9 +84,9 @@ async function createStyle(token: string, overrides?: Record<string, unknown>) {
       styleName: 'Boys Regular T-Shirt',
       lmixNumber: 'LMIX1234',
       finalMrp: 849,
-      hsnCode: '61091000',
       royaltyPercentage: 12,
       seasonId: season.id,
+      hsnId,
       ...overrides,
     });
 }
@@ -88,7 +109,9 @@ describe('styles API', () => {
 
     expect(adminRes.status).toBe(201);
     expect(merchRes.status).toBe(201);
-    expect(adminRes.body.data.hsnCode).toBe('61091000');
+    // Fixture HSN is synced through (exact code covered by the dedicated
+    // HSN-selection test below) — just confirm the sync happened at all.
+    expect(adminRes.body.data.hsnCode).toBeTruthy();
   });
 
   it('rejects unauthorized roles from creating styles', async () => {
@@ -122,32 +145,78 @@ describe('styles API', () => {
     expect(badRoyalty.status).toBe(400);
   });
 
-  it('rejects a non-8-digit HSN and accepts a valid 8-digit HSN, preserving leading zeroes', async () => {
+  it('resolves Style HSN selection through the HSN master, rejecting an unknown or inactive HSN', async () => {
     const { token } = await createTestUserAndToken({
       email: 'admin@test.local',
       password: 'admin-password',
       roles: ['ADMIN'],
     });
+    const activeHsn = await createHsnFixture({ code: '61091000', description: 'Boys / T-Shirt' });
+    const inactiveHsn = await createHsnFixture({ code: '61046200', status: 'INACTIVE' });
 
-    const tooShort = await createStyle(token, { styleNumber: 'ST-HSN-1', hsnCode: '6109100' });
-    const tooLong = await createStyle(token, { styleNumber: 'ST-HSN-2', hsnCode: '610910001' });
-    const nonNumeric = await createStyle(token, { styleNumber: 'ST-HSN-3', hsnCode: '6109100A' });
-    const leadingZero = await createStyle(token, {
-      styleNumber: 'ST-HSN-4',
-      hsnCode: '06091000',
+    const unknown = await createStyle(token, { styleNumber: 'ST-HSN-1', hsnId: 'does-not-exist' });
+    const inactive = await createStyle(token, { styleNumber: 'ST-HSN-2', hsnId: inactiveHsn.id });
+    expect(unknown.status).toBe(400);
+    expect(inactive.status).toBe(400);
+
+    const created = await createStyle(token, { styleNumber: 'ST-HSN-3', hsnId: activeHsn.id });
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({
+      hsnId: activeHsn.id,
+      hsnCode: '61091000',
+      hsnDescription: 'Boys / T-Shirt',
+      hsn: { id: activeHsn.id, code: '61091000', status: 'ACTIVE' },
     });
 
-    expect(tooShort.status).toBe(400);
-    expect(tooLong.status).toBe(400);
-    expect(nonNumeric.status).toBe(400);
-    expect(leadingZero.status).toBe(201);
-    expect(leadingZero.body.data.hsnCode).toBe('06091000');
-
-    const updated = await request(app)
-      .patch(`/styles/${leadingZero.body.data.id}`)
+    // Changing to a different, nonexistent HSN on update is rejected.
+    const badUpdate = await request(app)
+      .patch(`/styles/${created.body.data.id}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ hsnCode: '1234567' });
-    expect(updated.status).toBe(400);
+      .send({ hsnId: 'still-does-not-exist' });
+    expect(badUpdate.status).toBe(400);
+
+    // Unassigning clears the reference AND the synced legacy text fields —
+    // they must never diverge from "no HSN selected".
+    const unassigned = await request(app)
+      .patch(`/styles/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ hsnId: null });
+    expect(unassigned.status).toBe(200);
+    expect(unassigned.body.data).toMatchObject({
+      hsnId: null,
+      hsnCode: null,
+      hsnDescription: null,
+      hsn: null,
+    });
+  });
+
+  it('does not re-validate HSN activeness when an edit leaves hsnId unchanged, even if that HSN has since gone INACTIVE', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const hsn = await createHsnFixture({ code: '61091000' });
+    const created = await createStyle(token, { hsnId: hsn.id });
+    await prisma.hsn.update({ where: { id: hsn.id }, data: { status: 'INACTIVE' } });
+
+    // Re-sending the SAME hsnId alongside an unrelated field change must
+    // not be blocked merely because that HSN is now inactive — making an
+    // HSN inactive must never corrupt an existing Style's reference.
+    const res = await request(app)
+      .patch(`/styles/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ hsnId: hsn.id, description: 'Updated description' });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ hsnId: hsn.id, description: 'Updated description' });
+
+    // An edit that doesn't mention hsnId at all is obviously unaffected too.
+    const res2 = await request(app)
+      .patch(`/styles/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ description: 'Another edit' });
+    expect(res2.status).toBe(200);
+    expect(res2.body.data.hsnId).toBe(hsn.id);
   });
 
   it('adds and removes style sizes without allowing duplicates', async () => {

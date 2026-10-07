@@ -4,7 +4,12 @@ import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import { createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
-import { BandLadderError, validateBandLadder } from './gst-rule-sets.service.js';
+import {
+  BandLadderError,
+  CURRENT_GARMENT_GST_RULE_SET_CODE,
+  ensureCurrentGarmentGstRuleSet,
+  validateBandLadder,
+} from './gst-rule-sets.service.js';
 
 const app = createApp();
 
@@ -290,5 +295,56 @@ describe('validateBandLadder (unit)', () => {
 
   it('rejects a ladder missing an open upper bound', () => {
     expect(() => validateBandLadder([{ minValue: null, maxValue: 2000 }])).toThrow(BandLadderError);
+  });
+});
+
+describe('ensureCurrentGarmentGstRuleSet (bootstrap)', () => {
+  it('seeds the rule set and bands as DRAFT with no effective date — never invents one', async () => {
+    const result = await ensureCurrentGarmentGstRuleSet(null);
+    expect(result.action).toBe('created_draft');
+
+    const version = await prisma.gstRuleSetVersion.findUnique({
+      where: { id: result.versionId },
+      include: { bands: true },
+    });
+    expect(version).toMatchObject({ status: 'DRAFT', effectiveFrom: null, effectiveTo: null });
+    expect(version!.bands).toHaveLength(2);
+    expect(version!.bands.map((b) => b.gstPercent.toNumber()).sort((a, b) => a - b)).toEqual([5, 18]);
+
+    const ruleSet = await prisma.gstRuleSet.findUnique({ where: { id: result.gstRuleSetId } });
+    expect(ruleSet?.code).toBe(CURRENT_GARMENT_GST_RULE_SET_CODE);
+  });
+
+  it('is idempotent on repeated calls with no activation in between', async () => {
+    const first = await ensureCurrentGarmentGstRuleSet(null);
+    const second = await ensureCurrentGarmentGstRuleSet(null);
+    expect(second).toEqual({ ...first, action: 'unchanged' });
+    expect(await prisma.gstRuleSetVersion.count({ where: { gstRuleSetId: first.gstRuleSetId } })).toBe(1);
+  });
+
+  it('is idempotent even after an admin has activated the seeded version with a real date', async () => {
+    const seeded = await ensureCurrentGarmentGstRuleSet(null);
+    const token = (
+      await createTestUserAndToken({ email: `admin-${createId().slice(-8)}@test.local`, password: 'pass', roles: ['ADMIN'] })
+    ).token;
+
+    // The admin supplies the real effective date and activates it — the
+    // bootstrap must never have guessed this itself.
+    await request(app)
+      .patch(`/gst-rule-sets/${seeded.gstRuleSetId}/versions/${seeded.versionId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ effectiveFrom: '2026-04-01' })
+      .expect(200);
+    await request(app)
+      .post(`/gst-rule-sets/${seeded.gstRuleSetId}/versions/${seeded.versionId}/actions/activate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const again = await ensureCurrentGarmentGstRuleSet(null);
+    expect(again).toEqual({ ...seeded, action: 'unchanged' });
+
+    const version = await prisma.gstRuleSetVersion.findUnique({ where: { id: seeded.versionId } });
+    expect(version?.status).toBe('ACTIVE');
+    expect(version?.effectiveFrom?.toISOString().slice(0, 10)).toBe('2026-04-01');
   });
 });

@@ -11,8 +11,6 @@ export const emptyForm = {
   licensor: '',
   colour: '',
   lmixNumber: '',
-  hsnCode: '',
-  hsnDescription: '',
   finalMrp: '',
   royaltyPercentage: '',
   status: 'ACTIVE' as Status,
@@ -31,8 +29,6 @@ export const fieldLabels: Record<StyleFieldKey, string> = {
   licensor: 'Licensor',
   colour: 'Colour',
   lmixNumber: 'LMIX Number',
-  hsnCode: 'HSN Code',
-  hsnDescription: 'HSN Description',
   finalMrp: 'Final MRP',
   royaltyPercentage: 'Royalty %',
   status: 'Status',
@@ -58,15 +54,16 @@ export const identityFieldLayout = [
   { key: 'description', width: 'lg' },
 ] as const;
 
+// 'hsn' is not a key of StyleFormFields either — same reason as 'season'
+// above: it's a SelectField sourced from GET /hsns/options (INV-002 review
+// correction: Style selects an Hsn master record, it no longer accepts
+// free-text hsnCode/hsnDescription), rendered specially by
+// StyleCommercialSection.
 export const commercialFieldLayout = [
   { key: 'finalMrp', width: 'sm' },
   { key: 'royaltyPercentage', width: 'xs' },
-  { key: 'hsnCode', width: 'sm' },
-  { key: 'hsnDescription', width: 'lg' },
+  { key: 'hsn', width: 'lg' },
 ] as const;
-
-export const HSN_CODE_PATTERN = /^\d{8}$/;
-export const isValidHsnCode = (value: string) => !value || HSN_CODE_PATTERN.test(value);
 
 /** Same field-level error rules the form used pre-restructure, just relocated so both the
  * Identity and Commercial sections can each ask "does my own field have an error" without
@@ -77,7 +74,6 @@ export function styleFieldErrorMessage(
   hasError: boolean,
 ): string | undefined {
   if (!hasError) return undefined;
-  if (key === 'hsnCode' && !isValidHsnCode(form.hsnCode)) return 'HSN Code must be exactly 8 digits';
   if (key === 'styleNumber' && !form.styleNumber) return 'Required';
   if (key === 'styleName' && !form.styleName) return 'Required';
   if (key === 'finalMrp' && Number(form.finalMrp) <= 0) return 'Required';
@@ -87,21 +83,19 @@ export function styleFieldErrorMessage(
 /** Identical checks/messages to the pre-restructure inline mutation validation — relocated, not
  * changed, so it can be unit tested directly and reused verbatim from StyleFormPage's mutationFn. */
 export function validateStyleForm(form: StyleFormFields, seasonId: string): string | null {
-  if (!isValidHsnCode(form.hsnCode)) {
-    return 'HSN Code must be exactly 8 digits.';
-  }
   if (!form.styleNumber || !form.styleName || Number(form.finalMrp) <= 0 || !seasonId) {
     return 'Style number, style name, final MRP, and Season are required';
   }
   return null;
 }
 
-export function cleanPayload(form: StyleFormFields, seasonId: string) {
+export function cleanPayload(form: StyleFormFields, seasonId: string, hsnId: string | null) {
   return {
     ...form,
     finalMrp: Number(form.finalMrp),
     royaltyPercentage: form.royaltyPercentage === '' ? null : Number(form.royaltyPercentage),
     seasonId,
+    hsnId,
   };
 }
 

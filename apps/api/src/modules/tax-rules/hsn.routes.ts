@@ -37,13 +37,27 @@ hsnsRouter.post(
   }),
 );
 
-// Registered before '/:id' so 'gst-rule-set-options' is never captured as an
-// HSN id.
+// Registered before '/:id' so 'gst-rule-set-options'/'options' are never
+// captured as an HSN id.
 hsnsRouter.get(
   '/gst-rule-set-options',
   canManageHsns,
   asyncHandler(async (_req, res) => {
     const options = await hsnService.listGstRuleSetOptionsForHsn();
+    res.status(200).json(successResponse(options));
+  }),
+);
+
+// Style's HSN selector (INV-002 review correction) — gated like the
+// Season/Size/Process-Flow options endpoints (canManageMasterData in
+// master-data.routes.ts), not the broader view gate, since this only
+// feeds a Style create/edit form. canManageHsns is a superset of
+// STYLE_MANAGE_ROLES (ADMIN+MERCHANDISER), so every Style editor reaches it.
+hsnsRouter.get(
+  '/options',
+  canManageHsns,
+  asyncHandler(async (_req, res) => {
+    const options = await hsnService.listHsnOptions();
     res.status(200).json(successResponse(options));
   }),
 );

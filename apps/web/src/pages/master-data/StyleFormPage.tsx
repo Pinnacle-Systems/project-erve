@@ -24,7 +24,7 @@ import {
   toStyleSizeRequest,
   validateStyleForm,
 } from './style/style-form-state.js';
-import type { FactoryOption, SeasonOption, SizeOption, Style } from './types.js';
+import type { FactoryOption, HsnOption, SeasonOption, SizeOption, Style } from './types.js';
 
 export function StyleFormPage() {
   const navigate = useNavigate();
@@ -36,6 +36,7 @@ export function StyleFormPage() {
   // (the server generates; nothing is computed here).
   const [barcodeBySizeId, setBarcodeBySizeId] = useState<Record<string, string>>({});
   const [seasonId, setSeasonId] = useState('');
+  const [hsnId, setHsnId] = useState('');
   const [factoryMappings, setFactoryMappings] = useState<StyleFactoryMappingRow[]>([]);
   const [error, setError] = useState('');
   // Create-mode only: an image picked before the style exists. The style
@@ -71,22 +72,27 @@ export function StyleFormPage() {
   // Every Season, any status (GET /seasons/options): the identity section offers ACTIVE ones plus
   // this Style's saved Season, even if INACTIVE.
   const seasonsQuery = useQuery({ queryKey: ['seasons', 'options'], queryFn: async () => (await apiClient.get<ApiSuccessResponse<SeasonOption[]>>('/seasons/options')).data.data });
+  // Every HSN, any status (GET /hsns/options): the Commercial section
+  // offers ACTIVE ones plus this Style's saved HSN, even if INACTIVE —
+  // same convention as seasonsQuery above (INV-002 review correction).
+  const hsnsQuery = useQuery({ queryKey: ['hsns', 'options'], queryFn: async () => (await apiClient.get<ApiSuccessResponse<HsnOption[]>>('/hsns/options')).data.data });
 
   // Edit mode only: true once the form has been hydrated from the loaded record and is safe to
   // reveal. Gating on this (see the render-time check below), not just styleQuery.isLoading, is
-  // load-bearing: it keeps the Season SelectField from ever mounting with an empty value and then
-  // being reassigned a real one by this effect on a later render. That external post-mount value
-  // change — regardless of whether matching <SelectItem>s already exist by then — is what makes
-  // Radix's hidden native bubble-select fire its own change handler back to "", silently clobbering
-  // the just-hydrated season to empty with no error (confirmed live via a console trace on
-  // onValueChange; see erve-sale-order-edit-hydration-fix memory for the same root cause in a
-  // different form). Waiting to hydrate everything — Season included — until both styleQuery and
-  // seasonsQuery have resolved means the SelectField's first-ever render already carries the
-  // correct value, so no such post-mount change ever happens.
+  // load-bearing: it keeps the Season (and, since INV-002's review correction, HSN) SelectField
+  // from ever mounting with an empty value and then being reassigned a real one by this effect on
+  // a later render. That external post-mount value change — regardless of whether matching
+  // <SelectItem>s already exist by then — is what makes Radix's hidden native bubble-select fire
+  // its own change handler back to "", silently clobbering the just-hydrated value to empty with no
+  // error (confirmed live via a console trace on onValueChange; see
+  // erve-sale-order-edit-hydration-fix memory for the same root cause in a different form). Waiting
+  // to hydrate everything — Season and HSN included — until styleQuery, seasonsQuery AND hsnsQuery
+  // have all resolved means each SelectField's first-ever render already carries the correct value,
+  // so no such post-mount change ever happens.
   const [hydrated, setHydrated] = useState(!isEdit);
 
   useEffect(() => {
-    if (!styleQuery.data || !seasonsQuery.data) {
+    if (!styleQuery.data || !seasonsQuery.data || !hsnsQuery.data) {
       return;
     }
     // Hydrates the edit form from async-loaded records; the data isn't available for a lazy
@@ -102,8 +108,6 @@ export function StyleFormPage() {
       licensor: styleQuery.data.licensor ?? '',
       colour: styleQuery.data.colour ?? '',
       lmixNumber: styleQuery.data.lmixNumber ?? '',
-      hsnCode: styleQuery.data.hsnCode ?? '',
-      hsnDescription: styleQuery.data.hsnDescription ?? '',
       finalMrp: String(styleQuery.data.finalMrp),
       royaltyPercentage:
         styleQuery.data.royaltyPercentage === null ? '' : String(styleQuery.data.royaltyPercentage),
@@ -114,6 +118,7 @@ export function StyleFormPage() {
       Object.fromEntries(styleQuery.data.sizes.map((size) => [size.id, size.barcode ?? ''])),
     );
     setSeasonId(styleQuery.data.season.id);
+    setHsnId(styleQuery.data.hsnId ?? '');
     setFactoryMappings(
       styleQuery.data.factories.map((factory) => ({
         rowId: nextFactoryMappingRowId(),
@@ -122,7 +127,7 @@ export function StyleFormPage() {
       })),
     );
     setHydrated(true);
-  }, [styleQuery.data, seasonsQuery.data]);
+  }, [styleQuery.data, seasonsQuery.data, hsnsQuery.data]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -145,7 +150,7 @@ export function StyleFormPage() {
       // failure anywhere (a barcode conflict, an inactive factory) rolls back the whole save instead
       // of leaving the Style partially updated (SESS-008).
       const payload = {
-        ...cleanPayload(form, seasonId),
+        ...cleanPayload(form, seasonId, hsnId || null),
         sizes: selectedSizeIds.map((sizeId) => toStyleSizeRequest(sizeId, barcodeBySizeId)),
         factoryMappings: toStyleFactoryMappingRequests(factoryMappings),
       };
@@ -191,6 +196,7 @@ export function StyleFormPage() {
       selectedSizeIds,
       barcodeBySizeId,
       seasonId,
+      hsnId,
       factoryMappings: factoryMappings.map(({ factoryId, exFactoryPrice }) => ({
         factoryId,
         exFactoryPrice,
@@ -211,6 +217,11 @@ export function StyleFormPage() {
   // styleQuery succeeds.
   if (isEdit && seasonsQuery.isError) {
     return <ErrorState title="Unable to load seasons" description={seasonsQuery.error.message} />;
+  }
+  // Hydration also depends on hsnsQuery (see the hydration effect above) —
+  // same reasoning as seasonsQuery just above.
+  if (isEdit && hsnsQuery.isError) {
+    return <ErrorState title="Unable to load HSNs" description={hsnsQuery.error.message} />;
   }
   if (isEdit && (styleQuery.isLoading || !hydrated)) {
     return <LoadingState label="Loading style" />;
@@ -252,6 +263,9 @@ export function StyleFormPage() {
           <StyleCommercialSection
             form={form}
             onFieldChange={(key, value) => setForm((current) => ({ ...current, [key]: value }))}
+            hsnId={hsnId}
+            onHsnChange={setHsnId}
+            hsns={hsnsQuery.data ?? []}
             error={error}
           />
 
