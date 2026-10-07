@@ -12,6 +12,7 @@ import {
   type SeedComponent,
   type SeedSection,
 } from '../src/cli/quality-bootstrap-definitions.js';
+import { ensureCurrentGarmentGstRuleSet } from '../src/modules/tax-rules/gst-rule-sets.service.js';
 
 // Transporter delivery access is handled later via tokenized public
 // delivery links, not a normal logged-in role — do not add it here.
@@ -590,6 +591,13 @@ async function seedFinancialYears(): Promise<void> {
   await ensureFinancialYearWindow(prisma, new Date());
 }
 
+// Delegates to the same ensureCurrentGarmentGstRuleSet the production
+// gst-rule-set-bootstrap CLI uses, so dev/test seeding and a real
+// production install never drift onto different rule-set content.
+async function seedGstRuleSets(): Promise<void> {
+  await ensureCurrentGarmentGstRuleSet(null);
+}
+
 async function main(): Promise<void> {
   await seedRoles();
   await seedDefaultAdminUser();
@@ -599,6 +607,7 @@ async function main(): Promise<void> {
   await seedDefaultProcessFlow();
   await seedQualityForms();
   await seedErveProductionQualityFlow();
+  await seedGstRuleSets();
   await seedStyles();
 }
 

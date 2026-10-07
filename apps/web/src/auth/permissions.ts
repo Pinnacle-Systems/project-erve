@@ -106,6 +106,22 @@ export const PRICE_LIST_MANAGE_ROLES = [
   'ACCOUNTANT',
 ] as const satisfies readonly Role[];
 
+// INV-002: HSN is Style master data with a tax-configuration dimension
+// grafted on (its GST Rule Set assignment) — same role charter as Price
+// Lists (ADMIN + MERCHANDISER as master-data owners, ACCOUNTANT as the
+// explicit business exception for tax-rule work), reused for GST Rule Sets
+// too since the two are the same tax-configuration domain.
+export const HSN_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'ACCOUNTANT',
+] as const satisfies readonly Role[];
+export const HSN_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER', 'ACCOUNTANT'] as const satisfies readonly Role[];
+
+export const GST_RULE_SET_VIEW_ROLES = HSN_VIEW_ROLES;
+export const GST_RULE_SET_MANAGE_ROLES = HSN_MANAGE_ROLES;
+
 // Order Sheet planning belongs to Merchandising: DISTRIBUTOR has no access at
 // all (view or manage) — mirrors DISTRIBUTOR's existing full exclusion from
 // Job Orders (JOB_ORDER_VIEW_ROLES/JOB_ORDER_CREATE_ROLES below).
@@ -225,6 +241,14 @@ export const canViewPriceLists = (user: AuthUser | null | undefined) =>
 
 export const canManagePriceLists = (user: AuthUser | null | undefined) =>
   hasRole(user, PRICE_LIST_MANAGE_ROLES);
+
+export const canViewHsns = (user: AuthUser | null | undefined) => hasRole(user, HSN_VIEW_ROLES);
+export const canManageHsns = (user: AuthUser | null | undefined) => hasRole(user, HSN_MANAGE_ROLES);
+
+export const canViewGstRuleSets = (user: AuthUser | null | undefined) =>
+  hasRole(user, GST_RULE_SET_VIEW_ROLES);
+export const canManageGstRuleSets = (user: AuthUser | null | undefined) =>
+  hasRole(user, GST_RULE_SET_MANAGE_ROLES);
 
 export const canViewPurchaseOrders = (user: AuthUser | null | undefined) =>
   hasRole(user, PURCHASE_ORDER_VIEW_ROLES);

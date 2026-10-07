@@ -131,6 +131,65 @@ export interface SellerRegistration extends SellerRegistrationSummary {
   updatedAt: string;
 }
 
+// INV-002: a reusable GST rule identity, referenced by many Hsn records.
+export interface GstRuleSetSummary {
+  id: string;
+  code: string;
+  name: string;
+  status: Status;
+  versionCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GstValueBand {
+  id: string;
+  /** null = open-ended at this bound. minValue is EXCLUSIVE, maxValue INCLUSIVE. */
+  minValue: number | null;
+  maxValue: number | null;
+  gstPercent: number;
+}
+
+export type GstRuleSetVersionStatus = 'DRAFT' | 'ACTIVE' | 'EXPIRED';
+
+export interface GstRuleSetVersion {
+  id: string;
+  versionNumber: number;
+  status: GstRuleSetVersionStatus;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  bands: GstValueBand[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GstRuleSet {
+  id: string;
+  code: string;
+  name: string;
+  status: Status;
+  versions: GstRuleSetVersion[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type GstRuleSetOption = Pick<GstRuleSetSummary, 'id' | 'code' | 'name' | 'status'>;
+
+// INV-002: canonical HSN identity. Deliberately flat (no chapter/heading
+// hierarchy) — Style.hsnCode/hsnDescription remain free text and unrelated
+// to this master; see HsnListPage/HsnFormPage.
+export interface HsnSummary {
+  id: string;
+  code: string;
+  description: string | null;
+  status: Status;
+  gstRuleSet: GstRuleSetOption | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type Hsn = HsnSummary;
+
 export interface StyleImage {
   id: string;
   styleId: string;

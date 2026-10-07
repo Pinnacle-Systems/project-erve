@@ -6,9 +6,11 @@ import {
   FileText,
   Hammer,
   Handshake,
+  Hash,
   Landmark,
   LayoutDashboard,
   PackageCheck,
+  Percent,
   Receipt,
   RotateCcw,
   Ruler,
@@ -30,6 +32,8 @@ import {
   canManageSeasons,
   canManageUsers,
   canViewDistributorMaster,
+  canViewGstRuleSets,
+  canViewHsns,
   canViewSellerRegistrations,
   canViewErveDispatches,
   canViewErvePackingLists,
@@ -89,6 +93,10 @@ export function AppLayout() {
           : []),
         ...(canViewPriceLists(user)
           ? [{ to: '/price-lists', label: 'Price Lists', icon: Tags }]
+          : []),
+        ...(canViewHsns(user) ? [{ to: '/hsns', label: 'HSN Codes', icon: Hash }] : []),
+        ...(canViewGstRuleSets(user)
+          ? [{ to: '/gst-rule-sets', label: 'GST Rule Sets', icon: Percent }]
           : []),
         ...(canManageUsers(user)
           ? [{ to: '/master-data/users', label: 'Users', icon: Users }]
