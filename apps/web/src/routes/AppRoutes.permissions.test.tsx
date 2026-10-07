@@ -34,6 +34,15 @@ vi.mock('../pages/master-data/DistributorDetailPage.js', () => ({
 vi.mock('../pages/master-data/DistributorFormPage.js', () => ({
   DistributorFormPage: () => <div>DistributorFormPage</div>,
 }));
+vi.mock('../pages/master-data/SellerRegistrationListPage.js', () => ({
+  SellerRegistrationListPage: () => <div>SellerRegistrationListPage</div>,
+}));
+vi.mock('../pages/master-data/SellerRegistrationDetailPage.js', () => ({
+  SellerRegistrationDetailPage: () => <div>SellerRegistrationDetailPage</div>,
+}));
+vi.mock('../pages/master-data/SellerRegistrationFormPage.js', () => ({
+  SellerRegistrationFormPage: () => <div>SellerRegistrationFormPage</div>,
+}));
 vi.mock('../pages/purchase-orders/PurchaseOrderListPage.js', () => ({
   PurchaseOrderListPage: () => <div>PurchaseOrderListPage</div>,
 }));
@@ -161,6 +170,50 @@ describe('AppRoutes Permissions', () => {
   ] as const)('allows /master-data/factories/new for %s = %s', async (role, allowed) => {
     await renderRoutes(role, '/master-data/factories/new');
     expect(getPageContent()).toContain(allowed ? 'FactoryFormPage' : 'ForbiddenPage');
+  });
+
+  describe('Seller Registration (AINV-001) — ADMIN-only master', () => {
+    it.each([
+      ['ADMIN', true],
+      ['MERCHANDISER', false],
+      ['ACCOUNTANT', false],
+      ['SENIOR_MANAGEMENT', false],
+      ['FACTORY_USER', false],
+      ['QA_USER', false],
+      ['DISTRIBUTOR', false],
+    ] as const)('seller registration list route for %s = %s', async (role, allowed) => {
+      await renderRoutes(role, '/master-data/seller-registrations');
+      expect(getPageContent()).toContain(
+        allowed ? 'SellerRegistrationListPage' : 'ForbiddenPage',
+      );
+    });
+
+    it.each([
+      ['ADMIN', true],
+      ['MERCHANDISER', false],
+      ['ACCOUNTANT', false],
+    ] as const)('seller registration detail route for %s = %s', async (role, allowed) => {
+      await renderRoutes(role, '/master-data/seller-registrations/seller-1');
+      expect(getPageContent()).toContain(
+        allowed ? 'SellerRegistrationDetailPage' : 'ForbiddenPage',
+      );
+    });
+
+    it.each([
+      ['ADMIN', true],
+      ['MERCHANDISER', false],
+      ['ACCOUNTANT', false],
+    ] as const)('seller registration create/edit routes for %s = %s', async (role, allowed) => {
+      for (const path of [
+        '/master-data/seller-registrations/new',
+        '/master-data/seller-registrations/seller-1/edit',
+      ]) {
+        await renderRoutes(role, path);
+        expect(getPageContent()).toContain(
+          allowed ? 'SellerRegistrationFormPage' : 'ForbiddenPage',
+        );
+      }
+    });
   });
 
   describe('FACTORY_USER', () => {

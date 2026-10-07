@@ -6,6 +6,7 @@ import {
   FileText,
   Hammer,
   Handshake,
+  Landmark,
   LayoutDashboard,
   PackageCheck,
   Receipt,
@@ -29,6 +30,7 @@ import {
   canManageSeasons,
   canManageUsers,
   canViewDistributorMaster,
+  canViewSellerRegistrations,
   canViewErveDispatches,
   canViewErvePackingLists,
   canViewFactories,
@@ -69,6 +71,15 @@ export function AppLayout() {
           : []),
         ...(canViewDistributorMaster(user)
           ? [{ to: '/master-data/distributors', label: 'Distributors', icon: Handshake }]
+          : []),
+        ...(canViewSellerRegistrations(user)
+          ? [
+              {
+                to: '/master-data/seller-registrations',
+                label: 'Seller Registrations',
+                icon: Landmark,
+              },
+            ]
           : []),
         ...(canManageProcessFlows(user)
           ? [{ to: '/master-data/process-flows', label: 'Process Flows', icon: Workflow }]

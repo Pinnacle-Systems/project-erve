@@ -69,6 +69,13 @@ export const DISTRIBUTOR_MANAGE_ROLES = [
 
 export const FACTORY_MANAGE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
+// ERVE's own GST/legal/bank identity is statutory document master data —
+// intentionally ADMIN-only (tighter than the usual master-maintenance gate)
+// rather than widened just because invoice users may eventually need to
+// read it. Read access can broaden in a later invoice story.
+export const SELLER_REGISTRATION_VIEW_ROLES = ['ADMIN'] as const satisfies readonly Role[];
+export const SELLER_REGISTRATION_MANAGE_ROLES = ['ADMIN'] as const satisfies readonly Role[];
+
 export const PROCESS_FLOW_MANAGE_ROLES = [
   'ADMIN',
   'MERCHANDISER',
@@ -191,6 +198,12 @@ export const canViewFactories = (user: AuthUser | null | undefined) =>
 
 export const canManageFactories = (user: AuthUser | null | undefined) =>
   hasRole(user, FACTORY_MANAGE_ROLES);
+
+export const canViewSellerRegistrations = (user: AuthUser | null | undefined) =>
+  hasRole(user, SELLER_REGISTRATION_VIEW_ROLES);
+
+export const canManageSellerRegistrations = (user: AuthUser | null | undefined) =>
+  hasRole(user, SELLER_REGISTRATION_MANAGE_ROLES);
 
 export const canViewDistributorMaster = (user: AuthUser | null | undefined) =>
   hasRole(user, DISTRIBUTOR_VIEW_ROLES);

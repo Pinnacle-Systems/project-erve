@@ -40,6 +40,11 @@ enum FactoryStatus {
   INACTIVE
 }
 
+enum SellerRegistrationStatus {
+  ACTIVE
+  INACTIVE
+}
+
 enum StyleStatus {
   ACTIVE
   INACTIVE
@@ -462,6 +467,46 @@ model Factory {
 
   @@index([status])
   @@map("factories")
+}
+
+// ERVE's own GST/legal registration(s) — the future Tax Invoice "Sold By"
+// identity. Modeled as a normal master (never a singleton config row) so a
+// second branch with its own GSTIN/address/bank can be added later without a
+// schema change. Only `sellerRegistrationId` + a field snapshot are meant to
+// be consumed downstream (by a later invoice story); this story establishes
+// the source master only — nothing here is referenced by another model yet.
+model SellerRegistration {
+  id        String                   @id
+  legalName String                   @map("legal_name")
+  tradeName String?                  @map("trade_name")
+  // Internal short code for lookups/selectors — not a statutory field.
+  branchCode String                  @unique @map("branch_code")
+  status    SellerRegistrationStatus @default(ACTIVE)
+
+  gstin              String  @unique
+  einvoiceApplicable Boolean @default(false) @map("einvoice_applicable")
+
+  addressLine1 String  @map("address_line1")
+  addressLine2 String? @map("address_line2")
+  city         String
+  district     String?
+  state        String
+  stateCode    String  @map("state_code")
+  postalCode   String  @map("postal_code")
+  country      String  @default("India")
+
+  bankName          String  @map("bank_name")
+  bankAccountName   String  @map("bank_account_name")
+  bankAccountNumber String  @map("bank_account_number")
+  bankIfsc          String  @map("bank_ifsc")
+  bankBranchName    String  @map("bank_branch_name")
+  bankAddress       String? @map("bank_address")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("seller_registrations")
 }
 
 // A distributor user belongs to exactly one distributor: distributor
