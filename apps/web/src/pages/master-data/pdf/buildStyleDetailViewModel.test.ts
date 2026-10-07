@@ -17,6 +17,8 @@ function makeStyle(overrides: Partial<Style> = {}): Style {
     lmixNumber: null,
     hsnCode: '6109',
     hsnDescription: 'Cotton knit',
+    hsnId: null,
+    hsn: null,
     finalMrp: 499,
     royaltyPercentage: 5,
     status: 'ACTIVE',

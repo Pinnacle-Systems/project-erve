@@ -69,6 +69,19 @@ export async function getHsnDetail(id: string) {
   return toHsnView(hsn);
 }
 
+// Option lookup for the Style form's HSN selector (INV-002 review
+// correction: HSN master is now the canonical Style selection path). Every
+// HSN, any status — mirrors listSeasonOptions's convention exactly: the
+// web form offers ACTIVE ones for a *new* assignment but must still be
+// able to render/keep an already-assigned INACTIVE one on an existing
+// Style, so the status filtering happens client-side, not here.
+export async function listHsnOptions() {
+  return prisma.hsn.findMany({
+    orderBy: [{ code: 'asc' }, { id: 'asc' }],
+    select: { id: true, code: true, description: true, status: true },
+  });
+}
+
 // Minimal option lookup for the Style/Hsn forms' GST Rule Set selector —
 // ACTIVE rule sets only, since a new HSN should not be pointed at a retired
 // rule set (an existing assignment to an INACTIVE one is left alone; see

@@ -133,7 +133,13 @@ describe('HSN master', () => {
     expect(createRes.status).toBe(403);
   });
 
-  it('leaves existing Style create/update HSN free-text behavior untouched', async () => {
+  it('ignores raw hsnCode/hsnDescription sent to the Style API — HSN is selected by hsnId only', async () => {
+    // INV-002 review correction: a Style's HSN is now a canonical Hsn
+    // master reference, not free text. Zod strips unrecognized keys
+    // silently (no .strict()), so a stale/malicious client sending
+    // hsnCode/hsnDescription directly must have no effect at all — only
+    // hsnId, resolved against an ACTIVE Hsn, can set them (and only via
+    // the sync in master-data.service.ts).
     const token = await tokenWithRoles(['ADMIN', 'MERCHANDISER']);
     const season = await createTestSeason();
 
@@ -150,12 +156,75 @@ describe('HSN master', () => {
       });
 
     expect(res.status).toBe(201);
-    expect(res.body.data.hsnCode).toBe('61091000');
+    expect(res.body.data.hsnCode).toBeNull();
+    expect(res.body.data.hsnDescription).toBeNull();
+    expect(res.body.data.hsnId).toBeNull();
 
     const style = await prisma.style.findUnique({ where: { id: res.body.data.id } });
-    // Nothing in the Style create/update flow sets hsnId — that link is
-    // established only by the hsn-master-backfill script or the HSN admin
-    // screens, never implicitly by saving a Style.
+    expect(style!.hsnCode).toBeNull();
     expect(style!.hsnId).toBeNull();
+  });
+
+  it('selecting an HSN via hsnId syncs the legacy hsnCode/hsnDescription fields', async () => {
+    const token = await tokenWithRoles(['ADMIN', 'MERCHANDISER']);
+    const season = await createTestSeason();
+    const hsnRes = await request(app)
+      .post('/hsns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: '61091000', description: 'Boys / T-Shirt' });
+    const hsnId = hsnRes.body.data.id as string;
+
+    const res = await request(app)
+      .post('/styles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        styleNumber: `ST-${createId().slice(-8)}`,
+        styleName: 'Test Style',
+        finalMrp: 500,
+        seasonId: season.id,
+        hsnId,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({
+      hsnId,
+      hsnCode: '61091000',
+      hsnDescription: 'Boys / T-Shirt',
+      hsn: { id: hsnId, code: '61091000', description: 'Boys / T-Shirt', status: 'ACTIVE' },
+    });
+  });
+
+  it('rejects assigning an INACTIVE HSN to a Style', async () => {
+    const token = await tokenWithRoles(['ADMIN', 'MERCHANDISER']);
+    const season = await createTestSeason();
+    const hsnRes = await request(app)
+      .post('/hsns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: '61091000', status: 'INACTIVE' });
+
+    const res = await request(app)
+      .post('/styles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        styleNumber: `ST-${createId().slice(-8)}`,
+        styleName: 'Test Style',
+        finalMrp: 500,
+        seasonId: season.id,
+        hsnId: hsnRes.body.data.id,
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /hsns/options returns every HSN regardless of status (mirrors /seasons/options)', async () => {
+    const token = await tokenWithRoles(['ADMIN', 'MERCHANDISER']);
+    await request(app).post('/hsns').set('Authorization', `Bearer ${token}`).send({ code: '61091000' });
+    await request(app)
+      .post('/hsns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: '61046200', status: 'INACTIVE' });
+
+    const res = await request(app).get('/hsns/options').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((h: { code: string }) => h.code).sort()).toEqual(['61046200', '61091000']);
   });
 });

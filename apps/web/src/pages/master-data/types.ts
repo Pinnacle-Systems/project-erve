@@ -175,9 +175,17 @@ export interface GstRuleSet {
 
 export type GstRuleSetOption = Pick<GstRuleSetSummary, 'id' | 'code' | 'name' | 'status'>;
 
+// INV-002 review correction: Style selects its HSN from this master via
+// hsnId — this is the shape both GET /hsns/options and Style.hsn use.
+export interface HsnOption {
+  id: string;
+  code: string;
+  description: string | null;
+  status: Status;
+}
+
 // INV-002: canonical HSN identity. Deliberately flat (no chapter/heading
-// hierarchy) — Style.hsnCode/hsnDescription remain free text and unrelated
-// to this master; see HsnListPage/HsnFormPage.
+// hierarchy).
 export interface HsnSummary {
   id: string;
   code: string;
@@ -214,8 +222,13 @@ export interface Style {
   licensor: string | null;
   colour: string | null;
   lmixNumber: string | null;
+  // HSN is selected via hsnId against the Hsn master (INV-002 review
+  // correction) — hsnCode/hsnDescription are read-only, synced from `hsn`
+  // server-side, and never independently editable here.
   hsnCode: string | null;
   hsnDescription: string | null;
+  hsnId: string | null;
+  hsn: HsnOption | null;
   finalMrp: number;
   royaltyPercentage: number | null;
   status: Status;

@@ -63,6 +63,8 @@ function makeStyle(overrides: Partial<Style> = {}): Style {
     lmixNumber: null,
     hsnCode: null,
     hsnDescription: null,
+    hsnId: null,
+    hsn: null,
     finalMrp: 499,
     royaltyPercentage: null,
     status: 'ACTIVE',
@@ -81,15 +83,16 @@ function makeStyle(overrides: Partial<Style> = {}): Style {
   };
 }
 
-// Every StyleFormPage instance issues /sizes, /factories and /seasons
-// regardless of create/edit mode (those queries aren't gated by isEdit), so
-// they're stubbed by default here and only the record-specific GET varies
-// per test.
+// Every StyleFormPage instance issues /sizes, /factories, /seasons and
+// /hsns/options regardless of create/edit mode (those queries aren't gated
+// by isEdit), so they're stubbed by default here and only the
+// record-specific GET varies per test.
 function mockStyleGets(overrides: Record<string, () => Promise<unknown>> = {}) {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/sizes/options') return { data: { data: [] } };
     if (url === '/factories/options') return { data: { data: [] } };
     if (url === '/seasons/options') return { data: { data: [] } };
+    if (url === '/hsns/options') return { data: { data: [] } };
     const handler = overrides[url];
     if (handler) return handler();
     throw new Error(`Unexpected request: ${url}`);
@@ -203,6 +206,7 @@ describe('StyleFormPage — UXAUTH-019 edit-load gating', () => {
       if (url === '/factories/options') return { data: { data: [] } };
       if (url === '/seasons/options')
         return { data: { data: [{ id: 's1', code: 'SS27', name: 'Spring Summer 27', displayName: 'SS27', status: 'ACTIVE' }] } };
+      if (url === '/hsns/options') return { data: { data: [] } };
       if (url === '/styles/style-1') return { data: { data: style } };
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -253,6 +257,7 @@ describe('StyleFormPage — UXAUTH-019 edit-load gating', () => {
       if (url === '/factories/options') return { data: { data: [] } };
       if (url === '/seasons/options')
         return { data: { data: [{ id: 's1', code: 'SS27', name: 'Spring Summer 27', displayName: 'SS27', status: 'ACTIVE' }] } };
+      if (url === '/hsns/options') return { data: { data: [] } };
       if (url === '/styles/style-1') return { data: { data: style } };
       throw new Error(`Unexpected request: ${url}`);
     });

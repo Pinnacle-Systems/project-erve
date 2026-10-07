@@ -31,6 +31,8 @@ function style(n: number): Style {
     lmixNumber: null,
     hsnCode: null,
     hsnDescription: null,
+    hsnId: null,
+    hsn: null,
     finalMrp: 499,
     royaltyPercentage: null,
     status: 'ACTIVE',

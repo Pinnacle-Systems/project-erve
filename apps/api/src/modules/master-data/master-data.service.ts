@@ -21,6 +21,7 @@ import { generateStyleSizeBarcode, normalizeSuppliedBarcode } from './barcode.ut
 
 const styleInclude = {
   season: { include: { financialYear: { select: { id: true, code: true } } } },
+  hsn: { select: { id: true, code: true, description: true, status: true } },
   styleSizes: { include: { size: true }, orderBy: { size: { sortOrder: 'asc' } } },
   styleFactoryMappings: { include: { factory: true }, orderBy: { factory: { name: 'asc' } } },
   images: {
@@ -82,8 +83,13 @@ function toStyleView(style: StyleRecord) {
     licensor: style.licensor,
     colour: style.colour,
     lmixNumber: style.lmixNumber,
+    // Legacy text fields — still readable (PDFs, historical import,
+    // existing API consumers), now always synced from `hsn` below rather
+    // than independently editable from the web/API create/update path.
     hsnCode: style.hsnCode,
     hsnDescription: style.hsnDescription,
+    hsnId: style.hsn?.id ?? null,
+    hsn: style.hsn,
     finalMrp: decimalToNumber(style.finalMrp),
     royaltyPercentage: decimalToNumber(style.royaltyPercentage),
     status: style.status,
@@ -242,6 +248,15 @@ export async function createStyle(
     finalMrp: number;
     status?: StyleStatus;
     seasonId: string;
+    // Canonical HSN selection (INV-002 review correction): a Style's HSN is
+    // now an Hsn master reference, not free text. When present, must
+    // resolve to an ACTIVE Hsn — see assertActiveHsn below. hsnCode/
+    // hsnDescription are then synced from it, never accepted independently
+    // from this (web/API) path. Historical import calls createStyle/
+    // updateStyle directly with hsnCode/hsnDescription and no hsnId key —
+    // that compatibility path is untouched (see assertActiveHsn's call
+    // sites, both gated on `'hsnId' in styleFields` / hsnId being present).
+    hsnId?: string | null;
     // Optional: when present the Style, its Style+Size rows (with supplied or
     // generated barcodes), and its Factory mappings are all created in ONE
     // transaction (SESS-008), so a failure anywhere never leaves a
@@ -254,6 +269,11 @@ export async function createStyle(
   const { sizes = [], factoryMappings = [], ...styleFields } = input;
   const styleId = createId();
   const season = await assertActiveSeason(input.seasonId);
+  if (styleFields.hsnId !== undefined && styleFields.hsnId !== null) {
+    const hsn = await assertActiveHsn(styleFields.hsnId as string);
+    styleFields.hsnCode = hsn.code;
+    styleFields.hsnDescription = hsn.description;
+  }
   const plannedSizes = await planStyleSizes(
     { lmixNumber: styleFields.lmixNumber as string | null | undefined, season },
     sizes,
@@ -342,6 +362,26 @@ export async function updateStyle(
   // unrelated edits, but a Season change must land on an active Season.
   if (seasonId && seasonId !== existing.seasonId) {
     await assertActiveSeason(seasonId);
+  }
+
+  // Same rule for HSN (INV-002 review correction): an already-assigned,
+  // since-INACTIVE HSN must never block an unrelated edit that merely
+  // re-sends the same hsnId — only a genuine reassignment to a *different*
+  // HSN is validated against ACTIVE, and only then are the legacy text
+  // fields re-synced. Unassigning (hsnId -> null) clears them too, so they
+  // can never diverge from "no HSN selected".
+  if ('hsnId' in styleFields) {
+    const newHsnId = styleFields.hsnId as string | null;
+    if (newHsnId !== existing.hsnId) {
+      if (newHsnId === null) {
+        styleFields.hsnCode = null;
+        styleFields.hsnDescription = null;
+      } else {
+        const hsn = await assertActiveHsn(newHsnId);
+        styleFields.hsnCode = hsn.code;
+        styleFields.hsnDescription = hsn.description;
+      }
+    }
   }
 
   const sizesPlan = sizes
@@ -514,6 +554,17 @@ async function assertActiveSeason(id: string) {
   if (!season || season.status !== 'ACTIVE')
     throw HttpError.badRequest('The selected Season must exist and be active');
   return season;
+}
+
+// Hsn is owned by the tax-rules module (INV-002) — queried directly here
+// rather than through a cross-module service import, same as every other
+// simple existence/status check in this file (assertActiveSeason above,
+// assertFinancialYearExists below).
+async function assertActiveHsn(id: string) {
+  const hsn = await prisma.hsn.findUnique({ where: { id } });
+  if (!hsn || hsn.status !== 'ACTIVE')
+    throw HttpError.badRequest('The selected HSN must exist and be active');
+  return hsn;
 }
 
 export async function createSeason(
