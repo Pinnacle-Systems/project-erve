@@ -23,7 +23,10 @@ import { toBusinessCalendarDate } from '../master-data/financial-year.util.js';
 import { computeQualityWorkSummary } from '../job-orders/job-orders.service.js';
 import { getPooledFactoryInventory } from '../job-orders/pooled-inventory.service.js';
 import { getPhysicalPackedQuantitiesForLines } from '../fulfillment/packing-reconciliation.js';
-import { listSaleOrReturnPositions } from '../fulfillment/distributor-sales-report.service.js';
+import {
+  getSaleOrReturnRemainingTotal,
+  getSaleOrReturnGroupedTotals,
+} from '../fulfillment/sale-or-return-position-query.service.js';
 import { computeAvailability } from '../fulfillment/sale-or-return-quantities.js';
 import { listSeasonOptions } from '../master-data/master-data.service.js';
 
@@ -153,11 +156,12 @@ async function computeDeliverySection(): Promise<{ awaitingConfirmation: number 
 }
 
 async function computeSaleReturnSection(
-  user: CurrentUser,
+  _user: CurrentUser,
   filters: ReportFilters,
 ): Promise<{ remainingWithDistributors: number }> {
-  const rows = await listSaleOrReturnPositions(user, { distributorId: filters.distributorId });
-  const remainingWithDistributors = rows.reduce((sum, row) => sum + row.remainingWithDistributor, 0);
+  const remainingWithDistributors = await getSaleOrReturnRemainingTotal({
+    distributorId: filters.distributorId,
+  });
   return { remainingWithDistributors };
 }
 
@@ -498,54 +502,22 @@ export async function getSaleOrReturnReport(
   if (!canViewReportSection(user, 'saleReturn')) {
     throw HttpError.forbidden('You do not have permission to view the sale-or-return report');
   }
-  const positions = await listSaleOrReturnPositions(user, { distributorId: filters.distributorId });
 
-  interface Accumulator {
-    distributor: { id: string; code: string; name: string };
-    style?: { id: string; styleNumber: string; styleName: string };
-    receivedQuantity: number;
-    actualSoldQuantity: number;
-    returnedQuantity: number;
-    approvedAwaitingReceiptQuantity: number;
-    pendingRequestedQuantity: number;
-  }
-  const byKey = new Map<string, Accumulator>();
-  for (const row of positions) {
-    const key = filters.groupByStyle
-      ? `${row.distributor.id}:${row.styleNumber}`
-      : row.distributor.id;
-    const existing = byKey.get(key);
-    if (existing) {
-      existing.receivedQuantity += row.receivedQuantity;
-      existing.actualSoldQuantity += row.actualSoldQuantity;
-      existing.returnedQuantity += row.returnedQuantity;
-      existing.approvedAwaitingReceiptQuantity += row.approvedAwaitingReceiptQuantity;
-      existing.pendingRequestedQuantity += row.pendingRequestedQuantity;
-      continue;
-    }
-    byKey.set(key, {
-      distributor: row.distributor,
-      style: filters.groupByStyle
-        ? { id: row.saleOrderLineId, styleNumber: row.styleNumber, styleName: row.styleName }
-        : undefined,
-      receivedQuantity: row.receivedQuantity,
-      actualSoldQuantity: row.actualSoldQuantity,
-      returnedQuantity: row.returnedQuantity,
-      approvedAwaitingReceiptQuantity: row.approvedAwaitingReceiptQuantity,
-      pendingRequestedQuantity: row.pendingRequestedQuantity,
-    });
-  }
+  const grouped = await getSaleOrReturnGroupedTotals({
+    distributorId: filters.distributorId,
+    groupByStyle: filters.groupByStyle,
+  });
 
-  const rows: SaleOrReturnReportRow[] = [...byKey.values()].map((accumulator) => {
-    const availability = computeAvailability(accumulator);
+  const rows: SaleOrReturnReportRow[] = grouped.map((group) => {
+    const availability = computeAvailability(group);
     return {
-      distributor: accumulator.distributor,
-      style: accumulator.style,
-      received: accumulator.receivedQuantity,
-      sold: accumulator.actualSoldQuantity,
-      returned: accumulator.returnedQuantity,
-      approvedAwaitingReceipt: accumulator.approvedAwaitingReceiptQuantity,
-      pendingRequested: accumulator.pendingRequestedQuantity,
+      distributor: group.distributor,
+      style: group.style,
+      received: group.receivedQuantity,
+      sold: group.actualSoldQuantity,
+      returned: group.returnedQuantity,
+      approvedAwaitingReceipt: group.approvedAwaitingReceiptQuantity,
+      pendingRequested: group.pendingRequestedQuantity,
       remainingWithDistributor: availability.remainingWithDistributor,
       availableForNewReturn: availability.availableForNewReturn,
     };

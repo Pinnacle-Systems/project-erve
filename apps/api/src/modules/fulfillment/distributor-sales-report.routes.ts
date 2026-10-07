@@ -23,8 +23,8 @@ saleOrReturnPositionsRouter.get(
   requireRoles(...SALE_OR_RETURN_POSITION_VIEW_ROLES),
   asyncHandler(async (req, res) => {
     const filters = listSaleOrReturnPositionsQuerySchema.parse(req.query);
-    const items = await distributorSalesReportService.listSaleOrReturnPositions(req.user!, filters);
-    res.status(200).json(successResponse({ items }));
+    const result = await distributorSalesReportService.listSaleOrReturnPositions(req.user!, filters);
+    res.status(200).json(successResponse(result));
   }),
 );
 

@@ -7,7 +7,11 @@ export const listSaleOrReturnPositionsQuerySchema = z.object({
   // as true (Boolean('false') === true) — every non-empty query string
   // coerces truthy.
   onlyWithRemaining: queryBooleanSchema.optional(),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
 });
+
+export type ListSaleOrReturnPositionsQuery = z.infer<typeof listSaleOrReturnPositionsQuerySchema>;
 
 export const listDistributorSalesReportsQuerySchema = z.object({
   distributorId: z.string().trim().optional(),
