@@ -7,6 +7,7 @@ import { HttpError } from '../../errors/http-error.js';
 import {
   completeStageSchema,
   startStageSchema,
+  undoStageSchema,
   confirmJobOrderSchema,
   assignedTasksQuerySchema,
   createJobOrderSchema,
@@ -24,7 +25,11 @@ import {
 import * as jobOrdersService from './job-orders.service.js';
 import * as qualityExecutionsService from '../quality-executions/quality-executions.service.js';
 import { startQualityExecutionSchema } from '../quality-executions/quality-executions.validation.js';
-import { JOB_ORDER_FACTORY_FILTER_ROLES, JOB_ORDER_PRODUCTION_MUTATION_ROLES } from '@erve/shared';
+import {
+  JOB_ORDER_FACTORY_FILTER_ROLES,
+  JOB_ORDER_PRODUCTION_MUTATION_ROLES,
+  JOB_ORDER_STAGE_UNDO_ROLES,
+} from '@erve/shared';
 import { getPooledFactoryInventory } from './pooled-inventory.service.js';
 import { prisma } from '../../db/prisma.js';
 import { pooledInventoryQuerySchema } from './job-orders.validation.js';
@@ -277,6 +282,26 @@ jobOrdersRouter.post(
   asyncHandler(async (req, res) => {
     const input = completeStageSchema.parse(req.body);
     const jobOrder = await jobOrdersService.completeProductionStage(
+      req.user!,
+      req.params.id! as string,
+      input,
+      idempotencyKey(req),
+    );
+    res.status(200).json(successResponse(jobOrder));
+  }),
+);
+
+// DEMO-010: controlled undo of a completed production stage — deliberately
+// a narrower gate than canWorkflowJobOrders (no FACTORY_USER), matching the
+// mark-production-complete/cancel precedent. The 24-hour Merchandiser
+// window vs. unlimited Admin window is a service-layer rule (depends on the
+// target stage's own completedAt), not expressible at the route gate.
+jobOrdersRouter.post(
+  '/:id/actions/undo-stage',
+  requireRoles(...JOB_ORDER_STAGE_UNDO_ROLES),
+  asyncHandler(async (req, res) => {
+    const input = undoStageSchema.parse(req.body);
+    const jobOrder = await jobOrdersService.undoCompletedProductionStage(
       req.user!,
       req.params.id! as string,
       input,
