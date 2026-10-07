@@ -49,6 +49,22 @@ export function canMarkJobOrderProductionComplete(user: RoleHolder): boolean {
 }
 
 /**
+ * Roles that may undo a completed production stage (DEMO-010). Deliberately
+ * the same narrower set as JOB_ORDER_MANUAL_PRODUCTION_COMPLETE_ROLES (no
+ * FACTORY_USER, ever) — undoing a completed stage is a controlled
+ * correction, not ordinary Factory production work. The two roles are not
+ * equally permissive: MERCHANDISER may only undo within 24 hours of the
+ * stage's completion, while ADMIN has no time limit — see
+ * assertCanUndoProductionStage in job-orders.service.ts. Both are still
+ * blocked once the next production stage has started.
+ */
+export const JOB_ORDER_STAGE_UNDO_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
+
+export function canUndoJobOrderProductionStage(user: RoleHolder): boolean {
+  return hasAnyRole(user, JOB_ORDER_STAGE_UNDO_ROLES);
+}
+
+/**
  * Job Order Factory filter visibility, and the authorization gate for the
  * GET /job-orders/factory-options lookup that backs it (UXAUTH-014) — one
  * list so Web and API cannot drift on who may use the filter. Deliberately
