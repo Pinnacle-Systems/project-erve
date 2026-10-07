@@ -38,11 +38,13 @@ export const defaultConfig = (type: QualityFormComponentType): Record<string, un
       items: [{ key: 'checkItem', label: 'Check item' }],
       responseOptions: ['PASSED', 'FAILED', 'N/A'],
     },
+    // DEMO-006: global authoritative AQL acceptance levels — Critical 0,
+    // Major 1.5, Minor 2.5 — no brand/Style override.
     AQL_RESULT: {
       criteria: [
         { severity: 'CRITICAL', aql: 0 },
-        { severity: 'MAJOR', aql: 2.5 },
-        { severity: 'MINOR', aql: 4 },
+        { severity: 'MAJOR', aql: 1.5 },
+        { severity: 'MINOR', aql: 2.5 },
       ],
     },
     PRODUCTION_PROGRESS: {

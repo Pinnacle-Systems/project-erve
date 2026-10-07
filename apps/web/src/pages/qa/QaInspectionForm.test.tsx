@@ -353,7 +353,7 @@ describe('QaInspectionForm', () => {
     expect(canReopenQaForm(undefined)).toBe(false);
   });
 
-  it('renders one locked PP Sample context and sends the explicit QA decision', async () => {
+  it('renders one locked PP Sample context and sends the calculated QA decision', async () => {
     const source = detail();
     const form = source.sessions[0]!.forms[0]!;
     source.sessions[0]!.forms = [form];
@@ -396,24 +396,21 @@ describe('QaInspectionForm', () => {
       (container.querySelector('[aria-label="Quantity of samples"]') as HTMLInputElement).disabled,
     ).toBe(true);
     const ppResponse = responseControl(QA_CHECKLIST_ITEMS[0]!.label);
+    // DEMO-005: PP Sample checklist choices are Yes/No/N/A — there is no
+    // "Available" option for a PP Sample.
     expect(
       Array.from(ppResponse.querySelectorAll('input[type="radio"]')).map(
         (option) => (option as HTMLInputElement).value,
       ),
-    ).toEqual(['YES', 'NO']);
+    ).toEqual(['YES', 'NO', 'NOT_APPLICABLE']);
+    // DEMO-005: there is no manual Pass/Fail choice any more — the result is
+    // calculated from the checklist. One explicit No fails it.
     await act(async () =>
       (ppResponse.querySelector('input[value="NO"]') as HTMLInputElement).click(),
     );
     expect((ppResponse.querySelector('input[value="NO"]') as HTMLInputElement).checked).toBe(true);
+    expect(container.textContent).toContain('PP Sample Result');
     await act(async () => button('Finalize size M').click());
-    expect(container.textContent).toContain('Choose Pass or Fail before finalizing PP Sample.');
-    expect(requestCall).not.toHaveBeenCalled();
-
-    await act(async () =>
-      (container.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
-    );
-    await act(async () => button('Finalize size M').click());
-    expect(requestCall).not.toHaveBeenCalled();
     expect(
       Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
         dialog.textContent?.includes('Finalize this inspection as FAIL?'),
@@ -428,10 +425,12 @@ describe('QaInspectionForm', () => {
     expect(savedPayload).not.toHaveProperty('acceptedQuantity');
     expect(savedPayload).not.toHaveProperty('reworkQuantity');
     expect(savedPayload).not.toHaveProperty('permanentlyRejectedQuantity');
+    // The finalize call carries no decision at all — the server calculates
+    // it, and there is no field through which a client could forge one.
     expect(requestCall).toHaveBeenCalledWith(
       expect.objectContaining({
         url: '/qa/inspections/inspection-1/forms/form-1/finalize',
-        data: { expectedVersion: 1, ppSampleDecision: 'FAIL' },
+        data: { expectedVersion: 1 },
       }),
     );
   }, 15_000);
@@ -470,9 +469,8 @@ describe('QaInspectionForm', () => {
       .mockResolvedValue({ data: { data: source } } as never);
     await renderHarness(source);
 
-    await act(async () =>
-      (container.querySelector('input[value="PASS"]') as HTMLInputElement).click(),
-    );
+    // DEMO-005: all checklist items are Yes, so the calculated result is
+    // already PASS — there is no selector to click.
     await act(async () => button('Finalize size M').click());
     expect(
       Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
@@ -487,9 +485,7 @@ describe('QaInspectionForm', () => {
 
     expect(requestCall).not.toHaveBeenCalled();
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
-    expect((container.querySelector('input[value="PASS"]') as HTMLInputElement).checked).toBe(
-      true,
-    );
+    expect(container.textContent).toContain('PP Sample Result');
   }, 15_000);
 
   it('renders every paper-form checkpoint once in documented order and restores saved values', async () => {

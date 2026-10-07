@@ -237,7 +237,7 @@ afterEach(() => {
 });
 
 describe('rendered mobile QA form workflow', () => {
-  it('renders one locked PP Sample form and requires an explicit QA decision', async () => {
+  it('renders one locked PP Sample form and sends the calculated QA decision', async () => {
     const data = detail(
       [form('form-m', 'M')],
       [
@@ -275,7 +275,7 @@ describe('rendered mobile QA form workflow', () => {
       container.querySelector('[data-quality-execution-header="true"]')?.textContent,
     ).not.toContain('JO-1');
     expect(container.textContent).not.toContain('← QA queue');
-    expect(container.textContent).toContain('PP Sample Decision');
+    expect(container.textContent).toContain('PP Sample Result');
     expect(container.textContent).not.toContain('Size S');
     expect(container.querySelector('[aria-label="M accepted"]')).toBeNull();
     expect(container.querySelector('[aria-label="M rework"]')).toBeNull();
@@ -284,11 +284,12 @@ describe('rendered mobile QA form workflow', () => {
       (container.querySelector('[aria-label="Sample quantity"]') as HTMLInputElement).disabled,
     ).toBe(true);
     const firstResponse = container.querySelector('[role="radiogroup"][aria-label$="response"]')!;
+    // DEMO-005: PP Sample checklist choices are Yes/No/N/A.
     expect(
       Array.from(firstResponse.querySelectorAll('input[type="radio"]')).map(
         (option) => (option as HTMLInputElement).value,
       ),
-    ).toEqual(['YES', 'NO']);
+    ).toEqual(['YES', 'NO', 'NOT_APPLICABLE']);
     expect((firstResponse.querySelector('input[value="YES"]') as HTMLInputElement).checked).toBe(
       true,
     );
@@ -299,16 +300,9 @@ describe('rendered mobile QA form workflow', () => {
     expect(savedPayload).not.toHaveProperty('reworkQuantity');
     expect(savedPayload).not.toHaveProperty('permanentlyRejectedQuantity');
     vi.mocked(apiClient.request).mockClear();
+    // DEMO-005: all checklist items are Yes, so the calculated result is
+    // already PASS — there is no decision control to interact with.
     await click('Finalize size M');
-    expect(container.textContent).toContain('Choose Pass or Fail');
-    expect(vi.mocked(apiClient.request)).not.toHaveBeenCalled();
-    await act(async () =>
-      (
-        container.querySelector('input[name="pp-decision"][type="radio"]') as HTMLInputElement
-      ).click(),
-    );
-    await click('Finalize size M');
-    expect(vi.mocked(apiClient.request)).not.toHaveBeenCalled();
     expect(
       Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
         dialog.textContent?.includes('Finalize this inspection as PASS?'),
@@ -318,10 +312,12 @@ describe('rendered mobile QA form workflow', () => {
       (item) => item.textContent === 'Yes, finalize',
     ) as HTMLButtonElement;
     await act(async () => confirmFinalize.click());
+    // No decision field is sent at all — the server calculates it, and
+    // there is no field through which a client could forge one.
     expect(vi.mocked(apiClient.request)).toHaveBeenCalledWith(
       expect.objectContaining({
         url: '/qa/inspections/session-1/forms/form-m/finalize',
-        data: { expectedVersion: 1, ppSampleDecision: 'PASS' },
+        data: { expectedVersion: 1 },
       }),
     );
   });
@@ -355,8 +351,12 @@ describe('rendered mobile QA form workflow', () => {
     successfulUpdate(() => {});
     await renderPage(data);
 
-    const decisions = container.querySelectorAll('input[name="pp-decision"][type="radio"]');
-    await act(async () => (decisions[1] as HTMLInputElement).click());
+    // DEMO-005: there is no decision selector — a calculated FAIL comes
+    // from an underlying explicit No.
+    const firstResponse = container.querySelector('[role="radiogroup"][aria-label$="response"]')!;
+    await act(async () =>
+      (firstResponse.querySelector('input[value="NO"]') as HTMLInputElement).click(),
+    );
     await click('Finalize size M');
     expect(
       Array.from(document.body.querySelectorAll('[role="dialog"]')).some((dialog) =>
@@ -371,7 +371,9 @@ describe('rendered mobile QA form workflow', () => {
 
     expect(vi.mocked(apiClient.request)).not.toHaveBeenCalled();
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
-    expect((decisions[1] as HTMLInputElement).checked).toBe(true);
+    expect((firstResponse.querySelector('input[value="NO"]') as HTMLInputElement).checked).toBe(
+      true,
+    );
   });
 
   it('navigates three rendered sizes without leaking their values', async () => {
@@ -695,7 +697,9 @@ describe('rendered mobile QA form workflow', () => {
 
     await renderPage(data);
 
-    expect(container.querySelectorAll('[data-quality-checklist-result="true"]')).toHaveLength(30);
+    // 15 checklist items × 2 (current size detail + history) + 1 for the
+    // calculated PP Sample Result display (DEMO-005).
+    expect(container.querySelectorAll('[data-quality-checklist-result="true"]')).toHaveLength(31);
     expect(container.querySelector('[role="radiogroup"][aria-label$="response"]')).toBeNull();
     expect(
       container.querySelector('[data-quality-checklist="true"] input[type="radio"]'),

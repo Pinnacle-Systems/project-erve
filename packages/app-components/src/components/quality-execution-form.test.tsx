@@ -605,7 +605,7 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
     ).toEqual(['Inspection', 'Conclusion']);
   });
 
-  it('lets shared outcome remarks use the section width while keeping choices compact', () => {
+  it('keeps the calculated outcome display and its remarks at full section width', () => {
     act(() =>
       root.render(
         <QualityExecutionForm execution={execution()} onSave={vi.fn()} onFinalize={vi.fn()} />,
@@ -615,9 +615,10 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
     const outcome = container.querySelector('[data-quality-inspection-outcome="true"]')!;
     expect(outcome.className).toContain('w-full');
     expect(outcome.className).not.toContain('max-w-2xl');
-    expect(
-      outcome.querySelector('[role="radiogroup"]')?.parentElement?.parentElement?.className,
-    ).toContain('max-w-md');
+    // DEMO-005: the result is calculated, so there is no selectable choice
+    // control here any more — only a read-only indicator plus the remarks.
+    expect(outcome.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(outcome.querySelector('[data-quality-checklist-result="true"]')).not.toBeNull();
     expect(outcome.querySelector('textarea')?.className).toContain('w-full');
   });
 
@@ -771,13 +772,8 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
     act(() =>
       setInputValue(container.querySelector('#quality-actions-row-0-action')!, 'Repair pieces'),
     );
-    act(() =>
-      (
-        container.querySelector(
-          '[role="radiogroup"][aria-label="Outcome"] input[value="PASS"]',
-        ) as HTMLInputElement
-      ).click(),
-    );
+    // DEMO-005: there is no outcome selector any more — it is calculated,
+    // not chosen.
     await act(async () => button('Save draft').click());
 
     expect(save).toHaveBeenCalledWith(
@@ -791,7 +787,6 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
           }),
         ],
         correctiveActions: [{ componentId: 'actions', values: { action: 'Repair pieces' } }],
-        outcome: { componentId: 'outcome', value: 'PASS' },
       }),
     );
 
@@ -1154,10 +1149,8 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
         <QualityExecutionForm execution={execution()} onSave={vi.fn()} onFinalize={finalize} />,
       ),
     );
-    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
-    await act(async () =>
-      (group.querySelector('input[value="PASS"]') as HTMLInputElement).click(),
-    );
+    // DEMO-005: nothing has failed yet, so the calculated result is already
+    // PASS — there is no selector to click any more.
 
     await act(async () => button('Finalize').click());
     expect(finalize).not.toHaveBeenCalled();
@@ -1181,9 +1174,11 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
         <QualityExecutionForm execution={execution()} onSave={vi.fn()} onFinalize={finalize} />,
       ),
     );
-    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    // DEMO-005: there is no outcome selector — a calculated FAIL comes from
+    // an underlying failure, here a FAILED checklist response.
+    const group = container.querySelector('[role="radiogroup"][aria-label="Workmanship"]')!;
     await act(async () =>
-      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+      (group.querySelector('input[value="FAILED"]') as HTMLInputElement).click(),
     );
 
     await act(async () => button('Finalize').click());
@@ -1199,10 +1194,23 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
     await act(async () => cancel.click());
 
     expect(finalize).not.toHaveBeenCalled();
+    expect((group.querySelector('input[value="FAILED"]') as HTMLInputElement).checked).toBe(true);
     expect(
-      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).checked,
-    ).toBe(true);
+      container.querySelector('[data-quality-inspection-outcome="true"]')?.textContent,
+    ).toContain('FAIL');
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('exposes no manual PASS/FAIL override control for the calculated outcome', () => {
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={execution()} onSave={vi.fn()} onFinalize={vi.fn()} />,
+      ),
+    );
+    const outcome = container.querySelector('[data-quality-inspection-outcome="true"]')!;
+    expect(outcome.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(outcome.querySelector('select')).toBeNull();
+    expect(outcome.querySelector('input[type="radio"]')).toBeNull();
   });
 
   it('finalizes a PPM directly without a confirmation dialog, since it has no PASS/FAIL outcome', async () => {
@@ -1342,7 +1350,7 @@ describe('Final Inspection mandatory rejection reason on FAIL', () => {
     return item;
   };
 
-  it('only reveals the Rejection / Defect Reason field once Fail is selected, on a Final Inspection', async () => {
+  it('only reveals the Rejection / Defect Reason field once the calculated result is Fail, on a Final Inspection', async () => {
     const item = withFinalBatch();
     act(() =>
       root.render(
@@ -1350,9 +1358,11 @@ describe('Final Inspection mandatory rejection reason on FAIL', () => {
       ),
     );
     expect(container.textContent).not.toContain('Rejection / Defect Reason');
-    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    // DEMO-005: there is no outcome selector — a calculated FAIL comes from
+    // an underlying failure, here a FAILED on-site test.
+    const group = container.querySelector('[role="radiogroup"][aria-label="GSM"]')!;
     await act(async () =>
-      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+      (group.querySelector('input[value="FAILED"]') as HTMLInputElement).click(),
     );
     const field = container.querySelector(
       '#quality-outcome-rejectionReason',
@@ -1368,33 +1378,36 @@ describe('Final Inspection mandatory rejection reason on FAIL', () => {
         <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={vi.fn()} />,
       ),
     );
-    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    const group = container.querySelector('[role="radiogroup"][aria-label="Workmanship"]')!;
     await act(async () =>
-      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+      (group.querySelector('input[value="FAILED"]') as HTMLInputElement).click(),
     );
     expect(container.querySelector('#quality-outcome-rejectionReason')).toBeNull();
   });
 
-  it('removes the Rejection / Defect Reason field and its requirement when switching back to Pass', async () => {
+  it('removes the Rejection / Defect Reason field and its requirement once the calculated result returns to Pass', async () => {
     const item = withFinalBatch();
     act(() =>
       root.render(
         <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={vi.fn()} />,
       ),
     );
-    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    const group = container.querySelector('[role="radiogroup"][aria-label="GSM"]')!;
     await act(async () =>
-      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+      (group.querySelector('input[value="FAILED"]') as HTMLInputElement).click(),
     );
     expect(container.querySelector('#quality-outcome-rejectionReason')).not.toBeNull();
     await act(async () =>
-      (group.querySelector('input[value="PASS"]') as HTMLInputElement).click(),
+      (group.querySelector('input[value="PASSED"]') as HTMLInputElement).click(),
     );
     expect(container.querySelector('#quality-outcome-rejectionReason')).toBeNull();
   });
 
   it('shows the server validation error inline when Finalize is attempted without a reason', () => {
     const item = withFinalBatch();
+    // The underlying failure that produced this calculated FAIL — without
+    // it, the live recalculation would read PASS and hide the field.
+    item.responses.testResults = [{ componentId: 'tests', testKey: 'gsm', response: 'FAILED' }];
     item.responses.outcome = {
       componentId: 'outcome',
       value: 'FAIL',
@@ -1439,9 +1452,9 @@ describe('Final Inspection mandatory rejection reason on FAIL', () => {
         <QualityExecutionForm execution={item} onSave={vi.fn()} onFinalize={finalize} />,
       ),
     );
-    const group = container.querySelector('[role="radiogroup"][aria-label="Outcome"]')!;
+    const group = container.querySelector('[role="radiogroup"][aria-label="GSM"]')!;
     await act(async () =>
-      (group.querySelector('input[value="FAIL"]') as HTMLInputElement).click(),
+      (group.querySelector('input[value="FAILED"]') as HTMLInputElement).click(),
     );
     const field = container.querySelector(
       '#quality-outcome-rejectionReason',
