@@ -156,6 +156,14 @@ export const startStageSchema = z.object({
   stageStatusId: z.string().trim().min(1),
 });
 
+// DEMO-010: undoing a completed production stage always requires a non-empty
+// reason, unlike completeStageSchema's optional remarks.
+export const undoStageSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  stageStatusId: z.string().trim().min(1),
+  reason: z.string().trim().min(1, 'A reason is required to undo a completed production stage'),
+});
+
 // Pooled Factory + Style + Size inventory read path (Phase 2.1 §12/§29).
 export const pooledInventoryQuerySchema = z.object({
   factoryId: z.string().trim().min(1).optional(),
