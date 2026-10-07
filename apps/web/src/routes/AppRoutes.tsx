@@ -33,6 +33,12 @@ import { UserListPage } from '../pages/users/UserListPage.js';
 import { PriceListDetailPage } from '../pages/price-lists/PriceListDetailPage.js';
 import { PriceListFormPage } from '../pages/price-lists/PriceListFormPage.js';
 import { PriceListListPage } from '../pages/price-lists/PriceListListPage.js';
+import { HsnListPage } from '../pages/master-data/HsnListPage.js';
+import { HsnDetailPage } from '../pages/master-data/HsnDetailPage.js';
+import { HsnFormPage } from '../pages/master-data/HsnFormPage.js';
+import { GstRuleSetListPage } from '../pages/gst-rule-sets/GstRuleSetListPage.js';
+import { GstRuleSetDetailPage } from '../pages/gst-rule-sets/GstRuleSetDetailPage.js';
+import { GstRuleSetFormPage } from '../pages/gst-rule-sets/GstRuleSetFormPage.js';
 import { PurchaseOrderListPage } from '../pages/purchase-orders/PurchaseOrderListPage.js';
 import { PurchaseOrderFormPage } from '../pages/purchase-orders/PurchaseOrderFormPage.js';
 import { PurchaseOrderDetailPage } from '../pages/purchase-orders/PurchaseOrderDetailPage.js';
@@ -72,6 +78,10 @@ import {
   FACTORY_MANAGE_ROLES,
   JOB_ORDER_CREATE_ROLES,
   JOB_ORDER_VIEW_ROLES,
+  GST_RULE_SET_MANAGE_ROLES,
+  GST_RULE_SET_VIEW_ROLES,
+  HSN_MANAGE_ROLES,
+  HSN_VIEW_ROLES,
   PRICE_LIST_MANAGE_ROLES,
   PRICE_LIST_VIEW_ROLES,
   PROCESS_FLOW_MANAGE_ROLES,
@@ -428,6 +438,62 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={PRICE_LIST_MANAGE_ROLES}>
               <PriceListFormPage />
+            </RoleRoute>
+          }
+        />
+      </Route>
+
+      <Route
+        path="/hsns"
+        element={
+          <RoleRoute allowed={HSN_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<HsnListPage />} />
+        <Route
+          path="new"
+          element={
+            <RoleRoute allowed={HSN_MANAGE_ROLES}>
+              <HsnFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route path=":id" element={<HsnDetailPage />} />
+        <Route
+          path=":id/edit"
+          element={
+            <RoleRoute allowed={HSN_MANAGE_ROLES}>
+              <HsnFormPage />
+            </RoleRoute>
+          }
+        />
+      </Route>
+
+      <Route
+        path="/gst-rule-sets"
+        element={
+          <RoleRoute allowed={GST_RULE_SET_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<GstRuleSetListPage />} />
+        <Route
+          path="new"
+          element={
+            <RoleRoute allowed={GST_RULE_SET_MANAGE_ROLES}>
+              <GstRuleSetFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route path=":id" element={<GstRuleSetDetailPage />} />
+        <Route
+          path=":id/edit"
+          element={
+            <RoleRoute allowed={GST_RULE_SET_MANAGE_ROLES}>
+              <GstRuleSetFormPage />
             </RoleRoute>
           }
         />

@@ -141,6 +141,12 @@ export async function resetDatabase(): Promise<void> {
   await prisma.styleImage.deleteMany();
   await prisma.file.deleteMany();
   await prisma.style.deleteMany();
+  // Style.hsnId and Hsn.gstRuleSetId are both onDelete: Restrict, so Hsn
+  // must clear after Style (above) and before GstRuleSet (below). Deleting
+  // GstRuleSet cascades to its GstRuleSetVersion rows and from there to
+  // GstValueBand — no separate deleteMany needed for either.
+  await prisma.hsn.deleteMany();
+  await prisma.gstRuleSet.deleteMany();
   await prisma.season.deleteMany();
   // PO/JO/Season above all FK-reference financialYearId with onDelete:
   // Restrict, so document_sequences and financial_years can only be cleared

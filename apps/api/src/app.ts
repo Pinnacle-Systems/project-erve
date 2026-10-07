@@ -22,6 +22,8 @@ import {
 import { financialYearsRouter } from './modules/master-data/financial-year.routes.js';
 import { sellerRegistrationsRouter } from './modules/master-data/seller-registration.routes.js';
 import { priceListsRouter } from './modules/price-lists/price-lists.routes.js';
+import { hsnsRouter } from './modules/tax-rules/hsn.routes.js';
+import { gstRuleSetsRouter } from './modules/tax-rules/gst-rule-sets.routes.js';
 import { purchaseOrdersRouter } from './modules/purchase-orders/purchase-orders.routes.js';
 import { jobOrdersRouter } from './modules/job-orders/job-orders.routes.js';
 import { saleOrdersRouter } from './modules/sale-orders/sale-orders.routes.js';
@@ -116,6 +118,8 @@ export function createApp() {
   app.use('/quality-form-versions', qualityFormVersionsRouter);
   app.use('/quality-executions', qualityExecutionsRouter);
   app.use('/price-lists', priceListsRouter);
+  app.use('/hsns', hsnsRouter);
+  app.use('/gst-rule-sets', gstRuleSetsRouter);
   app.use('/purchase-orders', purchaseOrdersRouter);
   app.use('/job-orders', jobOrdersRouter);
   app.use('/sale-orders', saleOrdersRouter);

@@ -476,12 +476,12 @@ model Factory {
 // be consumed downstream (by a later invoice story); this story establishes
 // the source master only — nothing here is referenced by another model yet.
 model SellerRegistration {
-  id        String                   @id
-  legalName String                   @map("legal_name")
-  tradeName String?                  @map("trade_name")
+  id         String                   @id
+  legalName  String                   @map("legal_name")
+  tradeName  String?                  @map("trade_name")
   // Internal short code for lookups/selectors — not a statutory field.
-  branchCode String                  @unique @map("branch_code")
-  status    SellerRegistrationStatus @default(ACTIVE)
+  branchCode String                   @unique @map("branch_code")
+  status     SellerRegistrationStatus @default(ACTIVE)
 
   gstin              String  @unique
   einvoiceApplicable Boolean @default(false) @map("einvoice_applicable")
@@ -625,8 +625,15 @@ model Style {
   licensor            String?
   colour              String?
   lmixNumber          String?     @map("lmix_number")
+  // Free-text, merchandiser-entered HSN fields — kept exactly as before
+  // (INV-002 does not redesign Style's HSN entry flow). hsnId is an
+  // additive, nullable link to the new Hsn master (INV-002): populated by
+  // the one-time hsn-master-backfill script for Styles whose hsnCode
+  // matched an established Hsn.code, left null otherwise. Nothing currently
+  // writes hsnId on Style create/update.
   hsnCode             String?     @map("hsn_code")
   hsnDescription      String?     @map("hsn_description")
+  hsnId               String?     @map("hsn_id")
   finalMrp            Decimal     @map("final_mrp") @db.Decimal(12, 2)
   royaltyPercentage   Decimal?    @map("royalty_percentage") @db.Decimal(5, 2)
   status              StyleStatus @default(ACTIVE)
@@ -639,6 +646,7 @@ model Style {
   updatedAt           DateTime    @updatedAt @map("updated_at")
 
   season               Season                         @relation(fields: [seasonId], references: [id], onDelete: Restrict)
+  hsn                  Hsn?                           @relation(fields: [hsnId], references: [id], onDelete: Restrict)
   images               StyleImage[]
   styleSizes           StyleSize[]
   styleFactoryMappings StyleFactoryMapping[]
@@ -649,7 +657,121 @@ model Style {
 
   @@index([status])
   @@index([seasonId])
+  @@index([hsnId])
   @@map("styles")
+}
+
+enum HsnStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// Canonical HSN identity (INV-002 foundation). Deliberately flat — the final
+// 8-digit HSN code only, no chapter/heading hierarchy — mirroring how
+// hsnCode has always been entered on Style (master-data.validation.ts:
+// exactly 8 numeric digits). Style.hsnCode/hsnDescription remain free text;
+// this table is the first place an HSN code becomes a real, de-duplicated
+// identity that other records (GstRuleSet assignment) can reference.
+model Hsn {
+  id           String    @id
+  code         String    @unique
+  description  String?
+  status       HsnStatus @default(ACTIVE)
+  gstRuleSetId String?   @map("gst_rule_set_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  gstRuleSet GstRuleSet? @relation(fields: [gstRuleSetId], references: [id], onDelete: Restrict)
+  styles     Style[]
+
+  @@index([status])
+  @@index([gstRuleSetId])
+  @@map("hsns")
+}
+
+enum GstRuleSetStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// Reusable GST rule identity (INV-002). Many Hsn records may reference the
+// same GstRuleSet — the slab definitions below are never duplicated per HSN.
+// Actual invoice GST calculation, CGST/SGST vs IGST and place-of-supply are
+// deliberately out of scope here (INV-006) — this model only resolves which
+// value-band rule applies.
+model GstRuleSet {
+  id        String           @id
+  code      String           @unique
+  name      String
+  status    GstRuleSetStatus @default(ACTIVE)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  versions GstRuleSetVersion[]
+  hsns     Hsn[]
+
+  @@index([status])
+  @@map("gst_rule_sets")
+}
+
+enum GstRuleSetVersionStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+}
+
+// Effective-dated version of a GstRuleSet — mirrors PriceList's DRAFT ->
+// ACTIVE lifecycle (price-lists.service.ts) so history is never overwritten:
+// a future rate change is always a new version with a later effectiveFrom,
+// never an edit to an already-effective one. Day-granular dates (@db.Date),
+// like PriceList, make "the rule applicable on date X" deterministic. The
+// EXCLUDE constraint added in this migration (mirroring
+// price_lists_no_overlapping_active_periods) is the DB-level backstop
+// against two ACTIVE versions of the same rule set ever covering the same
+// date.
+model GstRuleSetVersion {
+  id            String                  @id
+  gstRuleSetId  String                  @map("gst_rule_set_id")
+  versionNumber Int                     @map("version_number")
+  status        GstRuleSetVersionStatus @default(DRAFT)
+  effectiveFrom DateTime?               @map("effective_from") @db.Date
+  effectiveTo   DateTime?               @map("effective_to") @db.Date
+  createdAt     DateTime                @default(now()) @map("created_at")
+  updatedAt     DateTime                @updatedAt @map("updated_at")
+
+  gstRuleSet GstRuleSet     @relation(fields: [gstRuleSetId], references: [id], onDelete: Cascade)
+  bands      GstValueBand[]
+
+  @@unique([gstRuleSetId, versionNumber])
+  @@index([gstRuleSetId])
+  @@index([status])
+  @@map("gst_rule_set_versions")
+}
+
+// A contiguous "ladder" of per-piece value bands within one
+// GstRuleSetVersion. Boundary convention is fixed and unambiguous: minValue
+// is always EXCLUSIVE, maxValue is always INCLUSIVE — so a band matches a
+// value when (minValue IS NULL OR value > minValue) AND (maxValue IS NULL OR
+// value <= maxValue). The first band in a version has minValue = NULL (from
+// zero), the last has maxValue = NULL (open-ended); every other band's
+// minValue must equal the previous band's maxValue exactly (enforced in
+// gst-rule-sets.service.ts, not the database — a numeric ladder isn't
+// expressible as a Postgres exclusion constraint the way date ranges are).
+// This directly yields "exactly 2500 resolves to 5%, not 18%" without any
+// min+0.01 boundary trick.
+model GstValueBand {
+  id                  String   @id
+  gstRuleSetVersionId String   @map("gst_rule_set_version_id")
+  minValue            Decimal? @map("min_value") @db.Decimal(12, 2)
+  maxValue            Decimal? @map("max_value") @db.Decimal(12, 2)
+  gstPercent          Decimal  @map("gst_percent") @db.Decimal(5, 2)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  version GstRuleSetVersion @relation(fields: [gstRuleSetVersionId], references: [id], onDelete: Cascade)
+
+  @@index([gstRuleSetVersionId])
+  @@map("gst_value_bands")
 }
 
 // Season names are administrator-managed master data. Season belongs to

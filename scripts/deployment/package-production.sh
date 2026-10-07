@@ -75,6 +75,7 @@ cp apps/api/dist-bundle/admin-bootstrap.js "$RELEASE_DIR/api/admin-bootstrap.js"
 cp apps/api/dist-bundle/roles-bootstrap.js "$RELEASE_DIR/api/roles-bootstrap.js"
 cp apps/api/dist-bundle/quality-bootstrap.js "$RELEASE_DIR/api/quality-bootstrap.js"
 cp apps/api/dist-bundle/financial-year-bootstrap.js "$RELEASE_DIR/api/financial-year-bootstrap.js"
+cp apps/api/dist-bundle/gst-rule-set-bootstrap.js "$RELEASE_DIR/api/gst-rule-set-bootstrap.js"
 cp apps/api/dist-bundle/historical-import-production.js "$RELEASE_DIR/api/historical-import-production.js"
 cp apps/api/dist-bundle/job-order-completion-reconciliation.js "$RELEASE_DIR/api/job-order-completion-reconciliation.js"
 # prisma.config.ts supplies datasource.url (schema.prisma's datasource block
