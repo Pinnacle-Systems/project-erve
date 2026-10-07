@@ -2639,13 +2639,16 @@ enum QaReworkStatus {
   REINSPECTED
 }
 
-// These are the three marked columns on the supplied sample checklist. A
-// missing value deliberately represents an unanswered draft item; it is not a
-// fabricated pass/fail default.
+// These are the marked columns on the supplied sample checklist. A missing
+// value deliberately represents an unanswered draft item; it is not a
+// fabricated pass/fail default. NOT_APPLICABLE (DEMO-005) is a distinct,
+// explicit "reviewed and not applicable" response — never conflated with
+// AVAILABLE (a different, non-PP-Sample legacy response) or with unanswered.
 enum QaChecklistStatus {
   YES
   NO
   AVAILABLE
+  NOT_APPLICABLE
 }
 
 model JobOrderIdempotencyRecord {

@@ -9,6 +9,7 @@ import { env } from '../../config/env.js';
 import { FileNotFoundInStorageError, getFileStorage } from '../../storage/index.js';
 import { sanitizeDisplayFileName, sniffImage } from '../../storage/image-sniff.js';
 import type { QualityExecutionPayload } from './quality-executions.validation.js';
+import { calculateQualityExecutionOutcome } from '@erve/types';
 import type { QualityExecutionValidationError } from '@erve/types';
 
 type Config = Record<string, unknown>;
@@ -273,11 +274,15 @@ function validatePayload(execution: Execution, input: QualityExecutionPayload, f
   }
   if (input.outcome) {
     const item = assertComponent(map, input.outcome.componentId, 'INSPECTION_OUTCOME');
-    assertOption(
-      input.outcome.value,
-      config(item).allowedOutcomes,
-      'Inspection outcome is not configured',
-    );
+    // input.outcome.value is always populated by withCalculatedOutcome before
+    // validation runs; this check still guards against a caller supplying a
+    // componentId for an outcome that doesn't exist on this form version.
+    if (input.outcome.value)
+      assertOption(
+        input.outcome.value,
+        config(item).allowedOutcomes,
+        'Inspection outcome is not configured',
+      );
   }
   if (!finalize) return;
   const missing: QualityExecutionValidationError[] = [];
@@ -1101,6 +1106,41 @@ function currentPayload(execution: Execution): QualityExecutionPayload {
   };
 }
 
+// DEMO-005: the server, not the caller, is authoritative for PASS/FAIL.
+// Whatever value (if any) the caller sent in input.outcome.value is
+// discarded and replaced with the result calculated from this same save's
+// checklist/test/AQL responses — so a forged or stale value can never reach
+// persistence, draft or finalize alike. A form with no INSPECTION_OUTCOME
+// component (PPM) keeps outcome null, exactly as before.
+function withCalculatedOutcome(
+  execution: Execution,
+  input: QualityExecutionPayload,
+): QualityExecutionPayload {
+  const outcomeComponent = components(execution).find(
+    (component) => component.type === 'INSPECTION_OUTCOME',
+  );
+  // A brand-new draft with no checklist/test/AQL responses yet has nothing
+  // to calculate from — leave outcome null (not a fabricated PASS) until at
+  // least one response exists. This also keeps an unmodified empty save a
+  // true no-op. Finalize always has complete data by this point (every
+  // checklist/AQL/test item is required first), so this never masks a real
+  // result at finalize time.
+  const hasAnySignal =
+    input.checklistResponses.length > 0 ||
+    input.testResults.length > 0 ||
+    input.aqlResults.length > 0;
+  if (!outcomeComponent || !hasAnySignal) return { ...input, outcome: null };
+  return {
+    ...input,
+    outcome: {
+      componentId: outcomeComponent.id,
+      value: calculateQualityExecutionOutcome(input),
+      remarks: input.outcome?.remarks ?? null,
+      rejectionReason: input.outcome?.rejectionReason ?? null,
+    },
+  };
+}
+
 async function persist(
   user: CurrentUser,
   executionId: string,
@@ -1122,8 +1162,9 @@ async function persist(
   if (execution.status !== 'DRAFT')
     throw HttpError.conflict('Finalized Quality executions are immutable');
   if (execution.version !== input.expectedVersion) throw HttpError.staleVersion(execution.version);
-  validatePayload(execution, input, finalize);
-  if (!finalize && canonical(input) === canonical(currentPayload(execution)))
+  const effectiveInput = withCalculatedOutcome(execution, input);
+  validatePayload(execution, effectiveInput, finalize);
+  if (!finalize && canonical(effectiveInput) === canonical(currentPayload(execution)))
     return toView(execution, await loadJobOrder(execution.jobOrderId));
   const saved = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${execution.jobOrderId}`}))`;
@@ -1155,7 +1196,7 @@ async function persist(
         batch.physicalQuantity
       )
         throw HttpError.conflict('Final batch size allocations do not reconcile');
-      if (input.outcome?.value === 'PASS') {
+      if (effectiveInput.outcome?.value === 'PASS') {
         const releasedBySize = new Map(
           (
             await tx.qaReleaseLine.groupBy({
@@ -1178,10 +1219,10 @@ async function persist(
       where: { id: execution.id, version: input.expectedVersion, status: 'DRAFT' },
       data: {
         version: { increment: 1 },
-        outcome: input.outcome?.value ?? null,
-        outcomeComponentId: input.outcome?.componentId ?? null,
-        outcomeRemarks: input.outcome?.remarks ?? null,
-        outcomeRejectionReason: input.outcome?.rejectionReason?.trim() || null,
+        outcome: effectiveInput.outcome?.value ?? null,
+        outcomeComponentId: effectiveInput.outcome?.componentId ?? null,
+        outcomeRemarks: effectiveInput.outcome?.remarks ?? null,
+        outcomeRejectionReason: effectiveInput.outcome?.rejectionReason?.trim() || null,
         ...(finalize
           ? { status: 'FINALIZED' as const, finalizedById: user.id, finalizedAt: new Date() }
           : {}),
@@ -1291,7 +1332,7 @@ async function persist(
           release: true,
         },
       });
-      if (input.outcome?.value === 'PASS') {
+      if (effectiveInput.outcome?.value === 'PASS') {
         const releaseId = createId();
         await tx.qaRelease.create({
           data: {
@@ -1378,7 +1419,7 @@ async function persist(
           attemptNumber: execution.attemptNumber,
           batchNumber: execution.batchNumber,
           inspectedQuantity: execution.inspectedQuantity,
-          outcome: input.outcome?.value ?? null,
+          outcome: effectiveInput.outcome?.value ?? null,
         },
       },
       tx,

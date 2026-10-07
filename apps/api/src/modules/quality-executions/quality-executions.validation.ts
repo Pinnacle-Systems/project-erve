@@ -120,7 +120,9 @@ export const qualityExecutionPayloadSchema = z
     outcome: z
       .object({
         componentId,
-        value: z.enum(['PASS', 'FAIL']),
+        // DEMO-005: the server always derives the authoritative value; any
+        // value sent here is ignored, so it is optional rather than required.
+        value: z.enum(['PASS', 'FAIL']).optional(),
         remarks: optionalRemarks,
         rejectionReason: optionalRemarks,
       })

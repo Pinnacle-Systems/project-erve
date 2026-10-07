@@ -27,7 +27,7 @@ const checklistItemCode = z.enum([
   'PP_SAMPLE_FIT_COMMENTS',
   'SOURCE_DECLARATION_FORM',
 ]);
-const checklistStatus = z.enum(['YES', 'NO', 'AVAILABLE']);
+const checklistStatus = z.enum(['YES', 'NO', 'AVAILABLE', 'NOT_APPLICABLE']);
 
 export const qaQueueQuerySchema = z.object({
   filter: z
@@ -111,10 +111,10 @@ export const saveSizeInspectionFormSchema = z
   });
 
 export const versionSchema = z.object({ expectedVersion });
-export const finalizeSizeInspectionSchema = z.object({
-  expectedVersion,
-  ppSampleDecision: z.enum(['PASS', 'FAIL']).optional(),
-});
+// DEMO-005: the PP Sample PASS/FAIL decision is calculated server-side from
+// the checklist, never supplied by the caller — finalize takes no decision
+// input at all.
+export const finalizeSizeInspectionSchema = z.object({ expectedVersion });
 export const reopenSchema = z.object({
   expectedVersion,
   reason: z.string().trim().min(3).max(1000),

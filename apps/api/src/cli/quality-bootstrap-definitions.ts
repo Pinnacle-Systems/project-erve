@@ -102,6 +102,10 @@ export const signatures = (roles: string[]): SeedComponent => ({
   },
 });
 
+// DEMO-006: the authoritative global AQL acceptance levels. Critical 0,
+// Major 1.5, Minor 2.5 apply to every brand and every Style — there is no
+// override. This is the single definition both Inline and Final reuse below
+// and the only place the production bootstrap/seed reads these numbers from.
 export const aql: SeedComponent = {
   type: 'AQL_RESULT',
   title: 'AQL defect summary',
@@ -109,8 +113,8 @@ export const aql: SeedComponent = {
     inspectionLevel: 'General Inspection Level II',
     criteria: [
       { severity: 'CRITICAL', aql: 0 },
-      { severity: 'MAJOR', aql: 2.5 },
-      { severity: 'MINOR', aql: 4 },
+      { severity: 'MAJOR', aql: 1.5 },
+      { severity: 'MINOR', aql: 2.5 },
     ],
   },
 };

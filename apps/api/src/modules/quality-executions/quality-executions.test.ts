@@ -101,7 +101,7 @@ async function fixture(
       title: 'Checks',
       config: {
         items: [{ key: 'workmanship', label: 'Workmanship' }],
-        responseOptions: ['PASSED', 'FAILED'],
+        responseOptions: ['PASSED', 'FAILED', 'N/A'],
       },
     },
     {
@@ -523,6 +523,137 @@ describe('Quality Activity Execution API', () => {
       expect(await prisma.qaReworkTask.count()).toBe(0);
       await resetDatabase();
     }
+  });
+
+  // DEMO-005: the server, not the caller, is authoritative for PASS/FAIL.
+  it('calculates the outcome from AQL/checklist data and ignores a forged client value', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.jobOrder.stageStatuses[0]!.id },
+      data: { status: 'IN_PROGRESS' },
+    });
+    const execution = (await start(f)).body.data;
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.jobOrder.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED', completedQuantity: 100 },
+    });
+    // Underlying AQL data (found 3 > maxAllowed 2) calculates to FAIL, but
+    // the payload forges outcome.value: 'PASS'.
+    const realPayload = completePayload(f, execution, 'FAIL');
+    await request(app)
+      .post(`/quality-executions/${execution.id}/attachments`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .field('componentId', f.components[6]!.id)
+      .field('requirementKey', 'inspectionPhoto')
+      .attach('image', png, 'failed-part.png');
+    const forged = await request(app)
+      .post(`/quality-executions/${execution.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({ ...realPayload, outcome: { ...realPayload.outcome, value: 'PASS' } });
+    expect(forged.status).toBe(200);
+    expect(forged.body.data.responses.outcome.value).toBe('FAIL');
+    expect(
+      (await prisma.qualityActivityExecution.findUniqueOrThrow({ where: { id: execution.id } }))
+        .outcome,
+    ).toBe('FAIL');
+  });
+
+  // DEMO-005: N/A is a distinct, explicit response — never Yes, never No,
+  // never a defect, and excluded from the calculated result.
+  it('persists an explicit N/A checklist response distinctly from unanswered, and excludes it from the calculated result', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.jobOrder.stageStatuses[0]!.id },
+      data: { status: 'IN_PROGRESS' },
+    });
+    const execution = (await start(f)).body.data;
+    const saved = await request(app)
+      .put(`/quality-executions/${execution.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({
+        expectedVersion: execution.version,
+        checklistResponses: [
+          { componentId: f.components[2]!.id, itemKey: 'workmanship', response: 'N/A' },
+        ],
+        aqlResults: [],
+        defects: [],
+        correctiveActions: [],
+        testResults: [],
+        quantities: [],
+        comments: [],
+        signoffs: [],
+        outcome: null,
+      })
+      .expect(200);
+    expect(saved.body.data.responses.checklistResponses).toEqual([
+      expect.objectContaining({ itemKey: 'workmanship', response: 'N/A' }),
+    ]);
+    // N/A alone must not be treated as a failure, so the live calculated
+    // preview reads PASS — it is not yet authoritative: finalize would still
+    // require the still-missing AQL criterion before this can be finalized.
+    expect(saved.body.data.responses.outcome).toMatchObject({ value: 'PASS' });
+    const detail = await request(app)
+      .get(`/quality-executions/${execution.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(detail.body.data.responses.checklistResponses).toEqual([
+      expect.objectContaining({ itemKey: 'workmanship', response: 'N/A' }),
+    ]);
+  });
+
+  // DEMO-006: boundary check on the existing found-vs-maxAllowed AQL
+  // calculation (the mechanism itself is unchanged by DEMO-006 — only the
+  // global acceptance-level constants it references were corrected).
+  it('calculates AQL PASS at exactly maxAllowed and FAIL just over it, per severity row', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.jobOrder.stageStatuses[0]!.id },
+      data: { status: 'IN_PROGRESS' },
+    });
+    const execution = (await start(f)).body.data;
+    const saved = await request(app)
+      .put(`/quality-executions/${execution.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({
+        expectedVersion: execution.version,
+        checklistResponses: [],
+        aqlResults: [{ componentId: f.components[3]!.id, severity: 'MAJOR', maxAllowed: 2, found: 2 }],
+        defects: [],
+        correctiveActions: [],
+        testResults: [],
+        quantities: [],
+        comments: [],
+        signoffs: [],
+        outcome: null,
+      })
+      .expect(200);
+    expect(saved.body.data.responses.aqlResults).toEqual([
+      expect.objectContaining({ severity: 'MAJOR', maxAllowed: 2, found: 2 }),
+    ]);
+    expect(
+      await prisma.qualityAqlResult.findFirstOrThrow({ where: { executionId: execution.id } }),
+    ).toMatchObject({ result: 'PASS' });
+    expect(saved.body.data.responses.outcome).toMatchObject({ value: 'PASS' });
+    const overThreshold = await request(app)
+      .put(`/quality-executions/${execution.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({
+        expectedVersion: saved.body.data.version,
+        checklistResponses: [],
+        aqlResults: [{ componentId: f.components[3]!.id, severity: 'MAJOR', maxAllowed: 2, found: 3 }],
+        defects: [],
+        correctiveActions: [],
+        testResults: [],
+        quantities: [],
+        comments: [],
+        signoffs: [],
+        outcome: null,
+      })
+      .expect(200);
+    expect(
+      await prisma.qualityAqlResult.findFirstOrThrow({ where: { executionId: execution.id } }),
+    ).toMatchObject({ result: 'FAIL' });
+    expect(overThreshold.body.data.responses.outcome).toMatchObject({ value: 'FAIL' });
   });
 
   it('scopes attachment ownership and duplicates to one execution and freezes evidence on finalize', async () => {
