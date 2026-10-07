@@ -522,6 +522,80 @@ describe('PackingListPage Factory Invoice cross-link (UXAUTH-012)', () => {
   });
 });
 
+// DEMO-019: a discoverable per-carton label print/download action, gated to
+// a currently Inspected carton — the business requirement that final carton
+// labels must come from confirmed/audited carton data.
+describe('PackingListPage carton label print/download (DEMO-019)', () => {
+  it('shows a disabled Print/Download Label action for a Not Inspected carton', async () => {
+    await renderPage(buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'NOT_INSPECTED' })] }] }));
+    expect(buttonByText('Print Label')!.disabled).toBe(true);
+    expect(buttonByText('Download Label')!.disabled).toBe(true);
+  });
+
+  it('shows a disabled Print/Download Label action for a carton Needing Reinspection', async () => {
+    await renderPage(
+      buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'NEEDS_REINSPECTION' })] }] }),
+    );
+    expect(buttonByText('Print Label')!.disabled).toBe(true);
+    expect(buttonByText('Download Label')!.disabled).toBe(true);
+  });
+
+  it('enables the Print/Download Label action once the carton is Inspected', async () => {
+    await renderPage(
+      buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'INSPECTED' })] }] }),
+    );
+    expect(buttonByText('Print Label')!.disabled).toBe(false);
+    expect(buttonByText('Download Label')!.disabled).toBe(false);
+  });
+
+  it('is visible to a read-only viewer (MERCHANDISER) just like the page-level PDF actions, without granting mutation controls', async () => {
+    await renderPage(
+      buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'INSPECTED' })] }] }),
+      'MERCHANDISER',
+    );
+    expect(buttonByText('Print Label')).not.toBeNull();
+    expect(buttonByText('Edit')).toBeNull();
+    expect(buttonByText('Delete')).toBeNull();
+  });
+
+  it('still renders the label action once the Factory Dispatch is finalized (READY_FOR_ERVE), when Edit/Retire are gone', async () => {
+    await renderPage(
+      buildPackingList({
+        factoryDispatch: { id: 'fd-1', factoryDispatchNumber: 'EIFD/26-27/0001', status: 'READY_FOR_ERVE', version: 2, factoryInvoiceId: null },
+        destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'INSPECTED' })] }],
+      }),
+    );
+    expect(buttonByText('Edit')).toBeNull();
+    expect(buttonByText('Print Label')!.disabled).toBe(false);
+  });
+
+  it('clicking Print Label never calls the top-level window.print() (reuses the established PDF print pipeline)', async () => {
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+    await renderPage(
+      buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'INSPECTED' })] }] }),
+    );
+    buttonByText('Print Label')!.click();
+    await flush();
+    await flush();
+    expect(printSpy).not.toHaveBeenCalled();
+  });
+
+  it('downloading a label does not mutate carton/audit/dispatch state (no POST/PATCH/DELETE call fires)', async () => {
+    const postSpy = vi.spyOn(apiClient, 'post');
+    const patchSpy = vi.spyOn(apiClient, 'patch');
+    const deleteSpy = vi.spyOn(apiClient, 'delete');
+    await renderPage(
+      buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'INSPECTED' })] }] }),
+    );
+    buttonByText('Download Label')!.click();
+    await flush();
+    await flush();
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(patchSpy).not.toHaveBeenCalled();
+    expect(deleteSpy).not.toHaveBeenCalled();
+  });
+});
+
 // UXAUTH-018: a failed fetch (403/500/network error) must render the real
 // ErrorState, not fall through to the "Dispatch Order not found" EmptyState
 // — that EmptyState is reserved for a genuine no-such-record response.
