@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Checkbox, DatePicker, Textarea, TextField } from '@erve/primitives';
+import { calculateQualityExecutionOutcome } from '@erve/types';
 import type {
   QualityExecutionPayload,
   QualityExecutionValidationError,
@@ -147,10 +148,15 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
   const hasOutcomeComponent = execution.sections.some((section) =>
     section.components.some((component) => component.type === 'INSPECTION_OUTCOME'),
   );
-  const outcomeValue = draft.outcome?.value;
+  // DEMO-005: the result is calculated from checklist/test/AQL responses and
+  // cannot be chosen — recalculated live as the draft changes so the warning
+  // below and the Finalize confirmation always reflect the current data.
+  const calculatedOutcomeValue = hasOutcomeComponent
+    ? calculateQualityExecutionOutcome(draft)
+    : undefined;
   const finalize = () => void props.onFinalize({ ...draft, expectedVersion: execution.version });
   const requestFinalize = () => {
-    if (hasOutcomeComponent && outcomeValue) {
+    if (hasOutcomeComponent && calculatedOutcomeValue) {
       setConfirmFinalizeOpen(true);
       return;
     }
@@ -1518,7 +1524,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                             <div className="space-y-3">
                               <QualityChecklistResult
                                 label={component.title}
-                                value={draft.outcome?.value ?? ''}
+                                value={draft.outcome?.value ?? calculatedOutcomeValue ?? ''}
                                 choices={(config.allowedOutcomes as string[]).map((outcome) => ({
                                   value: outcome,
                                   label: outcome,
@@ -1528,7 +1534,8 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                 label="Outcome remarks"
                                 value={draft.outcome?.remarks}
                               />
-                              {execution.finalBatch && draft.outcome?.value === 'FAIL' ? (
+                              {execution.finalBatch &&
+                              (draft.outcome?.value ?? calculatedOutcomeValue) === 'FAIL' ? (
                                 <QualityReadOnlyValue
                                   label="Rejection / Defect Reason"
                                   value={draft.outcome?.rejectionReason}
@@ -1538,28 +1545,16 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                           ) : (
                             <div className="space-y-3">
                               <div className="max-w-md">
-                                <QualityChoiceGroup
-                                  id={controlId(component.id, 'value')}
+                                {/* DEMO-005: the result is calculated — never a manual
+                                    choice — so this is always a read-only display, even
+                                    while editing the rest of the form. */}
+                                <QualityChecklistResult
                                   label={component.title}
+                                  value={calculatedOutcomeValue ?? ''}
                                   choices={(config.allowedOutcomes as string[]).map((outcome) => ({
                                     value: outcome,
                                     label: outcome,
                                   }))}
-                                  value={draft.outcome?.value ?? ''}
-                                  required
-                                  disabled={disabled}
-                                  error={fieldError(component.id, 'value')?.message}
-                                  onChange={(outcome) => {
-                                    clearFieldError(component.id, 'value');
-                                    if (outcome !== 'FAIL')
-                                      clearFieldError(component.id, 'rejectionReason');
-                                    set('outcome', {
-                                      componentId: component.id,
-                                      value: outcome as 'PASS' | 'FAIL',
-                                      remarks: draft.outcome?.remarks,
-                                      rejectionReason: draft.outcome?.rejectionReason,
-                                    });
-                                  }}
                                 />
                               </div>
                               <Textarea
@@ -1574,15 +1569,16 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                     undefined,
                                     Boolean(event.target.value.trim()),
                                   );
-                                  if (draft.outcome)
-                                    set('outcome', {
-                                      ...draft.outcome,
-                                      remarks: event.target.value,
-                                    });
+                                  set('outcome', {
+                                    componentId: component.id,
+                                    value: calculatedOutcomeValue,
+                                    remarks: event.target.value,
+                                    rejectionReason: draft.outcome?.rejectionReason,
+                                  });
                                 }}
                                 className="min-h-24"
                               />
-                              {execution.finalBatch && draft.outcome?.value === 'FAIL' ? (
+                              {execution.finalBatch && calculatedOutcomeValue === 'FAIL' ? (
                                 <Textarea
                                   id={controlId(component.id, 'rejectionReason')}
                                   label="Rejection / Defect Reason"
@@ -1596,11 +1592,12 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                       undefined,
                                       Boolean(event.target.value.trim()),
                                     );
-                                    if (draft.outcome)
-                                      set('outcome', {
-                                        ...draft.outcome,
-                                        rejectionReason: event.target.value,
-                                      });
+                                    set('outcome', {
+                                      componentId: component.id,
+                                      value: calculatedOutcomeValue,
+                                      remarks: draft.outcome?.remarks,
+                                      rejectionReason: event.target.value,
+                                    });
                                   }}
                                   className="min-h-24"
                                 />
@@ -1622,7 +1619,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                             requirement.required === true ||
                             requirement.requiredWhen === 'ALWAYS' ||
                             (requirement.requiredWhen === 'INSPECTION_FAILED' &&
-                              draft.outcome?.value === 'FAIL');
+                              calculatedOutcomeValue === 'FAIL');
                           const validation = fieldError(component.id, requirementKey);
                           return (
                             <div
@@ -1823,7 +1820,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
       <ConfirmDialog
         open={confirmFinalizeOpen}
         onOpenChange={setConfirmFinalizeOpen}
-        title={`Finalize this inspection as ${outcomeValue}?`}
+        title={`Finalize this inspection as ${calculatedOutcomeValue}?`}
         confirmLabel="Yes, finalize"
         loading={busy}
         onConfirm={() => {

@@ -11,6 +11,7 @@ import type {
   QaSizeInspectionFormView,
 } from '@erve/types';
 import {
+  calculatePpSampleOutcome,
   canStartQaInspection,
   qaChecklistChoices,
   qaInspectionAction,
@@ -186,7 +187,6 @@ export function QaInspectionPage() {
   const [errors, setErrors] = useState<Errors>({});
   const [serverIssues, setServerIssues] = useState<string[]>([]);
   const [stale, setStale] = useState(false);
-  const [ppSampleDecision, setPpSampleDecision] = useState<'PASS' | 'FAIL' | ''>('');
   const [pendingFinalize, setPendingFinalize] = useState<SubmitMutationVariables | null>(null);
   const query = useQuery({
     queryKey: ['qa-detail', id],
@@ -319,13 +319,18 @@ export function QaInspectionPage() {
     ? (displayedSession?.evidence.filter((item) => item.inspectionLineId === selected.id) ?? [])
     : [];
   const readonly = !editableSession || selected?.status === 'FINALIZED';
+  // DEMO-005: the PP Sample result is calculated from the checklist, never
+  // chosen manually — any explicit No fails it, N/A and Yes never do.
+  const calculatedPpSampleDecision = ppSample
+    ? calculatePpSampleOutcome(
+        QA_CHECKLIST_ITEMS.map((item) => ({ status: draft.checklist[item.code]?.status || null })),
+      )
+    : null;
   const change = (patch: Partial<QaFormDraft>) =>
     selected && setDrafts((all) => ({ ...all, [selected.id]: { ...draft, ...patch } }));
   const submit = (finalizing: boolean) => {
     if (!selected || !editableSession) return;
     const next = validateDraft(draft, capacity, finalizing, evidence.length, Boolean(ppSample));
-    if (finalizing && ppSample && !ppSampleDecision)
-      next.ppSampleDecision = 'Choose Pass or Fail before finalizing.';
     setErrors(next);
     setServerIssues([]);
     if (Object.keys(next).length) return;
@@ -333,7 +338,7 @@ export function QaInspectionPage() {
       url: `/qa/inspections/${editableSession.id}/forms/${selected.id}${finalizing ? '/finalize' : ''}`,
       method: finalizing ? 'post' : 'put',
       body: finalizing
-        ? { expectedVersion: selected.version, ...(ppSample ? { ppSampleDecision } : {}) }
+        ? { expectedVersion: selected.version }
         : formPayload(draft, selected.version, Boolean(ppSample)),
       key: requestKey(finalizing ? 'finalize' : 'save', selected.version),
     };
@@ -591,29 +596,16 @@ export function QaInspectionPage() {
             </section>
             {ppSample && (
               <section>
-                <h3>PP Sample Decision</h3>
-                <p>Explicit QA decision; not inferred from checklist or defect details.</p>
-                <label>
-                  <input
-                    type="radio"
-                    name="pp-decision"
-                    disabled={readonly}
-                    checked={(ppSample.decision ?? ppSampleDecision) === 'PASS'}
-                    onChange={() => setPpSampleDecision('PASS')}
-                  />
-                  Pass — OK to proceed
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="pp-decision"
-                    disabled={readonly}
-                    checked={(ppSample.decision ?? ppSampleDecision) === 'FAIL'}
-                    onChange={() => setPpSampleDecision('FAIL')}
-                  />
-                  Fail — Not approved
-                </label>
-                {errors.ppSampleDecision && <p role="alert">{errors.ppSampleDecision}</p>}
+                <h3>PP Sample Result</h3>
+                <p>Calculated automatically from the checklist responses; it cannot be overridden.</p>
+                <QualityChecklistResult
+                  label="PP Sample result"
+                  value={ppSample.decision ?? calculatedPpSampleDecision ?? ''}
+                  choices={[
+                    { value: 'PASS', label: 'PASS' },
+                    { value: 'FAIL', label: 'FAIL' },
+                  ]}
+                />
               </section>
             )}
             {errors.form && <p role="alert">{errors.form}</p>}
@@ -707,7 +699,7 @@ export function QaInspectionPage() {
         onOpenChange={(open) => {
           if (!open) setPendingFinalize(null);
         }}
-        title={`Finalize this inspection as ${ppSampleDecision}?`}
+        title={`Finalize this inspection as ${calculatedPpSampleDecision}?`}
         confirmLabel="Yes, finalize"
         loading={mutate.isPending}
         onConfirm={() => {

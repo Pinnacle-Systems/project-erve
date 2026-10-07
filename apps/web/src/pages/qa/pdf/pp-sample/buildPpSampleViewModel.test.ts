@@ -63,6 +63,34 @@ describe('buildPpSampleViewModel', () => {
     });
   });
 
+  // DEMO-005: an explicit N/A must print as a deliberate "N/A", never blank
+  // or the raw enum name.
+  it('prints an explicit N/A checklist response as "N/A", not the raw enum name or blank', () => {
+    const base = makeQaInspectionDetail();
+    const detail = makeQaInspectionDetail({
+      sessions: [
+        {
+          ...base.sessions[0]!,
+          forms: [
+            {
+              ...base.sessions[0]!.forms[0]!,
+              checklist: [
+                { itemCode: 'TRIMS_CARD', status: 'NOT_APPLICABLE', remarks: null },
+                ...base.sessions[0]!.forms[0]!.checklist.slice(1),
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    expect(viewModel.sessions[0]!.forms[0]!.checklist).toContainEqual({
+      label: 'Confirm trims is available and checked as per trims card',
+      status: 'N/A',
+      remarks: null,
+    });
+  });
+
   it('always includes an Evidence entry for a form even when no evidence was uploaded (evidence is mandatory)', () => {
     const detail = makeQaInspectionDetail({
       sessions: [{ ...makeQaInspectionDetail().sessions[0]!, evidence: [] }],

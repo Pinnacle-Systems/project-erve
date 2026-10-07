@@ -84,6 +84,13 @@ function checklistLabel(itemCode: string): string {
   return QA_CHECKLIST_ITEMS.find((definition) => definition.code === itemCode)?.label ?? itemCode.replaceAll('_', ' ');
 }
 
+// DEMO-005: an explicit N/A must render as a deliberate value, not the raw
+// enum name or a blank cell.
+function checklistStatusLabel(status: string | null): string {
+  if (status === 'NOT_APPLICABLE') return 'N/A';
+  return status ?? '—';
+}
+
 /**
  * Pure, synchronous, no HTTP — maps the already-loaded `QaInspectionDetail` (the `/qa/:id` PP
  * Sample screen — every one of its route occurrences in the live app has a `processFlowPpSample`
@@ -121,7 +128,7 @@ export function buildPpSampleViewModel(
       statusLabel: form.status,
       checklist: form.checklist.map((item) => ({
         label: checklistLabel(item.itemCode),
-        status: item.status ?? '—',
+        status: checklistStatusLabel(item.status),
         remarks: item.remarks,
       })),
       inspectionRemarks: form.inspectionRemarks,
