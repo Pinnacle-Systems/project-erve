@@ -16,10 +16,10 @@ function priceList(n: number): PriceListSummary {
     code: `PL-2026-${String(n).padStart(6, '0')}`,
     name: 'FY Prices',
     distributor: { id: 'd1', code: 'D1', name: 'Acme', status: 'ACTIVE' },
+    percentageOfMrp: 60,
     effectiveFrom: '2026-01-01',
     effectiveTo: null,
     status: 'DRAFT',
-    lineCount: 0,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };

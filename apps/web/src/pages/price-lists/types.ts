@@ -7,42 +7,19 @@ export interface PriceListDistributor {
   status: 'ACTIVE' | 'INACTIVE';
 }
 
-export interface PriceListSummary {
+// INV-003: pricing is a single Distributor-wide percentage of MRP, not a
+// per-Style absolute rate — there is no separate line/detail shape any more.
+export interface PriceList {
   id: string;
   code: string;
   name: string;
   distributor: PriceListDistributor;
+  percentageOfMrp: number;
   effectiveFrom: string | null;
   effectiveTo: string | null;
   status: PriceListStatus;
-  lineCount: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface PriceListLine {
-  id: string;
-  styleId: string;
-  styleNumber: string;
-  styleName: string;
-  styleStatus: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
-  unitPrice: number;
-  currency: string;
-}
-
-export interface PriceList extends PriceListSummary {
-  lines: PriceListLine[];
-}
-
-export interface StyleOption {
-  id: string;
-  styleNumber: string;
-  styleName: string;
-  status: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
-}
-
-// A Style this DRAFT price list can still add (GET
-// /price-lists/:id/style-options): ACTIVE and not yet priced on it.
-export interface PriceListStyleCandidate extends StyleOption {
-  lmixNumber: string | null;
-}
+export type PriceListSummary = PriceList;

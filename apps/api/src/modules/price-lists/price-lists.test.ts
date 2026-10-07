@@ -3,12 +3,7 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import {
-  createTestDistributor,
-  createTestSeason,
-  createTestUserAndToken,
-  resetDatabase,
-} from '../../test/helpers.js';
+import { createTestDistributor, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 
 const app = createApp();
 
@@ -23,19 +18,6 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 // Seed helpers
 // ---------------------------------------------------------------------------
-
-async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED' }) {
-  return prisma.style.create({
-    data: {
-      id: createId(),
-      styleNumber: `ST-${createId().slice(-8)}`,
-      styleName: 'Test Style',
-      finalMrp: 500,
-      status: overrides?.status ?? 'ACTIVE',
-      seasonId: (await createTestSeason()).id,
-    },
-  });
-}
 
 async function adminToken() {
   const { token } = await createTestUserAndToken({
@@ -59,6 +41,7 @@ async function distributorUserToken(distributorId: string) {
 interface PriceListPayload {
   distributorId?: string;
   name?: string;
+  percentageOfMrp?: number;
   effectiveFrom?: string | null;
   effectiveTo?: string | null;
 }
@@ -67,14 +50,7 @@ async function createDraft(token: string, payload: PriceListPayload) {
   return request(app)
     .post('/price-lists')
     .set('Authorization', `Bearer ${token}`)
-    .send({ name: 'FY Price List', ...payload });
-}
-
-async function addLine(token: string, priceListId: string, styleId: string, unitPrice: number) {
-  return request(app)
-    .post(`/price-lists/${priceListId}/lines`)
-    .set('Authorization', `Bearer ${token}`)
-    .send({ styleId, unitPrice });
+    .send({ name: 'FY Price List', percentageOfMrp: 60, ...payload });
 }
 
 async function activate(token: string, priceListId: string) {
@@ -83,23 +59,20 @@ async function activate(token: string, priceListId: string) {
     .set('Authorization', `Bearer ${token}`);
 }
 
-// Creates a DRAFT with one priced style via the API and returns ids.
-async function createDraftWithLine(
+// Creates an activatable DRAFT via the API and returns its id.
+async function createActivatableDraft(
   token: string,
   distributorId: string,
-  options?: { effectiveFrom?: string | null; effectiveTo?: string | null; unitPrice?: number },
+  options?: { effectiveFrom?: string | null; effectiveTo?: string | null; percentageOfMrp?: number },
 ) {
-  const style = await createStyle();
-  const createRes = await createDraft(token, {
+  const res = await createDraft(token, {
     distributorId,
+    percentageOfMrp: options?.percentageOfMrp ?? 60,
     effectiveFrom: options?.effectiveFrom === undefined ? '2026-01-01' : options.effectiveFrom,
     effectiveTo: options?.effectiveTo ?? null,
   });
-  expect(createRes.status).toBe(201);
-  const priceListId = createRes.body.data.id as string;
-  const lineRes = await addLine(token, priceListId, style.id, options?.unitPrice ?? 199.5);
-  expect(lineRes.status).toBe(201);
-  return { priceListId, styleId: style.id };
+  expect(res.status).toBe(201);
+  return { priceListId: res.body.data.id as string };
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +87,7 @@ describe('price lists API', () => {
 
       const res = await createDraft(token, {
         distributorId: dist.id,
+        percentageOfMrp: 60,
         effectiveFrom: '2026-01-01',
         effectiveTo: '2026-12-31',
       });
@@ -122,15 +96,25 @@ describe('price lists API', () => {
       expect(res.body.data.status).toBe('DRAFT');
       expect(res.body.data.code).toMatch(/^PL-\d{4}-\d{6}$/);
       expect(res.body.data.distributor.id).toBe(dist.id);
+      expect(res.body.data.percentageOfMrp).toBe(60);
       expect(res.body.data.effectiveFrom).toBe('2026-01-01');
       expect(res.body.data.effectiveTo).toBe('2026-12-31');
-      expect(res.body.data.lines).toEqual([]);
 
       const audit = await prisma.auditLog.findFirst({
         where: { action: 'PRICE_LIST_CREATED', entityId: res.body.data.id },
       });
       expect(audit).not.toBeNull();
-      expect(audit!.metadata).toMatchObject({ distributorId: dist.id });
+      expect(audit!.metadata).toMatchObject({ distributorId: dist.id, percentageOfMrp: 60 });
+    });
+
+    it('persists a fractional percentage exactly', async () => {
+      const token = await adminToken();
+      const dist = await createTestDistributor();
+
+      const res = await createDraft(token, { distributorId: dist.id, percentageOfMrp: 57.25 });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.percentageOfMrp).toBe(57.25);
     });
 
     it('allows MERCHANDISER to create price lists', async () => {
@@ -145,21 +129,39 @@ describe('price lists API', () => {
       expect(res.status).toBe(201);
     });
 
-    it('rejects creation without distributorId or name', async () => {
+    it('rejects creation without distributorId, name or percentage', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
 
       const noDistributor = await request(app)
         .post('/price-lists')
         .set('Authorization', `Bearer ${token}`)
-        .send({ name: 'X' });
+        .send({ name: 'X', percentageOfMrp: 50 });
       expect(noDistributor.status).toBe(400);
 
       const noName = await request(app)
         .post('/price-lists')
         .set('Authorization', `Bearer ${token}`)
-        .send({ distributorId: dist.id, name: '' });
+        .send({ distributorId: dist.id, name: '', percentageOfMrp: 50 });
       expect(noName.status).toBe(400);
+
+      const noPercentage = await request(app)
+        .post('/price-lists')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ distributorId: dist.id, name: 'X' });
+      expect(noPercentage.status).toBe(400);
+    });
+
+    it('rejects a percentage outside 0-100', async () => {
+      const token = await adminToken();
+      const dist = await createTestDistributor();
+
+      expect((await createDraft(token, { distributorId: dist.id, percentageOfMrp: -1 })).status).toBe(400);
+      expect((await createDraft(token, { distributorId: dist.id, percentageOfMrp: 100.01 })).status).toBe(
+        400,
+      );
+      expect((await createDraft(token, { distributorId: dist.id, percentageOfMrp: 0 })).status).toBe(201);
+      expect((await createDraft(token, { distributorId: dist.id, percentageOfMrp: 100 })).status).toBe(201);
     });
 
     it('rejects invalid date formats and inverted effective periods', async () => {
@@ -233,125 +235,25 @@ describe('price lists API', () => {
     });
   });
 
-  describe('price list lines — draft editing', () => {
-    it('adds a valid line and records an audit log', async () => {
-      const token = await adminToken();
-      const dist = await createTestDistributor();
-      const style = await createStyle();
-      const createRes = await createDraft(token, { distributorId: dist.id });
-      const priceListId = createRes.body.data.id as string;
-
-      const res = await addLine(token, priceListId, style.id, 249.99);
-
-      expect(res.status).toBe(201);
-      expect(res.body.data.lines).toHaveLength(1);
-      expect(res.body.data.lines[0]).toMatchObject({
-        styleId: style.id,
-        unitPrice: 249.99,
-        currency: 'INR',
-      });
-
-      const audit = await prisma.auditLog.findFirst({
-        where: { action: 'PRICE_LIST_LINE_ADDED', entityId: priceListId },
-      });
-      expect(audit).not.toBeNull();
-    });
-
-    it('rejects duplicate style lines', async () => {
-      const token = await adminToken();
-      const dist = await createTestDistributor();
-      const style = await createStyle();
-      const createRes = await createDraft(token, { distributorId: dist.id });
-      const priceListId = createRes.body.data.id as string;
-
-      await addLine(token, priceListId, style.id, 100);
-      const duplicate = await addLine(token, priceListId, style.id, 200);
-
-      expect(duplicate.status).toBe(409);
-    });
-
-    it('rejects unknown, inactive styles and non-positive prices', async () => {
-      const token = await adminToken();
-      const dist = await createTestDistributor();
-      const inactiveStyle = await createStyle({ status: 'INACTIVE' });
-      const style = await createStyle();
-      const createRes = await createDraft(token, { distributorId: dist.id });
-      const priceListId = createRes.body.data.id as string;
-
-      expect((await addLine(token, priceListId, createId(), 100)).status).toBe(400);
-      expect((await addLine(token, priceListId, inactiveStyle.id, 100)).status).toBe(400);
-      expect((await addLine(token, priceListId, style.id, 0)).status).toBe(400);
-      expect((await addLine(token, priceListId, style.id, -5)).status).toBe(400);
-    });
-
-    it('updates and removes draft lines with audit logs', async () => {
-      const token = await adminToken();
-      const dist = await createTestDistributor();
-      const { priceListId } = await createDraftWithLine(token, dist.id, { unitPrice: 100 });
-      const detail = await request(app)
-        .get(`/price-lists/${priceListId}`)
-        .set('Authorization', `Bearer ${token}`);
-      const lineId = detail.body.data.lines[0].id as string;
-
-      const updated = await request(app)
-        .patch(`/price-lists/${priceListId}/lines/${lineId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .send({ unitPrice: 150.25 });
-      expect(updated.status).toBe(200);
-      expect(updated.body.data.lines[0].unitPrice).toBe(150.25);
-
-      const updateAudit = await prisma.auditLog.findFirst({
-        where: { action: 'PRICE_LIST_LINE_UPDATED', entityId: priceListId },
-      });
-      expect(updateAudit!.metadata).toMatchObject({
-        before: { unitPrice: 100 },
-        after: { unitPrice: 150.25 },
-      });
-
-      const removed = await request(app)
-        .delete(`/price-lists/${priceListId}/lines/${lineId}`)
-        .set('Authorization', `Bearer ${token}`);
-      expect(removed.status).toBe(200);
-      expect(removed.body.data.lines).toHaveLength(0);
-
-      const removeAudit = await prisma.auditLog.findFirst({
-        where: { action: 'PRICE_LIST_LINE_REMOVED', entityId: priceListId },
-      });
-      expect(removeAudit).not.toBeNull();
-    });
-
-    it('returns 404 for a line belonging to a different price list', async () => {
-      const token = await adminToken();
-      const dist = await createTestDistributor();
-      const first = await createDraftWithLine(token, dist.id);
-      const second = await createDraft(token, { distributorId: dist.id, name: 'Other' });
-      const firstDetail = await request(app)
-        .get(`/price-lists/${first.priceListId}`)
-        .set('Authorization', `Bearer ${token}`);
-      const lineId = firstDetail.body.data.lines[0].id as string;
-
-      const res = await request(app)
-        .patch(`/price-lists/${second.body.data.id}/lines/${lineId}`)
-        .set('Authorization', `Bearer ${token}`)
-        .send({ unitPrice: 10 });
-      expect(res.status).toBe(404);
-    });
-  });
-
   describe('PATCH /price-lists/:id — draft metadata', () => {
-    it('updates draft metadata and records before/after audit metadata', async () => {
+    it('updates draft metadata (including the percentage) and records before/after audit metadata', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const createRes = await createDraft(token, { distributorId: dist.id, effectiveFrom: '2026-01-01' });
+      const createRes = await createDraft(token, {
+        distributorId: dist.id,
+        percentageOfMrp: 60,
+        effectiveFrom: '2026-01-01',
+      });
       const priceListId = createRes.body.data.id as string;
 
       const res = await request(app)
         .patch(`/price-lists/${priceListId}`)
         .set('Authorization', `Bearer ${token}`)
-        .send({ name: 'Renamed', effectiveFrom: '2026-02-01', effectiveTo: '2026-12-31' });
+        .send({ name: 'Renamed', percentageOfMrp: 65.5, effectiveFrom: '2026-02-01', effectiveTo: '2026-12-31' });
 
       expect(res.status).toBe(200);
       expect(res.body.data.name).toBe('Renamed');
+      expect(res.body.data.percentageOfMrp).toBe(65.5);
       expect(res.body.data.effectiveFrom).toBe('2026-02-01');
       expect(res.body.data.effectiveTo).toBe('2026-12-31');
 
@@ -359,8 +261,8 @@ describe('price lists API', () => {
         where: { action: 'PRICE_LIST_UPDATED', entityId: priceListId },
       });
       expect(audit!.metadata).toMatchObject({
-        before: { name: 'FY Price List', effectiveFrom: '2026-01-01' },
-        after: { name: 'Renamed', effectiveFrom: '2026-02-01' },
+        before: { name: 'FY Price List', percentageOfMrp: 60, effectiveFrom: '2026-01-01' },
+        after: { name: 'Renamed', percentageOfMrp: 65.5, effectiveFrom: '2026-02-01' },
       });
     });
 
@@ -375,13 +277,25 @@ describe('price lists API', () => {
         .send({ effectiveTo: '2026-01-01' });
       expect(res.status).toBe(400);
     });
+
+    it('rejects a percentage update outside 0-100', async () => {
+      const token = await adminToken();
+      const dist = await createTestDistributor();
+      const createRes = await createDraft(token, { distributorId: dist.id });
+
+      const res = await request(app)
+        .patch(`/price-lists/${createRes.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ percentageOfMrp: 150 });
+      expect(res.status).toBe(400);
+    });
   });
 
   describe('activation lifecycle', () => {
     it('activates a valid draft and records an audit log', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId } = await createDraftWithLine(token, dist.id);
+      const { priceListId } = await createActivatableDraft(token, dist.id);
 
       const res = await activate(token, priceListId);
 
@@ -395,29 +309,10 @@ describe('price lists API', () => {
       expect(audit!.metadata).toMatchObject({ effectiveFrom: '2026-01-01' });
     });
 
-    it('rejects activating an empty price list', async () => {
-      const token = await adminToken();
-      const dist = await createTestDistributor();
-      const createRes = await createDraft(token, { distributorId: dist.id, effectiveFrom: '2026-01-01' });
-
-      const res = await activate(token, createRes.body.data.id);
-      expect(res.status).toBe(400);
-    });
-
     it('rejects activation without an effective-from date', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId } = await createDraftWithLine(token, dist.id, { effectiveFrom: null });
-
-      const res = await activate(token, priceListId);
-      expect(res.status).toBe(400);
-    });
-
-    it('rejects activation when a line style has become inactive', async () => {
-      const token = await adminToken();
-      const dist = await createTestDistributor();
-      const { priceListId, styleId } = await createDraftWithLine(token, dist.id);
-      await prisma.style.update({ where: { id: styleId }, data: { status: 'INACTIVE' } });
+      const { priceListId } = await createActivatableDraft(token, dist.id, { effectiveFrom: null });
 
       const res = await activate(token, priceListId);
       expect(res.status).toBe(400);
@@ -426,7 +321,7 @@ describe('price lists API', () => {
     it('rejects activation for an inactive distributor', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId } = await createDraftWithLine(token, dist.id);
+      const { priceListId } = await createActivatableDraft(token, dist.id);
       await prisma.distributor.update({ where: { id: dist.id }, data: { status: 'INACTIVE' } });
 
       const res = await activate(token, priceListId);
@@ -436,7 +331,7 @@ describe('price lists API', () => {
     it('rejects invalid status transitions', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId } = await createDraftWithLine(token, dist.id);
+      const { priceListId } = await createActivatableDraft(token, dist.id);
 
       // Draft cannot be retired
       const retireDraft = await request(app)
@@ -465,13 +360,8 @@ describe('price lists API', () => {
     it('rejects modification of an ACTIVE price list', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId } = await createDraftWithLine(token, dist.id);
+      const { priceListId } = await createActivatableDraft(token, dist.id);
       await activate(token, priceListId);
-      const detail = await request(app)
-        .get(`/price-lists/${priceListId}`)
-        .set('Authorization', `Bearer ${token}`);
-      const lineId = detail.body.data.lines[0].id as string;
-      const otherStyle = await createStyle();
 
       const metadata = await request(app)
         .patch(`/price-lists/${priceListId}`)
@@ -479,24 +369,17 @@ describe('price lists API', () => {
         .send({ name: 'Nope' });
       expect(metadata.status).toBe(400);
 
-      expect((await addLine(token, priceListId, otherStyle.id, 10)).status).toBe(400);
-
-      const lineUpdate = await request(app)
-        .patch(`/price-lists/${priceListId}/lines/${lineId}`)
+      const percentage = await request(app)
+        .patch(`/price-lists/${priceListId}`)
         .set('Authorization', `Bearer ${token}`)
-        .send({ unitPrice: 1 });
-      expect(lineUpdate.status).toBe(400);
-
-      const lineRemove = await request(app)
-        .delete(`/price-lists/${priceListId}/lines/${lineId}`)
-        .set('Authorization', `Bearer ${token}`);
-      expect(lineRemove.status).toBe(400);
+        .send({ percentageOfMrp: 10 });
+      expect(percentage.status).toBe(400);
     });
 
     it('retires an ACTIVE list, keeps it readable, and records an audit log', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId } = await createDraftWithLine(token, dist.id, { unitPrice: 321.5 });
+      const { priceListId } = await createActivatableDraft(token, dist.id, { percentageOfMrp: 42.5 });
       await activate(token, priceListId);
 
       const res = await request(app)
@@ -506,12 +389,12 @@ describe('price lists API', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.status).toBe('EXPIRED');
 
-      // Historical list stays readable with prices and dates untouched
+      // Historical list stays readable with its percentage and dates untouched
       const detail = await request(app)
         .get(`/price-lists/${priceListId}`)
         .set('Authorization', `Bearer ${token}`);
       expect(detail.status).toBe(200);
-      expect(detail.body.data.lines[0].unitPrice).toBe(321.5);
+      expect(detail.body.data.percentageOfMrp).toBe(42.5);
       expect(detail.body.data.effectiveFrom).toBe('2026-01-01');
 
       const audit = await prisma.auditLog.findFirst({
@@ -526,13 +409,13 @@ describe('price lists API', () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
 
-      const first = await createDraftWithLine(token, dist.id, {
+      const first = await createActivatableDraft(token, dist.id, {
         effectiveFrom: '2026-01-01',
         effectiveTo: '2026-12-31',
       });
       expect((await activate(token, first.priceListId)).status).toBe(200);
 
-      const second = await createDraftWithLine(token, dist.id, { effectiveFrom: '2026-06-01' });
+      const second = await createActivatableDraft(token, dist.id, { effectiveFrom: '2026-06-01' });
       const res = await activate(token, second.priceListId);
       expect(res.status).toBe(409);
     });
@@ -542,8 +425,8 @@ describe('price lists API', () => {
       const distA = await createTestDistributor();
       const distB = await createTestDistributor();
 
-      const a = await createDraftWithLine(token, distA.id);
-      const b = await createDraftWithLine(token, distB.id);
+      const a = await createActivatableDraft(token, distA.id);
+      const b = await createActivatableDraft(token, distB.id);
 
       expect((await activate(token, a.priceListId)).status).toBe(200);
       expect((await activate(token, b.priceListId)).status).toBe(200);
@@ -553,10 +436,10 @@ describe('price lists API', () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
 
-      const first = await createDraftWithLine(token, dist.id, { effectiveFrom: '2026-01-01' });
+      const first = await createActivatableDraft(token, dist.id, { effectiveFrom: '2026-01-01' });
       await activate(token, first.priceListId);
 
-      const second = await createDraftWithLine(token, dist.id, { effectiveFrom: '2026-07-01' });
+      const second = await createActivatableDraft(token, dist.id, { effectiveFrom: '2026-07-01' });
       const res = await activate(token, second.priceListId);
       expect(res.status).toBe(200);
 
@@ -579,10 +462,10 @@ describe('price lists API', () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
 
-      const first = await createDraftWithLine(token, dist.id, { effectiveFrom: '2026-01-01' });
+      const first = await createActivatableDraft(token, dist.id, { effectiveFrom: '2026-01-01' });
       await activate(token, first.priceListId);
 
-      const second = await createDraftWithLine(token, dist.id, { effectiveFrom: '2026-01-01' });
+      const second = await createActivatableDraft(token, dist.id, { effectiveFrom: '2026-01-01' });
       const res = await activate(token, second.priceListId);
       expect(res.status).toBe(409);
     });
@@ -595,6 +478,7 @@ describe('price lists API', () => {
           code: `PL-RAW-${createId().slice(-6)}`,
           name: 'Raw A',
           distributorId: dist.id,
+          percentageOfMrp: 50,
           effectiveFrom: new Date('2026-01-01'),
           status: 'ACTIVE',
         },
@@ -607,6 +491,7 @@ describe('price lists API', () => {
             code: `PL-RAW-${createId().slice(-6)}`,
             name: 'Raw B',
             distributorId: dist.id,
+            percentageOfMrp: 55,
             effectiveFrom: new Date('2026-06-01'),
             status: 'ACTIVE',
           },
@@ -618,8 +503,8 @@ describe('price lists API', () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
 
-      const a = await createDraftWithLine(token, dist.id, { effectiveFrom: '2026-01-01' });
-      const b = await createDraftWithLine(token, dist.id, { effectiveFrom: '2026-01-01' });
+      const a = await createActivatableDraft(token, dist.id, { effectiveFrom: '2026-01-01' });
+      const b = await createActivatableDraft(token, dist.id, { effectiveFrom: '2026-01-01' });
 
       const [resA, resB] = await Promise.all([
         activate(token, a.priceListId),
@@ -642,7 +527,7 @@ describe('price lists API', () => {
       const distA = await createTestDistributor();
       const distB = await createTestDistributor();
 
-      const a = await createDraftWithLine(token, distA.id, {
+      const a = await createActivatableDraft(token, distA.id, {
         effectiveFrom: '2026-01-01',
         effectiveTo: '2026-06-30',
       });
@@ -655,7 +540,7 @@ describe('price lists API', () => {
         .set('Authorization', `Bearer ${token}`);
       expect(byDistributor.body.data).toHaveLength(1);
       expect(byDistributor.body.data[0].id).toBe(a.priceListId);
-      expect(byDistributor.body.data[0].lineCount).toBe(1);
+      expect(byDistributor.body.data[0].percentageOfMrp).toBe(60);
 
       const byStatus = await request(app)
         .get('/price-lists')
@@ -682,9 +567,9 @@ describe('price lists API', () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
 
-      const older = await createDraftWithLine(token, dist.id, { effectiveFrom: '2026-01-01' });
+      const older = await createActivatableDraft(token, dist.id, { effectiveFrom: '2026-01-01' });
       await activate(token, older.priceListId);
-      const newer = await createDraftWithLine(token, dist.id, { effectiveFrom: '2026-07-01' });
+      const newer = await createActivatableDraft(token, dist.id, { effectiveFrom: '2026-07-01' });
       await activate(token, newer.priceListId);
       await createDraft(token, { distributorId: dist.id, name: 'Pending draft' });
 
@@ -700,129 +585,122 @@ describe('price lists API', () => {
     });
   });
 
-  describe('GET /price-lists/lookup — deterministic price lookup', () => {
-    it('returns the applicable price with source identifiers', async () => {
+  describe('GET /price-lists/lookup — deterministic percentage resolver', () => {
+    it('returns the applicable percentage with source identifiers', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId, styleId } = await createDraftWithLine(token, dist.id, { unitPrice: 499.75 });
+      const { priceListId } = await createActivatableDraft(token, dist.id, { percentageOfMrp: 49.75 });
       await activate(token, priceListId);
 
       const res = await request(app)
         .get('/price-lists/lookup')
-        .query({ distributorId: dist.id, styleId, date: '2026-05-15' })
+        .query({ distributorId: dist.id, date: '2026-05-15' })
         .set('Authorization', `Bearer ${token}`);
 
       expect(res.status).toBe(200);
       expect(res.body.data.found).toBe(true);
-      expect(res.body.data.unitPrice).toBe(499.75);
-      expect(res.body.data.currency).toBe('INR');
+      expect(res.body.data.percentageOfMrp).toBe(49.75);
       expect(res.body.data.priceListId).toBe(priceListId);
-      expect(res.body.data.priceListLineId).toBeTruthy();
+      expect(res.body.data.distributorId).toBe(dist.id);
       expect(res.body.data.effectiveFrom).toBe('2026-01-01');
     });
 
-    it('resolves the correct historical price after supersession', async () => {
+    it('resolves the correct historical percentage after supersession', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const style = await createStyle();
 
-      const first = await createDraft(token, { distributorId: dist.id, effectiveFrom: '2026-01-01' });
-      await addLine(token, first.body.data.id, style.id, 100);
+      const first = await createDraft(token, {
+        distributorId: dist.id,
+        percentageOfMrp: 50,
+        effectiveFrom: '2026-01-01',
+      });
       await activate(token, first.body.data.id);
 
-      const second = await createDraft(token, { distributorId: dist.id, effectiveFrom: '2026-07-01' });
-      await addLine(token, second.body.data.id, style.id, 120);
+      const second = await createDraft(token, {
+        distributorId: dist.id,
+        percentageOfMrp: 55,
+        effectiveFrom: '2026-07-01',
+      });
       await activate(token, second.body.data.id);
 
       const before = await request(app)
         .get('/price-lists/lookup')
-        .query({ distributorId: dist.id, styleId: style.id, date: '2026-06-30' })
+        .query({ distributorId: dist.id, date: '2026-06-30' })
         .set('Authorization', `Bearer ${token}`);
-      expect(before.body.data).toMatchObject({ found: true, unitPrice: 100 });
+      expect(before.body.data).toMatchObject({ found: true, percentageOfMrp: 50 });
 
       const after = await request(app)
         .get('/price-lists/lookup')
-        .query({ distributorId: dist.id, styleId: style.id, date: '2026-07-01' })
+        .query({ distributorId: dist.id, date: '2026-07-01' })
         .set('Authorization', `Bearer ${token}`);
-      expect(after.body.data).toMatchObject({ found: true, unitPrice: 120 });
+      expect(after.body.data).toMatchObject({ found: true, percentageOfMrp: 55 });
     });
 
-    it('returns a clear not-found result when no price applies', async () => {
+    it('returns a clear not-found result when no price list applies', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId, styleId } = await createDraftWithLine(token, dist.id, {
+      const { priceListId } = await createActivatableDraft(token, dist.id, {
         effectiveFrom: '2026-01-01',
         effectiveTo: '2026-06-30',
       });
       await activate(token, priceListId);
-      const unpricedStyle = await createStyle();
 
       const outsidePeriod = await request(app)
         .get('/price-lists/lookup')
-        .query({ distributorId: dist.id, styleId, date: '2026-07-01' })
+        .query({ distributorId: dist.id, date: '2026-07-01' })
         .set('Authorization', `Bearer ${token}`);
       expect(outsidePeriod.status).toBe(200);
       expect(outsidePeriod.body.data).toEqual({ found: false, reason: 'NO_ACTIVE_PRICE_LIST' });
-
-      const notPriced = await request(app)
-        .get('/price-lists/lookup')
-        .query({ distributorId: dist.id, styleId: unpricedStyle.id, date: '2026-03-01' })
-        .set('Authorization', `Bearer ${token}`);
-      expect(notPriced.body.data).toEqual({ found: false, reason: 'STYLE_NOT_PRICED' });
     });
 
     it('does not fall back to another distributor price list', async () => {
       const token = await adminToken();
       const priced = await createTestDistributor();
       const unpriced = await createTestDistributor();
-      const { priceListId, styleId } = await createDraftWithLine(token, priced.id);
+      const { priceListId } = await createActivatableDraft(token, priced.id);
       await activate(token, priceListId);
 
       const res = await request(app)
         .get('/price-lists/lookup')
-        .query({ distributorId: unpriced.id, styleId, date: '2026-03-01' })
+        .query({ distributorId: unpriced.id, date: '2026-03-01' })
         .set('Authorization', `Bearer ${token}`);
       expect(res.body.data).toEqual({ found: false, reason: 'NO_ACTIVE_PRICE_LIST' });
     });
 
-    it('rejects lookups for inactive distributors and styles', async () => {
+    it('rejects lookups for an unknown or inactive distributor', async () => {
       const token = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId, styleId } = await createDraftWithLine(token, dist.id);
+      const { priceListId } = await createActivatableDraft(token, dist.id);
       await activate(token, priceListId);
+
+      const unknown = await request(app)
+        .get('/price-lists/lookup')
+        .query({ distributorId: createId(), date: '2026-03-01' })
+        .set('Authorization', `Bearer ${token}`);
+      expect(unknown.status).toBe(400);
 
       await prisma.distributor.update({ where: { id: dist.id }, data: { status: 'INACTIVE' } });
       const inactiveDist = await request(app)
         .get('/price-lists/lookup')
-        .query({ distributorId: dist.id, styleId, date: '2026-03-01' })
+        .query({ distributorId: dist.id, date: '2026-03-01' })
         .set('Authorization', `Bearer ${token}`);
       expect(inactiveDist.status).toBe(400);
-
-      await prisma.distributor.update({ where: { id: dist.id }, data: { status: 'ACTIVE' } });
-      await prisma.style.update({ where: { id: styleId }, data: { status: 'DISCONTINUED' } });
-      const inactiveStyle = await request(app)
-        .get('/price-lists/lookup')
-        .query({ distributorId: dist.id, styleId, date: '2026-03-01' })
-        .set('Authorization', `Bearer ${token}`);
-      expect(inactiveStyle.status).toBe(400);
     });
   });
 
   describe('distributor-user isolation', () => {
     // DISTRIBUTOR has no access to the Price List master module at all —
     // not even scoped to their own distributor. A distributor's own
-    // commercial price, if ever shown, must come from an embedded field on
-    // an authorized transaction, not from browsing Price Lists. This
-    // replaces the module's former scoped-self-view design, which the
-    // master-data authorization audit found conflicted with that policy.
+    // commercial percentage, if ever shown, must come from an embedded field
+    // on an authorized transaction, not from browsing Price Lists.
     it('blocks a DISTRIBUTOR user from list, detail, history and lookup — even for their own distributor', async () => {
       const admin = await adminToken();
       const own = await createTestDistributor();
       const other = await createTestDistributor();
 
-      const ownActive = await createDraftWithLine(admin, own.id, { unitPrice: 111 });
+      const ownActive = await createActivatableDraft(admin, own.id, { percentageOfMrp: 40 });
       await activate(admin, ownActive.priceListId);
-      const otherActive = await createDraftWithLine(admin, other.id);
+      const otherActive = await createActivatableDraft(admin, other.id);
       await activate(admin, otherActive.priceListId);
 
       const token = await distributorUserToken(own.id);
@@ -839,7 +717,7 @@ describe('price lists API', () => {
         (
           await request(app)
             .get('/price-lists/lookup')
-            .query({ distributorId: own.id, styleId: ownActive.styleId, date: '2026-03-01' })
+            .query({ distributorId: own.id, date: '2026-03-01' })
             .set(auth)
         ).status,
       ).toBe(403);
@@ -848,27 +726,31 @@ describe('price lists API', () => {
     it('blocks distributor users from every mutation endpoint', async () => {
       const admin = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId, styleId } = await createDraftWithLine(admin, dist.id);
-      const detail = await request(app)
-        .get(`/price-lists/${priceListId}`)
-        .set('Authorization', `Bearer ${admin}`);
-      const lineId = detail.body.data.lines[0].id as string;
+      const { priceListId } = await createActivatableDraft(admin, dist.id);
       const token = await distributorUserToken(dist.id);
       const auth = { Authorization: `Bearer ${token}` };
 
-      expect((await request(app).post('/price-lists').set(auth).send({ distributorId: dist.id, name: 'X' })).status).toBe(403);
-      expect((await request(app).patch(`/price-lists/${priceListId}`).set(auth).send({ name: 'X' })).status).toBe(403);
-      expect((await request(app).post(`/price-lists/${priceListId}/lines`).set(auth).send({ styleId, unitPrice: 10 })).status).toBe(403);
-      expect((await request(app).patch(`/price-lists/${priceListId}/lines/${lineId}`).set(auth).send({ unitPrice: 10 })).status).toBe(403);
-      expect((await request(app).delete(`/price-lists/${priceListId}/lines/${lineId}`).set(auth)).status).toBe(403);
-      expect((await request(app).post(`/price-lists/${priceListId}/actions/activate`).set(auth)).status).toBe(403);
+      expect(
+        (
+          await request(app)
+            .post('/price-lists')
+            .set(auth)
+            .send({ distributorId: dist.id, name: 'X', percentageOfMrp: 10 })
+        ).status,
+      ).toBe(403);
+      expect((await request(app).patch(`/price-lists/${priceListId}`).set(auth).send({ name: 'X' })).status).toBe(
+        403,
+      );
+      expect((await request(app).post(`/price-lists/${priceListId}/actions/activate`).set(auth)).status).toBe(
+        403,
+      );
       expect((await request(app).post(`/price-lists/${priceListId}/actions/retire`).set(auth)).status).toBe(403);
     });
 
     it('allows a read-only role (SENIOR_MANAGEMENT) to view but not mutate', async () => {
       const admin = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId } = await createDraftWithLine(admin, dist.id);
+      const { priceListId } = await createActivatableDraft(admin, dist.id);
 
       const { token } = await createTestUserAndToken({
         email: 'senior-mgmt@test.local',
@@ -895,7 +777,7 @@ describe('price lists API', () => {
     it('allows ACCOUNTANT to both view and mutate (finance exception)', async () => {
       const admin = await adminToken();
       const dist = await createTestDistributor();
-      const { priceListId } = await createDraftWithLine(admin, dist.id);
+      const { priceListId } = await createActivatableDraft(admin, dist.id);
 
       const { token } = await createTestUserAndToken({
         email: 'accountant@test.local',
@@ -922,10 +804,10 @@ describe('price lists API', () => {
   });
 
   // UXAUTH-013: ACCOUNTANT can manage Price Lists but is denied on the broad
-  // Style/Distributor masters. These endpoints give ACCOUNTANT (and the other
+  // Distributor master. This endpoint gives ACCOUNTANT (and the other
   // Price-List-capable roles) the minimal option data the Price List
-  // Distributor/Style selectors need, without granting master-data browsing.
-  describe('GET /price-lists/distributor-options & /price-lists/style-options (UXAUTH-013)', () => {
+  // Distributor selector needs, without granting master-data browsing.
+  describe('GET /price-lists/distributor-options (UXAUTH-013)', () => {
     it.each([
       ['ADMIN', 200],
       ['MERCHANDISER', 200],
@@ -944,17 +826,12 @@ describe('price lists API', () => {
       const distributorOptions = await request(app)
         .get('/price-lists/distributor-options')
         .set('Authorization', `Bearer ${token}`);
-      const styleOptions = await request(app)
-        .get('/price-lists/style-options')
-        .set('Authorization', `Bearer ${token}`);
 
       expect(distributorOptions.status).toBe(expectedStatus);
-      expect(styleOptions.status).toBe(expectedStatus);
     });
 
-    it('lets ACCOUNTANT fetch distributor and style options while still denying the broad masters', async () => {
+    it('lets ACCOUNTANT fetch distributor options while still denying the broad master', async () => {
       await createTestDistributor({ code: 'DIST-OPT', name: 'Option Distributors' });
-      await createStyle();
 
       const { token } = await createTestUserAndToken({
         email: 'accountant-options@test.local',
@@ -965,51 +842,34 @@ describe('price lists API', () => {
       const distributorOptions = await request(app)
         .get('/price-lists/distributor-options')
         .set('Authorization', `Bearer ${token}`);
-      const styleOptions = await request(app)
-        .get('/price-lists/style-options')
-        .set('Authorization', `Bearer ${token}`);
       const directDistributors = await request(app)
         .get('/distributors')
         .set('Authorization', `Bearer ${token}`);
-      const directStyles = await request(app)
-        .get('/styles')
-        .set('Authorization', `Bearer ${token}`);
 
       expect(distributorOptions.status).toBe(200);
-      expect(styleOptions.status).toBe(200);
       expect(distributorOptions.body.data.length).toBeGreaterThan(0);
-      expect(styleOptions.body.data.length).toBeGreaterThan(0);
       expect(directDistributors.status).toBe(403);
-      expect(directStyles.status).toBe(403);
     });
 
     it('returns only the minimal DTO fields, not the full master record', async () => {
       await createTestDistributor({ code: 'DIST-MIN', name: 'Minimal Distributors' });
-      await createStyle();
       const token = await adminToken();
 
       const distributorOptions = await request(app)
         .get('/price-lists/distributor-options')
         .set('Authorization', `Bearer ${token}`);
-      const styleOptions = await request(app)
-        .get('/price-lists/style-options')
-        .set('Authorization', `Bearer ${token}`);
 
       expect(Object.keys(distributorOptions.body.data[0]).sort()).toEqual(
         ['code', 'id', 'name', 'status'].sort(),
       );
-      expect(Object.keys(styleOptions.body.data[0]).sort()).toEqual(
-        ['id', 'status', 'styleName', 'styleNumber'].sort(),
-      );
     });
 
-    it('includes inactive distributors and styles unless a status filter is passed (historical read access)', async () => {
+    it('includes inactive distributors unless a status filter is passed (historical read access)', async () => {
       const inactiveDist = await createTestDistributor({
         code: 'DIST-INA',
         name: 'Inactive Distributors',
         status: 'INACTIVE',
       });
-      const inactiveStyle = await createStyle({ status: 'INACTIVE' });
       const token = await adminToken();
 
       const allDistributors = await request(app)
@@ -1019,18 +879,9 @@ describe('price lists API', () => {
         .get('/price-lists/distributor-options')
         .query({ status: 'ACTIVE' })
         .set('Authorization', `Bearer ${token}`);
-      const allStyles = await request(app)
-        .get('/price-lists/style-options')
-        .set('Authorization', `Bearer ${token}`);
-      const activeStyles = await request(app)
-        .get('/price-lists/style-options')
-        .query({ status: 'ACTIVE' })
-        .set('Authorization', `Bearer ${token}`);
 
       expect(allDistributors.body.data.map((d: { id: string }) => d.id)).toContain(inactiveDist.id);
       expect(activeDistributors.body.data.map((d: { id: string }) => d.id)).not.toContain(inactiveDist.id);
-      expect(allStyles.body.data.map((s: { id: string }) => s.id)).toContain(inactiveStyle.id);
-      expect(activeStyles.body.data.map((s: { id: string }) => s.id)).not.toContain(inactiveStyle.id);
     });
 
     it('returns the complete option set, not just a first page', async () => {
@@ -1053,226 +904,10 @@ describe('price lists API', () => {
       const distributorOptions = await request(app)
         .get('/price-lists/distributor-options')
         .set('Authorization', `Bearer ${token}`);
-      const styleOptions = await request(app)
-        .get('/price-lists/style-options')
-        .set('Authorization', `Bearer ${token}`);
 
       expect(distributorOptions.status).toBe(200);
       expect(Array.isArray(distributorOptions.body.data)).toBe(true);
-      expect(styleOptions.status).toBe(200);
-      expect(Array.isArray(styleOptions.body.data)).toBe(true);
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// P1L2 — Price List "Add Style" lookup
-// ---------------------------------------------------------------------------
-
-describe('GET /price-lists/:id/style-options — Add Style lookup (P1L2)', () => {
-  async function createLookupStyle(input: {
-    styleNumber: string;
-    styleName?: string;
-    lmixNumber?: string | null;
-    status?: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
-  }) {
-    const style = await createStyle({ status: input.status });
-    return prisma.style.update({
-      where: { id: style.id },
-      data: {
-        styleNumber: input.styleNumber,
-        styleName: input.styleName ?? 'Lookup Tee',
-        lmixNumber: input.lmixNumber ?? null,
-      },
-    });
-  }
-
-  async function draftPriceList(token: string) {
-    const dist = await createTestDistributor();
-    const res = await createDraft(token, { distributorId: dist.id, effectiveFrom: '2026-01-01' });
-    expect(res.status).toBe(201);
-    return res.body.data.id as string;
-  }
-
-  function searchCandidates(token: string, priceListId: string, query: Record<string, string | number>) {
-    return request(app)
-      .get(`/price-lists/${priceListId}/style-options`)
-      .query(query)
-      .set('Authorization', `Bearer ${token}`);
-  }
-
-  function styleNumbers(res: request.Response): string[] {
-    return (res.body.data as Array<{ styleNumber: string }>).map((option) => option.styleNumber).sort();
-  }
-
-  it('finds Styles by LMIX (full and partial), independent of the Style Number', async () => {
-    const token = await adminToken();
-    const priceListId = await draftPriceList(token);
-    await createLookupStyle({ styleNumber: 'SS26-TEE-A', lmixNumber: 'LMIX5526011' });
-    await createLookupStyle({ styleNumber: 'SS26-TEE-B', lmixNumber: 'LMIX7700000' });
-
-    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'LMIX5526011' }))).toEqual([
-      'SS26-TEE-A',
-    ]);
-    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'lmix5526' }))).toEqual([
-      'SS26-TEE-A',
-    ]);
-    expect(styleNumbers(await searchCandidates(token, priceListId, { search: '526011' }))).toEqual([
-      'SS26-TEE-A',
-    ]);
-  });
-
-  it('finds Styles by partial Style Number and by partial Style Name, case-insensitively', async () => {
-    const token = await adminToken();
-    const priceListId = await draftPriceList(token);
-    await createLookupStyle({ styleNumber: 'AW25-HOOD-01', styleName: "Girl's Hoody" });
-    await createLookupStyle({ styleNumber: 'SS26-PANT-02', styleName: "Boy's Sweat Pant" });
-
-    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'hood-0' }))).toEqual([
-      'AW25-HOOD-01',
-    ]);
-    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'SWEAT pant' }))).toEqual([
-      'SS26-PANT-02',
-    ]);
-  });
-
-  it('offers only ACTIVE Styles — INACTIVE/DISCONTINUED are excluded and no status override is accepted', async () => {
-    const token = await adminToken();
-    const priceListId = await draftPriceList(token);
-    await createLookupStyle({ styleNumber: 'ELIG-ACTIVE', lmixNumber: 'LMIX2000001' });
-    await createLookupStyle({ styleNumber: 'ELIG-INACTIVE', lmixNumber: 'LMIX2000002', status: 'INACTIVE' });
-    await createLookupStyle({
-      styleNumber: 'ELIG-DISCONTINUED',
-      lmixNumber: 'LMIX2000003',
-      status: 'DISCONTINUED',
-    });
-
-    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'LMIX200000' }))).toEqual([
-      'ELIG-ACTIVE',
-    ]);
-    expect(
-      styleNumbers(await searchCandidates(token, priceListId, { search: 'LMIX200000', status: 'INACTIVE' })),
-    ).toEqual(['ELIG-ACTIVE']);
-  });
-
-  it('excludes Styles already priced on this list, but not those priced only on another list', async () => {
-    const token = await adminToken();
-    const priceListId = await draftPriceList(token);
-    const otherPriceListId = await draftPriceList(token);
-    const priced = await createLookupStyle({ styleNumber: 'PRICED-HERE' });
-    const pricedElsewhere = await createLookupStyle({ styleNumber: 'PRICED-ELSEWHERE' });
-    await createLookupStyle({ styleNumber: 'PRICED-NOWHERE' });
-    expect((await addLine(token, priceListId, priced.id, 100)).status).toBe(201);
-    expect((await addLine(token, otherPriceListId, pricedElsewhere.id, 100)).status).toBe(201);
-
-    expect(styleNumbers(await searchCandidates(token, priceListId, { search: 'PRICED' }))).toEqual([
-      'PRICED-ELSEWHERE',
-      'PRICED-NOWHERE',
-    ]);
-  });
-
-  it('applies eligibility before the limit — already-priced matches never crowd addable Styles out of the page', async () => {
-    const token = await adminToken();
-    const priceListId = await draftPriceList(token);
-    // 22 matches sort ahead of the addable ones and are already priced here.
-    for (let index = 0; index < 22; index += 1) {
-      const style = await createLookupStyle({ styleNumber: `CROWD-A${String(index).padStart(2, '0')}` });
-      expect((await addLine(token, priceListId, style.id, 100)).status).toBe(201);
-    }
-    await createLookupStyle({ styleNumber: 'CROWD-Z01' });
-    await createLookupStyle({ styleNumber: 'CROWD-Z02' });
-
-    const res = await searchCandidates(token, priceListId, { search: 'CROWD' });
-
-    expect(res.status).toBe(200);
-    expect(styleNumbers(res)).toEqual(['CROWD-Z01', 'CROWD-Z02']);
-  });
-
-  it('treats an empty search as the initial options — only addable Styles, filtered before the limit (LU0)', async () => {
-    const token = await adminToken();
-    const priceListId = await draftPriceList(token);
-    // Priced and INACTIVE Styles sort first by Style No.
-    for (let index = 0; index < 3; index += 1) {
-      const style = await createLookupStyle({ styleNumber: `A-PRICED-${index}` });
-      expect((await addLine(token, priceListId, style.id, 100)).status).toBe(201);
-    }
-    await createLookupStyle({ styleNumber: 'A-RETIRED', status: 'INACTIVE' });
-    await createLookupStyle({ styleNumber: 'B-ADD-01' });
-    await createLookupStyle({ styleNumber: 'B-ADD-02' });
-    await createLookupStyle({ styleNumber: 'B-ADD-03' });
-
-    const res = await searchCandidates(token, priceListId, { search: '', limit: 2 });
-
-    expect(res.status).toBe(200);
-    expect(res.body.data.map((row: { styleNumber: string }) => row.styleNumber)).toEqual([
-      'B-ADD-01',
-      'B-ADD-02',
-    ]);
-  });
-
-  it('bounds the result count (default 20, caller limit honoured, over-max rejected)', async () => {
-    const token = await adminToken();
-    const priceListId = await draftPriceList(token);
-    for (let index = 0; index < 23; index += 1) {
-      await createLookupStyle({ styleNumber: `BULK-${String(index).padStart(2, '0')}` });
-    }
-
-    const byDefault = await searchCandidates(token, priceListId, { search: 'BULK' });
-    const noSearch = await searchCandidates(token, priceListId, {});
-    const limited = await searchCandidates(token, priceListId, { search: 'BULK', limit: 3 });
-    const overMax = await searchCandidates(token, priceListId, { search: 'BULK', limit: 51 });
-
-    expect(byDefault.body.data).toHaveLength(20);
-    expect(noSearch.body.data).toHaveLength(20);
-    expect(styleNumbers(limited)).toEqual(['BULK-00', 'BULK-01', 'BULK-02']);
-    expect(overMax.status).toBe(400);
-  });
-
-  it('returns a slim option including LMIX', async () => {
-    const token = await adminToken();
-    const priceListId = await draftPriceList(token);
-    const style = await createLookupStyle({ styleNumber: 'SLIM-01', lmixNumber: 'LMIX4000001' });
-
-    const res = await searchCandidates(token, priceListId, { search: 'SLIM' });
-
-    expect(res.status).toBe(200);
-    expect(Object.keys(res.body.data[0]).sort()).toEqual([
-      'id',
-      'lmixNumber',
-      'status',
-      'styleName',
-      'styleNumber',
-    ]);
-    expect(res.body.data[0]).toMatchObject({ id: style.id, lmixNumber: 'LMIX4000001', status: 'ACTIVE' });
-  });
-
-  it('refuses a non-DRAFT or unknown price list', async () => {
-    const token = await adminToken();
-    const dist = await createTestDistributor();
-    const { priceListId } = await createDraftWithLine(token, dist.id);
-    expect((await activate(token, priceListId)).status).toBe(200);
-
-    expect((await searchCandidates(token, priceListId, { search: 'ST' })).status).toBe(400);
-    expect((await searchCandidates(token, 'does-not-exist', { search: 'ST' })).status).toBe(404);
-  });
-
-  it.each([
-    ['ADMIN', 200],
-    ['MERCHANDISER', 200],
-    ['ACCOUNTANT', 200],
-    ['SENIOR_MANAGEMENT', 403],
-    ['FACTORY_USER', 403],
-    ['QA_USER', 403],
-    ['DISTRIBUTOR', 403],
-  ] as const)('follows the Price List manage permission for %s', async (role, expectedStatus) => {
-    const priceListId = await draftPriceList(await adminToken());
-    const { token } = await createTestUserAndToken({
-      email: `${role.toLowerCase()}-pl-candidates@test.local`,
-      password: 'test-password',
-      roles: [role],
-    });
-
-    expect((await searchCandidates(token, priceListId, { search: 'ST' })).status).toBe(expectedStatus);
   });
 });
 

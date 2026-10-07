@@ -17,6 +17,7 @@ import type { PriceListDistributor, PriceListStatus, PriceListSummary } from './
 import {
   PRICE_LIST_STATUS_LABELS,
   formatEffectiveDate,
+  formatPercentage,
   priceListStatusTone,
 } from './price-list-ui.js';
 
@@ -73,7 +74,7 @@ export function PriceListListPage() {
     <div className="space-y-5">
       <PageHeader
         title="Price Lists"
-        subtitle="Distributor-specific selling prices with effective periods"
+        subtitle="Distributor-wide MRP pricing percentages with effective periods"
         primaryAction={
           canManage ? (
             <Button asChild>
@@ -146,6 +147,12 @@ export function PriceListListPage() {
           { key: 'name', header: 'Name', accessor: 'name' },
           { key: 'distributor', header: 'Distributor', render: (priceList) => priceList.distributor.name },
           {
+            key: 'percentageOfMrp',
+            header: 'MRP %',
+            align: 'right',
+            render: (priceList) => formatPercentage(priceList.percentageOfMrp),
+          },
+          {
             key: 'effectiveFrom',
             header: 'Effective From',
             render: (priceList) => formatEffectiveDate(priceList.effectiveFrom),
@@ -155,7 +162,6 @@ export function PriceListListPage() {
             header: 'Effective To',
             render: (priceList) => (priceList.effectiveTo ? formatEffectiveDate(priceList.effectiveTo) : 'Open-ended'),
           },
-          { key: 'lineCount', header: 'Lines', align: 'right', render: (priceList) => priceList.lineCount },
           {
             key: 'status',
             header: 'Status',

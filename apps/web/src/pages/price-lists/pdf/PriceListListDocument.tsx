@@ -7,12 +7,12 @@ import { PdfTable, type PdfTableColumn } from '../../../lib/pdf/core/PdfTable.js
 import type { PriceListListPdfRow, PriceListListPdfViewModel } from './buildPriceListListViewModel.js';
 
 const columns: PdfTableColumn<PriceListListPdfRow>[] = [
-  { key: 'code', header: 'Code', width: '14%', value: (row) => row.code },
-  { key: 'name', header: 'Name', width: '24%', value: (row) => row.name },
-  { key: 'distributor', header: 'Distributor', width: '20%', value: (row) => row.distributorName },
+  { key: 'code', header: 'Code', width: '13%', value: (row) => row.code },
+  { key: 'name', header: 'Name', width: '21%', value: (row) => row.name },
+  { key: 'distributor', header: 'Distributor', width: '18%', value: (row) => row.distributorName },
+  { key: 'percentageOfMrp', header: 'MRP %', width: '9%', align: 'right', value: (row) => row.percentageOfMrp },
   { key: 'effectiveFrom', header: 'Effective From', width: '11%', value: (row) => row.effectiveFrom },
   { key: 'effectiveTo', header: 'Effective To', width: '11%', value: (row) => row.effectiveTo },
-  { key: 'lineCount', header: 'Lines', width: '8%', align: 'right', value: (row) => row.lineCount },
   { key: 'status', header: 'Status', width: '12%', value: (row) => row.status },
 ];
 

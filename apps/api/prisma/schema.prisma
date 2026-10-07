@@ -642,7 +642,6 @@ model Style {
   images               StyleImage[]
   styleSizes           StyleSize[]
   styleFactoryMappings StyleFactoryMapping[]
-  priceListLines       PriceListLine[]
   purchaseOrderLines   DistributorPurchaseOrderLine[]
   jobOrderLines        JobOrderLine[]
   saleOrderLines       SaleOrderLine[]
@@ -768,41 +767,28 @@ model StyleFactoryMapping {
 // transaction date" is deterministic; a raw exclusion constraint in the
 // migration (price_lists_no_overlapping_active_periods) guarantees at most
 // one ACTIVE list per distributor covers any given date.
+//
+// INV-003: pricing is a single Distributor-wide percentage of each Style's
+// MRP, not a per-Style absolute rate — one row covers every Style for its
+// effective period. Precision/range mirrors Style.royaltyPercentage
+// (Decimal(5,2), 0-100), the existing percentage-field convention.
 model PriceList {
-  id            String          @id
-  code          String          @unique
-  name          String
-  distributorId String          @map("distributor_id")
-  effectiveFrom DateTime?       @map("effective_from") @db.Date
-  effectiveTo   DateTime?       @map("effective_to") @db.Date
-  status        PriceListStatus @default(DRAFT)
-  createdAt     DateTime        @default(now()) @map("created_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
+  id              String          @id
+  code            String          @unique
+  name            String
+  distributorId   String          @map("distributor_id")
+  percentageOfMrp Decimal         @map("percentage_of_mrp") @db.Decimal(5, 2)
+  effectiveFrom   DateTime?       @map("effective_from") @db.Date
+  effectiveTo     DateTime?       @map("effective_to") @db.Date
+  status          PriceListStatus @default(DRAFT)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  distributor Distributor     @relation(fields: [distributorId], references: [id], onDelete: Restrict)
-  lines       PriceListLine[]
+  distributor Distributor @relation(fields: [distributorId], references: [id], onDelete: Restrict)
 
   @@index([distributorId])
   @@index([status])
   @@map("price_lists")
-}
-
-model PriceListLine {
-  id          String   @id
-  priceListId String   @map("price_list_id")
-  styleId     String   @map("style_id")
-  unitPrice   Decimal  @map("unit_price") @db.Decimal(12, 2)
-  currency    String   @default("INR")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  priceList PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
-  style     Style     @relation(fields: [styleId], references: [id], onDelete: Restrict)
-
-  @@unique([priceListId, styleId])
-  @@index([priceListId])
-  @@index([styleId])
-  @@map("price_list_lines")
 }
 
 // ---------------------------------------------------------------------------

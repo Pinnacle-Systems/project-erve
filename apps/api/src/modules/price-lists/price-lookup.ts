@@ -1,33 +1,31 @@
 import { prisma } from '../../db/prisma.js';
 import { HttpError } from '../../errors/http-error.js';
 
-// Domain-level deterministic price lookup, kept free of HTTP/UI concerns so
-// future sale-order and invoicing services can call it directly. Pricing is
-// style-level (the approved product dimension of PriceListLine) and strictly
-// distributor-specific: there is deliberately no fallback to another
-// distributor's list or to any generic price.
+// Domain-level deterministic resolver, kept free of HTTP/UI concerns so a
+// later invoicing story (INV-004) can call it directly. Pricing is
+// Distributor-wide (one percentage of MRP applies to every Style) and
+// strictly distributor-specific: there is deliberately no fallback to
+// another distributor's pricing or to any generic percentage.
 
-export interface PriceLookupInput {
+export interface DistributorPricingLookupInput {
   distributorId: string;
-  styleId: string;
   /** Transaction/pricing date. Strings must be YYYY-MM-DD. */
   date: Date | string;
 }
 
-export type PriceLookupMissReason = 'NO_ACTIVE_PRICE_LIST' | 'STYLE_NOT_PRICED';
+export type DistributorPricingMissReason = 'NO_ACTIVE_PRICE_LIST';
 
-export type PriceLookupResult =
+export type DistributorPricingResult =
   | {
       found: true;
-      unitPrice: number;
-      currency: string;
       priceListId: string;
       priceListCode: string;
-      priceListLineId: string;
+      distributorId: string;
+      percentageOfMrp: number;
       effectiveFrom: string;
       effectiveTo: string | null;
     }
-  | { found: false; reason: PriceLookupMissReason };
+  | { found: false; reason: DistributorPricingMissReason };
 
 export function toDateOnly(value: Date | string): Date {
   // Normalizes to UTC midnight, matching how Postgres `date` columns round-trip
@@ -43,25 +41,17 @@ export function toDateOnlyString(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
-export async function lookupDistributorPrice(input: PriceLookupInput): Promise<PriceLookupResult> {
+export async function resolveDistributorPricing(
+  input: DistributorPricingLookupInput,
+): Promise<DistributorPricingResult> {
   const date = toDateOnly(input.date);
 
-  const [distributor, style] = await Promise.all([
-    prisma.distributor.findUnique({ where: { id: input.distributorId } }),
-    prisma.style.findUnique({ where: { id: input.styleId } }),
-  ]);
-
+  const distributor = await prisma.distributor.findUnique({ where: { id: input.distributorId } });
   if (!distributor) {
     throw HttpError.badRequest('Unknown distributor');
   }
   if (distributor.status !== 'ACTIVE') {
     throw HttpError.badRequest('Distributor is not active');
-  }
-  if (!style) {
-    throw HttpError.badRequest('Unknown style');
-  }
-  if (style.status !== 'ACTIVE') {
-    throw HttpError.badRequest(`Style ${style.styleNumber} is not active`);
   }
 
   const applicableLists = await prisma.priceList.findMany({
@@ -71,7 +61,6 @@ export async function lookupDistributorPrice(input: PriceLookupInput): Promise<P
       effectiveFrom: { lte: date },
       OR: [{ effectiveTo: null }, { effectiveTo: { gte: date } }],
     },
-    include: { lines: { where: { styleId: input.styleId } } },
   });
 
   if (applicableLists.length === 0) {
@@ -88,18 +77,13 @@ export async function lookupDistributorPrice(input: PriceLookupInput): Promise<P
   }
 
   const priceList = applicableLists[0]!;
-  const line = priceList.lines[0];
-  if (!line) {
-    return { found: false, reason: 'STYLE_NOT_PRICED' };
-  }
 
   return {
     found: true,
-    unitPrice: line.unitPrice.toNumber(),
-    currency: line.currency,
     priceListId: priceList.id,
     priceListCode: priceList.code,
-    priceListLineId: line.id,
+    distributorId: priceList.distributorId,
+    percentageOfMrp: priceList.percentageOfMrp.toNumber(),
     effectiveFrom: toDateOnlyString(priceList.effectiveFrom!),
     effectiveTo: priceList.effectiveTo ? toDateOnlyString(priceList.effectiveTo) : null,
   };

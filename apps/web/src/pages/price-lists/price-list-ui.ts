@@ -24,8 +24,8 @@ export function formatEffectiveDate(date: string | null): string {
   });
 }
 
-export function formatPrice(unitPrice: number, currency: string): string {
-  return `${currency === 'INR' ? '₹' : `${currency} `}${unitPrice.toFixed(2)}`;
+export function formatPercentage(percentageOfMrp: number): string {
+  return `${percentageOfMrp.toFixed(2)}%`;
 }
 
 // Server-side validation messages (duplicate line, overlapping period, …) are

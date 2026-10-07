@@ -1,16 +1,16 @@
 import { createId } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
-import type { DistributorStatus, PriceListStatus, StyleStatus } from '../../db/prisma.js';
+import type { DistributorStatus, PriceListStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { listAllOrPage, type OptionalPageQuery } from '../../utils/pagination.js';
 import {
-  lookupDistributorPrice,
+  resolveDistributorPricing,
   toDateOnly,
   toDateOnlyString,
-  type PriceLookupResult,
+  type DistributorPricingResult,
 } from './price-lookup.js';
 
 // ---------------------------------------------------------------------------
@@ -38,19 +38,9 @@ export async function generatePriceListCode(): Promise<string> {
 
 const priceListInclude = {
   distributor: { select: { id: true, code: true, name: true, status: true } },
-  lines: {
-    include: { style: { select: { id: true, styleNumber: true, styleName: true, status: true } } },
-    orderBy: { style: { styleNumber: 'asc' as const } },
-  },
-} satisfies Prisma.PriceListInclude;
-
-const priceListSummaryInclude = {
-  distributor: { select: { id: true, code: true, name: true, status: true } },
-  _count: { select: { lines: true } },
 } satisfies Prisma.PriceListInclude;
 
 type PriceListRecord = Prisma.PriceListGetPayload<{ include: typeof priceListInclude }>;
-type PriceListSummaryRecord = Prisma.PriceListGetPayload<{ include: typeof priceListSummaryInclude }>;
 
 function toEffectiveDates(record: { effectiveFrom: Date | null; effectiveTo: Date | null }) {
   return {
@@ -65,32 +55,9 @@ function toPriceListView(priceList: PriceListRecord) {
     code: priceList.code,
     name: priceList.name,
     distributor: priceList.distributor,
+    percentageOfMrp: priceList.percentageOfMrp.toNumber(),
     ...toEffectiveDates(priceList),
     status: priceList.status,
-    lines: priceList.lines.map((line) => ({
-      id: line.id,
-      styleId: line.styleId,
-      styleNumber: line.style.styleNumber,
-      styleName: line.style.styleName,
-      styleStatus: line.style.status,
-      unitPrice: line.unitPrice.toNumber(),
-      currency: line.currency,
-    })),
-    lineCount: priceList.lines.length,
-    createdAt: priceList.createdAt,
-    updatedAt: priceList.updatedAt,
-  };
-}
-
-function toPriceListSummaryView(priceList: PriceListSummaryRecord) {
-  return {
-    id: priceList.id,
-    code: priceList.code,
-    name: priceList.name,
-    distributor: priceList.distributor,
-    ...toEffectiveDates(priceList),
-    status: priceList.status,
-    lineCount: priceList._count.lines,
     createdAt: priceList.createdAt,
     updatedAt: priceList.updatedAt,
   };
@@ -110,8 +77,8 @@ function canViewAllPriceLists(user: CurrentUser): boolean {
 
 // DISTRIBUTOR is blocked from every Price List route at the middleware layer
 // (canViewPriceLists in price-lists.routes.ts) — a distributor's own
-// commercial price, if ever shown, must come from an embedded field on an
-// authorized transaction, not from this master module. The distributor
+// commercial percentage, if ever shown, must come from an embedded field on
+// an authorized transaction, not from this master module. The distributor
 // branch below is an inert defense-in-depth backstop: if this function is
 // ever reached directly by a DISTRIBUTOR user (e.g. a future internal
 // caller), it still fails closed to their own ACTIVE list rather than
@@ -211,11 +178,11 @@ export async function listPriceLists(
     (
       await prisma.priceList.findMany({
         where,
-        include: priceListSummaryInclude,
+        include: priceListInclude,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         ...page,
       })
-    ).map(toPriceListSummaryView),
+    ).map(toPriceListView),
   );
 }
 
@@ -239,36 +206,36 @@ export async function getDistributorPriceListHistory(actor: CurrentUser, distrib
       distributorId,
       status: canViewAllPriceLists(actor) ? undefined : 'ACTIVE',
     },
-    include: priceListSummaryInclude,
+    include: priceListInclude,
     orderBy: [{ effectiveFrom: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
   });
 
-  return priceLists.map(toPriceListSummaryView);
+  return priceLists.map(toPriceListView);
 }
 
 export async function lookupPriceForActor(
   actor: CurrentUser,
-  input: { distributorId: string; styleId: string; date: string },
-): Promise<PriceLookupResult> {
+  input: { distributorId: string; date: string },
+): Promise<DistributorPricingResult> {
   if (!canViewAllPriceLists(actor) && getSoleDistributorId(actor) !== input.distributorId) {
     throw HttpError.forbidden('You do not have access to this distributor');
   }
-  return lookupDistributorPrice(input);
+  return resolveDistributorPricing(input);
 }
 
 // ---------------------------------------------------------------------------
-// Option lookups (Price List Distributor/Style selectors)
+// Option lookups (Price List Distributor selector)
 // ---------------------------------------------------------------------------
 
-// These return the minimal fields the Price List Distributor/Style selectors
-// need, gated by the Price List permission rather than the broad master-data
-// view permission — see price-lists.routes.ts. No status filter is applied
-// unless the caller passes one: the underlying master reads are unpaginated,
-// so omitting the filter (as a historical/editing screen might) returns the
+// Returns the minimal fields the Price List Distributor selector needs,
+// gated by the Price List permission rather than the broad master-data view
+// permission — see price-lists.routes.ts. No status filter is applied unless
+// the caller passes one: the underlying master read is unpaginated, so
+// omitting the filter (as a historical/editing screen might) returns the
 // complete option set, active and inactive alike, rather than silently
 // hiding an inactive entity a caller still needs to see.
 
-// With `limit` (the Price List Distributor lookups, P1L8) this is a bounded
+// With `limit` (the Price List Distributor lookup, P1L8) this is a bounded
 // search on code or name; without it, the complete option set as before.
 export async function listDistributorOptionsForPriceLists(filters: {
   status?: DistributorStatus;
@@ -293,52 +260,6 @@ export async function listDistributorOptionsForPriceLists(filters: {
   });
 }
 
-export async function listStyleOptionsForPriceLists(filters: { status?: StyleStatus }) {
-  return prisma.style.findMany({
-    where: { status: filters.status },
-    orderBy: { styleNumber: 'asc' },
-    select: { id: true, styleNumber: true, styleName: true, status: true },
-  });
-}
-
-// "Add Style" lookup (P1L2): the Styles this DRAFT price list can still add —
-// ACTIVE (the rule addPriceListLine enforces) and not already priced on it
-// (the unique [priceListId, styleId] line) — matched on LMIX, Style Number or
-// Style Name. Eligibility is applied in the query itself, before `limit`, so
-// the bounded page is made only of addable Styles: an already-priced match can
-// never crowd out an addable one.
-export async function listPriceListStyleCandidates(
-  actor: CurrentUser,
-  priceListId: string,
-  filters: { search?: string; limit: number },
-) {
-  const priceList = await prisma.priceList.findUnique({
-    where: { id: priceListId },
-    select: { distributorId: true, status: true },
-  });
-  if (!priceList) throw HttpError.notFound('Price list not found');
-  assertPriceListViewAccess(actor, priceList);
-  assertDraft(priceList);
-
-  const search = filters.search || undefined;
-  return prisma.style.findMany({
-    where: {
-      status: 'ACTIVE',
-      priceListLines: { none: { priceListId } },
-      OR: search
-        ? [
-            { lmixNumber: { contains: search, mode: 'insensitive' } },
-            { styleNumber: { contains: search, mode: 'insensitive' } },
-            { styleName: { contains: search, mode: 'insensitive' } },
-          ]
-        : undefined,
-    },
-    orderBy: { styleNumber: 'asc' },
-    select: { id: true, styleNumber: true, styleName: true, lmixNumber: true, status: true },
-    take: filters.limit,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Draft mutations
 // ---------------------------------------------------------------------------
@@ -348,6 +269,7 @@ export async function createPriceList(
   input: {
     distributorId: string;
     name: string;
+    percentageOfMrp: number;
     effectiveFrom?: string | null;
     effectiveTo?: string | null;
   },
@@ -372,6 +294,7 @@ export async function createPriceList(
         code,
         name: input.name,
         distributorId: input.distributorId,
+        percentageOfMrp: input.percentageOfMrp,
         effectiveFrom,
         effectiveTo,
         status: 'DRAFT',
@@ -392,6 +315,7 @@ export async function createPriceList(
     metadata: {
       code,
       distributorId: input.distributorId,
+      percentageOfMrp: input.percentageOfMrp,
       effectiveFrom: effectiveFrom ? toDateOnlyString(effectiveFrom) : null,
       effectiveTo: effectiveTo ? toDateOnlyString(effectiveTo) : null,
     },
@@ -403,7 +327,7 @@ export async function createPriceList(
 export async function updatePriceListDraft(
   actor: CurrentUser,
   id: string,
-  input: { name?: string; effectiveFrom?: string | null; effectiveTo?: string | null },
+  input: { name?: string; percentageOfMrp?: number; effectiveFrom?: string | null; effectiveTo?: string | null },
 ) {
   const existing = await prisma.priceList.findUnique({ where: { id } });
   if (!existing) throw HttpError.notFound('Price list not found');
@@ -427,6 +351,7 @@ export async function updatePriceListDraft(
     where: { id },
     data: {
       name: input.name,
+      percentageOfMrp: input.percentageOfMrp,
       effectiveFrom: input.effectiveFrom !== undefined ? effectiveFrom : undefined,
       effectiveTo: input.effectiveTo !== undefined ? effectiveTo : undefined,
     },
@@ -438,9 +363,14 @@ export async function updatePriceListDraft(
     entityType: 'PriceList',
     entityId: id,
     metadata: {
-      before: { name: existing.name, ...toEffectiveDates(existing) },
+      before: {
+        name: existing.name,
+        percentageOfMrp: existing.percentageOfMrp.toNumber(),
+        ...toEffectiveDates(existing),
+      },
       after: {
         name: input.name ?? existing.name,
+        percentageOfMrp: input.percentageOfMrp ?? existing.percentageOfMrp.toNumber(),
         effectiveFrom: effectiveFrom ? toDateOnlyString(effectiveFrom) : null,
         effectiveTo: effectiveTo ? toDateOnlyString(effectiveTo) : null,
       },
@@ -448,100 +378,6 @@ export async function updatePriceListDraft(
   });
 
   return getPriceListDetail(actor, id);
-}
-
-export async function addPriceListLine(
-  actor: CurrentUser,
-  priceListId: string,
-  input: { styleId: string; unitPrice: number },
-) {
-  const priceList = await prisma.priceList.findUnique({ where: { id: priceListId } });
-  if (!priceList) throw HttpError.notFound('Price list not found');
-  assertDraft(priceList);
-
-  const style = await prisma.style.findUnique({ where: { id: input.styleId } });
-  if (!style) throw HttpError.badRequest('Unknown style');
-  if (style.status !== 'ACTIVE') {
-    throw HttpError.badRequest(`Style ${style.styleNumber} is not active`);
-  }
-
-  const lineId = createId();
-  try {
-    await prisma.priceListLine.create({
-      data: { id: lineId, priceListId, styleId: input.styleId, unitPrice: input.unitPrice },
-    });
-  } catch (error) {
-    if (isUniqueConstraintError(error)) {
-      throw HttpError.conflict(`Style ${style.styleNumber} is already priced in this price list`);
-    }
-    throw error;
-  }
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'PRICE_LIST_LINE_ADDED',
-    entityType: 'PriceList',
-    entityId: priceListId,
-    metadata: { lineId, styleId: input.styleId, unitPrice: input.unitPrice },
-  });
-
-  return getPriceListDetail(actor, priceListId);
-}
-
-export async function updatePriceListLine(
-  actor: CurrentUser,
-  priceListId: string,
-  lineId: string,
-  input: { unitPrice: number },
-) {
-  const priceList = await prisma.priceList.findUnique({ where: { id: priceListId } });
-  if (!priceList) throw HttpError.notFound('Price list not found');
-  assertDraft(priceList);
-
-  const line = await prisma.priceListLine.findUnique({ where: { id: lineId } });
-  if (!line || line.priceListId !== priceListId) {
-    throw HttpError.notFound('Price list line not found');
-  }
-
-  await prisma.priceListLine.update({ where: { id: lineId }, data: { unitPrice: input.unitPrice } });
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'PRICE_LIST_LINE_UPDATED',
-    entityType: 'PriceList',
-    entityId: priceListId,
-    metadata: {
-      lineId,
-      styleId: line.styleId,
-      before: { unitPrice: line.unitPrice.toNumber() },
-      after: { unitPrice: input.unitPrice },
-    },
-  });
-
-  return getPriceListDetail(actor, priceListId);
-}
-
-export async function removePriceListLine(actor: CurrentUser, priceListId: string, lineId: string) {
-  const priceList = await prisma.priceList.findUnique({ where: { id: priceListId } });
-  if (!priceList) throw HttpError.notFound('Price list not found');
-  assertDraft(priceList);
-
-  const line = await prisma.priceListLine.findUnique({ where: { id: lineId } });
-  if (!line || line.priceListId !== priceListId) {
-    throw HttpError.notFound('Price list line not found');
-  }
-
-  await prisma.priceListLine.delete({ where: { id: lineId } });
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'PRICE_LIST_LINE_REMOVED',
-    entityType: 'PriceList',
-    entityId: priceListId,
-    metadata: { lineId, styleId: line.styleId, unitPrice: line.unitPrice.toNumber() },
-  });
-
-  return getPriceListDetail(actor, priceListId);
 }
 
 // ---------------------------------------------------------------------------
@@ -565,10 +401,7 @@ export async function activatePriceList(actor: CurrentUser, id: string) {
 
       const priceList = await tx.priceList.findUnique({
         where: { id },
-        include: {
-          distributor: { select: { id: true, status: true } },
-          lines: { include: { style: { select: { styleNumber: true, status: true } } } },
-        },
+        include: { distributor: { select: { id: true, status: true } } },
       });
       if (!priceList) throw HttpError.notFound('Price list not found');
       if (priceList.status !== 'DRAFT') {
@@ -581,21 +414,6 @@ export async function activatePriceList(actor: CurrentUser, id: string) {
         throw HttpError.badRequest('An effective-from date is required before activation');
       }
       assertValidPeriod(priceList.effectiveFrom, priceList.effectiveTo);
-      if (priceList.lines.length === 0) {
-        throw HttpError.badRequest('Cannot activate a price list with no lines');
-      }
-      for (const line of priceList.lines) {
-        if (line.style.status !== 'ACTIVE') {
-          throw HttpError.badRequest(
-            `Cannot activate: style ${line.style.styleNumber} is not active`,
-          );
-        }
-        if (line.unitPrice.lessThanOrEqualTo(0)) {
-          throw HttpError.badRequest(
-            `Cannot activate: style ${line.style.styleNumber} has a non-positive price`,
-          );
-        }
-      }
 
       const overlapping = await tx.priceList.findMany({
         where: {
@@ -680,8 +498,9 @@ export async function retirePriceList(actor: CurrentUser, id: string) {
     throw HttpError.badRequest('Only ACTIVE price lists can be retired');
   }
 
-  // Status-only transition: lines and effective dates are preserved untouched
-  // so prices already used by historical transactions stay readable as-is.
+  // Status-only transition: the percentage and effective dates are preserved
+  // untouched so prices already used by historical transactions stay
+  // readable as-is.
   await prisma.priceList.update({ where: { id }, data: { status: 'EXPIRED' } });
 
   await recordAuditLog({
@@ -689,7 +508,12 @@ export async function retirePriceList(actor: CurrentUser, id: string) {
     action: 'PRICE_LIST_RETIRED',
     entityType: 'PriceList',
     entityId: id,
-    metadata: { from: 'ACTIVE', to: 'EXPIRED', ...toEffectiveDates(existing) },
+    metadata: {
+      from: 'ACTIVE',
+      to: 'EXPIRED',
+      percentageOfMrp: existing.percentageOfMrp.toNumber(),
+      ...toEffectiveDates(existing),
+    },
   });
 
   return getPriceListDetail(actor, id);
