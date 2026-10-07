@@ -8,6 +8,8 @@ import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useAuth } from '../../auth/AuthContext.js';
+import { canAssignHsnGstRuleSet } from '../../auth/permissions.js';
 import type { GstRuleSetOption, Hsn, Status } from './types.js';
 
 const UNASSIGNED = 'UNASSIGNED';
@@ -25,6 +27,12 @@ export function HsnFormPage() {
   const queryClient = useQueryClient();
   const { id } = useParams();
   const isEdit = Boolean(id);
+  const { user } = useAuth();
+  // RBAC finalization review: MERCHANDISER keeps full identity edit rights
+  // on this form but must not assign/change the GST Rule Set — enforced
+  // server-side regardless (hsn.service.ts), disabled here too so a
+  // MERCHANDISER never sees a field they cannot actually use.
+  const canAssignGst = canAssignHsnGstRuleSet(user);
 
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
@@ -146,7 +154,7 @@ export function HsnFormPage() {
                 value={gstRuleSetId}
                 onValueChange={setGstRuleSetId}
                 width="fill"
-                disabled={ruleSetOptionsQuery.isLoading}
+                disabled={!canAssignGst || ruleSetOptionsQuery.isLoading}
               >
                 <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
                 {(ruleSetOptionsQuery.data ?? []).map((option) => (
@@ -155,6 +163,11 @@ export function HsnFormPage() {
                   </SelectItem>
                 ))}
               </SelectField>
+              {!canAssignGst && (
+                <p className="col-span-full text-sm text-muted-foreground">
+                  Only Admin or Accountant may assign or change the GST Rule Set.
+                </p>
+              )}
             </FormGrid>
           </FormSection>
 

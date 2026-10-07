@@ -98,10 +98,21 @@ describe('GstRuleSetListPage', () => {
     expect(container.textContent).toContain('ACTIVE');
   });
 
-  it('shows "Create GST Rule Set" for ADMIN but not for SENIOR_MANAGEMENT', async () => {
+  it('shows "Create GST Rule Set" for ADMIN/ACCOUNTANT but not for MERCHANDISER or SENIOR_MANAGEMENT', async () => {
+    // RBAC finalization review: GST rate/version configuration is
+    // finance-only — MERCHANDISER (unlike on the HSN master) is view-only
+    // here.
     await renderPage([], 'ADMIN');
     let buttons = Array.from(container.querySelectorAll('a, button')).map((el) => el.textContent);
     expect(buttons).toContain('Create GST Rule Set');
+
+    await renderPage([], 'ACCOUNTANT');
+    buttons = Array.from(container.querySelectorAll('a, button')).map((el) => el.textContent);
+    expect(buttons).toContain('Create GST Rule Set');
+
+    await renderPage([], 'MERCHANDISER');
+    buttons = Array.from(container.querySelectorAll('a, button')).map((el) => el.textContent);
+    expect(buttons).not.toContain('Create GST Rule Set');
 
     await renderPage([], 'SENIOR_MANAGEMENT');
     buttons = Array.from(container.querySelectorAll('a, button')).map((el) => el.textContent);

@@ -17,10 +17,14 @@ import * as gstRuleSetsService from './gst-rule-sets.service.js';
 export const gstRuleSetsRouter = Router();
 gstRuleSetsRouter.use(requireAuth);
 
-// Same role charter as the HSN master (hsn.routes.ts) and the Price List
-// precedent (price-lists.routes.ts): ADMIN + MERCHANDISER (master-data
-// owners) plus ACCOUNTANT (finance defines/cross-checks GST rule sets).
-const canManageGstRuleSets = requireRoles('ADMIN', 'MERCHANDISER', 'ACCOUNTANT');
+// Deliberately NOT the same manage charter as the HSN master (hsn.routes.ts)
+// — GST rate/version configuration is statutory tax configuration, not
+// operational master data, so it stays finance-only (RBAC finalization
+// review): only ADMIN and ACCOUNTANT may create/version/activate a rule set
+// or its bands. MERCHANDISER and SENIOR_MANAGEMENT can view (every role
+// that can view/edit an HSN can also see the rule sets it may reference),
+// but never mutate.
+const canManageGstRuleSets = requireRoles('ADMIN', 'ACCOUNTANT');
 const canViewGstRuleSets = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT');
 
 gstRuleSetsRouter.get(

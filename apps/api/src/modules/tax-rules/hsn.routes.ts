@@ -9,11 +9,15 @@ import * as hsnService from './hsn.service.js';
 export const hsnsRouter = Router();
 hsnsRouter.use(requireAuth);
 
-// HSN is Style master data with a tax-configuration dimension grafted on
-// (its GST Rule Set assignment) — mirrors the Price List precedent
-// (price-lists.routes.ts): MERCHANDISER (master-data owner) plus ADMIN,
-// plus ACCOUNTANT as the same explicit business exception (finance assigns
-// and cross-checks GST rule sets). Reads add SENIOR_MANAGEMENT oversight.
+// HSN identity (code/description/status) is operational master data that
+// MERCHANDISER owns, same as Style — so this route-level gate stays broad
+// (ADMIN + MERCHANDISER + ACCOUNTANT write, +SENIOR_MANAGEMENT read). But
+// the HSN -> GST Rule Set assignment is statutory tax configuration (RBAC
+// finalization review): hsnService.createHsn/updateHsn separately enforce,
+// at the FIELD level, that only ADMIN/ACCOUNTANT may set or change
+// gstRuleSetId — a MERCHANDISER request that edits identity fields without
+// touching gstRuleSetId still succeeds here, but one that tries to
+// assign/change it is rejected in the service regardless of this route gate.
 const canManageHsns = requireRoles('ADMIN', 'MERCHANDISER', 'ACCOUNTANT');
 const canViewHsns = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT');
 

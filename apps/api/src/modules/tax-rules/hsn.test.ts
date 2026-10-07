@@ -227,4 +227,125 @@ describe('HSN master', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.map((h: { code: string }) => h.code).sort()).toEqual(['61046200', '61091000']);
   });
+
+  describe('RBAC finalization: HSN -> GST Rule Set assignment is finance-only', () => {
+    it('lets MERCHANDISER create/edit HSN identity fields without ever touching gstRuleSetId', async () => {
+      const token = await tokenWithRoles(['MERCHANDISER']);
+      const created = await request(app)
+        .post('/hsns')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: '61091000', description: 'Boys / T-Shirt' });
+      expect(created.status).toBe(201);
+      expect(created.body.data.gstRuleSet).toBeNull();
+
+      const updated = await request(app)
+        .patch(`/hsns/${created.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ description: 'Updated description', status: 'INACTIVE' });
+      expect(updated.status).toBe(200);
+      expect(updated.body.data).toMatchObject({ description: 'Updated description', status: 'INACTIVE' });
+    });
+
+    it('rejects MERCHANDISER creating an HSN with a GST Rule Set assignment', async () => {
+      const adminToken = await tokenWithRoles(['ADMIN']);
+      const ruleSetId = await createRuleSet(adminToken);
+      const merchToken = await tokenWithRoles(['MERCHANDISER']);
+
+      const res = await request(app)
+        .post('/hsns')
+        .set('Authorization', `Bearer ${merchToken}`)
+        .send({ code: '61091000', gstRuleSetId: ruleSetId });
+      expect(res.status).toBe(403);
+    });
+
+    it('rejects MERCHANDISER assigning, reassigning, or unassigning an HSN\'s GST Rule Set', async () => {
+      const adminToken = await tokenWithRoles(['ADMIN']);
+      const ruleSetA = await createRuleSet(adminToken);
+      const ruleSetB = await createRuleSet(adminToken);
+      const merchToken = await tokenWithRoles(['MERCHANDISER']);
+
+      const created = await request(app)
+        .post('/hsns')
+        .set('Authorization', `Bearer ${merchToken}`)
+        .send({ code: '61091000' });
+      const hsnId = created.body.data.id as string;
+
+      // Assign (null -> ruleSetA)
+      const assign = await request(app)
+        .patch(`/hsns/${hsnId}`)
+        .set('Authorization', `Bearer ${merchToken}`)
+        .send({ gstRuleSetId: ruleSetA });
+      expect(assign.status).toBe(403);
+
+      // Now assign it as ADMIN so we can test reassign/unassign from a non-null state.
+      await request(app)
+        .patch(`/hsns/${hsnId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ gstRuleSetId: ruleSetA })
+        .expect(200);
+
+      // Reassign (ruleSetA -> ruleSetB)
+      const reassign = await request(app)
+        .patch(`/hsns/${hsnId}`)
+        .set('Authorization', `Bearer ${merchToken}`)
+        .send({ gstRuleSetId: ruleSetB });
+      expect(reassign.status).toBe(403);
+
+      // Unassign (ruleSetA -> null)
+      const unassign = await request(app)
+        .patch(`/hsns/${hsnId}`)
+        .set('Authorization', `Bearer ${merchToken}`)
+        .send({ gstRuleSetId: null });
+      expect(unassign.status).toBe(403);
+
+      const unchanged = await prisma.hsn.findUnique({ where: { id: hsnId } });
+      expect(unchanged?.gstRuleSetId).toBe(ruleSetA);
+    });
+
+    it('does not re-trigger the finance-only check when an edit re-sends the same gstRuleSetId', async () => {
+      const adminToken = await tokenWithRoles(['ADMIN']);
+      const ruleSetId = await createRuleSet(adminToken);
+      const created = await request(app)
+        .post('/hsns')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ code: '61091000', gstRuleSetId: ruleSetId });
+      const hsnId = created.body.data.id as string;
+
+      const merchToken = await tokenWithRoles(['MERCHANDISER']);
+      const res = await request(app)
+        .patch(`/hsns/${hsnId}`)
+        .set('Authorization', `Bearer ${merchToken}`)
+        .send({ gstRuleSetId: ruleSetId, description: 'Merchandiser edit' });
+      expect(res.status).toBe(200);
+      expect(res.body.data).toMatchObject({ description: 'Merchandiser edit', gstRuleSet: { id: ruleSetId } });
+    });
+
+    it('allows ACCOUNTANT (finance) to assign, reassign, and unassign a GST Rule Set', async () => {
+      const adminToken = await tokenWithRoles(['ADMIN']);
+      const ruleSetA = await createRuleSet(adminToken);
+      const ruleSetB = await createRuleSet(adminToken);
+      const accountantToken = await tokenWithRoles(['ACCOUNTANT']);
+
+      const created = await request(app)
+        .post('/hsns')
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ code: '61091000', gstRuleSetId: ruleSetA });
+      expect(created.status).toBe(201);
+      const hsnId = created.body.data.id as string;
+
+      const reassigned = await request(app)
+        .patch(`/hsns/${hsnId}`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ gstRuleSetId: ruleSetB });
+      expect(reassigned.status).toBe(200);
+      expect(reassigned.body.data.gstRuleSet.id).toBe(ruleSetB);
+
+      const unassigned = await request(app)
+        .patch(`/hsns/${hsnId}`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ gstRuleSetId: null });
+      expect(unassigned.status).toBe(200);
+      expect(unassigned.body.data.gstRuleSet).toBeNull();
+    });
+  });
 });
