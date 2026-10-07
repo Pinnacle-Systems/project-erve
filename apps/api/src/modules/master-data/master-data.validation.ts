@@ -44,6 +44,11 @@ export const updateStyleSizeBarcodeSchema = z.object({
   barcode: z.string().trim().min(1, 'Barcode cannot be blank').regex(SUPPLIED_BARCODE_PATTERN, SUPPLIED_BARCODE_MESSAGE),
 });
 
+export const styleFactorySchema = z.object({
+  factoryId: z.string().trim().min(1),
+  exFactoryPrice: positiveMoney,
+});
+
 export const createStyleSchema = z.object({
   styleNumber: z.string().trim().min(1),
   styleName: z.string().trim().min(1),
@@ -60,12 +65,15 @@ export const createStyleSchema = z.object({
   royaltyPercentage: z.coerce.number().min(0).max(100).optional().nullable(),
   status: styleStatusSchema.optional(),
   seasonId: seasonIdSchema,
-  // Sizes (with optional manual barcodes) created atomically with the Style.
+  // Sizes (with optional manual barcodes) and Factory mappings, persisted in
+  // the SAME transaction as the Style row — see SESS-008. Omitting either
+  // key leaves that part of the Style untouched; sending one always means
+  // "this is the complete desired set", never a delta.
   sizes: z.array(styleSizeSchema).optional(),
+  factoryMappings: z.array(styleFactorySchema).optional(),
 });
 
 export const updateStyleSchema = createStyleSchema
-  .omit({ sizes: true })
   .partial()
   .refine((value) => Object.keys(value).length > 0, {
     message: 'At least one field is required',
@@ -105,11 +113,6 @@ export const listSeasonsQuerySchema = z.object({
 });
 
 export const listProcessFlowsQuerySchema = z.object(optionalPageQueryFields);
-
-export const styleFactorySchema = z.object({
-  factoryId: z.string().trim().min(1),
-  exFactoryPrice: positiveMoney,
-});
 
 export const createSizeSchema = z.object({
   code: z.string().trim().min(1),

@@ -1,4 +1,5 @@
 import type { Status } from '../types.js';
+import type { StyleFactoryMappingRow } from './StyleFactoryMappingsField.js';
 
 export const emptyForm = {
   styleNumber: '',
@@ -112,4 +113,14 @@ export function cleanPayload(form: StyleFormFields, seasonId: string) {
 export function toStyleSizeRequest(sizeId: string, barcodeBySizeId: Record<string, string>) {
   const barcode = (barcodeBySizeId[sizeId] ?? '').trim();
   return barcode === '' ? { sizeId } : { sizeId, barcode };
+}
+
+/**
+ * Request item for the Style's complete desired Factory-mapping set (SESS-008): rows without a
+ * selected factory are blank "add another" placeholders, never sent.
+ */
+export function toStyleFactoryMappingRequests(mappings: StyleFactoryMappingRow[]) {
+  return mappings
+    .filter((mapping) => mapping.factoryId)
+    .map((mapping) => ({ factoryId: mapping.factoryId, exFactoryPrice: Number(mapping.exFactoryPrice) }));
 }

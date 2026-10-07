@@ -17,7 +17,13 @@ import {
   nextFactoryMappingRowId,
   type StyleFactoryMappingRow,
 } from './style/StyleFactoryMappingsField.js';
-import { cleanPayload, emptyForm, toStyleSizeRequest, validateStyleForm } from './style/style-form-state.js';
+import {
+  cleanPayload,
+  emptyForm,
+  toStyleFactoryMappingRequests,
+  toStyleSizeRequest,
+  validateStyleForm,
+} from './style/style-form-state.js';
 import type { FactoryOption, SeasonOption, SizeOption, Style } from './types.js';
 
 export function StyleFormPage() {
@@ -134,74 +140,19 @@ export function StyleFormPage() {
         );
         if (blanked) throw new Error(`Barcode cannot be blank for size ${blanked.code}`);
       }
-      // Create sends the sizes (and any manual barcodes) WITH the style so the server
-      // creates everything in one transaction - a barcode failure leaves no half-created style.
+      // One call carries the Style fields plus the COMPLETE desired Sizes and Factory-mapping sets
+      // (never a delta) - the server diffs and persists all of it in a single DB transaction, so a
+      // failure anywhere (a barcode conflict, an inactive factory) rolls back the whole save instead
+      // of leaving the Style partially updated (SESS-008).
+      const payload = {
+        ...cleanPayload(form, seasonId),
+        sizes: selectedSizeIds.map((sizeId) => toStyleSizeRequest(sizeId, barcodeBySizeId)),
+        factoryMappings: toStyleFactoryMappingRequests(factoryMappings),
+      };
       const response = isEdit
-        ? await apiClient.patch<ApiSuccessResponse<Style>>(`/styles/${id}`, cleanPayload(form, seasonId))
-        : await apiClient.post<ApiSuccessResponse<Style>>('/styles', {
-            ...cleanPayload(form, seasonId),
-            sizes: selectedSizeIds.map((sizeId) => toStyleSizeRequest(sizeId, barcodeBySizeId)),
-          });
+        ? await apiClient.patch<ApiSuccessResponse<Style>>(`/styles/${id}`, payload)
+        : await apiClient.post<ApiSuccessResponse<Style>>('/styles', payload);
       const style = response.data.data;
-
-      const currentSizeIds = new Set(style.sizes.map((size) => size.id));
-      await Promise.all(
-        style.sizes
-          .filter((size) => !selectedSizeIds.includes(size.id))
-          .map((size) => apiClient.delete(`/styles/${style.id}/sizes/${size.id}`)),
-      );
-      await Promise.all(
-        selectedSizeIds
-          .filter((sizeId) => !currentSizeIds.has(sizeId))
-          .map((sizeId) => apiClient.post(`/styles/${style.id}/sizes`, toStyleSizeRequest(sizeId, barcodeBySizeId))),
-      );
-      // Manual override of an already-mapped size's barcode (only when it actually changed).
-      await Promise.all(
-        style.sizes
-          .filter((size) => selectedSizeIds.includes(size.id))
-          .filter((size) => enteredBarcode(size.id) !== '' && enteredBarcode(size.id) !== size.barcode)
-          .map((size) =>
-            apiClient.patch(`/styles/${style.id}/sizes/${size.id}/barcode`, { barcode: enteredBarcode(size.id) }),
-          ),
-      );
-
-      const submittedFactories = factoryMappings.filter((mapping) => mapping.factoryId);
-      const submittedFactoryIds = new Set(submittedFactories.map((mapping) => mapping.factoryId));
-      await Promise.all(
-        style.factories
-          .filter((factory) => !submittedFactoryIds.has(factory.id))
-          .map((factory) => apiClient.delete(`/styles/${style.id}/factories/${factory.id}`)),
-      );
-      await Promise.all(
-        style.factories
-          .filter((factory) => {
-            const submitted = submittedFactories.find(
-              (mapping) => mapping.factoryId === factory.id,
-            );
-            return submitted && Number(submitted.exFactoryPrice) !== factory.exFactoryPrice;
-          })
-          .map((factory) => apiClient.delete(`/styles/${style.id}/factories/${factory.id}`)),
-      );
-      const currentFactoryIds = new Set(
-        style.factories
-          .filter((factory) => {
-            const submitted = submittedFactories.find(
-              (mapping) => mapping.factoryId === factory.id,
-            );
-            return submitted && Number(submitted.exFactoryPrice) === factory.exFactoryPrice;
-          })
-          .map((factory) => factory.id),
-      );
-      await Promise.all(
-        submittedFactories
-          .filter((mapping) => !currentFactoryIds.has(mapping.factoryId))
-          .map((mapping) =>
-            apiClient.post(`/styles/${style.id}/factories`, {
-              factoryId: mapping.factoryId,
-              exFactoryPrice: Number(mapping.exFactoryPrice),
-            }),
-          ),
-      );
 
       if (!isEdit && pendingImage) {
         // The style row is already committed at this point. If the image

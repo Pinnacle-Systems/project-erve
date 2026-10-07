@@ -206,6 +206,192 @@ describe('styles API', () => {
     expect(removed.body.data.factories).toHaveLength(0);
   });
 
+  // SESS-008: Style create/edit saving must be atomic (all required DB
+  // changes succeed together or none commit) and recoverable (a retry after
+  // a failed save must not duplicate anything).
+  describe('SESS-008 — Style save atomicity', () => {
+    it('creates the Style, its sizes, and its factory mappings in one call/transaction', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'sess008-create@test.local',
+        password: 'admin-password',
+        roles: ['ADMIN'],
+      });
+      const size = await createSize();
+      const factory = await createTestFactory({ code: 'FAC-SESS-1', name: 'Sess Factory' });
+      const season = await createActiveSeason();
+
+      const res = await request(app)
+        .post('/styles')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          styleNumber: 'ST-SESS-CREATE',
+          styleName: 'Atomic Create Tee',
+          lmixNumber: 'LMIX1234',
+          finalMrp: 500,
+          seasonId: season.id,
+          sizes: [{ sizeId: size.id }],
+          factoryMappings: [{ factoryId: factory.id, exFactoryPrice: 200 }],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.sizes).toHaveLength(1);
+      expect(res.body.data.sizes[0].barcode).not.toBeNull();
+      expect(res.body.data.factories).toHaveLength(1);
+      expect(res.body.data.factories[0].exFactoryPrice).toBe(200);
+    });
+
+    it('rolls back the entire create when a factory mapping is invalid — no half-created Style is left behind', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'sess008-create-rollback@test.local',
+        password: 'admin-password',
+        roles: ['ADMIN'],
+      });
+      const size = await createSize();
+      const factory = await createTestFactory({ code: 'FAC-SESS-2', name: 'Inactive Factory' });
+      await prisma.factory.update({ where: { id: factory.id }, data: { status: 'INACTIVE' } });
+      const season = await createActiveSeason();
+
+      const res = await request(app)
+        .post('/styles')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          styleNumber: 'ST-SESS-ROLLBACK',
+          styleName: 'Should Not Exist',
+          lmixNumber: 'LMIX1234',
+          finalMrp: 500,
+          seasonId: season.id,
+          sizes: [{ sizeId: size.id }],
+          factoryMappings: [{ factoryId: factory.id, exFactoryPrice: 200 }],
+        });
+
+      expect(res.status).toBe(400);
+      const style = await prisma.style.findUnique({ where: { styleNumber: 'ST-SESS-ROLLBACK' } });
+      expect(style).toBeNull();
+      const sizeRows = await prisma.styleSize.findMany({ where: { sizeId: size.id } });
+      expect(sizeRows).toHaveLength(0);
+    });
+
+    it('edits Style fields, sizes, and factory mappings together in one call, and rolls back all of it on failure', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'sess008-edit@test.local',
+        password: 'admin-password',
+        roles: ['ADMIN'],
+      });
+      const sizeA = await createSize('AGE_3');
+      const sizeB = await createSize('AGE_4');
+      const factoryA = await createTestFactory({ code: 'FAC-SESS-3A', name: 'Factory A' });
+      const factoryB = await createTestFactory({ code: 'FAC-SESS-3B', name: 'Factory B' });
+      const style = await createStyle(token, { styleNumber: 'ST-SESS-EDIT' }).then((res) => res.body.data);
+
+      await request(app)
+        .post(`/styles/${style.id}/sizes`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ sizeId: sizeA.id });
+      await request(app)
+        .post(`/styles/${style.id}/factories`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ factoryId: factoryA.id, exFactoryPrice: 100 });
+
+      // One PATCH: rename, drop sizeA for sizeB, drop factoryA for factoryB.
+      const edited = await request(app)
+        .patch(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          styleName: 'Renamed Tee',
+          sizes: [{ sizeId: sizeB.id }],
+          factoryMappings: [{ factoryId: factoryB.id, exFactoryPrice: 150 }],
+        });
+
+      expect(edited.status).toBe(200);
+      expect(edited.body.data.styleName).toBe('Renamed Tee');
+      expect(edited.body.data.sizes.map((s: { id: string }) => s.id)).toEqual([sizeB.id]);
+      expect(edited.body.data.factories.map((f: { id: string }) => f.id)).toEqual([factoryB.id]);
+
+      // Now attempt an edit that is partly invalid (unknown size) alongside a
+      // valid-looking field change and a valid factory-price change — none of
+      // it should land: not the rename, not the factory price, not the size.
+      const failedEdit = await request(app)
+        .patch(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          styleName: 'Should Not Persist',
+          sizes: [{ sizeId: 'not-a-real-size-id' }],
+          factoryMappings: [{ factoryId: factoryB.id, exFactoryPrice: 999 }],
+        });
+
+      expect(failedEdit.status).toBe(400);
+      const reloaded = await request(app)
+        .get(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(reloaded.body.data.styleName).toBe('Renamed Tee');
+      expect(reloaded.body.data.factories[0].exFactoryPrice).toBe(150);
+      expect(reloaded.body.data.sizes.map((s: { id: string }) => s.id)).toEqual([sizeB.id]);
+    });
+
+    it('rejects blanking an existing size barcode on edit, and leaves the barcode untouched', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'sess008-blank-barcode@test.local',
+        password: 'admin-password',
+        roles: ['ADMIN'],
+      });
+      const size = await createSize();
+      const style = await createStyle(token, { styleNumber: 'ST-SESS-BLANK' }).then((res) => res.body.data);
+      const withSize = await request(app)
+        .post(`/styles/${style.id}/sizes`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ sizeId: size.id });
+      const originalBarcode = withSize.body.data.sizes[0].barcode as string;
+      expect(originalBarcode).not.toBeNull();
+
+      const res = await request(app)
+        .patch(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ sizes: [{ sizeId: size.id, barcode: '' }] });
+
+      expect(res.status).toBe(400);
+      const reloaded = await request(app)
+        .get(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(reloaded.body.data.sizes[0].barcode).toBe(originalBarcode);
+    });
+
+    it('retrying a corrected edit after a failed save does not create duplicate sizes or mappings', async () => {
+      const { token } = await createTestUserAndToken({
+        email: 'sess008-retry@test.local',
+        password: 'admin-password',
+        roles: ['ADMIN'],
+      });
+      const size = await createSize();
+      const factory = await createTestFactory({ code: 'FAC-SESS-4', name: 'Retry Factory' });
+      const style = await createStyle(token, { styleNumber: 'ST-SESS-RETRY' }).then((res) => res.body.data);
+
+      // First attempt fails (unknown factory) — nothing should land.
+      const failed = await request(app)
+        .patch(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          sizes: [{ sizeId: size.id }],
+          factoryMappings: [{ factoryId: 'not-a-real-factory-id', exFactoryPrice: 200 }],
+        });
+      expect(failed.status).toBe(400);
+
+      // Retry with the corrected payload — the same logical save, resubmitted.
+      const retried = await request(app)
+        .patch(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          sizes: [{ sizeId: size.id }],
+          factoryMappings: [{ factoryId: factory.id, exFactoryPrice: 200 }],
+        });
+
+      expect(retried.status).toBe(200);
+      expect(retried.body.data.sizes).toHaveLength(1);
+      expect(retried.body.data.factories).toHaveLength(1);
+      const sizeRows = await prisma.styleSize.findMany({ where: { styleId: style.id, sizeId: size.id } });
+      expect(sizeRows).toHaveLength(1);
+    });
+  });
+
   // UXAUTH-013 regression: the Price List option-lookup endpoints exist so
   // ACCOUNTANT never needs direct access to this master. That fix only holds
   // if this denial actually stays in place, so lock it in here.
