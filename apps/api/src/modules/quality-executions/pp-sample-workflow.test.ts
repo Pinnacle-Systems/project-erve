@@ -200,7 +200,12 @@ async function workflow() {
   });
   const versionId = flow.versions[0]!.id;
   const inlineOutcomeId = createId();
+  const inlineAqlComponentId = createId();
   const finalOutcomeId = createId();
+  const finalAqlComponentId = createId();
+  // DEMO-005: the outcome is server-calculated from AQL/checklist/test
+  // responses, so each form needs a signal source (here, a single MAJOR AQL
+  // criterion) for the end-to-end test below to drive a genuine PASS/FAIL.
   const inlineForm = await prisma.qualityForm.create({
     data: {
       id: createId(),
@@ -220,13 +225,22 @@ async function workflow() {
               sequence: 1,
               title: 'Outcome',
               components: {
-                create: {
-                  id: inlineOutcomeId,
-                  sequence: 1,
-                  type: 'INSPECTION_OUTCOME',
-                  title: 'Outcome',
-                  config: { allowedOutcomes: ['PASS', 'FAIL'] },
-                },
+                create: [
+                  {
+                    id: inlineAqlComponentId,
+                    sequence: 1,
+                    type: 'AQL_RESULT',
+                    title: 'AQL',
+                    config: { criteria: [{ severity: 'MAJOR', aql: 1.5 }] },
+                  },
+                  {
+                    id: inlineOutcomeId,
+                    sequence: 2,
+                    type: 'INSPECTION_OUTCOME',
+                    title: 'Outcome',
+                    config: { allowedOutcomes: ['PASS', 'FAIL'] },
+                  },
+                ],
               },
             },
           },
@@ -254,13 +268,22 @@ async function workflow() {
               sequence: 1,
               title: 'Outcome',
               components: {
-                create: {
-                  id: finalOutcomeId,
-                  sequence: 1,
-                  type: 'INSPECTION_OUTCOME',
-                  title: 'Outcome',
-                  config: { allowedOutcomes: ['PASS', 'FAIL'] },
-                },
+                create: [
+                  {
+                    id: finalAqlComponentId,
+                    sequence: 1,
+                    type: 'AQL_RESULT',
+                    title: 'AQL',
+                    config: { criteria: [{ severity: 'MAJOR', aql: 1.5 }] },
+                  },
+                  {
+                    id: finalOutcomeId,
+                    sequence: 2,
+                    type: 'INSPECTION_OUTCOME',
+                    title: 'Outcome',
+                    config: { allowedOutcomes: ['PASS', 'FAIL'] },
+                  },
+                ],
               },
             },
           },
@@ -423,7 +446,9 @@ async function workflow() {
     sampleForm,
     ppmForm,
     inlineOutcomeId,
+    inlineAqlComponentId,
     finalOutcomeId,
+    finalAqlComponentId,
     fieldId,
     attendeeId,
     actionId,
@@ -486,6 +511,8 @@ async function finalizeStartedPp(
   });
   const form = session.forms[0]!;
   const quantity = form.sampleQuantity!;
+  // DEMO-005: the decision is calculated from the checklist — one explicit
+  // No is enough to fail it; everything else Yes passes it.
   await request(app)
     .put(`/qa/inspections/${session.id}/forms/${form.id}`)
     .set('Authorization', `Bearer ${f.qa.token}`)
@@ -494,7 +521,11 @@ async function finalizeStartedPp(
       expectedVersion: form.version,
       sampleQuantity: quantity,
       inspectionRemarks: null,
-      checklist: checklistCodes.map((itemCode) => ({ itemCode, status: 'YES', remarks: null })),
+      checklist: checklistCodes.map((itemCode, index) => ({
+        itemCode,
+        status: decision === 'FAIL' && index === 0 ? 'NO' : 'YES',
+        remarks: null,
+      })),
       defectCategory: null,
       otherDefectDetails: null,
       defectNotes: null,
@@ -506,7 +537,7 @@ async function finalizeStartedPp(
     .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
     .set('Authorization', `Bearer ${f.qa.token}`)
     .set('Idempotency-Key', createId())
-    .send({ expectedVersion: savedForm.version, ppSampleDecision: decision })
+    .send({ expectedVersion: savedForm.version })
     .expect(200);
 }
 
@@ -744,7 +775,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
   });
 
   it.each(['PASS', 'FAIL'] as const)(
-    'requires an explicit decision and applies %s without inference',
+    'calculates the PP Sample decision from the checklist and ignores a forged decision',
     async (decision) => {
       const f = await workflow();
       await prisma.jobOrder.update({
@@ -765,38 +796,46 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
         .set('Authorization', `Bearer ${f.qa.token}`)
         .set('Idempotency-Key', createId())
-        .send({ expectedVersion: form.version, ppSampleDecision: decision })
+        .send({ expectedVersion: form.version })
         .expect(400);
       expect(invalidChecklist.body.error.details.issues).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             field: 'checklist',
-            message: 'Every PP Sample checklist response must be Yes or No.',
+            message: 'Every PP Sample checklist response must be Yes, No, or N/A.',
           }),
         ]),
       );
+      // The checklist now determines the decision: one explicit No fails it,
+      // all Yes passes it.
       await prisma.qaSizeInspectionChecklistItem.updateMany({
         where: { inspectionFormId: form.id },
-        // Checklist marks are observations. They never determine the explicit decision.
-        data: { status: decision === 'PASS' ? 'NO' : 'YES' },
+        data: { status: 'YES' },
       });
-      await request(app)
-        .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
-        .set('Authorization', `Bearer ${f.qa.token}`)
-        .set('Idempotency-Key', createId())
-        .send({ expectedVersion: form.version })
-        .expect(400);
+      if (decision === 'FAIL') {
+        const firstItem = await prisma.qaSizeInspectionChecklistItem.findFirstOrThrow({
+          where: { inspectionFormId: form.id },
+          orderBy: { itemCode: 'asc' },
+        });
+        await prisma.qaSizeInspectionChecklistItem.update({
+          where: { id: firstItem.id },
+          data: { status: 'NO' },
+        });
+      }
+      const forgedDecision = decision === 'PASS' ? 'FAIL' : 'PASS';
       await request(app)
         .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
         .set('Authorization', `Bearer ${f.factoryUser.token}`)
         .set('Idempotency-Key', createId())
-        .send({ expectedVersion: form.version, ppSampleDecision: decision })
+        .send({ expectedVersion: form.version })
         .expect(403);
       const missingEvidence = await request(app)
         .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
         .set('Authorization', `Bearer ${f.qa.token}`)
         .set('Idempotency-Key', createId())
-        .send({ expectedVersion: form.version, ppSampleDecision: decision })
+        // A forged opposite decision is accepted by validation (unknown keys
+        // are ignored) but must never reach the calculated result below.
+        .send({ expectedVersion: form.version, ppSampleDecision: forgedDecision })
         .expect(400);
       expect(missingEvidence.body.error.message).toBe(
         'Photo evidence is required before a PP Sample can be finalized',
@@ -806,7 +845,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
         .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
         .set('Authorization', `Bearer ${f.qa.token}`)
         .set('Idempotency-Key', createId())
-        .send({ expectedVersion: form.version, ppSampleDecision: decision })
+        .send({ expectedVersion: form.version, ppSampleDecision: forgedDecision })
         .expect(200);
       const finalizedForm = await prisma.qaSizeInspectionForm.findUniqueOrThrow({
         where: { id: form.id },
@@ -846,6 +885,66 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     },
   );
 
+  // DEMO-005: N/A is a distinct, explicit response for PP Sample too — never
+  // Yes, never No, never a defect, excluded from the calculated decision.
+  it('persists an explicit N/A PP Sample checklist response and excludes it from the calculated decision', async () => {
+    const f = await workflow();
+    await prisma.jobOrder.update({
+      where: { id: f.job.id },
+      data: { status: 'CONFIRMED_BY_FACTORY', factoryConfirmationStatus: 'CONFIRMED' },
+    });
+    const started = await startPp(f).expect(201);
+    const session = await prisma.qaInspectionSession.findUniqueOrThrow({
+      where: { qualityActivityExecutionId: started.body.data.id },
+      include: { forms: true },
+    });
+    const form = session.forms[0]!;
+    const saved = await request(app)
+      .put(`/qa/inspections/${session.id}/forms/${form.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send({
+        expectedVersion: form.version,
+        sampleQuantity: form.sampleQuantity,
+        inspectionRemarks: null,
+        checklist: checklistCodes.map((itemCode, index) => ({
+          itemCode,
+          status: index === 0 ? 'NOT_APPLICABLE' : 'YES',
+          remarks: null,
+        })),
+        defectCategory: null,
+        otherDefectDetails: null,
+        defectNotes: null,
+      })
+      .expect(200);
+    const savedChecklist = saved.body.data.sessions
+      .flatMap((candidate: { forms: Array<{ id: string; checklist: unknown[] }> }) => candidate.forms)
+      .find((candidate: { id: string }) => candidate.id === form.id).checklist;
+    expect(savedChecklist[0]).toMatchObject({ status: 'NOT_APPLICABLE' });
+    expect(savedChecklist.slice(1).every((item: { status: string }) => item.status === 'YES')).toBe(
+      true,
+    );
+    await attachPpEvidence(f, session.id, form.id);
+    const savedForm = await prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } });
+    await request(app)
+      .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send({ expectedVersion: savedForm.version })
+      .expect(200);
+    const execution = await prisma.qualityActivityExecution.findUniqueOrThrow({
+      where: { id: started.body.data.id },
+    });
+    // N/A does not count as No — the one N/A plus all-Yes calculates PASS.
+    expect(execution.outcome).toBe('PASS');
+    const detail = await request(app)
+      .get(`/qa/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    const persistedChecklist = detail.body.data.sessions[0].forms[0].checklist;
+    expect(persistedChecklist[0]).toMatchObject({ status: 'NOT_APPLICABLE' });
+  });
+
   it('ignores legacy disposition values when finalizing a linked PP Sample', async () => {
     const f = await workflow();
     await prisma.jobOrder.update({
@@ -876,7 +975,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
       .set('Idempotency-Key', createId())
-      .send({ expectedVersion: form.version, ppSampleDecision: 'PASS' })
+      .send({ expectedVersion: form.version })
       .expect(200);
 
     await expect(prisma.qaReworkTask.count({ where: { jobOrderId: f.job.id } })).resolves.toBe(0);
@@ -1211,15 +1310,23 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       qualityState: { label: 'Inline Inspection Pending' },
       primaryDisplayState: { label: 'Sewing In Progress' },
     });
+    // DEMO-005: the server calculates PASS/FAIL from the AQL/checklist/test
+    // responses, so to drive a given outcome this payload must supply a
+    // matching AQL signal — a MAJOR row at/under its maxAllowed of 0 passes,
+    // over it fails. The `outcome.value` sent here is otherwise ignored by
+    // the server.
     const qualityPayload = (
       version: number,
       componentId: string,
+      aqlComponentId: string,
       outcome: 'PASS' | 'FAIL',
       rejectionReason?: string,
     ) => ({
       expectedVersion: version,
       checklistResponses: [],
-      aqlResults: [],
+      aqlResults: [
+        { componentId: aqlComponentId, severity: 'MAJOR', maxAllowed: 0, found: outcome === 'FAIL' ? 1 : 0 },
+      ],
       defects: [],
       correctiveActions: [],
       testResults: [],
@@ -1284,7 +1391,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     await request(app)
       .post(`/quality-executions/${inlineStarted.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
-      .send(qualityPayload(inlineStarted.version, f.inlineOutcomeId, 'FAIL'))
+      .send(qualityPayload(inlineStarted.version, f.inlineOutcomeId, f.inlineAqlComponentId, 'FAIL'))
       .expect(200);
     expect((await prisma.jobOrder.findUniqueOrThrow({ where: { id: f.job.id } })).status).toBe(
       'IN_PRODUCTION',
@@ -1305,7 +1412,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     await request(app)
       .post(`/quality-executions/${inlineRetry.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
-      .send(qualityPayload(inlineRetry.version, f.inlineOutcomeId, 'PASS'))
+      .send(qualityPayload(inlineRetry.version, f.inlineOutcomeId, f.inlineAqlComponentId, 'PASS'))
       .expect(200);
 
     await runStage(f.sewing.id);
@@ -1344,12 +1451,14 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     const firstSaved = await request(app)
       .put(`/quality-executions/${firstFinal.id}`)
       .set('Authorization', `Bearer ${f.qa.token}`)
-      .send(qualityPayload(firstFinal.version, f.finalOutcomeId, 'PASS'))
+      .send(qualityPayload(firstFinal.version, f.finalOutcomeId, f.finalAqlComponentId, 'PASS'))
       .expect(200);
     const firstFinalized = await request(app)
       .post(`/quality-executions/${firstFinal.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
-      .send(qualityPayload(firstSaved.body.data.version, f.finalOutcomeId, 'PASS'))
+      .send(
+        qualityPayload(firstSaved.body.data.version, f.finalOutcomeId, f.finalAqlComponentId, 'PASS'),
+      )
       .expect(200);
 
     await runStage(f.finishing.id);
@@ -1396,6 +1505,7 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
           qualityPayload(
             batch.version,
             f.finalOutcomeId,
+            f.finalAqlComponentId,
             outcome,
             outcome === 'FAIL' ? 'End-to-end fixture Final Inspection failure' : undefined,
           ),
@@ -1608,7 +1718,7 @@ describe('cancellation blocks PP Sample/PPM QA start and finalization (Correctio
       .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
       .set('Idempotency-Key', createId())
-      .send({ expectedVersion: form.version, ppSampleDecision: 'PASS' })
+      .send({ expectedVersion: form.version })
       .expect(409);
   });
 

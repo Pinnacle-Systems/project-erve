@@ -7,7 +7,11 @@ import type {
   QaQueueSummary,
   QaReworkTaskView,
 } from '@erve/types';
-import { QA_INSPECTION_START_STATUSES, QA_QUEUE_STATUSES } from '@erve/types';
+import {
+  calculatePpSampleOutcome,
+  QA_INSPECTION_START_STATUSES,
+  QA_QUEUE_STATUSES,
+} from '@erve/types';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { HttpError } from '../../errors/http-error.js';
@@ -511,7 +515,7 @@ export async function saveSizeInspectionForm(
     inspectionRemarks?: string | null;
     checklist: Array<{
       itemCode: QaChecklistItemCode;
-      status: 'YES' | 'NO' | 'AVAILABLE' | null;
+      status: 'YES' | 'NO' | 'AVAILABLE' | 'NOT_APPLICABLE' | null;
       remarks: string | null;
     }>;
     inspectedQuantity?: number;
@@ -564,7 +568,7 @@ export async function saveSizeInspectionForm(
       throw HttpError.conflict('PP Sample size and quantity are locked after inspection starts');
     const ppSample = Boolean(form.session.qualityActivityExecution);
     if (ppSample && input.checklist.some((item) => item.status === 'AVAILABLE'))
-      throw HttpError.badRequest('PP Sample checklist responses must be Yes, No, or unanswered');
+      throw HttpError.badRequest('PP Sample checklist responses must be Yes, No, N/A, or unanswered');
     const dispositionQuantities = [
       input.inspectedQuantity,
       input.acceptedQuantity,
@@ -684,7 +688,7 @@ export async function finalizeSizeInspectionForm(
   user: CurrentUser,
   sessionId: string,
   formId: string,
-  input: { expectedVersion: number; ppSampleDecision?: 'PASS' | 'FAIL' },
+  input: { expectedVersion: number },
   key: string,
 ) {
   const requestHash = hash(input);
@@ -718,10 +722,6 @@ export async function finalizeSizeInspectionForm(
     if (form.status !== 'DRAFT')
       throw HttpError.conflict('Size inspection form is already finalized');
     const ppExecution = form.session.qualityActivityExecution;
-    if (ppExecution && !input.ppSampleDecision)
-      throw HttpError.badRequest('An explicit PP Sample PASS or FAIL decision is required');
-    if (!ppExecution && input.ppSampleDecision)
-      throw HttpError.badRequest('PP Sample decision is only valid for a Process Flow PP Sample');
     const capacity = ppExecution
       ? ppExecution.sampleQuantity!
       : form.sourceReworkTaskId
@@ -744,7 +744,7 @@ export async function finalizeSizeInspectionForm(
       incomplete.push({
         field: 'checklist',
         message: ppExecution
-          ? 'Every PP Sample checklist response must be Yes or No.'
+          ? 'Every PP Sample checklist response must be Yes, No, or N/A.'
           : 'Every checklist response is required.',
       });
     if (!ppExecution && form.inspectedQuantity !== capacity)
@@ -844,13 +844,16 @@ export async function finalizeSizeInspectionForm(
     });
     const session = await deriveSessionStatus(tx, sessionId);
     if (ppExecution) {
+      // DEMO-005: the decision is calculated from the checklist, never taken
+      // from the caller. A FAIL does not block finalize — it finalizes as FAIL.
+      const calculatedDecision = calculatePpSampleOutcome(form.checklist);
       const executionUpdated = await tx.qualityActivityExecution.updateMany({
         where: { id: ppExecution.id, status: 'DRAFT', version: ppExecution.version },
         data: {
           status: 'FINALIZED',
           finalizedAt: new Date(),
           finalizedById: user.id,
-          outcome: input.ppSampleDecision,
+          outcome: calculatedDecision,
           version: { increment: 1 },
         },
       });
@@ -867,7 +870,7 @@ export async function finalizeSizeInspectionForm(
             qualityFormVersionId: ppExecution.qualityFormVersionId,
             jobOrderLineSizeId: ppExecution.sampleJobOrderLineSizeId,
             sampleQuantity: ppExecution.sampleQuantity,
-            decision: input.ppSampleDecision,
+            decision: calculatedDecision,
             cycleNumber: ppExecution.attemptNumber,
           },
         },

@@ -69,6 +69,11 @@ async function fixture(preparedQuantity = 840) {
     include: { lines: { include: { sizes: true } } },
   });
   const outcomeId = createId();
+  const aqlComponentId = createId();
+  // DEMO-005: the outcome is server-calculated from AQL/checklist/test
+  // responses, so this fixture's form needs a signal source (a single MAJOR
+  // AQL criterion) for `payload()`/`finalize()` below to drive a genuine
+  // PASS/FAIL rather than relying on a client-chosen value.
   const form = await prisma.qualityForm.create({
     data: {
       id: createId(),
@@ -88,13 +93,22 @@ async function fixture(preparedQuantity = 840) {
               sequence: 1,
               title: 'Conclusion',
               components: {
-                create: {
-                  id: outcomeId,
-                  sequence: 1,
-                  type: 'INSPECTION_OUTCOME',
-                  title: 'Inspection conclusion',
-                  config: { allowedOutcomes: ['PASS', 'FAIL'] },
-                },
+                create: [
+                  {
+                    id: aqlComponentId,
+                    sequence: 1,
+                    type: 'AQL_RESULT',
+                    title: 'AQL',
+                    config: { criteria: [{ severity: 'MAJOR', aql: 1.5 }] },
+                  },
+                  {
+                    id: outcomeId,
+                    sequence: 2,
+                    type: 'INSPECTION_OUTCOME',
+                    title: 'Inspection conclusion',
+                    config: { allowedOutcomes: ['PASS', 'FAIL'] },
+                  },
+                ],
               },
             },
           },
@@ -193,18 +207,33 @@ async function fixture(preparedQuantity = 840) {
     where: { id: po.id },
     data: { jobOrderId: job.id },
   });
-  return { qa, job, finishing, final, form, outcomeId, factory, poId: po.id };
+  return { qa, job, finishing, final, form, outcomeId, aqlComponentId, factory, poId: po.id };
 }
 
+// DEMO-005: the server calculates PASS/FAIL from AQL/checklist/test
+// responses, so to drive a given outcome this payload supplies a matching
+// AQL signal (a MAJOR row at/under its maxAllowed of 0 passes, over it
+// fails) rather than relying on the `outcome.value` sent here, which the
+// server ignores.
 const payload = (
   version: number,
   outcomeId: string,
   outcome: 'PASS' | 'FAIL',
   rejectionReason?: string | null,
+  aqlComponentId?: string,
 ) => ({
   expectedVersion: version,
   checklistResponses: [],
-  aqlResults: [],
+  aqlResults: aqlComponentId
+    ? [
+        {
+          componentId: aqlComponentId,
+          severity: 'MAJOR',
+          maxAllowed: 0,
+          found: outcome === 'FAIL' ? 1 : 0,
+        },
+      ]
+    : [],
   defects: [],
   correctiveActions: [],
   testResults: [],
@@ -257,6 +286,7 @@ const finalize = (
           : outcome === 'FAIL'
             ? 'Stitching defect found on collar'
             : undefined,
+        f.aqlComponentId,
       ),
     );
 
@@ -625,7 +655,7 @@ describe('Final Inspection batching and prepared coverage', () => {
     await request(app)
       .put(`/quality-executions/${workedDraft.id}`)
       .set('Authorization', `Bearer ${f.qa.token}`)
-      .send(payload(workedDraft.version, f.outcomeId, 'PASS'))
+      .send(payload(workedDraft.version, f.outcomeId, 'PASS', undefined, f.aqlComponentId))
       .expect(200);
     await request(app)
       .post(`/quality-executions/final-batches/${workedDraft.finalBatch.id}/cancel`)
@@ -1131,7 +1161,7 @@ describe('Final QA reinspection of a failed batch (no Factory Rework workflow)',
   it('cannot double-release a batch under concurrent duplicate finalize PASS requests', async () => {
     const { f, batchId } = await failedBatch(50);
     const retry = (await reinspect(f, batchId).expect(201)).body.data;
-    const body = payload(retry.version, f.outcomeId, 'PASS');
+    const body = payload(retry.version, f.outcomeId, 'PASS', undefined, f.aqlComponentId);
     const [first, second] = await Promise.all([
       request(app)
         .post(`/quality-executions/${retry.id}/finalize`)
@@ -1269,13 +1299,16 @@ describe('Final Inspection mandatory rejection reason on FAIL', () => {
 
   it('cannot be bypassed by a direct API call that omits rejectionReason entirely', async () => {
     const { f, execution } = await draftBatch(20);
+    // A real calculated FAIL (an AQL row over its maxAllowed) — a forged
+    // `outcome.value` with no underlying failure data would calculate PASS
+    // instead and never reach the rejection-reason rule at all.
     const response = await request(app)
       .post(`/quality-executions/${execution.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
       .send({
         expectedVersion: execution.version,
         checklistResponses: [],
-        aqlResults: [],
+        aqlResults: [{ componentId: f.aqlComponentId, severity: 'MAJOR', maxAllowed: 0, found: 1 }],
         defects: [],
         correctiveActions: [],
         testResults: [],
@@ -1285,10 +1318,21 @@ describe('Final Inspection mandatory rejection reason on FAIL', () => {
         attendees: [],
         actions: [],
         signoffs: [],
-        outcome: { componentId: f.outcomeId, value: 'FAIL' },
+        outcome: { componentId: f.outcomeId },
       });
     expect(response.status).toBe(400);
-    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    expect(response.body.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      details: {
+        validationErrors: expect.arrayContaining([
+          expect.objectContaining({
+            fieldKey: 'rejectionReason',
+            code: 'REQUIRED',
+            message: 'Rejection reason is required when Final Inspection fails',
+          }),
+        ]),
+      },
+    });
     expect(
       await prisma.qualityActivityExecution.findUniqueOrThrow({ where: { id: execution.id } }),
     ).toMatchObject({ status: 'DRAFT' });

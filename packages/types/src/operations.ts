@@ -1010,10 +1010,32 @@ export interface QualityExecutionPayload {
   signoffs: Array<{ componentId: string; roleKey: string; signatoryName: string }>;
   outcome?: {
     componentId: string;
-    value: 'PASS' | 'FAIL';
+    // DEMO-005: the server always derives the authoritative value from
+    // checklist/test/AQL results and ignores any value a caller sends — kept
+    // optional so a caller never needs to (and cannot meaningfully) pick one.
+    value?: 'PASS' | 'FAIL';
     remarks?: string | null;
     rejectionReason?: string | null;
   } | null;
+}
+
+// DEMO-005: shared by the server (authoritative) and the UI (live preview
+// before save) so both sides calculate the identical result from the same
+// rule. A checklist/test response of NO or FAILED is a failure; N/A, YES and
+// PASSED are not. An AQL severity row fails when found exceeds maxAllowed.
+export function calculateQualityExecutionOutcome(input: {
+  checklistResponses: ReadonlyArray<{ response: string }>;
+  testResults: ReadonlyArray<{ response: string }>;
+  aqlResults: ReadonlyArray<{ maxAllowed?: number | null; found?: number | null }>;
+}): 'PASS' | 'FAIL' {
+  const failingChecklist = input.checklistResponses.some(
+    (response) => response.response === 'NO' || response.response === 'FAILED',
+  );
+  const failingTest = input.testResults.some((response) => response.response === 'FAILED');
+  const failingAql = input.aqlResults.some(
+    (result) => result.maxAllowed != null && result.found != null && result.found > result.maxAllowed,
+  );
+  return failingChecklist || failingTest || failingAql ? 'FAIL' : 'PASS';
 }
 
 export interface QualityExecutionValidationError {
@@ -1373,18 +1395,31 @@ export type QaDefectCategory =
   'STITCHING' | 'FABRIC' | 'PRINT_EMBROIDERY' | 'MEASUREMENT' | 'FINISHING' | 'PACKAGING' | 'OTHER';
 export type QaReworkStatus =
   'REWORK_REQUIRED' | 'ACKNOWLEDGED' | 'READY_FOR_REINSPECTION' | 'REINSPECTED';
-export type QaChecklistStatus = 'YES' | 'NO' | 'AVAILABLE';
+export type QaChecklistStatus = 'YES' | 'NO' | 'AVAILABLE' | 'NOT_APPLICABLE';
 export const QA_CHECKLIST_CHOICES: ReadonlyArray<{
   value: QaChecklistStatus;
   label: string;
+  // Each flag controls visibility in its own inspection mode, independently
+  // — ppSample=false is NOT "show everything": NOT_APPLICABLE is PP-Sample-
+  // only (DEMO-005) and AVAILABLE remains legacy-only, exactly as before.
   ppSample: boolean;
+  legacy: boolean;
 }> = [
-  { value: 'YES', label: 'Yes', ppSample: true },
-  { value: 'NO', label: 'No', ppSample: true },
-  { value: 'AVAILABLE', label: 'Available', ppSample: false },
+  { value: 'YES', label: 'Yes', ppSample: true, legacy: true },
+  { value: 'NO', label: 'No', ppSample: true, legacy: true },
+  { value: 'AVAILABLE', label: 'Available', ppSample: false, legacy: true },
+  { value: 'NOT_APPLICABLE', label: 'N/A', ppSample: true, legacy: false },
 ];
 export const qaChecklistChoices = (ppSample: boolean) =>
-  QA_CHECKLIST_CHOICES.filter((choice) => !ppSample || choice.ppSample);
+  QA_CHECKLIST_CHOICES.filter((choice) => (ppSample ? choice.ppSample : choice.legacy));
+// DEMO-005: the PP Sample decision is calculated, not manually chosen. An
+// explicit No on any checklist item fails the sample; N/A and unanswered
+// items (unanswered is rejected separately at finalize) never do.
+export function calculatePpSampleOutcome(
+  checklist: ReadonlyArray<{ status: QaChecklistStatus | null }>,
+): 'PASS' | 'FAIL' {
+  return checklist.some((item) => item.status === 'NO') ? 'FAIL' : 'PASS';
+}
 export type QaChecklistItemCode =
   | 'FABRIC_COLOUR_QUALITY'
   | 'TRIMS_CARD'
