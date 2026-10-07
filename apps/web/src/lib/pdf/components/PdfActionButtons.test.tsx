@@ -69,4 +69,49 @@ describe('PdfActionButtons', () => {
       'PDF generation failed. Please try again.',
     );
   });
+
+  it('disables both actions and does not fire their handlers when disabled is true, regardless of isGenerating', () => {
+    const onDownload = vi.fn();
+    const onPrint = vi.fn();
+    act(() => {
+      root.render(
+        <PdfActionButtons
+          isGenerating={false}
+          error={null}
+          onDownload={onDownload}
+          onPrint={onPrint}
+          disabled
+          disabledHint="Carton must be Inspected before its label can be printed"
+        />,
+      );
+    });
+    const [downloadBtn, printBtn] = buttons();
+    expect(downloadBtn!.disabled).toBe(true);
+    expect(printBtn!.disabled).toBe(true);
+    act(() => downloadBtn!.click());
+    act(() => printBtn!.click());
+    expect(onDownload).not.toHaveBeenCalled();
+    expect(onPrint).not.toHaveBeenCalled();
+    expect(container.querySelector('.flex.items-center.gap-2')?.getAttribute('title')).toBe(
+      'Carton must be Inspected before its label can be printed',
+    );
+  });
+
+  it('supports custom download/print labels, e.g. for a label-specific action pair', () => {
+    act(() => {
+      root.render(
+        <PdfActionButtons
+          isGenerating={false}
+          error={null}
+          onDownload={() => {}}
+          onPrint={() => {}}
+          downloadLabel="Download Label"
+          printLabel="Print Label"
+        />,
+      );
+    });
+    const [downloadBtn, printBtn] = buttons();
+    expect(downloadBtn!.textContent).toBe('Download Label');
+    expect(printBtn!.textContent).toBe('Print Label');
+  });
 });

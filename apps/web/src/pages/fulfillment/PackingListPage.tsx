@@ -11,6 +11,7 @@ import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { CartonLabelButton } from './CartonLabelButton.js';
 import { canMutateFactoryDispatches, canViewFactoryInvoices } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { FactoryPackingCartonView, FinalizeBlockers, PackingListDestinationView, PackingListView } from './types.js';
@@ -448,21 +449,31 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                             </span>
                           )}
                         </div>
-                        {isDraft && canMutate && (
-                          <div className="flex gap-2">
-                            <Button variant="ghost" density="compact" onClick={() => openEdit(carton)}>
-                              Edit
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              density="compact"
-                              onClick={() => removeCartonMutation.mutate({ cartonId: carton.id, expectedVersion: carton.version })}
-                              loading={removeCartonMutation.isPending}
-                            >
-                              {carton.auditHistory.length > 0 ? 'Retire' : 'Delete'}
-                            </Button>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <CartonLabelButton
+                            carton={carton}
+                            destination={destination}
+                            saleOrderNumber={packingList.saleOrderNumber}
+                            factoryName={packingList.factory.name}
+                            factoryDispatchNumber={dispatch?.factoryDispatchNumber ?? null}
+                            generatedByName={user?.name}
+                          />
+                          {isDraft && canMutate && (
+                            <div className="flex gap-2">
+                              <Button variant="ghost" density="compact" onClick={() => openEdit(carton)}>
+                                Edit
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                density="compact"
+                                onClick={() => removeCartonMutation.mutate({ cartonId: carton.id, expectedVersion: carton.version })}
+                                loading={removeCartonMutation.isPending}
+                              >
+                                {carton.auditHistory.length > 0 ? 'Retire' : 'Delete'}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                       {carton.packageDetails && <div className="text-sm text-muted-foreground">{carton.packageDetails}</div>}
                       <ul className="mt-2 text-sm">
