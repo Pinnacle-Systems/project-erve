@@ -134,7 +134,6 @@ export async function resetDatabase(): Promise<void> {
   await prisma.qualityFormSection.deleteMany();
   await prisma.qualityFormVersion.deleteMany();
   await prisma.qualityForm.deleteMany();
-  await prisma.priceListLine.deleteMany();
   await prisma.priceList.deleteMany();
   await prisma.styleFactoryMapping.deleteMany();
   await prisma.styleSize.deleteMany();

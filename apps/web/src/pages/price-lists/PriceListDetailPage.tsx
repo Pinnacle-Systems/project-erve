@@ -2,23 +2,22 @@ import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { ConfirmDialog, createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
+import { Button, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManagePriceLists } from '../../auth/permissions.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import type { PriceList, PriceListLine, PriceListStyleCandidate } from './types.js';
-import { PriceListStyleLookupField } from './PriceListStyleLookupField.js';
+import type { PriceList } from './types.js';
 import {
   PRICE_LIST_STATUS_LABELS,
   apiErrorMessage,
   formatEffectiveDate,
-  formatPrice,
+  formatPercentage,
   priceListStatusTone,
 } from './price-list-ui.js';
 
@@ -35,9 +34,6 @@ export function PriceListDetailPage() {
 
   const [activateDialogOpen, setActivateDialogOpen] = useState(false);
   const [retireDialogOpen, setRetireDialogOpen] = useState(false);
-  const [newStyle, setNewStyle] = useState<PriceListStyleCandidate | null>(null);
-  const [newUnitPrice, setNewUnitPrice] = useState('');
-  const [editedPrices, setEditedPrices] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
 
   const priceListQuery = useQuery({
@@ -77,65 +73,6 @@ export function PriceListDetailPage() {
     await queryClient.invalidateQueries({ queryKey: ['price-list', id] });
     await queryClient.invalidateQueries({ queryKey: ['price-lists'] });
   }
-
-  const addLineMutation = useMutation({
-    mutationFn: async () => {
-      setError('');
-      if (!newStyle) throw new Error('Select a style to add');
-      const unitPrice = Number(newUnitPrice);
-      if (!newUnitPrice || Number.isNaN(unitPrice) || unitPrice <= 0) {
-        throw new Error('Enter a price greater than 0');
-      }
-      const res = await apiClient.post<ApiSuccessResponse<PriceList>>(`/price-lists/${id}/lines`, {
-        styleId: newStyle.id,
-        unitPrice,
-      });
-      return res.data.data;
-    },
-    onSuccess: async () => {
-      setNewStyle(null);
-      setNewUnitPrice('');
-      await refresh();
-    },
-    onError: (caught) => setError(apiErrorMessage(caught, 'Unable to add price line')),
-  });
-
-  const updateLineMutation = useMutation({
-    mutationFn: async (line: PriceListLine) => {
-      setError('');
-      const raw = editedPrices[line.id];
-      const unitPrice = Number(raw);
-      if (!raw || Number.isNaN(unitPrice) || unitPrice <= 0) {
-        throw new Error('Enter a price greater than 0');
-      }
-      const res = await apiClient.patch<ApiSuccessResponse<PriceList>>(
-        `/price-lists/${id}/lines/${line.id}`,
-        { unitPrice },
-      );
-      return res.data.data;
-    },
-    onSuccess: async (_data, line) => {
-      setEditedPrices((current) => {
-        const next = { ...current };
-        delete next[line.id];
-        return next;
-      });
-      await refresh();
-    },
-    onError: (caught) => setError(apiErrorMessage(caught, 'Unable to update price line')),
-  });
-
-  const removeLineMutation = useMutation({
-    mutationFn: async (line: PriceListLine) => {
-      setError('');
-      const res = await apiClient.delete<ApiSuccessResponse<PriceList>>(
-        `/price-lists/${id}/lines/${line.id}`,
-      );
-      return res.data.data;
-    },
-    onSuccess: refresh,
-    onError: (caught) => setError(apiErrorMessage(caught, 'Unable to remove price line')),
-  });
 
   const activateMutation = useMutation({
     mutationFn: async () => {
@@ -238,139 +175,20 @@ export function PriceListDetailPage() {
       <Panel title="Details">
         <DescriptionList columns={4}>
           <DescriptionList.Item label="Distributor" value={priceList.distributor.name} />
+          <DescriptionList.Item label="MRP Percentage (%)" value={formatPercentage(priceList.percentageOfMrp)} />
           <DescriptionList.Item label="Effective From" value={formatEffectiveDate(priceList.effectiveFrom)} />
           <DescriptionList.Item
             label="Effective To"
             value={priceList.effectiveTo ? formatEffectiveDate(priceList.effectiveTo) : 'Open-ended'}
           />
-          <DescriptionList.Item label="Lines" value={String(priceList.lineCount)} />
           <DescriptionList.Item label="Created" value={formatTimestamp(priceList.createdAt)} />
           <DescriptionList.Item label="Last Updated" value={formatTimestamp(priceList.updatedAt)} />
         </DescriptionList>
         {priceList.status === 'EXPIRED' && (
           <p className="mt-3 text-sm text-muted-foreground">
-            This price list is retired and read-only. Its prices are preserved for historical reference.
+            This price list is retired and read-only. Its percentage is preserved for historical reference.
           </p>
         )}
-      </Panel>
-
-      {canEdit && (
-        <Panel title="Add Style Price">
-          <form
-            className="flex flex-wrap items-end gap-3"
-            onKeyDown={createEnterToNextHandler()}
-            onSubmit={(e) => {
-              e.preventDefault();
-              addLineMutation.mutate();
-            }}
-          >
-            <div className="min-w-64 flex-1">
-              {/* Price-List-specific lookup: ACCOUNTANT can edit a DRAFT price
-                  list's lines but is denied on the broad /styles master, and
-                  already-priced Styles are excluded server-side. */}
-              <PriceListStyleLookupField priceListId={priceList.id} value={newStyle} onChange={setNewStyle} />
-            </div>
-            <TextField
-              label="Unit Price (INR)"
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={newUnitPrice}
-              onChange={(e) => setNewUnitPrice(e.target.value)}
-              placeholder="0.00"
-              width="sm"
-            />
-            <Button type="submit" loading={addLineMutation.isPending}>
-              Add Line
-            </Button>
-          </form>
-        </Panel>
-      )}
-
-      <Panel title="Style Prices">
-        <DataTable
-          columns={[
-            { key: 'styleNumber', header: 'Style Number', accessor: 'styleNumber' },
-            { key: 'styleName', header: 'Style Name', accessor: 'styleName' },
-            ...(canEdit
-              ? [
-                  {
-                    key: 'unitPrice',
-                    header: 'Unit Price (INR)',
-                    align: 'right' as const,
-                    render: (line: PriceListLine) => (
-                      <TextField
-                        aria-label={`Unit price for ${line.styleNumber}`}
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        density="compact"
-                        width="sm"
-                        value={editedPrices[line.id] ?? String(line.unitPrice)}
-                        onChange={(e) =>
-                          setEditedPrices((current) => ({ ...current, [line.id]: e.target.value }))
-                        }
-                      />
-                    ),
-                  },
-                  {
-                    key: 'actions',
-                    header: '',
-                    align: 'right' as const,
-                    render: (line: PriceListLine) => (
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          density="compact"
-                          disabled={
-                            editedPrices[line.id] === undefined ||
-                            editedPrices[line.id] === String(line.unitPrice)
-                          }
-                          loading={
-                            updateLineMutation.isPending && updateLineMutation.variables?.id === line.id
-                          }
-                          onClick={() => updateLineMutation.mutate(line)}
-                        >
-                          Save
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          density="compact"
-                          loading={
-                            removeLineMutation.isPending && removeLineMutation.variables?.id === line.id
-                          }
-                          onClick={() => removeLineMutation.mutate(line)}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    ),
-                  },
-                ]
-              : [
-                  {
-                    key: 'unitPrice',
-                    header: 'Unit Price',
-                    align: 'right' as const,
-                    render: (line: PriceListLine) => formatPrice(line.unitPrice, line.currency),
-                  },
-                ]),
-          ]}
-          data={priceList.lines}
-          rowKey="id"
-          emptyState={
-            <EmptyState
-              title="No style prices yet"
-              description={
-                canEdit
-                  ? 'Add style prices above. The price list needs at least one line before it can be activated.'
-                  : 'This price list has no lines.'
-              }
-            />
-          }
-        />
       </Panel>
 
       <ConfirmDialog
@@ -387,7 +205,7 @@ export function PriceListDetailPage() {
         open={retireDialogOpen}
         onOpenChange={setRetireDialogOpen}
         title="Retire price list?"
-        description={`New transactions will no longer price against ${priceList.code}. Historical prices remain readable and unchanged.`}
+        description={`New transactions will no longer price against ${priceList.code}. The historical percentage remains readable and unchanged.`}
         confirmLabel="Retire"
         destructive
         loading={retireMutation.isPending}

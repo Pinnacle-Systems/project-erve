@@ -18,9 +18,9 @@ export interface PriceListListPdfRow {
   code: string;
   name: string;
   distributorName: string;
+  percentageOfMrp: string;
   effectiveFrom: string;
   effectiveTo: string;
-  lineCount: number;
   status: string;
 }
 
@@ -51,15 +51,15 @@ export function buildPriceListListViewModel(
     code: priceList.code,
     name: priceList.name,
     distributorName: priceList.distributor.name,
+    percentageOfMrp: `${priceList.percentageOfMrp.toFixed(2)}%`,
     effectiveFrom: formatPdfDate(priceList.effectiveFrom),
     effectiveTo: priceList.effectiveTo ? formatPdfDate(priceList.effectiveTo) : 'Open-ended',
-    lineCount: priceList.lineCount,
     status: PRICE_LIST_STATUS_LABELS[priceList.status],
   }));
 
   return {
     title: 'PRICE LIST MASTER LIST',
-    subtitle: 'Distributor-specific selling prices with effective periods',
+    subtitle: 'Distributor-wide MRP pricing percentages with effective periods',
     filters: [
       { label: 'Search', value: filters.search ?? '' },
       { label: 'Status', value: filters.status ? PRICE_LIST_STATUS_LABELS[filters.status] : '' },

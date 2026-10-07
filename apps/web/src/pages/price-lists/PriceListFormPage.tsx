@@ -20,6 +20,7 @@ export function PriceListFormPage() {
   // Create mode only — the distributor is fixed once the price list exists.
   const [distributor, setDistributor] = useState<PriceListDistributor | null>(null);
   const [name, setName] = useState('');
+  const [percentageOfMrp, setPercentageOfMrp] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState('');
   const [effectiveTo, setEffectiveTo] = useState('');
   const [error, setError] = useState('');
@@ -40,6 +41,7 @@ export function PriceListFormPage() {
     // for a lazy initial-state computation, so this can't be done without an effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setName(priceList.name);
+    setPercentageOfMrp(String(priceList.percentageOfMrp));
     setEffectiveFrom(priceList.effectiveFrom ?? '');
     setEffectiveTo(priceList.effectiveTo ?? '');
   }, [priceListQuery.data]);
@@ -49,6 +51,10 @@ export function PriceListFormPage() {
       setError('');
       if (!isEdit && !distributor) throw new Error('Distributor is required');
       if (!name.trim()) throw new Error('Name is required');
+      const percentage = Number(percentageOfMrp);
+      if (!percentageOfMrp.trim() || Number.isNaN(percentage) || percentage < 0 || percentage > 100) {
+        throw new Error('Enter a percentage between 0 and 100');
+      }
       if (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom) {
         throw new Error('Effective-to date cannot be before the effective-from date');
       }
@@ -56,6 +62,7 @@ export function PriceListFormPage() {
       if (isEdit) {
         const res = await apiClient.patch<ApiSuccessResponse<PriceList>>(`/price-lists/${id}`, {
           name: name.trim(),
+          percentageOfMrp: percentage,
           effectiveFrom: effectiveFrom || null,
           effectiveTo: effectiveTo || null,
         });
@@ -64,6 +71,7 @@ export function PriceListFormPage() {
       const res = await apiClient.post<ApiSuccessResponse<PriceList>>('/price-lists', {
         distributorId: distributor!.id,
         name: name.trim(),
+        percentageOfMrp: percentage,
         effectiveFrom: effectiveFrom || null,
         effectiveTo: effectiveTo || null,
       });
@@ -105,7 +113,7 @@ export function PriceListFormPage() {
         subtitle={
           isEdit
             ? 'Update draft price-list details'
-            : 'Create a draft price list for a distributor, then add style prices'
+            : 'Create a draft price list with a single MRP percentage for a distributor'
         }
         secondaryActions={
           <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
@@ -157,6 +165,19 @@ export function PriceListFormPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 width="md"
+              />
+
+              <TextField
+                label="MRP Percentage (%)"
+                required
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={percentageOfMrp}
+                onChange={(e) => setPercentageOfMrp(e.target.value)}
+                placeholder="0.00"
+                width="sm"
               />
 
               <DatePicker

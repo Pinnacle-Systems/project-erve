@@ -9,9 +9,9 @@ function makeRow(overrides: Partial<PriceListListPdfRow> = {}): PriceListListPdf
     code: 'PL-2026-000001',
     name: 'FY 2026 Prices',
     distributorName: 'Acme Distributors',
+    percentageOfMrp: '60.00%',
     effectiveFrom: '01 Jan 2026',
     effectiveTo: 'Open-ended',
-    lineCount: 3,
     status: 'Active',
     ...overrides,
   };
@@ -20,7 +20,7 @@ function makeRow(overrides: Partial<PriceListListPdfRow> = {}): PriceListListPdf
 function makeViewModel(rows: PriceListListPdfRow[]): PriceListListPdfViewModel {
   return {
     title: 'PRICE LIST MASTER LIST',
-    subtitle: 'Distributor-specific selling prices with effective periods',
+    subtitle: 'Distributor-wide MRP pricing percentages with effective periods',
     filters: [],
     generatedAt: '2026-09-12T10:00:00Z',
     generatedBy: 'Test Admin',
@@ -41,8 +41,8 @@ describe('PriceListListDocument', () => {
     expect(blob.size).toBeGreaterThan(0);
   });
 
-  it('renders a zero line count as "0", not an em dash', async () => {
-    const rows = [makeRow({ lineCount: 0 })];
+  it('renders a zero percentage as "0.00%", not an em dash', async () => {
+    const rows = [makeRow({ percentageOfMrp: '0.00%' })];
     const blob = await pdf(<PriceListListDocument viewModel={makeViewModel(rows)} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });

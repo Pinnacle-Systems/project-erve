@@ -4,14 +4,10 @@ import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
 import {
-  createPriceListLineSchema,
   createPriceListSchema,
   listPriceListsQuerySchema,
   priceListDistributorOptionsQuerySchema,
-  priceListStyleCandidatesQuerySchema,
-  priceListStyleOptionsQuerySchema,
   priceLookupQuerySchema,
-  updatePriceListLineSchema,
   updatePriceListSchema,
 } from './price-lists.validation.js';
 import * as priceListsService from './price-lists.service.js';
@@ -24,7 +20,7 @@ priceListsRouter.use(requireAuth);
 // business exception (finance may need to correct commercial pricing).
 // Reads are limited to the same roles: master-data owners, oversight, and
 // Accountant. DISTRIBUTOR has no access to this master module — a
-// distributor's own commercial price, if ever shown, must come from an
+// distributor's own commercial percentage, if ever shown, must come from an
 // embedded field on an authorized transaction, not from browsing Price Lists.
 const canManagePriceLists = requireRoles('ADMIN', 'MERCHANDISER', 'ACCOUNTANT');
 const canViewPriceLists = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT');
@@ -60,26 +56,16 @@ priceListsRouter.get(
   }),
 );
 
-// Registered before '/:id' for the same reason as '/lookup': these serve the
-// Price List Distributor/Style selectors under the Price List permission, so
-// ACCOUNTANT (permitted here, denied on the broad Style/Distributor masters)
-// isn't blocked from picking a distributor/style while working a price list.
+// Registered before '/:id' for the same reason as '/lookup': this serves the
+// Price List Distributor selector under the Price List permission, so
+// ACCOUNTANT (permitted here, denied on the broad Distributor master) isn't
+// blocked from picking a distributor while working a price list.
 priceListsRouter.get(
   '/distributor-options',
   canViewPriceLists,
   asyncHandler(async (req, res) => {
     const filters = priceListDistributorOptionsQuerySchema.parse(req.query);
     const options = await priceListsService.listDistributorOptionsForPriceLists(filters);
-    res.status(200).json(successResponse(options));
-  }),
-);
-
-priceListsRouter.get(
-  '/style-options',
-  canViewPriceLists,
-  asyncHandler(async (req, res) => {
-    const filters = priceListStyleOptionsQuerySchema.parse(req.query);
-    const options = await priceListsService.listStyleOptionsForPriceLists(filters);
     res.status(200).json(successResponse(options));
   }),
 );
@@ -105,22 +91,6 @@ priceListsRouter.get(
   }),
 );
 
-// P1L2: the "Add Style" lookup — a bounded search over the Styles this price
-// list can still add. Gated like adding a line (manage), not like browsing.
-priceListsRouter.get(
-  '/:id/style-options',
-  canManagePriceLists,
-  asyncHandler(async (req, res) => {
-    const filters = priceListStyleCandidatesQuerySchema.parse(req.query);
-    const options = await priceListsService.listPriceListStyleCandidates(
-      req.user!,
-      req.params.id! as string,
-      filters,
-    );
-    res.status(200).json(successResponse(options));
-  }),
-);
-
 priceListsRouter.patch(
   '/:id',
   canManagePriceLists,
@@ -130,44 +100,6 @@ priceListsRouter.patch(
       req.user!,
       req.params.id! as string,
       input,
-    );
-    res.status(200).json(successResponse(priceList));
-  }),
-);
-
-priceListsRouter.post(
-  '/:id/lines',
-  canManagePriceLists,
-  asyncHandler(async (req, res) => {
-    const input = createPriceListLineSchema.parse(req.body);
-    const priceList = await priceListsService.addPriceListLine(req.user!, req.params.id! as string, input);
-    res.status(201).json(successResponse(priceList));
-  }),
-);
-
-priceListsRouter.patch(
-  '/:id/lines/:lineId',
-  canManagePriceLists,
-  asyncHandler(async (req, res) => {
-    const input = updatePriceListLineSchema.parse(req.body);
-    const priceList = await priceListsService.updatePriceListLine(
-      req.user!,
-      req.params.id! as string,
-      req.params.lineId! as string,
-      input,
-    );
-    res.status(200).json(successResponse(priceList));
-  }),
-);
-
-priceListsRouter.delete(
-  '/:id/lines/:lineId',
-  canManagePriceLists,
-  asyncHandler(async (req, res) => {
-    const priceList = await priceListsService.removePriceListLine(
-      req.user!,
-      req.params.id! as string,
-      req.params.lineId! as string,
     );
     res.status(200).json(successResponse(priceList));
   }),

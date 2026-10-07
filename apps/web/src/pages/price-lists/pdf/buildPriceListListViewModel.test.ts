@@ -8,10 +8,10 @@ function makePriceList(overrides: Partial<PriceListSummary> = {}): PriceListSumm
     code: 'PL-2026-000001',
     name: 'FY 2026 Prices',
     distributor: { id: 'dist-1', code: 'DIST-1', name: 'Acme Distributors', status: 'ACTIVE' },
+    percentageOfMrp: 60,
     effectiveFrom: '2026-01-01',
     effectiveTo: null,
     status: 'ACTIVE',
-    lineCount: 3,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-02T00:00:00.000Z',
     ...overrides,
@@ -51,13 +51,22 @@ describe('buildPriceListListViewModel', () => {
     expect(vm.rows[0]!.effectiveTo).toMatch(/2026/);
   });
 
-  it('preserves a zero line count rather than treating it as missing', () => {
+  it('formats the MRP percentage as a two-decimal-place string with a percent sign', () => {
     const vm = buildPriceListListViewModel(
-      [makePriceList({ lineCount: 0 })],
+      [makePriceList({ percentageOfMrp: 57.5 })],
       {},
       { generatedAt: '2026-09-12T00:00:00Z' },
     );
-    expect(vm.rows[0]!.lineCount).toBe(0);
+    expect(vm.rows[0]!.percentageOfMrp).toBe('57.50%');
+  });
+
+  it('preserves a zero percentage rather than treating it as missing', () => {
+    const vm = buildPriceListListViewModel(
+      [makePriceList({ percentageOfMrp: 0 })],
+      {},
+      { generatedAt: '2026-09-12T00:00:00Z' },
+    );
+    expect(vm.rows[0]!.percentageOfMrp).toBe('0.00%');
   });
 
   it('maps status through the shared display labels (EXPIRED -> Retired)', () => {
@@ -109,7 +118,7 @@ describe('buildPriceListListViewModel', () => {
     const vm = buildPriceListListViewModel([tainted], {}, { generatedAt: '2026-09-12T00:00:00Z' });
 
     expect(Object.keys(vm.rows[0]!).sort()).toEqual(
-      ['id', 'code', 'name', 'distributorName', 'effectiveFrom', 'effectiveTo', 'lineCount', 'status'].sort(),
+      ['id', 'code', 'name', 'distributorName', 'percentageOfMrp', 'effectiveFrom', 'effectiveTo', 'status'].sort(),
     );
   });
 });
