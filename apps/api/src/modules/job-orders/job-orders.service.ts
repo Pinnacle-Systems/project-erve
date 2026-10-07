@@ -2758,13 +2758,18 @@ export async function undoCompletedProductionStage(
   }
 
   const isFinalStage = targetStage.id === stages[stages.length - 1]?.id;
-  if (isFinalStage) {
-    const finalActivity = jobOrder.processFlowVersion.stages.find(isProcessFlowFinalActivity);
-    const hasFinalQualityWork = finalActivity
-      ? jobOrder.finalQualityBatches.some(
-          (batch) => batch.processFlowActivityId === finalActivity.id && batch.disposition !== 'CANCELLED',
-        )
-      : false;
+  const finalActivity = isFinalStage
+    ? jobOrder.processFlowVersion.stages.find(isProcessFlowFinalActivity)
+    : undefined;
+  // Fast, pre-transaction fail on the stale snapshot already fetched above —
+  // purely a responsiveness shortcut. The authoritative re-check happens
+  // inside the transaction below, under the same advisory lock
+  // startFinalPhysicalBatch uses to create a batch, so this can't be
+  // bypassed by a batch created concurrently with this request.
+  if (finalActivity) {
+    const hasFinalQualityWork = jobOrder.finalQualityBatches.some(
+      (batch) => batch.processFlowActivityId === finalActivity.id && batch.disposition !== 'CANCELLED',
+    );
     if (hasFinalQualityWork) {
       throw HttpError.conflict(
         'Cannot undo this stage: Final QA has already recorded batches against it. Resolve this through the QA workflow instead.',
@@ -2775,6 +2780,24 @@ export async function undoCompletedProductionStage(
   await prisma.$transaction(async (tx) => {
     if (await beginIdempotentOperation(tx, actor.id, id, 'UNDO_STAGE', idempotencyKey, hash)) return;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`job-order-${id}`}))`;
+    // quality-executions.service.ts's startFinalPhysicalBatch takes this
+    // same 'qa-accounting:{jobOrderId}' lock before creating a Final QA
+    // batch — taking it here too, before the fresh re-read below, closes
+    // the race where a batch is created in the window between the
+    // pre-transaction check above and this transaction's own writes:
+    // whichever side acquires the lock first commits (or fails) before the
+    // other can even read.
+    if (finalActivity) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qa-accounting:${id}`}))`;
+      const freshBatchCount = await tx.finalQualityBatch.count({
+        where: { jobOrderId: id, processFlowActivityId: finalActivity.id, disposition: { not: 'CANCELLED' } },
+      });
+      if (freshBatchCount > 0) {
+        throw HttpError.conflict(
+          'Cannot undo this stage: Final QA has already recorded batches against it. Resolve this through the QA workflow instead.',
+        );
+      }
+    }
     const current = await tx.jobOrder.findUnique({
       where: { id },
       select: { version: true, status: true, productionCompletedAt: true },
