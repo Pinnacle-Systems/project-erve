@@ -2,6 +2,7 @@ import type { AuthUser } from '@erve/types';
 import type { Role } from '@erve/types';
 import {
   canMutateJobOrderProduction,
+  canUndoJobOrderProductionStage,
   canMutateFactoryDispatch,
   canViewFactoryDispatch,
   canConfirmPackingAudit,
@@ -242,6 +243,15 @@ export const canCreateJobOrders = (user: AuthUser | null | undefined) =>
 
 export const canManageJobOrderProduction = (user: AuthUser | null | undefined) =>
   Boolean(user && canMutateJobOrderProduction(user));
+
+// DEMO-010: whether this user's role may even attempt to undo a completed
+// production stage (ADMIN or MERCHANDISER, never FACTORY_USER). The
+// MERCHANDISER-only 24-hour window is a separate, time-dependent check made
+// directly against user.roles where the Undo action is rendered — this
+// wrapper only answers "is this role eligible at all", mirroring the API's
+// JOB_ORDER_STAGE_UNDO_ROLES/canUndoJobOrderProductionStage.
+export const canUndoProductionStage = (user: AuthUser | null | undefined) =>
+  Boolean(user && canUndoJobOrderProductionStage(user));
 
 export const canFilterJobOrdersByFactory = (user: AuthUser | null | undefined) =>
   hasRole(user, JOB_ORDER_FACTORY_FILTER_ROLES);

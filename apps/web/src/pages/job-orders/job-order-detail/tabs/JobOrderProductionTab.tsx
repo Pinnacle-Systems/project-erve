@@ -9,15 +9,26 @@ import {
   formatPreparedQuantity,
   formatPreparedVariance,
 } from '@erve/app-components';
-import { Button, Textarea, TextField, ValidationMessage } from '@erve/primitives';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Textarea,
+  TextField,
+  ValidationMessage,
+} from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
 import { apiClient } from '../../../../lib/api-client.js';
-import { canManageJobOrderProduction } from '../../../../auth/permissions.js';
+import { canManageJobOrderProduction, canUndoProductionStage } from '../../../../auth/permissions.js';
 import type { Style } from '../../../master-data/types.js';
-import type { JobOrder } from '../../types.js';
+import type { JobOrder, JobOrderStage } from '../../types.js';
 import { ProductionStageStepper } from '../../ProductionStageStepper.js';
-import { STAGE_LABELS } from '../../job-order-ui.js';
+import { STAGE_LABELS, formatDateTime } from '../../job-order-ui.js';
 import { mutationErrorMessage, type FlatSize } from '../job-order-detail-utils.js';
 
 export interface JobOrderProductionTabDisclaimer {
@@ -74,6 +85,15 @@ export function JobOrderProductionTab({
   const [markCompleteDialogOpen, setMarkCompleteDialogOpen] = useState(false);
   const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
   const [planDrafts, setPlanDrafts] = useState<Record<string, number>>({});
+  const [undoStage, setUndoStage] = useState<JobOrderStage | null>(null);
+  const [undoReason, setUndoReason] = useState('');
+  // Date.now() may not be called directly during render (react-hooks/purity)
+  // — capture it once per mount instead, matching SessionDialogs.tsx's own
+  // lazy useState(() => Date.now()) pattern. A page left open past the
+  // 24-hour Merchandiser window won't hide the button until the next
+  // reload/remount; the backend enforces the window authoritatively
+  // regardless, so this is a display-only staleness, not a security gap.
+  const [undoEligibilityCheckedAt] = useState(() => Date.now());
 
   const disclaimerMutation = useMutation({
     mutationFn: async () =>
@@ -103,6 +123,20 @@ export function JobOrderProductionTab({
         { headers: { 'Idempotency-Key': `${jobOrder.id}:start-stage:${stageStatusId}:${jobOrder.version}` } },
       ),
     onSuccess: invalidate,
+  });
+
+  const undoStageMutation = useMutation({
+    mutationFn: async ({ stageStatusId, reason }: { stageStatusId: string; reason: string }) =>
+      apiClient.post<ApiSuccessResponse<JobOrder>>(
+        `/job-orders/${jobOrder.id}/actions/undo-stage`,
+        { stageStatusId, expectedVersion: jobOrder.version, reason },
+        { headers: { 'Idempotency-Key': `${jobOrder.id}:undo-stage:${stageStatusId}:${jobOrder.version}` } },
+      ),
+    onSuccess: () => {
+      setUndoStage(null);
+      setUndoReason('');
+      invalidate();
+    },
   });
 
   const markProductionCompleteMutation = useMutation({
@@ -165,6 +199,31 @@ export function JobOrderProductionTab({
   // — a live in-progress stage must be stopped/completed first.
   const anyProductionStageInProgress = jobOrder.stages.some((stage) => stage.status === 'IN_PROGRESS');
   const canMarkProductionComplete = jobOrder.status === 'IN_PRODUCTION' && canManageJobOrders;
+
+  // DEMO-010: the Undo action is only ever offered for the single
+  // most-recently-completed stage (jobOrder.stages is sequence-ordered), and
+  // only while the stage after it has not started — mirrors the server's own
+  // eligibility rule exactly (job-orders.service.ts's
+  // undoCompletedProductionStage) so the button never appears somewhere the
+  // backend would reject anyway. The 24-hour Merchandiser-only window is
+  // read directly off this stage's completedAt; Admin has no such limit.
+  const isAdminUser = Boolean(user?.roles.includes('ADMIN'));
+  const completedStages = jobOrder.stages.filter((stage) => stage.status === 'COMPLETED');
+  const lastCompletedStage = completedStages.at(-1);
+  const stageAfterLastCompleted = lastCompletedStage
+    ? jobOrder.stages.find((stage) => stage.stageSequence === lastCompletedStage.stageSequence + 1)
+    : undefined;
+  const undoNextStageNotStarted = !stageAfterLastCompleted || stageAfterLastCompleted.status === 'NOT_STARTED';
+  const undoWithinMerchandiserWindow =
+    isAdminUser ||
+    !lastCompletedStage?.completedAt ||
+    undoEligibilityCheckedAt - new Date(lastCompletedStage.completedAt).getTime() <= 24 * 60 * 60 * 1000;
+  const canOfferUndo =
+    canUndoProductionStage(user) &&
+    Boolean(lastCompletedStage) &&
+    undoNextStageNotStarted &&
+    undoWithinMerchandiserWindow &&
+    ['IN_PRODUCTION', 'PRODUCTION_COMPLETE'].includes(jobOrder.status);
 
   const styleDetailQuery = useQuery({
     queryKey: ['style', jobOrder.lines[0]?.styleId],
@@ -316,6 +375,41 @@ export function JobOrderProductionTab({
           currentStageId={nextStage?.id}
           isPreparedQuantitiesUnlocked={isPreparedQuantitiesUnlocked}
         />
+      )}
+
+      {canOfferUndo && lastCompletedStage && (
+        <Panel title="Undo completed stage">
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-muted-foreground">
+              {lastCompletedStage.stageNameSnapshot} was completed
+              {formatDateTime(lastCompletedStage.completedAt)
+                ? ` on ${formatDateTime(lastCompletedStage.completedAt)}`
+                : ''}
+              {lastCompletedStage.completedBy?.name ? ` by ${lastCompletedStage.completedBy.name}` : ''}.
+              {!isAdminUser &&
+                ' As Merchandising, this can only be undone within 24 hours of completion.'}
+            </p>
+            <div>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setUndoStage(lastCompletedStage);
+                  setUndoReason('');
+                }}
+              >
+                Undo {lastCompletedStage.stageNameSnapshot}
+              </Button>
+            </div>
+            {undoStageMutation.isError && (
+              <ValidationMessage tone="error">
+                {mutationErrorMessage(
+                  undoStageMutation.error,
+                  `Unable to undo ${lastCompletedStage.stageNameSnapshot}.`,
+                )}
+              </ValidationMessage>
+            )}
+          </div>
+        </Panel>
       )}
 
       {['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) &&
@@ -618,6 +712,49 @@ export function JobOrderProductionTab({
         loading={markProductionCompleteMutation.isPending}
         onConfirm={() => markProductionCompleteMutation.mutate()}
       />
+
+      <Dialog
+        open={undoStage !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setUndoStage(null);
+            setUndoReason('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Undo {undoStage?.stageNameSnapshot}?</DialogTitle>
+            <DialogDescription>
+              This reopens {undoStage?.stageNameSnapshot} and reverses its completion. A reason is
+              required and is recorded in this Job Order&apos;s audit history.
+            </DialogDescription>
+          </DialogHeader>
+          <TextField
+            label="Reason"
+            width="fill"
+            value={undoReason}
+            onChange={(event) => setUndoReason(event.target.value)}
+          />
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setUndoStage(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              loading={undoStageMutation.isPending}
+              disabled={!undoReason.trim()}
+              onClick={() =>
+                undoStage &&
+                undoStageMutation.mutate({ stageStatusId: undoStage.id, reason: undoReason.trim() })
+              }
+            >
+              Undo stage
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

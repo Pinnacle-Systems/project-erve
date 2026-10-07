@@ -283,6 +283,121 @@ describe('JobOrderProductionTab manual Production Complete (Correction 3)', () =
   });
 });
 
+describe('JobOrderProductionTab Undo completed stage (DEMO-010)', () => {
+  // The shared `stage()` fixture stamps a fixed, long-past completedAt
+  // ('2026-07-31T10:00:00Z') — useful on its own for exercising the
+  // Merchandiser 24-hour cutoff against the real clock without faking time,
+  // but tests that need a stage completed "just now" build their own via
+  // this helper instead.
+  function freshlyCompletedStage(id: string, name: string, sequence: number) {
+    return { ...stage(id, name, sequence, 'COMPLETED'), completedAt: new Date().toISOString() };
+  }
+
+  function findDialogInput(label: string): HTMLInputElement {
+    const match = Array.from(document.body.querySelectorAll('label')).find(
+      (candidate) => candidate.textContent === label,
+    );
+    if (!match) throw new Error(`No dialog field labeled "${label}"`);
+    const inputId = match.getAttribute('for');
+    const input = inputId ? document.getElementById(inputId) : null;
+    if (!input) throw new Error(`No input for label "${label}"`);
+    return input as HTMLInputElement;
+  }
+
+  it('hides Undo from a Factory-only user even when eligible otherwise', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderProduction('IN_PRODUCTION', [
+      freshlyCompletedStage('stage-1', 'Cutting', 1),
+      stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
+    ]);
+    expect(content(container)).not.toContain('Undo completed stage');
+    expect(
+      Array.from(container.querySelectorAll('button')).some((button) => button.textContent?.includes('Undo')),
+    ).toBe(false);
+  });
+
+  it('shows Undo to Merchandiser within 24 hours when the next stage has not started', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderProduction('IN_PRODUCTION', [
+      freshlyCompletedStage('stage-1', 'Cutting', 1),
+      stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
+    ]);
+    const panel = getActiveTabPanel(container);
+    expect(panel.textContent).toContain('Undo completed stage');
+    expect(
+      Array.from(panel.querySelectorAll('button')).some((button) => button.textContent === 'Undo Cutting'),
+    ).toBe(true);
+  });
+
+  it('hides Undo from Merchandiser once more than 24 hours have passed', async () => {
+    authState.roles = ['MERCHANDISER'];
+    // Default `stage()` completedAt is long in the past relative to the
+    // real clock this test runs under.
+    await renderProduction('IN_PRODUCTION', [
+      stage('stage-1', 'Cutting', 1, 'COMPLETED'),
+      stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
+    ]);
+    expect(content(container)).not.toContain('Undo completed stage');
+  });
+
+  it('still shows Undo to Admin after the Merchandiser 24-hour window', async () => {
+    authState.roles = ['ADMIN'];
+    await renderProduction('IN_PRODUCTION', [
+      stage('stage-1', 'Cutting', 1, 'COMPLETED'),
+      stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
+    ]);
+    const panel = getActiveTabPanel(container);
+    expect(panel.textContent).toContain('Undo completed stage');
+  });
+
+  it('hides Undo once the next stage has started', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderProduction('IN_PRODUCTION', [
+      freshlyCompletedStage('stage-1', 'Cutting', 1),
+      stage('stage-2', 'Printing', 2, 'IN_PROGRESS'),
+    ]);
+    expect(content(container)).not.toContain('Undo completed stage');
+  });
+
+  it('requires a reason before the Undo dialog can be submitted, then posts to undo-stage', async () => {
+    authState.roles = ['ADMIN'];
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: mockJobOrder('IN_PRODUCTION', [
+        stage('stage-1', 'Cutting', 1, 'IN_PROGRESS'),
+        stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
+      ]) },
+    });
+    await renderProduction('IN_PRODUCTION', [
+      freshlyCompletedStage('stage-1', 'Cutting', 1),
+      stage('stage-2', 'Printing', 2, 'NOT_STARTED'),
+    ]);
+
+    const trigger = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Undo Cutting',
+    ) as HTMLButtonElement;
+    expect(trigger).toBeDefined();
+    act(() => trigger.click());
+
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Undo stage',
+    ) as HTMLButtonElement;
+    expect(confirm).toBeDefined();
+    expect(confirm.disabled).toBe(true);
+
+    const reasonInput = findDialogInput('Reason');
+    changeInput(reasonInput, 'Cutting defect found');
+    expect(confirm.disabled).toBe(false);
+
+    await act(async () => confirm.click());
+
+    expect(post).toHaveBeenCalledWith(
+      '/job-orders/jo-1/actions/undo-stage',
+      { stageStatusId: 'stage-1', expectedVersion: 1, reason: 'Cutting defect found' },
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+  });
+});
+
 describe('JobOrderProductionTab Production Plan (Phase 2.1)', () => {
   it('renders an editable Production Plan for a DRAFT job order and saves via PATCH .../production-plan', async () => {
     await renderJobOrderDetail(container, root, {
