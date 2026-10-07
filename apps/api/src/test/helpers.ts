@@ -159,6 +159,9 @@ export async function resetDatabase(): Promise<void> {
   await prisma.user.deleteMany();
   await prisma.factory.deleteMany();
   await prisma.distributor.deleteMany();
+  // No model references SellerRegistration yet (AINV-001 is the source
+  // master only) — nothing else needs clearing first.
+  await prisma.sellerRegistration.deleteMany();
 }
 
 export interface CreateTestUserOptions {
@@ -233,6 +236,38 @@ export async function createTestDistributor(overrides?: {
     },
   });
   return { id, code, name };
+}
+
+export async function createTestSellerRegistration(overrides?: {
+  branchCode?: string;
+  legalName?: string;
+  gstin?: string;
+  status?: 'ACTIVE' | 'INACTIVE';
+}): Promise<{ id: string; branchCode: string; legalName: string }> {
+  const id = createId();
+  const branchCode = overrides?.branchCode ?? `BR-${id}`;
+  const legalName = overrides?.legalName ?? 'Test Seller Pvt Ltd';
+  const gstin = overrides?.gstin ?? '27AAAAA0000A1Z5';
+  await prisma.sellerRegistration.create({
+    data: {
+      id,
+      branchCode,
+      legalName,
+      gstin,
+      status: overrides?.status ?? 'ACTIVE',
+      addressLine1: '1 Test Street',
+      city: 'Mumbai',
+      state: 'Maharashtra',
+      stateCode: gstin.slice(0, 2),
+      postalCode: '400001',
+      bankName: 'Test Bank',
+      bankAccountName: legalName,
+      bankAccountNumber: '000111222333',
+      bankIfsc: 'HDFC0001234',
+      bankBranchName: 'Test Branch',
+    },
+  });
+  return { id, branchCode, legalName };
 }
 
 export async function createTestFactory(overrides?: {

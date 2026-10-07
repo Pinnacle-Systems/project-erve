@@ -102,6 +102,35 @@ export interface AdminUserSummary {
 
 export type FactoryUser = DistributorUser;
 
+export interface SellerRegistrationSummary {
+  id: string;
+  branchCode: string;
+  legalName: string;
+  tradeName: string | null;
+  gstin: string;
+  city: string;
+  state: string;
+  status: Status;
+}
+
+export interface SellerRegistration extends SellerRegistrationSummary {
+  einvoiceApplicable: boolean;
+  addressLine1: string;
+  addressLine2: string | null;
+  district: string | null;
+  stateCode: string;
+  postalCode: string;
+  country: string;
+  bankName: string;
+  bankAccountName: string;
+  bankAccountNumber: string;
+  bankIfsc: string;
+  bankBranchName: string;
+  bankAddress: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface StyleImage {
   id: string;
   styleId: string;

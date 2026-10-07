@@ -29,6 +29,7 @@ export type {
   RecordOrigin,
   RoleName,
   SaleOrderStatus,
+  SellerRegistrationStatus,
   SizeStatus,
   SizeType,
   StockAllocationSource,

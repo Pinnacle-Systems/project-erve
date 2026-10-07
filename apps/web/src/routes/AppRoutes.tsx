@@ -9,6 +9,9 @@ import { DistributorListPage } from '../pages/master-data/DistributorListPage.js
 import { FactoryListPage } from '../pages/master-data/FactoryListPage.js';
 import { FactoryDetailPage } from '../pages/master-data/FactoryDetailPage.js';
 import { FactoryFormPage } from '../pages/master-data/FactoryFormPage.js';
+import { SellerRegistrationListPage } from '../pages/master-data/SellerRegistrationListPage.js';
+import { SellerRegistrationDetailPage } from '../pages/master-data/SellerRegistrationDetailPage.js';
+import { SellerRegistrationFormPage } from '../pages/master-data/SellerRegistrationFormPage.js';
 import { ProcessFlowDetailPage } from '../pages/master-data/ProcessFlowDetailPage.js';
 import { ProcessFlowCreatePage } from '../pages/master-data/ProcessFlowCreatePage.js';
 import { ProcessFlowListPage } from '../pages/master-data/ProcessFlowListPage.js';
@@ -80,6 +83,8 @@ import {
   DISPATCH_ORDER_VIEW_ROLES,
   SIZE_MANAGE_ROLES,
   SEASON_MANAGE_ROLES,
+  SELLER_REGISTRATION_MANAGE_ROLES,
+  SELLER_REGISTRATION_VIEW_ROLES,
   STYLE_MANAGE_ROLES,
   STYLE_VIEW_ROLES,
   USER_MANAGE_ROLES,
@@ -259,6 +264,38 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={DISTRIBUTOR_MANAGE_ROLES}>
               <DistributorFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="seller-registrations"
+          element={
+            <RoleRoute allowed={SELLER_REGISTRATION_VIEW_ROLES}>
+              <SellerRegistrationListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="seller-registrations/new"
+          element={
+            <RoleRoute allowed={SELLER_REGISTRATION_MANAGE_ROLES}>
+              <SellerRegistrationFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="seller-registrations/:id"
+          element={
+            <RoleRoute allowed={SELLER_REGISTRATION_VIEW_ROLES}>
+              <SellerRegistrationDetailPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="seller-registrations/:id/edit"
+          element={
+            <RoleRoute allowed={SELLER_REGISTRATION_MANAGE_ROLES}>
+              <SellerRegistrationFormPage />
             </RoleRoute>
           }
         />
