@@ -4,6 +4,7 @@ import {
   canViewDistributorSalesReport,
   canViewSaleOrReturnPosition,
 } from '@erve/shared';
+import type { PaginatedResponse } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -18,6 +19,12 @@ import {
   getReturnedQuantityForPair,
   saleOrReturnPositionLockKey,
 } from './sale-or-return-quantities.js';
+import {
+  listSaleOrReturnPositionsPage,
+  type SaleOrReturnPositionRow,
+} from './sale-or-return-position-query.service.js';
+
+export type { SaleOrReturnPositionRow };
 
 function isBroadViewer(actor: CurrentUser): boolean {
   return actor.roles.some((r) => r === 'ADMIN' || r === 'MERCHANDISER' || r === 'SENIOR_MANAGEMENT' || r === 'ACCOUNTANT');
@@ -25,7 +32,11 @@ function isBroadViewer(actor: CurrentUser): boolean {
 
 function resolveViewerDistributorScope(actor: CurrentUser, requestedDistributorId?: string): string | undefined {
   if (isBroadViewer(actor)) return requestedDistributorId;
-  return getSoleDistributorId(actor);
+  const soleDistributorId = getSoleDistributorId(actor);
+  if (requestedDistributorId && requestedDistributorId !== soleDistributorId) {
+    throw HttpError.forbidden('You do not have permission to view data for another distributor');
+  }
+  return soleDistributorId;
 }
 
 // ---------------------------------------------------------------------------
@@ -45,191 +56,34 @@ function resolveViewerDistributorScope(actor: CurrentUser, requestedDistributorI
 // invoice. This deliberately does not touch StockAllocation at all: once
 // physically dispatched, stock has already left the central QA/allocation
 // availability model (see the schema module doc).
+//
+// PAG-P1-07: Operational list reads delegate to the dedicated
+// `sale-or-return-position-query.service.ts` for database-side candidate
+// eligibility, grouping, component aggregation and keyset pagination.
 // ---------------------------------------------------------------------------
 
-export interface SaleOrReturnPositionRow {
-  erveDispatchId: string;
-  erveDispatchNumber: string;
-  dispatchDate: string;
-  saleOrderId: string;
-  saleOrderNumber: string;
-  distributor: { id: string; code: string; name: string };
-  saleOrderLineId: string;
-  styleNumber: string;
-  styleName: string;
-  sizeCode: string;
-  sizeLabel: string;
-  dispatchedQuantity: number;
-  receivedQuantity: number;
-  actualSoldQuantity: number;
-  returnedQuantity: number;
-  approvedAwaitingReceiptQuantity: number;
-  pendingRequestedQuantity: number;
-  remainingWithDistributor: number;
-  returnableQuantity: number;
+export interface ListSaleOrReturnPositionsFilters {
+  distributorId?: string;
+  onlyWithRemaining?: boolean;
+  cursor?: string;
+  limit?: number;
 }
 
 export async function listSaleOrReturnPositions(
   actor: CurrentUser,
-  filters: { distributorId?: string; onlyWithRemaining?: boolean },
-): Promise<SaleOrReturnPositionRow[]> {
+  filters: ListSaleOrReturnPositionsFilters = {},
+): Promise<PaginatedResponse<SaleOrReturnPositionRow>> {
   if (!canViewSaleOrReturnPosition(actor)) {
     throw HttpError.forbidden('You do not have permission to view Sale-or-Return positions');
   }
   const distributorId = resolveViewerDistributorScope(actor, filters.distributorId);
 
-  // Phase 6: sourced from consolidated carton contents (FactoryPackingCartonLine),
-  // never FactoryDispatchLine — a source FactoryDispatch may contribute
-  // cartons to several destination-specific Erve Packing Lists, so its
-  // whole-batch FactoryDispatchLine total is no longer a safe basis for
-  // "which Erve Dispatch was this line actually dispatched on."
-  const lines = await prisma.factoryPackingCartonLine.findMany({
-    where: {
-      // Correction 8: purchaseMode is resolved per line via its own
-      // destination's Distributor-group snapshot, never a single
-      // order-level value — a Dispatch Order may mix Distributors/Purchase
-      // Modes.
-      saleOrderLine: {
-        destination: {
-          saleOrderDistributor: {
-            purchaseMode: 'SALE_RETURN',
-            // RPT1 6.11: pushed into the DB query rather than filtered in
-            // the JS loop below — was `if (distributorId && distributor.id
-            // !== distributorId) continue`, fetching every SALE_RETURN
-            // line for every Distributor even when scoped to one.
-            ...(distributorId ? { distributorId } : {}),
-          },
-        },
-      },
-      carton: { retiredAt: null },
-    },
-    select: {
-      quantity: true,
-      saleOrderLine: {
-        select: {
-          id: true,
-          saleOrderId: true,
-          saleOrder: { select: { saleOrderNumber: true } },
-          destination: { select: { saleOrderDistributor: { select: { distributor: { select: { id: true, code: true, name: true } } } } } },
-          style: { select: { styleNumber: true, styleName: true } },
-          size: { select: { code: true, label: true } },
-        },
-      },
-      carton: {
-        select: {
-          ervePackingList: {
-            select: {
-              dispatch: { select: { id: true, erveDispatchNumber: true, dispatchDate: true } },
-            },
-          },
-        },
-      },
-    },
+  return listSaleOrReturnPositionsPage({
+    distributorId,
+    onlyWithRemaining: filters.onlyWithRemaining,
+    cursor: filters.cursor,
+    limit: filters.limit ?? 25,
   });
-
-  const grouped = new Map<string, SaleOrReturnPositionRow>();
-  for (const line of lines) {
-    const dispatch = line.carton.ervePackingList?.dispatch;
-    if (!dispatch) continue; // packed but not yet Erve-dispatched — no consignment position exists yet
-    const so = line.saleOrderLine.saleOrder;
-    const distributor = line.saleOrderLine.destination.saleOrderDistributor.distributor;
-
-    const key = `${dispatch.id}:${line.saleOrderLine.id}`;
-    const existing = grouped.get(key);
-    if (existing) {
-      existing.dispatchedQuantity += line.quantity;
-      continue;
-    }
-    const sol = line.saleOrderLine;
-    grouped.set(key, {
-      erveDispatchId: dispatch.id,
-      erveDispatchNumber: dispatch.erveDispatchNumber,
-      dispatchDate: dispatch.dispatchDate.toISOString(),
-      saleOrderId: line.saleOrderLine.saleOrderId,
-      saleOrderNumber: so.saleOrderNumber,
-      distributor,
-      saleOrderLineId: line.saleOrderLine.id,
-      styleNumber: sol.style.styleNumber,
-      styleName: sol.style.styleName,
-      sizeCode: sol.size.code,
-      sizeLabel: sol.size.label,
-      dispatchedQuantity: line.quantity,
-      receivedQuantity: 0,
-      actualSoldQuantity: 0,
-      returnedQuantity: 0,
-      approvedAwaitingReceiptQuantity: 0,
-      pendingRequestedQuantity: 0,
-      remainingWithDistributor: 0,
-      returnableQuantity: 0,
-    });
-  }
-
-  const keys = [...grouped.keys()];
-  if (keys.length > 0) {
-    const orClause = keys.map((key) => {
-      const [erveDispatchId, saleOrderLineId] = key.split(':') as [string, string];
-      return { erveDispatchId, saleOrderLineId };
-    });
-
-    const [receivedSums, actualSoldSums, returnedSums, approvedSums, pendingSums] = await Promise.all([
-      prisma.erveDispatchDeliveryLine.groupBy({
-        by: ['erveDispatchId', 'saleOrderLineId'],
-        where: { OR: orClause },
-        _sum: { receivedQuantity: true },
-      }),
-      prisma.distributorSalesReportLine.groupBy({
-        by: ['erveDispatchId', 'saleOrderLineId'],
-        where: { OR: orClause },
-        _sum: { quantitySold: true },
-      }),
-      prisma.distributorReturnLine.groupBy({
-        by: ['erveDispatchId', 'saleOrderLineId'],
-        where: { OR: orClause, distributorReturn: { status: 'RECEIVED' } },
-        _sum: { receivedQuantity: true },
-      }),
-      prisma.distributorReturnLine.groupBy({
-        by: ['erveDispatchId', 'saleOrderLineId'],
-        where: { OR: orClause, distributorReturn: { status: 'APPROVED' } },
-        _sum: { approvedQuantity: true },
-      }),
-      prisma.distributorReturnLine.groupBy({
-        by: ['erveDispatchId', 'saleOrderLineId'],
-        where: { OR: orClause, distributorReturn: { status: 'SUBMITTED' } },
-        _sum: { requestedQuantity: true },
-      }),
-    ]);
-    for (const sum of receivedSums) {
-      const row = grouped.get(`${sum.erveDispatchId}:${sum.saleOrderLineId}`);
-      if (row) row.receivedQuantity = sum._sum.receivedQuantity ?? 0;
-    }
-    for (const sum of actualSoldSums) {
-      const row = grouped.get(`${sum.erveDispatchId}:${sum.saleOrderLineId}`);
-      if (row) row.actualSoldQuantity = sum._sum.quantitySold ?? 0;
-    }
-    for (const sum of returnedSums) {
-      const row = grouped.get(`${sum.erveDispatchId}:${sum.saleOrderLineId}`);
-      if (row) row.returnedQuantity = sum._sum.receivedQuantity ?? 0;
-    }
-    for (const sum of approvedSums) {
-      const row = grouped.get(`${sum.erveDispatchId}:${sum.saleOrderLineId}`);
-      if (row) row.approvedAwaitingReceiptQuantity = sum._sum.approvedQuantity ?? 0;
-    }
-    for (const sum of pendingSums) {
-      const row = grouped.get(`${sum.erveDispatchId}:${sum.saleOrderLineId}`);
-      if (row) row.pendingRequestedQuantity = sum._sum.requestedQuantity ?? 0;
-    }
-  }
-
-  const rows = [...grouped.values()].map((row) => {
-    const availability = computeAvailability(row);
-    return {
-      ...row,
-      remainingWithDistributor: availability.remainingWithDistributor,
-      returnableQuantity: availability.availableForNewReturn,
-    };
-  });
-
-  return filters.onlyWithRemaining ? rows.filter((row) => row.remainingWithDistributor > 0) : rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,18 +105,20 @@ const reportInclude = {
       },
     },
   },
-} satisfies Prisma.DistributorSalesReportInclude;
+} as const;
 
-type ReportRecord = Prisma.DistributorSalesReportGetPayload<{ include: typeof reportInclude }>;
+type DistributorSalesReportRecord = Prisma.DistributorSalesReportGetPayload<{
+  include: typeof reportInclude;
+}>;
 
-function toReportView(record: ReportRecord) {
+function toReportView(record: DistributorSalesReportRecord) {
   return {
     id: record.id,
     distributor: record.distributor,
-    reportDate: record.reportDate.toISOString(),
+    reportDate: record.reportDate.toISOString().slice(0, 10),
     remarks: record.remarks,
     submittedBy: record.submittedBy,
-    submittedAt: record.submittedAt.toISOString(),
+    createdAt: record.createdAt.toISOString(),
     lines: record.lines.map((line) => ({
       id: line.id,
       erveDispatch: line.erveDispatch,
