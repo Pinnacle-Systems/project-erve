@@ -10,7 +10,7 @@ export type OverallVerdict = 'READY' | 'READY WITH CONDITIONS' | 'BLOCKED';
 export type TargetEnvironment = 'LOCAL' | 'DEV' | 'STAGING' | 'PRODUCTION' | 'TEST';
 
 export interface AuthoritativeExternalRecord {
-  /** Canonical invoice number, e.g. "EI/26-27/0042" */
+  /** Invoice number, e.g. "EI/26-27/0042" or "EI/26-27/10000" */
   invoiceNumber: string;
   /** ISO date or calendar date string */
   invoiceDate?: string;
@@ -21,13 +21,15 @@ export interface AuthoritativeExternalRecord {
 }
 
 export interface ExternalSourceManifest {
-  /** Name of source accounting system (e.g., "Tally Prime", "Physical Register") */
+  /** Name of source accounting system (e.g., "Tally Prime ERP", "Physical Register Book 2") */
   systemName: string;
   /** ISO timestamp when the source data was extracted */
   extractedAt: string;
-  /** Name/email of the verifying Accountant */
+  /** Name or email of the verifying Accountant */
   verifiedBy: string;
-  /** Notes or commentary from verification */
+  /** Whether the billing freeze on the external system was verified active */
+  freezeConfirmed?: boolean;
+  /** Additional audit commentary or filing reference */
   notes?: string;
 }
 
@@ -66,6 +68,17 @@ export interface PreflightHighWaterMarkSummary {
   verifiedHighWaterMark: number | null;
   nextProposedSerial: number | null;
   nextProposedInvoiceNumber: string | null;
+  serialWidth: number | null;
+  unresolvedWidthPolicy: boolean;
+}
+
+export interface PreflightReadinessBreakdown {
+  /** Whether bounded preparation deliverables (INV-012) are verified */
+  isPreparationReady: boolean;
+  /** Whether database schema and enum prerequisites (INV-006) are deployed */
+  isSchemaConfigReady: boolean;
+  /** Whether production live cutover can safely execute right now */
+  isProductionCutoverReady: boolean;
 }
 
 export interface PreflightReport {
@@ -73,6 +86,7 @@ export interface PreflightReport {
   environment: TargetEnvironment;
   targetFinancialYear: string;
   verdict: OverallVerdict;
+  readinessBreakdown: PreflightReadinessBreakdown;
   summary: {
     passed: number;
     warned: number;

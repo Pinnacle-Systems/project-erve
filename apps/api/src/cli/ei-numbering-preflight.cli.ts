@@ -100,6 +100,17 @@ function printFormattedReport(report: PreflightReport): void {
   );
   console.log(`Next Proposed Number: ${report.highWaterMark.nextProposedInvoiceNumber ?? 'N/A'}`);
   console.log('----------------------------------------------------------------------');
+  console.log('READINESS BREAKDOWN:');
+  console.log(
+    `  INV-012 Preparation:       ${report.readinessBreakdown.isPreparationReady ? 'COMPLETE' : 'INCOMPLETE'}`,
+  );
+  console.log(
+    `  Schema / Config (INV-006): ${report.readinessBreakdown.isSchemaConfigReady ? 'READY' : 'PENDING MIGRATION'}`,
+  );
+  console.log(
+    `  Production Cutover:        ${report.readinessBreakdown.isProductionCutoverReady ? 'READY FOR ACTIVATION' : 'BLOCKED / NOT READY'}`,
+  );
+  console.log('----------------------------------------------------------------------');
   console.log('DIAGNOSTIC CHECKS:');
   console.log('----------------------------------------------------------------------');
 

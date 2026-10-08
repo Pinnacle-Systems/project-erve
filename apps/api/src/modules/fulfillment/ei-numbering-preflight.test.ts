@@ -20,15 +20,28 @@ describe('parseCanonicalInvoiceNumber', () => {
     expect(result.isWellFormed).toBe(true);
     expect(result.fyCompactCode).toBe('26-27');
     expect(result.serial).toBe(42);
+    expect(result.digitCount).toBe(4);
     expect(result.source).toBe('EXTERNAL_REGISTER');
   });
 
-  it('rejects malformed invoice numbers with fewer or more than 4 digits', () => {
+  it('accepts numbers exceeding 4 digits consistent with shared formatter', () => {
+    const result9999 = parseCanonicalInvoiceNumber('EI/26-27/9999', 'EXTERNAL_REGISTER');
+    expect(result9999.isWellFormed).toBe(true);
+    expect(result9999.serial).toBe(9999);
+    expect(result9999.digitCount).toBe(4);
+
+    const result10000 = parseCanonicalInvoiceNumber('EI/26-27/10000', 'EXTERNAL_REGISTER');
+    expect(result10000.isWellFormed).toBe(true);
+    expect(result10000.serial).toBe(10000);
+    expect(result10000.digitCount).toBe(5);
+  });
+
+  it('rejects malformed invoice numbers with fewer than 4 digits', () => {
     expect(parseCanonicalInvoiceNumber('EI/26-27/1', 'EXTERNAL_REGISTER').isWellFormed).toBe(false);
-    expect(parseCanonicalInvoiceNumber('EI/26-27/001', 'EXTERNAL_REGISTER').isWellFormed).toBe(
+    expect(parseCanonicalInvoiceNumber('EI/26-27/01', 'EXTERNAL_REGISTER').isWellFormed).toBe(
       false,
     );
-    expect(parseCanonicalInvoiceNumber('EI/26-27/10000', 'EXTERNAL_REGISTER').isWellFormed).toBe(
+    expect(parseCanonicalInvoiceNumber('EI/26-27/001', 'EXTERNAL_REGISTER').isWellFormed).toBe(
       false,
     );
   });
@@ -70,6 +83,9 @@ describe('runEiNumberingPreflight Diagnostics', () => {
     expect(report.verdict).toBe('READY WITH CONDITIONS');
     expect(report.summary.blocked).toBe(0);
     expect(report.summary.warned).toBeGreaterThan(0);
+    expect(report.readinessBreakdown.isPreparationReady).toBe(true);
+    expect(report.readinessBreakdown.isSchemaConfigReady).toBe(false); // TAX_INVOICE enum not yet in schema
+    expect(report.readinessBreakdown.isProductionCutoverReady).toBe(false);
     expect(report.highWaterMark.verifiedHighWaterMark).toBe(3);
     expect(report.highWaterMark.nextProposedSerial).toBe(4);
     expect(report.highWaterMark.nextProposedInvoiceNumber).toBe('EI/26-27/0004');
@@ -84,6 +100,7 @@ describe('runEiNumberingPreflight Diagnostics', () => {
     const report = await runEiNumberingPreflight(prisma, options);
 
     expect(report.verdict).toBe('BLOCKED');
+    expect(report.readinessBreakdown.isPreparationReady).toBe(false);
     const fyCheck = report.checks.find((c) => c.checkId === 'CHK_FINANCIAL_YEAR');
     expect(fyCheck?.status).toBe('BLOCKED');
     expect(fyCheck?.message).toMatch(/not seeded/i);
@@ -140,6 +157,33 @@ describe('runEiNumberingPreflight Diagnostics', () => {
     const sourceCheck = report.checks.find((c) => c.checkId === 'CHK_SOURCE_COMPLETENESS');
     expect(sourceCheck?.status).toBe('BLOCKED');
     expect(sourceCheck?.message).toMatch(/No authoritative external/i);
+  });
+
+  it('distinguishes preparation from production cutover: blocks production when manifest is missing', async () => {
+    const fy = await ensureFinancialYear(prisma, new Date('2026-06-01'));
+
+    // In LOCAL/DEV environment: missing manifest is a warning (acceptable during preparation)
+    const localReport = await runEiNumberingPreflight(prisma, {
+      targetFinancialYearCode: fy.code,
+      externalHighWaterMark: 100,
+      environment: 'LOCAL',
+    });
+    const localSourceCheck = localReport.checks.find(
+      (c) => c.checkId === 'CHK_SOURCE_COMPLETENESS',
+    );
+    expect(localSourceCheck?.status).toBe('WARN');
+
+    // In PRODUCTION environment: missing manifest is strictly BLOCKED
+    const prodReport = await runEiNumberingPreflight(prisma, {
+      targetFinancialYearCode: fy.code,
+      externalHighWaterMark: 100,
+      environment: 'PRODUCTION',
+    });
+    expect(prodReport.verdict).toBe('BLOCKED');
+    const prodSourceCheck = prodReport.checks.find((c) => c.checkId === 'CHK_SOURCE_COMPLETENESS');
+    expect(prodSourceCheck?.status).toBe('BLOCKED');
+    expect(prodSourceCheck?.message).toMatch(/Production cutover is BLOCKED/i);
+    expect(prodReport.readinessBreakdown.isProductionCutoverReady).toBe(false);
   });
 
   it('blocks when malformed invoice numbers are detected in source records', async () => {
@@ -214,37 +258,56 @@ describe('runEiNumberingPreflight Diagnostics', () => {
     expect(report.highWaterMark.nextProposedInvoiceNumber).toBe('EI/26-27/0004');
   });
 
-  it('warns when serial approaches 9000 and blocks when serial exceeds 9999', async () => {
+  it('handles serial capacity: warns at 9000-9999 and blocks when next allocation exceeds 9999 due to unresolved policy', async () => {
     const fy = await ensureFinancialYear(prisma, new Date('2026-06-01'));
 
-    // Approaching capacity (9200)
+    // Case A: Serial 9200 (approaching limit)
     const warnReport = await runEiNumberingPreflight(prisma, {
       targetFinancialYearCode: fy.code,
       externalHighWaterMark: 9200,
       externalSourceManifest: {
         systemName: 'Tally',
-        extractedAt: '2026-10-08',
+        extractedAt: '2026-10-08T10:00:00.000Z',
         verifiedBy: 'tester',
       },
     });
     const warnCapCheck = warnReport.checks.find((c) => c.checkId === 'CHK_SERIAL_CAPACITY');
     expect(warnCapCheck?.status).toBe('WARN');
     expect(warnCapCheck?.message).toMatch(/approaching 4-digit capacity limit/i);
+    expect(warnReport.highWaterMark.nextProposedSerial).toBe(9201);
+    expect(warnReport.highWaterMark.unresolvedWidthPolicy).toBe(false);
 
-    // Exceeding capacity (10005)
-    const blockReport = await runEiNumberingPreflight(prisma, {
+    // Case B: Serial 9999 (next allocation is 10000 -> 5 digits!)
+    const at9999Report = await runEiNumberingPreflight(prisma, {
       targetFinancialYearCode: fy.code,
-      externalHighWaterMark: 10005,
+      externalHighWaterMark: 9999,
       externalSourceManifest: {
         systemName: 'Tally',
-        extractedAt: '2026-10-08',
+        extractedAt: '2026-10-08T10:00:00.000Z',
         verifiedBy: 'tester',
       },
     });
-    expect(blockReport.verdict).toBe('BLOCKED');
-    const blockCapCheck = blockReport.checks.find((c) => c.checkId === 'CHK_SERIAL_CAPACITY');
-    expect(blockCapCheck?.status).toBe('BLOCKED');
-    expect(blockCapCheck?.message).toMatch(/exceeds the canonical 4-digit serial capacity/i);
+    expect(at9999Report.verdict).toBe('BLOCKED');
+    expect(at9999Report.highWaterMark.nextProposedSerial).toBe(10000);
+    expect(at9999Report.highWaterMark.nextProposedInvoiceNumber).toBe('EI/26-27/10000');
+    expect(at9999Report.highWaterMark.unresolvedWidthPolicy).toBe(true);
+    const at9999CapCheck = at9999Report.checks.find((c) => c.checkId === 'CHK_SERIAL_CAPACITY');
+    expect(at9999CapCheck?.status).toBe('BLOCKED');
+    expect(at9999CapCheck?.message).toMatch(/exceeds 4 digits/i);
+
+    // Case C: Serial 10000 (already at 5 digits)
+    const at10000Report = await runEiNumberingPreflight(prisma, {
+      targetFinancialYearCode: fy.code,
+      externalHighWaterMark: 10000,
+      externalSourceManifest: {
+        systemName: 'Tally',
+        extractedAt: '2026-10-08T10:00:00.000Z',
+        verifiedBy: 'tester',
+      },
+    });
+    expect(at10000Report.verdict).toBe('BLOCKED');
+    expect(at10000Report.highWaterMark.nextProposedSerial).toBe(10001);
+    expect(at10000Report.highWaterMark.unresolvedWidthPolicy).toBe(true);
   });
 
   it('guarantees zero persistent mutations and is strictly idempotent', async () => {
@@ -255,7 +318,7 @@ describe('runEiNumberingPreflight Diagnostics', () => {
       externalHighWaterMark: 150,
       externalSourceManifest: {
         systemName: 'Tally',
-        extractedAt: '2026-10-08',
+        extractedAt: '2026-10-08T10:00:00.000Z',
         verifiedBy: 'tester',
       },
     };
@@ -296,7 +359,7 @@ describe('runEiNumberingPreflight Diagnostics', () => {
       ],
       externalSourceManifest: {
         systemName: 'Tally',
-        extractedAt: '2026-10-08',
+        extractedAt: '2026-10-08T10:00:00.000Z',
         verifiedBy: 'tester',
       },
     };
@@ -308,7 +371,7 @@ describe('runEiNumberingPreflight Diagnostics', () => {
     expect(fySepCheck?.message).toMatch(/non-target financial year/i);
   });
 
-  it('warns on cross-system overlap when an invoice exists in both ERVE and external ledger', async () => {
+  it('validates cross-system representation when an invoice exists in both ERVE and external ledger', async () => {
     const fy = await ensureFinancialYear(prisma, new Date('2026-06-01'));
 
     // Insert an ERVE invoice
@@ -327,14 +390,13 @@ describe('runEiNumberingPreflight Diagnostics', () => {
       ],
       externalSourceManifest: {
         systemName: 'Tally',
-        extractedAt: '2026-10-08',
+        extractedAt: '2026-10-08T10:00:00.000Z',
         verifiedBy: 'tester',
       },
     };
 
     const report = await runEiNumberingPreflight(prisma, options);
     const uniqCheck = report.checks.find((c) => c.checkId === 'CHK_UNIQUENESS');
-    // If table insert succeeded, reports WARN for overlap; if mock, passes
     expect(['PASS', 'WARN']).toContain(uniqCheck?.status);
   });
 });
