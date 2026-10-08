@@ -87,13 +87,18 @@ export async function listSellerRegistrationOptions(filters: {
   });
 }
 
-// The single active registration, when there is exactly one — the shape a
-// future Tax Invoice flow can use to auto-select a seller identity without
-// this master ever enforcing a singleton constraint. Returns null for the
-// zero- or multiple-active cases; callers decide what to do about those,
-// since that behavior is out of scope for this story.
-export async function resolveSoleActiveSellerRegistration(): Promise<SellerRegistrationOption | null> {
-  const active = await prisma.sellerRegistration.findMany({
+// The single active registration, when there is exactly one — the shape
+// INV-005's Tax Invoice draft creation uses to auto-select a seller
+// identity without this master ever enforcing a singleton constraint.
+// Returns null for the zero- or multiple-active cases; callers decide what
+// to do about those. `client` defaults to the module-level `prisma` but may
+// be a transaction client (INV-005 resolves this inside the same
+// transaction that writes the draft), mirroring price-lookup.ts's
+// resolveDistributorPricingForSnapshot.
+export async function resolveSoleActiveSellerRegistration(
+  client: Pick<typeof prisma, 'sellerRegistration'> = prisma,
+): Promise<SellerRegistrationOption | null> {
+  const active = await client.sellerRegistration.findMany({
     where: { status: 'ACTIVE' },
     select: sellerRegistrationOptionSelect,
     take: 2,

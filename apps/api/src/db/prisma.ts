@@ -38,6 +38,7 @@ export type {
   StockAllocationSource,
   StockAllocationStatus,
   StyleStatus,
+  TaxInvoiceStatus,
   UserStatus,
 } from '../generated/prisma/client.js';
 

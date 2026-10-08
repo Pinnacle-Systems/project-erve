@@ -35,6 +35,7 @@ import { ervePackingListsRouter, erveDispatchesRouter } from './modules/fulfillm
 import { invoiceHandoffsRouter } from './modules/fulfillment/invoice-handoff.routes.js';
 import { saleOrReturnPositionsRouter, distributorSalesReportsRouter } from './modules/fulfillment/distributor-sales-report.routes.js';
 import { distributorReturnsRouter } from './modules/fulfillment/distributor-return.routes.js';
+import { taxInvoicesRouter } from './modules/fulfillment/tax-invoice.routes.js';
 import { qaRouter } from './modules/qa/qa.routes.js';
 import {
   qualityFormsRouter,
@@ -134,6 +135,7 @@ export function createApp() {
   app.use('/sale-or-return-positions', saleOrReturnPositionsRouter);
   app.use('/distributor-sales-reports', distributorSalesReportsRouter);
   app.use('/distributor-returns', distributorReturnsRouter);
+  app.use('/tax-invoices', taxInvoicesRouter);
   app.use('/qa', qaRouter);
   app.use('/reports', reportsRouter);
 

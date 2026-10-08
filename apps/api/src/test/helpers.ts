@@ -64,6 +64,15 @@ export async function resetDatabase(): Promise<void> {
   // below (the carton rows themselves are cleared shortly after via
   // TRUNCATE, so this is only about breaking the restrictive reference).
   await prisma.$executeRawUnsafe('UPDATE "factory_packing_cartons" SET "erve_packing_list_id" = NULL');
+  // INV-005: TaxInvoice.ervePackingListId is onDelete: Restrict against
+  // ErvePackingList (and TaxInvoiceLine.ervePackingListCommercialLineId is
+  // onDelete: Restrict against ErvePackingListCommercialLine, which itself
+  // cascades off ErvePackingList) — TaxInvoice must clear before
+  // ervePackingList.deleteMany() below, and before the later
+  // user/distributor/sellerRegistration deletes further down this function
+  // (TaxInvoice also FKs onDelete: Restrict to all three). TaxInvoiceLine
+  // cascades automatically once its parent TaxInvoice is deleted.
+  await prisma.taxInvoice.deleteMany();
   // Fulfillment rows must go before Sale Order/StockAllocation/Factory
   // below — every FK in this chain (ErveDispatch -> ErvePackingList ->
   // FactoryDispatch -> StockAllocation/SaleOrder/Factory) is onDelete:
@@ -165,8 +174,8 @@ export async function resetDatabase(): Promise<void> {
   await prisma.user.deleteMany();
   await prisma.factory.deleteMany();
   await prisma.distributor.deleteMany();
-  // No model references SellerRegistration yet (AINV-001 is the source
-  // master only) — nothing else needs clearing first.
+  // TaxInvoice references SellerRegistration (onDelete: Restrict) — already
+  // cleared by taxInvoice.deleteMany() near the top of this function.
   await prisma.sellerRegistration.deleteMany();
 }
 
