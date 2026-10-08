@@ -108,6 +108,9 @@ function printFormattedReport(report: PreflightReport): void {
     `  Schema / Config (INV-006): ${report.readinessBreakdown.isSchemaConfigReady ? 'READY' : 'PENDING MIGRATION'}`,
   );
   console.log(
+    `  Baseline Reconciliation:   ${report.readinessBreakdown.isBaselineReconciliationReady ? 'AUTHORIZED (EVIDENCE VERIFIED)' : 'BLOCKED / PENDING PREREQUISITES'}`,
+  );
+  console.log(
     `  Production Cutover:        ${report.readinessBreakdown.isProductionCutoverReady ? 'READY FOR ACTIVATION' : 'BLOCKED / NOT READY'}`,
   );
   console.log('----------------------------------------------------------------------');
