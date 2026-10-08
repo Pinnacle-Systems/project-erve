@@ -155,6 +155,17 @@ export function ErveDispatchDetailPage() {
         </DescriptionList>
       </Panel>
 
+      {dispatch.destination && (
+        <Panel title="Destination">
+          <DescriptionList columns={3}>
+            <DescriptionList.Item label="Store" value={dispatch.destination?.label ?? '—'} />
+            <DescriptionList.Item label="Store Code" value={dispatch.destination?.storeCode ?? '—'} />
+            <DescriptionList.Item label="Destination GSTIN" value={dispatch.destination?.gstin ?? '—'} />
+            <DescriptionList.Item label="Address" value={[dispatch.destination?.addressLine1, dispatch.destination?.addressLine2, dispatch.destination?.city, dispatch.destination?.state, dispatch.destination?.postalCode, dispatch.destination?.country].filter(Boolean).join(', ')} span={3} />
+          </DescriptionList>
+        </Panel>
+      )}
+
       {canSeeInvoices && (
         <Panel title="Invoice / Tally Status" padding="none">
           <DataTable

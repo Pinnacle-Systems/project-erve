@@ -362,6 +362,8 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       : null,
     destinations: destinations.map((destination) => ({
       id: destination.id,
+      retailStoreId: destination.retailStoreId,
+      storeCode: destination.storeCode,
       distributor: destination.saleOrderDistributor.distributor,
       label: destination.label,
       contactName: destination.contactName,

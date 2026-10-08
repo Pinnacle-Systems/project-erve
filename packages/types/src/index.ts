@@ -5,3 +5,4 @@ export * from './auth.js';
 export * from './health.js';
 export * from './operations.js';
 export * from './reporting.js';
+export * from './retail-store.js';

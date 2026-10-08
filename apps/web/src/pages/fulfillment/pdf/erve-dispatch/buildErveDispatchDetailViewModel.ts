@@ -61,6 +61,12 @@ export function buildErveDispatchDetailViewModel(
   meta: ErveDispatchDetailPdfMeta,
 ): ErveDispatchDetailPdfViewModel {
   const identityItems: PdfKeyValueItem[] = [
+    ...(dispatch.destination ? [
+      { label: 'Destination', value: dispatch.destination.label },
+      { label: 'Store Code', value: dispatch.destination.storeCode ?? null },
+      { label: 'Destination GSTIN', value: dispatch.destination.gstin ?? null },
+      { label: 'Destination Address', value: [dispatch.destination.addressLine1, dispatch.destination.addressLine2, dispatch.destination.city, dispatch.destination.state, dispatch.destination.postalCode, dispatch.destination.country].filter(Boolean).join(', ') },
+    ] : []),
     { label: 'Erve Dispatch Number', value: dispatch.erveDispatchNumber },
     { label: 'Erve Packing List', value: dispatch.ervePackingList.ervePackingListNumber },
     { label: 'Distributor', value: dispatch.distributor.name },

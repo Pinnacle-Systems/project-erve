@@ -94,6 +94,7 @@ export async function resetDatabase(): Promise<void> {
   await prisma.stockAllocation.deleteMany();
   await prisma.saleOrderLine.deleteMany();
   await prisma.saleOrderDestination.deleteMany();
+  await prisma.retailStore.deleteMany();
   await prisma.saleOrder.deleteMany();
   // Repeated rework intentionally forms a historical chain where a reinspection
   // form points to cycle N and cycle N+1 points back to that form. PostgreSQL

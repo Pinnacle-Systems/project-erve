@@ -201,7 +201,19 @@ export function SaleOrderDetailPage() {
                             {[dest.contactName, dest.contactPhone].filter(Boolean).join(' · ')}
                           </div>
                         )}
-                        {dest.gstin && <div className="text-sm text-[var(--erp-text-muted)]">GSTIN: {dest.gstin}</div>}
+                        {dest.storeCode && (
+                          <div className="text-sm text-[var(--erp-text-muted)]">
+                            Store Code: {dest.storeCode}
+                          </div>
+                        )}
+                        {dest.contactEmail && (
+                          <div className="text-sm text-[var(--erp-text-muted)]">
+                            {dest.contactEmail}
+                          </div>
+                        )}
+                        {dest.gstin && (
+                          <div className="text-sm text-[var(--erp-text-muted)]">GSTIN: {dest.gstin}</div>
+                        )}
                         <DataTable
                           rowKey="id"
                           data={destLines}

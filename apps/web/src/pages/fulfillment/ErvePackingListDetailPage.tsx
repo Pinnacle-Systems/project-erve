@@ -179,6 +179,8 @@ export function ErvePackingListDetailPage() {
         <Panel title="Erve India Consolidated Packing List">
           <DescriptionList columns={4}>
             <DescriptionList.Item label="Distributor" value={packingList.distributor?.name ?? '—'} />
+            {packingList.destination.storeCode && <DescriptionList.Item label="Store Code" value={packingList.destination.storeCode} />}
+            {packingList.destination.gstin && <DescriptionList.Item label="Destination GSTIN" value={packingList.destination.gstin} />}
             <DescriptionList.Item
               label="Destination"
               value={[packingList.destination.addressLine1, packingList.destination.addressLine2, packingList.destination.city, packingList.destination.state, packingList.destination.postalCode]

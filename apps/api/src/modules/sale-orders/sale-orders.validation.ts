@@ -18,6 +18,8 @@ const optionalGstinSchema = z.preprocess(
 );
 
 const destinationSchema = z.object({
+  retailStoreId: z.string().trim().min(1).optional().nullable(),
+  refreshStoreSnapshot: z.boolean().optional(),
   clientKey: z.string().trim().min(1),
   id: z.string().trim().min(1).optional(),
   label: z.string().trim().min(1).optional().nullable(),
