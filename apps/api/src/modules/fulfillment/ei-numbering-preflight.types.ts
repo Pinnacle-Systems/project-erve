@@ -77,7 +77,9 @@ export interface PreflightReadinessBreakdown {
   isPreparationReady: boolean;
   /** Whether database schema and enum prerequisites (INV-006) are deployed */
   isSchemaConfigReady: boolean;
-  /** Whether production live cutover can safely execute right now */
+  /** Whether prerequisite data evidence is verified, authorizing sequence baseline reconciliation */
+  isBaselineReconciliationReady: boolean;
+  /** Whether production live cutover sequence is aligned and ready for active invoice allocation */
   isProductionCutoverReady: boolean;
 }
 

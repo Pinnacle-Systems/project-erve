@@ -40,12 +40,16 @@ export interface InvoiceRecordComparison {
   status?: string;
   isWellFormed: boolean;
   digitCount: number;
+  sourceReference?: string;
+  recordId?: string;
+  invoiceDate?: string;
 }
 
 export function parseCanonicalInvoiceNumber(
   invoiceNumber: string,
   source: 'ERVE_DATABASE' | 'EXTERNAL_REGISTER',
   status?: string,
+  metadata?: { sourceReference?: string; recordId?: string; invoiceDate?: string },
 ): InvoiceRecordComparison {
   const match = CANONICAL_EI_INVOICE_REGEX.exec(invoiceNumber);
   if (!match) {
@@ -57,6 +61,9 @@ export function parseCanonicalInvoiceNumber(
       status,
       isWellFormed: false,
       digitCount: 0,
+      sourceReference: metadata?.sourceReference,
+      recordId: metadata?.recordId,
+      invoiceDate: metadata?.invoiceDate,
     };
   }
   const digitsStr = match[2]!;
@@ -68,6 +75,9 @@ export function parseCanonicalInvoiceNumber(
     status,
     isWellFormed: true,
     digitCount: digitsStr.length,
+    sourceReference: metadata?.sourceReference,
+    recordId: metadata?.recordId,
+    invoiceDate: metadata?.invoiceDate,
   };
 }
 
@@ -285,7 +295,10 @@ export async function runEiNumberingPreflight(
   for (const inv of erveInvoiceRecords) {
     if (inv.invoiceNumber) {
       allParsedInvoices.push(
-        parseCanonicalInvoiceNumber(inv.invoiceNumber, 'ERVE_DATABASE', inv.status),
+        parseCanonicalInvoiceNumber(inv.invoiceNumber, 'ERVE_DATABASE', inv.status, {
+          recordId: inv.id,
+          invoiceDate: inv.createdAt ? inv.createdAt.toISOString() : undefined,
+        }),
       );
     }
   }
@@ -293,7 +306,10 @@ export async function runEiNumberingPreflight(
   if (options.externalRecords && options.externalRecords.length > 0) {
     for (const ext of options.externalRecords) {
       allParsedInvoices.push(
-        parseCanonicalInvoiceNumber(ext.invoiceNumber, 'EXTERNAL_REGISTER', ext.status),
+        parseCanonicalInvoiceNumber(ext.invoiceNumber, 'EXTERNAL_REGISTER', ext.status, {
+          sourceReference: ext.sourceReference,
+          invoiceDate: ext.invoiceDate,
+        }),
       );
     }
   }
@@ -369,36 +385,115 @@ export async function runEiNumberingPreflight(
     externalInvoiceCounts.has(num),
   );
 
-  if (erveDuplicates.length > 0 || externalDuplicates.length > 0) {
+  const ambiguousMatches: Array<{
+    invoiceNumber: string;
+    erveRecordId?: string;
+    erveStatus?: string;
+    externalStatus?: string;
+    reason: string;
+  }> = [];
+
+  const conflictingMatches: Array<{
+    invoiceNumber: string;
+    reason: string;
+  }> = [];
+
+  const authoritativeMatches: Array<{
+    invoiceNumber: string;
+    sourceReference: string;
+    erveRecordId: string;
+  }> = [];
+
+  for (const num of crossSystemOverlap) {
+    const erveRec = allParsedInvoices.find(
+      (i) => i.source === 'ERVE_DATABASE' && i.invoiceNumber === num,
+    );
+    const extRec = allParsedInvoices.find(
+      (i) => i.source === 'EXTERNAL_REGISTER' && i.invoiceNumber === num,
+    );
+
+    if (erveRec && extRec) {
+      // Check for conflicting statuses
+      const statusConflict =
+        (erveRec.status === 'FINALIZED' && extRec.status === 'CANCELLED') ||
+        (erveRec.status === 'DRAFT' && extRec.status === 'CANCELLED');
+
+      // Authoritative identity evidence requires verifiable linkage
+      const hasAuthoritativeLink =
+        Boolean(extRec.sourceReference) &&
+        Boolean(erveRec.recordId) &&
+        extRec.sourceReference === erveRec.recordId;
+
+      if (statusConflict) {
+        conflictingMatches.push({
+          invoiceNumber: num,
+          reason: `Status conflict: ERVE status is "${erveRec.status}", external status is "${extRec.status}".`,
+        });
+      } else if (hasAuthoritativeLink) {
+        authoritativeMatches.push({
+          invoiceNumber: num,
+          sourceReference: extRec.sourceReference!,
+          erveRecordId: erveRec.recordId!,
+        });
+      } else {
+        // Matching invoice number, date and status alone cannot automatically establish that two records represent the same underlying invoice.
+        ambiguousMatches.push({
+          invoiceNumber: num,
+          erveRecordId: erveRec.recordId,
+          erveStatus: erveRec.status,
+          externalStatus: extRec.status,
+          reason:
+            'Lacks verifiable authoritative cross-system identity evidence (e.g. matching sourceReference). Matching number, date, and status alone cannot prove identical underlying transaction.',
+        });
+      }
+    }
+  }
+
+  if (erveDuplicates.length > 0 || externalDuplicates.length > 0 || conflictingMatches.length > 0) {
     checks.push({
       checkId: 'CHK_UNIQUENESS',
       title: 'Invoice Identity Uniqueness',
       status: 'BLOCKED',
-      message: `Duplicate invoice numbers detected within authoritative datasets.`,
+      message: `Duplicate or conflicting invoice identities detected across authoritative datasets.`,
       evidence: {
         erveDuplicates: erveDuplicates.map(([num, count]) => ({ invoiceNumber: num, count })),
         externalDuplicates: externalDuplicates.map(([num, count]) => ({
           invoiceNumber: num,
           count,
         })),
+        conflictingMatches,
       },
       actionRequired:
-        'Resolve duplicate invoice records in the respective database or ledger before proceeding.',
+        'Resolve duplicate or conflicting invoice records in the respective database or ledger before proceeding.',
     });
-  } else if (crossSystemOverlap.length > 0) {
-    // Distinguish legitimate shared representation from conflicting allocation
+  } else if (ambiguousMatches.length > 0) {
     checks.push({
       checkId: 'CHK_UNIQUENESS',
       title: 'Invoice Identity Uniqueness and Cross-System Overlap',
       status: 'WARN',
-      message: `${crossSystemOverlap.length} invoice numbers appear in both ERVE and the external register. Verified as identical mirrored records, but requires Accountant confirmation.`,
+      message: `${ambiguousMatches.length} invoice numbers appear in both ERVE and external registers without authoritative identity evidence. Matching number, date, and status alone cannot establish identical underlying invoices; flagged for operator review.`,
       evidence: {
         crossSystemOverlapCount: crossSystemOverlap.length,
-        sampleOverlap: crossSystemOverlap.slice(0, 5),
-        isLegitimateRepresentation: true,
+        ambiguousMatchesCount: ambiguousMatches.length,
+        ambiguousMatches: ambiguousMatches.slice(0, 5),
+        authoritativeMatchesCount: authoritativeMatches.length,
+        hasAmbiguousMatches: true,
       },
       actionRequired:
-        'Confirm with Accountant that overlapping numbers represent historically mirrored records.',
+        'Operator and Accountant must review ambiguous cross-system matches to verify whether they represent the same underlying invoice or a conflicting duplicate allocation.',
+    });
+  } else if (authoritativeMatches.length > 0) {
+    checks.push({
+      checkId: 'CHK_UNIQUENESS',
+      title: 'Invoice Identity Uniqueness and Cross-System Overlap',
+      status: 'PASS',
+      message: `All ${crossSystemOverlap.length} overlapping cross-system invoice numbers are verified with authoritative identity evidence (external sourceReference matches ERVE TaxInvoice ID).`,
+      evidence: {
+        crossSystemOverlapCount: crossSystemOverlap.length,
+        authoritativeMatchesCount: authoritativeMatches.length,
+        authoritativeMatches: authoritativeMatches.slice(0, 5),
+        hasAmbiguousMatches: false,
+      },
     });
   } else {
     checks.push({
@@ -738,14 +833,18 @@ export async function runEiNumberingPreflight(
         checkId: 'CHK_SOURCE_COMPLETENESS',
         title: 'Authoritative External Source Completeness',
         status: 'PASS',
-        message: `Authoritative source verified: ${manifest.systemName}, extracted ${manifest.extractedAt}, verified by ${manifest.verifiedBy}.`,
+        message: `Manifest structure and declared metadata validated for ${manifest.systemName} (declared by ${manifest.verifiedBy} at ${manifest.extractedAt}). Note: Manifest metadata constitutes operational attestation, not independent proof of external billing freeze or out-of-band accountant approval.`,
         evidence: {
           systemName: manifest.systemName,
           extractedAt: manifest.extractedAt,
           verifiedBy: manifest.verifiedBy,
-          freezeConfirmed: manifest.freezeConfirmed ?? false,
+          declaredFreezeConfirmed: manifest.freezeConfirmed ?? false,
           recordCount: options.externalRecords?.length ?? 0,
+          manifestAttestationVerified: true,
+          requiresOutOfBandApproval: true,
         },
+        actionRequired:
+          'Ensure documented operator authorization and actual legacy billing freeze verification are independently recorded prior to live activation.',
       });
     }
   }
@@ -781,19 +880,48 @@ export async function runEiNumberingPreflight(
   }
 
   // Distinct readiness states:
-  const isPreparationReady = blocked === 0;
+  // Data evidence checks: syntax, uniqueness, collision, capacity, manifest, FY boundaries
+  const fatalEvidenceBlocked = checks.some(
+    (c) =>
+      c.status === 'BLOCKED' &&
+      c.checkId !== 'CHK_SEQUENCE_STATE' &&
+      c.checkId !== 'CHK_HIGH_WATER_RECON' &&
+      c.checkId !== 'CHK_DOCUMENT_TYPE_CONFIG',
+  );
+
+  const isPreparationReady = !fatalEvidenceBlocked;
   const isSchemaConfigReady = dbEnumHasTaxInvoice;
+
+  // Baseline reconciliation is authorized once data evidence is verified,
+  // there is a verified high-water mark, no unresolved width policy, and valid manifest:
+  const isBaselineReconciliationReady =
+    !fatalEvidenceBlocked &&
+    verifiedHighWaterMark !== null &&
+    !unresolvedWidthPolicy &&
+    Boolean(manifest);
+
+  // Production cutover allocation is ready ONLY post-baseline:
+  // sequence must exist, lastAllocatedSerial must match verifiedHighWaterMark,
+  // isBaselineReconciliationReady must be true, isProduction must be true,
+  // and ZERO checks can be BLOCKED:
+  const sequenceIsAligned =
+    sequenceRowExists &&
+    sequenceLastAllocatedSerial !== null &&
+    sequenceLastAllocatedSerial === verifiedHighWaterMark;
+
   const isProductionCutoverReady =
     isProduction &&
     blocked === 0 &&
     isSchemaConfigReady &&
-    sequenceRowExists &&
+    isBaselineReconciliationReady &&
+    sequenceIsAligned &&
     !unresolvedWidthPolicy &&
     Boolean(manifest);
 
   const readinessBreakdown: PreflightReadinessBreakdown = {
     isPreparationReady,
     isSchemaConfigReady,
+    isBaselineReconciliationReady,
     isProductionCutoverReady,
   };
 

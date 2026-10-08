@@ -231,7 +231,7 @@ describe('runEiNumberingPreflight Diagnostics', () => {
     expect(report.verdict).toBe('BLOCKED');
     const uniqCheck = report.checks.find((c) => c.checkId === 'CHK_UNIQUENESS');
     expect(uniqCheck?.status).toBe('BLOCKED');
-    expect(uniqCheck?.message).toMatch(/Duplicate invoice numbers detected/i);
+    expect(uniqCheck?.message).toMatch(/Duplicate.*detected/i);
   });
 
   it('correctly includes CANCELLED invoices in the high-water mark calculation', async () => {
@@ -371,32 +371,96 @@ describe('runEiNumberingPreflight Diagnostics', () => {
     expect(fySepCheck?.message).toMatch(/non-target financial year/i);
   });
 
-  it('validates cross-system representation when an invoice exists in both ERVE and external ledger', async () => {
+  it('flags cross-system overlap as ambiguous match when lacking authoritative identity evidence', async () => {
     const fy = await ensureFinancialYear(prisma, new Date('2026-06-01'));
 
-    // Insert an ERVE invoice
-    await prisma
-      .$executeRawUnsafe(
-        `INSERT INTO tax_invoices (id, status, invoice_number, erve_packing_list_id, distributor_id, purchase_mode, seller_registration_id, seller_legal_name, seller_gstin, seller_einvoice_applicable, seller_address_line1, seller_city, seller_state, seller_state_code, seller_postal_code, seller_country, seller_bank_name, seller_bank_account_name, seller_bank_account_number, seller_bank_ifsc, seller_bank_branch_name, bill_to_name, bill_to_gstin, created_by_id, updated_at)
-       VALUES ('test-overlap-inv', 'FINALIZED', 'EI/26-27/0001', 'pl-1', 'dist-1', 'OUTRIGHT', 'sr-1', 'Seller', '29AAAAA0000A1Z5', false, 'Addr', 'City', 'State', '29', '560001', 'India', 'Bank', 'Acct', '12345', 'IFSC001', 'Branch', 'BillTo', '29BBBBB0000B1Z5', 'user-1', now())`,
-      )
-      .catch(() => {});
+    await prisma.$executeRawUnsafe('ALTER TABLE tax_invoices DISABLE TRIGGER ALL');
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO tax_invoices (id, status, invoice_number, erve_packing_list_id, distributor_id, purchase_mode, seller_registration_id, seller_legal_name, seller_gstin, seller_einvoice_applicable, seller_address_line1, seller_city, seller_state, seller_state_code, seller_postal_code, seller_country, seller_bank_name, seller_bank_account_name, seller_bank_account_number, seller_bank_ifsc, seller_bank_branch_name, bill_to_name, bill_to_gstin, created_by_id, updated_at)
+       VALUES ('test-overlap-inv-1', 'FINALIZED', 'EI/26-27/0001', 'pl-10', 'dist-1', 'OUTRIGHT', 'sr-1', 'Seller', '29AAAAA0000A1Z5', false, 'Addr', 'City', 'State', '29', '560001', 'India', 'Bank', 'Acct', '12345', 'IFSC001', 'Branch', 'BillTo', '29BBBBB0000B1Z5', 'user-1', now())`,
+    );
+    await prisma.$executeRawUnsafe('ALTER TABLE tax_invoices ENABLE TRIGGER ALL');
 
     const options: PreflightOptions = {
       targetFinancialYearCode: fy.code,
       externalRecords: [
-        { invoiceNumber: 'EI/26-27/0001', status: 'ISSUED' }, // Overlap with ERVE
+        { invoiceNumber: 'EI/26-27/0001', status: 'ISSUED' }, // Overlap without sourceReference
         { invoiceNumber: 'EI/26-27/0002', status: 'ISSUED' },
       ],
       externalSourceManifest: {
         systemName: 'Tally',
         extractedAt: '2026-10-08T10:00:00.000Z',
-        verifiedBy: 'tester',
+        verifiedBy: 'accountant@example.com',
       },
     };
 
     const report = await runEiNumberingPreflight(prisma, options);
     const uniqCheck = report.checks.find((c) => c.checkId === 'CHK_UNIQUENESS');
-    expect(['PASS', 'WARN']).toContain(uniqCheck?.status);
+    expect(uniqCheck?.status).toBe('WARN');
+    expect(uniqCheck?.evidence?.hasAmbiguousMatches).toBe(true);
+    expect(uniqCheck?.message).toMatch(/without authoritative identity evidence/i);
+  });
+
+  it('validates cross-system representation with PASS when authoritative identity evidence is provided', async () => {
+    const fy = await ensureFinancialYear(prisma, new Date('2026-06-01'));
+
+    await prisma.$executeRawUnsafe('ALTER TABLE tax_invoices DISABLE TRIGGER ALL');
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO tax_invoices (id, status, invoice_number, erve_packing_list_id, distributor_id, purchase_mode, seller_registration_id, seller_legal_name, seller_gstin, seller_einvoice_applicable, seller_address_line1, seller_city, seller_state, seller_state_code, seller_postal_code, seller_country, seller_bank_name, seller_bank_account_name, seller_bank_account_number, seller_bank_ifsc, seller_bank_branch_name, bill_to_name, bill_to_gstin, created_by_id, updated_at)
+       VALUES ('test-overlap-inv-auth', 'FINALIZED', 'EI/26-27/0001', 'pl-11', 'dist-1', 'OUTRIGHT', 'sr-1', 'Seller', '29AAAAA0000A1Z5', false, 'Addr', 'City', 'State', '29', '560001', 'India', 'Bank', 'Acct', '12345', 'IFSC001', 'Branch', 'BillTo', '29BBBBB0000B1Z5', 'user-1', now())`,
+    );
+    await prisma.$executeRawUnsafe('ALTER TABLE tax_invoices ENABLE TRIGGER ALL');
+
+    const options: PreflightOptions = {
+      targetFinancialYearCode: fy.code,
+      externalRecords: [
+        // Authoritative link: sourceReference explicitly matches ERVE TaxInvoice id
+        {
+          invoiceNumber: 'EI/26-27/0001',
+          status: 'ISSUED',
+          sourceReference: 'test-overlap-inv-auth',
+        },
+        { invoiceNumber: 'EI/26-27/0002', status: 'ISSUED' },
+      ],
+      externalSourceManifest: {
+        systemName: 'Tally',
+        extractedAt: '2026-10-08T10:00:00.000Z',
+        verifiedBy: 'accountant@example.com',
+      },
+    };
+
+    const report = await runEiNumberingPreflight(prisma, options);
+    const uniqCheck = report.checks.find((c) => c.checkId === 'CHK_UNIQUENESS');
+    expect(uniqCheck?.status).toBe('PASS');
+    expect(uniqCheck?.evidence?.hasAmbiguousMatches).toBe(false);
+  });
+
+  it('distinguishes pre-baseline readiness from post-baseline production cutover readiness', async () => {
+    const fy = await ensureFinancialYear(prisma, new Date('2026-06-01'));
+
+    const options: PreflightOptions = {
+      targetFinancialYearCode: fy.code,
+      environment: 'PRODUCTION',
+      externalRecords: [
+        { invoiceNumber: 'EI/26-27/0001', status: 'ISSUED' },
+        { invoiceNumber: 'EI/26-27/0002', status: 'ISSUED' },
+      ],
+      externalSourceManifest: {
+        systemName: 'Tally Prime',
+        extractedAt: '2026-10-08T10:00:00.000Z',
+        verifiedBy: 'lead.accountant@example.com',
+        freezeConfirmed: true,
+      },
+    };
+
+    // Pre-baseline run: sequence does not exist
+    const preBaselineReport = await runEiNumberingPreflight(prisma, options);
+    // Baseline reconciliation is authorized because all prerequisite evidence is verified
+    expect(preBaselineReport.readinessBreakdown.isBaselineReconciliationReady).toBe(true);
+    // But live production cutover allocation remains blocked until baselined
+    expect(preBaselineReport.readinessBreakdown.isProductionCutoverReady).toBe(false);
+    expect(preBaselineReport.checks.find((c) => c.checkId === 'CHK_SEQUENCE_STATE')?.status).toBe(
+      'BLOCKED',
+    );
   });
 });

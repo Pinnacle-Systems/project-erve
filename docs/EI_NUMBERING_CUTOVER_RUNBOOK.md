@@ -30,6 +30,11 @@ This runbook defines the idempotent, operator-controlled procedure for transitio
 | **Deployment Operator / DevOps** | • Executes read-only preflight diagnostic CLI.<br>• Executes baseline adjustment CLI when authorized.<br>• Inspects transaction logs and database health.<br>• Halts procedure if any check reports `BLOCKED`. | **Gate 2:** Preflight `READY` confirmation.<br>**Gate 3:** Sequence baseline execution log verification.                          |
 | **Engineering (INV-006 Owner)**  | • Deploys INV-006 migration adding `TAX_INVOICE` to `DocumentType` enum.<br>• Delivers atomic allocation inside Tax Invoice finalization transaction.<br>• Enforces sequence gates preventing auto-seed at 1.  | **Prerequisite:** INV-006 merged and deployed.                                                                                    |
 
+### 2.1 Manifest Attestation vs Physical Operational Verification
+
+- **Manifest as Self-Attestation:** The metadata in `manifest.json` (`systemName`, `extractedAt`, `verifiedBy`, `freezeConfirmed`) is a machine-readable operational declaration accompanying the data export. It does **not** constitute independent proof of accountant sign-off or physical billing freeze.
+- **Mandatory Operational Verification:** Prior to sequence baseline adjustment or production activation, the Deployment Operator must obtain documented authorization (e.g., change request sign-off) and independently verify that external billing is physically frozen (e.g. ERP write permissions revoked, batch billing services halted, and confirmed in writing by Finance).
+
 ---
 
 ## 3. Phase 1: Cutover Preparation & Prerequisites
@@ -91,7 +96,7 @@ Prepare manifest file (`manifest.json`):
 
 From `apps/api`:
 
-```bash
+````bash
 # Example for local/dev validation
 pnpm run ei-numbering:preflight \
   --financial-year 2026-27 \
@@ -104,52 +109,50 @@ pnpm run ei-numbering:preflight \
   --financial-year 2026-27 \
   --external-records-file /secure/path/external-ledger.json \
   --manifest-file /secure/path/manifest.json \
-  --target production
-```
+  ### 4.3 Step 3: Interpret Diagnostic Results
 
-### 4.3 Step 3: Interpret Diagnostic Results
-
-The diagnostic evaluates three independent readiness dimensions:
+The diagnostic evaluates four distinct readiness dimensions:
 
 1. **Preparation Completeness (`isPreparationReady`):** Validates that external ledgers, manifests, FY boundaries, and historical serial reconciliation are sound. Missing downstream INV-006 schema dependencies do not prevent preparation completeness.
 2. **Schema & Config Readiness (`isSchemaConfigReady`):** Validates that `DocumentType.TAX_INVOICE` and `DOCUMENT_PREFIXES.TAX_INVOICE` are migrated in the database and active.
-3. **Production Cutover Readiness (`isProductionCutoverReady`):** Strict production readiness requiring preparation completeness, schema readiness, accountant manifest verification, freeze confirmation, and zero unresolved numbering policies.
+3. **Baseline Reconciliation Readiness (`isBaselineReconciliationReady`):** Validates that all prerequisite data evidence (FY boundaries, syntax, uniqueness, collision checks, capacity limits, and manifest structure) is sound, formally clearing the operator to execute sequence baseline adjustment.
+4. **Production Cutover Readiness (`isProductionCutoverReady`):** Strict production activation readiness. Requires baseline reconciliation to be complete (`sequenceLastAllocatedSerial === verifiedHighWaterMark`), schema readiness, accountant manifest verification, independent physical freeze verification, and zero blocked checks.
 
 Review check status codes in the output:
 
-| Status      | Meaning                                                                                                                                                                           | Required Operator Action                                                  |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| **PASS**    | Check completely verified with evidence.                                                                                                                                          | Proceed.                                                                  |
-| **WARN**    | Non-blocking condition in dev/prep (e.g. sequence uninitialized, approaching serial 9000, or cross-system overlap of known migrated records).                                     | Requires review and explicit Accountant sign-off before proceeding.       |
-| **BLOCKED** | Fatal cutover blocker (missing FY, duplicate invoice numbers, malformed numbers, serial > 9999 affecting next allocation, sequence behind external reality, or missing manifest). | **STOP IMMEDIATELY.** Do not proceed with baseline adjustment or cutover. |
+| Status      | Meaning                                                                                                                                                                                                                                | Required Operator Action                                                                                                             |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **PASS**    | Check completely verified with evidence.                                                                                                                                                                                               | Proceed.                                                                                                                             |
+| **WARN**    | Non-blocking condition in dev/prep (e.g. sequence uninitialized, approaching serial 9000, or cross-system ambiguous match).                                                                                                             | Requires review and explicit Accountant sign-off before proceeding.                                                                  |
+| **BLOCKED** | Fatal cutover blocker (missing FY, duplicate invoice numbers, malformed numbers, serial > 9999 affecting next allocation, or missing/invalid manifest). Pre-baseline sequence shortfall blocks live allocation pending baseline adjustment. | **STOP IMMEDIATELY on data integrity errors.** If sequence shortfall is the only blocker and evidence is verified, proceed to Gate 2. |
 
 ### 4.4 Diagnostic Checks Overview:
 
 1. `CHK_FINANCIAL_YEAR`: Confirms target FY exists and calendar boundaries are strictly April 1 to March 31.
 2. `CHK_DOCUMENT_TYPE_CONFIG`: Confirms `TAX_INVOICE` is registered in database enum and configuration. (Permitted as WARN in DEV/LOCAL; strictly BLOCKED in PRODUCTION).
-3. `CHK_SEQUENCE_STATE`: Reports existing sequence state without creating or mutating rows.
+3. `CHK_SEQUENCE_STATE`: Reports existing sequence state without creating or mutating rows. In production, uninitialized sequence blocks live allocation pending baseline adjustment.
 4. `CHK_INVOICE_SYNTAX`: Confirms all ERVE and external invoice numbers match formatter syntax `^EI\/(\d{2}-\d{2})\/(\d{4,})$` ($\ge 4$ digits). Identifies serials exceeding 4 digits.
-5. `CHK_UNIQUENESS`: Detects duplicate invoice numbers within ERVE and external registers. Distinguishes genuine conflicts from legitimate cross-system representations of the same invoice.
+5. `CHK_UNIQUENESS`: Detects duplicate invoice numbers within ERVE and external registers. Inspects cross-system matches: matching number, date, and status alone cannot prove identical underlying invoices. Requires authoritative identity evidence (`sourceReference`); ambiguous matches are flagged for operator review.
 6. `CHK_FY_SEPARATION`: Detects any cross-FY attribution bleed.
-7. `CHK_HIGH_WATER_RECON`: Reconciles external ledger max serial, ERVE max serial, and `DocumentSequence.lastAllocatedSerial`. Rejects manually entered HWM without authoritative manifest in production.
+7. `CHK_HIGH_WATER_RECON`: Reconciles external ledger max serial, ERVE max serial, and `DocumentSequence.lastAllocatedSerial`. Rejects manually entered HWM without authoritative manifest in production. In production pre-baseline state, sequence shortfall blocks live allocation pending baseline adjustment.
 8. `CHK_NUMBER_COLLISION`: Confirms proposed next serial does not collide with any existing record.
 9. `CHK_SERIAL_CAPACITY`: Assesses remaining serial capacity. Warns between 9000–9999. Does not impose an arbitrary hard limit of 9999, but identifies when serial exceeds 4 digits and blocks production cutover if an unresolved 5-digit policy affects the next allocation.
-10. `CHK_SOURCE_COMPLETENESS`: Validates manifest presence, accountant approval, extraction timestamp, and freeze confirmation. In production, an unverified manual HWM cannot produce a ready verdict.
+10. `CHK_SOURCE_COMPLETENESS`: Validates manifest presence, completeness, and declared metadata. Manifest metadata is an accompanying operational self-attestation and does not constitute independent proof of accountant sign-off or physical billing freeze.
 11. `CHK_PERMISSIONS`: Confirms read-only execution with zero mutations.
 
 ---
 
 ## 5. Phase 3: Controlled Activation (Post-Approval)
 
-> **CRITICAL SAFEGUARD:** This step must ONLY be performed after:
+> **CRITICAL SAFEGUARD:** Baseline adjustment (Step 1) must ONLY be performed after:
 >
-> 1. Preflight reports `READY` or `READY WITH CONDITIONS` (with approved sign-off).
-> 2. Gate 2 approval from the Accountant is signed.
-> 3. Legacy system billing freeze is active.
+> 1. Preflight diagnostic reports `isBaselineReconciliationReady: true` (all prerequisite data evidence verified). Note: Prior to baseline adjustment, `isProductionCutoverReady` will remain `false` (and sequence checks will report that the sequence is pending baseline adjustment); this expected pre-cutover shortfall authorizes baseline reconciliation.
+> 2. Documented operator authorization and Accountant Gate 2 sign-off are recorded.
+> 3. Actual legacy system billing freeze has been independently verified (ERP write access revoked, automated billing jobs halted).
 
 ### 5.1 Step 1: Execute Sequence Baseline Adjustment
 
-Once INV-006 is deployed, the operator sets the sequence high-water mark to the verified external serial:
+Once INV-006 is deployed and Gate 2 is approved, the operator sets the sequence high-water mark to the verified external serial:
 
 ```bash
 # Example syntax:
@@ -157,13 +160,34 @@ tsx src/cli/document-sequence-baseline.cli.ts \
   --document-type TAX_INVOICE \
   --financial-year 2026-27 \
   --serial <VERIFIED_LIVE_HWM>
-```
+````
 
 ### 5.2 Idempotency & Invariant Verification:
 
 - **First Run:** Sets `lastAllocatedSerial = <VERIFIED_LIVE_HWM>`. CLI reports `raised: TAX_INVOICE sequence for FY 2026-27 from 0 to <VERIFIED_LIVE_HWM>`.
 - **Repeat Run:** If run again with the same serial, the CLI detects identical value and reports: `no-op: TAX_INVOICE sequence for FY 2026-27 is already at <VERIFIED_LIVE_HWM>`.
 - **Attempted Decrease:** If accidentally run with a lower serial, the CLI rejects the command with an error: `Refusing to lower TAX_INVOICE sequence... sequences are never decreased`.
+
+### 5.3 Step 2: Post-Baseline Preflight Re-Verification
+
+Immediately following baseline adjustment, the operator reruns the preflight diagnostic to verify live cutover readiness:
+
+```bash
+pnpm run ei-numbering:preflight \
+  --financial-year 2026-27 \
+  --external-records-file /secure/path/external-ledger.json \
+  --manifest-file /secure/path/manifest.json \
+  --target production
+```
+
+**Verification Gate:** Preflight must now report:
+
+- `CHK_SEQUENCE_STATE`: **PASS**
+- `CHK_HIGH_WATER_RECON`: **PASS**
+- `isProductionCutoverReady`: **true**
+- Summary: **0 BLOCKED** checks.
+
+Only when `isProductionCutoverReady: true` is confirmed may live Tax Invoice generation and finalization be activated in ERVE.
 
 ---
 
@@ -190,8 +214,8 @@ Immediately following baseline setting and INV-006 activation:
 
 Halt the cutover immediately if:
 
-- Preflight diagnostic reports `BLOCKED` (or `isProductionCutoverReady: false`).
-- Any external invoice number is malformed or lacks canonical formatting.
+- Preflight diagnostic reports `BLOCKED` on any data integrity, schema, or manifest check (`CHK_FINANCIAL_YEAR`, `CHK_DOCUMENT_TYPE_CONFIG`, `CHK_INVOICE_SYNTAX`, `CHK_UNIQUENESS`, `CHK_NUMBER_COLLISION`, `CHK_SERIAL_CAPACITY`, or `CHK_SOURCE_COMPLETENESS`). (Note: Sequence shortfall prior to baseline adjustment is expected and resolved in Phase 3, Step 1).
+- Following Step 1 baseline adjustment, post-baseline preflight fails to report `isProductionCutoverReady: true`.
 - Legacy system issues an invoice after the extraction timestamp.
 - Database connection aborts mid-transaction.
 - First finalized invoice generates a number that collides with historical records.
