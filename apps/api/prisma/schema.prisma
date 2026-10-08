@@ -354,6 +354,8 @@ model User {
   importedJobOrders                    JobOrder[]                  @relation("JobOrderImportedBy")
   startedImportBatches                 ImportBatch[]
   addedHistoricalDocuments             HistoricalDocument[]
+  createdTaxInvoices                   TaxInvoice[]                @relation("TaxInvoiceCreator")
+  finalizedTaxInvoices                 TaxInvoice[]                @relation("TaxInvoiceFinalizer")
 
   @@index([status])
   @@map("users")
@@ -436,6 +438,7 @@ model Distributor {
   erveDispatches        ErveDispatch[]
   salesReports          DistributorSalesReport[]
   distributorReturns    DistributorReturn[]
+  taxInvoices           TaxInvoice[]
 
   @@index([status])
   @@map("distributors")
@@ -469,12 +472,11 @@ model Factory {
   @@map("factories")
 }
 
-// ERVE's own GST/legal registration(s) — the future Tax Invoice "Sold By"
-// identity. Modeled as a normal master (never a singleton config row) so a
-// second branch with its own GSTIN/address/bank can be added later without a
-// schema change. Only `sellerRegistrationId` + a field snapshot are meant to
-// be consumed downstream (by a later invoice story); this story establishes
-// the source master only — nothing here is referenced by another model yet.
+// ERVE's own GST/legal registration(s) — the Tax Invoice "Sold By" identity.
+// Modeled as a normal master (never a singleton config row) so a second
+// branch with its own GSTIN/address/bank can be added later without a schema
+// change. INV-005 is the first consumer: TaxInvoice.sellerRegistrationId +
+// a full field snapshot (identity, address, bank, e-invoice applicability).
 model SellerRegistration {
   id         String                   @id
   legalName  String                   @map("legal_name")
@@ -504,6 +506,8 @@ model SellerRegistration {
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+
+  taxInvoices TaxInvoice[]
 
   @@index([status])
   @@map("seller_registrations")
@@ -654,6 +658,7 @@ model Style {
   jobOrderLines                  JobOrderLine[]
   saleOrderLines                 SaleOrderLine[]
   ervePackingListCommercialLines ErvePackingListCommercialLine[]
+  taxInvoiceLines                TaxInvoiceLine[]
 
   @@index([status])
   @@index([seasonId])
@@ -909,6 +914,7 @@ model PriceList {
 
   distributor                    Distributor                     @relation(fields: [distributorId], references: [id], onDelete: Restrict)
   ervePackingListCommercialLines ErvePackingListCommercialLine[]
+  taxInvoiceLines                TaxInvoiceLine[]
 
   @@index([distributorId])
   @@index([status])
@@ -1704,6 +1710,7 @@ model SaleOrderLine {
   returnedStockLots              ReturnedStockLot[]
   factoryInvoiceLines            FactoryInvoiceLine[]
   ervePackingListCommercialLines ErvePackingListCommercialLine[]
+  taxInvoiceLines                TaxInvoiceLine[]
 
   @@unique([saleOrderId, destinationId, styleId, sizeId], map: "sale_order_line_grain_key")
   @@index([saleOrderId])
@@ -2098,6 +2105,7 @@ model ErvePackingList {
   cartons           FactoryPackingCarton[]
   dispatch          ErveDispatch?
   commercialLines   ErvePackingListCommercialLine[]
+  taxInvoice        TaxInvoice?
 
   @@unique([financialYearId, ervePackingListSerial])
   @@index([saleOrderId, status])
@@ -2125,8 +2133,10 @@ model ErvePackingList {
 // `updatedAt` column (mirrors FactoryPackingCartonLine's own immutable
 // shape): once written, a row never changes, and a later finalize attempt
 // against an already-FINALIZED Erve Packing List is rejected before this
-// table is ever touched again. Future Tax Invoice work (INV-005+) consumes
-// these rows instead of re-resolving MRP/pricing from current masters.
+// table is ever touched again. INV-005's TaxInvoiceLine is the first real
+// consumer — one row per commercial line (TaxInvoiceLine.
+// ervePackingListCommercialLineId @unique), copying these frozen values
+// rather than re-resolving MRP/pricing from current masters.
 model ErvePackingListCommercialLine {
   id                            String   @id
   ervePackingListId             String   @map("erve_packing_list_id")
@@ -2142,6 +2152,7 @@ model ErvePackingListCommercialLine {
   saleOrderLine   SaleOrderLine   @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
   style           Style           @relation(fields: [styleId], references: [id], onDelete: Restrict)
   priceList       PriceList       @relation(fields: [priceListId], references: [id], onDelete: Restrict)
+  taxInvoiceLine  TaxInvoiceLine?
 
   @@unique([ervePackingListId, saleOrderLineId])
   @@index([saleOrderLineId])
@@ -2273,6 +2284,181 @@ model ErveDispatchDeliveryLine {
   @@unique([erveDispatchId, saleOrderLineId])
   @@index([saleOrderLineId])
   @@map("erve_dispatch_delivery_lines")
+}
+
+// ---------------------------------------------------------------------------
+// INV-005 — Distributor Tax Invoice (DRAFT domain only; INV-006 owns GST
+// calculation, override and the real FINALIZED transition; INV-012 owns EI
+// number cutover). This is the real statutory sales document Erve India
+// itself will generate — a DIFFERENT fact from the legacy InvoiceHandoff
+// "Dispatch Sale" Tally-reference record below, which predates this
+// decision and is left untouched here; reconciling the two (if at all) is
+// a decision for whoever implements INV-013 Tally sync, not this story.
+//
+// One row per eligible ErvePackingList — @@unique([ervePackingListId]) is
+// the DB-level backstop against ever creating two drafts for the same
+// source. Created by tax-invoice.service.ts's createOrGetTaxInvoiceDraft,
+// which takes the same pg_advisory_xact_lock + check-then-create approach
+// as finalizeErvePackingList/recordErveDispatch above, so a draft may be
+// requested any number of times for the same EIPL and only ever resolves
+// to one row.
+//
+// Deliberately has NO erveDispatchId column. ErvePackingList<->ErveDispatch
+// is already a strict 1:1 relationship (ErveDispatch.ervePackingListId
+// @unique) owned entirely by erve-dispatch.service.ts; the mission allows a
+// draft to be created before the physical ErveDispatch exists, so the
+// associated dispatch (when one exists) is always resolved by following
+// ervePackingList.dispatch at read time — see
+// getTaxInvoiceByErveDispatch — never duplicated into a second nullable FK
+// here that would need its own synchronization mechanism for no benefit.
+//
+// purchaseMode is required, never nullable: an ErvePackingList is scoped to
+// exactly one Distributor (every member carton's destination must resolve
+// to the SAME distributorId — see assertSameCommercialOwner above), and
+// Distributor.purchaseMode is immutable after creation and the sole source
+// every SaleOrderDistributor.purchaseMode snapshot ever copies — so every
+// line under one EIPL necessarily shares one Purchase Mode. (The
+// InvoiceHandoff module doc's "a single physical Dispatch can contain both
+// OUTRIGHT and SALE_RETURN" describes a SaleOrder spanning MULTIPLE
+// Distributors before Phase 6 consolidation splits it by distributor — it
+// is not a fact about one EIPL/Dispatch/Tax Invoice.)
+//
+// Every identity/financial field below is a snapshot taken at DRAFT
+// creation time — never a live join — so a later edit to
+// SellerRegistration/Distributor master data never changes an
+// already-drafted invoice. This is provisional, reviewable DRAFT data
+// (INV-007 owns the review UI): it becomes the irrevocable statutory record
+// only once INV-006 implements the real FINALIZED transition. status,
+// invoiceNumber, finalizedById/At are reserved for that — nothing in this
+// story ever sets status to FINALIZED, allocates invoiceNumber, or exposes
+// an update route for any field below.
+//
+// Seller bank details ARE captured here (not omitted for being sensitive —
+// a later statutory invoice PDF, INV-008, needs them for historical
+// rendering even if the bank's master record later changes). Access is
+// protected at the service/view layer: every role that may view a Tax
+// Invoice at all (ADMIN, ACCOUNTANT — see TAX_INVOICE_VIEW_ROLES) is
+// already finance-trusted, so no further per-field redaction is applied;
+// tighten the view layer first if that role set is ever widened.
+//
+// NOT frozen here, deliberately deferred to INV-006: HSN (Style.hsnId is
+// itself still an operationally-incomplete master per INV-002 — freezing an
+// unreliable value now would be worse than not freezing it) and GST
+// computation. A consumer needing the HSN for a DRAFT invoice line joins
+// live through TaxInvoiceLine.styleId -> Style.hsnId, exactly as every
+// other pre-INV-006 view in this codebase already does.
+//
+// Bill-To is sourced from Distributor: name/gstin are required there and
+// therefore required here too; Distributor's address fields are themselves
+// optional, so the matching Bill-To fields here are optional too — never
+// fabricated. A null Bill-To address field means the Distributor master
+// itself has no address on file: a gap INV-006 must require be filled
+// before finalization, not something this story invents or blocks on.
+// ---------------------------------------------------------------------------
+
+enum TaxInvoiceStatus {
+  DRAFT
+  FINALIZED
+}
+
+model TaxInvoice {
+  id                String           @id
+  status            TaxInvoiceStatus @default(DRAFT)
+  invoiceNumber     String?          @unique @map("invoice_number")
+  ervePackingListId String           @unique @map("erve_packing_list_id")
+  distributorId     String           @map("distributor_id")
+  purchaseMode      PurchaseMode     @map("purchase_mode")
+
+  sellerRegistrationId     String  @map("seller_registration_id")
+  sellerLegalName          String  @map("seller_legal_name")
+  sellerTradeName          String? @map("seller_trade_name")
+  sellerGstin              String  @map("seller_gstin")
+  sellerEinvoiceApplicable Boolean @map("seller_einvoice_applicable")
+  sellerAddressLine1       String  @map("seller_address_line1")
+  sellerAddressLine2       String? @map("seller_address_line2")
+  sellerCity               String  @map("seller_city")
+  sellerState              String  @map("seller_state")
+  sellerStateCode          String  @map("seller_state_code")
+  sellerPostalCode         String  @map("seller_postal_code")
+  sellerCountry            String  @map("seller_country")
+  sellerBankName           String  @map("seller_bank_name")
+  sellerBankAccountName    String  @map("seller_bank_account_name")
+  sellerBankAccountNumber  String  @map("seller_bank_account_number")
+  sellerBankIfsc           String  @map("seller_bank_ifsc")
+  sellerBankBranchName     String  @map("seller_bank_branch_name")
+  sellerBankAddress        String? @map("seller_bank_address")
+
+  billToName         String  @map("bill_to_name")
+  billToGstin        String  @map("bill_to_gstin")
+  billToContactName  String? @map("bill_to_contact_name")
+  billToContactEmail String? @map("bill_to_contact_email")
+  billToContactPhone String? @map("bill_to_contact_phone")
+  billToAddressLine1 String? @map("bill_to_address_line1")
+  billToAddressLine2 String? @map("bill_to_address_line2")
+  billToCity         String? @map("bill_to_city")
+  billToState        String? @map("bill_to_state")
+  billToCountry      String? @map("bill_to_country")
+  billToPostalCode   String? @map("bill_to_postal_code")
+
+  shipToLabel        String? @map("ship_to_label")
+  shipToContactName  String? @map("ship_to_contact_name")
+  shipToContactEmail String? @map("ship_to_contact_email")
+  shipToContactPhone String? @map("ship_to_contact_phone")
+  shipToAddressLine1 String? @map("ship_to_address_line1")
+  shipToAddressLine2 String? @map("ship_to_address_line2")
+  shipToCity         String? @map("ship_to_city")
+  shipToState        String? @map("ship_to_state")
+  shipToCountry      String? @map("ship_to_country")
+  shipToPostalCode   String? @map("ship_to_postal_code")
+
+  createdById   String    @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  finalizedById String?   @map("finalized_by_id")
+  finalizedAt   DateTime? @map("finalized_at")
+  version       Int       @default(1)
+
+  ervePackingList    ErvePackingList    @relation(fields: [ervePackingListId], references: [id], onDelete: Restrict)
+  distributor        Distributor        @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  sellerRegistration SellerRegistration @relation(fields: [sellerRegistrationId], references: [id], onDelete: Restrict)
+  createdBy          User               @relation("TaxInvoiceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  finalizedBy        User?              @relation("TaxInvoiceFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict)
+  lines              TaxInvoiceLine[]
+
+  @@index([distributorId])
+  @@index([status])
+  @@map("tax_invoices")
+}
+
+// One row per ErvePackingListCommercialLine actually consumed — identical
+// grain to INV-004 (one SaleOrderLine, which is already Style+Size+
+// Destination-specific). ervePackingListCommercialLineId is @unique (not
+// merely unique-per-invoice): a commercial line belongs to exactly one
+// EIPL, and one EIPL maps to at most one TaxInvoice
+// (TaxInvoice.ervePackingListId @unique), so "unique per invoice" and
+// "globally unique" are the same invariant here — only the single-column
+// unique is declared, to avoid a redundant composite.
+model TaxInvoiceLine {
+  id                              String   @id
+  taxInvoiceId                    String   @map("tax_invoice_id")
+  ervePackingListCommercialLineId String   @unique @map("erve_packing_list_commercial_line_id")
+  saleOrderLineId                 String   @map("sale_order_line_id")
+  styleId                         String   @map("style_id")
+  quantity                        Int
+  styleMrp                        Decimal  @map("style_mrp") @db.Decimal(12, 2)
+  distributorPricingPercentage    Decimal  @map("distributor_pricing_percentage") @db.Decimal(5, 2)
+  priceListId                     String   @map("price_list_id")
+  createdAt                       DateTime @default(now()) @map("created_at")
+
+  taxInvoice                    TaxInvoice                    @relation(fields: [taxInvoiceId], references: [id], onDelete: Cascade)
+  ervePackingListCommercialLine ErvePackingListCommercialLine @relation(fields: [ervePackingListCommercialLineId], references: [id], onDelete: Restrict)
+  saleOrderLine                 SaleOrderLine                 @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+  style                          Style                         @relation(fields: [styleId], references: [id], onDelete: Restrict)
+  priceList                      PriceList                     @relation(fields: [priceListId], references: [id], onDelete: Restrict)
+
+  @@index([taxInvoiceId])
+  @@index([saleOrderLineId])
+  @@map("tax_invoice_lines")
 }
 
 // ---------------------------------------------------------------------------

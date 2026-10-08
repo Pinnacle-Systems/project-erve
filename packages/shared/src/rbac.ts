@@ -488,6 +488,34 @@ export function canManageFactoryInvoiceFinancials(user: RoleHolder): boolean {
 }
 
 /**
+ * ACCOUNTANT-only — creating/retrieving a Distributor Tax Invoice draft
+ * (INV-005). ADMIN is deliberately EXCLUDED, same precedent as
+ * FACTORY_INVOICE_FINANCIAL_ROLES above: a statutory financial document is
+ * Accounts' authority, not a general administrative one, per explicit
+ * business instruction (INV-005 Phase A) that ADMIN must not automatically
+ * inherit Accountant-only privilege merely because ADMIN is broad
+ * elsewhere.
+ */
+export const TAX_INVOICE_MUTATION_ROLES = ['ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canMutateTaxInvoice(user: RoleHolder): boolean {
+  return hasAnyRole(user, TAX_INVOICE_MUTATION_ROLES);
+}
+
+/**
+ * Roles that may view a Tax Invoice draft. Deliberately narrow for INV-005
+ * (ADMIN keeps its usual oversight standing even where it loses mutate, same
+ * split as Factory Invoice) — DISTRIBUTOR/MERCHANDISER/FACTORY_USER/
+ * SENIOR_MANAGEMENT get no access yet; INV-007's review UI widens this with
+ * its own explicit justification.
+ */
+export const TAX_INVOICE_VIEW_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canViewTaxInvoice(user: RoleHolder): boolean {
+  return hasAnyRole(user, TAX_INVOICE_VIEW_ROLES);
+}
+
+/**
  * V1 management/aggregate reporting audience (RPT0). Distinct from every
  * transaction domain's own view/mutation roles above — this is who may
  * reach `/reports/*` and the management Dashboard at all. Being in this
