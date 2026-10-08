@@ -9,6 +9,7 @@ import {
   createFactoryUserToken,
   createRoleToken,
   createSingleFactoryApprovedSaleOrder,
+  ensureActiveDistributorPricing,
   ensureStyleFactoryRate,
   packAndFinalize,
 } from './fulfillment-test-helpers.js';
@@ -477,6 +478,7 @@ describe('Erve Packing List — lifecycle (Phase 6)', () => {
       .send({ cartonIds: [dispatch.cartonId] })
       .expect(201);
     const ervePackingListId = created.body.data.id as string;
+    await ensureActiveDistributorPricing(fixture.stock.distributorId);
 
     await request(app)
       .post(`/erve-packing-lists/${ervePackingListId}/finalize`)
@@ -614,6 +616,7 @@ describe('Erve Dispatch — physical dispatch and fulfillment', () => {
       .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ cartonIds: [dispatch.cartonId] })
       .expect(201);
+    await ensureActiveDistributorPricing(fixture.stock.distributorId);
     await request(app)
       .post(`/erve-packing-lists/${created.body.data.id}/finalize`)
       .set('Authorization', `Bearer ${fixture.merchToken}`)

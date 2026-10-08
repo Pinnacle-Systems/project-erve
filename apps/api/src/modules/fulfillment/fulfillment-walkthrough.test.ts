@@ -7,6 +7,7 @@ import {
   createFactoryUserToken,
   createRoleToken,
   createTwoBatchApprovedSaleOrder,
+  ensureActiveDistributorPricing,
   ensureStyleFactoryRate,
 } from './fulfillment-test-helpers.js';
 
@@ -34,6 +35,7 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
     const { token: qaToken } = await createRoleToken('QA_USER');
     const destinationId = fixture.saleOrder.destinations[0]!.id;
     await ensureStyleFactoryRate(fixture.batchA.stock.styleId, fixture.factoryId);
+    await ensureActiveDistributorPricing(fixture.batchA.stock.distributorId);
 
     // --- Factory cartons 40 of the 100 total; cannot finalize yet (incomplete, unaudited) ---
     const carton1 = await request(app)

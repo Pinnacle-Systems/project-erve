@@ -645,14 +645,15 @@ model Style {
   createdAt           DateTime    @default(now()) @map("created_at")
   updatedAt           DateTime    @updatedAt @map("updated_at")
 
-  season               Season                         @relation(fields: [seasonId], references: [id], onDelete: Restrict)
-  hsn                  Hsn?                           @relation(fields: [hsnId], references: [id], onDelete: Restrict)
-  images               StyleImage[]
-  styleSizes           StyleSize[]
-  styleFactoryMappings StyleFactoryMapping[]
-  purchaseOrderLines   DistributorPurchaseOrderLine[]
-  jobOrderLines        JobOrderLine[]
-  saleOrderLines       SaleOrderLine[]
+  season                         Season                         @relation(fields: [seasonId], references: [id], onDelete: Restrict)
+  hsn                            Hsn?                           @relation(fields: [hsnId], references: [id], onDelete: Restrict)
+  images                         StyleImage[]
+  styleSizes                     StyleSize[]
+  styleFactoryMappings           StyleFactoryMapping[]
+  purchaseOrderLines             DistributorPurchaseOrderLine[]
+  jobOrderLines                  JobOrderLine[]
+  saleOrderLines                 SaleOrderLine[]
+  ervePackingListCommercialLines ErvePackingListCommercialLine[]
 
   @@index([status])
   @@index([seasonId])
@@ -906,7 +907,8 @@ model PriceList {
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  distributor Distributor @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  distributor                    Distributor                     @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  ervePackingListCommercialLines ErvePackingListCommercialLine[]
 
   @@index([distributorId])
   @@index([status])
@@ -1688,19 +1690,20 @@ model SaleOrderLine {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  saleOrder                   SaleOrder                    @relation(fields: [saleOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  destination                 SaleOrderDestination         @relation(fields: [destinationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  style                       Style                        @relation(fields: [styleId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  size                        Size                         @relation(fields: [sizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  allocations                 StockAllocation[]
-  factoryDispatchLines        FactoryDispatchLine[]
-  cartonLines                 FactoryPackingCartonLine[]
-  invoiceHandoffs             InvoiceHandoff[]
-  distributorSalesReportLines DistributorSalesReportLine[]
-  erveDispatchDeliveryLines   ErveDispatchDeliveryLine[]
-  distributorReturnLines      DistributorReturnLine[]
-  returnedStockLots           ReturnedStockLot[]
-  factoryInvoiceLines         FactoryInvoiceLine[]
+  saleOrder                      SaleOrder                       @relation(fields: [saleOrderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  destination                    SaleOrderDestination            @relation(fields: [destinationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  style                          Style                           @relation(fields: [styleId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  size                           Size                            @relation(fields: [sizeId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  allocations                    StockAllocation[]
+  factoryDispatchLines           FactoryDispatchLine[]
+  cartonLines                    FactoryPackingCartonLine[]
+  invoiceHandoffs                InvoiceHandoff[]
+  distributorSalesReportLines    DistributorSalesReportLine[]
+  erveDispatchDeliveryLines      ErveDispatchDeliveryLine[]
+  distributorReturnLines         DistributorReturnLine[]
+  returnedStockLots              ReturnedStockLot[]
+  factoryInvoiceLines            FactoryInvoiceLine[]
+  ervePackingListCommercialLines ErvePackingListCommercialLine[]
 
   @@unique([saleOrderId, destinationId, styleId, sizeId], map: "sale_order_line_grain_key")
   @@index([saleOrderId])
@@ -2094,11 +2097,55 @@ model ErvePackingList {
   sources           ErvePackingListSource[]
   cartons           FactoryPackingCarton[]
   dispatch          ErveDispatch?
+  commercialLines   ErvePackingListCommercialLine[]
 
   @@unique([financialYearId, ervePackingListSerial])
   @@index([saleOrderId, status])
   @@index([distributorId, status])
   @@map("erve_packing_lists")
+}
+
+// INV-004 — EIPL Commercial Snapshot: the immutable commercial basis frozen
+// the moment an Erve Packing List transitions OPEN -> FINALIZED (see
+// erve-dispatch.service.ts's finalizeErvePackingList, which writes these rows
+// in the SAME transaction as that status flip — finalization is the
+// commercial point of no return). One row per distinct SaleOrderLine actually
+// represented in the finalized carton composition — the same grain
+// computeDispatchFinancialBreakdown's own bySaleOrderLine aggregation and
+// FactoryInvoiceLine already use — so quantity is the SUM of
+// FactoryPackingCartonLine.quantity across every non-retired member carton
+// for that SaleOrderLine: a Style split across several cartons is neither
+// lost nor double-counted, and @@unique([ervePackingListId, saleOrderLineId])
+// is the DB-level backstop against ever creating two rows for the same line.
+// styleMrp and distributorPricingPercentage are resolved exactly once, at the
+// finalization instant, via INV-003's resolveDistributorPricingForSnapshot —
+// never re-resolved from live Style/PriceList master data afterwards, so a
+// later MRP or pricing change never changes an already-finalized EIPL's
+// commercial values. There is deliberately no update endpoint and no
+// `updatedAt` column (mirrors FactoryPackingCartonLine's own immutable
+// shape): once written, a row never changes, and a later finalize attempt
+// against an already-FINALIZED Erve Packing List is rejected before this
+// table is ever touched again. Future Tax Invoice work (INV-005+) consumes
+// these rows instead of re-resolving MRP/pricing from current masters.
+model ErvePackingListCommercialLine {
+  id                            String   @id
+  ervePackingListId             String   @map("erve_packing_list_id")
+  saleOrderLineId               String   @map("sale_order_line_id")
+  styleId                       String   @map("style_id")
+  quantity                      Int
+  styleMrp                      Decimal  @map("style_mrp") @db.Decimal(12, 2)
+  distributorPricingPercentage  Decimal  @map("distributor_pricing_percentage") @db.Decimal(5, 2)
+  priceListId                   String   @map("price_list_id")
+  createdAt                     DateTime @default(now()) @map("created_at")
+
+  ervePackingList ErvePackingList @relation(fields: [ervePackingListId], references: [id], onDelete: Cascade)
+  saleOrderLine   SaleOrderLine   @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+  style           Style           @relation(fields: [styleId], references: [id], onDelete: Restrict)
+  priceList       PriceList       @relation(fields: [priceListId], references: [id], onDelete: Restrict)
+
+  @@unique([ervePackingListId, saleOrderLineId])
+  @@index([saleOrderLineId])
+  @@map("erve_packing_list_commercial_lines")
 }
 
 // Legacy-only: join of whole finalized Factory Dispatch batches consolidated

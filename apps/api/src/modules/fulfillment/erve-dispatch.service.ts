@@ -10,6 +10,7 @@ import { toBusinessCalendarDate } from '../master-data/financial-year.util.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { createInvoiceHandoffsForDispatch } from './invoice-handoff.service.js';
+import { resolveDistributorPricingForSnapshot } from '../price-lists/price-lookup.js';
 import {
   computeAvailability,
   getActualSoldQuantityForPair,
@@ -701,6 +702,76 @@ export async function removeErvePackingListCarton(actor: CurrentUser, ervePackin
   return getErvePackingListDetail(actor, ervePackingListId);
 }
 
+// ---------------------------------------------------------------------------
+// INV-004 — EIPL Commercial Snapshot (see ErvePackingListCommercialLine's
+// schema doc comment for the full invariant). Built from the SAME
+// packingList.cartons already loaded by finalizeErvePackingList for
+// eligibility re-validation — never a second carton-composition query — and
+// resolved/persisted inside that same transaction, so a missing or ambiguous
+// commercial input fails finalize atomically and leaves the EIPL OPEN.
+// ---------------------------------------------------------------------------
+
+async function buildCommercialSnapshotLines(
+  tx: Tx,
+  packingList: { id: string; distributorId: string | null; cartons: EligibilityCarton[] },
+  finalizedAt: Date,
+) {
+  if (!packingList.distributorId) {
+    throw HttpError.badRequest('This Erve Packing List has no Distributor and cannot be finalized');
+  }
+
+  // Aggregate carton-derived quantity per SaleOrderLine — the same grain
+  // computeDispatchFinancialBreakdown uses — so a Style split across several
+  // member cartons is summed exactly once: never lost, never double-counted.
+  const bySaleOrderLine = new Map<string, { quantity: number; styleId: string }>();
+  for (const carton of packingList.cartons) {
+    for (const line of carton.lines) {
+      const existing = bySaleOrderLine.get(line.saleOrderLineId);
+      if (existing) {
+        existing.quantity += line.quantity;
+        continue;
+      }
+      bySaleOrderLine.set(line.saleOrderLineId, { quantity: line.quantity, styleId: line.saleOrderLine.style.id });
+    }
+  }
+
+  const styleIds = [...new Set([...bySaleOrderLine.values()].map((v) => v.styleId))];
+  const styles = await tx.style.findMany({ where: { id: { in: styleIds } }, select: { id: true, finalMrp: true } });
+  const mrpByStyle = new Map(styles.map((s) => [s.id, s.finalMrp]));
+
+  // Distributor-wide pricing — one resolution per Erve Packing List, reused
+  // across every line — via INV-003's reusable resolver, never re-interpreted
+  // here. The finalization instant is the applicable commercial date.
+  const pricing = await resolveDistributorPricingForSnapshot(
+    { distributorId: packingList.distributorId, date: finalizedAt },
+    tx,
+  );
+  if (!pricing.found) {
+    throw HttpError.badRequest(
+      'Cannot finalize: no active Distributor pricing (% of MRP) applies on the finalization date',
+      { distributorId: packingList.distributorId },
+    );
+  }
+
+  return [...bySaleOrderLine.entries()].map(([saleOrderLineId, { quantity, styleId }]) => {
+    const styleMrp = mrpByStyle.get(styleId);
+    if (!styleMrp) {
+      // Unreachable under the FK/Restrict guarantee on Style — defensive only.
+      throw HttpError.badRequest('Cannot finalize: missing Style MRP for a line in this Erve Packing List', { styleId });
+    }
+    return {
+      id: createId(),
+      ervePackingListId: packingList.id,
+      saleOrderLineId,
+      styleId,
+      quantity,
+      styleMrp,
+      distributorPricingPercentage: pricing.percentageOfMrp,
+      priceListId: pricing.priceListId,
+    };
+  });
+}
+
 export async function finalizeErvePackingList(actor: CurrentUser, ervePackingListId: string) {
   assertPackingListMutationAccess(actor);
 
@@ -724,10 +795,15 @@ export async function finalizeErvePackingList(actor: CurrentUser, ervePackingLis
       assertCartonEligibleForConsolidation(carton);
     }
 
+    const finalizedAt = new Date();
+    const commercialLines = await buildCommercialSnapshotLines(tx, packingList, finalizedAt);
+
     await tx.ervePackingList.update({
       where: { id: ervePackingListId },
-      data: { status: 'FINALIZED', finalizedById: actor.id, finalizedAt: new Date() },
+      data: { status: 'FINALIZED', finalizedById: actor.id, finalizedAt },
     });
+
+    await tx.ervePackingListCommercialLine.createMany({ data: commercialLines });
 
     await recordAuditLog(
       {
@@ -735,7 +811,11 @@ export async function finalizeErvePackingList(actor: CurrentUser, ervePackingLis
         action: 'ERVE_PACKING_LIST_FINALIZED',
         entityType: 'ErvePackingList',
         entityId: ervePackingListId,
-        metadata: { ervePackingListNumber: packingList.ervePackingListNumber, cartonCount: packingList.cartons.length },
+        metadata: {
+          ervePackingListNumber: packingList.ervePackingListNumber,
+          cartonCount: packingList.cartons.length,
+          commercialLineCount: commercialLines.length,
+        },
       },
       tx,
     );

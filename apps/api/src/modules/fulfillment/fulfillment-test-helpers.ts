@@ -199,6 +199,32 @@ export async function packAndFinalize(
 }
 
 /**
+ * INV-004: EIPL finalization now also resolves a Distributor-wide % of MRP
+ * (see erve-dispatch.service.ts's finalizeErvePackingList) and fails the
+ * whole finalize call if none applies on the finalization date. Provisions a
+ * wide-open ACTIVE PriceList for the Distributor, if it doesn't already have
+ * one, so every existing "finalize an Erve Packing List" fixture keeps
+ * working without each test needing to know about pricing — mirrors
+ * ensureStyleFactoryRate's role for the analogous Factory Invoice generation
+ * precondition at Factory Dispatch finalize.
+ */
+export async function ensureActiveDistributorPricing(distributorId: string, percentageOfMrp = 50) {
+  const existing = await prisma.priceList.findFirst({ where: { distributorId, status: 'ACTIVE' } });
+  if (existing) return existing;
+  return prisma.priceList.create({
+    data: {
+      id: createId(),
+      code: `PL-TEST-${createId()}`,
+      name: 'Test fixture price list',
+      distributorId,
+      percentageOfMrp,
+      effectiveFrom: new Date('2000-01-01'),
+      status: 'ACTIVE',
+    },
+  });
+}
+
+/**
  * Phase 6: consolidates one or more already-finalized (READY_FOR_ERVE),
  * audited cartons — see packAndFinalize — into a new Erve Packing List,
  * finalizes it, and records the physical Erve Dispatch, as a MERCHANDISER.
@@ -213,6 +239,7 @@ export async function consolidateAndDispatch(app: Express, merchToken: string, c
     .send({ cartonIds })
     .expect(201);
   const ervePackingListId = created.body.data.id as string;
+  await ensureActiveDistributorPricing(created.body.data.distributor.id as string);
 
   await request(app)
     .post(`/erve-packing-lists/${ervePackingListId}/finalize`)
