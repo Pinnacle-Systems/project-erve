@@ -58,7 +58,12 @@ export const listFactoryDispatchesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
-export const packingQueueQuerySchema = z.object({ factoryId: z.string().trim().optional() });
+export const packingQueueQuerySchema = z.object({
+  factoryId: z.string().trim().optional(),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+export type PackingQueueQuery = z.infer<typeof packingQueueQuerySchema>;
 
 export const packingAuditQueueQuerySchema = z.object({
   factoryId: z.string().trim().optional(),

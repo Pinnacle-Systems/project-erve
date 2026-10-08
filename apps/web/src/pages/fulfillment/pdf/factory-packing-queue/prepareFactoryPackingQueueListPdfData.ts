@@ -1,26 +1,34 @@
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
 import { apiClient } from '../../../../lib/api-client.js';
 import { fetchAllPaginatedRecords } from '../../../../lib/pdf/fetchAllPaginatedRecords.js';
-import type { FactoryDispatchSummary } from '../../types.js';
+import type { FactoryDispatchSummary, FactoryPackingQueueLine } from '../../types.js';
 
 const EXPORT_PAGE_SIZE = 100;
 
 /**
- * The only network-touching step for the Factory Packing Queue PDF's "Your Factory Dispatches"
- * section. GET /factory-dispatches is cursor-paginated (default limit 25, max 100), but the screen
- * itself hardcodes `limit: 25` with no "load more" — so beyond 25 open Factory Dispatches the page
- * silently shows only the first page. A PDF export must not inherit that cap: this loops every page
- * (same implicit server-side Factory scoping, no extra filters — the screen exposes none) so the
- * export always contains every authorized matching Factory Dispatch.
+ * Traverses every page of GET /factory-dispatches/packing-queue (bounded by default, limit 100)
+ * so the PDF export contains every authorized line awaiting packing, rather than only the
+ * first page shown on screen.
  *
- * The "Awaiting Packing" section needs no equivalent treatment — GET /factory-dispatches/packing-queue
- * has no pagination at all and already returns every remaining line, so the PDF reads that half
- * directly from the page's already-loaded query data.
+ * UXAUTH-005: factoryId matches the on-screen selected Factory context (undefined for FACTORY_USER).
+ */
+export async function prepareFactoryPackingQueueAwaitingData(factoryId?: string): Promise<FactoryPackingQueueLine[]> {
+  return fetchAllPaginatedRecords(
+    async ({ cursor, limit }) => {
+      const res = await apiClient.get<ApiSuccessResponse<PaginatedResponse<FactoryPackingQueueLine>>>('/factory-dispatches/packing-queue', {
+        params: { cursor, limit, factoryId },
+      });
+      return res.data.data;
+    },
+    { pageSize: EXPORT_PAGE_SIZE },
+  );
+}
+
+/**
+ * Traverses every page of GET /factory-dispatches (default limit 25, max 100)
+ * so the PDF export always contains every authorized matching Factory Dispatch.
  *
- * UXAUTH-005: `factoryId` must be the same Factory context the screen is
- * currently showing (undefined for a FACTORY_USER, who is scoped server-side
- * regardless) — otherwise this export would silently include every Factory's
- * Dispatches instead of matching the on-screen selection.
+ * UXAUTH-005: factoryId matches the on-screen selected Factory context (undefined for FACTORY_USER).
  */
 export async function prepareFactoryPackingQueueListPdfData(factoryId?: string): Promise<FactoryDispatchSummary[]> {
   return fetchAllPaginatedRecords(

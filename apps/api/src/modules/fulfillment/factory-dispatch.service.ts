@@ -18,6 +18,8 @@ import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document
 import { getPhysicalPackedQuantitiesForLines, reconcileFactoryDispatchLineAttribution } from './packing-reconciliation.js';
 import { generateFactoryInvoiceForFinalizedDispatch } from './factory-invoice.service.js';
 import { listFactories } from '../master-data/master-data.service.js';
+import type { FactoryPackingQueueLine, PaginatedResponse } from '@erve/types';
+import type { PackingQueueQuery } from './factory-dispatch.validation.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -465,65 +467,157 @@ export async function getFactoryDispatchList(
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // Factory Packing Queue (business-level progress: required vs. physical
 // carton-packed quantity — Factory never sees/selects a StockAllocation/
 // QaReleaseLine/Job Order, and never sees an internal allocation split)
 // ---------------------------------------------------------------------------
 
-export async function getFactoryPackingQueue(actor: CurrentUser, requestedFactoryId?: string) {
+export interface PackingQueueCursor {
+  createdAt: Date;
+  saleOrderLineId: string;
+}
+
+export function encodePackingQueueCursor(cursor: PackingQueueCursor): string {
+  return Buffer.from(`${cursor.createdAt.toISOString()}:${cursor.saleOrderLineId}`, 'utf8').toString('base64url');
+}
+
+export function decodePackingQueueCursor(raw: string): PackingQueueCursor {
+  const decoded = Buffer.from(raw, 'base64url').toString('utf8');
+  const separatorIndex = decoded.lastIndexOf(':');
+  const isoDate = separatorIndex >= 0 ? decoded.slice(0, separatorIndex) : '';
+  const saleOrderLineId = separatorIndex >= 0 ? decoded.slice(separatorIndex + 1) : '';
+  const createdAt = new Date(isoDate);
+  if (!isoDate || Number.isNaN(createdAt.getTime()) || !saleOrderLineId) {
+    throw HttpError.badRequest('Invalid packing queue cursor');
+  }
+  return { createdAt, saleOrderLineId };
+}
+
+interface RawPackingQueueRow {
+  saleOrderLineId: string;
+  saleOrderId: string;
+  saleOrderNumber: string;
+  distributorId: string;
+  distributorCode: string;
+  distributorName: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  allocatedQuantity: number;
+  packedQuantity: number;
+  remainingQuantity: number;
+  createdAt: Date;
+}
+
+export async function getFactoryPackingQueue(
+  actor: CurrentUser,
+  filters: Partial<PackingQueueQuery> = {},
+): Promise<PaginatedResponse<FactoryPackingQueueLine>> {
   assertViewAccess(actor);
 
   let factoryId: string;
   if (canReadFactoryDispatchBroadly(actor)) {
-    if (requestedFactoryId) factoryId = requestedFactoryId;
+    if (filters.factoryId) factoryId = filters.factoryId;
     else if (actor.factoryIds.length === 1) factoryId = actor.factoryIds[0]!;
     else throw HttpError.badRequest('factoryId is required');
   } else {
     factoryId = getSoleFactoryId(actor);
   }
 
-  const lines = await prisma.saleOrderLine.findMany({
-    where: { saleOrder: { factoryId } },
-    select: {
-      id: true,
-      quantity: true,
-      style: { select: { id: true, styleNumber: true, styleName: true } },
-      size: { select: { id: true, code: true, label: true } },
-      saleOrder: { select: { id: true, saleOrderNumber: true } },
-      // Correction 8: resolved per line via its own destination's
-      // Distributor-group — a Dispatch Order may span several Distributors,
-      // so this can no longer be read off the order root.
-      destination: { select: { saleOrderDistributor: { select: { distributor: { select: { id: true, code: true, name: true } } } } } },
+  const cursor = filters.cursor ? decodePackingQueueCursor(filters.cursor) : null;
+  const limit = Math.min(Math.max(filters.limit ?? 25, 1), 100);
+
+  const cursorClause = cursor
+    ? Prisma.sql`AND (sol.created_at, sol.id) > (${cursor.createdAt}, ${cursor.saleOrderLineId})`
+    : Prisma.empty;
+
+  // PAG-P1-05: Database-side aggregation & filtering.
+  // 1. Pre-filters finalized Dispatch Orders (fd.status = 'READY_FOR_ERVE')
+  //    before line/carton evaluation because READY_FOR_ERVE requires 100%
+  //    completion of all lines and is immutable, pruning historical records.
+  // 2. Evaluates non-retired carton totals (fpc.retired_at IS NULL) laterally.
+  // 3. Excludes fully packed lines (remainingQuantity <= 0) inside PostgreSQL.
+  // 4. Stable keyset pagination via (created_at ASC, id ASC).
+  const rows = await prisma.$queryRaw<RawPackingQueueRow[]>(Prisma.sql`
+    SELECT
+      sol.id AS "saleOrderLineId",
+      so.id AS "saleOrderId",
+      so.sale_order_number AS "saleOrderNumber",
+      d.id AS "distributorId",
+      d.code AS "distributorCode",
+      d.name AS "distributorName",
+      sty.id AS "styleId",
+      sty.style_number AS "styleNumber",
+      sty.style_name AS "styleName",
+      sz.id AS "sizeId",
+      sz.code AS "sizeCode",
+      sz.label AS "sizeLabel",
+      sol.quantity AS "allocatedQuantity",
+      COALESCE(packed.qty, 0)::int AS "packedQuantity",
+      (sol.quantity - COALESCE(packed.qty, 0))::int AS "remainingQuantity",
+      sol.created_at AS "createdAt"
+    FROM sale_order_lines sol
+    JOIN sale_orders so ON so.id = sol.sale_order_id
+    LEFT JOIN factory_dispatches fd ON fd.sale_order_id = so.id
+    JOIN styles sty ON sty.id = sol.style_id
+    JOIN sizes sz ON sz.id = sol.size_id
+    JOIN sale_order_destinations sod ON sod.id = sol.destination_id
+    JOIN sale_order_distributors sodi ON sodi.id = sod.sale_order_distributor_id
+    JOIN distributors d ON d.id = sodi.distributor_id
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(fpcl.quantity), 0)::int AS qty
+      FROM factory_packing_carton_lines fpcl
+      WHERE fpcl.sale_order_line_id = sol.id
+        AND EXISTS (
+          SELECT 1 FROM factory_packing_cartons fpc
+          WHERE fpc.id = fpcl.carton_id AND fpc.retired_at IS NULL
+        )
+    ) packed ON TRUE
+    WHERE so.factory_id = ${factoryId}
+      AND (fd.id IS NULL OR fd.status != 'READY_FOR_ERVE')
+      AND (sol.quantity - COALESCE(packed.qty, 0)) > 0
+      ${cursorClause}
+    ORDER BY sol.created_at ASC, sol.id ASC
+    LIMIT ${limit + 1}
+  `);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const lastRow = page.at(-1);
+
+  return {
+    items: page.map((row) => ({
+      saleOrderId: row.saleOrderId,
+      saleOrderNumber: row.saleOrderNumber,
+      distributor: {
+        id: row.distributorId,
+        code: row.distributorCode,
+        name: row.distributorName,
+      },
+      saleOrderLineId: row.saleOrderLineId,
+      styleId: row.styleId,
+      styleNumber: row.styleNumber,
+      styleName: row.styleName,
+      sizeId: row.sizeId,
+      sizeCode: row.sizeCode,
+      sizeLabel: row.sizeLabel,
+      allocatedQuantity: row.allocatedQuantity,
+      packedQuantity: row.packedQuantity,
+      remainingQuantity: row.remainingQuantity,
+    })),
+    pageInfo: {
+      limit,
+      hasMore,
+      nextCursor:
+        hasMore && lastRow
+          ? encodePackingQueueCursor({ createdAt: lastRow.createdAt, saleOrderLineId: lastRow.saleOrderLineId })
+          : null,
     },
-    orderBy: { createdAt: 'asc' },
-  });
-  if (lines.length === 0) return [];
-
-  const packedByLine = await getPhysicalPackedQuantitiesForLines(
-    prisma,
-    lines.map((l) => l.id),
-  );
-
-  return lines
-    .map((line) => {
-      const packedQuantity = packedByLine.get(line.id) ?? 0;
-      return {
-        saleOrderId: line.saleOrder.id,
-        saleOrderNumber: line.saleOrder.saleOrderNumber,
-        distributor: line.destination.saleOrderDistributor.distributor,
-        saleOrderLineId: line.id,
-        styleId: line.style.id,
-        styleNumber: line.style.styleNumber,
-        styleName: line.style.styleName,
-        sizeId: line.size.id,
-        sizeCode: line.size.code,
-        sizeLabel: line.size.label,
-        allocatedQuantity: line.quantity,
-        packedQuantity,
-        remainingQuantity: line.quantity - packedQuantity,
-      };
-    })
-    .filter((row) => row.remainingQuantity > 0);
+  };
 }
 
 // ---------------------------------------------------------------------------

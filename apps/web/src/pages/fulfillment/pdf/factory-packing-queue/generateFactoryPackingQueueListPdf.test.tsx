@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FactoryDispatchSummary } from '../../types.js';
 
 const prepareMock = vi.fn();
+const prepareAwaitingMock = vi.fn();
 const buildViewModelMock = vi.fn((..._args: unknown[]) => ({ viewModel: 'stub' }));
 const renderPdfBlobMock = vi.fn(async (..._args: unknown[]) => new Blob(['stub-pdf']));
 
 vi.mock('./prepareFactoryPackingQueueListPdfData.js', () => ({
   prepareFactoryPackingQueueListPdfData: (...args: unknown[]) => prepareMock(...args),
+  prepareFactoryPackingQueueAwaitingData: (...args: unknown[]) => prepareAwaitingMock(...args),
 }));
 vi.mock('./buildFactoryPackingQueueListViewModel.js', () => ({
   buildFactoryPackingQueueListViewModel: (...args: unknown[]) => buildViewModelMock(...args),
@@ -20,6 +22,7 @@ vi.mock('../../../../lib/pdf/generate.js', () => ({
 
 afterEach(() => {
   prepareMock.mockReset();
+  prepareAwaitingMock.mockReset();
   buildViewModelMock.mockClear();
   renderPdfBlobMock.mockClear();
 });
@@ -77,5 +80,39 @@ describe('generateFactoryPackingQueueListPdfBlob', () => {
     prepareMock.mockResolvedValueOnce([dispatch()]);
     await generateFactoryPackingQueueListPdfBlob([], { generatedAt: '2026-09-01T00:00:00.000Z', factoryId: 'factory-B' });
     expect(prepareMock).toHaveBeenNthCalledWith(2, 'factory-B');
+  });
+
+  it('fetches both awaiting packing and dispatches across all pages when called with meta only', async () => {
+    const { generateFactoryPackingQueueListPdfBlob } = await import('./generateFactoryPackingQueueListPdf.js');
+
+    const d = dispatch();
+    const qLine = {
+      saleOrderId: 'so-1',
+      saleOrderNumber: 'EISO/26-27/0001',
+      distributor: { id: 'd1', code: 'D1', name: 'Distributor One' },
+      saleOrderLineId: 'line-1',
+      styleId: 'st-1',
+      styleNumber: 'ST-001',
+      styleName: 'Style 1',
+      sizeId: 'sz-1',
+      sizeCode: 'M',
+      sizeLabel: 'Medium',
+      allocatedQuantity: 10,
+      packedQuantity: 2,
+      remainingQuantity: 8,
+    };
+
+    prepareMock.mockResolvedValueOnce([d]);
+    prepareAwaitingMock.mockResolvedValueOnce([qLine]);
+
+    await generateFactoryPackingQueueListPdfBlob({
+      generatedAt: '2026-09-01T00:00:00.000Z',
+      generatedBy: 'Planner',
+      factoryId: 'factory-A',
+    });
+
+    expect(prepareMock).toHaveBeenCalledWith('factory-A');
+    expect(prepareAwaitingMock).toHaveBeenCalledWith('factory-A');
+    expect(buildViewModelMock).toHaveBeenCalledWith([qLine], [d], expect.objectContaining({ factoryId: 'factory-A' }));
   });
 });
