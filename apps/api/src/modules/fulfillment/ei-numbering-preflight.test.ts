@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../../db/prisma.js';
-import { resetDatabase } from '../../test/helpers.js';
+import { resetDatabase, createTestTaxInvoice } from '../../test/helpers.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import {
   runEiNumberingPreflight,
@@ -374,12 +374,11 @@ describe('runEiNumberingPreflight Diagnostics', () => {
   it('flags cross-system overlap as ambiguous match when lacking authoritative identity evidence', async () => {
     const fy = await ensureFinancialYear(prisma, new Date('2026-06-01'));
 
-    await prisma.$executeRawUnsafe('ALTER TABLE tax_invoices DISABLE TRIGGER ALL');
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO tax_invoices (id, status, invoice_number, erve_packing_list_id, distributor_id, purchase_mode, seller_registration_id, seller_legal_name, seller_gstin, seller_einvoice_applicable, seller_address_line1, seller_city, seller_state, seller_state_code, seller_postal_code, seller_country, seller_bank_name, seller_bank_account_name, seller_bank_account_number, seller_bank_ifsc, seller_bank_branch_name, bill_to_name, bill_to_gstin, created_by_id, updated_at)
-       VALUES ('test-overlap-inv-1', 'FINALIZED', 'EI/26-27/0001', 'pl-10', 'dist-1', 'OUTRIGHT', 'sr-1', 'Seller', '29AAAAA0000A1Z5', false, 'Addr', 'City', 'State', '29', '560001', 'India', 'Bank', 'Acct', '12345', 'IFSC001', 'Branch', 'BillTo', '29BBBBB0000B1Z5', 'user-1', now())`,
-    );
-    await prisma.$executeRawUnsafe('ALTER TABLE tax_invoices ENABLE TRIGGER ALL');
+    await createTestTaxInvoice({
+      id: 'test-overlap-inv-1',
+      invoiceNumber: 'EI/26-27/0001',
+      financialYearId: fy.id,
+    });
 
     const options: PreflightOptions = {
       targetFinancialYearCode: fy.code,
@@ -404,12 +403,11 @@ describe('runEiNumberingPreflight Diagnostics', () => {
   it('validates cross-system representation with PASS when authoritative identity evidence is provided', async () => {
     const fy = await ensureFinancialYear(prisma, new Date('2026-06-01'));
 
-    await prisma.$executeRawUnsafe('ALTER TABLE tax_invoices DISABLE TRIGGER ALL');
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO tax_invoices (id, status, invoice_number, erve_packing_list_id, distributor_id, purchase_mode, seller_registration_id, seller_legal_name, seller_gstin, seller_einvoice_applicable, seller_address_line1, seller_city, seller_state, seller_state_code, seller_postal_code, seller_country, seller_bank_name, seller_bank_account_name, seller_bank_account_number, seller_bank_ifsc, seller_bank_branch_name, bill_to_name, bill_to_gstin, created_by_id, updated_at)
-       VALUES ('test-overlap-inv-auth', 'FINALIZED', 'EI/26-27/0001', 'pl-11', 'dist-1', 'OUTRIGHT', 'sr-1', 'Seller', '29AAAAA0000A1Z5', false, 'Addr', 'City', 'State', '29', '560001', 'India', 'Bank', 'Acct', '12345', 'IFSC001', 'Branch', 'BillTo', '29BBBBB0000B1Z5', 'user-1', now())`,
-    );
-    await prisma.$executeRawUnsafe('ALTER TABLE tax_invoices ENABLE TRIGGER ALL');
+    await createTestTaxInvoice({
+      id: 'test-overlap-inv-auth',
+      invoiceNumber: 'EI/26-27/0001',
+      financialYearId: fy.id,
+    });
 
     const options: PreflightOptions = {
       targetFinancialYearCode: fy.code,
