@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom';
+import { canViewRetailStores } from '../auth/permissions.js';
 import {
   ClipboardList,
   CalendarRange,
@@ -75,6 +76,9 @@ export function AppLayout() {
           : []),
         ...(canViewDistributorMaster(user)
           ? [{ to: '/master-data/distributors', label: 'Distributors', icon: Handshake }]
+          : []),
+        ...(canViewRetailStores(user)
+          ? [{ to: '/master-data/retail-stores', label: 'Retail Stores', icon: ShoppingCart }]
           : []),
         ...(canViewSellerRegistrations(user)
           ? [

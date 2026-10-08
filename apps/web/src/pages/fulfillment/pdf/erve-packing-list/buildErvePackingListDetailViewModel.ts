@@ -89,6 +89,8 @@ export function buildErvePackingListDetailViewModel(
   ];
 
   const destinationItems: PdfKeyValueItem[] = [
+    ...(packingList.destination.storeCode ? [{ label: 'Store Code', value: packingList.destination.storeCode }] : []),
+    ...(packingList.destination.gstin ? [{ label: 'Destination GSTIN', value: packingList.destination.gstin }] : []),
     { label: 'Destination', value: packingList.destination.label },
     {
       label: 'Address',

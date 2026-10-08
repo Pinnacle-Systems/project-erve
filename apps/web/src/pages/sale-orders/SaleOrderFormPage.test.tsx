@@ -9,9 +9,13 @@ import { SaleOrderFormPage } from './SaleOrderFormPage.js';
 import type { SaleOrder } from './types.js';
 
 let container: HTMLDivElement;
+vi.mock('../../auth/AuthContext.js', () => ({
+  useAuth: () => ({ user: { roles: ['MERCHANDISER'] } }),
+}));
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -77,6 +81,32 @@ async function renderCreateForm() {
           data: [
             { id: 'dist-1', code: 'D1', name: 'Distributor One', purchaseMode: 'OUTRIGHT', status: 'ACTIVE' },
             { id: 'dist-2', code: 'D2', name: 'Distributor Two', purchaseMode: 'SALE_RETURN', status: 'ACTIVE' },
+          ],
+        },
+      };
+    }
+    if (url === '/retail-stores/options') {
+        const owner = config?.params?.distributorId;
+        return {
+          data: {
+            data: [
+              {
+                id: `store-${owner}`,
+                distributorId: owner,
+                code: 'S1',
+                name: `Store ${owner}`,
+                addressLine1: 'Store Address',
+                addressLine2: 'Floor 2',
+                city: 'Chennai',
+                state: 'TN',
+                country: 'India',
+                postalCode: '600001',
+                contactName: 'Manager',
+                contactEmail: 'manager@store.local',
+                contactPhone: '9876543210',
+                gstin: '22AAAAA0000A1Z5',
+                status: 'ACTIVE',
+              },
           ],
         },
       };
@@ -170,6 +200,179 @@ describe('SaleOrderFormPage destination/line repeater', () => {
     const firstInput = document.getElementById(firstLabelFor) as HTMLInputElement;
     expect(firstInput.value).toBe('');
     expect(secondInput.value).toBe('456 Second Destination Road');
+  });
+});
+
+function textInput(labelText: string, scope: ParentNode = container): HTMLInputElement {
+  const label = Array.from(scope.querySelectorAll('label')).find(
+    (e) => e.textContent?.trim().replace(/\s*\*$/, '') === labelText,
+  )!;
+  if (!label) throw new Error(`Missing input ${labelText}`);
+  return document.getElementById(label.htmlFor) as HTMLInputElement;
+}
+async function typeText(label: string, value: string, scope: ParentNode = container) {
+  await act(async () => {
+    const el = textInput(label, scope);
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+async function chooseDistributor(name: string, occurrence = 0) {
+  const lookup = triggerByLabel('Distributor', occurrence) as unknown as HTMLInputElement;
+  await act(async () => {
+    lookup.focus();
+    lookup.click();
+  });
+  await flush();
+  await flush();
+  const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (e) => e.textContent?.includes(name),
+  )!;
+  await act(async () => option.click());
+}
+async function prepareInline() {
+  await renderCreateForm();
+  await selectOption('Factory', 'Factory One');
+  await flush();
+  await chooseDistributor('Distributor One');
+  await typeText('Remarks', 'Keep my unsaved notes');
+  await act(async () => clickButtonByText('+ Add Style/Size line'));
+  await selectOption('Style / Size', 'Classic Tee');
+  await typeText('Quantity', '7');
+  // Keep a real parent validation error while creating the missing Store.
+  await act(async () =>
+    container
+      .querySelector('form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+  );
+  await flush();
+  const error = container.querySelector('[role="alert"]')?.textContent ?? container.textContent!;
+  await act(async () => clickButtonByText('+ Create new Retail Store'));
+  return error;
+}
+async function fillInline() {
+  const dialog = document.body.querySelector('[role="dialog"]')!;
+  await typeText('Store Code', 'NEW', dialog);
+  await typeText('Store Name', 'New Store', dialog);
+  await typeText('Address Line 1', 'New Address', dialog);
+  await typeText('City', 'Chennai', dialog);
+  await typeText('State', 'TN', dialog);
+  await typeText('PIN', '600002', dialog);
+  return dialog;
+}
+
+describe('DEMO-014 Store selection and inline creation context', () => {
+  it('ignores a canceled creation that completes after another creation dialog opens', async () => {
+    const pending = deferred<{ data: { data: unknown } }>();
+    vi.spyOn(apiClient, 'post').mockRejectedValueOnce(new Error('Destination address is required')).mockImplementationOnce(() => pending.promise);
+    await prepareInline();
+    const dialog = await fillInline();
+    await act(async () => dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await flush();
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => clickButtonByText('+ Create new Retail Store'));
+    const reopened = document.body.querySelector('[role="dialog"]')!;
+    await typeText('Store Code', 'SECOND', reopened);
+    await act(async () => pending.resolve({ data: { data: { id: 'canceled', distributorId: 'dist-1', code: 'FIRST', name: 'Canceled Store', addressLine1: 'Canceled address', city: 'Chennai', state: 'TN', country: 'India', postalCode: '600001', status: 'ACTIVE' } } }));
+    await flush();
+    expect(document.body.querySelector('[role="dialog"]')).toBe(reopened);
+    expect(textInput('Store Code', reopened).value).toBe('SECOND');
+    expect(textInput('Retail Store').value).toBe('');
+    expect(textInput('Quantity').value).toBe('7');
+    expect(textInput('Remarks').value).toBe('Keep my unsaved notes');
+  });
+
+  it('scopes Store lookup by Distributor and populates every destination field', async () => {
+    await renderCreateForm();
+    await selectOption('Factory', 'Factory One');
+    await flush();
+    await chooseDistributor('Distributor One');
+    const lookup = triggerByLabel('Retail Store') as unknown as HTMLInputElement;
+    await act(async () => {
+      lookup.focus();
+      lookup.click();
+    });
+    await flush();
+    await flush();
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (e) => e.textContent?.includes('Store dist-1'),
+    )!;
+    await act(async () => option.click());
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/retail-stores/options',
+      expect.objectContaining({ params: expect.objectContaining({ distributorId: 'dist-1' }) }),
+    );
+    expect(textInput('Label').value).toBe('Store dist-1');
+    expect(textInput('Address Line 1').value).toBe('Store Address');
+    expect(textInput('Contact Email').value).toBe('manager@store.local');
+    expect(textInput('GSTIN').value).toBe('22AAAAA0000A1Z5');
+  });
+
+  it('creates inline, refreshes lookup and selects the new Store without resetting allocations, notes or errors', async () => {
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValue({
+        data: {
+          data: {
+            id: 'new',
+            distributorId: 'dist-1',
+            code: 'NEW',
+            name: 'New Store',
+            addressLine1: 'New Address',
+            city: 'Chennai',
+            state: 'TN',
+            country: 'India',
+            postalCode: '600002',
+            status: 'ACTIVE',
+          },
+        },
+      }).mockRejectedValueOnce(new Error('Destination address is required'));
+    await prepareInline();
+    const parent = container.querySelector('form')!;
+    expect(container.textContent).toContain('Destination address is required');
+    const dialog = await fillInline();
+    await act(async () =>
+      dialog
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
+    await flush();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelector('form')).toBe(parent);
+    expect(textInput('Remarks').value).toBe('Keep my unsaved notes');
+    expect(textInput('Quantity').value).toBe('7');
+    expect(textInput('Retail Store').value).toContain('New Store');
+    expect(textInput('Address Line 1').value).toBe('New Address');
+    expect(container.textContent).toContain('Destination address is required');
+    expect(post.mock.calls).toHaveLength(2);
+    expect(post.mock.calls.filter(([url]) => url === '/sale-orders')).toHaveLength(1);
+    expect(post).toHaveBeenCalledWith(
+      '/retail-stores',
+      expect.objectContaining({ distributorId: 'dist-1' }),
+    );
+  });
+
+  it('keeps parent state after inline failure and cancellation', async () => {
+    vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('Store Code already exists'));
+    await prepareInline();
+    const dialog = await fillInline();
+    await act(async () =>
+      dialog
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
+    await flush();
+    expect(dialog.textContent).toContain('Store Code already exists');
+    expect(textInput('Store Code', dialog).value).toBe('NEW');
+    expect(textInput('Remarks').value).toBe('Keep my unsaved notes');
+    const cancel = Array.from(dialog.querySelectorAll('button')).find(
+      (e) => e.textContent === 'Cancel',
+    )!;
+    await act(async () => cancel.click());
+    expect(textInput('Quantity').value).toBe('7');
+    expect(textInput('Remarks').value).toBe('Keep my unsaved notes');
+    expect(textInput('Retail Store').value).toBe('');
   });
 });
 

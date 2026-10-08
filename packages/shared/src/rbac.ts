@@ -4,6 +4,16 @@ export interface RoleHolder {
   roles: readonly Role[];
 }
 
+export const RETAIL_STORE_MANAGE_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+] as const satisfies readonly Role[];
+export const RETAIL_STORE_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+] as const satisfies readonly Role[];
+
 export function hasRole(user: RoleHolder, role: Role): boolean {
   return user.roles.includes(role);
 }

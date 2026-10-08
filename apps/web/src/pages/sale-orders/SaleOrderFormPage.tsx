@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
+import type { RetailStore } from '@erve/types';
+import { RetailStoreLookupField } from '../master-data/RetailStoreLookupField.js';
 import { createEnterToNextHandler, PageHeader } from '@erve/app-components';
 import { Badge, Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
@@ -22,6 +24,9 @@ interface LineDraft {
 }
 
 interface DestinationDraft {
+  retailStoreId?: string | null;
+  refreshStoreSnapshot?: boolean;
+  storeCode?: string | null;
   clientKey: string;
   id?: string;
   label: string;
@@ -164,6 +169,8 @@ export function SaleOrderFormPage() {
         destinations: group.destinations.map((dest) => ({
           clientKey: dest.id,
           id: dest.id,
+          retailStoreId: dest.retailStoreId ?? null,
+          storeCode: dest.storeCode ?? null,
           label: dest.label ?? '',
           contactName: dest.contactName ?? '',
           contactEmail: dest.contactEmail ?? '',
@@ -262,6 +269,29 @@ export function SaleOrderFormPage() {
     );
   }
 
+  function selectStore(groupKey: string, destKey: string, store: RetailStore | null) {
+    if (!store) {
+      updateDestination(groupKey, destKey, { retailStoreId: null, storeCode: null });
+      return;
+    }
+    updateDestination(groupKey, destKey, {
+      retailStoreId: store.id,
+      refreshStoreSnapshot: true,
+      storeCode: store.code,
+      label: store.name,
+      addressLine1: store.addressLine1,
+      addressLine2: store.addressLine2 ?? '',
+      city: store.city,
+      state: store.state,
+      country: store.country,
+      postalCode: store.postalCode,
+      contactName: store.contactName ?? '',
+      contactEmail: store.contactEmail ?? '',
+      contactPhone: store.contactPhone ?? '',
+      gstin: store.gstin ?? '',
+    });
+  }
+
   function updateLine(groupKey: string, destKey: string, lineKey: string, patch: Partial<LineDraft>) {
     setDistributorGroups((current) =>
       current.map((g) =>
@@ -333,7 +363,7 @@ export function SaleOrderFormPage() {
       if (!destination) return current;
       return current.map((g) => {
         if (g.clientKey === fromGroupKey) return { ...g, destinations: g.destinations.filter((d) => d.clientKey !== destKey) };
-        if (g.clientKey === toGroupKey) return { ...g, destinations: [...g.destinations, destination] };
+        if (g.clientKey === toGroupKey) return { ...g, destinations: [...g.destinations, { ...destination, retailStoreId: null, storeCode: null }] };
         return g;
       });
     });
@@ -360,6 +390,8 @@ export function SaleOrderFormPage() {
         distributorId: group.distributorId,
         destinations: group.destinations.map((d) => ({
           clientKey: d.clientKey,
+          retailStoreId: d.retailStoreId ?? null,
+          refreshStoreSnapshot: d.refreshStoreSnapshot ?? false,
           ...(d.id ? { id: d.id } : {}),
           label: d.label || null,
           contactName: d.contactName || null,
@@ -498,7 +530,11 @@ export function SaleOrderFormPage() {
                             label="Distributor"
                             value={group.distributor}
                             onChange={(distributor) =>
-                              updateGroup(group.clientKey, { distributor, distributorId: distributor?.id ?? '' })
+                              updateGroup(group.clientKey, {
+                                distributor,
+                                distributorId: distributor?.id ?? '',
+                                destinations: group.destinations.map((d) => ({ ...d, retailStoreId: null, storeCode: null })),
+                              })
                             }
                             excludeIds={otherGroupDistributorIds}
                             required
@@ -517,6 +553,23 @@ export function SaleOrderFormPage() {
                           {group.destinations.map((dest, destIndex) => (
                             <Panel key={dest.clientKey} title={`Destination ${destIndex + 1}`}>
                               <div className="space-y-4">
+                                <RetailStoreLookupField
+                                  id={`dest-${dest.clientKey}-store`}
+                                  key={group.distributorId}
+                                  distributor={group.distributor}
+                                  value={
+                                    dest.retailStoreId
+                                      ? {
+                                          id: dest.retailStoreId,
+                                          code: dest.storeCode ?? undefined,
+                                          name: dest.label,
+                                        }
+                                      : null
+                                  }
+                                  onChange={(store) =>
+                                    selectStore(group.clientKey, dest.clientKey, store)
+                                  }
+                                />
                                 <FormGrid layout="content">
                                   <TextField
                                     id={`dest-${dest.clientKey}-label`}
@@ -535,6 +588,17 @@ export function SaleOrderFormPage() {
                                     label="Contact Phone"
                                     value={dest.contactPhone}
                                     onChange={(e) => updateDestination(group.clientKey, dest.clientKey, { contactPhone: e.target.value })}
+                                  />
+                                  <TextField
+                                    id={`dest-${dest.clientKey}-email`}
+                                    label="Contact Email"
+                                    type="email"
+                                    value={dest.contactEmail}
+                                    onChange={(e) =>
+                                      updateDestination(group.clientKey, dest.clientKey, {
+                                        contactEmail: e.target.value,
+                                      })
+                                    }
                                   />
                                   <TextField
                                     id={`dest-${dest.clientKey}-address-line-1`}

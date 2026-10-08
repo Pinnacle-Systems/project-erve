@@ -6,6 +6,12 @@ import { LoginPage } from '../pages/LoginPage.js';
 import { DistributorDetailPage } from '../pages/master-data/DistributorDetailPage.js';
 import { DistributorFormPage } from '../pages/master-data/DistributorFormPage.js';
 import { DistributorListPage } from '../pages/master-data/DistributorListPage.js';
+import {
+  RetailStoreListPage,
+  RetailStoreFormPage,
+  RetailStoreDetailPage,
+} from '../pages/master-data/RetailStorePages.js';
+import { RETAIL_STORE_MANAGE_ROLES, RETAIL_STORE_VIEW_ROLES } from '../auth/permissions.js';
 import { FactoryListPage } from '../pages/master-data/FactoryListPage.js';
 import { FactoryDetailPage } from '../pages/master-data/FactoryDetailPage.js';
 import { FactoryFormPage } from '../pages/master-data/FactoryFormPage.js';
@@ -250,6 +256,38 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={DISTRIBUTOR_VIEW_ROLES}>
               <DistributorListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="retail-stores"
+          element={
+            <RoleRoute allowed={RETAIL_STORE_VIEW_ROLES}>
+              <RetailStoreListPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="retail-stores/new"
+          element={
+            <RoleRoute allowed={RETAIL_STORE_MANAGE_ROLES}>
+              <RetailStoreFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="retail-stores/:id"
+          element={
+            <RoleRoute allowed={RETAIL_STORE_VIEW_ROLES}>
+              <RetailStoreDetailPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="retail-stores/:id/edit"
+          element={
+            <RoleRoute allowed={RETAIL_STORE_MANAGE_ROLES}>
+              <RetailStoreFormPage />
             </RoleRoute>
           }
         />

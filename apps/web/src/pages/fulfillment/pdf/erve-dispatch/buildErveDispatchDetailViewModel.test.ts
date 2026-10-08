@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { ErveDispatchView } from '../../types.js';
 import { buildErveDispatchDetailViewModel } from './buildErveDispatchDetailViewModel.js';
 
+it('prints destination facts from the finalized packing snapshot', () => {
+  const dispatch = makeDispatch({ destination: { storeCode: 'ST-OLD', gstin: '22AAAAA0000A1Z5', label: 'Historic Store', addressLine1: 'Original Road', addressLine2: null, city: 'Chennai', state: 'TN', country: 'India', postalCode: '600001', contactName: 'Manager', contactEmail: 'old@example.com', contactPhone: '9876543210' } });
+  const vm = buildErveDispatchDetailViewModel(dispatch, { invoiceHandoffs: null }, { generatedAt: '2026-10-08T00:00:00Z' });
+  expect(vm.identityItems).toContainEqual({ label: 'Store Code', value: 'ST-OLD' });
+  expect(vm.identityItems).toContainEqual({ label: 'Destination GSTIN', value: '22AAAAA0000A1Z5' });
+  expect(vm.identityItems).toContainEqual({ label: 'Destination Address', value: 'Original Road, Chennai, TN, 600001, India' });
+});
+
 function makeDispatch(overrides: Partial<ErveDispatchView> = {}): ErveDispatchView {
   return {
     id: 'ed-1',

@@ -213,6 +213,9 @@ export type StockAllocationSource = 'MERCHANDISER_ALLOCATION';
 
 export interface SaleOrderDestinationView {
   id: string;
+  /** Nullable on historical/manual destinations; display always uses the snapshot. */
+  retailStoreId?: string | null;
+  storeCode?: string | null;
   label: string | null;
   contactName: string | null;
   contactEmail: string | null;
@@ -535,6 +538,8 @@ export interface ErvePackingListCartonView {
 }
 
 export interface ErvePackingListDestinationSnapshot {
+  storeCode?: string | null;
+  gstin?: string | null;
   label: string | null;
   contactName: string | null;
   contactEmail: string | null;
@@ -625,6 +630,7 @@ export interface ErveDispatchSaleOrReturnLine {
 
 export interface ErveDispatchView extends VersionedResource {
   id: string;
+  destination?: ErvePackingListDestinationSnapshot;
   erveDispatchNumber: string;
   ervePackingList: { id: string; ervePackingListNumber: string };
   saleOrder: { id: string; saleOrderNumber: string } | null;

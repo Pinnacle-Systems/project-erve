@@ -13,6 +13,7 @@ import { getAvailableQuantities, getEligibleQaReleaseLinesForPool } from '../job
 import { computeDispatchOrderFulfillment } from '../fulfillment/fulfillment-progress.js';
 import { buildPackingListProjection, hardDeleteFactoryDispatches } from '../fulfillment/factory-dispatch.service.js';
 import { getPhysicalPackedQuantitiesForLines } from '../fulfillment/packing-reconciliation.js';
+import { resolveRetailStoreSnapshots } from './retail-store-snapshot.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -72,6 +73,8 @@ type SODestinationRecord = SOGroupRecord['destinations'][number];
 function toDestinationView(destination: SODestinationRecord, canMoveDistributor: boolean) {
   return {
     id: destination.id,
+    retailStoreId: destination.retailStoreId,
+    storeCode: destination.storeCode,
     label: destination.label,
     contactName: destination.contactName,
     contactEmail: destination.contactEmail,
@@ -413,6 +416,9 @@ async function lockPoolKeys(tx: Tx, factoryId: string, poolKeys: Iterable<string
 // ---------------------------------------------------------------------------
 
 export interface DispatchOrderDestinationInput {
+  retailStoreId?: string | null;
+  refreshStoreSnapshot?: boolean;
+  storeCode?: string | null;
   clientKey: string;
   id?: string;
   label?: string | null;
@@ -791,6 +797,8 @@ export async function createDispatchOrder(
     const existingId = await findIdempotentSaleOrderId(tx, actor.id, 'CREATE', idempotencyKey, hash);
     if (existingId) return existingId;
 
+    await resolveRetailStoreSnapshots(tx, input.distributors, flattenedDestinations);
+
     const groupIdByClientKey = new Map(input.distributors.map((g) => [g.clientKey, createId()]));
     const destinationIdByClientKey = new Map(flattenedDestinations.map((d) => [d.clientKey, createId()]));
     const lineDefs = input.lines.map((line) => ({
@@ -845,6 +853,8 @@ export async function createDispatchOrder(
         id: destinationIdByClientKey.get(d.clientKey)!,
         saleOrderId: soId,
         saleOrderDistributorId: groupIdByClientKey.get(d.groupClientKey)!,
+        retailStoreId: d.retailStoreId ?? null,
+        storeCode: d.storeCode ?? null,
         label: d.label ?? null,
         contactName: d.contactName ?? null,
         contactEmail: d.contactEmail ?? null,
@@ -1004,6 +1014,22 @@ export async function updateDispatchOrder(
       if (order.version !== input.expectedVersion) throw HttpError.staleVersion(order.version);
       if (await isDispatchOrderLocked(tx, id)) {
         throw HttpError.badRequest('This dispatch order is locked: Factory Dispatch has already occurred');
+      }
+
+      if (input.distributors) {
+        await resolveRetailStoreSnapshots(
+          tx,
+          input.distributors,
+          flattenedDestinations,
+          order.distributorGroups.flatMap((g) =>
+            g.destinations.map((d) => ({
+              id: d.id,
+              retailStoreId: d.retailStoreId,
+              storeCode: d.storeCode,
+              distributorId: g.distributorId,
+            })),
+          ),
+        );
       }
 
       const existingGroups: LoadedGroup[] = order.distributorGroups.map((g) => ({
@@ -1334,6 +1360,8 @@ export async function updateDispatchOrder(
             const existing = existingDestById.get(d.id);
             if (!existing) continue;
             const changed =
+              (d.retailStoreId ?? null) !== existing.retailStoreId ||
+              (d.storeCode ?? null) !== existing.storeCode ||
               (d.label ?? null) !== existing.label ||
               (d.contactName ?? null) !== existing.contactName ||
               (d.contactEmail ?? null) !== existing.contactEmail ||
@@ -1556,6 +1584,8 @@ async function createOrMergeAllocations(tx: Tx, actorId: string, allocations: Pl
 }
 
 interface DestinationFields {
+  retailStoreId: string | null;
+  storeCode: string | null;
   label: string | null;
   contactName: string | null;
   contactEmail: string | null;
@@ -1571,6 +1601,8 @@ interface DestinationFields {
 
 function toDestinationFields(d: DispatchOrderDestinationInput): DestinationFields {
   return {
+    retailStoreId: d.retailStoreId ?? null,
+    storeCode: d.storeCode ?? null,
     label: d.label ?? null,
     contactName: d.contactName ?? null,
     contactEmail: d.contactEmail ?? null,

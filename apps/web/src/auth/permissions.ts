@@ -1,5 +1,11 @@
 import type { AuthUser } from '@erve/types';
 import type { Role } from '@erve/types';
+import { RETAIL_STORE_MANAGE_ROLES, RETAIL_STORE_VIEW_ROLES } from '@erve/shared';
+export { RETAIL_STORE_MANAGE_ROLES, RETAIL_STORE_VIEW_ROLES } from '@erve/shared';
+export const canManageRetailStores = (user: AuthUser | null | undefined) =>
+  hasRole(user, RETAIL_STORE_MANAGE_ROLES);
+export const canViewRetailStores = (user: AuthUser | null | undefined) =>
+  hasRole(user, RETAIL_STORE_VIEW_ROLES);
 import {
   canMutateJobOrderProduction,
   canUndoJobOrderProductionStage,

@@ -429,6 +429,7 @@ model Distributor {
   updatedAt    DateTime          @updatedAt @map("updated_at")
 
   userDistributors      UserDistributor[]
+  retailStores          RetailStore[]
   priceLists            PriceList[]
   purchaseOrders        DistributorPurchaseOrder[]
   saleOrderDistributors SaleOrderDistributor[]
@@ -439,6 +440,33 @@ model Distributor {
 
   @@index([status])
   @@map("distributors")
+}
+
+model RetailStore {
+  id           String            @id
+  distributorId String           @map("distributor_id")
+  code         String
+  name         String
+  addressLine1 String            @map("address_line1")
+  addressLine2 String?           @map("address_line2")
+  city         String
+  state        String
+  country      String            @default("India")
+  postalCode   String            @map("postal_code")
+  gstin        String?
+  contactName  String?           @map("contact_name")
+  contactEmail String?           @map("contact_email")
+  contactPhone String?           @map("contact_phone")
+  status       DistributorStatus @default(ACTIVE)
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+
+  distributor  Distributor            @relation(fields: [distributorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  destinations SaleOrderDestination[]
+
+  @@unique([distributorId, code])
+  @@index([distributorId, status])
+  @@map("retail_stores")
 }
 
 model Factory {
@@ -1643,6 +1671,8 @@ model SaleOrderDistributor {
 // to the same SaleOrder as this destination's own saleOrderId.
 model SaleOrderDestination {
   id                     String   @id
+  retailStoreId          String?  @map("retail_store_id")
+  storeCode              String?  @map("store_code")
   saleOrderId            String   @map("sale_order_id")
   saleOrderDistributorId String   @map("sale_order_distributor_id")
   label                  String?
@@ -1663,6 +1693,7 @@ model SaleOrderDestination {
   updatedAt              DateTime @updatedAt @map("updated_at")
 
   saleOrder              SaleOrder              @relation(fields: [saleOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  retailStore            RetailStore?           @relation(fields: [retailStoreId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   saleOrderDistributor   SaleOrderDistributor   @relation(fields: [saleOrderDistributorId, saleOrderId], references: [id, saleOrderId], onDelete: Restrict, onUpdate: NoAction)
   lines                  SaleOrderLine[]
   cartons                FactoryPackingCarton[]
@@ -1670,6 +1701,7 @@ model SaleOrderDestination {
 
   @@index([saleOrderId])
   @@index([saleOrderDistributorId])
+  @@index([retailStoreId])
   @@map("sale_order_destinations")
 }
 
@@ -2071,6 +2103,8 @@ model ErvePackingList {
   originDestinationId     String?               @map("origin_destination_id")
   destinationMatchKey     String?               @map("destination_match_key")
   destinationLabel        String?               @map("destination_label")
+  destinationStoreCode    String?               @map("destination_store_code")
+  destinationGstin        String?               @map("destination_gstin")
   destinationContactName  String?               @map("destination_contact_name")
   destinationContactEmail String?               @map("destination_contact_email")
   destinationContactPhone String?               @map("destination_contact_phone")

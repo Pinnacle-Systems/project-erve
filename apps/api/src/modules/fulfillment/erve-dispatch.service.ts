@@ -104,6 +104,15 @@ interface DestinationAddressFields {
   postalCode: string | null;
 }
 
+type DestinationSnapshotFields = DestinationAddressFields & {
+  label: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  storeCode: string | null;
+  gstin: string | null;
+};
+
 function normalizeAddressField(value: string | null | undefined): string {
   return (value ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
 }
@@ -370,8 +379,14 @@ function sourceDispatchOrdersOf(record: PackingListRecord) {
   return [...byId.values()];
 }
 
-function destinationSnapshotOf(record: PackingListRecord) {
+function destinationSnapshotOf(record: Pick<PackingListRecord,
+  'destinationLabel' | 'destinationStoreCode' | 'destinationGstin' |
+  'destinationContactName' | 'destinationContactEmail' | 'destinationContactPhone' |
+  'destinationAddressLine1' | 'destinationAddressLine2' | 'destinationCity' |
+  'destinationState' | 'destinationCountry' | 'destinationPostalCode'>) {
   return {
+    storeCode: record.destinationStoreCode,
+    gstin: record.destinationGstin,
     label: record.destinationLabel,
     contactName: record.destinationContactName,
     contactEmail: record.destinationContactEmail,
@@ -474,7 +489,7 @@ async function loadAndValidateCartonsForConsolidation(
   distributorId: string;
   matchKey: string;
   originDestinationId: string;
-  destinationSnapshot: DestinationAddressFields & { label: string | null; contactName: string | null; contactEmail: string | null; contactPhone: string | null };
+  destinationSnapshot: DestinationSnapshotFields;
   saleOrderIds: Set<string>;
 }> {
   const cartons = await tx.factoryPackingCarton.findMany({ where: { id: { in: cartonIds } }, include: eligibilityCartonInclude });
@@ -483,7 +498,7 @@ async function loadAndValidateCartonsForConsolidation(
   let distributorId = existing?.distributorId ?? null;
   let matchKey = existing?.destinationMatchKey ?? null;
   let originDestinationId: string | null = null;
-  let destinationSnapshot: (DestinationAddressFields & { label: string | null; contactName: string | null; contactEmail: string | null; contactPhone: string | null }) | null = null;
+  let destinationSnapshot: (DestinationSnapshotFields) | null = null;
   const saleOrderIds = new Set<string>();
 
   const orderedCartons: EligibilityCarton[] = [];
@@ -502,6 +517,8 @@ async function loadAndValidateCartonsForConsolidation(
       matchKey = cartonKey;
       originDestinationId = carton.destinationId;
       destinationSnapshot = {
+        storeCode: carton.destination.storeCode,
+        gstin: carton.destination.gstin,
         label: carton.destination.label,
         contactName: carton.destination.contactName,
         contactEmail: carton.destination.contactEmail,
@@ -535,7 +552,7 @@ async function loadAndValidateCartonsForConsolidation(
     distributorId,
     matchKey,
     originDestinationId: originDestinationId ?? '',
-    destinationSnapshot: destinationSnapshot ?? ({} as DestinationAddressFields & { label: string | null; contactName: string | null; contactEmail: string | null; contactPhone: string | null }),
+    destinationSnapshot: destinationSnapshot ?? ({} as DestinationSnapshotFields),
     saleOrderIds,
   };
 }
@@ -579,6 +596,8 @@ export async function createErvePackingList(actor: CurrentUser, input: CreateErv
         originDestinationId,
         destinationMatchKey: matchKey,
         destinationLabel: destinationSnapshot.label,
+        destinationStoreCode: destinationSnapshot.storeCode,
+        destinationGstin: destinationSnapshot.gstin,
         destinationContactName: destinationSnapshot.contactName,
         destinationContactEmail: destinationSnapshot.contactEmail,
         destinationContactPhone: destinationSnapshot.contactPhone,
@@ -829,7 +848,12 @@ export async function finalizeErvePackingList(actor: CurrentUser, ervePackingLis
 // ---------------------------------------------------------------------------
 
 const erveDispatchInclude = {
-  ervePackingList: { select: { id: true, ervePackingListNumber: true } },
+  ervePackingList: { select: { id: true, ervePackingListNumber: true,
+    destinationLabel: true, destinationStoreCode: true, destinationGstin: true,
+    destinationContactName: true, destinationContactEmail: true, destinationContactPhone: true,
+    destinationAddressLine1: true, destinationAddressLine2: true, destinationCity: true,
+    destinationState: true, destinationCountry: true, destinationPostalCode: true,
+  } },
   saleOrder: { select: { id: true, saleOrderNumber: true } },
   distributor: { select: { id: true, code: true, name: true } },
   dispatchedBy: { select: { id: true, name: true, email: true } },
@@ -1000,7 +1024,8 @@ async function toErveDispatchView(record: ErveDispatchRecord) {
   return {
     id: record.id,
     erveDispatchNumber: record.erveDispatchNumber,
-    ervePackingList: record.ervePackingList,
+    ervePackingList: { id: record.ervePackingList.id, ervePackingListNumber: record.ervePackingList.ervePackingListNumber },
+    destination: destinationSnapshotOf(record.ervePackingList),
     saleOrder: record.saleOrder,
     distributor: record.distributor,
     status: record.status,

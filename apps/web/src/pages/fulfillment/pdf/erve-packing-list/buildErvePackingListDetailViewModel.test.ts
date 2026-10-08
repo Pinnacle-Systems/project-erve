@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { ErvePackingListDetail } from '../../types.js';
 import { buildErvePackingListDetailViewModel } from './buildErvePackingListDetailViewModel.js';
 
+it('prints the persisted Retail Store Code and destination GSTIN', () => {
+  const packingList = makePackingList();
+  packingList.destination.storeCode = 'ST-OLD';
+  packingList.destination.gstin = '22AAAAA0000A1Z5';
+  const vm = buildErvePackingListDetailViewModel(packingList, { generatedAt: '2026-10-08T00:00:00Z' });
+  expect(vm.destinationItems).toContainEqual({ label: 'Store Code', value: 'ST-OLD' });
+  expect(vm.destinationItems).toContainEqual({ label: 'Destination GSTIN', value: '22AAAAA0000A1Z5' });
+});
+
 function makePackingList(overrides: Partial<ErvePackingListDetail> = {}): ErvePackingListDetail {
   return {
     id: 'epl-1',
