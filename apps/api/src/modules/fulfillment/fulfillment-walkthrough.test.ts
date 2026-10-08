@@ -71,7 +71,8 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
       .get('/factory-dispatches/packing-queue')
       .set('Authorization', `Bearer ${factoryToken}`)
       .expect(200);
-    expect(queue.body.data).toEqual([expect.objectContaining({ remainingQuantity: 60 })]);
+    expect(queue.body.data.items).toEqual([expect.objectContaining({ remainingQuantity: 60 })]);
+    expect(queue.body.data.pageInfo).toEqual({ limit: 25, hasMore: false, nextCursor: null });
 
     // --- Factory cartons the remaining 60 against the SAME packing root —
     // the auto-distribution across the two underlying Job Orders' stock
@@ -124,7 +125,8 @@ describe('Acceptance walkthrough — Factory Packing -> Erve Consolidation -> Di
       .get('/factory-dispatches/packing-queue')
       .set('Authorization', `Bearer ${factoryToken}`)
       .expect(200);
-    expect(queueFinal.body.data).toHaveLength(0);
+    expect(queueFinal.body.data.items).toHaveLength(0);
+    expect(queueFinal.body.data.pageInfo).toEqual({ limit: 25, hasMore: false, nextCursor: null });
 
     // --- Erve consolidates both cartons from the single packing root and dispatches them in full ---
     const packingList = await request(app)

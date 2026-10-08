@@ -33,8 +33,8 @@ factoryDispatchesRouter.get(
   '/packing-queue',
   canView,
   asyncHandler(async (req, res) => {
-    const query = packingQueueQuerySchema.parse(req.query);
-    const queue = await factoryDispatchService.getFactoryPackingQueue(req.user!, query.factoryId);
+    const filters = packingQueueQuerySchema.parse(req.query);
+    const queue = await factoryDispatchService.getFactoryPackingQueue(req.user!, filters);
     res.status(200).json(successResponse(queue));
   }),
 );

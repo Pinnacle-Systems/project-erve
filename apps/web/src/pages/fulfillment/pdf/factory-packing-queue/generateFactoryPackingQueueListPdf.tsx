@@ -1,4 +1,7 @@
-import { prepareFactoryPackingQueueListPdfData } from './prepareFactoryPackingQueueListPdfData.js';
+import {
+  prepareFactoryPackingQueueAwaitingData,
+  prepareFactoryPackingQueueListPdfData,
+} from './prepareFactoryPackingQueueListPdfData.js';
 import {
   buildFactoryPackingQueueListViewModel,
   type FactoryPackingQueueListPdfMeta,
@@ -13,21 +16,26 @@ import type { FactoryPackingQueueLine } from '../../types.js';
  * `import()` so the PDF engine and document code load only when a user actually clicks
  * Download/Print.
  *
- * The "Awaiting Packing" half is passed in already-loaded (its own endpoint is unbounded); the
- * "Your Factory Dispatches" half is fetched here across every page so the PDF never inherits the
- * screen's own hardcoded `limit: 25`.
+ * Both the "Awaiting Packing" queue and "Your Factory Dispatches" sections are fetched across
+ * every page (traversing all pages with fetchAllPaginatedRecords) so the PDF export is never
+ * truncated to only the initial page loaded on screen.
  *
  * UXAUTH-005: `meta.factoryId` (the same Factory context selected on screen —
- * undefined for a FACTORY_USER) is threaded into the "Your Factory
- * Dispatches" re-fetch so a broad reader's export always matches the
- * Factory currently on screen, never every Factory or a previously selected
- * one.
+ * undefined for a FACTORY_USER) is threaded into both data fetches so a broad reader's
+ * export always matches the Factory currently on screen.
  */
 export async function generateFactoryPackingQueueListPdfBlob(
-  awaitingPacking: FactoryPackingQueueLine[],
-  meta: FactoryPackingQueueListPdfMeta,
+  metaOrAwaiting: FactoryPackingQueueLine[] | FactoryPackingQueueListPdfMeta,
+  maybeMeta?: FactoryPackingQueueListPdfMeta,
 ): Promise<Blob> {
-  const factoryDispatches = await prepareFactoryPackingQueueListPdfData(meta.factoryId);
+  const isLinesArray = Array.isArray(metaOrAwaiting);
+  const meta = isLinesArray ? maybeMeta! : metaOrAwaiting;
+  const [awaitingPacking, factoryDispatches] = await Promise.all([
+    isLinesArray
+      ? Promise.resolve(metaOrAwaiting)
+      : prepareFactoryPackingQueueAwaitingData(meta.factoryId),
+    prepareFactoryPackingQueueListPdfData(meta.factoryId),
+  ]);
   const viewModel = buildFactoryPackingQueueListViewModel(awaitingPacking, factoryDispatches, meta);
   return renderPdfBlob(<FactoryPackingQueueListDocument viewModel={viewModel} />);
 }

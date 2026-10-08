@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { FactoryDispatchSummary } from '../../types.js';
-import { prepareFactoryPackingQueueListPdfData } from './prepareFactoryPackingQueueListPdfData.js';
+import type { FactoryDispatchSummary, FactoryPackingQueueLine } from '../../types.js';
+import {
+  prepareFactoryPackingQueueAwaitingData,
+  prepareFactoryPackingQueueListPdfData,
+} from './prepareFactoryPackingQueueListPdfData.js';
 
 const getMock = vi.fn();
 vi.mock('../../../../lib/api-client.js', () => ({
@@ -26,7 +29,26 @@ function makeDispatch(overrides: Partial<FactoryDispatchSummary> = {}): FactoryD
   };
 }
 
-function apiResponse(items: FactoryDispatchSummary[], pageInfo: { limit: number; hasMore: boolean; nextCursor: string | null }) {
+function makeQueueLine(overrides: Partial<FactoryPackingQueueLine> = {}): FactoryPackingQueueLine {
+  return {
+    saleOrderId: 'so-1',
+    saleOrderNumber: 'EISO/26-27/0001',
+    distributor: { id: 'd1', code: 'D1', name: 'Distributor One' },
+    saleOrderLineId: 'line-1',
+    styleId: 'style-1',
+    styleNumber: 'ST-001',
+    styleName: 'Classic Tee',
+    sizeId: 'size-1',
+    sizeCode: 'M',
+    sizeLabel: 'Medium',
+    allocatedQuantity: 10,
+    packedQuantity: 0,
+    remainingQuantity: 10,
+    ...overrides,
+  };
+}
+
+function apiResponse<T>(items: T[], pageInfo: { limit: number; hasMore: boolean; nextCursor: string | null }) {
   return { data: { data: { items, pageInfo } } };
 }
 
@@ -67,10 +89,6 @@ describe('prepareFactoryPackingQueueListPdfData', () => {
     await expect(prepareFactoryPackingQueueListPdfData()).rejects.toThrow('network error');
   });
 
-  // UXAUTH-005: this export's "Your Factory Dispatches" half previously
-  // ignored the on-screen Factory selection entirely (always fetched every
-  // Factory). It must now carry the exact same Factory context the screen
-  // is showing.
   it('passes a given factoryId through to every page request', async () => {
     const fdA = makeDispatch({ id: 'fd-1' });
     const fdB = makeDispatch({ id: 'fd-2' });
@@ -99,6 +117,58 @@ describe('prepareFactoryPackingQueueListPdfData', () => {
   it('omits factoryId (server-scoped FACTORY_USER) when none is given', async () => {
     getMock.mockResolvedValue(apiResponse([], { limit: 100, hasMore: false, nextCursor: null }));
     await prepareFactoryPackingQueueListPdfData();
+    const [, config] = getMock.mock.calls[0]!;
+    expect((config as { params: Record<string, unknown> }).params.factoryId).toBeUndefined();
+  });
+});
+
+describe('prepareFactoryPackingQueueAwaitingData — PAG-P1-05 cursor traversal', () => {
+  it('returns all items from a single-page response at the export page size', async () => {
+    getMock.mockResolvedValue(apiResponse([makeQueueLine()], { limit: 100, hasMore: false, nextCursor: null }));
+
+    const result = await prepareFactoryPackingQueueAwaitingData();
+
+    expect(result).toEqual([makeQueueLine()]);
+    expect(getMock).toHaveBeenCalledWith('/factory-dispatches/packing-queue', { params: { cursor: undefined, limit: 100 } });
+  });
+
+  it('traverses every page across cursor boundaries and preserves item ordering', async () => {
+    const lineA = makeQueueLine({ saleOrderLineId: 'line-1' });
+    const lineB = makeQueueLine({ saleOrderLineId: 'line-2' });
+    const lineC = makeQueueLine({ saleOrderLineId: 'line-3' });
+
+    getMock
+      .mockResolvedValueOnce(apiResponse([lineA, lineB], { limit: 100, hasMore: true, nextCursor: 'cursor-token-1' }))
+      .mockResolvedValueOnce(apiResponse([lineC], { limit: 100, hasMore: false, nextCursor: null }));
+
+    const result = await prepareFactoryPackingQueueAwaitingData('factory-1');
+
+    expect(result).toEqual([lineA, lineB, lineC]);
+    expect(getMock).toHaveBeenNthCalledWith(1, '/factory-dispatches/packing-queue', {
+      params: { cursor: undefined, limit: 100, factoryId: 'factory-1' },
+    });
+    expect(getMock).toHaveBeenNthCalledWith(2, '/factory-dispatches/packing-queue', {
+      params: { cursor: 'cursor-token-1', limit: 100, factoryId: 'factory-1' },
+    });
+  });
+
+  it('returns empty array when queue is empty', async () => {
+    getMock.mockResolvedValue(apiResponse([], { limit: 100, hasMore: false, nextCursor: null }));
+    const result = await prepareFactoryPackingQueueAwaitingData();
+    expect(result).toEqual([]);
+  });
+
+  it('propagates error when any page request fails', async () => {
+    getMock
+      .mockResolvedValueOnce(apiResponse([makeQueueLine()], { limit: 100, hasMore: true, nextCursor: 'cursor-1' }))
+      .mockRejectedValueOnce(new Error('connection timeout'));
+
+    await expect(prepareFactoryPackingQueueAwaitingData()).rejects.toThrow('connection timeout');
+  });
+
+  it('omits factoryId when undefined for FACTORY_USER', async () => {
+    getMock.mockResolvedValue(apiResponse([], { limit: 100, hasMore: false, nextCursor: null }));
+    await prepareFactoryPackingQueueAwaitingData();
     const [, config] = getMock.mock.calls[0]!;
     expect((config as { params: Record<string, unknown> }).params.factoryId).toBeUndefined();
   });

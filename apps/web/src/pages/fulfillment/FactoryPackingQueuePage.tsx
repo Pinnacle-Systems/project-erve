@@ -75,15 +75,12 @@ export function FactoryPackingQueuePage() {
     setSearchParams(next, { replace: true });
   };
 
-  const queueQuery = useQuery({
+  // Cursor-paginated: bounded by default (limit 25) with "Load more" support.
+  const { query: queueQuery, items: queueItems } = useCursorList<FactoryPackingQueueLine>({
     queryKey: ['factory-packing-queue', selectedFactoryId ?? 'own'],
+    path: '/factory-dispatches/packing-queue',
+    params: { limit: 25, factoryId: selectedFactoryId },
     enabled: hasValidFactoryContext,
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<FactoryPackingQueueLine[]>>('/factory-dispatches/packing-queue', {
-        params: selectedFactoryId ? { factoryId: selectedFactoryId } : undefined,
-      });
-      return res.data.data;
-    },
   });
 
   // Cursor-paginated: Load more reaches every Factory Dispatch, not just
@@ -98,13 +95,14 @@ export function FactoryPackingQueuePage() {
   const generateFactoryPackingQueueListPdf = useCallback(async () => {
     // Dynamically imported so @react-pdf/renderer and the document code load only when a user
     // actually clicks Download/Print, not as part of the app's initial bundle.
+    // Traverses every page of both sections so export is never capped to on-screen pages.
     const { generateFactoryPackingQueueListPdfBlob } = await import('./pdf/factory-packing-queue/generateFactoryPackingQueueListPdf.js');
-    return generateFactoryPackingQueueListPdfBlob(queueQuery.data ?? [], {
+    return generateFactoryPackingQueueListPdfBlob({
       generatedAt: new Date().toISOString(),
       generatedBy: user?.name,
       factoryId: selectedFactoryId,
     });
-  }, [queueQuery.data, user?.name, selectedFactoryId]);
+  }, [user?.name, selectedFactoryId]);
 
   const pdfAction = usePdfAction({
     generate: generateFactoryPackingQueueListPdf,
@@ -184,7 +182,7 @@ export function FactoryPackingQueuePage() {
           <Panel title="Awaiting Packing" padding="none">
             <DataTable
               rowKey="saleOrderLineId"
-              data={queueQuery.data ?? []}
+              data={queueItems}
               loading={queueQuery.isLoading}
               loadingState={<LoadingState label="Loading the packing queue" />}
               error={
@@ -203,6 +201,9 @@ export function FactoryPackingQueuePage() {
                 { key: 'packed', header: 'Packed', align: 'right', render: (r) => r.packedQuantity.toLocaleString() },
                 { key: 'remaining', header: 'Remaining', align: 'right', render: (r) => r.remainingQuantity.toLocaleString() },
               ]}
+            />
+            <LoadMoreFooter
+              {...loadMoreProps(queueQuery, queueItems.length, ['line', 'lines'])}
             />
           </Panel>
 

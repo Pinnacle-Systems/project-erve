@@ -78,6 +78,13 @@ function queueLine(overrides: Partial<FactoryPackingQueueLine> = {}): FactoryPac
   };
 }
 
+function queueApiResponse(
+  items: FactoryPackingQueueLine[],
+  pageInfo: { limit: number; hasMore: boolean; nextCursor: string | null } = { limit: 25, hasMore: false, nextCursor: null },
+) {
+  return { data: { data: { items, pageInfo } } };
+}
+
 function dispatchSummary(overrides: Partial<FactoryDispatchSummary> = {}): FactoryDispatchSummary {
   return {
     id: 'fd-1',
@@ -123,7 +130,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
   describe('FACTORY_USER (no selector)', () => {
     it('never renders a Factory selector and requests carry no factoryId', async () => {
       const getSpy = await renderPage('FACTORY_USER', '/fulfillment/factory-dispatches', async (url) => {
-        if (url === '/factory-dispatches/packing-queue') return { data: { data: [queueLine()] } };
+        if (url === '/factory-dispatches/packing-queue') return queueApiResponse([queueLine()]);
         if (url === '/factory-dispatches') return { data: { data: { items: [dispatchSummary()], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
@@ -133,7 +140,8 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
       expect(calledUrls(getSpy)).not.toContain('/factory-dispatches/factory-options');
 
       const queueCall = getSpy.mock.calls.find((c) => c[0] === '/factory-dispatches/packing-queue')!;
-      expect((queueCall[1] as { params?: Record<string, unknown> } | undefined)?.params).toBeUndefined();
+      expect((queueCall[1] as { params?: Record<string, unknown> } | undefined)?.params).toMatchObject({ limit: 25 });
+      expect((queueCall[1] as { params?: Record<string, unknown> } | undefined)?.params?.factoryId).toBeUndefined();
       expect(content()).toContain('ST-001');
       expect(content()).toContain('EIFD/26-27/0001');
     });
@@ -167,7 +175,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
             return { data: { data: [factoryOption({ id: 'fac-A', code: 'FAC-A', name: 'Factory A' })] } };
           }
           if (url === '/factory-dispatches/packing-queue') {
-            return { data: { data: [queueLine({ styleNumber: 'A-STYLE' })] } };
+            return queueApiResponse([queueLine({ styleNumber: 'A-STYLE' })]);
           }
           if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
           throw new Error(`Unexpected GET: ${url}`);
@@ -176,9 +184,9 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
 
       expect(content()).toContain('A-STYLE');
       const queueCall = getSpy.mock.calls.find((c) => c[0] === '/factory-dispatches/packing-queue')!;
-      expect((queueCall[1] as { params?: Record<string, unknown> }).params).toEqual({ factoryId: 'fac-A' });
+      expect((queueCall[1] as { params?: Record<string, unknown> }).params).toMatchObject({ factoryId: 'fac-A', limit: 25 });
       const listCall = getSpy.mock.calls.find((c) => c[0] === '/factory-dispatches')!;
-      expect((listCall[1] as { params?: Record<string, unknown> }).params).toMatchObject({ factoryId: 'fac-A' });
+      expect((listCall[1] as { params?: Record<string, unknown> }).params).toMatchObject({ factoryId: 'fac-A', limit: 25 });
     });
   });
 
@@ -194,7 +202,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
         if (url === '/factory-dispatches/factory-options') return { data: { data: optionsByFactory } };
         if (url === '/factory-dispatches/packing-queue') {
           const factoryId = config?.params?.factoryId;
-          return { data: { data: factoryId === 'fac-A' ? [queueLine({ styleNumber: 'A-STYLE' })] : [] } };
+          return queueApiResponse(factoryId === 'fac-A' ? [queueLine({ styleNumber: 'A-STYLE' })] : []);
         }
         if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
@@ -211,7 +219,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
         if (url === '/factory-dispatches/factory-options') return { data: { data: optionsByFactory } };
         if (url === '/factory-dispatches/packing-queue') {
           const factoryId = config?.params?.factoryId;
-          return { data: { data: factoryId === 'fac-B' ? [queueLine({ styleNumber: 'B-STYLE' })] : [queueLine({ styleNumber: 'A-STYLE' })] } };
+          return queueApiResponse(factoryId === 'fac-B' ? [queueLine({ styleNumber: 'B-STYLE' })] : [queueLine({ styleNumber: 'A-STYLE' })]);
         }
         if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
@@ -220,7 +228,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
       expect(content()).toContain('B-STYLE');
       expect(content()).not.toContain('A-STYLE');
       const queueCallB = getSpyB.mock.calls.find((c) => c[0] === '/factory-dispatches/packing-queue')!;
-      expect((queueCallB[1] as { params?: Record<string, unknown> }).params).toEqual({ factoryId: 'fac-B' });
+      expect((queueCallB[1] as { params?: Record<string, unknown> }).params).toMatchObject({ factoryId: 'fac-B', limit: 25 });
     });
   });
 
@@ -228,7 +236,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
     it('a genuinely empty [] response shows the legitimate empty state', async () => {
       await renderPage('SENIOR_MANAGEMENT', '/fulfillment/factory-dispatches?factoryId=fac-A', async (url) => {
         if (url === '/factory-dispatches/factory-options') return { data: { data: [factoryOption({ id: 'fac-A' })] } };
-        if (url === '/factory-dispatches/packing-queue') return { data: { data: [] } };
+        if (url === '/factory-dispatches/packing-queue') return queueApiResponse([]);
         if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
@@ -253,7 +261,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
     it('dispatchesQuery rejecting shows its own ErrorState, never "No Factory Dispatches yet"', async () => {
       await renderPage('SENIOR_MANAGEMENT', '/fulfillment/factory-dispatches?factoryId=fac-A', async (url) => {
         if (url === '/factory-dispatches/factory-options') return { data: { data: [factoryOption({ id: 'fac-A' })] } };
-        if (url === '/factory-dispatches/packing-queue') return { data: { data: [] } };
+        if (url === '/factory-dispatches/packing-queue') return queueApiResponse([]);
         if (url === '/factory-dispatches') throw new Error('boom');
         throw new Error(`Unexpected GET: ${url}`);
       });
@@ -305,7 +313,7 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
             },
           };
         }
-        if (url === '/factory-dispatches/packing-queue') return { data: { data: [] } };
+        if (url === '/factory-dispatches/packing-queue') return queueApiResponse([]);
         if (url === '/factory-dispatches') return { data: { data: { items: [dispatchSummary()], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
         throw new Error(`Unexpected GET: ${url}`);
       });
@@ -314,6 +322,43 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
       // Selecting it did not degrade into the "no selection" or "invalid"
       // states — the valid-context panels (with real, not stale, data) render.
       expect(content()).toContain('EIFD/26-27/0001');
+    });
+  });
+
+  describe('PAG-P1-05 pagination in Awaiting Packing', () => {
+    it('renders Load more button when queue hasMore is true and appends next page', async () => {
+      const line1 = queueLine({ saleOrderLineId: 'line-1', styleNumber: 'ST-001' });
+      const line2 = queueLine({ saleOrderLineId: 'line-2', styleNumber: 'ST-002' });
+
+      await renderPage('FACTORY_USER', '/fulfillment/factory-dispatches', async (url, config) => {
+        if (url === '/factory-dispatches/packing-queue') {
+          const cursor = config?.params?.cursor;
+          if (!cursor) {
+            return queueApiResponse([line1], { limit: 25, hasMore: true, nextCursor: 'cursor-token' });
+          }
+          return queueApiResponse([line2], { limit: 25, hasMore: false, nextCursor: null });
+        }
+        if (url === '/factory-dispatches') {
+          return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
+        }
+        throw new Error(`Unexpected GET: ${url}`);
+      });
+
+      expect(content()).toContain('ST-001');
+      expect(content()).toContain('Load more');
+
+      const loadMoreButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Load more'));
+      expect(loadMoreButton).toBeDefined();
+
+      act(() => {
+        loadMoreButton?.click();
+      });
+      await flush();
+      await flush();
+
+      expect(content()).toContain('ST-001');
+      expect(content()).toContain('ST-002');
+      expect(content()).toContain('Showing 2 lines (all loaded)');
     });
   });
 });

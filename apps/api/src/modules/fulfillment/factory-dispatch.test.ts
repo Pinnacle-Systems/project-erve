@@ -18,10 +18,10 @@ const app = createApp();
 beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
 
-function packingQueue(token: string, factoryId?: string) {
+function packingQueue(token: string, factoryId?: string, query?: Record<string, unknown>) {
   return request(app)
     .get('/factory-dispatches/packing-queue')
-    .query(factoryId ? { factoryId } : {})
+    .query({ ...(factoryId ? { factoryId } : {}), ...query })
     .set('Authorization', `Bearer ${token}`);
 }
 
@@ -81,10 +81,11 @@ describe('Factory Packing Queue — Stage 1 scoping/authorization', () => {
 
     const res = await packingQueue(factoryAToken).expect(200);
 
-    expect(res.body.data).toHaveLength(1);
-    expect(res.body.data[0].saleOrderLineId).toBe(orderA.saleOrderLineId);
-    expect(res.body.data[0].allocatedQuantity).toBe(60);
-    expect(res.body.data[0].remainingQuantity).toBe(60);
+    expect(res.body.data.items).toHaveLength(1);
+    expect(res.body.data.items[0].saleOrderLineId).toBe(orderA.saleOrderLineId);
+    expect(res.body.data.items[0].allocatedQuantity).toBe(60);
+    expect(res.body.data.items[0].remainingQuantity).toBe(60);
+    expect(res.body.data.pageInfo).toEqual({ limit: 25, hasMore: false, nextCursor: null });
   });
 
   it('does not show a FACTORY_USER another Factory\'s Dispatch Order line', async () => {
@@ -94,12 +95,13 @@ describe('Factory Packing Queue — Stage 1 scoping/authorization', () => {
 
     const res = await packingQueue(factoryBToken).expect(200);
 
-    expect(res.body.data).toHaveLength(1);
-    expect(res.body.data[0].saleOrderLineId).toBe(orderB.saleOrderLineId);
-    expect(res.body.data[0].allocatedQuantity).toBe(40);
+    expect(res.body.data.items).toHaveLength(1);
+    expect(res.body.data.items[0].saleOrderLineId).toBe(orderB.saleOrderLineId);
+    expect(res.body.data.items[0].allocatedQuantity).toBe(40);
     expect(
-      res.body.data.some((row: { saleOrderLineId: string }) => row.saleOrderLineId === orderA.saleOrderLineId),
+      res.body.data.items.some((row: { saleOrderLineId: string }) => row.saleOrderLineId === orderA.saleOrderLineId),
     ).toBe(false);
+    expect(res.body.data.pageInfo).toEqual({ limit: 25, hasMore: false, nextCursor: null });
   });
 
   it('forbids DISTRIBUTOR from accessing the packing queue', async () => {
@@ -160,8 +162,8 @@ describe('UXAUTH-004 — Factory Dispatch broad-read scope (MERCHANDISER/SENIOR_
       const { token } = await createRoleToken(role);
 
       const res = await packingQueue(token, fixture.stock.factoryId).expect(200);
-      expect(res.body.data).toHaveLength(1);
-      expect(res.body.data[0].saleOrderLineId).toBe(fixture.saleOrderLineId);
+      expect(res.body.data.items).toHaveLength(1);
+      expect(res.body.data.items[0].saleOrderLineId).toBe(fixture.saleOrderLineId);
     },
   );
 
@@ -303,15 +305,15 @@ describe('UXAUTH-004 — mixed-role precedence (additive broad-read)', () => {
     const token = await createFactoryUserToken(orderA.stock.factoryId, ['DISTRIBUTOR']);
 
     const res = await packingQueue(token, orderB.stock.factoryId).expect(200);
-    expect(res.body.data).toHaveLength(1);
-    expect(res.body.data[0].saleOrderLineId).toBe(orderA.saleOrderLineId);
+    expect(res.body.data.items).toHaveLength(1);
+    expect(res.body.data.items[0].saleOrderLineId).toBe(orderA.saleOrderLineId);
   });
 
   it('FACTORY_USER + QA_USER remains Factory-scoped', async () => {
     const orderA = await createSingleFactoryApprovedSaleOrder(app, 30);
     const token = await createFactoryUserToken(orderA.stock.factoryId, ['QA_USER']);
     const res = await packingQueue(token).expect(200);
-    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data.items).toHaveLength(1);
   });
 
   it.each(['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'] as const)(
@@ -322,8 +324,8 @@ describe('UXAUTH-004 — mixed-role precedence (additive broad-read)', () => {
       const token = await createFactoryUserToken(orderA.stock.factoryId, [extraRole]);
 
       const res = await packingQueue(token, orderB.stock.factoryId).expect(200);
-      expect(res.body.data).toHaveLength(1);
-      expect(res.body.data[0].saleOrderLineId).toBe(orderB.saleOrderLineId);
+      expect(res.body.data.items).toHaveLength(1);
+      expect(res.body.data.items[0].saleOrderLineId).toBe(orderB.saleOrderLineId);
     },
   );
 
@@ -530,7 +532,7 @@ describe('Factory Dispatch — carton-first packing creation and ceilings', () =
     expect(second.body.data.destinations[0].lines[0].packedQuantity).toBe(50);
 
     const queue = await packingQueue(factoryToken).expect(200);
-    expect(queue.body.data).toHaveLength(0); // fully packed (20 + 30 == 50)
+    expect(queue.body.data.items).toHaveLength(0); // fully packed (20 + 30 == 50)
 
     const dispatchCount = await prisma.factoryDispatch.count({ where: { saleOrderId: fixture.saleOrder.id } });
     expect(dispatchCount).toBe(1);
@@ -1824,5 +1826,159 @@ describe('DAT-P1-01 — Factory Dispatch Financial Year boundary resolution at 1
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('PAG-P1-05 — Factory Packing Queue Scalability & Keyset Pagination', () => {
+  it('defaults to bounded pagination (limit: 25) with PaginatedResponse envelope', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 50);
+    const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+
+    const res = await packingQueue(factoryToken).expect(200);
+
+    expect(res.body.data).toHaveProperty('items');
+    expect(res.body.data).toHaveProperty('pageInfo');
+    expect(res.body.data.pageInfo.limit).toBe(25);
+    expect(res.body.data.pageInfo.hasMore).toBe(false);
+    expect(res.body.data.pageInfo.nextCursor).toBeNull();
+    expect(res.body.data.items).toHaveLength(1);
+    expect(res.body.data.items[0]).toMatchObject({
+      saleOrderLineId: fixture.saleOrderLineId,
+      allocatedQuantity: 50,
+      packedQuantity: 0,
+      remainingQuantity: 50,
+    });
+  });
+
+  it('traverses multiple pages across cursor boundaries in deterministic order', async () => {
+    const fixture1 = await createSingleFactoryApprovedSaleOrder(app, 10);
+    const factoryId = fixture1.stock.factoryId;
+    const fixture2 = await createSingleFactoryApprovedSaleOrder(app, 20, 'OUTRIGHT', { factoryId });
+    const fixture3 = await createSingleFactoryApprovedSaleOrder(app, 30, 'OUTRIGHT', { factoryId });
+    const factoryToken = await createFactoryUserToken(factoryId);
+
+    // Page 1: limit 2
+    const page1 = await packingQueue(factoryToken, undefined, { limit: 2 }).expect(200);
+    expect(page1.body.data.items).toHaveLength(2);
+    expect(page1.body.data.pageInfo.limit).toBe(2);
+    expect(page1.body.data.pageInfo.hasMore).toBe(true);
+    expect(typeof page1.body.data.pageInfo.nextCursor).toBe('string');
+
+    // Page 2: with cursor from page 1
+    const page2 = await packingQueue(factoryToken, undefined, {
+      cursor: page1.body.data.pageInfo.nextCursor,
+      limit: 2,
+    }).expect(200);
+    expect(page2.body.data.items).toHaveLength(1);
+    expect(page2.body.data.pageInfo.limit).toBe(2);
+    expect(page2.body.data.pageInfo.hasMore).toBe(false);
+    expect(page2.body.data.pageInfo.nextCursor).toBeNull();
+
+    // Verify all 3 lines are received without duplicates
+    const allIds = [
+      ...page1.body.data.items.map((i: { saleOrderLineId: string }) => i.saleOrderLineId),
+      ...page2.body.data.items.map((i: { saleOrderLineId: string }) => i.saleOrderLineId),
+    ];
+    expect(allIds).toEqual([
+      fixture1.saleOrderLineId,
+      fixture2.saleOrderLineId,
+      fixture3.saleOrderLineId,
+    ]);
+  });
+
+  it('rejects malformed cursors with 400 Bad Request', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
+    const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+
+    // Completely invalid string
+    const res1 = await packingQueue(factoryToken, undefined, { cursor: '!!!not-valid-base64url!!!' }).expect(400);
+    expect(res1.body.error.message).toContain('Invalid packing queue cursor');
+
+    // Decodable string without colon separator
+    const badCursorNoColon = Buffer.from('justsomestring', 'utf8').toString('base64url');
+    const res2 = await packingQueue(factoryToken, undefined, { cursor: badCursorNoColon }).expect(400);
+    expect(res2.body.error.message).toContain('Invalid packing queue cursor');
+
+    // Decodable string with invalid date
+    const badCursorInvalidDate = Buffer.from('not-a-valid-date:line-123', 'utf8').toString('base64url');
+    const res3 = await packingQueue(factoryToken, undefined, { cursor: badCursorInvalidDate }).expect(400);
+    expect(res3.body.error.message).toContain('Invalid packing queue cursor');
+  });
+
+  it('rejects invalid limit values with 400 Bad Request', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
+    const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+
+    // limit: 0
+    await packingQueue(factoryToken, undefined, { limit: 0 }).expect(400);
+
+    // limit: 101 (> 100 max)
+    await packingQueue(factoryToken, undefined, { limit: 101 }).expect(400);
+
+    // limit: -5
+    await packingQueue(factoryToken, undefined, { limit: -5 }).expect(400);
+  });
+
+  it('scales correctly with heavy completed history: completed orders are pruned and late active lines appear', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+    const factoryId = fixture.stock.factoryId;
+    const factoryToken = await createFactoryUserToken(factoryId);
+
+    // Fully pack and finalize 3 historical orders
+    for (let i = 0; i < 3; i++) {
+      const histFixture = await createSingleFactoryApprovedSaleOrder(app, 15, 'OUTRIGHT', { factoryId });
+      await packAndFinalize(
+        app,
+        factoryToken,
+        histFixture.saleOrder.id,
+        histFixture.saleOrderLineId,
+        destinationOf(histFixture.saleOrder),
+        15,
+      );
+    }
+
+    // Now create a new active order late in the ordering
+    const lateActive = await createSingleFactoryApprovedSaleOrder(app, 40, 'OUTRIGHT', { factoryId });
+
+    const queueRes = await packingQueue(factoryToken).expect(200);
+
+    // Queue must contain exactly fixture (10) and lateActive (40), historical 3 are completely excluded
+    expect(queueRes.body.data.items).toHaveLength(2);
+    expect(queueRes.body.data.items.map((i: { saleOrderLineId: string }) => i.saleOrderLineId)).toEqual([
+      fixture.saleOrderLineId,
+      lateActive.saleOrderLineId,
+    ]);
+    expect(queueRes.body.data.items[0].remainingQuantity).toBe(10);
+    expect(queueRes.body.data.items[1].remainingQuantity).toBe(40);
+  });
+
+  it('preserves physical non-retired carton authority: carton retirement restores remaining quantity', async () => {
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 50);
+    const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+    const destinationId = destinationOf(fixture.saleOrder);
+
+    // Before packing: 50 remaining
+    const before = await packingQueue(factoryToken).expect(200);
+    expect(before.body.data.items[0].remainingQuantity).toBe(50);
+
+    // Pack 20
+    const carton = await createCarton(factoryToken, fixture.saleOrder.id, {
+      cartonNumber: 'C-RET',
+      destinationId,
+      lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 20 }],
+    }).expect(200);
+    const cartonId = carton.body.data.destinations[0].cartons[0].id;
+    const fdId = carton.body.data.factoryDispatch.id;
+
+    // After packing 20: 30 remaining
+    const afterPack = await packingQueue(factoryToken).expect(200);
+    expect(afterPack.body.data.items[0].remainingQuantity).toBe(30);
+
+    // Retire carton
+    await removeCarton(factoryToken, fdId, cartonId, 1).expect(200);
+
+    // After retiring: remaining restores to 50
+    const afterRetire = await packingQueue(factoryToken).expect(200);
+    expect(afterRetire.body.data.items[0].remainingQuantity).toBe(50);
   });
 });

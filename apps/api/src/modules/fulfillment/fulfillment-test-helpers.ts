@@ -74,8 +74,16 @@ export async function createSingleFactoryApprovedSaleOrder(
   app: Express,
   quantity = 40,
   purchaseMode: 'OUTRIGHT' | 'SALE_RETURN' = 'OUTRIGHT',
+  options?: { factoryId?: string; distributorId?: string; styleId?: string; sizeId?: string },
 ) {
-  const stock = await createReleasedQaStock({ quantity, purchaseMode });
+  const stock = await createReleasedQaStock({
+    quantity,
+    purchaseMode,
+    factoryId: options?.factoryId,
+    distributorId: options?.distributorId,
+    styleId: options?.styleId,
+    sizeId: options?.sizeId,
+  });
   const { token: merchToken } = await createRoleToken('MERCHANDISER');
   const created = await request(app)
     .post('/sale-orders')
