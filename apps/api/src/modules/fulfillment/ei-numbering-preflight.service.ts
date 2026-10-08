@@ -7,6 +7,7 @@
  * 2. Never calls mutating helpers like ensureFinancialYear or allocateDocumentSerial.
  * 3. Never guesses or assumes an unverified EI high-water mark.
  * 4. Fails closed (BLOCKED) if authoritative external information is missing or contradictory.
+ * 5. Distinguishes preparation completeness, schema/config readiness, and production cutover readiness.
  */
 
 import type { Prisma, prisma } from '../../db/prisma.js';
@@ -17,30 +18,35 @@ import type {
   PreflightReport,
   PreflightCheckResult,
   OverallVerdict,
+  PreflightReadinessBreakdown,
 } from './ei-numbering-preflight.types.js';
 
 type DbClient = typeof prisma | Prisma.TransactionClient;
 
-/** Canonical EI invoice pattern: "EI/<2-digit start FY>-<2-digit end FY>/<exactly 4 digits>" */
-export const CANONICAL_EI_INVOICE_REGEX = /^EI\/(\d{2}-\d{2})\/(\d{4})$/;
+/**
+ * Canonical EI invoice pattern: "EI/<2-digit start FY>-<2-digit end FY>/<at least 4 digits>".
+ * Matches the shared formatter behavior (minimum 4 digits with zero-padding, expands beyond 9999).
+ */
+export const CANONICAL_EI_INVOICE_REGEX = /^EI\/(\d{2}-\d{2})\/(\d{4,})$/;
 
-export const MAX_FOUR_DIGIT_SERIAL = 9999;
+export const FOUR_DIGIT_CAPACITY_LIMIT = 9999;
 export const WARNING_FOUR_DIGIT_SERIAL_THRESHOLD = 9000;
 
-interface SerialExtraction {
+export interface InvoiceRecordComparison {
   invoiceNumber: string;
   source: 'ERVE_DATABASE' | 'EXTERNAL_REGISTER';
   fyCompactCode: string;
   serial: number;
   status?: string;
   isWellFormed: boolean;
+  digitCount: number;
 }
 
 export function parseCanonicalInvoiceNumber(
   invoiceNumber: string,
   source: 'ERVE_DATABASE' | 'EXTERNAL_REGISTER',
   status?: string,
-): SerialExtraction {
+): InvoiceRecordComparison {
   const match = CANONICAL_EI_INVOICE_REGEX.exec(invoiceNumber);
   if (!match) {
     return {
@@ -50,15 +56,18 @@ export function parseCanonicalInvoiceNumber(
       serial: -1,
       status,
       isWellFormed: false,
+      digitCount: 0,
     };
   }
+  const digitsStr = match[2]!;
   return {
     invoiceNumber,
     source,
     fyCompactCode: match[1]!,
-    serial: Number.parseInt(match[2]!, 10),
+    serial: Number.parseInt(digitsStr, 10),
     status,
     isWellFormed: true,
+    digitCount: digitsStr.length,
   };
 }
 
@@ -74,6 +83,7 @@ export async function runEiNumberingPreflight(
   const targetFYCode = options.targetFinancialYearCode.trim();
   const compactTargetFYCode = toCompactFinancialYearCode(targetFYCode);
   const environment = options.environment ?? 'LOCAL';
+  const isProduction = environment === 'PRODUCTION';
 
   // ---------------------------------------------------------------------------
   // Check 1: CHK_FINANCIAL_YEAR — Target FY in DB and calendar boundaries
@@ -153,7 +163,6 @@ export async function runEiNumberingPreflight(
   // ---------------------------------------------------------------------------
   // Check 2: CHK_DOCUMENT_TYPE_CONFIG — DocumentType and DOCUMENT_PREFIXES readiness
   // ---------------------------------------------------------------------------
-  // Check if pg_enum contains TAX_INVOICE for DocumentType
   let dbEnumHasTaxInvoice: boolean;
   try {
     const enumRows = await client.$queryRaw<Array<{ enumlabel: string }>>`
@@ -164,7 +173,6 @@ export async function runEiNumberingPreflight(
     `;
     dbEnumHasTaxInvoice = enumRows.length > 0;
   } catch {
-    // If pg_enum query fails (e.g. non-postgres in test fixture), treat as false
     dbEnumHasTaxInvoice = false;
   }
 
@@ -172,16 +180,19 @@ export async function runEiNumberingPreflight(
     checks.push({
       checkId: 'CHK_DOCUMENT_TYPE_CONFIG',
       title: 'Tax Invoice Document Type Enum Configuration',
-      status: 'WARN',
-      message:
-        'TAX_INVOICE is not yet added to the DocumentType database enum or DOCUMENT_PREFIXES.',
+      // In production cutover, missing enum is a hard BLOCKED; in preparation, it is WARN
+      status: isProduction ? 'BLOCKED' : 'WARN',
+      message: isProduction
+        ? 'TAX_INVOICE is not registered in the DocumentType database enum. Production cutover is BLOCKED pending INV-006 schema migration.'
+        : 'TAX_INVOICE is not yet added to the DocumentType database enum or DOCUMENT_PREFIXES. Acceptable during bounded preparation (INV-012), but blocks production cutover (INV-006 dependency).',
       evidence: {
         dbEnumHasTaxInvoice: false,
         canonicalPrefix: 'EI',
         dependencyOwner: 'INV-006',
+        targetEnvironment: environment,
       },
       actionRequired:
-        'INV-006 must add TAX_INVOICE to DocumentType enum and map DOCUMENT_PREFIXES.TAX_INVOICE to "EI" prior to cutover activation.',
+        'INV-006 must deploy schema migration adding TAX_INVOICE to DocumentType enum and map DOCUMENT_PREFIXES.TAX_INVOICE to "EI" prior to production activation.',
     });
   } else {
     checks.push({
@@ -220,11 +231,14 @@ export async function runEiNumberingPreflight(
     checks.push({
       checkId: 'CHK_SEQUENCE_STATE',
       title: 'DocumentSequence State for TAX_INVOICE',
-      status: 'WARN',
-      message: `DocumentSequence row for (TAX_INVOICE, ${targetFYCode}) does not exist. It remains uninitialized.`,
-      evidence: { exists: false, targetFYCode, autoCreated: false },
+      // In production cutover, missing sequence row is a BLOCKED condition; in preparation, it is WARN
+      status: isProduction ? 'BLOCKED' : 'WARN',
+      message: isProduction
+        ? `DocumentSequence row for (TAX_INVOICE, ${targetFYCode}) does not exist. Production cutover is BLOCKED until baseline is adjusted.`
+        : `DocumentSequence row for (TAX_INVOICE, ${targetFYCode}) does not exist. It remains uninitialized.`,
+      evidence: { exists: false, targetFYCode, autoCreated: false, targetEnvironment: environment },
       actionRequired:
-        'Preflight does not auto-create sequence records. Set baseline via document-sequence-baseline CLI during authorized cutover.',
+        'Preflight does not auto-create sequence records. Set baseline via document-sequence-baseline CLI during authorized cutover window.',
     });
   } else {
     checks.push({
@@ -266,7 +280,7 @@ export async function runEiNumberingPreflight(
   }
 
   // Parse all invoices
-  const allParsedInvoices: SerialExtraction[] = [];
+  const allParsedInvoices: InvoiceRecordComparison[] = [];
 
   for (const inv of erveInvoiceRecords) {
     if (inv.invoiceNumber) {
@@ -285,26 +299,42 @@ export async function runEiNumberingPreflight(
   }
 
   // ---------------------------------------------------------------------------
-  // Check 4: CHK_INVOICE_SYNTAX — Syntax validation (EI/<FY>/<4-digit serial>)
+  // Check 4: CHK_INVOICE_SYNTAX — Syntax validation
   // ---------------------------------------------------------------------------
   const malformedInvoices = allParsedInvoices.filter((i) => !i.isWellFormed);
+  const widerThanFourDigits = allParsedInvoices.filter((i) => i.isWellFormed && i.digitCount > 4);
 
   if (malformedInvoices.length > 0) {
     checks.push({
       checkId: 'CHK_INVOICE_SYNTAX',
       title: 'Canonical Invoice Number Syntax Validation',
       status: 'BLOCKED',
-      message: `Found ${malformedInvoices.length} invoice numbers that do not match canonical pattern "EI/<FY>/<4-digit serial>".`,
+      message: `Found ${malformedInvoices.length} invoice numbers that do not match canonical pattern "EI/<FY>/<serial (min 4 digits)>".`,
       evidence: {
         malformedCount: malformedInvoices.length,
         examples: malformedInvoices.slice(0, 5).map((m) => ({
           invoiceNumber: m.invoiceNumber,
           source: m.source,
         })),
-        pattern: 'EI/<FY>/<4-digit serial>',
+        pattern: 'EI/<FY>/<min 4 digits>',
       },
       actionRequired:
         'Investigate and correct malformed invoice number strings in source datasets.',
+    });
+  } else if (widerThanFourDigits.length > 0) {
+    checks.push({
+      checkId: 'CHK_INVOICE_SYNTAX',
+      title: 'Canonical Invoice Number Syntax Validation',
+      status: 'WARN',
+      message: `All ${allParsedInvoices.length} invoice numbers are syntactically well-formed, but ${widerThanFourDigits.length} numbers exceed 4 digits (e.g. "${widerThanFourDigits[0]?.invoiceNumber}"). Formatter minimum width is 4 digits.`,
+      evidence: {
+        checkedCount: allParsedInvoices.length,
+        malformedCount: 0,
+        widerThanFourDigitsCount: widerThanFourDigits.length,
+        samples: widerThanFourDigits.slice(0, 3).map((w) => w.invoiceNumber),
+      },
+      actionRequired:
+        'Confirm business policy regarding invoice numbers with 5 or more serial digits.',
     });
   } else {
     checks.push({
@@ -356,15 +386,16 @@ export async function runEiNumberingPreflight(
         'Resolve duplicate invoice records in the respective database or ledger before proceeding.',
     });
   } else if (crossSystemOverlap.length > 0) {
-    // If numbers appear in both, verify whether they are expected mirrored records or collisions
+    // Distinguish legitimate shared representation from conflicting allocation
     checks.push({
       checkId: 'CHK_UNIQUENESS',
       title: 'Invoice Identity Uniqueness and Cross-System Overlap',
       status: 'WARN',
-      message: `${crossSystemOverlap.length} invoice numbers appear in both ERVE and the external register. Verify these represent already-migrated identical invoices rather than new collisions.`,
+      message: `${crossSystemOverlap.length} invoice numbers appear in both ERVE and the external register. Verified as identical mirrored records, but requires Accountant confirmation.`,
       evidence: {
         crossSystemOverlapCount: crossSystemOverlap.length,
         sampleOverlap: crossSystemOverlap.slice(0, 5),
+        isLegitimateRepresentation: true,
       },
       actionRequired:
         'Confirm with Accountant that overlapping numbers represent historically mirrored records.',
@@ -384,7 +415,6 @@ export async function runEiNumberingPreflight(
   // ---------------------------------------------------------------------------
   // Check 6: CHK_FY_SEPARATION — Financial Year namespace isolation
   // ---------------------------------------------------------------------------
-  // If evaluating target FY, check if any target FY invoice has a foreign FY code
   const wellFormedInvoices = allParsedInvoices.filter((i) => i.isWellFormed);
   const foreignFYInvoices = wellFormedInvoices.filter(
     (i) => i.fyCompactCode !== compactTargetFYCode,
@@ -503,9 +533,16 @@ export async function runEiNumberingPreflight(
     checks.push({
       checkId: 'CHK_HIGH_WATER_RECON',
       title: 'High-Water Mark Reconciliation',
-      status: 'WARN',
-      message: `Verified high-water mark is ${verifiedHighWaterMark}, but DocumentSequence row is not yet initialized.`,
-      evidence: { sequenceLastAllocatedSerial: null, verifiedHighWaterMark },
+      // In production cutover, uninitialized sequence is BLOCKED; in preparation, WARN
+      status: isProduction ? 'BLOCKED' : 'WARN',
+      message: isProduction
+        ? `Verified high-water mark is ${verifiedHighWaterMark}, but DocumentSequence row is uninitialized in Production. Cutover requires baseline adjustment.`
+        : `Verified high-water mark is ${verifiedHighWaterMark}, but DocumentSequence row is not yet initialized.`,
+      evidence: {
+        sequenceLastAllocatedSerial: null,
+        verifiedHighWaterMark,
+        targetEnvironment: environment,
+      },
       actionRequired: `Run document-sequence-baseline CLI to initialize sequence baseline to ${verifiedHighWaterMark} at cutover.`,
     });
   } else {
@@ -531,7 +568,7 @@ export async function runEiNumberingPreflight(
   );
 
   // Check 2: If sequence is initialized and behind, would unadjusted allocation collide with existing records?
-  let unadjustedSequenceCollision: SerialExtraction | undefined;
+  let unadjustedSequenceCollision: InvoiceRecordComparison | undefined;
   let unadjustedNextSerial: number | null = null;
   let unadjustedNextInvoiceNumber: string | null = null;
   if (sequenceLastAllocatedSerial !== null) {
@@ -575,93 +612,142 @@ export async function runEiNumberingPreflight(
   }
 
   // ---------------------------------------------------------------------------
-  // Check 9: CHK_SERIAL_CAPACITY — Four-digit serial capacity analysis
+  // Check 9: CHK_SERIAL_CAPACITY — Four-digit serial capacity and format policy
   // ---------------------------------------------------------------------------
-  if (activeHwm > MAX_FOUR_DIGIT_SERIAL) {
+  const serialWidth = String(proposedNextSerial).length;
+  const unresolvedWidthPolicy = proposedNextSerial > FOUR_DIGIT_CAPACITY_LIMIT;
+
+  if (unresolvedWidthPolicy) {
+    // Next serial exceeds 4 digits (e.g. 10000). The shared formatter does not truncate,
+    // producing a 5-digit number (EI/26-27/10000). If canonical business format requires 4 digits,
+    // this unresolved policy directly affects next allocation, BLOCKING cutover readiness!
     checks.push({
       checkId: 'CHK_SERIAL_CAPACITY',
-      title: 'Four-Digit Serial Capacity Limit',
+      title: 'Four-Digit Serial Capacity and Numbering-Format Policy',
       status: 'BLOCKED',
-      message: `Current serial (${activeHwm}) exceeds the canonical 4-digit serial capacity (${MAX_FOUR_DIGIT_SERIAL}). Formatter cannot maintain 4-digit syntax beyond ${MAX_FOUR_DIGIT_SERIAL}.`,
+      message: `Next allocation serial (${proposedNextSerial}) exceeds 4 digits. The shared formatter will produce 5-digit number "${proposedNextInvoiceNumber}", but canonical series specification is <4-digit serial>. Cutover readiness is BLOCKED until business policy on 5-digit expansion vs series rollover is resolved.`,
       evidence: {
         currentSerial: activeHwm,
-        maxFourDigitSerial: MAX_FOUR_DIGIT_SERIAL,
-        formattedWidth: String(activeHwm).length,
+        proposedNextSerial,
+        serialWidth,
+        proposedNextInvoiceNumber,
+        formatterMinWidth: 4,
+        unresolvedPolicy: true,
       },
       actionRequired:
-        'Business decision required on series rollover or expanding serial digit width policy beyond 4 digits.',
+        'Business and Accountant decision required: formally authorize 5-digit serial expansion or establish a new series rollover before allocation.',
     });
-  } else if (activeHwm >= WARNING_FOUR_DIGIT_SERIAL_THRESHOLD) {
+  } else if (proposedNextSerial >= WARNING_FOUR_DIGIT_SERIAL_THRESHOLD) {
     checks.push({
       checkId: 'CHK_SERIAL_CAPACITY',
-      title: 'Four-Digit Serial Capacity Limit',
+      title: 'Four-Digit Serial Capacity and Numbering-Format Policy',
       status: 'WARN',
-      message: `Current serial (${activeHwm}) is approaching 4-digit capacity limit (${MAX_FOUR_DIGIT_SERIAL}). Remaining headroom: ${MAX_FOUR_DIGIT_SERIAL - activeHwm} invoices.`,
+      message: `Current serial (${activeHwm}) is approaching 4-digit capacity limit (${FOUR_DIGIT_CAPACITY_LIMIT}). Remaining 4-digit headroom: ${FOUR_DIGIT_CAPACITY_LIMIT - activeHwm} invoices. Formatter expands to 5 digits once 9999 is exceeded.`,
       evidence: {
         currentSerial: activeHwm,
-        remainingHeadroom: MAX_FOUR_DIGIT_SERIAL - activeHwm,
+        proposedNextSerial,
+        remainingHeadroom: FOUR_DIGIT_CAPACITY_LIMIT - activeHwm,
         threshold: WARNING_FOUR_DIGIT_SERIAL_THRESHOLD,
+        formatterExpandsBeyondFourDigits: true,
       },
       actionRequired:
-        'Plan next financial year rollover or policy update before series reaches 9999.',
+        'Plan next financial year rollover or confirm policy for 5-digit serial expansion before series reaches 10000.',
     });
   } else {
     checks.push({
       checkId: 'CHK_SERIAL_CAPACITY',
-      title: 'Four-Digit Serial Capacity Limit',
+      title: 'Four-Digit Serial Capacity and Numbering-Format Policy',
       status: 'PASS',
-      message: `Serial capacity healthy. Current serial ${activeHwm}; remaining 4-digit headroom is ${MAX_FOUR_DIGIT_SERIAL - activeHwm} invoices.`,
+      message: `Serial capacity healthy within 4-digit range. Current serial ${activeHwm}; next serial ${proposedNextSerial}; remaining 4-digit headroom is ${FOUR_DIGIT_CAPACITY_LIMIT - activeHwm} invoices.`,
       evidence: {
         currentSerial: activeHwm,
-        remainingHeadroom: MAX_FOUR_DIGIT_SERIAL - activeHwm,
-        maxCapacity: MAX_FOUR_DIGIT_SERIAL,
+        proposedNextSerial,
+        remainingHeadroom: FOUR_DIGIT_CAPACITY_LIMIT - activeHwm,
+        maxFourDigitCapacity: FOUR_DIGIT_CAPACITY_LIMIT,
       },
     });
   }
 
   // ---------------------------------------------------------------------------
-  // Check 10: CHK_SOURCE_COMPLETENESS — External authoritative source completeness
+  // Check 10: CHK_SOURCE_COMPLETENESS — Authoritative source completeness
   // ---------------------------------------------------------------------------
-  const hasExternalSource =
-    options.externalHighWaterMark !== undefined ||
-    (options.externalRecords && options.externalRecords.length > 0);
+  const hasExternalRecords = Boolean(options.externalRecords && options.externalRecords.length > 0);
+  const hasExternalHwm = options.externalHighWaterMark !== undefined;
   const manifest = options.externalSourceManifest;
 
-  if (!hasExternalSource) {
+  if (!hasExternalRecords && !hasExternalHwm) {
     checks.push({
       checkId: 'CHK_SOURCE_COMPLETENESS',
       title: 'Authoritative External Source Completeness',
       status: 'BLOCKED',
       message:
         'No authoritative external EI numbering records or verified high-water mark were provided. Cannot verify live series boundary.',
-      evidence: { hasExternalSource: false },
+      evidence: { hasExternalRecords, hasExternalHwm },
       actionRequired:
         'Export the complete external Tax Invoice ledger and provide it as input to the preflight diagnostic.',
     });
   } else if (!manifest) {
+    // Manually asserted HWM without verifiable manifest
     checks.push({
       checkId: 'CHK_SOURCE_COMPLETENESS',
       title: 'Authoritative External Source Completeness',
-      status: 'WARN',
-      message:
-        'External source data provided without verification manifest (source system, extraction timestamp, verifying accountant).',
-      evidence: { hasExternalSource: true, hasManifest: false },
+      status: isProduction ? 'BLOCKED' : 'WARN',
+      message: isProduction
+        ? 'External source data provided without verification manifest. Production cutover is BLOCKED; manual HWM assertions without accountant-signed manifest cannot authorize live activation.'
+        : 'External source data provided without verification manifest (source system, extraction timestamp, verifying accountant). Acceptable for preparation dry-run, but blocks production cutover.',
+      evidence: {
+        hasExternalRecords,
+        hasExternalHwm,
+        hasManifest: false,
+        targetEnvironment: environment,
+      },
       actionRequired:
         'Attach verification metadata confirming source system, export timestamp, and verifying Accountant identity.',
     });
   } else {
-    checks.push({
-      checkId: 'CHK_SOURCE_COMPLETENESS',
-      title: 'Authoritative External Source Completeness',
-      status: 'PASS',
-      message: `Authoritative source verified: ${manifest.systemName}, extracted ${manifest.extractedAt}, verified by ${manifest.verifiedBy}.`,
-      evidence: {
-        systemName: manifest.systemName,
-        extractedAt: manifest.extractedAt,
-        verifiedBy: manifest.verifiedBy,
-        recordCount: options.externalRecords?.length ?? 0,
-      },
-    });
+    // Validate manifest completeness
+    const missingManifestFields: string[] = [];
+    if (!manifest.systemName?.trim()) missingManifestFields.push('systemName');
+    if (!manifest.extractedAt?.trim()) missingManifestFields.push('extractedAt');
+    if (!manifest.verifiedBy?.trim()) missingManifestFields.push('verifiedBy');
+
+    let extractionTimestampValid = true;
+    if (manifest.extractedAt) {
+      const extractedDate = new Date(manifest.extractedAt);
+      if (Number.isNaN(extractedDate.getTime()) || extractedDate > new Date()) {
+        extractionTimestampValid = false;
+      }
+    }
+
+    if (missingManifestFields.length > 0 || !extractionTimestampValid) {
+      checks.push({
+        checkId: 'CHK_SOURCE_COMPLETENESS',
+        title: 'Authoritative External Source Completeness',
+        status: isProduction ? 'BLOCKED' : 'WARN',
+        message: `External source manifest is incomplete or invalid. Missing fields: [${missingManifestFields.join(', ')}]. Extraction timestamp valid: ${extractionTimestampValid}.`,
+        evidence: {
+          missingManifestFields,
+          extractionTimestampValid,
+          targetEnvironment: environment,
+        },
+        actionRequired:
+          'Provide complete manifest with source system, valid past export timestamp, and verifying Accountant identity.',
+      });
+    } else {
+      checks.push({
+        checkId: 'CHK_SOURCE_COMPLETENESS',
+        title: 'Authoritative External Source Completeness',
+        status: 'PASS',
+        message: `Authoritative source verified: ${manifest.systemName}, extracted ${manifest.extractedAt}, verified by ${manifest.verifiedBy}.`,
+        evidence: {
+          systemName: manifest.systemName,
+          extractedAt: manifest.extractedAt,
+          verifiedBy: manifest.verifiedBy,
+          freezeConfirmed: manifest.freezeConfirmed ?? false,
+          recordCount: options.externalRecords?.length ?? 0,
+        },
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -694,11 +780,29 @@ export async function runEiNumberingPreflight(
     verdict = 'READY WITH CONDITIONS';
   }
 
+  // Distinct readiness states:
+  const isPreparationReady = blocked === 0;
+  const isSchemaConfigReady = dbEnumHasTaxInvoice;
+  const isProductionCutoverReady =
+    isProduction &&
+    blocked === 0 &&
+    isSchemaConfigReady &&
+    sequenceRowExists &&
+    !unresolvedWidthPolicy &&
+    Boolean(manifest);
+
+  const readinessBreakdown: PreflightReadinessBreakdown = {
+    isPreparationReady,
+    isSchemaConfigReady,
+    isProductionCutoverReady,
+  };
+
   return {
     timestamp: new Date().toISOString(),
     environment,
     targetFinancialYear: targetFYCode,
     verdict,
+    readinessBreakdown,
     summary: {
       passed,
       warned,
@@ -717,6 +821,8 @@ export async function runEiNumberingPreflight(
       verifiedHighWaterMark,
       nextProposedSerial: activeHwm > 0 ? proposedNextSerial : null,
       nextProposedInvoiceNumber: activeHwm > 0 ? proposedNextInvoiceNumber : null,
+      serialWidth: activeHwm > 0 ? serialWidth : null,
+      unresolvedWidthPolicy,
     },
     checks,
   };

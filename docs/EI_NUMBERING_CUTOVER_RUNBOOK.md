@@ -4,7 +4,7 @@
 **Story Reference:** INV-012 (EI Numbering Cutover Preparation)  
 **Downstream Dependency:** INV-006 (Tax Invoice Finalization & Atomic Number Allocation)  
 **Governing Standard:** Indian GST (Section 31 CGST Act / Rule 46 CGST Rules) & ERVE Financial Year Infrastructure  
-**Canonical Invoice Syntax:** `EI/<FY>/<4-digit serial>` (e.g., `EI/26-27/0001`)
+**Canonical Invoice Syntax:** `EI/<FY>/<serial>` with a 4-digit minimum width (e.g., `EI/26-27/0001`). Note: Serials $\ge 10000$ format with 5+ digits under the shared formatter; exceeding 9999 represents an unresolved width policy that blocks production cutover when it affects the next allocation.
 
 ---
 
@@ -16,7 +16,7 @@ This runbook defines the idempotent, operator-controlled procedure for transitio
 
 1. **Never guess the high-water mark:** Allocation must continue from the _actual verified live high-water mark_ of issued Tax Invoices in the active Indian Financial Year (1 April – 31 March). Illustrative numbers (such as `0270`) must never be used as default or assumed values.
 2. **Never rewind or decrease sequences:** A `DocumentSequence` high-water mark is strictly append-only. Lowering a sequence is prohibited and rejected by application controls.
-3. **Never reuse cancelled or voided numbers:** Under statutory Indian GST rules, cancelled or voided invoice numbers remain part of the historical serial registry and cannot be recycled or backfilled.
+3. **Never reuse cancelled, voided, or reversed numbers:** Under statutory Indian GST rules, cancelled, voided, or reversed invoice numbers remain part of the historical serial registry and cannot be recycled, backfilled, or reassigned under any circumstances, regardless of the eventual lifecycle state design in ERVE.
 4. **Read-only preflight diagnostics:** The preflight utility (`pnpm run ei-numbering:preflight`) performs zero writes, zero table modifications, and zero sequence adjustments. It may be run repeatedly without operational side effects.
 5. **No premature activation:** Sequence initialization and finalization must only occur during an approved maintenance window after the external accounting system is frozen.
 
@@ -28,7 +28,7 @@ This runbook defines the idempotent, operator-controlled procedure for transitio
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | **Accountant (Finance Lead)**    | • Owns external invoice registers and GST filings.<br>• Extracts and signs off on the live external high-water mark.<br>• Enforces freeze on legacy billing.<br>• Validates first ERVE-issued invoice.         | **Gate 1:** Authoritative ledger export sign-off.<br>**Gate 2:** Pre-baseline approval.<br>**Gate 3:** Post-cutover verification. |
 | **Deployment Operator / DevOps** | • Executes read-only preflight diagnostic CLI.<br>• Executes baseline adjustment CLI when authorized.<br>• Inspects transaction logs and database health.<br>• Halts procedure if any check reports `BLOCKED`. | **Gate 2:** Preflight `READY` confirmation.<br>**Gate 3:** Sequence baseline execution log verification.                          |
-| **Engineering (INV-006 Owner)**  | • Deploys INV-006 migration adding `TAX_INVOICE` to `DocumentType` enum.<br>• Delivers atomic allocation inside Tax Invoice finalization transaction.                                                          | **Prerequisite:** INV-006 merged and deployed.                                                                                    |
+| **Engineering (INV-006 Owner)**  | • Deploys INV-006 migration adding `TAX_INVOICE` to `DocumentType` enum.<br>• Delivers atomic allocation inside Tax Invoice finalization transaction.<br>• Enforces sequence gates preventing auto-seed at 1.  | **Prerequisite:** INV-006 merged and deployed.                                                                                    |
 
 ---
 
@@ -72,6 +72,7 @@ Prepare manifest file (`manifest.json`):
   "systemName": "Tally Prime ERP",
   "extractedAt": "2026-10-15T18:00:00.000Z",
   "verifiedBy": "lead.accountant@example.com",
+  "freezeConfirmed": true,
   "notes": "Verified against GSTR-1 filings through September 2026."
 }
 ```
@@ -108,26 +109,32 @@ pnpm run ei-numbering:preflight \
 
 ### 4.3 Step 3: Interpret Diagnostic Results
 
-Review each check in the console output:
+The diagnostic evaluates three independent readiness dimensions:
 
-| Status      | Meaning                                                                                                                                                             | Required Operator Action                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| **PASS**    | Check completely verified with evidence.                                                                                                                            | Proceed.                                                                  |
-| **WARN**    | Non-blocking condition (e.g. sequence uninitialized, approaching serial 9000, or cross-system overlap of known migrated records).                                   | Requires review and explicit Accountant sign-off before proceeding.       |
-| **BLOCKED** | Fatal cutover blocker (missing FY, duplicate invoice numbers, malformed numbers, serial > 9999, sequence behind external reality, or missing external source data). | **STOP IMMEDIATELY.** Do not proceed with baseline adjustment or cutover. |
+1. **Preparation Completeness (`isPreparationReady`):** Validates that external ledgers, manifests, FY boundaries, and historical serial reconciliation are sound. Missing downstream INV-006 schema dependencies do not prevent preparation completeness.
+2. **Schema & Config Readiness (`isSchemaConfigReady`):** Validates that `DocumentType.TAX_INVOICE` and `DOCUMENT_PREFIXES.TAX_INVOICE` are migrated in the database and active.
+3. **Production Cutover Readiness (`isProductionCutoverReady`):** Strict production readiness requiring preparation completeness, schema readiness, accountant manifest verification, freeze confirmation, and zero unresolved numbering policies.
+
+Review check status codes in the output:
+
+| Status      | Meaning                                                                                                                                                                           | Required Operator Action                                                  |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **PASS**    | Check completely verified with evidence.                                                                                                                                          | Proceed.                                                                  |
+| **WARN**    | Non-blocking condition in dev/prep (e.g. sequence uninitialized, approaching serial 9000, or cross-system overlap of known migrated records).                                     | Requires review and explicit Accountant sign-off before proceeding.       |
+| **BLOCKED** | Fatal cutover blocker (missing FY, duplicate invoice numbers, malformed numbers, serial > 9999 affecting next allocation, sequence behind external reality, or missing manifest). | **STOP IMMEDIATELY.** Do not proceed with baseline adjustment or cutover. |
 
 ### 4.4 Diagnostic Checks Overview:
 
 1. `CHK_FINANCIAL_YEAR`: Confirms target FY exists and calendar boundaries are strictly April 1 to March 31.
-2. `CHK_DOCUMENT_TYPE_CONFIG`: Confirms `TAX_INVOICE` is registered in database enum and configuration.
+2. `CHK_DOCUMENT_TYPE_CONFIG`: Confirms `TAX_INVOICE` is registered in database enum and configuration. (Permitted as WARN in DEV/LOCAL; strictly BLOCKED in PRODUCTION).
 3. `CHK_SEQUENCE_STATE`: Reports existing sequence state without creating or mutating rows.
-4. `CHK_INVOICE_SYNTAX`: Confirms all ERVE and external invoice numbers match canonical regex `^EI\/(\d{2}-\d{2})\/(\d{4})$`.
-5. `CHK_UNIQUENESS`: Detects duplicate invoice numbers within ERVE and external registers.
+4. `CHK_INVOICE_SYNTAX`: Confirms all ERVE and external invoice numbers match formatter syntax `^EI\/(\d{2}-\d{2})\/(\d{4,})$` ($\ge 4$ digits). Identifies serials exceeding 4 digits.
+5. `CHK_UNIQUENESS`: Detects duplicate invoice numbers within ERVE and external registers. Distinguishes genuine conflicts from legitimate cross-system representations of the same invoice.
 6. `CHK_FY_SEPARATION`: Detects any cross-FY attribution bleed.
-7. `CHK_HIGH_WATER_RECON`: Reconciles external ledger max serial, ERVE max serial, and `DocumentSequence.lastAllocatedSerial`.
+7. `CHK_HIGH_WATER_RECON`: Reconciles external ledger max serial, ERVE max serial, and `DocumentSequence.lastAllocatedSerial`. Rejects manually entered HWM without authoritative manifest in production.
 8. `CHK_NUMBER_COLLISION`: Confirms proposed next serial does not collide with any existing record.
-9. `CHK_SERIAL_CAPACITY`: Assesses remaining headroom within the 4-digit serial capacity (1..9999).
-10. `CHK_SOURCE_COMPLETENESS`: Assesses presence and completeness of external authoritative ledger and manifest.
+9. `CHK_SERIAL_CAPACITY`: Assesses remaining serial capacity. Warns between 9000–9999. Does not impose an arbitrary hard limit of 9999, but identifies when serial exceeds 4 digits and blocks production cutover if an unresolved 5-digit policy affects the next allocation.
+10. `CHK_SOURCE_COMPLETENESS`: Validates manifest presence, accountant approval, extraction timestamp, and freeze confirmation. In production, an unverified manual HWM cannot produce a ready verdict.
 11. `CHK_PERMISSIONS`: Confirms read-only execution with zero mutations.
 
 ---
@@ -183,8 +190,8 @@ Immediately following baseline setting and INV-006 activation:
 
 Halt the cutover immediately if:
 
-- Preflight diagnostic reports `BLOCKED`.
-- Any external invoice number is malformed or lacks canonical `EI/<FY>/<4-digit serial>` formatting.
+- Preflight diagnostic reports `BLOCKED` (or `isProductionCutoverReady: false`).
+- Any external invoice number is malformed or lacks canonical formatting.
 - Legacy system issues an invoice after the extraction timestamp.
 - Database connection aborts mid-transaction.
 - First finalized invoice generates a number that collides with historical records.
@@ -193,7 +200,40 @@ Halt the cutover immediately if:
 
 1. **Never reset or decrement DocumentSequence:**
    - Even if the first post-cutover invoice is erroneous, **do not decrement `lastAllocatedSerial`**.
-   - If an invoice is created in error, mark that invoice `CANCELLED` within ERVE according to statutory GST accounting workflows.
+   - If an invoice is created in error, mark that invoice cancelled, voided, or reversed within ERVE according to statutory GST accounting workflows without releasing the invoice number.
    - The sequence must continue forward. Under Indian GST law, gaps caused by cancelled invoices are acceptable when supported by documented cancellation logs, but duplicate numbers are strictly illegal.
 2. **Partial Cutover Resolution:**
    - If sequence was raised but INV-006 activation fails, keep the sequence at the raised baseline. It will safely remain ready for retry once the underlying service issue is resolved.
+
+---
+
+## 8. Downstream Engineering Handoff to INV-006
+
+INV-006 owns Tax Invoice finalization, statutory GST calculations, and atomic document sequence allocation. The following architectural constraints and invariants established in INV-012 must be respected:
+
+### 8.1 Sequence Auto-Seed Guard
+
+Existing sequence infrastructure (`allocateDocumentSerial`) defaults to creating a sequence row starting at `lastAllocatedSerial = 1` if no record exists for the given Financial Year and DocumentType.
+**Requirement for INV-006:** For `TAX_INVOICE`, INV-006 must explicitly prevent automatic sequence initialization starting at serial 1 until historical high-water mark reconciliation and cutover gates are completed and verified. Attempting to allocate a Tax Invoice serial on an un-baselined sequence in production must throw a fatal guard exception.
+
+### 8.2 Invoice Number Immutability & Anti-Reuse Invariant
+
+Under GST Rule 46, Tax Invoice numbers must be consecutive, unique, and strictly non-reusable:
+
+- Once an invoice number is allocated (e.g. `EI/26-27/0271`), that number is permanently consumed.
+- If an invoice is subsequently cancelled, voided, or reversed, its invoice number must never be released, recycled, backfilled, or reassigned to another invoice.
+- Gaps in sequence resulting from cancellations are permitted by GST authorities when supported by documented cancellation logs; duplicate or recycled numbers are strictly prohibited.
+
+### 8.3 Lifecycle State Design Independence
+
+INV-012 does not prescribe a specific `CANCELLED` enum on `TaxInvoiceStatus`. INV-006 is free to implement the finalized lifecycle domain design (e.g., status flags, cancellation audit entities, or credit note linkages) provided the anti-reuse invariant above is strictly enforced.
+
+### 8.4 Schema & Configuration Deployment
+
+INV-006 must deploy:
+
+1. Prisma migration adding `TAX_INVOICE` to the `DocumentType` database enum.
+2. Mapping in `DOCUMENT_PREFIXES` in `apps/api/src/modules/master-data/document-number.util.ts`:
+   ```typescript
+   TAX_INVOICE: 'EI',
+   ```
