@@ -1,12 +1,33 @@
-import { createId } from '@erve/shared';
+import { createId, resolveGstStateCode } from '@erve/shared';
 import { canMutateTaxInvoice, canViewTaxInvoice } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { resolveSoleActiveSellerRegistration } from '../master-data/seller-registration.service.js';
+import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
+import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
+import { ensureFinancialYear } from '../master-data/financial-year.service.js';
+import { toBusinessCalendarDate } from '../master-data/financial-year.util.js';
+import { resolveGstRuleForHsn } from '../tax-rules/gst-rule-sets.service.js';
+import {
+  aggregateHsnSummary,
+  aggregateInvoiceTotals,
+  calculateGrandTotal,
+  classifyGstTreatment,
+  computeLineTax,
+  computeNormalUnitRate,
+  resolveFinalUnitRate,
+  type LineTaxResult,
+} from './tax-invoice-calculation.js';
 
 type Tx = Prisma.TransactionClient;
+
+// Shared by override and finalize so the two can never race each other on
+// the same invoice — both acquire this exact lock before reading status.
+function taxInvoiceLifecycleLockKey(taxInvoiceId: string): string {
+  return `tax-invoice-finalize-${taxInvoiceId}`;
+}
 
 // ---------------------------------------------------------------------------
 // Access helpers
@@ -114,6 +135,7 @@ const taxInvoiceInclude = {
   },
   distributor: { select: { id: true, code: true, name: true } },
   sellerRegistration: { select: { id: true, branchCode: true } },
+  financialYear: { select: { id: true, code: true } },
   createdBy: { select: { id: true, name: true, email: true } },
   finalizedBy: { select: { id: true, name: true, email: true } },
   lines: {
@@ -126,6 +148,10 @@ const taxInvoiceInclude = {
           hsn: { select: { code: true, description: true } },
         },
       },
+      // The line's own frozen HSN (set only at finalization) — takes
+      // precedence over the live style.hsn join below once present.
+      hsn: { select: { code: true, description: true } },
+      overriddenBy: { select: { id: true, name: true, email: true } },
       saleOrderLine: { select: { id: true, size: { select: { code: true, label: true } } } },
     },
   },
@@ -134,6 +160,31 @@ const taxInvoiceInclude = {
 type TaxInvoiceRecord = Prisma.TaxInvoiceGetPayload<{ include: typeof taxInvoiceInclude }>;
 
 function toTaxInvoiceView(record: TaxInvoiceRecord) {
+  // Derived at read time from the already-persisted, immutable line
+  // snapshots — never a separately stored/duplicated table. Null for a
+  // DRAFT (nothing to summarize yet); every finalized line always has
+  // hsnCode/gstPercent/amounts set together, so this is safe once FINALIZED.
+  const hsnSummary =
+    record.status === 'FINALIZED'
+      ? aggregateHsnSummary(
+          record.lines.map((line) => ({
+            hsnCode: line.hsnCode!,
+            gstPercent: line.gstPercent!,
+            taxableValue: line.taxableValue!,
+            cgstAmount: line.cgstAmount!,
+            sgstAmount: line.sgstAmount!,
+            igstAmount: line.igstAmount!,
+          })),
+        ).map((row) => ({
+          hsnCode: row.hsnCode,
+          gstPercent: row.gstPercent.toString(),
+          taxableValue: row.taxableValue.toString(),
+          cgstAmount: row.cgstAmount.toString(),
+          sgstAmount: row.sgstAmount.toString(),
+          igstAmount: row.igstAmount.toString(),
+        }))
+      : null;
+
   return {
     id: record.id,
     status: record.status,
@@ -182,9 +233,15 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
       addressLine2: record.billToAddressLine2,
       city: record.billToCity,
       state: record.billToState,
+      // Resolved + validated only at finalization; null on every DRAFT. Also
+      // the Place-of-Supply code (same value, by this story's confirmed
+      // business rule — see the TaxInvoice model's schema doc comment).
+      stateCode: record.billToStateCode,
       country: record.billToCountry,
       postalCode: record.billToPostalCode,
     },
+    gstTreatment: record.gstTreatment,
+    financialYear: record.financialYear ? { id: record.financialYear.id, code: record.financialYear.code } : null,
     shipTo: {
       label: record.shipToLabel,
       contactName: record.shipToContactName,
@@ -202,15 +259,49 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
       ervePackingListCommercialLineId: line.ervePackingListCommercialLineId,
       saleOrderLineId: line.saleOrderLineId,
       style: { id: line.style.id, styleNumber: line.style.styleNumber, styleName: line.style.styleName },
-      // HSN is resolved live from Style — never frozen in INV-005 (see the
-      // TaxInvoice model's schema doc comment on why).
-      hsn: line.style.hsn ? { code: line.style.hsn.code, description: line.style.hsn.description } : null,
+      // The line's own frozen HSN (set only at finalization) takes
+      // precedence; a DRAFT line still falls back to the live Style join,
+      // exactly as INV-005 already did (see the TaxInvoice model's schema
+      // doc comment).
+      hsn: line.hsn
+        ? { code: line.hsn.code, description: line.hsn.description }
+        : line.style.hsn
+          ? { code: line.style.hsn.code, description: line.style.hsn.description }
+          : null,
       size: { code: line.saleOrderLine.size.code, label: line.saleOrderLine.size.label },
       quantity: line.quantity,
       styleMrp: line.styleMrp.toString(),
       distributorPricingPercentage: line.distributorPricingPercentage.toString(),
       priceListId: line.priceListId,
+      // INV-006 — all null until an override and/or finalization sets them.
+      // Serialized via .toString(), never .toNumber(), so the scale-6/11
+      // precision never round-trips through a JS number in the API response.
+      calculatedUnitRate: line.calculatedUnitRate?.toString() ?? null,
+      overrideUnitRate: line.overrideUnitRate?.toString() ?? null,
+      overrideReason: line.overrideReason,
+      overriddenBy: line.overriddenBy,
+      overriddenAt: line.overriddenAt?.toISOString() ?? null,
+      finalUnitRate: line.finalUnitRate?.toString() ?? null,
+      gstPercent: line.gstPercent?.toString() ?? null,
+      taxableValue: line.taxableValue?.toString() ?? null,
+      cgstAmount: line.cgstAmount?.toString() ?? null,
+      sgstAmount: line.sgstAmount?.toString() ?? null,
+      igstAmount: line.igstAmount?.toString() ?? null,
     })),
+    // INV-006 — unrounded aggregate totals plus the single rounded
+    // grandTotal; all null until finalization.
+    subtotal: record.subtotal?.toString() ?? null,
+    totalCgst: record.totalCgst?.toString() ?? null,
+    totalSgst: record.totalSgst?.toString() ?? null,
+    totalIgst: record.totalIgst?.toString() ?? null,
+    totalGst: record.totalGst?.toString() ?? null,
+    // .toFixed(2), not .toString() — grandTotal is always exactly the
+    // rounded 2dp value by construction, and decimal.js's toString() drops
+    // trailing zeros (e.g. "1050" instead of "1050.00"), which would be an
+    // inconsistent wire format for the one field that's supposed to be a
+    // clean, final, two-decimal monetary amount.
+    grandTotal: record.grandTotal?.toFixed(2) ?? null,
+    hsnSummary,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
@@ -441,4 +532,266 @@ export async function getTaxInvoiceList(actor: CurrentUser, filters: TaxInvoiceL
   const page = hasMore ? records.slice(0, filters.limit) : records;
   const items = page.map(toTaxInvoiceView);
   return { items, pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null } };
+}
+
+// ---------------------------------------------------------------------------
+// INV-006: Accountant rate override. Shares the finalize lifecycle lock
+// (taxInvoiceLifecycleLockKey) so an override and a finalize on the same
+// invoice can never race each other.
+// ---------------------------------------------------------------------------
+
+export interface OverrideTaxInvoiceLineRateInput {
+  overrideUnitRate: Prisma.Decimal;
+  reason: string;
+}
+
+export async function overrideTaxInvoiceLineRate(
+  actor: CurrentUser,
+  taxInvoiceId: string,
+  lineId: string,
+  input: OverrideTaxInvoiceLineRateInput,
+): Promise<TaxInvoiceView> {
+  assertMutationAccess(actor);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(taxInvoiceId)}))`;
+
+    const invoice = await tx.taxInvoice.findUnique({ where: { id: taxInvoiceId }, select: { status: true } });
+    if (!invoice) throw HttpError.notFound('Tax invoice not found');
+    if (invoice.status !== 'DRAFT') {
+      throw HttpError.conflict('A Tax Invoice line can only be overridden while the invoice is still DRAFT');
+    }
+
+    const line = await tx.taxInvoiceLine.findUnique({ where: { id: lineId } });
+    if (!line || line.taxInvoiceId !== taxInvoiceId) {
+      throw HttpError.notFound('Tax invoice line not found on this invoice');
+    }
+
+    // Recorded alongside the override so the original calculated rate is
+    // never lost even though it is also re-derivable from styleMrp/
+    // distributorPricingPercentage — matches §1.3's "persist the original
+    // calculated unit rate" requirement explicitly, not just implicitly.
+    const calculatedUnitRate = computeNormalUnitRate(line.styleMrp, line.distributorPricingPercentage);
+    const overriddenAt = new Date();
+
+    await tx.taxInvoiceLine.update({
+      where: { id: lineId },
+      data: {
+        calculatedUnitRate,
+        overrideUnitRate: input.overrideUnitRate,
+        overrideReason: input.reason,
+        overriddenById: actor.id,
+        overriddenAt,
+      },
+    });
+
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'TAX_INVOICE_LINE_RATE_OVERRIDDEN',
+        entityType: 'TaxInvoiceLine',
+        entityId: lineId,
+        metadata: {
+          taxInvoiceId,
+          calculatedUnitRate: calculatedUnitRate.toString(),
+          overrideUnitRate: input.overrideUnitRate.toString(),
+          reason: input.reason,
+        },
+      },
+      tx,
+    );
+  });
+
+  return toTaxInvoiceView(await loadTaxInvoiceById(taxInvoiceId));
+}
+
+// ---------------------------------------------------------------------------
+// INV-006: Atomic DRAFT -> FINALIZED finalization.
+//
+// Idempotent: if the invoice is already FINALIZED when the lock is
+// acquired, this makes no further writes, allocates no serial and records
+// no additional audit entry — it simply falls through to the unconditional
+// reload below, which returns the existing persisted finalized document.
+// This correctly handles both a plain retry and two concurrent requests for
+// the SAME invoice (the second one blocks on the advisory lock until the
+// first commits, then sees status === 'FINALIZED' and takes this branch).
+//
+// Two different invoices finalizing concurrently in the same Financial Year
+// don't contend on this lock at all (it's keyed by taxInvoiceId), but still
+// serialize correctly on allocateDocumentSerial's own inner
+// pg_advisory_xact_lock (keyed by documentType:financialYearId) — two
+// independent, non-overlapping lock keyspaces composed together, not a new
+// locking primitive.
+//
+// All fail-closed validation (commercial snapshot, Bill-To state/GSTIN
+// consistency, HSN/GST resolution) happens before allocateDocumentSerial is
+// called, so a doomed finalize never consumes a number — belt-and-suspenders
+// on top of the fact that a thrown error rolls back the whole transaction,
+// including the serial increment, anyway.
+// ---------------------------------------------------------------------------
+
+export async function finalizeTaxInvoice(actor: CurrentUser, taxInvoiceId: string): Promise<TaxInvoiceView> {
+  assertMutationAccess(actor);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(taxInvoiceId)}))`;
+
+    const invoice = await tx.taxInvoice.findUnique({ where: { id: taxInvoiceId }, include: { lines: true } });
+    if (!invoice) throw HttpError.notFound('Tax invoice not found');
+
+    if (invoice.status === 'FINALIZED') return; // idempotent — see header comment
+    if (invoice.status !== 'DRAFT') {
+      throw HttpError.conflict('Only a DRAFT Tax Invoice can be finalized');
+    }
+    // Unreachable in practice — draft creation refuses an EIPL with no
+    // commercial lines (COMMERCIAL_SNAPSHOT_MISSING) — kept as a defensive
+    // guard, same stance as other "unreachable, but fail loudly" checks in
+    // this module.
+    if (invoice.lines.length === 0) {
+      throw HttpError.conflict('A Tax Invoice with no lines cannot be finalized');
+    }
+
+    // Revalidate the EIPL's frozen commercial snapshot is still internally
+    // consistent — the exact same check draft creation performs, reused
+    // rather than duplicated.
+    await loadAndValidateCommercialLines(tx, invoice.ervePackingListId);
+
+    // --- Place of Supply: resolve from the snapshotted Bill-To ADDRESS
+    // state (never the GSTIN, never Ship-To), then cross-validate against
+    // the Bill-To GSTIN's own 2-digit prefix. Fails closed on either step.
+    const billToStateCode = resolveGstStateCode(invoice.billToState);
+    if (!billToStateCode) {
+      throw HttpError.badRequest(
+        'The Bill-To address state could not be resolved to a recognized GST state/UT name — finalization cannot proceed',
+        { reason: 'BILL_TO_STATE_UNRESOLVED', billToState: invoice.billToState },
+      );
+    }
+    const billToGstinStateCode = invoice.billToGstin.slice(0, 2);
+    if (billToStateCode !== billToGstinStateCode) {
+      throw HttpError.badRequest(
+        "The Bill-To address state does not match the Bill-To GSTIN's registered state — finalization cannot proceed",
+        { reason: 'BILL_TO_STATE_GSTIN_MISMATCH', billToStateCode, billToGstinStateCode },
+      );
+    }
+    const gstTreatment = classifyGstTreatment(invoice.sellerStateCode, billToStateCode);
+
+    const finalizedAt = new Date();
+    const businessDate = toBusinessCalendarDate(finalizedAt);
+
+    const styleIds = [...new Set(invoice.lines.map((line) => line.styleId))];
+    const styles = await tx.style.findMany({ where: { id: { in: styleIds } }, select: { id: true, hsnId: true } });
+    const hsnIdByStyleId = new Map(styles.map((style) => [style.id, style.hsnId]));
+
+    interface ResolvedLine extends LineTaxResult {
+      id: string;
+      hsnId: string;
+      hsnCode: string;
+      gstRuleSetVersionId: string;
+      gstValueBandId: string;
+      calculatedUnitRate: Prisma.Decimal;
+      finalUnitRate: Prisma.Decimal;
+      gstPercent: Prisma.Decimal;
+    }
+    const resolvedLines: ResolvedLine[] = [];
+
+    for (const line of invoice.lines) {
+      const hsnId = hsnIdByStyleId.get(line.styleId);
+      if (!hsnId) {
+        throw HttpError.badRequest(
+          'A line\'s Style has no assigned HSN — finalization cannot proceed until HSN master data is complete',
+          { reason: 'HSN_NOT_ASSIGNED', taxInvoiceLineId: line.id, styleId: line.styleId },
+        );
+      }
+
+      const calculatedUnitRate = computeNormalUnitRate(line.styleMrp, line.distributorPricingPercentage);
+      const finalUnitRate = resolveFinalUnitRate(calculatedUnitRate, line.overrideUnitRate);
+
+      const resolution = await resolveGstRuleForHsn({ hsnId, date: businessDate, value: finalUnitRate });
+      if (!resolution.found) {
+        throw HttpError.badRequest(
+          "No applicable GST rule could be resolved for a line's HSN — finalization cannot proceed until GST configuration is complete and active",
+          { reason: resolution.reason, taxInvoiceLineId: line.id, hsnId },
+        );
+      }
+
+      const gstPercent = new Prisma.Decimal(resolution.band.gstPercent);
+      const lineTax = computeLineTax(finalUnitRate, line.quantity, gstPercent, gstTreatment);
+
+      resolvedLines.push({
+        id: line.id,
+        hsnId: resolution.hsnId,
+        hsnCode: resolution.hsnCode,
+        gstRuleSetVersionId: resolution.versionId,
+        gstValueBandId: resolution.band.id,
+        calculatedUnitRate,
+        finalUnitRate,
+        gstPercent,
+        ...lineTax,
+      });
+    }
+
+    const totals = aggregateInvoiceTotals(resolvedLines);
+    const grandTotal = calculateGrandTotal(totals.subtotal, totals.totalGst);
+
+    const financialYear = await ensureFinancialYear(tx, businessDate);
+    const serial = await allocateDocumentSerial(tx, 'TAX_INVOICE', financialYear.id);
+    const invoiceNumber = formatDocumentNumber(DOCUMENT_PREFIXES.TAX_INVOICE, financialYear.code, serial);
+
+    for (const resolved of resolvedLines) {
+      await tx.taxInvoiceLine.update({
+        where: { id: resolved.id },
+        data: {
+          hsnId: resolved.hsnId,
+          hsnCode: resolved.hsnCode,
+          gstRuleSetVersionId: resolved.gstRuleSetVersionId,
+          gstValueBandId: resolved.gstValueBandId,
+          calculatedUnitRate: resolved.calculatedUnitRate,
+          finalUnitRate: resolved.finalUnitRate,
+          gstPercent: resolved.gstPercent,
+          taxableValue: resolved.taxableValue,
+          cgstAmount: resolved.cgstAmount,
+          sgstAmount: resolved.sgstAmount,
+          igstAmount: resolved.igstAmount,
+        },
+      });
+    }
+
+    await tx.taxInvoice.update({
+      where: { id: taxInvoiceId },
+      data: {
+        status: 'FINALIZED',
+        invoiceNumber,
+        billToStateCode,
+        gstTreatment,
+        financialYearId: financialYear.id,
+        subtotal: totals.subtotal,
+        totalCgst: totals.totalCgst,
+        totalSgst: totals.totalSgst,
+        totalIgst: totals.totalIgst,
+        totalGst: totals.totalGst,
+        grandTotal,
+        finalizedById: actor.id,
+        finalizedAt,
+      },
+    });
+
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'TAX_INVOICE_FINALIZED',
+        entityType: 'TaxInvoice',
+        entityId: taxInvoiceId,
+        metadata: {
+          invoiceNumber,
+          gstTreatment,
+          billToStateCode,
+          grandTotal: grandTotal.toString(),
+          lineCount: resolvedLines.length,
+        },
+      },
+      tx,
+    );
+  });
+
+  return toTaxInvoiceView(await loadTaxInvoiceById(taxInvoiceId));
 }

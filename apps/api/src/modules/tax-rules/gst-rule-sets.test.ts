@@ -2,12 +2,13 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
-import { prisma } from '../../db/prisma.js';
+import { Prisma, prisma } from '../../db/prisma.js';
 import { createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 import {
   BandLadderError,
   CURRENT_GARMENT_GST_RULE_SET_CODE,
   ensureCurrentGarmentGstRuleSet,
+  resolveGstRuleForHsn,
   validateBandLadder,
 } from './gst-rule-sets.service.js';
 
@@ -118,6 +119,25 @@ describe('GST Rule Sets', () => {
     expect((await resolve(2500)).body.data).toMatchObject({ found: true, band: { gstPercent: 5 } });
     expect((await resolve(2500.01)).body.data).toMatchObject({ found: true, band: { gstPercent: 18 } });
     expect((await resolve(5000)).body.data).toMatchObject({ found: true, band: { gstPercent: 18 } });
+  });
+
+  it('resolves Decimal-input boundary values exactly (INV-006: no number round-trip), including 2500.000001', async () => {
+    const token = await tokenWithRoles(['ADMIN']);
+    const { hsnId } = await setupActiveGarmentRuleSet(token, '2017-07-01');
+
+    const atBoundary = await resolveGstRuleForHsn({ hsnId, date: '2024-01-01', value: new Prisma.Decimal('2500.000000') });
+    expect(atBoundary).toMatchObject({ found: true, band: { gstPercent: 5 } });
+
+    const justOverBoundary = await resolveGstRuleForHsn({
+      hsnId,
+      date: '2024-01-01',
+      value: new Prisma.Decimal('2500.000001'),
+    });
+    expect(justOverBoundary).toMatchObject({ found: true, band: { gstPercent: 18 } });
+
+    // A plain `number` caller (e.g. the /resolve HTTP route above) must still work unchanged.
+    const numberCaller = await resolveGstRuleForHsn({ hsnId, date: '2024-01-01', value: 2500 });
+    expect(numberCaller).toMatchObject({ found: true, band: { gstPercent: 5 } });
   });
 
   it('resolves the version effective on the given date; a later version does not alter historical resolution', async () => {

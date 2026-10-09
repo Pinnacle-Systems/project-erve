@@ -656,7 +656,12 @@ export interface GstRuleResolutionInput {
   hsnId?: string;
   hsnCode?: string;
   date: Date | string;
-  value: number;
+  // INV-006 addition: accepts a Prisma.Decimal so a finalization-time final
+  // unit rate (scale 6) never has to round-trip through a JS number before
+  // being compared against the value band's Decimal(12,2) bounds. Existing
+  // `number` callers (e.g. the /resolve read endpoint) are unaffected —
+  // comparisons below now happen in Decimal space for both input shapes.
+  value: Prisma.Decimal | number;
 }
 
 export type GstRuleResolutionMissReason =
@@ -712,10 +717,15 @@ export async function resolveGstRuleForHsn(input: GstRuleResolutionInput): Promi
   }
   const version = versions[0]!;
 
+  // Decimal-safe comparison: the input value and both band bounds are
+  // normalized to Prisma.Decimal before comparing, so a scale-6 finalization
+  // rate is never lossily converted to a JS number first (unlike
+  // decimalToNumber, used elsewhere in this file for view-shaping only).
+  const value = input.value instanceof Prisma.Decimal ? input.value : new Prisma.Decimal(input.value);
   const band = version.bands.find((candidate) => {
-    const min = decimalToNumber(candidate.minValue);
-    const max = decimalToNumber(candidate.maxValue);
-    return (min === null || input.value > min) && (max === null || input.value <= max);
+    const min = candidate.minValue;
+    const max = candidate.maxValue;
+    return (min === null || value.greaterThan(min)) && (max === null || value.lessThanOrEqualTo(max));
   });
   if (!band) return { found: false, reason: 'NO_MATCHING_BAND' };
 
