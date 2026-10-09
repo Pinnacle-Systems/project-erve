@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 // Operational cutover helper for Financial-Year-aware document numbering.
-// Raises (never lowers) a Purchase Order / Job Order sequence's high-water
-// mark to align with an already-issued external/manual numbering series
-// before this scheme's numbers are treated as durable business identifiers.
-// Not a public HTTP endpoint — deliberately a script, run once per cutover.
+// Raises (never lowers) a Purchase Order / Job Order / Tax Invoice
+// sequence's high-water mark to align with an already-issued external/
+// manual numbering series before this scheme's numbers are treated as
+// durable business identifiers. Not a public HTTP endpoint — deliberately
+// a script, run once per cutover.
 //
 // Usage (from apps/api):
 //   tsx src/cli/document-sequence-baseline.cli.ts \
 //     --document-type PURCHASE_ORDER --financial-year 2026-27 --serial 68
+//
+// TAX_INVOICE usage is the INV-012 EI numbering cutover procedure (see
+// docs/EI_NUMBERING_CUTOVER_RUNBOOK.md) — INV-006's finalization path
+// (assertTaxInvoiceSequenceBaselined in tax-invoice.service.ts) refuses to
+// auto-seed a TAX_INVOICE sequence at serial 1 in production, so this
+// baseline command must run against the verified external high-water mark
+// before the first production Tax Invoice can ever be finalized.
 import { prisma } from '../db/prisma.js';
 import type { DocumentType } from '../db/prisma.js';
 import { runDocumentSequenceBaseline, DocumentSequenceBaselineError } from './document-sequence-baseline.js';
 
-const DOCUMENT_TYPES: DocumentType[] = ['PURCHASE_ORDER', 'JOB_ORDER'];
+const DOCUMENT_TYPES: DocumentType[] = ['PURCHASE_ORDER', 'JOB_ORDER', 'TAX_INVOICE'];
 
 function parseArgs(argv: string[]): {
   documentType: DocumentType;

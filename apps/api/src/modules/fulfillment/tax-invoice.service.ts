@@ -1,6 +1,7 @@
 import { createId, resolveGstStateCode } from '@erve/shared';
 import { canMutateTaxInvoice, canViewTaxInvoice } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
+import { env } from '../../config/env.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
@@ -27,6 +28,32 @@ type Tx = Prisma.TransactionClient;
 // the same invoice — both acquire this exact lock before reading status.
 function taxInvoiceLifecycleLockKey(taxInvoiceId: string): string {
   return `tax-invoice-finalize-${taxInvoiceId}`;
+}
+
+// INV-012's EI Numbering Cutover Runbook, §8.1 "Sequence Auto-Seed Guard",
+// assigns this explicitly to INV-006: "Attempting to allocate a Tax Invoice
+// serial on an un-baselined sequence in production must throw a fatal
+// guard exception." allocateDocumentSerial's own upsert otherwise defaults
+// a brand-new (documentType, financialYearId) row to lastAllocatedSerial=1
+// — correct for every OTHER document type's first-ever document, but wrong
+// here: a production EI sequence must only ever start from the verified
+// external high-water mark the document-sequence-baseline CLI sets, never
+// from an auto-seeded 1. Non-production environments (dev/test) are
+// intentionally exempt — this is what lets this story's own tests and any
+// local/dev finalize flow work without running the INV-012 baseline CLI
+// first. Exported as a pure function (nodeEnv/sequenceAlreadyExists passed
+// in explicitly) so it's unit-testable without mocking the process-wide env
+// singleton or standing up a real "production" server process.
+export function assertTaxInvoiceSequenceBaselined(
+  nodeEnv: string,
+  sequenceAlreadyExists: boolean,
+  financialYearCode: string,
+): void {
+  if (nodeEnv !== 'production' || sequenceAlreadyExists) return;
+  throw HttpError.conflict(
+    'Tax Invoice numbering for this Financial Year has not been baselined against the verified external high-water mark — finalization is blocked until the INV-012 cutover procedure (EI_NUMBERING_CUTOVER_RUNBOOK.md) completes',
+    { reason: 'TAX_INVOICE_SEQUENCE_NOT_BASELINED', financialYearCode },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -734,6 +761,22 @@ export async function finalizeTaxInvoice(actor: CurrentUser, taxInvoiceId: strin
     const grandTotal = calculateGrandTotal(totals.subtotal, totals.totalGst);
 
     const financialYear = await ensureFinancialYear(tx, businessDate);
+
+    // Same advisory lock allocateDocumentSerial itself takes (identical key
+    // construction, document-sequence.service.ts) — taken here too so the
+    // existence-check below and the allocation are atomic together. Without
+    // this, two concurrent first-ever production finalizations for a
+    // brand-new FY could both pass the check before either creates the row,
+    // letting one slip through and auto-seed at 1 anyway. Re-acquiring the
+    // same advisory lock a second time (inside allocateDocumentSerial, a few
+    // lines below) within the same transaction/session is a safe no-op in
+    // Postgres, not a self-deadlock.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${'TAX_INVOICE'}::text || ':' || ${financialYear.id}, 0))`;
+    const existingSequence = await tx.documentSequence.findUnique({
+      where: { documentType_financialYearId: { documentType: 'TAX_INVOICE', financialYearId: financialYear.id } },
+    });
+    assertTaxInvoiceSequenceBaselined(env.NODE_ENV, existingSequence !== null, financialYear.code);
+
     const serial = await allocateDocumentSerial(tx, 'TAX_INVOICE', financialYear.id);
     const invoiceNumber = formatDocumentNumber(DOCUMENT_PREFIXES.TAX_INVOICE, financialYear.code, serial);
 
