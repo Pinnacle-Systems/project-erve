@@ -84,7 +84,10 @@ describe('runEiNumberingPreflight Diagnostics', () => {
     expect(report.summary.blocked).toBe(0);
     expect(report.summary.warned).toBeGreaterThan(0);
     expect(report.readinessBreakdown.isPreparationReady).toBe(true);
-    expect(report.readinessBreakdown.isSchemaConfigReady).toBe(false); // TAX_INVOICE enum not yet in schema
+    // INV-006 merged and added TAX_INVOICE to the DocumentType enum —
+    // schema config is now ready; isProductionCutoverReady still correctly
+    // stays false below because the sequence itself remains unbaselined.
+    expect(report.readinessBreakdown.isSchemaConfigReady).toBe(true);
     expect(report.readinessBreakdown.isProductionCutoverReady).toBe(false);
     expect(report.highWaterMark.verifiedHighWaterMark).toBe(3);
     expect(report.highWaterMark.nextProposedSerial).toBe(4);
