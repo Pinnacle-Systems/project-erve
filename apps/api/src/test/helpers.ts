@@ -1,6 +1,12 @@
 import { createId } from '@erve/shared';
 import type { Role } from '@erve/types';
-import { prisma, type UserStatus, type DocumentType, type PurchaseOrderStatus } from '../db/prisma.js';
+import {
+  prisma,
+  type UserStatus,
+  type DocumentType,
+  type PurchaseOrderStatus,
+  type TaxInvoiceStatus,
+} from '../db/prisma.js';
 import { hashPassword } from '../auth/password.js';
 import { signAccessToken } from '../auth/jwt.js';
 import { ensureFinancialYear } from '../modules/master-data/financial-year.service.js';
@@ -701,5 +707,114 @@ export async function createReleasedQaStock(
     qaReleaseId,
     qaReleaseLineId,
     quantity,
+  };
+}
+
+export interface CreateTestTaxInvoiceOptions {
+  id?: string;
+  invoiceNumber?: string;
+  status?: TaxInvoiceStatus;
+  distributorId?: string;
+  sellerRegistrationId?: string;
+  createdById?: string;
+  financialYearId?: string;
+  ervePackingListId?: string;
+}
+
+export async function createTestTaxInvoice(
+  options?: CreateTestTaxInvoiceOptions,
+): Promise<{
+  id: string;
+  invoiceNumber: string;
+  ervePackingListId: string;
+  distributorId: string;
+  sellerRegistrationId: string;
+  createdById: string;
+}> {
+  const financialYear = options?.financialYearId
+    ? { id: options.financialYearId }
+    : await createTestFinancialYear();
+
+  const createdById =
+    options?.createdById ??
+    (await createTestUser({
+      email: `creator-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['ACCOUNTANT'],
+    }));
+
+  const distributor = options?.distributorId
+    ? await prisma.distributor.findUniqueOrThrow({ where: { id: options.distributorId } })
+    : await (async () => {
+        const created = await createTestDistributor();
+        return prisma.distributor.findUniqueOrThrow({ where: { id: created.id } });
+      })();
+
+  const sellerRegistration = options?.sellerRegistrationId
+    ? await prisma.sellerRegistration.findUniqueOrThrow({
+        where: { id: options.sellerRegistrationId },
+      })
+    : await (async () => {
+        const created = await createTestSellerRegistration();
+        return prisma.sellerRegistration.findUniqueOrThrow({ where: { id: created.id } });
+      })();
+
+  const ervePackingListId =
+    options?.ervePackingListId ??
+    (
+      await prisma.ervePackingList.create({
+        data: {
+          id: createId(),
+          ervePackingListNumber: `EPL-${createId()}`,
+          distributorId: distributor.id,
+          createdById,
+          financialYearId: financialYear.id,
+          ervePackingListSerial: await allocateTestDocumentSerial(
+            'ERVE_PACKING_LIST',
+            financialYear.id,
+          ),
+        },
+      })
+    ).id;
+
+  const invoiceId = options?.id ?? createId();
+  const invoiceNumber = options?.invoiceNumber ?? 'EI/26-27/0001';
+
+  await prisma.taxInvoice.create({
+    data: {
+      id: invoiceId,
+      status: options?.status ?? 'FINALIZED',
+      invoiceNumber,
+      purchaseMode: 'OUTRIGHT',
+      ervePackingListId,
+      distributorId: distributor.id,
+      sellerRegistrationId: sellerRegistration.id,
+      sellerLegalName: sellerRegistration.legalName,
+      sellerGstin: sellerRegistration.gstin,
+      sellerEinvoiceApplicable: false,
+      sellerAddressLine1: '1 Test Street',
+      sellerCity: 'Mumbai',
+      sellerState: 'Maharashtra',
+      sellerStateCode: sellerRegistration.gstin.slice(0, 2),
+      sellerPostalCode: '400001',
+      sellerCountry: 'India',
+      sellerBankName: 'Test Bank',
+      sellerBankAccountName: sellerRegistration.legalName,
+      sellerBankAccountNumber: '000111222333',
+      sellerBankIfsc: 'HDFC0001234',
+      sellerBankBranchName: 'Test Branch',
+      billToName: distributor.name,
+      billToGstin: distributor.gstin,
+      createdById,
+    },
+  });
+
+  return {
+    id: invoiceId,
+    invoiceNumber,
+    ervePackingListId,
+    distributorId: distributor.id,
+    sellerRegistrationId: sellerRegistration.id,
+    createdById,
   };
 }
