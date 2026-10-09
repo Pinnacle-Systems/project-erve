@@ -356,6 +356,7 @@ model User {
   addedHistoricalDocuments             HistoricalDocument[]
   createdTaxInvoices                   TaxInvoice[]                @relation("TaxInvoiceCreator")
   finalizedTaxInvoices                 TaxInvoice[]                @relation("TaxInvoiceFinalizer")
+  overriddenTaxInvoiceLines            TaxInvoiceLine[]            @relation("TaxInvoiceLineOverriddenBy")
 
   @@index([status])
   @@map("users")
@@ -446,23 +447,23 @@ model Distributor {
 }
 
 model RetailStore {
-  id           String            @id
-  distributorId String           @map("distributor_id")
-  code         String
-  name         String
-  addressLine1 String            @map("address_line1")
-  addressLine2 String?           @map("address_line2")
-  city         String
-  state        String
-  country      String            @default("India")
-  postalCode   String            @map("postal_code")
-  gstin        String?
-  contactName  String?           @map("contact_name")
-  contactEmail String?           @map("contact_email")
-  contactPhone String?           @map("contact_phone")
-  status       DistributorStatus @default(ACTIVE)
-  createdAt    DateTime          @default(now()) @map("created_at")
-  updatedAt    DateTime          @updatedAt @map("updated_at")
+  id            String            @id
+  distributorId String            @map("distributor_id")
+  code          String
+  name          String
+  addressLine1  String            @map("address_line1")
+  addressLine2  String?           @map("address_line2")
+  city          String
+  state         String
+  country       String            @default("India")
+  postalCode    String            @map("postal_code")
+  gstin         String?
+  contactName   String?           @map("contact_name")
+  contactEmail  String?           @map("contact_email")
+  contactPhone  String?           @map("contact_phone")
+  status        DistributorStatus @default(ACTIVE)
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
 
   distributor  Distributor            @relation(fields: [distributorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   destinations SaleOrderDestination[]
@@ -603,6 +604,7 @@ model FinancialYear {
   ervePackingLists   ErvePackingList[]
   erveDispatches     ErveDispatch[]
   distributorReturns DistributorReturn[]
+  taxInvoices        TaxInvoice[]
 
   @@map("financial_years")
 }
@@ -615,6 +617,9 @@ enum DocumentType {
   ERVE_PACKING_LIST
   ERVE_DISPATCH
   DISTRIBUTOR_RETURN
+  // INV-006: EI/<FY>/<serial> statutory Tax Invoice numbering, allocated
+  // only at successful finalization (see TaxInvoice.invoiceNumber).
+  TAX_INVOICE
   // Own DocumentSequence row per financial year, entirely separate from
   // JOB_ORDER/EIJO. Historical Job Orders never allocate a live JOB_ORDER
   // serial (see JobOrder.jobOrderSerial); this exists only because
@@ -677,8 +682,8 @@ model Style {
   createdAt           DateTime    @default(now()) @map("created_at")
   updatedAt           DateTime    @updatedAt @map("updated_at")
 
-  season                         Season                         @relation(fields: [seasonId], references: [id], onDelete: Restrict)
-  hsn                            Hsn?                           @relation(fields: [hsnId], references: [id], onDelete: Restrict)
+  season                         Season                          @relation(fields: [seasonId], references: [id], onDelete: Restrict)
+  hsn                            Hsn?                            @relation(fields: [hsnId], references: [id], onDelete: Restrict)
   images                         StyleImage[]
   styleSizes                     StyleSize[]
   styleFactoryMappings           StyleFactoryMapping[]
@@ -714,8 +719,9 @@ model Hsn {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  gstRuleSet GstRuleSet? @relation(fields: [gstRuleSetId], references: [id], onDelete: Restrict)
-  styles     Style[]
+  gstRuleSet      GstRuleSet?      @relation(fields: [gstRuleSetId], references: [id], onDelete: Restrict)
+  styles          Style[]
+  taxInvoiceLines TaxInvoiceLine[]
 
   @@index([status])
   @@index([gstRuleSetId])
@@ -772,8 +778,13 @@ model GstRuleSetVersion {
   createdAt     DateTime                @default(now()) @map("created_at")
   updatedAt     DateTime                @updatedAt @map("updated_at")
 
-  gstRuleSet GstRuleSet     @relation(fields: [gstRuleSetId], references: [id], onDelete: Cascade)
-  bands      GstValueBand[]
+  gstRuleSet      GstRuleSet       @relation(fields: [gstRuleSetId], references: [id], onDelete: Cascade)
+  bands           GstValueBand[]
+  // INV-006 provenance only — restricted so a version a finalized invoice
+  // line points to can never be deleted out from under it. The invoice
+  // line's own gstPercent snapshot (not this FK) is what makes the
+  // finalized document immutable; this FK exists purely for audit traceability.
+  taxInvoiceLines TaxInvoiceLine[]
 
   @@unique([gstRuleSetId, versionNumber])
   @@index([gstRuleSetId])
@@ -801,7 +812,8 @@ model GstValueBand {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  version GstRuleSetVersion @relation(fields: [gstRuleSetVersionId], references: [id], onDelete: Cascade)
+  version         GstRuleSetVersion @relation(fields: [gstRuleSetVersionId], references: [id], onDelete: Cascade)
+  taxInvoiceLines TaxInvoiceLine[]
 
   @@index([gstRuleSetVersionId])
   @@map("gst_value_bands")
@@ -2129,12 +2141,12 @@ model ErvePackingList {
   financialYearId         String                @map("financial_year_id")
   ervePackingListSerial   Int                   @map("erve_packing_list_serial")
 
-  saleOrder         SaleOrder?              @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
-  distributor       Distributor?            @relation(fields: [distributorId], references: [id], onDelete: Restrict)
-  originDestination SaleOrderDestination?   @relation(fields: [originDestinationId], references: [id], onDelete: Restrict)
-  createdBy         User                    @relation("ErvePackingListCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  finalizedBy       User?                   @relation("ErvePackingListFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict)
-  financialYear     FinancialYear           @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
+  saleOrder         SaleOrder?                      @relation(fields: [saleOrderId], references: [id], onDelete: Restrict)
+  distributor       Distributor?                    @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  originDestination SaleOrderDestination?           @relation(fields: [originDestinationId], references: [id], onDelete: Restrict)
+  createdBy         User                            @relation("ErvePackingListCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  finalizedBy       User?                           @relation("ErvePackingListFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict)
+  financialYear     FinancialYear                   @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
   sources           ErvePackingListSource[]
   cartons           FactoryPackingCarton[]
   dispatch          ErveDispatch?
@@ -2172,15 +2184,15 @@ model ErvePackingList {
 // ervePackingListCommercialLineId @unique), copying these frozen values
 // rather than re-resolving MRP/pricing from current masters.
 model ErvePackingListCommercialLine {
-  id                            String   @id
-  ervePackingListId             String   @map("erve_packing_list_id")
-  saleOrderLineId               String   @map("sale_order_line_id")
-  styleId                       String   @map("style_id")
-  quantity                      Int
-  styleMrp                      Decimal  @map("style_mrp") @db.Decimal(12, 2)
-  distributorPricingPercentage  Decimal  @map("distributor_pricing_percentage") @db.Decimal(5, 2)
-  priceListId                   String   @map("price_list_id")
-  createdAt                     DateTime @default(now()) @map("created_at")
+  id                           String   @id
+  ervePackingListId            String   @map("erve_packing_list_id")
+  saleOrderLineId              String   @map("sale_order_line_id")
+  styleId                      String   @map("style_id")
+  quantity                     Int
+  styleMrp                     Decimal  @map("style_mrp") @db.Decimal(12, 2)
+  distributorPricingPercentage Decimal  @map("distributor_pricing_percentage") @db.Decimal(5, 2)
+  priceListId                  String   @map("price_list_id")
+  createdAt                    DateTime @default(now()) @map("created_at")
 
   ervePackingList ErvePackingList @relation(fields: [ervePackingListId], references: [id], onDelete: Cascade)
   saleOrderLine   SaleOrderLine   @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
@@ -2375,12 +2387,16 @@ model ErveDispatchDeliveryLine {
 // already finance-trusted, so no further per-field redaction is applied;
 // tighten the view layer first if that role set is ever widened.
 //
-// NOT frozen here, deliberately deferred to INV-006: HSN (Style.hsnId is
-// itself still an operationally-incomplete master per INV-002 — freezing an
-// unreliable value now would be worse than not freezing it) and GST
-// computation. A consumer needing the HSN for a DRAFT invoice line joins
-// live through TaxInvoiceLine.styleId -> Style.hsnId, exactly as every
-// other pre-INV-006 view in this codebase already does.
+// Pre-INV-006, HSN was deliberately NOT frozen here (Style.hsnId was still
+// an operationally-incomplete master per INV-002 — freezing an unreliable
+// value then would have been worse than not freezing it). A DRAFT invoice
+// line still joins live through TaxInvoiceLine.styleId -> Style.hsnId.
+// INV-006 adds the actual GST calculation/finalization fields below —
+// these remain null for DRAFT lines and are populated atomically, once,
+// during finalization (see finalizeTaxInvoice in tax-invoice.service.ts).
+// A finalized line's hsnCode/gstPercent/gstRuleSetVersionId/gstValueBandId
+// are literal snapshots, not live joins, so a later HSN reassignment or GST
+// rule change never alters an already-finalized invoice.
 //
 // Bill-To is sourced from Distributor: name/gstin are required there and
 // therefore required here too; Distributor's address fields are themselves
@@ -2388,11 +2404,29 @@ model ErveDispatchDeliveryLine {
 // fabricated. A null Bill-To address field means the Distributor master
 // itself has no address on file: a gap INV-006 must require be filled
 // before finalization, not something this story invents or blocks on.
+//
+// INV-006 Place of Supply: billToStateCode is resolved (not fabricated) at
+// finalization time from this Distributor-sourced billToState free text
+// via the canonical INDIAN_GST_STATE_CODES map (packages/shared/src/
+// gst-state-codes.ts), then cross-validated against billToGstin's own
+// 2-digit prefix — finalization fails closed if either step fails. Because
+// this story's confirmed business rule is "Place of Supply == Bill-To
+// state, always", billToStateCode IS the Place-of-Supply code; there is
+// deliberately no separate placeOfSupplyStateCode column duplicating the
+// same geographic value. gstTreatment (INTRA/INTER) is the derived
+// CGST+SGST-vs-IGST classification, persisted separately since it is a
+// distinct fact (a comparison result, not a geography) from the state code
+// itself — see TaxInvoiceGstTreatment below.
 // ---------------------------------------------------------------------------
 
 enum TaxInvoiceStatus {
   DRAFT
   FINALIZED
+}
+
+enum TaxInvoiceGstTreatment {
+  INTRA
+  INTER
 }
 
 model TaxInvoice {
@@ -2445,6 +2479,21 @@ model TaxInvoice {
   shipToCountry      String? @map("ship_to_country")
   shipToPostalCode   String? @map("ship_to_postal_code")
 
+  // INV-006: resolved + validated only at finalization; null on every DRAFT.
+  billToStateCode String?                 @map("bill_to_state_code")
+  gstTreatment    TaxInvoiceGstTreatment? @map("gst_treatment")
+  financialYearId String?                 @map("financial_year_id")
+
+  // INV-006: unrounded aggregate totals (see TaxInvoiceLine precision
+  // comment below for the scale derivation) plus the single rounded
+  // grandTotal. All null until finalization.
+  subtotal   Decimal? @map("subtotal") @db.Decimal(26, 6)
+  totalCgst  Decimal? @map("total_cgst") @db.Decimal(31, 11)
+  totalSgst  Decimal? @map("total_sgst") @db.Decimal(31, 11)
+  totalIgst  Decimal? @map("total_igst") @db.Decimal(31, 11)
+  totalGst   Decimal? @map("total_gst") @db.Decimal(31, 11)
+  grandTotal Decimal? @map("grand_total") @db.Decimal(14, 2)
+
   createdById   String    @map("created_by_id")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
@@ -2455,12 +2504,14 @@ model TaxInvoice {
   ervePackingList    ErvePackingList    @relation(fields: [ervePackingListId], references: [id], onDelete: Restrict)
   distributor        Distributor        @relation(fields: [distributorId], references: [id], onDelete: Restrict)
   sellerRegistration SellerRegistration @relation(fields: [sellerRegistrationId], references: [id], onDelete: Restrict)
+  financialYear      FinancialYear?     @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
   createdBy          User               @relation("TaxInvoiceCreator", fields: [createdById], references: [id], onDelete: Restrict)
   finalizedBy        User?              @relation("TaxInvoiceFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict)
   lines              TaxInvoiceLine[]
 
   @@index([distributorId])
   @@index([status])
+  @@index([financialYearId])
   @@map("tax_invoices")
 }
 
@@ -2472,6 +2523,18 @@ model TaxInvoice {
 // (TaxInvoice.ervePackingListId @unique), so "unique per invoice" and
 // "globally unique" are the same invariant here — only the single-column
 // unique is declared, to avoid a redundant composite.
+// INV-006 precision model (verified by direct decimal computation, not
+// assumed — see tax-invoice-calculation.ts header comment and its tests):
+//   calculatedUnitRate/overrideUnitRate/finalUnitRate = styleMrp(2dp) *
+//     distributorPricingPercentage(2dp) / 100            -> exact scale 6
+//   taxableValue = finalUnitRate(scale 6) * quantity(integer) -> scale 6
+//   cgstAmount/sgstAmount/igstAmount = taxableValue(scale 6) *
+//     gstPercent(2dp) / 100, halved for CGST/SGST          -> scale 11
+//     worst case (today's whole-percent 5%/18% slabs only need scale 8;
+//     scale 11 is reserved so a future fractional GST percentage never
+//     forces a migration). Only TaxInvoice.grandTotal is ever rounded
+//     (ROUND_HALF_UP, 2dp) — every field below is the exact, unrounded
+//     result of its formula.
 model TaxInvoiceLine {
   id                              String   @id
   taxInvoiceId                    String   @map("tax_invoice_id")
@@ -2484,14 +2547,39 @@ model TaxInvoiceLine {
   priceListId                     String   @map("price_list_id")
   createdAt                       DateTime @default(now()) @map("created_at")
 
+  // INV-006: resolved/calculated only at finalization (or by an ACCOUNTANT
+  // override while still DRAFT); all null on every freshly-drafted line.
+  hsnId               String? @map("hsn_id")
+  hsnCode             String? @map("hsn_code")
+  gstRuleSetVersionId String? @map("gst_rule_set_version_id")
+  gstValueBandId      String? @map("gst_value_band_id")
+
+  calculatedUnitRate Decimal?  @map("calculated_unit_rate") @db.Decimal(20, 6)
+  overrideUnitRate   Decimal?  @map("override_unit_rate") @db.Decimal(20, 6)
+  overrideReason     String?   @map("override_reason")
+  overriddenById     String?   @map("overridden_by_id")
+  overriddenAt       DateTime? @map("overridden_at")
+  finalUnitRate      Decimal?  @map("final_unit_rate") @db.Decimal(20, 6)
+
+  gstPercent   Decimal? @map("gst_percent") @db.Decimal(5, 2)
+  taxableValue Decimal? @map("taxable_value") @db.Decimal(24, 6)
+  cgstAmount   Decimal? @map("cgst_amount") @db.Decimal(29, 11)
+  sgstAmount   Decimal? @map("sgst_amount") @db.Decimal(29, 11)
+  igstAmount   Decimal? @map("igst_amount") @db.Decimal(29, 11)
+
   taxInvoice                    TaxInvoice                    @relation(fields: [taxInvoiceId], references: [id], onDelete: Cascade)
   ervePackingListCommercialLine ErvePackingListCommercialLine @relation(fields: [ervePackingListCommercialLineId], references: [id], onDelete: Restrict)
   saleOrderLine                 SaleOrderLine                 @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
-  style                          Style                         @relation(fields: [styleId], references: [id], onDelete: Restrict)
-  priceList                      PriceList                     @relation(fields: [priceListId], references: [id], onDelete: Restrict)
+  style                         Style                         @relation(fields: [styleId], references: [id], onDelete: Restrict)
+  priceList                     PriceList                     @relation(fields: [priceListId], references: [id], onDelete: Restrict)
+  hsn                           Hsn?                          @relation(fields: [hsnId], references: [id], onDelete: Restrict)
+  gstRuleSetVersion             GstRuleSetVersion?            @relation(fields: [gstRuleSetVersionId], references: [id], onDelete: Restrict)
+  gstValueBand                  GstValueBand?                 @relation(fields: [gstValueBandId], references: [id], onDelete: Restrict)
+  overriddenBy                  User?                         @relation("TaxInvoiceLineOverriddenBy", fields: [overriddenById], references: [id], onDelete: Restrict)
 
   @@index([taxInvoiceId])
   @@index([saleOrderLineId])
+  @@index([hsnId])
   @@map("tax_invoice_lines")
 }
 

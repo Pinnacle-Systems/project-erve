@@ -26,6 +26,10 @@ export const DOCUMENT_PREFIXES = {
   // the real historical identity is JobOrder.legacyReferenceNumber (e.g.
   // "EI25001"), not this value.
   HISTORICAL_JOB_ORDER: 'EIJOH',
+  // INV-006: confirmed statutory format "EI/<FY>/<4-digit serial>" (e.g.
+  // EI/26-27/0001) — the prefix is literally "EI", not "EI" + an
+  // abbreviation like every other row above.
+  TAX_INVOICE: 'EI',
 } as const;
 
 // MINIMUM width — pads short serials up to 4 digits but never truncates
