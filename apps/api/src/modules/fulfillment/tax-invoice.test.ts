@@ -13,7 +13,7 @@ import {
   ensureActiveDistributorPricing,
   packAndFinalize,
 } from './fulfillment-test-helpers.js';
-import { createOrGetTaxInvoiceDraft } from './tax-invoice.service.js';
+import { assertTaxInvoiceSequenceBaselined, createOrGetTaxInvoiceDraft } from './tax-invoice.service.js';
 
 const app = createApp();
 beforeEach(resetDatabase);
@@ -837,11 +837,14 @@ describe('Tax Invoice — Accountant rate override', () => {
     const res = await request(app)
       .patch(`/tax-invoices/${taxInvoiceId}/lines/${lineId}/override`)
       .set('Authorization', `Bearer ${accountantToken}`)
-      .send({ overrideUnitRate: 199.999999, reason: 'Negotiated rate for this dispatch' })
+      // Normal 2dp currency entry — the column is Decimal(20,6) for the
+      // SYSTEM's own calculated rate, but a human-entered override is
+      // capped at 2dp (see tax-invoice.validation.ts).
+      .send({ overrideUnitRate: 199.99, reason: 'Negotiated rate for this dispatch' })
       .expect(200);
 
     const line = res.body.data.lines.find((candidate: { id: string }) => candidate.id === lineId);
-    expect(line.overrideUnitRate).toBe('199.999999');
+    expect(line.overrideUnitRate).toBe('199.99');
     expect(line.overrideReason).toBe('Negotiated rate for this dispatch');
     expect(line.overriddenBy).toBeTruthy();
     expect(line.overriddenAt).toBeTruthy();
@@ -871,12 +874,22 @@ describe('Tax Invoice — Accountant rate override', () => {
       .expect(400);
   });
 
-  it('rejects an override rate with more than 6 decimal places rather than silently rounding it', async () => {
+  it('rejects an override rate with more than 2 decimal places rather than silently rounding it', async () => {
     const { taxInvoiceId, lineId, accountantToken } = await createReadyDraftInvoice(10);
+    // Three decimal places — beyond normal currency entry — must be
+    // rejected outright, not silently rounded or truncated to 2dp.
     await request(app)
       .patch(`/tax-invoices/${taxInvoiceId}/lines/${lineId}/override`)
       .set('Authorization', `Bearer ${accountantToken}`)
-      .send({ overrideUnitRate: 150.1234567, reason: 'too precise' })
+      .send({ overrideUnitRate: 150.123, reason: 'too precise' })
+      .expect(400);
+    // The old 6dp ceiling (matching the stored column's scale) is no longer
+    // accepted as direct human input either — only the system's own
+    // calculated rate uses that precision, never a typed override.
+    await request(app)
+      .patch(`/tax-invoices/${taxInvoiceId}/lines/${lineId}/override`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ overrideUnitRate: 150.123456, reason: 'too precise' })
       .expect(400);
   });
 
@@ -906,6 +919,33 @@ describe('Tax Invoice — Accountant rate override', () => {
       .set('Authorization', `Bearer ${accountantToken}`)
       .send({ overrideUnitRate: 150, reason: 'too late' })
       .expect(409);
+  });
+});
+
+describe('Tax Invoice — production EI sequence auto-seed guard (INV-012 §8.1)', () => {
+  // Pure-logic coverage: env.NODE_ENV is parsed once at process startup
+  // (config/env.ts) and this whole suite runs under NODE_ENV=test, so a
+  // genuine end-to-end "blocked under a real production process" test
+  // would need a separate process invocation, which this suite does not
+  // attempt — this exercises the exact exported guard function
+  // finalizeTaxInvoice calls, with the same two inputs it passes.
+  it('blocks a brand-new (un-baselined) sequence only in production', () => {
+    expect(() => assertTaxInvoiceSequenceBaselined('production', false, '2026-27')).toThrow(/baselined/i);
+    try {
+      assertTaxInvoiceSequenceBaselined('production', false, '2026-27');
+      expect.unreachable();
+    } catch (error) {
+      expect((error as { details?: { reason?: string } }).details?.reason).toBe('TAX_INVOICE_SEQUENCE_NOT_BASELINED');
+    }
+  });
+
+  it('allows production finalization once the sequence has been baselined', () => {
+    expect(() => assertTaxInvoiceSequenceBaselined('production', true, '2026-27')).not.toThrow();
+  });
+
+  it('never blocks non-production environments, baselined or not', () => {
+    expect(() => assertTaxInvoiceSequenceBaselined('test', false, '2026-27')).not.toThrow();
+    expect(() => assertTaxInvoiceSequenceBaselined('development', false, '2026-27')).not.toThrow();
   });
 });
 
