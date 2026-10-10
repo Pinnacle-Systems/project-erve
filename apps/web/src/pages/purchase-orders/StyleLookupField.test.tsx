@@ -17,6 +17,7 @@ const tee: OrderSheetStyleOption = {
   lmixNumber: 'LMIX5526011',
   status: 'ACTIVE',
   season,
+  primaryImage: null,
 };
 const hoody: OrderSheetStyleOption = {
   id: 'style-2',
@@ -25,6 +26,18 @@ const hoody: OrderSheetStyleOption = {
   lmixNumber: 'LMIX5526022',
   status: 'ACTIVE',
   season,
+  primaryImage: {
+    id: 'image-1',
+    styleId: 'style-2',
+    fileId: 'file-1',
+    fileName: 'hoody.png',
+    mimeType: 'image/png',
+    sizeBytes: 1024,
+    isPrimary: true,
+    sortOrder: 0,
+    createdAt: '2026-04-01T00:00:00.000Z',
+    updatedAt: '2026-04-01T00:00:00.000Z',
+  },
 };
 
 let container: HTMLDivElement;
@@ -138,6 +151,13 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 3000) {
 const fresh = (count: number) => () =>
   options().length === count && document.body.querySelector('[role="listbox"][aria-busy]') === null;
 
+// `requests` now also sees each result row's own (expected, additive)
+// thumbnail fetch once a result with a primaryImage (hoody) renders — these
+// assertions are specifically about the bounded style-options SEARCH
+// request count, so they filter those out rather than pin an incidental,
+// async-timing-dependent image-fetch count/order.
+const styleOptionRequests = () => requests.filter((r) => r.url === '/purchase-orders/style-options');
+
 describe('StyleLookupField (LU0)', () => {
   it('makes no request on mount or focus; opening requests the bounded initial Styles', async () => {
     render();
@@ -147,7 +167,7 @@ describe('StyleLookupField (LU0)', () => {
     await open();
     await waitUntil(fresh(2));
 
-    expect(requests).toEqual([
+    expect(styleOptionRequests()).toEqual([
       { url: '/purchase-orders/style-options', params: { search: '', limit: 20 } },
     ]);
     expect(options().map((option) => option.textContent)).toEqual([
@@ -164,7 +184,7 @@ describe('StyleLookupField (LU0)', () => {
 
     await type('hood');
     await waitUntil(fresh(1));
-    expect(requests.at(-1)).toEqual({
+    expect(styleOptionRequests().at(-1)).toEqual({
       url: '/purchase-orders/style-options',
       params: { search: 'hood', limit: 20 },
     });
@@ -172,7 +192,7 @@ describe('StyleLookupField (LU0)', () => {
     await type('');
     await waitUntil(fresh(2));
     // Served from the cached initial set.
-    expect(requests).toHaveLength(2);
+    expect(styleOptionRequests()).toHaveLength(2);
   });
 
   it('selects a Style and shows its label', async () => {
@@ -187,7 +207,7 @@ describe('StyleLookupField (LU0)', () => {
   });
 
   it('keeps a hydrated inactive value as-is, without searching', async () => {
-    render({ id: 'style-9', styleNumber: 'AW24-OLD', styleName: 'Old Hoody', status: 'INACTIVE' });
+    render({ id: 'style-9', styleNumber: 'AW24-OLD', styleName: 'Old Hoody', status: 'INACTIVE', primaryImage: null });
 
     expect(input().value).toBe('AW24-OLD · Old Hoody (inactive)');
     expect(container.textContent).toContain('This Style is no longer active');

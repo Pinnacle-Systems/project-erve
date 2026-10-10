@@ -113,11 +113,30 @@ export interface PurchaseOrderLineSize {
   returnedQuantity: number;
   reassignedQuantity: number;
 }
+// A Style's primary (or, if none is flagged, first) image — the minimal
+// projection every Style-bearing line/lookup result needs for the shared
+// StyleThumbnailCell/StyleImageViewer (SM-000 PR3 coverage matrix). Shape
+// matches apps/web's own StyleImage exactly (duck-typed, same convention as
+// the rest of Style's own types, which aren't shared via this package) so a
+// value here satisfies that prop type with no cast.
+export interface StylePrimaryImageView {
+  id: string;
+  styleId: string;
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  isPrimary: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface PurchaseOrderLine {
   id: string;
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   lineStatus: 'ACTIVE' | 'CANCELLED';
   remarks: string | null;
   seasonSnapshots: Array<{
@@ -131,8 +150,9 @@ export interface PurchaseOrderLine {
   totalOrderedQuantity: number;
 }
 // Slim Style row for the Order Sheet Style lookup (GET
-// /purchase-orders/style-options). Deliberately excludes sizes, images and
-// factory mappings — those belong to the selected Style only.
+// /purchase-orders/style-options). Deliberately excludes sizes and factory
+// mappings — those belong to the selected Style only. Carries a primary
+// image (SM-000 PR3) so lookup results can show a thumbnail per row.
 export interface OrderSheetStyleOption {
   id: string;
   styleNumber: string;
@@ -140,6 +160,7 @@ export interface OrderSheetStyleOption {
   lmixNumber: string | null;
   status: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
   season: { code: string; displayName: string };
+  primaryImage: StylePrimaryImageView | null;
 }
 
 // The one selected Style (GET /purchase-orders/style-options/:styleId): the
@@ -686,7 +707,7 @@ export interface InvoiceHandoffView extends VersionedResource {
   distributor: { id: string; code: string; name: string };
   purchaseMode: PurchaseMode;
   saleOrderLineId: string;
-  style: { styleNumber: string; styleName: string };
+  style: { id: string; styleNumber: string; styleName: string; primaryImage: StylePrimaryImageView | null };
   size: { sizeCode: string; sizeLabel: string };
   quantity: number;
   status: InvoiceHandoffStatus;
@@ -873,6 +894,7 @@ export interface JobOrderLine {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   orderedQuantityTotal: number;
   preparedQuantityTotal: number;
   status: JobOrderStatus;

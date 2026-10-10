@@ -1244,7 +1244,7 @@ describe('Order Sheet Style lookup (P1L1)', () => {
     expect(res.body.data.map((row: { styleNumber: string }) => row.styleNumber)).toEqual(['B-TEE', 'C-TEE']);
   });
 
-  it('returns a slim option — no sizes, images or factory mappings', async () => {
+  it('returns a slim option — no sizes or factory mappings, but a primaryImage (SM-000 PR3 thumbnail support)', async () => {
     const token = await merchandiserToken();
     const style = await createLookupStyle({ styleNumber: 'SLIM-01', styleName: 'Slim Tee', lmixNumber: 'LMIX4000001' });
     const size = await createSize('AGE_4', 4);
@@ -1254,10 +1254,53 @@ describe('Order Sheet Style lookup (P1L1)', () => {
 
     expect(res.status).toBe(200);
     const [option] = res.body.data;
-    expect(Object.keys(option).sort()).toEqual(['id', 'lmixNumber', 'season', 'status', 'styleName', 'styleNumber']);
+    expect(Object.keys(option).sort()).toEqual([
+      'id',
+      'lmixNumber',
+      'primaryImage',
+      'season',
+      'status',
+      'styleName',
+      'styleNumber',
+    ]);
     expect(Object.keys(option.season).sort()).toEqual(['code', 'displayName']);
-    expect(option).toMatchObject({ id: style.id, lmixNumber: 'LMIX4000001', status: 'ACTIVE' });
+    expect(option).toMatchObject({ id: style.id, lmixNumber: 'LMIX4000001', status: 'ACTIVE', primaryImage: null });
     expect(option.season.displayName).toMatch(/ 26-27$/);
+  });
+
+  it('resolves primaryImage to the Style\'s actual primary image, not just the first one created', async () => {
+    const token = await merchandiserToken();
+    const style = await createLookupStyle({ styleNumber: 'SLIM-02', styleName: 'Slim Hoody' });
+
+    async function insertImage(isPrimary: boolean, sortOrder: number) {
+      return prisma.styleImage.create({
+        data: {
+          id: createId(),
+          style: { connect: { id: style.id } },
+          sortOrder,
+          isPrimary,
+          file: {
+            create: {
+              id: createId(),
+              fileName: `${sortOrder}.jpg`,
+              mimeType: 'image/jpeg',
+              sizeBytes: 100,
+              storageKey: `test/${createId()}.jpg`,
+            },
+          },
+        },
+      });
+    }
+
+    const first = await insertImage(false, 0);
+    const primary = await insertImage(true, 1);
+
+    const res = await searchOptions(token, { search: 'SLIM-02' });
+
+    expect(res.status).toBe(200);
+    const [option] = res.body.data;
+    expect(option.primaryImage).toMatchObject({ id: primary.id, isPrimary: true });
+    expect(option.primaryImage.id).not.toBe(first.id);
   });
 
   it('returns the selected Style by id with only its orderable sizes, even once the Style is INACTIVE', async () => {

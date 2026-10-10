@@ -40,6 +40,23 @@ export function toStyleImageView(image: StyleImageRecord) {
   };
 }
 
+// Shared across every Style-bearing projection outside the Style master
+// itself (PO/JO lines, Style lookup options) — the primary (or, if none
+// flagged, first-by-sortOrder) image only, never the full gallery; those
+// belong to the Style master (SM-000 PR3 coverage matrix).
+export const stylePrimaryImageInclude = {
+  include: { file: true },
+  orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+  take: 1,
+} satisfies Prisma.StyleImageFindManyArgs;
+
+/** `toStyleImageView` + the Date->ISO-string conversion every `@erve/types` view interface expects at the HTTP boundary. */
+export function toPrimaryImageView(images: StyleImageRecord[]) {
+  if (!images[0]) return null;
+  const image = toStyleImageView(images[0]);
+  return { ...image, createdAt: image.createdAt.toISOString(), updatedAt: image.updatedAt.toISOString() };
+}
+
 function validateImageUpload(buffer: Buffer): SniffedImage {
   if (buffer.length === 0) {
     throw HttpError.badRequest('Uploaded file is empty');

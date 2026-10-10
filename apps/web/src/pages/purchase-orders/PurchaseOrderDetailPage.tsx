@@ -6,6 +6,7 @@ import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-co
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -107,6 +108,19 @@ export function PurchaseOrderDetailPage() {
       <PageHeader
         title={po.poNumber}
         subtitle={po.distributor.name}
+        // An Order Sheet is exactly one Style, server-enforced (see
+        // purchase-orders.validation.ts) — its single line's Style image is
+        // this document's own identity, not just a line-item thumbnail.
+        leadingVisual={
+          po.lines[0] && (
+            <StyleThumbnailCell
+              styleId={po.lines[0].styleId}
+              image={po.lines[0].primaryImage}
+              size={56}
+              viewerTitle={po.lines[0].styleNumber}
+            />
+          )
+        }
         status={
           <StatusBadge label={PLANNING_STATE_LABELS[planningState]} tone={planningStateTone(planningState)} />
         }
@@ -177,10 +191,13 @@ export function PurchaseOrderDetailPage() {
         {po.lines.map((line) => (
           <Panel key={line.id} variant="bordered" padding="none" className="mb-4 last:mb-0">
             <div className="border-b border-border-subtle bg-surface-muted px-4 py-3 flex items-center justify-between gap-3">
-              <div>
-                <span className="font-medium text-foreground">{line.styleNumber}</span>
-                <span className="ml-2 text-sm text-muted-foreground">{line.styleName}</span>
-                <span className="ml-2 text-xs text-muted-foreground">{line.seasonSnapshots.map((season) => season.displayName).join(', ')}</span>
+              <div className="flex items-center gap-3">
+                <StyleThumbnailCell styleId={line.styleId} image={line.primaryImage} size={40} viewerTitle={line.styleNumber} />
+                <div>
+                  <span className="font-medium text-foreground">{line.styleNumber}</span>
+                  <span className="ml-2 text-sm text-muted-foreground">{line.styleName}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{line.seasonSnapshots.map((season) => season.displayName).join(', ')}</span>
+                </div>
               </div>
               <span className="text-sm font-medium text-foreground">
                 Total: {line.totalOrderedQuantity.toLocaleString()}

@@ -245,6 +245,7 @@ export function JobOrderDetailPage() {
       <JobOrderPageHeader
         jobOrderNumber={jobOrder.jobOrderNumber}
         factoryName={jobOrder.factory.name}
+        lines={jobOrder.lines}
         pdfAction={pdfAction}
       />
 

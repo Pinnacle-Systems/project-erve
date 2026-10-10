@@ -44,6 +44,7 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
         styleId: 'style-1',
         styleNumber: 'STY-0001',
         styleName: 'Basic Tee',
+        primaryImage: null,
         orderedQuantityTotal: 500,
         preparedQuantityTotal: 200,
         status: 'IN_PRODUCTION',

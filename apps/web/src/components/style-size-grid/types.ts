@@ -3,6 +3,8 @@ import type { StyleImage } from '../../pages/master-data/types.js';
 export interface StyleSizeGridColumn {
   sizeId: string;
   sizeCode: string;
+  /** Defaults to true. Set false for a Size that should display (e.g. historical/provenance context) but never be hand-edited, regardless of `variant` — the grid renders it read-only across every row, same as a `computed`/`readOnly` grid cell. */
+  editable?: boolean;
 }
 
 export interface StyleSizeGridRow {

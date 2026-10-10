@@ -1,5 +1,6 @@
 import { formatPdfDate, formatPdfDateTime, formatPdfMoney } from '../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../lib/pdf/core/PdfKeyValueSection.js';
+import type { PdfImageSource } from '../../../lib/pdf/core/PdfThumbnail.js';
 import { NOT_APPLICABLE_LABEL, NOT_RECORDED_LABEL, getRecordedPreparedQuantity } from '@erve/app-components';
 import {
   getJobOrderConfirmationPresentation,
@@ -86,6 +87,8 @@ export interface JobOrderDetailPdfViewModel {
   combinedForecast: JobOrderDetailCombinedForecastRow[];
   stages: JobOrderDetailStageRow[];
   qualityActivities: JobOrderDetailQualityActivityRow[];
+  /** The invariant-resolved primary Style's image — placeholder when the Job Order has no lines, or when legacy lines disagree on Style (resolveJobOrderPrimaryStyle), never a guess. */
+  image: PdfImageSource;
 }
 
 function coverageSummary(coverage: JobOrder['qualityActivities'][number]['coverage']): string {
@@ -121,6 +124,7 @@ function coverageSummary(coverage: JobOrder['qualityActivities'][number]['covera
 export function buildJobOrderDetailViewModel(
   jobOrder: JobOrder,
   meta: JobOrderDetailPdfMeta,
+  primaryImage: PdfImageSource = { placeholder: true },
 ): JobOrderDetailPdfViewModel {
   const line = jobOrder.lines[0];
   // Historical imports have no recorded prepared quantity (unknown, not 0),
@@ -235,5 +239,6 @@ export function buildJobOrderDetailViewModel(
     combinedForecast,
     stages,
     qualityActivities,
+    image: primaryImage,
   };
 }

@@ -5,6 +5,7 @@ import { PdfFooter } from '../../../lib/pdf/core/PdfFooter.js';
 import { PdfMetaSection } from '../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../lib/pdf/core/PdfKeyValueSection.js';
+import { PdfThumbnail } from '../../../lib/pdf/core/PdfThumbnail.js';
 import { PdfTable, type PdfTableColumn } from '../../../lib/pdf/core/PdfTable.js';
 import type {
   OrderSheetDetailLineSection,
@@ -13,6 +14,9 @@ import type {
 } from './buildOrderSheetDetailViewModel.js';
 
 const styles = StyleSheet.create({
+  identityRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  imageWrapper: { marginRight: 16 },
+  identityContent: { flex: 1 },
   lineBlock: { marginBottom: 10 },
   lineHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   lineTitle: { fontSize: 9, fontWeight: 700, color: '#111111' },
@@ -55,7 +59,14 @@ export function OrderSheetDetailDocument({ viewModel }: OrderSheetDetailDocument
       <PdfMetaSection generatedAt={viewModel.generatedAt} generatedBy={viewModel.generatedBy} />
 
       <PdfSection title="Order Sheet Details">
-        <PdfKeyValueSection items={viewModel.identityItems} columns={4} />
+        <View style={styles.identityRow}>
+          <View style={styles.imageWrapper}>
+            <PdfThumbnail image={viewModel.image} width={90} height={90} />
+          </View>
+          <View style={styles.identityContent}>
+            <PdfKeyValueSection items={viewModel.identityItems} columns={4} />
+          </View>
+        </View>
       </PdfSection>
 
       <PdfSection title="Style and Size-wise Quantities" wrap>

@@ -41,6 +41,7 @@ function makeViewModel(
     ],
     remarks: null,
     lines,
+    image: { placeholder: true },
     ...overrides,
   };
 }

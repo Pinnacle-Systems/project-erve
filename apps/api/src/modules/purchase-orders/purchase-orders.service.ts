@@ -11,6 +11,7 @@ import { allocateDocumentSerial } from '../master-data/document-sequence.service
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { toCompactFinancialYearCode } from '../master-data/financial-year.util.js';
 import { getActiveStyleSizeIds } from '../master-data/style-size.util.js';
+import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 
 // ---------------------------------------------------------------------------
 // PO number generation
@@ -48,7 +49,7 @@ const poInclude = {
   lockedByJobOrder: { select: { id: true, jobOrderNumber: true, status: true } },
   lines: {
     include: {
-      style: { select: { id: true, styleNumber: true, styleName: true } },
+      style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
       seasonSnapshots: { orderBy: [{ financialYear: 'asc' as const }, { name: 'asc' as const }] },
       sizes: {
         include: { size: { select: { id: true, code: true, label: true, sortOrder: true } } },
@@ -68,6 +69,7 @@ function toLineView(line: PORecord['lines'][number]) {
     styleId: line.styleId,
     styleNumber: line.style.styleNumber,
     styleName: line.style.styleName,
+    primaryImage: toPrimaryImageView(line.style.images),
     lineStatus: line.lineStatus,
     remarks: line.remarks,
     seasonSnapshots: line.seasonSnapshots.map((season) => ({
@@ -509,7 +511,9 @@ export async function cancelPurchaseOrder(actor: CurrentUser, id: string) {
 // ---------------------------------------------------------------------------
 
 // Slim projection for the Order Sheet Style lookup. Never the Style master's
-// styleInclude: no sizes, images or factory mappings in search results.
+// styleInclude: no sizes or factory mappings in search results — those
+// belong to the selected Style only. A primary image IS included (SM-000
+// PR3) so each lookup result can show a thumbnail.
 const styleOptionSelect = {
   id: true,
   styleNumber: true,
@@ -517,6 +521,7 @@ const styleOptionSelect = {
   lmixNumber: true,
   status: true,
   season: { select: { code: true, financialYear: { select: { code: true } } } },
+  images: stylePrimaryImageInclude,
 } satisfies Prisma.StyleSelect;
 
 function toStyleOptionView(
@@ -532,6 +537,7 @@ function toStyleOptionView(
       code: style.season.code,
       displayName: `${style.season.code} ${toCompactFinancialYearCode(style.season.financialYear.code)}`,
     },
+    primaryImage: toPrimaryImageView(style.images),
   };
 }
 

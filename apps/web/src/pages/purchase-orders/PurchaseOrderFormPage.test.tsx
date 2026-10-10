@@ -37,6 +37,16 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+// Size quantities are NumericField "cell" cells now: like every NumericField,
+// they only commit (fire onChange) on blur — see numeric-field.tsx's commit()
+// — so a test must dispatch `focusout` (the bubbling event React's onBlur
+// listens for; plain `blur` doesn't bubble) after setting the draft value,
+// matching the convention already established in StyleSizeGrid.test.tsx.
+function setSizeQuantity(input: HTMLInputElement, value: string): void {
+  setInputValue(input, value);
+  input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+}
+
 const distributor = {
   id: 'dist-1',
   code: 'DIST-1',
@@ -394,8 +404,15 @@ async function chooseStyle(search: string, styleNumber: string): Promise<void> {
   await act(async () => option.click());
 }
 
+// Size quantities are now entered through the shared StyleSizeGrid
+// (NumericField "cell" variant via GridCellInput), which has no `id` the
+// way a labeled TextField does — each cell's `aria-label` ends with
+// "<sizeCode> quantity" instead (e.g. "ST-001 M quantity"). The leading
+// space before `sizeCode` in the suffix match is deliberate: it keeps a
+// size code like "L" from matching a cell actually labeled "XL quantity".
 function sizeInput(sizeCode: string): HTMLInputElement | null {
-  return document.getElementById(`field-${sizeCode.toLowerCase()}`) as HTMLInputElement | null;
+  const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input[aria-label]'));
+  return inputs.find((el) => el.getAttribute('aria-label')?.endsWith(` ${sizeCode} quantity`)) ?? null;
 }
 
 async function fillValidStyleLine(search: string, styleNumber: string, sizeCode: string): Promise<void> {
@@ -403,7 +420,7 @@ async function fillValidStyleLine(search: string, styleNumber: string, sizeCode:
   await flush();
   await chooseStyle(search, styleNumber);
   await waitFor(() => expect(sizeInput(sizeCode)).not.toBeNull());
-  setInputValue(sizeInput(sizeCode)!, '5');
+  setSizeQuantity(sizeInput(sizeCode)!, '5');
 }
 
 function styleMasterRequests() {
@@ -537,7 +554,7 @@ describe('PurchaseOrderFormPage edit-load safety (NEW-AUTH-001)', () => {
       (i) => (i as HTMLInputElement).value === 'existing remarks',
     );
     expect(remarksInputs.length).toBeGreaterThan(0);
-    const qtyInput = document.getElementById('field-m') as HTMLInputElement | null;
+    const qtyInput = sizeInput('M');
     expect(qtyInput?.value).toBe('12');
     const distributorInputEl = (document.getElementById('field-distributor') ??
       document.getElementById('field-distributor-*')) as HTMLInputElement | null;
@@ -753,7 +770,7 @@ describe('PurchaseOrderFormPage Style lookup (P1L1)', () => {
     expect(styleInput().value).toBe('SS26-TEE-2 · LMIX5526022 · Classic Tee');
     expect(requestLog.some((request) => request.url === '/purchase-orders/style-options/style-2')).toBe(true);
 
-    setInputValue(sizeInput('L')!, '9');
+    setSizeQuantity(sizeInput('L')!, '9');
     await act(async () => submitButton().click());
     await flush();
 
@@ -766,7 +783,7 @@ describe('PurchaseOrderFormPage Style lookup (P1L1)', () => {
     await renderPage(baseAdapter(catalog));
     await chooseStyle('ST-001', 'ST-001');
     await waitFor(() => expect(sizeInput('M')).not.toBeNull());
-    setInputValue(sizeInput('M')!, '4');
+    setSizeQuantity(sizeInput('M')!, '4');
 
     await chooseStyle('SS26-TEE', 'SS26-TEE-2');
 
