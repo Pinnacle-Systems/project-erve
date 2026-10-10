@@ -155,6 +155,10 @@ export async function resetDatabase(): Promise<void> {
   await prisma.styleSize.deleteMany();
   await prisma.styleImage.deleteMany();
   await prisma.file.deleteMany();
+  // StyleBulkImportRowResult.styleId is a plain tracking field (no FK) —
+  // clearing the run cascades to its row results automatically, and
+  // neither blocks nor is blocked by the Style delete below.
+  await prisma.styleBulkImportRun.deleteMany();
   await prisma.style.deleteMany();
   // Style.hsnId and Hsn.gstRuleSetId are both onDelete: Restrict, so Hsn
   // must clear after Style (above) and before GstRuleSet (below). Deleting
