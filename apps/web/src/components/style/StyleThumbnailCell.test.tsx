@@ -167,7 +167,6 @@ describe('StyleThumbnailCell click-to-view', () => {
     act(() => {
       root.render(
         withQueryClient(
-          // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
           <div onClick={parentClick}>
             <StyleThumbnailCell styleId="style-1" image={image} viewerTitle="ABC123" />
           </div>,

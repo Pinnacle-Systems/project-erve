@@ -54,11 +54,13 @@ export function ImageViewerDialog({ open, onOpenChange, images, initialIndex = 0
   // Render-time reset (not an effect) when the dialog transitions open or the
   // caller changes the starting image — the same pattern `useAuthedImage`
   // uses for "reset derived state when an input changes" without a
-  // setState-in-effect cascade.
+  // setState-in-effect cascade. Must be `useState`, not a ref: this
+  // codebase's lint rules (react-hooks/refs) forbid reading/writing a ref's
+  // `current` during render.
   const openKey = open ? `open:${initialIndex}` : 'closed';
-  const lastOpenKey = useRef(openKey);
-  if (lastOpenKey.current !== openKey) {
-    lastOpenKey.current = openKey;
+  const [lastOpenKey, setLastOpenKey] = useState(openKey);
+  if (lastOpenKey !== openKey) {
+    setLastOpenKey(openKey);
     if (open) {
       setIndex(Math.min(Math.max(initialIndex, 0), Math.max(images.length - 1, 0)));
       setScale(1);

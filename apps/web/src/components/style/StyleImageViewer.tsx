@@ -62,13 +62,23 @@ function useResolvedImageUrls(images: StyleImage[]): Record<string, { url: strin
   const [resolved, setResolved] = useState<Record<string, { url: string | null; loading: boolean }>>({});
   const imageKey = images.map((image) => image.id).join(',');
 
+  // Render-time reset (not an effect) for the "loading" seed state when the
+  // image set changes — the lint rules here forbid calling setState directly
+  // in an effect body; only the async .then()/.catch() callbacks below (true
+  // "subscribe to an external system" updates) may call it from inside the
+  // effect.
+  const [lastImageKey, setLastImageKey] = useState(imageKey);
+  if (lastImageKey !== imageKey) {
+    setLastImageKey(imageKey);
+    setResolved(Object.fromEntries(images.map((image) => [image.id, { url: null, loading: true }])));
+  }
+
   useEffect(() => {
     if (images.length === 0) return;
     let cancelled = false;
     const objectUrls: string[] = [];
 
     for (const image of images) {
-      setResolved((prev) => (prev[image.id] ? prev : { ...prev, [image.id]: { url: null, loading: true } }));
       apiClient
         .get<Blob>(`/styles/${image.styleId}/images/${image.id}/content`, { responseType: 'blob' })
         .then((response) => {
