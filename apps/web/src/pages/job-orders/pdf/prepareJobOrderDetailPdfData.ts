@@ -13,13 +13,19 @@ const DETAIL_IMAGE_MAX_DIMENSION = 480;
 /**
  * The only step that touches the network for the Job Order Detail PDF.
  * Resolves the Job Order's primary Style through the same invariant check
- * the detail page header uses (resolveJobOrderPrimaryStyle) — legacy lines
- * that disagree on Style, or a Job Order with no lines at all, degrade to
- * the honest placeholder rather than guessing a line's image.
+ * the detail page header uses (resolveJobOrderPrimaryStyle). A Job Order is
+ * exactly one Style by business rule, server-enforced — legacy/corrupted
+ * lines that disagree on Style (or a Job Order with no lines at all) are a
+ * genuine data problem, surfaced as the explicit `{ inconsistent: true }`
+ * marker (distinct from the plain "no image uploaded" placeholder), never
+ * a guess at one line's image.
  */
 export async function prepareJobOrderDetailPdfData(jobOrder: JobOrder): Promise<PreparedJobOrderDetailPdfData> {
   const resolved = resolveJobOrderPrimaryStyle(jobOrder.lines);
-  if (!resolved.consistent || !resolved.style.primaryImage) {
+  if (!resolved.consistent) {
+    return { jobOrder, primaryImage: { inconsistent: true } };
+  }
+  if (!resolved.style.primaryImage) {
     return { jobOrder, primaryImage: { placeholder: true } };
   }
   const { styleId, primaryImage: primary } = resolved.style;

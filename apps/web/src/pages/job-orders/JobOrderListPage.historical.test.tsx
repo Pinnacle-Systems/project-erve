@@ -26,6 +26,7 @@ function jobOrder(id: string, overrides: Record<string, unknown>) {
   return {
     id,
     jobOrderNumber: id.toUpperCase(),
+    primaryStyle: { consistent: false },
     financialYear: { id: 'fy-1', code: '2026-27' },
     factory: { name: 'Green Way' },
     processFlowVersion: { versionNumber: 3, processFlow: { name: 'Erve Production + Quality' } },

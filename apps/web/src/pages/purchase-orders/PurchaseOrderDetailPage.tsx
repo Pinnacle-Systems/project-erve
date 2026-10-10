@@ -7,6 +7,7 @@ import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
+import { IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -116,7 +117,7 @@ export function PurchaseOrderDetailPage() {
             <StyleThumbnailCell
               styleId={po.lines[0].styleId}
               image={po.lines[0].primaryImage}
-              size={56}
+              size={IDENTITY_HEADER_IMAGE_SIZE}
               viewerTitle={po.lines[0].styleNumber}
             />
           )

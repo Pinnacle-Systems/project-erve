@@ -349,6 +349,7 @@ export interface FactoryPackingCartonLineView {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
@@ -395,6 +396,7 @@ export interface PackingListLineView {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
@@ -1093,6 +1095,15 @@ export interface QualityExecutionView {
   id: string;
   jobOrderId: string;
   jobOrderNumber: string;
+  // Resolved server-side through the same single-Style invariant as the Job
+  // Order detail header/PDF (resolveJobOrderPrimaryStyle on the web,
+  // resolvePrimaryStyleAcrossLines on the API). `consistent: false` means
+  // legacy/corrupted lines disagree on Style (a Job Order is exactly one
+  // Style by business rule, server-enforced) — render an explicit "identity
+  // unavailable" state, never nothing and never a guess.
+  primaryStyle:
+    | { consistent: true; style: { id: string; styleNumber: string; styleName: string; primaryImage: StylePrimaryImageView | null } }
+    | { consistent: false };
   processFlowActivityId: string;
   activityName: string;
   qualityForm: { id: string; code: string; name: string; versionId: string; versionNumber: number };
@@ -1222,6 +1233,14 @@ export interface FinalQualityBatchView {
 export interface JobOrderSummary extends VersionedResource {
   id: string;
   jobOrderNumber: string;
+  // Resolved through the same single-Style invariant as the detail header/
+  // PDF (a Job Order is exactly one Style by business rule, server-
+  // enforced — see resolvePrimaryStyleAcrossLines). `consistent: false`
+  // means legacy/corrupted lines disagree on Style; render an explicit
+  // "identity unavailable" state, never nothing and never a guess.
+  primaryStyle:
+    | { consistent: true; style: { id: string; styleNumber: string; styleName: string; primaryImage: StylePrimaryImageView | null } }
+    | { consistent: false };
   // The Financial Year of this JO's own effective date (its createdAt) —
   // never inherited from any source Order Sheet.
   financialYear: { id: string; code: string };
@@ -1531,8 +1550,10 @@ export interface QaSizeInspectionFormView {
   reopenReason: string | null;
   jobOrderLineSizeId: string;
   sourceReworkTaskId: string | null;
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   colour: string | null;
   sizeCode: string;
   sizeLabel: string;
@@ -1580,8 +1601,10 @@ export interface QaReworkTaskView extends VersionedResource {
   jobOrderId: string;
   jobOrderNumber: string;
   jobOrderLineSizeId: string;
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   sizeCode: string;
   sizeLabel: string;
   assignedQuantity: number;
@@ -1605,8 +1628,10 @@ export interface QaInspectionDetail extends QaQueueSummary {
   seasons: Array<{ code: string; displayName: string }>;
   lines: Array<{
     jobOrderLineSizeId: string;
+    styleId: string;
     styleNumber: string;
     styleName: string;
+    primaryImage: StylePrimaryImageView | null;
     colour: string | null;
     sizeCode: string;
     sizeLabel: string;

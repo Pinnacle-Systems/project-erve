@@ -30,6 +30,7 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
   return {
     id: 'jo-1',
     jobOrderNumber: 'EIJO/26-27/0001',
+    primaryStyle: { consistent: true, style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null } },
     financialYear: { id: 'fy1', code: '2026-27' },
     factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
     unitPrice: 125.5,
@@ -106,7 +107,7 @@ describe('prepareJobOrderDetailPdfData', () => {
     expect(result.primaryImage).toEqual({ placeholder: true });
   });
 
-  it('returns a placeholder — never guesses an image — when lines disagree on Style', async () => {
+  it('returns the explicit inconsistent marker — never guesses an image, never a plain placeholder — when lines disagree on Style', async () => {
     const jobOrder = makeJobOrder({
       lines: [
         makeLine({
@@ -131,12 +132,12 @@ describe('prepareJobOrderDetailPdfData', () => {
     const result = await prepareJobOrderDetailPdfData(jobOrder);
 
     expect(resolveImagesForPdfMock).not.toHaveBeenCalled();
-    expect(result.primaryImage).toEqual({ placeholder: true });
+    expect(result.primaryImage).toEqual({ inconsistent: true });
   });
 
-  it('returns a placeholder for a Job Order with no lines at all', async () => {
+  it('returns the explicit inconsistent marker for a Job Order with no lines at all', async () => {
     const result = await prepareJobOrderDetailPdfData(makeJobOrder({ lines: [] }));
     expect(resolveImagesForPdfMock).not.toHaveBeenCalled();
-    expect(result.primaryImage).toEqual({ placeholder: true });
+    expect(result.primaryImage).toEqual({ inconsistent: true });
   });
 });

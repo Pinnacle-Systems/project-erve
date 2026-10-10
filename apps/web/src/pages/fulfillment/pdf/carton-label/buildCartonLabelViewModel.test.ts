@@ -20,7 +20,7 @@ function makeCarton(overrides: Partial<FactoryPackingCartonView> = {}): FactoryP
     createdAt: '2026-09-01T00:00:00.000Z',
     updatedAt: '2026-09-01T00:00:00.000Z',
     lines: [
-      { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, currentDestinationId: 'dest-1' },
+      { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, currentDestinationId: 'dest-1' },
     ],
     auditHistory: [],
     ...overrides,
@@ -104,9 +104,9 @@ describe('buildCartonLabelViewModel', () => {
   it('maps multiple size/content lines without dropping any', () => {
     const carton = makeCarton({
       lines: [
-        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 4, currentDestinationId: 'dest-1' },
-        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', quantity: 6, currentDestinationId: 'dest-1' },
-        { saleOrderLineId: 'line-3', styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', sizeId: 'size-3', sizeCode: 'L', sizeLabel: 'Large', quantity: 8, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 4, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', quantity: 6, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-3', styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', primaryImage: null, sizeId: 'size-3', sizeCode: 'L', sizeLabel: 'Large', quantity: 8, currentDestinationId: 'dest-1' },
       ],
       totalQuantity: 18,
     });

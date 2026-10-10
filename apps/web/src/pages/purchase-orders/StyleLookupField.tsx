@@ -28,7 +28,13 @@ function getStyleLabel(style: StyleLookupValue): string {
 function StyleOptionRow({ style }: { style: StyleLookupValue }) {
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <StyleThumbnailCell styleId={style.id} image={style.primaryImage} size={32} clickable={false} />
+      {/* clickable (default true): a separate, accessible preview action —
+          its own button with aria-label="View style image" and
+          stopPropagation — lets a user inspect the full-resolution image
+          before choosing; clicking it never selects the option (the
+          dropdown panel keeps focus in the search box on any internal
+          click, so this never blurs/closes it either). */}
+      <StyleThumbnailCell styleId={style.id} image={style.primaryImage} size={32} viewerTitle={style.styleNumber} />
       <div className="min-w-0">
         <div className="flex items-baseline gap-2">
           <span className="truncate font-semibold">{style.styleNumber}</span>

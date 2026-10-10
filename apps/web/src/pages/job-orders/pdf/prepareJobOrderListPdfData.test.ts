@@ -15,6 +15,7 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
   return {
     id: 'jo-1',
     jobOrderNumber: 'EIJO/26-27/0001',
+    primaryStyle: { consistent: true, style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null } },
     financialYear: { id: 'fy1', code: '2026-27' },
     factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
     unitPrice: 100,

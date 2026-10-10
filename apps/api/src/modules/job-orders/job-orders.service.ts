@@ -18,7 +18,11 @@ import { Prisma, prisma } from '../../db/prisma.js';
 import type { FactoryStatus, JobOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
-import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
+import {
+  resolvePrimaryStyleAcrossLines,
+  stylePrimaryImageInclude,
+  toPrimaryImageView,
+} from '../master-data/style-images.service.js';
 import { getSoleFactoryId } from '../../auth/access.js';
 import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
@@ -687,6 +691,7 @@ function toJobOrderView(
   return {
     id: jobOrder.id,
     jobOrderNumber: jobOrder.jobOrderNumber,
+    primaryStyle: resolvePrimaryStyleAcrossLines(jobOrder.lines),
     financialYear: jobOrder.financialYear,
     factory: jobOrder.factory,
     historicalImport:
@@ -801,8 +806,10 @@ function toJobOrderView(
         jobOrderId: jobOrder.id,
         jobOrderNumber: jobOrder.jobOrderNumber,
         jobOrderLineSizeId: task.jobOrderLineSizeId,
+        styleId: context.line.style.id,
         styleNumber: context.line.style.styleNumber,
         styleName: context.line.style.styleName,
+        primaryImage: toPrimaryImageView(context.line.style.images),
         sizeCode: context.size.size.code,
         sizeLabel: context.size.size.label,
         assignedQuantity: task.assignedQuantity,

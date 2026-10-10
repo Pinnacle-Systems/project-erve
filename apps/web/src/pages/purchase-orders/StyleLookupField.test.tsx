@@ -206,6 +206,31 @@ describe('StyleLookupField (LU0)', () => {
     expect(input().value).toBe('ST-002 · LMIX5526022 · Girls Hoody');
   });
 
+  it('each result row carries its own separate, accessible preview action for the Style image', async () => {
+    render();
+    await open();
+    await waitUntil(fresh(2));
+
+    // Structural/accessibility guarantee: a dedicated, labeled button per
+    // row, distinct from the row's own click-to-select — same component
+    // (StyleThumbnailCell) and mechanism (stopPropagation on its own click)
+    // already proven in isolation by StyleThumbnailCell.test.tsx's "opens
+    // the viewer dialog on click without propagating the click to a parent
+    // row handler". That mechanism depends on a real browser's mousedown
+    // `preventDefault`-cancels-focus-shift behavior (the dropdown panel's
+    // own `onMouseDown preventDefault` — "Keep focus in the textbox while
+    // clicking inside the panel" — exists for exactly this) to also keep
+    // the dropdown itself open, which jsdom's synthetic `.click()` doesn't
+    // model faithfully enough to assert on here; verified in a real browser
+    // instead, not by this unit test.
+    // tee has no primaryImage (no uploaded photo yet) — StyleThumbnailCell
+    // correctly shows no preview button for it at all; hoody does.
+    expect(options()[0]!.querySelector('[aria-label="View style image"]')).toBeNull();
+    const hoodyPreview = options()[1]!.querySelector('[aria-label="View style image"]');
+    expect(hoodyPreview).not.toBeNull();
+    expect(hoodyPreview!.tagName).toBe('BUTTON');
+  });
+
   it('keeps a hydrated inactive value as-is, without searching', async () => {
     render({ id: 'style-9', styleNumber: 'AW24-OLD', styleName: 'Old Hoody', status: 'INACTIVE', primaryImage: null });
 

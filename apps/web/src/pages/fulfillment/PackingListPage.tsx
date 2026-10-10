@@ -8,6 +8,7 @@ import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
@@ -342,7 +343,16 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                 rowKey="saleOrderLineId"
                 data={destination.lines}
                 columns={[
-                  { key: 'style', header: 'Style', render: (r) => `${r.styleNumber} — ${r.styleName}` },
+                  {
+                    key: 'style',
+                    header: 'Style',
+                    render: (r) => (
+                      <div className="flex items-center gap-2">
+                        <StyleThumbnailCell styleId={r.styleId} image={r.primaryImage} size={32} viewerTitle={r.styleNumber} />
+                        <span>{`${r.styleNumber} — ${r.styleName}`}</span>
+                      </div>
+                    ),
+                  },
                   { key: 'size', header: 'Size', accessor: 'sizeLabel' },
                   { key: 'required', header: 'Required', align: 'right', render: (r) => r.requiredQuantity.toLocaleString() },
                   { key: 'packed', header: 'Packed', align: 'right', render: (r) => r.packedQuantity.toLocaleString() },

@@ -16,12 +16,8 @@ import { StyleImagesPanel } from './StyleImagesPanel.js';
 import { StyleIdentityDetail } from './style/StyleIdentityDetail.js';
 import { StyleCommercialDetail } from './style/StyleCommercialDetail.js';
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
+import { IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
 import type { Style } from './types.js';
-
-// Identification size for a single-Style detail header — large enough to
-// actually identify the garment, not a 40px grid chip. Matches the print
-// size already used in StyleDetailDocument's PDF header.
-const IDENTITY_HEADER_IMAGE_SIZE = 120;
 
 export function StyleDetailPage() {
   const { id } = useParams();

@@ -44,6 +44,7 @@ import { DescriptionList, FormGrid, FormSection, Panel } from '@erve/layout';
 import { apiClient } from '../../lib/api-client.js';
 import { useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 
 type Draft = {
   sample: string;
@@ -610,7 +611,14 @@ export function QaInspectionForm({
               <DescriptionList.Item label="Job Order" value={detail.jobOrderNumber} />
               <DescriptionList.Item
                 label="Style / colour"
-                value={`${selected.styleNumber} · ${selected.colour ?? '—'}`}
+                value={
+                  <div className="flex items-center gap-2">
+                    {line && (
+                      <StyleThumbnailCell styleId={line.styleId} image={line.primaryImage} size={32} viewerTitle={line.styleNumber} />
+                    )}
+                    <span>{`${selected.styleNumber} · ${selected.colour ?? '—'}`}</span>
+                  </div>
+                }
               />
               <DescriptionList.Item label="Selected size" value={selected.sizeLabel} />
               {ppSample && (

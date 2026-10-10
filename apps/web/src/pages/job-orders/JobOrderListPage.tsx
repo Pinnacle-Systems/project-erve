@@ -23,6 +23,8 @@ import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
+import { StyleIdentityUnavailable } from '../../components/style/StyleIdentityUnavailable.js';
 import type { JobOrder, JobOrderFactoryOption, JobOrderStatus } from './types.js';
 import {
   JOB_ORDER_STATUS_LABELS,
@@ -249,6 +251,32 @@ export function JobOrderListPage() {
                 {jobOrder.jobOrderNumber}
               </Link>
             ),
+          },
+          {
+            key: 'style',
+            header: 'Style',
+            // A Job Order is exactly one Style by business rule (server-
+            // enforced) — this is its own resolved single-Style identity,
+            // not a guess at one of several lines. `consistent: false`
+            // means legacy/corrupted data, shown honestly rather than
+            // silently as nothing.
+            render: (jobOrder) =>
+              jobOrder.primaryStyle.consistent ? (
+                <div className="flex items-center gap-2">
+                  <StyleThumbnailCell
+                    styleId={jobOrder.primaryStyle.style.id}
+                    image={jobOrder.primaryStyle.style.primaryImage}
+                    size={32}
+                    viewerTitle={jobOrder.primaryStyle.style.styleNumber}
+                  />
+                  <span className="truncate">{jobOrder.primaryStyle.style.styleNumber}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <StyleIdentityUnavailable size={32} />
+                  <span className="text-xs text-muted-foreground">Unavailable</span>
+                </div>
+              ),
           },
           {
             key: 'sourceOrderSheetCount',

@@ -57,13 +57,17 @@ describe('JobOrderPageHeader', () => {
     expect(container.querySelector('svg, img')).not.toBeNull();
   });
 
-  it('renders no thumbnail when lines reference different Styles — never guesses one', () => {
+  it('renders the explicit "identity unavailable" marker — never nothing, never a guess — when lines reference different Styles', () => {
     render({ lines: [line(), line({ styleId: 'style-2', styleNumber: 'STY-0002' })] });
-    expect(container.querySelector('svg, img')).toBeNull();
+    const marker = container.querySelector('[role="img"]');
+    expect(marker).not.toBeNull();
+    expect(marker!.getAttribute('aria-label')).toMatch(/unavailable/i);
   });
 
-  it('renders no thumbnail for a Job Order with no lines at all', () => {
+  it('renders the explicit "identity unavailable" marker for a Job Order with no lines at all', () => {
     render({ lines: [] });
-    expect(container.querySelector('svg, img')).toBeNull();
+    const marker = container.querySelector('[role="img"]');
+    expect(marker).not.toBeNull();
+    expect(marker!.getAttribute('aria-label')).toMatch(/unavailable/i);
   });
 });
