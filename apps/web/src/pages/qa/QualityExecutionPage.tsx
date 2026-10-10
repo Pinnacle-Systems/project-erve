@@ -18,6 +18,9 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { displayQualityActivityName } from './pdf/shared/displayQualityActivityName.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
+import { StyleIdentityUnavailable } from '../../components/style/StyleIdentityUnavailable.js';
+import { IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
 
 export function QualityExecutionPage() {
   const { executionId = '' } = useParams();
@@ -181,6 +184,30 @@ export function QualityExecutionPage() {
         />
       }
     >
+      <div className="flex items-start gap-3">
+        {query.data.primaryStyle.consistent ? (
+          <StyleThumbnailCell
+            styleId={query.data.primaryStyle.style.id}
+            image={query.data.primaryStyle.style.primaryImage}
+            size={IDENTITY_HEADER_IMAGE_SIZE}
+            viewerTitle={query.data.primaryStyle.style.styleNumber}
+          />
+        ) : (
+          <StyleIdentityUnavailable
+            size={IDENTITY_HEADER_IMAGE_SIZE}
+            reason="Style identity unavailable — this Job Order's lines disagree on Style, which should never happen. Reported for investigation, not guessed."
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl font-semibold text-foreground">
+            {displayQualityActivityName(query.data.activityName)}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {query.data.jobOrderNumber}
+            {query.data.primaryStyle.consistent ? ` · ${query.data.primaryStyle.style.styleNumber}` : ''}
+          </p>
+        </div>
+      </div>
       <QualityExecutionForm
         key={`${query.data.id}:${query.data.version}`}
         execution={query.data}

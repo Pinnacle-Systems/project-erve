@@ -113,11 +113,30 @@ export interface PurchaseOrderLineSize {
   returnedQuantity: number;
   reassignedQuantity: number;
 }
+// A Style's primary (or, if none is flagged, first) image — the minimal
+// projection every Style-bearing line/lookup result needs for the shared
+// StyleThumbnailCell/StyleImageViewer (SM-000 PR3 coverage matrix). Shape
+// matches apps/web's own StyleImage exactly (duck-typed, same convention as
+// the rest of Style's own types, which aren't shared via this package) so a
+// value here satisfies that prop type with no cast.
+export interface StylePrimaryImageView {
+  id: string;
+  styleId: string;
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  isPrimary: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface PurchaseOrderLine {
   id: string;
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   lineStatus: 'ACTIVE' | 'CANCELLED';
   remarks: string | null;
   seasonSnapshots: Array<{
@@ -131,8 +150,9 @@ export interface PurchaseOrderLine {
   totalOrderedQuantity: number;
 }
 // Slim Style row for the Order Sheet Style lookup (GET
-// /purchase-orders/style-options). Deliberately excludes sizes, images and
-// factory mappings — those belong to the selected Style only.
+// /purchase-orders/style-options). Deliberately excludes sizes and factory
+// mappings — those belong to the selected Style only. Carries a primary
+// image (SM-000 PR3) so lookup results can show a thumbnail per row.
 export interface OrderSheetStyleOption {
   id: string;
   styleNumber: string;
@@ -140,6 +160,7 @@ export interface OrderSheetStyleOption {
   lmixNumber: string | null;
   status: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED';
   season: { code: string; displayName: string };
+  primaryImage: StylePrimaryImageView | null;
 }
 
 // The one selected Style (GET /purchase-orders/style-options/:styleId): the
@@ -328,6 +349,7 @@ export interface FactoryPackingCartonLineView {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
@@ -374,6 +396,7 @@ export interface PackingListLineView {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
@@ -686,7 +709,7 @@ export interface InvoiceHandoffView extends VersionedResource {
   distributor: { id: string; code: string; name: string };
   purchaseMode: PurchaseMode;
   saleOrderLineId: string;
-  style: { styleNumber: string; styleName: string };
+  style: { id: string; styleNumber: string; styleName: string; primaryImage: StylePrimaryImageView | null };
   size: { sizeCode: string; sizeLabel: string };
   quantity: number;
   status: InvoiceHandoffStatus;
@@ -873,6 +896,7 @@ export interface JobOrderLine {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   orderedQuantityTotal: number;
   preparedQuantityTotal: number;
   status: JobOrderStatus;
@@ -1071,6 +1095,15 @@ export interface QualityExecutionView {
   id: string;
   jobOrderId: string;
   jobOrderNumber: string;
+  // Resolved server-side through the same single-Style invariant as the Job
+  // Order detail header/PDF (resolveJobOrderPrimaryStyle on the web,
+  // resolvePrimaryStyleAcrossLines on the API). `consistent: false` means
+  // legacy/corrupted lines disagree on Style (a Job Order is exactly one
+  // Style by business rule, server-enforced) — render an explicit "identity
+  // unavailable" state, never nothing and never a guess.
+  primaryStyle:
+    | { consistent: true; style: { id: string; styleNumber: string; styleName: string; primaryImage: StylePrimaryImageView | null } }
+    | { consistent: false };
   processFlowActivityId: string;
   activityName: string;
   qualityForm: { id: string; code: string; name: string; versionId: string; versionNumber: number };
@@ -1200,6 +1233,14 @@ export interface FinalQualityBatchView {
 export interface JobOrderSummary extends VersionedResource {
   id: string;
   jobOrderNumber: string;
+  // Resolved through the same single-Style invariant as the detail header/
+  // PDF (a Job Order is exactly one Style by business rule, server-
+  // enforced — see resolvePrimaryStyleAcrossLines). `consistent: false`
+  // means legacy/corrupted lines disagree on Style; render an explicit
+  // "identity unavailable" state, never nothing and never a guess.
+  primaryStyle:
+    | { consistent: true; style: { id: string; styleNumber: string; styleName: string; primaryImage: StylePrimaryImageView | null } }
+    | { consistent: false };
   // The Financial Year of this JO's own effective date (its createdAt) —
   // never inherited from any source Order Sheet.
   financialYear: { id: string; code: string };
@@ -1509,8 +1550,10 @@ export interface QaSizeInspectionFormView {
   reopenReason: string | null;
   jobOrderLineSizeId: string;
   sourceReworkTaskId: string | null;
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   colour: string | null;
   sizeCode: string;
   sizeLabel: string;
@@ -1558,8 +1601,10 @@ export interface QaReworkTaskView extends VersionedResource {
   jobOrderId: string;
   jobOrderNumber: string;
   jobOrderLineSizeId: string;
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   sizeCode: string;
   sizeLabel: string;
   assignedQuantity: number;
@@ -1583,8 +1628,10 @@ export interface QaInspectionDetail extends QaQueueSummary {
   seasons: Array<{ code: string; displayName: string }>;
   lines: Array<{
     jobOrderLineSizeId: string;
+    styleId: string;
     styleNumber: string;
     styleName: string;
+    primaryImage: StylePrimaryImageView | null;
     colour: string | null;
     sizeCode: string;
     sizeLabel: string;

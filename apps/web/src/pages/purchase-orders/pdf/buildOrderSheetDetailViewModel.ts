@@ -1,5 +1,6 @@
 import { formatPdfDate, formatPdfDateTime } from '../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../lib/pdf/core/PdfKeyValueSection.js';
+import type { PdfImageSource } from '../../../lib/pdf/core/PdfThumbnail.js';
 import { getOrderSheetPlanningState } from '../types.js';
 import type { OrderSheetPlanningState, PurchaseMode, PurchaseOrder } from '../types.js';
 
@@ -44,6 +45,8 @@ export interface OrderSheetDetailPdfViewModel {
   identityItems: PdfKeyValueItem[];
   remarks: string | null;
   lines: OrderSheetDetailLineSection[];
+  /** The one Style's primary image (an Order Sheet is exactly one Style, server-enforced) — a resolved image or an honest placeholder, never fetched here. */
+  image: PdfImageSource;
 }
 
 /**
@@ -57,6 +60,7 @@ export interface OrderSheetDetailPdfViewModel {
 export function buildOrderSheetDetailViewModel(
   po: PurchaseOrder,
   meta: OrderSheetDetailPdfMeta,
+  primaryImage: PdfImageSource = { placeholder: true },
 ): OrderSheetDetailPdfViewModel {
   const planningState = PLANNING_STATE_LABELS[getOrderSheetPlanningState(po)];
 
@@ -102,5 +106,6 @@ export function buildOrderSheetDetailViewModel(
     identityItems,
     remarks: po.remarks?.trim() ? po.remarks : null,
     lines,
+    image: primaryImage,
   };
 }

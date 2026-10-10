@@ -5,6 +5,7 @@ import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
+import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -49,7 +50,7 @@ const invoiceHandoffInclude = {
   saleOrderLine: {
     select: {
       id: true,
-      style: { select: { styleNumber: true, styleName: true } },
+      style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
       size: { select: { code: true, label: true } },
       // Correction 8: purchaseMode is resolved per line via its own
       // destination's Distributor-group snapshot, never a single
@@ -82,7 +83,12 @@ function toInvoiceHandoffView(record: InvoiceHandoffRecord, full: boolean) {
     // physically dispatched line gets a handoff regardless.
     purchaseMode: sol.destination.saleOrderDistributor.purchaseMode,
     saleOrderLineId: record.saleOrderLineId,
-    style: { styleNumber: sol.style.styleNumber, styleName: sol.style.styleName },
+    style: {
+      id: sol.style.id,
+      styleNumber: sol.style.styleNumber,
+      styleName: sol.style.styleName,
+      primaryImage: toPrimaryImageView(sol.style.images),
+    },
     size: { sizeCode: sol.size.code, sizeLabel: sol.size.label },
     quantity: record.quantity,
     status: record.status,

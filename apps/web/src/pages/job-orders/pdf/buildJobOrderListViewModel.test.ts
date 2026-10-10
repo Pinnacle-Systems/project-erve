@@ -6,6 +6,7 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
   return {
     id: 'jo-1',
     jobOrderNumber: 'EIJO/26-27/0001',
+    primaryStyle: { consistent: true, style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null } },
     financialYear: { id: 'fy1', code: '2026-27' },
     factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
     unitPrice: 100,
@@ -38,7 +39,7 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
     productionCompletedAt: null,
     creator: { id: 'u1', name: 'Test User', email: 'test@erve.local' },
     lines: [
-      { id: 'line-1', styleId: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', orderedQuantityTotal: 1000, preparedQuantityTotal: 400, status: 'IN_PRODUCTION', sizes: [] },
+      { id: 'line-1', styleId: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null, orderedQuantityTotal: 1000, preparedQuantityTotal: 400, status: 'IN_PRODUCTION', sizes: [] },
     ],
     stages: [],
     qualityActivities: [],

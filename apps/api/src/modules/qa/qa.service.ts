@@ -16,6 +16,7 @@ import type { CurrentUser } from '../../auth/current-user.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { HttpError } from '../../errors/http-error.js';
 import { Prisma, prisma } from '../../db/prisma.js';
+import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -98,7 +99,7 @@ const detailInclude = {
   seasonSnapshots: { select: { code: true, displayName: true } },
   lines: {
     include: {
-      style: { select: { styleNumber: true, styleName: true, colour: true } },
+      style: { select: { id: true, styleNumber: true, styleName: true, colour: true, images: stylePrimaryImageInclude } },
       sizes: { include: { size: { select: { code: true, label: true, sortOrder: true } } } },
     },
   },
@@ -185,8 +186,10 @@ function toRework(
     jobOrderId: record.id,
     jobOrderNumber: record.jobOrderNumber,
     jobOrderLineSizeId: task.jobOrderLineSizeId,
+    styleId: size.l.style.id,
     styleNumber: size.l.style.styleNumber,
     styleName: size.l.style.styleName,
+    primaryImage: toPrimaryImageView(size.l.style.images),
     sizeCode: size.s.size.code,
     sizeLabel: size.s.size.label,
     assignedQuantity: task.assignedQuantity,
@@ -255,8 +258,10 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
         const fact = lineFacts.get(size.id)!;
         return {
           jobOrderLineSizeId: size.id,
+          styleId: line.style.id,
           styleNumber: line.style.styleNumber,
           styleName: line.style.styleName,
+          primaryImage: toPrimaryImageView(line.style.images),
           colour: line.style.colour,
           sizeCode: size.size.code,
           sizeLabel: size.size.label,
@@ -303,8 +308,10 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
           reopenReason: line.reopenReason,
           jobOrderLineSizeId: line.jobOrderLineSizeId,
           sourceReworkTaskId: line.sourceReworkTaskId,
+          styleId: size.l.style.id,
           styleNumber: size.l.style.styleNumber,
           styleName: size.l.style.styleName,
+          primaryImage: toPrimaryImageView(size.l.style.images),
           colour: size.l.style.colour,
           sizeCode: size.s.size.code,
           sizeLabel: size.s.size.label,

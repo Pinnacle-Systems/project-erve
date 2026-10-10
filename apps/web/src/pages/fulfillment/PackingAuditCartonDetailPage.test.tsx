@@ -64,6 +64,7 @@ function buildCarton(
         styleId: 'style-1',
         styleNumber: 'ST-001',
         styleName: 'Classic Tee',
+        primaryImage: null,
         sizeId: 'size-1',
         sizeCode: 'M',
         sizeLabel: 'Medium',
