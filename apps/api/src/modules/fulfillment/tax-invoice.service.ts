@@ -15,6 +15,7 @@ import {
   aggregateHsnSummary,
   aggregateInvoiceTotals,
   calculateGrandTotal,
+  calculatePayableRounding,
   classifyGstTreatment,
   computeLineTax,
   computeNormalUnitRate,
@@ -99,7 +100,9 @@ async function loadAndValidateCommercialLines(tx: Tx, ervePackingListId: string)
     );
   }
 
-  const commercialLines = await tx.ervePackingListCommercialLine.findMany({ where: { ervePackingListId } });
+  const commercialLines = await tx.ervePackingListCommercialLine.findMany({
+    where: { ervePackingListId },
+  });
 
   if (commercialLines.length === 0) {
     throw HttpError.badRequest(
@@ -108,7 +111,9 @@ async function loadAndValidateCommercialLines(tx: Tx, ervePackingListId: string)
     );
   }
 
-  const commercialBySaleOrderLine = new Map(commercialLines.map((line) => [line.saleOrderLineId, line]));
+  const commercialBySaleOrderLine = new Map(
+    commercialLines.map((line) => [line.saleOrderLineId, line]),
+  );
 
   const missingSaleOrderLineIds = [...cartonQuantityBySaleOrderLine.keys()].filter(
     (id) => !commercialBySaleOrderLine.has(id),
@@ -130,7 +135,11 @@ async function loadAndValidateCommercialLines(tx: Tx, ervePackingListId: string)
     );
   }
 
-  const mismatched: Array<{ saleOrderLineId: string; cartonQuantity: number; commercialQuantity: number }> = [];
+  const mismatched: Array<{
+    saleOrderLineId: string;
+    cartonQuantity: number;
+    commercialQuantity: number;
+  }> = [];
   for (const [saleOrderLineId, cartonQuantity] of cartonQuantityBySaleOrderLine) {
     const commercialQuantity = commercialBySaleOrderLine.get(saleOrderLineId)!.quantity;
     if (commercialQuantity !== cartonQuantity) {
@@ -268,7 +277,9 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
       postalCode: record.billToPostalCode,
     },
     gstTreatment: record.gstTreatment,
-    financialYear: record.financialYear ? { id: record.financialYear.id, code: record.financialYear.code } : null,
+    financialYear: record.financialYear
+      ? { id: record.financialYear.id, code: record.financialYear.code }
+      : null,
     shipTo: {
       label: record.shipToLabel,
       contactName: record.shipToContactName,
@@ -285,7 +296,11 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
       id: line.id,
       ervePackingListCommercialLineId: line.ervePackingListCommercialLineId,
       saleOrderLineId: line.saleOrderLineId,
-      style: { id: line.style.id, styleNumber: line.style.styleNumber, styleName: line.style.styleName },
+      style: {
+        id: line.style.id,
+        styleNumber: line.style.styleNumber,
+        styleName: line.style.styleName,
+      },
       // The line's own frozen HSN (set only at finalization) takes
       // precedence; a DRAFT line still falls back to the live Style join,
       // exactly as INV-005 already did (see the TaxInvoice model's schema
@@ -328,6 +343,11 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
     // inconsistent wire format for the one field that's supposed to be a
     // clean, final, two-decimal monetary amount.
     grandTotal: record.grandTotal?.toFixed(2) ?? null,
+    // PR0 snapshots: unavailable on legacy finalized documents. Never
+    // derive these during reads or substitute zero for a missing adjustment.
+    payableTotal: record.payableTotal?.toFixed(2) ?? null,
+    roundOffAdjustment: record.roundOffAdjustment?.toFixed(2) ?? null,
+    roundingPolicy: record.roundingPolicy,
     hsnSummary,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
@@ -369,7 +389,10 @@ export async function createOrGetTaxInvoiceDraft(
   const taxInvoiceId = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`tax-invoice-${ervePackingListId}`}))`;
 
-    const existing = await tx.taxInvoice.findUnique({ where: { ervePackingListId }, select: { id: true } });
+    const existing = await tx.taxInvoice.findUnique({
+      where: { ervePackingListId },
+      select: { id: true },
+    });
     if (existing) return existing.id;
 
     const packingList = await tx.ervePackingList.findUnique({
@@ -382,7 +405,9 @@ export async function createOrGetTaxInvoiceDraft(
     // 'FINALIZED' (ErvePackingListStatus: OPEN -> FINALIZED -> DISPATCHED).
     // Only OPEN is ineligible.
     if (packingList.status === 'OPEN') {
-      throw HttpError.conflict('This Erve Packing List must be finalized before a Tax Invoice draft can be created');
+      throw HttpError.conflict(
+        'This Erve Packing List must be finalized before a Tax Invoice draft can be created',
+      );
     }
     if (!packingList.distributor) {
       // Unreachable once not OPEN — finalize requires a Distributor
@@ -399,7 +424,9 @@ export async function createOrGetTaxInvoiceDraft(
         'Exactly one ACTIVE Seller Registration is required to draft a Tax Invoice; none or more than one is currently active',
       );
     }
-    const seller = await tx.sellerRegistration.findUniqueOrThrow({ where: { id: sellerOption.id } });
+    const seller = await tx.sellerRegistration.findUniqueOrThrow({
+      where: { id: sellerOption.id },
+    });
 
     const id = createId();
 
@@ -511,9 +538,15 @@ export async function getTaxInvoiceDetail(actor: CurrentUser, id: string) {
   return toTaxInvoiceView(await loadTaxInvoiceById(id));
 }
 
-export async function getTaxInvoiceByErvePackingListId(actor: CurrentUser, ervePackingListId: string) {
+export async function getTaxInvoiceByErvePackingListId(
+  actor: CurrentUser,
+  ervePackingListId: string,
+) {
   assertViewAccess(actor);
-  const record = await prisma.taxInvoice.findUnique({ where: { ervePackingListId }, include: taxInvoiceInclude });
+  const record = await prisma.taxInvoice.findUnique({
+    where: { ervePackingListId },
+    include: taxInvoiceInclude,
+  });
   if (!record) throw HttpError.notFound('No Tax Invoice draft exists for this Erve Packing List');
   return toTaxInvoiceView(record);
 }
@@ -558,7 +591,10 @@ export async function getTaxInvoiceList(actor: CurrentUser, filters: TaxInvoiceL
   const hasMore = records.length > filters.limit;
   const page = hasMore ? records.slice(0, filters.limit) : records;
   const items = page.map(toTaxInvoiceView);
-  return { items, pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null } };
+  return {
+    items,
+    pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -583,10 +619,15 @@ export async function overrideTaxInvoiceLineRate(
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(taxInvoiceId)}))`;
 
-    const invoice = await tx.taxInvoice.findUnique({ where: { id: taxInvoiceId }, select: { status: true } });
+    const invoice = await tx.taxInvoice.findUnique({
+      where: { id: taxInvoiceId },
+      select: { status: true },
+    });
     if (!invoice) throw HttpError.notFound('Tax invoice not found');
     if (invoice.status !== 'DRAFT') {
-      throw HttpError.conflict('A Tax Invoice line can only be overridden while the invoice is still DRAFT');
+      throw HttpError.conflict(
+        'A Tax Invoice line can only be overridden while the invoice is still DRAFT',
+      );
     }
 
     const line = await tx.taxInvoiceLine.findUnique({ where: { id: lineId } });
@@ -598,7 +639,10 @@ export async function overrideTaxInvoiceLineRate(
     // never lost even though it is also re-derivable from styleMrp/
     // distributorPricingPercentage — matches §1.3's "persist the original
     // calculated unit rate" requirement explicitly, not just implicitly.
-    const calculatedUnitRate = computeNormalUnitRate(line.styleMrp, line.distributorPricingPercentage);
+    const calculatedUnitRate = computeNormalUnitRate(
+      line.styleMrp,
+      line.distributorPricingPercentage,
+    );
     const overriddenAt = new Date();
 
     await tx.taxInvoiceLine.update({
@@ -657,13 +701,19 @@ export async function overrideTaxInvoiceLineRate(
 // including the serial increment, anyway.
 // ---------------------------------------------------------------------------
 
-export async function finalizeTaxInvoice(actor: CurrentUser, taxInvoiceId: string): Promise<TaxInvoiceView> {
+export async function finalizeTaxInvoice(
+  actor: CurrentUser,
+  taxInvoiceId: string,
+): Promise<TaxInvoiceView> {
   assertMutationAccess(actor);
 
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(taxInvoiceId)}))`;
 
-    const invoice = await tx.taxInvoice.findUnique({ where: { id: taxInvoiceId }, include: { lines: true } });
+    const invoice = await tx.taxInvoice.findUnique({
+      where: { id: taxInvoiceId },
+      include: { lines: true },
+    });
     if (!invoice) throw HttpError.notFound('Tax invoice not found');
 
     if (invoice.status === 'FINALIZED') return; // idempotent — see header comment
@@ -706,7 +756,10 @@ export async function finalizeTaxInvoice(actor: CurrentUser, taxInvoiceId: strin
     const businessDate = toBusinessCalendarDate(finalizedAt);
 
     const styleIds = [...new Set(invoice.lines.map((line) => line.styleId))];
-    const styles = await tx.style.findMany({ where: { id: { in: styleIds } }, select: { id: true, hsnId: true } });
+    const styles = await tx.style.findMany({
+      where: { id: { in: styleIds } },
+      select: { id: true, hsnId: true },
+    });
     const hsnIdByStyleId = new Map(styles.map((style) => [style.id, style.hsnId]));
 
     interface ResolvedLine extends LineTaxResult {
@@ -725,15 +778,22 @@ export async function finalizeTaxInvoice(actor: CurrentUser, taxInvoiceId: strin
       const hsnId = hsnIdByStyleId.get(line.styleId);
       if (!hsnId) {
         throw HttpError.badRequest(
-          'A line\'s Style has no assigned HSN — finalization cannot proceed until HSN master data is complete',
+          "A line's Style has no assigned HSN — finalization cannot proceed until HSN master data is complete",
           { reason: 'HSN_NOT_ASSIGNED', taxInvoiceLineId: line.id, styleId: line.styleId },
         );
       }
 
-      const calculatedUnitRate = computeNormalUnitRate(line.styleMrp, line.distributorPricingPercentage);
+      const calculatedUnitRate = computeNormalUnitRate(
+        line.styleMrp,
+        line.distributorPricingPercentage,
+      );
       const finalUnitRate = resolveFinalUnitRate(calculatedUnitRate, line.overrideUnitRate);
 
-      const resolution = await resolveGstRuleForHsn({ hsnId, date: businessDate, value: finalUnitRate });
+      const resolution = await resolveGstRuleForHsn({
+        hsnId,
+        date: businessDate,
+        value: finalUnitRate,
+      });
       if (!resolution.found) {
         throw HttpError.badRequest(
           "No applicable GST rule could be resolved for a line's HSN — finalization cannot proceed until GST configuration is complete and active",
@@ -759,6 +819,7 @@ export async function finalizeTaxInvoice(actor: CurrentUser, taxInvoiceId: strin
 
     const totals = aggregateInvoiceTotals(resolvedLines);
     const grandTotal = calculateGrandTotal(totals.subtotal, totals.totalGst);
+    const payableRounding = calculatePayableRounding(totals.subtotal, totals.totalGst, grandTotal);
 
     const financialYear = await ensureFinancialYear(tx, businessDate);
 
@@ -773,12 +834,21 @@ export async function finalizeTaxInvoice(actor: CurrentUser, taxInvoiceId: strin
     // Postgres, not a self-deadlock.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${'TAX_INVOICE'}::text || ':' || ${financialYear.id}, 0))`;
     const existingSequence = await tx.documentSequence.findUnique({
-      where: { documentType_financialYearId: { documentType: 'TAX_INVOICE', financialYearId: financialYear.id } },
+      where: {
+        documentType_financialYearId: {
+          documentType: 'TAX_INVOICE',
+          financialYearId: financialYear.id,
+        },
+      },
     });
     assertTaxInvoiceSequenceBaselined(env.NODE_ENV, existingSequence !== null, financialYear.code);
 
     const serial = await allocateDocumentSerial(tx, 'TAX_INVOICE', financialYear.id);
-    const invoiceNumber = formatDocumentNumber(DOCUMENT_PREFIXES.TAX_INVOICE, financialYear.code, serial);
+    const invoiceNumber = formatDocumentNumber(
+      DOCUMENT_PREFIXES.TAX_INVOICE,
+      financialYear.code,
+      serial,
+    );
 
     for (const resolved of resolvedLines) {
       await tx.taxInvoiceLine.update({
@@ -813,6 +883,7 @@ export async function finalizeTaxInvoice(actor: CurrentUser, taxInvoiceId: strin
         totalIgst: totals.totalIgst,
         totalGst: totals.totalGst,
         grandTotal,
+        ...payableRounding,
         finalizedById: actor.id,
         finalizedAt,
       },
@@ -829,6 +900,9 @@ export async function finalizeTaxInvoice(actor: CurrentUser, taxInvoiceId: strin
           gstTreatment,
           billToStateCode,
           grandTotal: grandTotal.toString(),
+          payableTotal: payableRounding.payableTotal.toFixed(2),
+          roundOffAdjustment: payableRounding.roundOffAdjustment.toFixed(2),
+          roundingPolicy: payableRounding.roundingPolicy,
           lineCount: resolvedLines.length,
         },
       },

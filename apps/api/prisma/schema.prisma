@@ -2555,6 +2555,12 @@ model TaxInvoice {
   totalGst   Decimal? @map("total_gst") @db.Decimal(31, 11)
   grandTotal Decimal? @map("grand_total") @db.Decimal(14, 2)
 
+  // PR0: frozen only on new finalizations. Null for DRAFT and legacy
+  // FINALIZED documents; never backfilled or computed during reads/retries.
+  payableTotal       Decimal? @map("payable_total") @db.Decimal(14, 2)
+  roundOffAdjustment Decimal? @map("round_off_adjustment") @db.Decimal(14, 2)
+  roundingPolicy     String?  @map("rounding_policy")
+
   createdById   String    @map("created_by_id")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
@@ -2593,9 +2599,9 @@ model TaxInvoice {
 //     gstPercent(2dp) / 100, halved for CGST/SGST          -> scale 11
 //     worst case (today's whole-percent 5%/18% slabs only need scale 8;
 //     scale 11 is reserved so a future fractional GST percentage never
-//     forces a migration). Only TaxInvoice.grandTotal is ever rounded
-//     (ROUND_HALF_UP, 2dp) — every field below is the exact, unrounded
-//     result of its formula.
+//     forces a migration). TaxInvoice.grandTotal is rounded to 2dp and PR0's
+//     payableTotal is independently rounded to whole rupees from the exact
+//     aggregate — every field below is the exact, unrounded result of its formula.
 model TaxInvoiceLine {
   id                              String   @id
   taxInvoiceId                    String   @map("tax_invoice_id")

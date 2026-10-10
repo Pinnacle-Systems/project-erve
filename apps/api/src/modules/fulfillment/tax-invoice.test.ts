@@ -13,14 +13,20 @@ import {
   ensureActiveDistributorPricing,
   packAndFinalize,
 } from './fulfillment-test-helpers.js';
-import { assertTaxInvoiceSequenceBaselined, createOrGetTaxInvoiceDraft } from './tax-invoice.service.js';
+import {
+  assertTaxInvoiceSequenceBaselined,
+  createOrGetTaxInvoiceDraft,
+} from './tax-invoice.service.js';
 
 const app = createApp();
 beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
 
 /** Finalizes (but does NOT dispatch) a single-carton Erve Packing List. */
-async function createFinalizedEipl(quantity = 20, purchaseMode: 'OUTRIGHT' | 'SALE_RETURN' = 'OUTRIGHT') {
+async function createFinalizedEipl(
+  quantity = 20,
+  purchaseMode: 'OUTRIGHT' | 'SALE_RETURN' = 'OUTRIGHT',
+) {
   const fixture = await createSingleFactoryApprovedSaleOrder(app, quantity, purchaseMode);
   const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
   const dispatch = await packAndFinalize(
@@ -78,7 +84,14 @@ describe('Tax Invoice — draft creation eligibility', () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO' });
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
+    const dispatch = await packAndFinalize(
+      app,
+      factoryToken,
+      fixture.saleOrder.id,
+      fixture.saleOrderLineId,
+      fixture.saleOrder.destinations[0].id,
+      20,
+    );
     const erveDispatch = await consolidateAndDispatch(app, fixture.merchToken, [dispatch.cartonId]);
     const accountantToken = await createAccountantToken();
 
@@ -97,7 +110,14 @@ describe('Tax Invoice — draft creation eligibility', () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO' });
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
+    const dispatch = await packAndFinalize(
+      app,
+      factoryToken,
+      fixture.saleOrder.id,
+      fixture.saleOrderLineId,
+      fixture.saleOrder.destinations[0].id,
+      20,
+    );
     const created = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -147,8 +167,22 @@ describe('Tax Invoice — draft creation eligibility', () => {
     const fixtureB = await createApprovedSaleOrder(app, { distributorId, quantity: 25 });
     const factoryTokenA = await createFactoryUserToken(fixtureA.stock.factoryId);
     const factoryTokenB = await createFactoryUserToken(fixtureB.stock.factoryId);
-    const dispatchA = await packAndFinalize(app, factoryTokenA, fixtureA.saleOrder.id, fixtureA.saleOrderLineId, fixtureA.saleOrder.destinations[0].id, 15);
-    const dispatchB = await packAndFinalize(app, factoryTokenB, fixtureB.saleOrder.id, fixtureB.saleOrderLineId, fixtureB.saleOrder.destinations[0].id, 25);
+    const dispatchA = await packAndFinalize(
+      app,
+      factoryTokenA,
+      fixtureA.saleOrder.id,
+      fixtureA.saleOrderLineId,
+      fixtureA.saleOrder.destinations[0].id,
+      15,
+    );
+    const dispatchB = await packAndFinalize(
+      app,
+      factoryTokenB,
+      fixtureB.saleOrder.id,
+      fixtureB.saleOrderLineId,
+      fixtureB.saleOrder.destinations[0].id,
+      25,
+    );
 
     const created = await request(app)
       .post('/erve-packing-lists')
@@ -163,7 +197,9 @@ describe('Tax Invoice — draft creation eligibility', () => {
       .send({})
       .expect(200);
 
-    const lines = await prisma.ervePackingListCommercialLine.findMany({ where: { ervePackingListId } });
+    const lines = await prisma.ervePackingListCommercialLine.findMany({
+      where: { ervePackingListId },
+    });
     expect(lines).toHaveLength(2);
     await prisma.ervePackingListCommercialLine.delete({ where: { id: lines[0]!.id } });
 
@@ -180,8 +216,13 @@ describe('Tax Invoice — draft creation eligibility', () => {
   it('rejects an EIPL whose frozen quantity no longer matches its carton composition', async () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO' });
     const { ervePackingListId } = await createFinalizedEipl(20);
-    const line = await prisma.ervePackingListCommercialLine.findFirstOrThrow({ where: { ervePackingListId } });
-    await prisma.ervePackingListCommercialLine.update({ where: { id: line.id }, data: { quantity: line.quantity + 5 } });
+    const line = await prisma.ervePackingListCommercialLine.findFirstOrThrow({
+      where: { ervePackingListId },
+    });
+    await prisma.ervePackingListCommercialLine.update({
+      where: { id: line.id },
+      data: { quantity: line.quantity + 5 },
+    });
 
     const accountantToken = await createAccountantToken();
     const res = await request(app)
@@ -198,7 +239,10 @@ describe('Tax Invoice — draft creation eligibility', () => {
     const { ervePackingListId, cartonId } = await createFinalizedEipl(20);
     // Simulate drift: the carton backing this line is no longer live, but
     // the frozen commercial line (correctly) still is.
-    await prisma.factoryPackingCarton.update({ where: { id: cartonId }, data: { retiredAt: new Date() } });
+    await prisma.factoryPackingCarton.update({
+      where: { id: cartonId },
+      data: { retiredAt: new Date() },
+    });
 
     const accountantToken = await createAccountantToken();
     const res = await request(app)
@@ -237,7 +281,10 @@ describe('Tax Invoice — seller registration resolution', () => {
   });
 
   it('snapshots the full seller identity, address and bank details independently of later master edits', async () => {
-    const seller = await createTestSellerRegistration({ branchCode: 'ERVE-HO', legalName: 'ERVE India Private Limited' });
+    const seller = await createTestSellerRegistration({
+      branchCode: 'ERVE-HO',
+      legalName: 'ERVE India Private Limited',
+    });
     const { ervePackingListId } = await createFinalizedEipl(20);
     const accountantToken = await createAccountantToken();
 
@@ -252,7 +299,10 @@ describe('Tax Invoice — seller registration resolution', () => {
     expect(res.body.data.seller.bankIfsc).toBe('HDFC0001234');
 
     // Later master edit must never change the already-drafted invoice.
-    await prisma.sellerRegistration.update({ where: { id: seller.id }, data: { legalName: 'Renamed Seller Pvt Ltd' } });
+    await prisma.sellerRegistration.update({
+      where: { id: seller.id },
+      data: { legalName: 'Renamed Seller Pvt Ltd' },
+    });
     const refetched = await request(app)
       .get(`/tax-invoices/${res.body.data.id}`)
       .set('Authorization', `Bearer ${accountantToken}`)
@@ -269,8 +319,22 @@ describe('Tax Invoice — quantity and provenance', () => {
     const fixtureB = await createApprovedSaleOrder(app, { distributorId, quantity: 25 });
     const factoryTokenA = await createFactoryUserToken(fixtureA.stock.factoryId);
     const factoryTokenB = await createFactoryUserToken(fixtureB.stock.factoryId);
-    const dispatchA = await packAndFinalize(app, factoryTokenA, fixtureA.saleOrder.id, fixtureA.saleOrderLineId, fixtureA.saleOrder.destinations[0].id, 15);
-    const dispatchB = await packAndFinalize(app, factoryTokenB, fixtureB.saleOrder.id, fixtureB.saleOrderLineId, fixtureB.saleOrder.destinations[0].id, 25);
+    const dispatchA = await packAndFinalize(
+      app,
+      factoryTokenA,
+      fixtureA.saleOrder.id,
+      fixtureA.saleOrderLineId,
+      fixtureA.saleOrder.destinations[0].id,
+      15,
+    );
+    const dispatchB = await packAndFinalize(
+      app,
+      factoryTokenB,
+      fixtureB.saleOrder.id,
+      fixtureB.saleOrderLineId,
+      fixtureB.saleOrder.destinations[0].id,
+      25,
+    );
 
     const created = await request(app)
       .post('/erve-packing-lists')
@@ -293,9 +357,13 @@ describe('Tax Invoice — quantity and provenance', () => {
       .expect(201);
 
     expect(res.body.data.lines).toHaveLength(2);
-    const quantities = res.body.data.lines.map((l: { quantity: number }) => l.quantity).sort((a: number, b: number) => a - b);
+    const quantities = res.body.data.lines
+      .map((l: { quantity: number }) => l.quantity)
+      .sort((a: number, b: number) => a - b);
     expect(quantities).toEqual([15, 25]);
-    const saleOrderLineIds = res.body.data.lines.map((l: { saleOrderLineId: string }) => l.saleOrderLineId);
+    const saleOrderLineIds = res.body.data.lines.map(
+      (l: { saleOrderLineId: string }) => l.saleOrderLineId,
+    );
     expect(new Set(saleOrderLineIds).size).toBe(2);
   });
 
@@ -313,7 +381,10 @@ describe('Tax Invoice — quantity and provenance', () => {
     const frozenPct = res.body.data.lines[0].distributorPricingPercentage;
 
     await prisma.style.update({ where: { id: fixture.stock.styleId }, data: { finalMrp: 999999 } });
-    await prisma.priceList.updateMany({ where: { distributorId: fixture.stock.distributorId, status: 'ACTIVE' }, data: { percentageOfMrp: 1 } });
+    await prisma.priceList.updateMany({
+      where: { distributorId: fixture.stock.distributorId, status: 'ACTIVE' },
+      data: { percentageOfMrp: 1 },
+    });
 
     const refetched = await request(app)
       .get(`/tax-invoices/${res.body.data.id}`)
@@ -370,7 +441,9 @@ describe('Tax Invoice — lifecycle', () => {
     expect(res.body.data.status).toBe('DRAFT');
     expect(res.body.data.invoiceNumber).toBeNull();
     const sequencesAfter = await prisma.documentSequence.findMany();
-    expect(sequencesAfter.map((s) => ({ type: s.documentType, serial: s.lastAllocatedSerial }))).toEqual(
+    expect(
+      sequencesAfter.map((s) => ({ type: s.documentType, serial: s.lastAllocatedSerial })),
+    ).toEqual(
       sequencesBefore.map((s) => ({ type: s.documentType, serial: s.lastAllocatedSerial })),
     );
   });
@@ -476,7 +549,13 @@ describe('Tax Invoice — authorization', () => {
       .send({ ervePackingListId })
       .expect(201);
 
-    for (const role of ['MERCHANDISER', 'FACTORY_USER', 'DISTRIBUTOR', 'QA_USER', 'SENIOR_MANAGEMENT'] as const) {
+    for (const role of [
+      'MERCHANDISER',
+      'FACTORY_USER',
+      'DISTRIBUTOR',
+      'QA_USER',
+      'SENIOR_MANAGEMENT',
+    ] as const) {
       const { token } = await createRoleToken(role);
       await request(app)
         .post('/tax-invoices')
@@ -497,7 +576,14 @@ describe('Tax Invoice — ErveDispatch association', () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO' });
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
+    const dispatch = await packAndFinalize(
+      app,
+      factoryToken,
+      fixture.saleOrder.id,
+      fixture.saleOrderLineId,
+      fixture.saleOrder.destinations[0].id,
+      20,
+    );
     const createdPackingList = await request(app)
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${fixture.merchToken}`)
@@ -547,7 +633,14 @@ describe('Tax Invoice — ErveDispatch association', () => {
   it('returns 404 for by-erve-dispatch when no draft has been created yet', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 20);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
-    const dispatch = await packAndFinalize(app, factoryToken, fixture.saleOrder.id, fixture.saleOrderLineId, fixture.saleOrder.destinations[0].id, 20);
+    const dispatch = await packAndFinalize(
+      app,
+      factoryToken,
+      fixture.saleOrder.id,
+      fixture.saleOrderLineId,
+      fixture.saleOrder.destinations[0].id,
+      20,
+    );
     const erveDispatch = await consolidateAndDispatch(app, fixture.merchToken, [dispatch.cartonId]);
     const accountantToken = await createAccountantToken();
 
@@ -565,7 +658,9 @@ describe('Tax Invoice — ErveDispatch association', () => {
 
 /** HSN codes are a DB-checked exactly-8-digit string — createId() is alphanumeric and cannot be used here. */
 function randomHsnCode(): string {
-  return Math.floor(Math.random() * 1e8).toString().padStart(8, '0');
+  return Math.floor(Math.random() * 1e8)
+    .toString()
+    .padStart(8, '0');
 }
 
 /** Standard two-band garment GST rule (<=2500: 5%, >2500: 18%), ACTIVE since 2017, assigned to the given Style's HSN. */
@@ -574,7 +669,9 @@ async function activateGarmentGstRuleAndAssignHsn(styleId: string) {
   const versionId = createId();
   const hsnId = createId();
 
-  await prisma.gstRuleSet.create({ data: { id: gstRuleSetId, code: `GST-${createId().slice(-8)}`, name: 'Test Garment Rule' } });
+  await prisma.gstRuleSet.create({
+    data: { id: gstRuleSetId, code: `GST-${createId().slice(-8)}`, name: 'Test Garment Rule' },
+  });
   await prisma.gstRuleSetVersion.create({
     data: {
       id: versionId,
@@ -587,8 +684,20 @@ async function activateGarmentGstRuleAndAssignHsn(styleId: string) {
   });
   await prisma.gstValueBand.createMany({
     data: [
-      { id: createId(), gstRuleSetVersionId: versionId, minValue: null, maxValue: 2500, gstPercent: 5 },
-      { id: createId(), gstRuleSetVersionId: versionId, minValue: 2500, maxValue: null, gstPercent: 18 },
+      {
+        id: createId(),
+        gstRuleSetVersionId: versionId,
+        minValue: null,
+        maxValue: 2500,
+        gstPercent: 5,
+      },
+      {
+        id: createId(),
+        gstRuleSetVersionId: versionId,
+        minValue: 2500,
+        maxValue: null,
+        gstPercent: 18,
+      },
     ],
   });
   await prisma.hsn.create({ data: { id: hsnId, code: randomHsnCode(), gstRuleSetId } });
@@ -622,7 +731,10 @@ async function setDistributorAddress(
 async function ensureTestSellerRegistration() {
   const existing = await prisma.sellerRegistration.findFirst({ where: { status: 'ACTIVE' } });
   if (existing) return existing;
-  return createTestSellerRegistration({ branchCode: `ERVE-HO-${createId().slice(-8)}`, gstin: '27AAAAA0000A1Z5' }); // state code 27 = Maharashtra
+  return createTestSellerRegistration({
+    branchCode: `ERVE-HO-${createId().slice(-8)}`,
+    gstin: '27AAAAA0000A1Z5',
+  }); // state code 27 = Maharashtra
 }
 
 /** Full happy-path setup: finalized EIPL, Maharashtra seller + Maharashtra distributor (intrastate), active GST rule, DRAFT Tax Invoice. */
@@ -630,7 +742,10 @@ async function createReadyDraftInvoice(quantity = 20) {
   await ensureTestSellerRegistration();
   const { fixture, ervePackingListId } = await createFinalizedEipl(quantity);
   await activateGarmentGstRuleAndAssignHsn(fixture.stock.styleId);
-  await setDistributorAddress(fixture.stock.distributorId, { state: 'Maharashtra', gstin: '27AAAAA0000A1Z5' });
+  await setDistributorAddress(fixture.stock.distributorId, {
+    state: 'Maharashtra',
+    gstin: '27AAAAA0000A1Z5',
+  });
 
   const accountantToken = await createAccountantToken();
   const draft = await request(app)
@@ -666,7 +781,9 @@ describe('Tax Invoice — finalization: normal rate, GST and precision', () => {
     expect(finalizeRes.body.data.gstTreatment).toBe('INTRA');
     expect(finalizeRes.body.data.billTo.stateCode).toBe('27');
 
-    const line = finalizeRes.body.data.lines.find((candidate: { id: string }) => candidate.id === lineId);
+    const line = finalizeRes.body.data.lines.find(
+      (candidate: { id: string }) => candidate.id === lineId,
+    );
     const taxableValue = Number(line.taxableValue);
     const cgst = Number(line.cgstAmount);
     const sgst = Number(line.sgstAmount);
@@ -678,7 +795,7 @@ describe('Tax Invoice — finalization: normal rate, GST and precision', () => {
     const subtotal = Number(finalizeRes.body.data.subtotal);
     const totalGst = Number(finalizeRes.body.data.totalGst);
     expect(grandTotal).toBeCloseTo(subtotal + totalGst, 2);
-    // grandTotal is the ONLY rounded field — exactly 2 decimal places.
+    // grandTotal retains the existing two-decimal pre-payable-rounding value.
     expect(finalizeRes.body.data.grandTotal).toMatch(/^\d+\.\d{2}$/);
   });
 
@@ -724,10 +841,17 @@ describe('Tax Invoice — Place of Supply', () => {
     await activateGarmentGstRuleAndAssignHsn(fixture.stock.styleId);
     // Bill-To (Distributor) also Maharashtra; Ship-To (destination) was
     // fixed as Chennai/TN by the fixture helper — must not affect treatment.
-    await setDistributorAddress(fixture.stock.distributorId, { state: 'Maharashtra', gstin: '27AAAAA0000A1Z5' });
+    await setDistributorAddress(fixture.stock.distributorId, {
+      state: 'Maharashtra',
+      gstin: '27AAAAA0000A1Z5',
+    });
 
     const accountantToken = await createAccountantToken();
-    const draft = await request(app).post('/tax-invoices').set('Authorization', `Bearer ${accountantToken}`).send({ ervePackingListId }).expect(201);
+    const draft = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
     expect(draft.body.data.shipTo.state).not.toBe('Maharashtra');
 
     const finalizeRes = await request(app)
@@ -743,10 +867,17 @@ describe('Tax Invoice — Place of Supply', () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO', gstin: '27AAAAA0000A1Z5' }); // Maharashtra
     const { fixture, ervePackingListId } = await createFinalizedEipl(5);
     await activateGarmentGstRuleAndAssignHsn(fixture.stock.styleId);
-    await setDistributorAddress(fixture.stock.distributorId, { state: 'Karnataka', gstin: '29AAAAA0000A1Z5' });
+    await setDistributorAddress(fixture.stock.distributorId, {
+      state: 'Karnataka',
+      gstin: '29AAAAA0000A1Z5',
+    });
 
     const accountantToken = await createAccountantToken();
-    const draft = await request(app).post('/tax-invoices').set('Authorization', `Bearer ${accountantToken}`).send({ ervePackingListId }).expect(201);
+    const draft = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
 
     const finalizeRes = await request(app)
       .post(`/tax-invoices/${draft.body.data.id}/actions/finalize`)
@@ -763,10 +894,17 @@ describe('Tax Invoice — Place of Supply', () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO', gstin: '27AAAAA0000A1Z5' });
     const { fixture, ervePackingListId } = await createFinalizedEipl(5);
     await activateGarmentGstRuleAndAssignHsn(fixture.stock.styleId);
-    await setDistributorAddress(fixture.stock.distributorId, { state: 'Not A Real State', gstin: '27AAAAA0000A1Z5' });
+    await setDistributorAddress(fixture.stock.distributorId, {
+      state: 'Not A Real State',
+      gstin: '27AAAAA0000A1Z5',
+    });
 
     const accountantToken = await createAccountantToken();
-    const draft = await request(app).post('/tax-invoices').set('Authorization', `Bearer ${accountantToken}`).send({ ervePackingListId }).expect(201);
+    const draft = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
 
     const res = await request(app)
       .post(`/tax-invoices/${draft.body.data.id}/actions/finalize`)
@@ -780,10 +918,17 @@ describe('Tax Invoice — Place of Supply', () => {
     const { fixture, ervePackingListId } = await createFinalizedEipl(5);
     await activateGarmentGstRuleAndAssignHsn(fixture.stock.styleId);
     // Address says Karnataka (29) but the GSTIN prefix says Maharashtra (27) — a genuine data inconsistency.
-    await setDistributorAddress(fixture.stock.distributorId, { state: 'Karnataka', gstin: '27AAAAA0000A1Z5' });
+    await setDistributorAddress(fixture.stock.distributorId, {
+      state: 'Karnataka',
+      gstin: '27AAAAA0000A1Z5',
+    });
 
     const accountantToken = await createAccountantToken();
-    const draft = await request(app).post('/tax-invoices').set('Authorization', `Bearer ${accountantToken}`).send({ ervePackingListId }).expect(201);
+    const draft = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
 
     const res = await request(app)
       .post(`/tax-invoices/${draft.body.data.id}/actions/finalize`)
@@ -797,11 +942,18 @@ describe('Tax Invoice — GST/HSN configuration fail-closed', () => {
   it('fails closed when the line Style has no assigned HSN', async () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO', gstin: '27AAAAA0000A1Z5' });
     const { fixture, ervePackingListId } = await createFinalizedEipl(5);
-    await setDistributorAddress(fixture.stock.distributorId, { state: 'Maharashtra', gstin: '27AAAAA0000A1Z5' });
+    await setDistributorAddress(fixture.stock.distributorId, {
+      state: 'Maharashtra',
+      gstin: '27AAAAA0000A1Z5',
+    });
     // Deliberately no activateGarmentGstRuleAndAssignHsn call — Style.hsnId stays null.
 
     const accountantToken = await createAccountantToken();
-    const draft = await request(app).post('/tax-invoices').set('Authorization', `Bearer ${accountantToken}`).send({ ervePackingListId }).expect(201);
+    const draft = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
 
     const res = await request(app)
       .post(`/tax-invoices/${draft.body.data.id}/actions/finalize`)
@@ -813,14 +965,21 @@ describe('Tax Invoice — GST/HSN configuration fail-closed', () => {
   it('fails closed when the HSN has no ACTIVE GST rule version effective on the finalization date', async () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO', gstin: '27AAAAA0000A1Z5' });
     const { fixture, ervePackingListId } = await createFinalizedEipl(5);
-    await setDistributorAddress(fixture.stock.distributorId, { state: 'Maharashtra', gstin: '27AAAAA0000A1Z5' });
+    await setDistributorAddress(fixture.stock.distributorId, {
+      state: 'Maharashtra',
+      gstin: '27AAAAA0000A1Z5',
+    });
     // HSN exists but is assigned to NO GST Rule Set at all.
     const hsnId = createId();
     await prisma.hsn.create({ data: { id: hsnId, code: randomHsnCode() } });
     await prisma.style.update({ where: { id: fixture.stock.styleId }, data: { hsnId } });
 
     const accountantToken = await createAccountantToken();
-    const draft = await request(app).post('/tax-invoices').set('Authorization', `Bearer ${accountantToken}`).send({ ervePackingListId }).expect(201);
+    const draft = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
 
     const res = await request(app)
       .post(`/tax-invoices/${draft.body.data.id}/actions/finalize`)
@@ -902,7 +1061,9 @@ describe('Tax Invoice — Accountant rate override', () => {
       .send({ overrideUnitRate: 150, reason: 'admin attempt' })
       .expect(403);
 
-    const factoryToken = await createFactoryUserToken((await createSingleFactoryApprovedSaleOrder(app, 1)).stock.factoryId);
+    const factoryToken = await createFactoryUserToken(
+      (await createSingleFactoryApprovedSaleOrder(app, 1)).stock.factoryId,
+    );
     await request(app)
       .patch(`/tax-invoices/${taxInvoiceId}/lines/${lineId}/override`)
       .set('Authorization', `Bearer ${factoryToken}`)
@@ -912,7 +1073,10 @@ describe('Tax Invoice — Accountant rate override', () => {
 
   it('rejects an override after the invoice has been finalized', async () => {
     const { taxInvoiceId, lineId, accountantToken } = await createReadyDraftInvoice(10);
-    await request(app).post(`/tax-invoices/${taxInvoiceId}/actions/finalize`).set('Authorization', `Bearer ${accountantToken}`).expect(200);
+    await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
 
     await request(app)
       .patch(`/tax-invoices/${taxInvoiceId}/lines/${lineId}/override`)
@@ -930,12 +1094,16 @@ describe('Tax Invoice — production EI sequence auto-seed guard (INV-012 §8.1)
   // attempt — this exercises the exact exported guard function
   // finalizeTaxInvoice calls, with the same two inputs it passes.
   it('blocks a brand-new (un-baselined) sequence only in production', () => {
-    expect(() => assertTaxInvoiceSequenceBaselined('production', false, '2026-27')).toThrow(/baselined/i);
+    expect(() => assertTaxInvoiceSequenceBaselined('production', false, '2026-27')).toThrow(
+      /baselined/i,
+    );
     try {
       assertTaxInvoiceSequenceBaselined('production', false, '2026-27');
       expect.unreachable();
     } catch (error) {
-      expect((error as { details?: { reason?: string } }).details?.reason).toBe('TAX_INVOICE_SEQUENCE_NOT_BASELINED');
+      expect((error as { details?: { reason?: string } }).details?.reason).toBe(
+        'TAX_INVOICE_SEQUENCE_NOT_BASELINED',
+      );
     }
   });
 
@@ -946,6 +1114,147 @@ describe('Tax Invoice — production EI sequence auto-seed guard (INV-012 §8.1)
   it('never blocks non-production environments, baselined or not', () => {
     expect(() => assertTaxInvoiceSequenceBaselined('test', false, '2026-27')).not.toThrow();
     expect(() => assertTaxInvoiceSequenceBaselined('development', false, '2026-27')).not.toThrow();
+  });
+});
+
+describe('Tax Invoice — final payable round-off snapshots', () => {
+  it.each([
+    [10.01, '10.51', '11.00', '0.49'],
+    [10.95, '11.50', '11.00', '-0.50'],
+    [20, '21.00', '21.00', '0.00'],
+    [10, '10.50', '11.00', '0.50'],
+  ])(
+    'freezes payable rounding for rate %s from exact taxable value plus GST',
+    async (rate, grand, payable, adjustment) => {
+      const { taxInvoiceId, lineId, accountantToken } = await createReadyDraftInvoice(1);
+      const draft = await request(app)
+        .get(`/tax-invoices/${taxInvoiceId}`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200);
+      expect(draft.body.data.payableTotal).toBeNull();
+      expect(draft.body.data.roundOffAdjustment).toBeNull();
+      expect(draft.body.data.roundingPolicy).toBeNull();
+
+      await request(app)
+        .patch(`/tax-invoices/${taxInvoiceId}/lines/${lineId}/override`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ overrideUnitRate: rate, reason: 'Payable round-off fixture' })
+        .expect(200);
+      const finalized = await request(app)
+        .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200);
+      expect(finalized.body.data).toMatchObject({
+        grandTotal: grand,
+        payableTotal: payable,
+        roundOffAdjustment: adjustment,
+        roundingPolicy: 'NEAREST_RUPEE_HALF_UP_V1',
+      });
+      if (rate === 10.95) {
+        expect(finalized.body.data.lines[0]).toMatchObject({
+          taxableValue: '10.95',
+          cgstAmount: '0.27375',
+          sgstAmount: '0.27375',
+          igstAmount: '0',
+        });
+        expect(finalized.body.data.hsnSummary[0]).toMatchObject({
+          taxableValue: '10.95',
+          cgstAmount: '0.27375',
+          sgstAmount: '0.27375',
+        });
+      }
+
+      const stored = await prisma.taxInvoice.findUniqueOrThrow({ where: { id: taxInvoiceId } });
+      expect(stored.payableTotal?.toFixed(2)).toBe(payable);
+      expect(stored.roundOffAdjustment?.toFixed(2)).toBe(adjustment);
+      const audit = await prisma.auditLog.findFirstOrThrow({
+        where: { entityId: taxInvoiceId, action: 'TAX_INVOICE_FINALIZED' },
+      });
+      expect(audit.metadata).toMatchObject({
+        payableTotal: payable,
+        roundOffAdjustment: adjustment,
+        roundingPolicy: 'NEAREST_RUPEE_HALF_UP_V1',
+      });
+      const read = await request(app)
+        .get(`/tax-invoices/${taxInvoiceId}`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200);
+      expect(read.body.data).toEqual(finalized.body.data);
+    },
+  );
+
+  it('preserves legacy finalized invoices with unavailable rounding snapshots across reads and concurrent retries', async () => {
+    const { taxInvoiceId, ervePackingListId, accountantToken } = await createReadyDraftInvoice(1);
+    await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    // Simulate a pre-PR0 finalized document: additive nullable columns are
+    // unavailable, and its original finalization audit has no payable fields.
+    await prisma.taxInvoice.update({
+      where: { id: taxInvoiceId },
+      data: { payableTotal: null, roundOffAdjustment: null, roundingPolicy: null },
+    });
+    const audit = await prisma.auditLog.findFirstOrThrow({
+      where: { entityId: taxInvoiceId, action: 'TAX_INVOICE_FINALIZED' },
+    });
+    const originalMetadata = Object.fromEntries(
+      Object.entries(audit.metadata as Record<string, string | number>).filter(
+        ([key]) => !['payableTotal', 'roundOffAdjustment', 'roundingPolicy'].includes(key),
+      ),
+    );
+    await prisma.auditLog.update({ where: { id: audit.id }, data: { metadata: originalMetadata } });
+    const before = await prisma.taxInvoice.findUniqueOrThrow({
+      where: { id: taxInvoiceId },
+      include: { lines: true },
+    });
+    const sequencesBefore = await prisma.documentSequence.findMany();
+    const auditsBefore = await prisma.auditLog.findMany({ where: { entityId: taxInvoiceId } });
+
+    const reads = await Promise.all([
+      request(app)
+        .get(`/tax-invoices/${taxInvoiceId}`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200),
+      request(app)
+        .get(`/tax-invoices/by-erve-packing-list/${ervePackingListId}`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200),
+      request(app)
+        .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200),
+      request(app)
+        .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200),
+    ]);
+    for (const response of reads) {
+      expect(response.body.data).toMatchObject({
+        payableTotal: null,
+        roundOffAdjustment: null,
+        roundingPolicy: null,
+      });
+      expect(response.body.data.grandTotal).toBe(before.grandTotal?.toFixed(2));
+      expect(response.body.data.invoiceNumber).toBe(before.invoiceNumber);
+    }
+    const list = await request(app)
+      .get('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(
+      list.body.data.items.find((item: { id: string }) => item.id === taxInvoiceId),
+    ).toMatchObject({ payableTotal: null, roundOffAdjustment: null, roundingPolicy: null });
+    expect(
+      await prisma.taxInvoice.findUniqueOrThrow({
+        where: { id: taxInvoiceId },
+        include: { lines: true },
+      }),
+    ).toEqual(before);
+    expect(await prisma.documentSequence.findMany()).toEqual(sequencesBefore);
+    expect(await prisma.auditLog.findMany({ where: { entityId: taxInvoiceId } })).toEqual(
+      auditsBefore,
+    );
   });
 });
 
@@ -962,11 +1271,21 @@ describe('Tax Invoice — finalization lifecycle, idempotency and concurrency', 
   it('repeated finalize requests return the same EI number and totals, with exactly one audit event', async () => {
     const { taxInvoiceId, accountantToken } = await createReadyDraftInvoice(10);
 
-    const first = await request(app).post(`/tax-invoices/${taxInvoiceId}/actions/finalize`).set('Authorization', `Bearer ${accountantToken}`).expect(200);
-    const second = await request(app).post(`/tax-invoices/${taxInvoiceId}/actions/finalize`).set('Authorization', `Bearer ${accountantToken}`).expect(200);
+    const first = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    const second = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
 
     expect(second.body.data.invoiceNumber).toBe(first.body.data.invoiceNumber);
     expect(second.body.data.grandTotal).toBe(first.body.data.grandTotal);
+    expect(first.body.data.roundingPolicy).toBe('NEAREST_RUPEE_HALF_UP_V1');
+    expect(second.body.data.payableTotal).toBe(first.body.data.payableTotal);
+    expect(second.body.data.roundOffAdjustment).toBe(first.body.data.roundOffAdjustment);
+    expect(second.body.data.roundingPolicy).toBe(first.body.data.roundingPolicy);
     expect(second.body.data.finalizedAt).toBe(first.body.data.finalizedAt);
 
     const auditCount = await prisma.auditLog.count({
@@ -979,12 +1298,20 @@ describe('Tax Invoice — finalization lifecycle, idempotency and concurrency', 
     const { taxInvoiceId, accountantToken } = await createReadyDraftInvoice(10);
 
     const [a, b] = await Promise.all([
-      request(app).post(`/tax-invoices/${taxInvoiceId}/actions/finalize`).set('Authorization', `Bearer ${accountantToken}`),
-      request(app).post(`/tax-invoices/${taxInvoiceId}/actions/finalize`).set('Authorization', `Bearer ${accountantToken}`),
+      request(app)
+        .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+        .set('Authorization', `Bearer ${accountantToken}`),
+      request(app)
+        .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+        .set('Authorization', `Bearer ${accountantToken}`),
     ]);
     expect(a.status).toBe(200);
     expect(b.status).toBe(200);
     expect(a.body.data.invoiceNumber).toBe(b.body.data.invoiceNumber);
+    expect(a.body.data.roundingPolicy).toBe('NEAREST_RUPEE_HALF_UP_V1');
+    expect(a.body.data.payableTotal).toBe(b.body.data.payableTotal);
+    expect(a.body.data.roundOffAdjustment).toBe(b.body.data.roundOffAdjustment);
+    expect(a.body.data.roundingPolicy).toBe(b.body.data.roundingPolicy);
 
     const auditCount = await prisma.auditLog.count({
       where: { entityType: 'TaxInvoice', entityId: taxInvoiceId, action: 'TAX_INVOICE_FINALIZED' },
@@ -997,8 +1324,12 @@ describe('Tax Invoice — finalization lifecycle, idempotency and concurrency', 
     const draftB = await createReadyDraftInvoice(5);
 
     const [a, b] = await Promise.all([
-      request(app).post(`/tax-invoices/${draftA.taxInvoiceId}/actions/finalize`).set('Authorization', `Bearer ${draftA.accountantToken}`),
-      request(app).post(`/tax-invoices/${draftB.taxInvoiceId}/actions/finalize`).set('Authorization', `Bearer ${draftB.accountantToken}`),
+      request(app)
+        .post(`/tax-invoices/${draftA.taxInvoiceId}/actions/finalize`)
+        .set('Authorization', `Bearer ${draftA.accountantToken}`),
+      request(app)
+        .post(`/tax-invoices/${draftB.taxInvoiceId}/actions/finalize`)
+        .set('Authorization', `Bearer ${draftB.accountantToken}`),
     ]);
     expect(a.status).toBe(200);
     expect(b.status).toBe(200);
@@ -1007,14 +1338,27 @@ describe('Tax Invoice — finalization lifecycle, idempotency and concurrency', 
 
   it('a finalized invoice is unaffected by later changes to Style MRP, Distributor pricing or GST rules', async () => {
     const { taxInvoiceId, lineId, fixture, accountantToken } = await createReadyDraftInvoice(10);
-    const before = await request(app).post(`/tax-invoices/${taxInvoiceId}/actions/finalize`).set('Authorization', `Bearer ${accountantToken}`).expect(200);
+    const before = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
 
     await prisma.style.update({ where: { id: fixture.stock.styleId }, data: { finalMrp: 999999 } });
-    await prisma.distributor.update({ where: { id: fixture.stock.distributorId }, data: { state: 'Karnataka' } });
+    await prisma.distributor.update({
+      where: { id: fixture.stock.distributorId },
+      data: { state: 'Karnataka' },
+    });
 
-    const after = await request(app).get(`/tax-invoices/${taxInvoiceId}`).set('Authorization', `Bearer ${accountantToken}`).expect(200);
-    const beforeLine = before.body.data.lines.find((candidate: { id: string }) => candidate.id === lineId);
-    const afterLine = after.body.data.lines.find((candidate: { id: string }) => candidate.id === lineId);
+    const after = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    const beforeLine = before.body.data.lines.find(
+      (candidate: { id: string }) => candidate.id === lineId,
+    );
+    const afterLine = after.body.data.lines.find(
+      (candidate: { id: string }) => candidate.id === lineId,
+    );
     expect(afterLine.taxableValue).toBe(beforeLine.taxableValue);
     expect(afterLine.cgstAmount).toBe(beforeLine.cgstAmount);
     expect(after.body.data.grandTotal).toBe(before.body.data.grandTotal);

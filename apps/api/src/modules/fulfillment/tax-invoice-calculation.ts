@@ -13,8 +13,9 @@ import { Prisma } from '../../db/prisma.js';
 //   totalLineTax        = taxableValue(scale 6) * gstPercent(scale 2) / 100 -> scale 10 (worst case)
 //   cgst/sgst (intra)    = totalLineTax / 2                            -> scale 11 (worst case; halving
 //                          an odd-ending decimal can need one more decimal place to stay exact)
-// Only the final grand total is ever rounded (ROUND_HALF_UP, 2dp) - every
-// other value here is the exact, unrounded decimal result of its formula.
+// grandTotal retains ROUND_HALF_UP at 2dp. PR0 adds a separate final payable
+// rounded directly from the exact aggregate to whole rupees. All line and
+// GST components retain their exact, unrounded computed values.
 
 export type GstTreatment = 'INTRA' | 'INTER';
 
@@ -89,17 +90,51 @@ export function aggregateInvoiceTotals(lines: readonly LineTaxResult[]): Invoice
   const totalCgst = lines.reduce((sum, line) => sum.plus(line.cgstAmount), zero);
   const totalSgst = lines.reduce((sum, line) => sum.plus(line.sgstAmount), zero);
   const totalIgst = lines.reduce((sum, line) => sum.plus(line.igstAmount), zero);
-  return { subtotal, totalCgst, totalSgst, totalIgst, totalGst: totalCgst.plus(totalSgst).plus(totalIgst) };
+  return {
+    subtotal,
+    totalCgst,
+    totalSgst,
+    totalIgst,
+    totalGst: totalCgst.plus(totalSgst).plus(totalIgst),
+  };
 }
 
 /**
- * The ONLY rounding operation in the entire calculation chain. Rounds the
- * unrounded subtotal + total GST to 2 decimal places using ROUND_HALF_UP,
- * per the confirmed business decision. Every other persisted amount keeps
- * its full computed precision.
+ * Preserves the existing subtotal + total GST rounding to 2 decimal places
+ * using ROUND_HALF_UP. Line and tax components keep their full precision;
+ * the separate payable policy below does not change this result.
  */
-export function calculateGrandTotal(subtotal: Prisma.Decimal, totalGst: Prisma.Decimal): Prisma.Decimal {
+export function calculateGrandTotal(
+  subtotal: Prisma.Decimal,
+  totalGst: Prisma.Decimal,
+): Prisma.Decimal {
   return subtotal.plus(totalGst).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+}
+
+// Stored aggregates use up to 31 significant digits. A local constructor
+// leaves enough headroom for addition without changing INV-006's global
+// Decimal settings or existing line, GST and grandTotal calculations.
+const PayableDecimal = Prisma.Decimal.clone({ precision: 40 });
+
+/**
+ * PR0: round the exact aggregate once to whole rupees, never the already
+ * rounded grandTotal (which would double-round just-below-half boundaries).
+ * The signed adjustment reconciles the two persisted monetary totals;
+ * it never changes the taxable value, GST components or HSN summary.
+ */
+export function calculatePayableRounding(
+  subtotal: Prisma.Decimal,
+  totalGst: Prisma.Decimal,
+  grandTotal: Prisma.Decimal,
+) {
+  const payableTotal = new PayableDecimal(subtotal)
+    .plus(totalGst)
+    .toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP);
+  return {
+    payableTotal,
+    roundOffAdjustment: payableTotal.minus(grandTotal),
+    roundingPolicy: 'NEAREST_RUPEE_HALF_UP_V1' as const,
+  };
 }
 
 export interface HsnSummaryInput {

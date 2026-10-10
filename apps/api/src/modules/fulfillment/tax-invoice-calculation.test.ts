@@ -4,6 +4,7 @@ import {
   aggregateHsnSummary,
   aggregateInvoiceTotals,
   calculateGrandTotal,
+  calculatePayableRounding,
   classifyGstTreatment,
   computeLineTax,
   computeNormalUnitRate,
@@ -111,11 +112,51 @@ describe('Tax Invoice calculation — invoice aggregation and rounding', () => {
   });
 });
 
+describe('Tax Invoice calculation — final payable round-off', () => {
+  it.each([
+    ['41952', '2097.60', '44049.60', '44050.00', '0.40'],
+    ['10', '0.40', '10.40', '10.00', '-0.40'],
+    ['10', '0', '10.00', '10.00', '0.00'],
+    ['10', '0.50', '10.50', '11.00', '0.50'],
+    ['10', '0.49999999999', '10.50', '10.00', '-0.50'],
+    ['10', '0.50000000001', '10.50', '11.00', '0.50'],
+    ['99999999999.49', '0.00999999999', '99999999999.50', '99999999999.00', '-0.50'],
+    ['99999999999.49', '0.01000000001', '99999999999.50', '100000000000.00', '0.50'],
+  ])(
+    'rounds exact aggregate %s + %s without rounding components',
+    (subtotal, gst, grand, payable, adjustment) => {
+      const taxableValue = D(subtotal);
+      const totalGst = D(gst);
+      const grandTotal = calculateGrandTotal(taxableValue, totalGst);
+      const result = calculatePayableRounding(taxableValue, totalGst, grandTotal);
+
+      expect(grandTotal.toFixed(2)).toBe(grand);
+      expect(result.payableTotal.toFixed(2)).toBe(payable);
+      expect(result.roundOffAdjustment.toFixed(2)).toBe(adjustment);
+      expect(result.roundingPolicy).toBe('NEAREST_RUPEE_HALF_UP_V1');
+      expect(taxableValue.toString()).toBe(D(subtotal).toString());
+      expect(totalGst.toString()).toBe(D(gst).toString());
+    },
+  );
+});
+
 describe('Tax Invoice calculation — HSN summary aggregation', () => {
   it('groups by HSN code and GST percent, summing taxable/tax amounts', () => {
-    const lineA = { hsnCode: '61091000', gstPercent: D('5'), ...computeLineTax(D('100'), 10, D('5'), 'INTRA') };
-    const lineB = { hsnCode: '61091000', gstPercent: D('5'), ...computeLineTax(D('50'), 4, D('5'), 'INTRA') };
-    const lineC = { hsnCode: '62034200', gstPercent: D('18'), ...computeLineTax(D('3000'), 2, D('18'), 'INTER') };
+    const lineA = {
+      hsnCode: '61091000',
+      gstPercent: D('5'),
+      ...computeLineTax(D('100'), 10, D('5'), 'INTRA'),
+    };
+    const lineB = {
+      hsnCode: '61091000',
+      gstPercent: D('5'),
+      ...computeLineTax(D('50'), 4, D('5'), 'INTRA'),
+    };
+    const lineC = {
+      hsnCode: '62034200',
+      gstPercent: D('18'),
+      ...computeLineTax(D('3000'), 2, D('18'), 'INTER'),
+    };
 
     const summary = aggregateHsnSummary([lineA, lineB, lineC]);
     expect(summary).toHaveLength(2);
