@@ -30,6 +30,7 @@ import { SizeListPage } from '../pages/master-data/SizeListPage.js';
 import { SizeDetailPage } from '../pages/master-data/SizeDetailPage.js';
 import { SizeFormPage } from '../pages/master-data/SizeFormPage.js';
 import { SeasonListPage } from '../pages/master-data/SeasonListPage.js';
+import { StyleBulkImportPage } from '../pages/master-data/StyleBulkImportPage.js';
 import { StyleDetailPage } from '../pages/master-data/StyleDetailPage.js';
 import { StyleFormPage } from '../pages/master-data/StyleFormPage.js';
 import { StyleListPage } from '../pages/master-data/StyleListPage.js';
@@ -168,6 +169,14 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={STYLE_MANAGE_ROLES}>
               <StyleFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="styles/bulk-import"
+          element={
+            <RoleRoute allowed={STYLE_MANAGE_ROLES}>
+              <StyleBulkImportPage />
             </RoleRoute>
           }
         />

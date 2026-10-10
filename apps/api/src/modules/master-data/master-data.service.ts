@@ -265,6 +265,15 @@ export async function createStyle(
     factoryMappings?: StyleFactoryMappingRequest[];
     [key: string]: unknown;
   },
+  options: {
+    // Runs inside the SAME transaction as the Style/Size/FactoryMapping
+    // create, right before it commits — e.g. so a bulk importer's
+    // provenance row is written atomically with the Style it describes,
+    // rather than as a separate transaction that could succeed or fail
+    // independently of this one. Optional and additive: existing callers
+    // that don't pass it see no change in behavior.
+    onCommitted?: (tx: Prisma.TransactionClient, created: { id: string }) => Promise<void>;
+  } = {},
 ) {
   const { sizes = [], factoryMappings = [], ...styleFields } = input;
   const styleId = createId();
@@ -305,6 +314,9 @@ export async function createStyle(
             exFactoryPrice: mapping.exFactoryPrice,
           })),
         });
+      }
+      if (options.onCommitted) {
+        await options.onCommitted(tx, { id: styleId });
       }
     });
   } catch (error) {

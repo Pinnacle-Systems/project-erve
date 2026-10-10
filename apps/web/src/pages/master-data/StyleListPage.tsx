@@ -58,9 +58,14 @@ export function StyleListPage() {
         subtitle="Item master records"
         primaryAction={
           canManageStyles(user) ? (
-            <Button asChild variant="default">
-              <Link to="/master-data/styles/new">Create Style</Link>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button asChild variant="secondary">
+                <Link to="/master-data/styles/bulk-import">Bulk Import</Link>
+              </Button>
+              <Button asChild variant="default">
+                <Link to="/master-data/styles/new">Create Style</Link>
+              </Button>
+            </div>
           ) : undefined
         }
       />

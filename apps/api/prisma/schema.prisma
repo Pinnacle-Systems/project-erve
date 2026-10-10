@@ -928,6 +928,67 @@ model StyleFactoryMapping {
   @@map("style_factory_mappings")
 }
 
+enum StyleBulkImportRunStatus {
+  DRY_RUN
+  EXECUTED
+}
+
+// DEMO-001: one row per attempted Style in a bulk-import run. This is the
+// provenance record that lets a retry tell "a Style this batch created but
+// whose image attach failed" apart from "a pre-existing Style we must never
+// touch" — matching is done on (styleNumber, expectedImageChecksum), not
+// styleNumber alone, so a retry only ever recovers a row it can verify was
+// its own. IMAGE_PENDING is never reported as a successful import.
+enum StyleBulkImportRowOutcome {
+  COMPLETED
+  SKIPPED_EXISTING
+  IMAGE_PENDING
+  FAILED
+}
+
+model StyleBulkImportRun {
+  id                 String                    @id
+  sourceFileName     String                    @map("source_file_name")
+  // Identifies "the same logical import" across repeated runs of an
+  // unmodified source file — see StyleBulkImportRowResult's recovery match.
+  sourceFileChecksum String                    @map("source_file_checksum")
+  status             StyleBulkImportRunStatus
+  actorUserId        String                    @map("actor_user_id")
+  totalRows          Int                       @map("total_rows")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+
+  rows StyleBulkImportRowResult[]
+
+  @@index([sourceFileChecksum])
+  @@map("style_bulk_import_runs")
+}
+
+model StyleBulkImportRowResult {
+  id          String                    @id
+  runId       String                    @map("run_id")
+  rowNumber   Int                       @map("row_number")
+  styleNumber String                    @map("style_number")
+  // Set once the Style exists — for CREATE rows this is written atomically
+  // with the Style itself (same transaction, via createStyle's onCommitted
+  // hook), never as a separate write that could drift from whether the
+  // Style actually got created.
+  styleId     String?                   @map("style_id")
+  outcome     StyleBulkImportRowOutcome
+  // The primary candidate image's sha256 for this row, when it has one —
+  // the anchor a later retry verifies against before touching this Style's
+  // images again.
+  expectedImageChecksum String?          @map("expected_image_checksum")
+  detail      String?
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  updatedAt   DateTime                  @updatedAt @map("updated_at")
+
+  run StyleBulkImportRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([styleNumber, expectedImageChecksum])
+  @@map("style_bulk_import_row_results")
+}
+
 // A price list is always distributor-specific (what Erve charges that
 // distributor) — there is no generic/global price list, so distributorId is
 // required and deletion is restricted to preserve pricing history.
