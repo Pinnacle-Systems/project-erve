@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
-import type { StyleImage } from './types.js';
+import type { StyleImage } from '../../pages/master-data/types.js';
+import { StyleImageViewer } from './StyleImageViewer.js';
 
 export interface StyleThumbnailCellProps {
   styleId: string;
   image: StyleImage | null;
   size?: number;
+  /** Shown as the viewer's header title (e.g. the Style Number) when the thumbnail is clicked open. */
+  viewerTitle?: string;
+  /** When true (default) and an image is present, clicking the thumbnail opens the shared high-resolution viewer. */
+  clickable?: boolean;
 }
 
 const DEFAULT_SIZE = 40;
@@ -16,12 +21,23 @@ const DEFAULT_SIZE = 40;
  * stay independently testable. Lazy loading is genuine: the authenticated fetch (inside
  * StyleThumbnailImage/useAuthedImage) is only mounted once the cell is reported near-viewport, so
  * off-screen rows issue zero image requests.
+ *
+ * Promoted out of pages/master-data so every Style-bearing screen (Job Order, Order Sheet,
+ * Dispatch Order, etc.) can import it without reaching into a page folder — see the Style image
+ * coverage matrix in docs/SM-000-style-image-coverage-matrix.md.
  */
-export function StyleThumbnailCell({ styleId, image, size = DEFAULT_SIZE }: StyleThumbnailCellProps) {
+export function StyleThumbnailCell({
+  styleId,
+  image,
+  size = DEFAULT_SIZE,
+  viewerTitle,
+  clickable = true,
+}: StyleThumbnailCellProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // Environments without IntersectionObserver (e.g. some test runners) render immediately —
   // decided once at init rather than via a synchronous setState inside the effect below.
   const [isNearViewport, setIsNearViewport] = useState(() => typeof IntersectionObserver === 'undefined');
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   useEffect(() => {
     if (isNearViewport) return;
@@ -40,16 +56,40 @@ export function StyleThumbnailCell({ styleId, image, size = DEFAULT_SIZE }: Styl
     return () => observer.disconnect();
   }, [isNearViewport]);
 
+  const isClickable = clickable && Boolean(image);
+
   return (
     <div
       ref={containerRef}
-      className="flex items-center justify-center overflow-hidden rounded-[var(--erp-radius-sm)] bg-surface-muted"
+      className="relative flex items-center justify-center overflow-hidden rounded-[var(--erp-radius-sm)] bg-surface-muted"
       style={{ width: size, height: size }}
     >
       {isNearViewport && image ? (
         <StyleThumbnailImage styleId={styleId} image={image} />
       ) : (
         <StyleThumbnailPlaceholder />
+      )}
+      {isClickable && (
+        <button
+          type="button"
+          aria-label="View style image"
+          className="absolute inset-0 cursor-pointer focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary"
+          onClick={(event) => {
+            // Never let opening the viewer also trigger a parent row's own
+            // click/navigation handler.
+            event.stopPropagation();
+            setViewerOpen(true);
+          }}
+        />
+      )}
+      {isClickable && (
+        <StyleImageViewer
+          styleId={styleId}
+          initialImageId={image?.id ?? null}
+          open={viewerOpen}
+          onOpenChange={setViewerOpen}
+          title={viewerTitle}
+        />
       )}
     </div>
   );
