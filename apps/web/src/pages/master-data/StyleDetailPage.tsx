@@ -15,7 +15,13 @@ import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { StyleImagesPanel } from './StyleImagesPanel.js';
 import { StyleIdentityDetail } from './style/StyleIdentityDetail.js';
 import { StyleCommercialDetail } from './style/StyleCommercialDetail.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import type { Style } from './types.js';
+
+// Identification size for a single-Style detail header — large enough to
+// actually identify the garment, not a 40px grid chip. Matches the print
+// size already used in StyleDetailDocument's PDF header.
+const IDENTITY_HEADER_IMAGE_SIZE = 120;
 
 export function StyleDetailPage() {
   const { id } = useParams();
@@ -64,6 +70,14 @@ export function StyleDetailPage() {
       <PageHeader
         title={style.styleNumber}
         subtitle={style.styleName}
+        leadingVisual={
+          <StyleThumbnailCell
+            styleId={style.id}
+            image={style.images.find((image) => image.isPrimary) ?? style.images[0] ?? null}
+            size={IDENTITY_HEADER_IMAGE_SIZE}
+            viewerTitle={style.styleNumber}
+          />
+        }
         status={
           <StatusBadge
             label={style.status}

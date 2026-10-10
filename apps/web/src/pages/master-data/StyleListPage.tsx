@@ -12,7 +12,7 @@ import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import { StyleThumbnailCell } from './StyleThumbnailCell.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import type { Status, Style } from './types.js';
 
 export function StyleListPage() {
@@ -103,6 +103,7 @@ export function StyleListPage() {
               <StyleThumbnailCell
                 styleId={style.id}
                 image={style.images.find((image) => image.isPrimary) ?? style.images[0] ?? null}
+                viewerTitle={style.styleNumber}
               />
             ),
           },

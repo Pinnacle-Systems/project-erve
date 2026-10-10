@@ -16,6 +16,8 @@ export interface PageHeaderProps {
   subtitle?: string;
   breadcrumbs?: BreadcrumbItem[];
   breadcrumbSlot?: ReactNode;
+  /** Optional identity visual (e.g. a Primary Style Image) rendered left of the title block. Opt-in — omitted by every existing caller, so it changes nothing for them. */
+  leadingVisual?: ReactNode;
   status?: ReactNode;
   primaryAction?: ReactNode;
   secondaryActions?: ReactNode;
@@ -29,6 +31,7 @@ export const PageHeader = ({
   subtitle,
   breadcrumbs,
   breadcrumbSlot,
+  leadingVisual,
   status,
   primaryAction,
   secondaryActions,
@@ -54,30 +57,33 @@ export const PageHeader = ({
     ) : null}
 
     <div className="flex items-start justify-between gap-4">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <h1
-            className={cn(
-              "font-semibold text-foreground leading-tight",
-              density === "compact" && "text-sm",
-              density === "comfortable" && "text-base",
-              density === "touch" && "text-lg",
-            )}
-          >
-            {title}
-          </h1>
-          {status && <div className="flex items-center shrink-0">{status}</div>}
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        {leadingVisual && <div className="shrink-0">{leadingVisual}</div>}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1
+              className={cn(
+                "font-semibold text-foreground leading-tight",
+                density === "compact" && "text-sm",
+                density === "comfortable" && "text-base",
+                density === "touch" && "text-lg",
+              )}
+            >
+              {title}
+            </h1>
+            {status && <div className="flex items-center shrink-0">{status}</div>}
+          </div>
+          {subtitle && (
+            <p
+              className={cn(
+                "text-muted-foreground mt-0.5 truncate",
+                density === "compact" ? "text-xs" : "text-sm",
+              )}
+            >
+              {subtitle}
+            </p>
+          )}
         </div>
-        {subtitle && (
-          <p
-            className={cn(
-              "text-muted-foreground mt-0.5 truncate",
-              density === "compact" ? "text-xs" : "text-sm",
-            )}
-          >
-            {subtitle}
-          </p>
-        )}
       </div>
 
       {(secondaryActions || primaryAction) && (

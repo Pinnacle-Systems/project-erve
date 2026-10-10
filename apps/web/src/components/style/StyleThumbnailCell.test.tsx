@@ -1,14 +1,21 @@
 /** @vitest-environment jsdom */
-import { act } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '../../lib/api-client.js';
+import type { StyleImage } from '../../pages/master-data/types.js';
 import { StyleThumbnailCell } from './StyleThumbnailCell.js';
-import type { StyleImage } from './types.js';
 
 let container: HTMLDivElement;
 let root: Root;
+let queryClient: QueryClient;
 let observerInstances: FakeIntersectionObserver[];
+
+function withQueryClient(children: ReactNode) {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+}
 
 class FakeIntersectionObserver {
   callback: IntersectionObserverCallback;
@@ -53,6 +60,12 @@ beforeEach(() => {
   root = createRoot(container);
   observerInstances = [];
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
+  class ResizeObserverStub {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 });
 
 afterEach(() => {
@@ -73,7 +86,7 @@ describe('StyleThumbnailCell lazy loading', () => {
     const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new Blob(['bytes']) });
 
     act(() => {
-      root.render(<StyleThumbnailCell styleId="style-1" image={image} />);
+      root.render(withQueryClient(<StyleThumbnailCell styleId="style-1" image={image} />));
     });
     await flush();
 
@@ -85,7 +98,7 @@ describe('StyleThumbnailCell lazy loading', () => {
     const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new Blob(['bytes']) });
 
     act(() => {
-      root.render(<StyleThumbnailCell styleId="style-1" image={image} />);
+      root.render(withQueryClient(<StyleThumbnailCell styleId="style-1" image={image} />));
     });
     await flush();
     expect(getSpy).not.toHaveBeenCalled();
@@ -106,7 +119,7 @@ describe('StyleThumbnailCell lazy loading', () => {
     const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new Blob(['bytes']) });
 
     act(() => {
-      root.render(<StyleThumbnailCell styleId="style-1" image={null} />);
+      root.render(withQueryClient(<StyleThumbnailCell styleId="style-1" image={null} />));
     });
     await flush();
 
@@ -118,7 +131,7 @@ describe('StyleThumbnailCell lazy loading', () => {
     vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('boom'));
 
     act(() => {
-      root.render(<StyleThumbnailCell styleId="style-1" image={image} />);
+      root.render(withQueryClient(<StyleThumbnailCell styleId="style-1" image={image} />));
     });
     await flush();
     act(() => {
@@ -129,5 +142,47 @@ describe('StyleThumbnailCell lazy loading', () => {
 
     expect(container.querySelector('svg')).not.toBeNull();
     expect(container.querySelector('img')).toBeNull();
+  });
+});
+
+describe('StyleThumbnailCell click-to-view', () => {
+  it('renders no click overlay when there is no image, or when clickable is false', async () => {
+    act(() => {
+      root.render(withQueryClient(<StyleThumbnailCell styleId="style-1" image={null} />));
+    });
+    await flush();
+    expect(container.querySelector('[aria-label="View style image"]')).toBeNull();
+
+    act(() => {
+      root.render(withQueryClient(<StyleThumbnailCell styleId="style-1" image={image} clickable={false} />));
+    });
+    await flush();
+    expect(container.querySelector('[aria-label="View style image"]')).toBeNull();
+  });
+
+  it('opens the viewer dialog on click without propagating the click to a parent row handler', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: { images: [] } } });
+
+    const parentClick = vi.fn();
+    act(() => {
+      root.render(
+        withQueryClient(
+          // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
+          <div onClick={parentClick}>
+            <StyleThumbnailCell styleId="style-1" image={image} viewerTitle="ABC123" />
+          </div>,
+        ),
+      );
+    });
+    await flush();
+
+    const overlay = container.querySelector('[aria-label="View style image"]') as HTMLButtonElement;
+    expect(overlay).not.toBeNull();
+
+    act(() => overlay.click());
+    await flush();
+
+    expect(parentClick).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="dialog"]')).toBeTruthy();
   });
 });

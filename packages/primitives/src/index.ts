@@ -19,6 +19,18 @@ export type {
 export { GridCellInput } from "./components/grid-cell-input";
 export type { GridCellInputProps } from "./components/grid-cell-input";
 
+export { NumericField } from "./components/numeric-field";
+export type { NumericFieldProps, NumericMode } from "./components/numeric-field";
+export {
+  commitNumericDraft,
+  extractNumericSubstring,
+  formatNumericValue,
+  isNumericDraft,
+  resolvePrecision,
+  toFiniteNumber,
+} from "./lib/numeric";
+export type { NumericFieldConstraints, NumericCommitResult } from "./lib/numeric";
+
 export { Badge } from "./components/badge";
 export type { BadgeProps, BadgeVariant, BadgeWidth } from "./components/badge";
 
