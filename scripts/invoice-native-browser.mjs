@@ -117,6 +117,8 @@ async function enter(page) {
     key: 'Enter',
     code: 'Enter',
     windowsVirtualKeyCode: 13,
+    text: '\r',
+    unmodifiedText: '\r',
   });
   await page.send('Input.dispatchKeyEvent', {
     type: 'keyUp',
@@ -435,6 +437,17 @@ async function main() {
       proof.assertions.push(
         `Native ${width}px: queue/review/multiple archived Styles; ADMIN read-only and MERCHANDISER denied`,
       );
+    } catch (error) {
+      if (page) {
+        await screenshot(page, `failure-${width}`).catch(() => undefined);
+        const state = await page
+          .evaluate(
+            `JSON.stringify({path:location.pathname,body:document.body.innerText,inputs:Array.from(document.querySelectorAll('input')).map(node=>({id:node.id,type:node.type,length:node.value.length,valid:node.validity.valid}))})`,
+          )
+          .catch(() => 'Browser state unavailable');
+        await fs.writeFile(path.join(evidence, `failure-state-${width}.json`), state);
+      }
+      throw error;
     } finally {
       page?.close();
       browser?.close();
