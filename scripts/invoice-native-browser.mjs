@@ -5,6 +5,7 @@ import process from 'node:process';
 import { Buffer } from 'node:buffer';
 import { setTimeout } from 'node:timers';
 import console from 'node:console';
+import { pathToFileURL } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 const { fetch, WebSocket } = globalThis;
 
@@ -150,6 +151,59 @@ async function screenshot(page, name) {
   execFileSync('import', ['-window', 'root', path.join(evidence, `${name}.png`)], {
     env: { ...process.env, DISPLAY: ':99' },
   });
+}
+async function downloadPdf(page, browser, record, name) {
+  const directory = path.join(evidence, `downloads-${name}`);
+  await fs.mkdir(directory, { recursive: true });
+  await browser.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: directory });
+  await go(page, `http://localhost:5177/fulfillment/tax-invoices/${record.id}`, 'Download PDF');
+  const response = await api(page, `/tax-invoices/${record.id}`);
+  assert.equal(response.status, 200);
+  await click(page, 'Download PDF');
+  const file = await until(
+    async () => {
+      const names = await fs.readdir(directory);
+      const pdf = names.find((item) => item.endsWith('.pdf'));
+      if (!pdf || names.some((item) => item.endsWith('.crdownload'))) return null;
+      const bytes = await fs.readFile(path.join(directory, pdf));
+      return bytes.subarray(0, 5).toString() === '%PDF-' ? path.join(directory, pdf) : null;
+    },
+    `completed ${name} PDF download`,
+    60000,
+  );
+  await fs.copyFile(file, path.join(evidence, `${name}.pdf`));
+  await fs.writeFile(path.join(evidence, `${name}-expected.json`), JSON.stringify(response.data));
+  return file;
+}
+async function inspectNativePdf(page, browser, file) {
+  const target = await browser.send('Target.createTarget', { url: pathToFileURL(file).href });
+  await pause(2500);
+  execFileSync('import', ['-window', 'root', path.join(evidence, 'native-pdf-preview.png')], {
+    env: { ...process.env, DISPLAY: ':99' },
+  });
+  await browser.send('Target.closeTarget', { targetId: target.targetId });
+  await page.send('Page.bringToFront');
+  await click(page, 'Print');
+  await until(
+    async () => {
+      const targets = await browser.send('Target.getTargets');
+      return targets.targetInfos.some((item) => item.url.startsWith('chrome://print'));
+    },
+    'native Chrome print preview',
+    60000,
+  );
+  await pause(1500);
+  execFileSync('import', ['-window', 'root', path.join(evidence, 'native-pdf-print.png')], {
+    env: { ...process.env, DISPLAY: ':99' },
+  });
+  execFileSync('xdotool', ['key', '--clearmodifiers', 'Escape'], {
+    env: { ...process.env, DISPLAY: ':99' },
+  });
+  await until(async () => {
+    const targets = await browser.send('Target.getTargets');
+    return !targets.targetInfos.some((item) => item.url.startsWith('chrome://print'));
+  }, 'print preview cancelled without issuing a print');
+  await page.send('Page.bringToFront');
 }
 async function main() {
   const chromeBinary = process.env.NATIVE_CHROME_BINARY;
@@ -450,6 +504,15 @@ async function main() {
         }
         await page.send('Emulation.clearDeviceMetricsOverride');
       }
+      if (width === 1440 && process.env.NATIVE_VERIFY_PDF === 'true') {
+        const rounded = await downloadPdf(page, browser, fixture.issued, 'rounded');
+        await inspectNativePdf(page, browser, rounded);
+        await downloadPdf(page, browser, fixture.multi, 'multi');
+        await downloadPdf(page, browser, fixture.legacy, 'legacy');
+        proof.assertions.push(
+          'ACCOUNTANT downloaded frozen rounded, multi-order and legacy PDFs; native PDF and print previews opened',
+        );
+      }
       await login(page, fixture.actors.admin);
       await go(
         page,
@@ -464,6 +527,28 @@ async function main() {
         false,
       );
       await screenshot(page, `admin-readonly-${width}`);
+      if (width === 1440 && process.env.NATIVE_VERIFY_PDF === 'true') {
+        await downloadPdf(page, browser, fixture.issued, 'rounded-admin');
+        await page.send('Emulation.setDeviceMetricsOverride', {
+          width: 390,
+          height: 900,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        assert.ok(
+          await page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'),
+          'Finalized invoice PDF actions fit narrow layout',
+        );
+        const capture = await page.send('Page.captureScreenshot', { format: 'png' });
+        await fs.writeFile(
+          path.join(evidence, 'responsive-supplement-finalized-390.png'),
+          Buffer.from(capture.data, 'base64'),
+        );
+        await page.send('Emulation.clearDeviceMetricsOverride');
+        proof.assertions.push(
+          'ADMIN downloaded the same issued invoice after its Style image and description were replaced',
+        );
+      }
       await login(page, fixture.actors.restricted);
       await page.send('Page.navigate', { url: 'http://localhost:5177/fulfillment/tax-invoices' });
       await until(

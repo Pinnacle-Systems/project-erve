@@ -16,10 +16,14 @@ import { LoadingState, EmptyState, ErrorState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
 import {
   canMutateTaxInvoices,
+  canViewTaxInvoices,
   canViewErvePackingLists,
   canViewErveDispatches,
 } from '../../auth/permissions.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import {
   useTaxInvoiceReview,
   useTaxInvoiceAudit,
@@ -119,6 +123,16 @@ function TaxInvoiceDetail({
   const audit = useTaxInvoiceAudit(invoice.id, tab === 'history');
   const mutable = canMutateTaxInvoices(user) && invoice.status === 'DRAFT';
   const busy = actions.override.isPending || actions.finalize.isPending || verifying;
+  const canPrint = canViewTaxInvoices(user) && invoice.status === 'FINALIZED';
+  const pdfActions = usePdfAction({
+    generate: async () => {
+      if (!canPrint) throw new Error('Issued invoice read permission is required');
+      const { generateTaxInvoicePdfBlob } =
+        await import('./pdf/tax-invoice/generateTaxInvoicePdf.js');
+      return generateTaxInvoicePdfBlob(invoice);
+    },
+    filename: () => buildPdfFilename(['ERVE-Tax-Invoice', invoice.invoiceNumber]),
+  });
   async function finalize() {
     setVerifying(true);
     setError('');
@@ -151,7 +165,7 @@ function TaxInvoiceDetail({
   return (
     <div className="space-y-4">
       <PageHeader
-        className="[&>div]:flex-col [&>div]:items-stretch sm:[&>div]:flex-row sm:[&>div]:items-start [&_h1]:break-words"
+        className="[&>div]:flex-col [&>div]:items-stretch sm:[&>div]:flex-row sm:[&>div]:items-start [&_h1]:break-words max-sm:[&>div>div:last-child]:flex-wrap"
         title={invoice.invoiceNumber ?? `Draft · ${invoice.ervePackingList.ervePackingListNumber}`}
         subtitle={`${invoice.billTo.name} · ${invoice.shipTo.label ?? 'Destination not snapshotted'}`}
         status={
@@ -178,9 +192,23 @@ function TaxInvoiceDetail({
           ) : undefined
         }
         secondaryActions={
-          <Button variant="secondary" onClick={() => navigate('/fulfillment/tax-invoices')}>
-            Back to invoices
-          </Button>
+          <>
+            <Button variant="secondary" onClick={() => navigate('/fulfillment/tax-invoices')}>
+              Back to invoices
+            </Button>
+            {canPrint && (
+              <PdfActionButtons
+                isGenerating={pdfActions.isGenerating}
+                error={pdfActions.error}
+                onDownload={() => void pdfActions.handleDownload()}
+                onPrint={() => void pdfActions.handlePrint()}
+                disabled={
+                  !invoice.invoiceNumber || !invoice.finalizedAt || invoice.grandTotal === null
+                }
+                disabledHint="Issued identity and financial total are required for the PDF."
+              />
+            )}
+          </>
         }
       />
       {refreshError && (

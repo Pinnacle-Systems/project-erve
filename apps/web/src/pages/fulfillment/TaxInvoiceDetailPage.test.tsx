@@ -9,10 +9,17 @@ import { apiClient } from '../../lib/api-client.js';
 import * as Auth from '../../auth/AuthContext.js';
 import { TaxInvoiceDetailPage } from './TaxInvoiceDetailPage.js';
 import { taxInvoiceFixture } from './tax-invoice-test-fixture.js';
+import * as PdfDownloads from '../../lib/pdf/download.js';
+
+const generatePdf = vi.hoisted(() => vi.fn());
+vi.mock('./pdf/tax-invoice/generateTaxInvoicePdf.js', () => ({
+  generateTaxInvoicePdfBlob: generatePdf,
+}));
 
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
+  generatePdf.mockReset();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -89,6 +96,65 @@ async function render(
   await vi.waitFor(() => expect(text()).toContain('ST-001'));
 }
 describe('Tax Invoice Accountant review and immutable presentation', () => {
+  it.each(['ADMIN', 'ACCOUNTANT'] as const)(
+    'allows %s to download the finalized frozen invoice',
+    async (role) => {
+      const invoice = taxInvoiceFixture({
+        status: 'FINALIZED',
+        invoiceNumber: 'EI/26-27/0001',
+        finalizedAt: '2026-10-11T05:00:00Z',
+        review: { state: 'FINALIZED', isPreview: false, calculatedAt: null, blockers: [] },
+      });
+      const blob = new Blob(['pdf'], { type: 'application/pdf' });
+      generatePdf.mockResolvedValue(blob);
+      const download = vi.spyOn(PdfDownloads, 'downloadPdfBlob').mockImplementation(() => {});
+      await render(invoice, role);
+      await act(async () => button('Download PDF')?.click());
+      await vi.waitFor(() =>
+        expect(download).toHaveBeenCalledWith(blob, 'ERVE-Tax-Invoice-EI-26-27-0001.pdf'),
+      );
+      expect(generatePdf).toHaveBeenCalledWith(
+        expect.objectContaining({ grandTotal: '490.07', payableTotal: '490.00' }),
+      );
+      expect(button('Print')).toBeDefined();
+      expect(button('Finalize invoice')).toBeUndefined();
+    },
+  );
+
+  it('does not offer PDF actions for drafts or an unauthorized role', async () => {
+    await render(taxInvoiceFixture());
+    expect(button('Download PDF')).toBeUndefined();
+    expect(button('Print')).toBeUndefined();
+    await render(
+      taxInvoiceFixture({
+        status: 'FINALIZED',
+        invoiceNumber: 'EI/26-27/0001',
+        finalizedAt: '2026-10-11T05:00:00Z',
+      }),
+      'MERCHANDISER',
+    );
+    expect(button('Download PDF')).toBeUndefined();
+    expect(generatePdf).not.toHaveBeenCalled();
+  });
+
+  it('keeps the issued document visible and permits PDF retry after generation failure', async () => {
+    generatePdf
+      .mockRejectedValueOnce(new Error('Unavailable image decoder'))
+      .mockResolvedValue(new Blob(['pdf']));
+    vi.spyOn(PdfDownloads, 'downloadPdfBlob').mockImplementation(() => {});
+    await render(
+      taxInvoiceFixture({
+        status: 'FINALIZED',
+        invoiceNumber: 'EI/26-27/0001',
+        finalizedAt: '2026-10-11T05:00:00Z',
+      }),
+    );
+    await act(async () => button('Download PDF')?.click());
+    await vi.waitFor(() => expect(text()).toContain('PDF generation failed. Please try again.'));
+    expect(text()).toContain('EI/26-27/0001');
+    await act(async () => button('Download PDF')?.click());
+    await vi.waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(2));
+  });
   it('does not submit finalization after backend review values change', async () => {
     await render(taxInvoiceFixture());
     vi.mocked(apiClient.get).mockResolvedValue({

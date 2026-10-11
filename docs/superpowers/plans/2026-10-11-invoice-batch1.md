@@ -47,24 +47,24 @@ Vitest, React-PDF, installed Chrome/Edge with native-window verification.
       missing/legacy data, saved overrides, retries and role-specific actions.
 - [x] Add the approved versioned presentation snapshots and invoice-owned
       archival media, with honest legacy gaps and no Style permission widening.
-- [ ] Verify focused/regression tests, workspace checks and native browser
+- [x] Verify focused/regression tests, workspace checks and native browser
       behavior at maximized/100% zoom and responsive desktop/narrow widths.
-- [ ] Review diff, commit/push, create PR, monitor exact-head CI and reviews,
+- [x] Review diff, commit/push, create PR, monitor exact-head CI and reviews,
       guarded squash merge, verify main and clean up only this worktree/branch.
 
 ## PR2: INV-008
 
-- [ ] Refresh main/Style dependencies after PR1 merge and cleanup.
-- [ ] Reopen/render Inv-103.pdf and compare content/layout directly.
-- [ ] Build a pure finalized snapshot adapter, A4 portrait React-PDF document
+- [x] Refresh main/Style dependencies after PR1 merge and cleanup.
+- [x] Reopen/render Inv-103.pdf and compare content/layout directly.
+- [x] Build a pure finalized snapshot adapter, A4 portrait React-PDF document
       and lazy generation integrated with the existing print/download lifecycle.
-- [ ] Preserve historical EISO verbatim; print verified current order
+- [x] Preserve historical EISO verbatim; print verified current order
       references separately, including multiple source orders and missing data.
-- [ ] Group only compatible Style/colour/HSN/MRP/rate/tax lines; keep quantity,
+- [x] Group only compatible Style/colour/HSN/MRP/rate/tax lines; keep quantity,
       price and tax calculations unchanged. Retain compact archived Style images.
-- [ ] Print frozen seller/bank/parties, HSN/GST summaries, grandTotal, signed
+- [x] Print frozen seller/bank/parties, HSN/GST summaries, grandTotal, signed
       round-off and issued payable. Amount in words follows the issued total.
-- [ ] Conditional exemption declaration uses frozen applicability and FY;
+- [x] Conditional exemption declaration uses frozen applicability and FY;
       RCM No is bold. Do not add E-Way capture or infer absent references.
 - [ ] Verify one/multi-page PDFs, long fields, images, totals, declarations,
       native print/download, tests and workspace checks.
@@ -77,3 +77,46 @@ Vitest, React-PDF, installed Chrome/Edge with native-window verification.
       numbering, time boundaries and partial-credit round-off remain decisions.
 
 No tracker/Library updates or Batch 2 implementation are authorized here.
+
+### INV-008 execution detail
+
+Baseline: PR67 merged at 3955a80, identical to tested e79c72e. Its three mandatory
+CI jobs and native browser acceptance passed. Postmerge checks passed 87 API and
+21 web tests on the safety-verified invoice test database. Feature worktree and
+branch were safely removed; evidence is preserved in ignored main artifacts.
+
+1. Test a pure snapshot adapter and exact decimal presentation/amount-in-words.
+   Group only compatible frozen Style/colour/HSN/MRP/rate/GST lines. Aggregate
+   already-frozen line amounts only for presentation, preserving source IDs.
+   Never resolve current masters or calculate tax/payable inside the PDF.
+2. Resolve archived images through the existing authenticated PDF image utility,
+   using invoice-owned paths and print-quality options. Honest placeholders cover
+   missing images; legacy issued presentation is unavailable, not reconstructed.
+3. Render A4 portrait with existing React-PDF/core infrastructure, logo, compact
+   per-Style images, size breakdowns, parties, references, frozen financial/HSN
+   totals, issued payable words, conditional FY declaration, bold RCM No and bank.
+   Split exceptionally long presentation text without dropping content or
+   duplicating amounts; inspect one-page and multi-page output directly.
+4. Add finalized-only lazy Print/Download actions using shared lifecycle controls.
+   Extend native CI fixtures/harness for actual PDF downloads, preview/print,
+   image replacement after issue, pagination and backend reconciliation.
+5. Run focused/regression/workspace checks, inspect native/PDF evidence, review
+   scope, create PR, wait for all latest-head CI, merge, verify main and clean up.
+
+No API/schema, tax policy, shared UI/media or unrelated business-module changes
+are planned in PR2. INV-009 retains E-Way capture/cancellation ownership.
+
+Execution evidence (2026-10-12): refreshed against main 1a25294 (Dispatch Order
+PR69). Local workspace typecheck/lint/build passed; lint reports only the three
+existing shared date-picker warnings. Focused web/PDF lifecycle and invoice
+regression: 139 tests passed; client: 56 passed; shared UI: 119 passed. Actual
+synthetic A4 PDFs visually inspected: nine Styles/six sizes fit one page;
+36 Styles span three pages with repeated table headers; legacy totals remain
+original with missing round-off/reference/image data explicit. Native download,
+print and archived PNG alpha verification remain an acceptance gate in CI.
+
+Ruling: PNG/WebP archives use an invoice-local lossless converter because the
+existing shared PDF resolver emits JPEG and loses transparency. This preserves
+issued image fidelity without altering shared media behavior; JPEG still reuses
+the shared resolver. Final review is a separate author self-review under the
+single-agent workflow, with CI and visual evidence required before merge.

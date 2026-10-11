@@ -40,6 +40,7 @@ jobs:
       VITE_API_URL: http://localhost:4107
       NATIVE_FIXTURE_PATH: ${{ github.workspace }}/.artifacts/native-invoice-fixtures.json
       FILE_STORAGE_DIR: ${{ github.workspace }}/.artifacts/native-media
+      NATIVE_VERIFY_PDF: ${{ github.head_ref == 'feature/invoice-inv008-pdf' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -80,6 +81,12 @@ jobs:
           curl -fsS http://localhost:4107/health > /dev/null
       - name: Verify native maximization, zoom and Accountant workflow
         run: node scripts/invoice-native-browser.mjs
+      - name: Inspect generated invoice PDF content and geometry
+        if: github.head_ref == 'feature/invoice-inv008-pdf'
+        run: |
+          python -m venv .artifacts/pdf-check-tools
+          .artifacts/pdf-check-tools/bin/pip install --quiet pymupdf==1.28.2
+          .artifacts/pdf-check-tools/bin/python scripts/verify-invoice-pdf.py
       - name: Upload screenshots and native-window proof
         if: always()
         uses: actions/upload-artifact@v4
