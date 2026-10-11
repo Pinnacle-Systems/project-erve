@@ -71,10 +71,13 @@ async function until(callback, label, timeout = 30000) {
   throw new Error(`Timed out: ${label}`);
 }
 async function click(page, label) {
+  // Dialog entry animations must settle before measuring native click coordinates.
+  await pause(300);
   const rect = await page.evaluate(
     `(() => { const node = [...document.querySelectorAll('button')].find(n => n.textContent.trim() === ${JSON.stringify(label)} || n.getAttribute('aria-label') === ${JSON.stringify(label)}); if (!node || node.disabled) return null; node.scrollIntoView({block:'center'}); const r=node.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`,
   );
   assert.ok(rect, `Enabled action ${label}`);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...rect });
   await page.send('Input.dispatchMouseEvent', {
     type: 'mousePressed',
     button: 'left',
@@ -395,6 +398,18 @@ async function main() {
             mobile: false,
           });
           await pause(250);
+          assert.ok(
+            await page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'),
+            `No page overflow at ${narrow}px; tables scroll within their containers`,
+          );
+          if (narrow === 390) {
+            assert.ok(
+              await page.evaluate(
+                "document.querySelector('h1').getBoundingClientRect().bottom <= [...document.querySelectorAll('button')].find(node => node.textContent.trim() === 'Finalize invoice').getBoundingClientRect().top",
+              ),
+              'Narrow header places actions below invoice identity',
+            );
+          }
           const capture = await page.send('Page.captureScreenshot', { format: 'png' });
           await fs.writeFile(
             path.join(evidence, `responsive-supplement-${narrow}.png`),

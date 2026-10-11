@@ -152,6 +152,8 @@ export function TaxInvoiceListPage() {
               {
                 key: 'action',
                 header: 'Action',
+                headerClassName: 'sticky right-0 bg-surface-muted',
+                className: 'sticky right-0 bg-surface',
                 render: (row) => (
                   <Button
                     variant="secondary"

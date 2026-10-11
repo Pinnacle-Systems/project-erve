@@ -11,8 +11,8 @@ import {
 export function TaxInvoiceTotals({ invoice }: { invoice: TaxInvoiceReviewView }) {
   const issued = invoiceIssuedAmount(invoice);
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-      <Panel title="HSN tax summary" padding="none">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+      <Panel title="HSN tax summary" padding="none" className="min-w-0">
         {invoice.hsnSummary ? (
           <DataTable
             rowKey={(row) => `${row.hsnCode}-${row.gstPercent}`}
