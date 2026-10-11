@@ -112,19 +112,9 @@ async function type(page, selector, value) {
   await page.send('Input.insertText', { text: value });
 }
 async function enter(page) {
-  await page.send('Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: 'Enter',
-    code: 'Enter',
-    windowsVirtualKeyCode: 13,
-    text: '\r',
-    unmodifiedText: '\r',
-  });
-  await page.send('Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: 'Enter',
-    code: 'Enter',
-    windowsVirtualKeyCode: 13,
+  await page.send('Page.bringToFront');
+  execFileSync('xdotool', ['key', '--clearmodifiers', 'Return'], {
+    env: { ...process.env, DISPLAY: ':99' },
   });
 }
 const body = (page) => page.evaluate('document.body.innerText');
@@ -144,7 +134,7 @@ async function login(page, actor) {
   await go(page, 'http://localhost:5177/login', 'Email or mobile number');
   await type(page, '#identifier', actor.email);
   await type(page, '#password', actor.password);
-  await enter(page);
+  await click(page, 'Sign in');
   await until(
     async () => Boolean(await page.evaluate("sessionStorage.getItem('erve.accessToken')")),
     'real sign-in',

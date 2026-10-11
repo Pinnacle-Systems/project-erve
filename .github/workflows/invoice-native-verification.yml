@@ -57,7 +57,7 @@ jobs:
           "$chrome" --version
           echo "NATIVE_CHROME_BINARY=$chrome" >> "$GITHUB_ENV"
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb openbox imagemagick x11-utils
+          sudo apt-get install -y -qq xvfb openbox imagemagick x11-utils xdotool
       - name: Verify disposable target and replay schema
         working-directory: apps/api
         run: |
