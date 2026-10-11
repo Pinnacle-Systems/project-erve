@@ -259,6 +259,7 @@ export interface SaleOrderLineView {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
@@ -871,9 +872,16 @@ export interface PooledFactoryInventoryLine {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  // DEMO-016/DEMO-003: the Dispatch Order Style picker and computed Size
+  // grid are built directly from this pool (the authoritative "what can
+  // this Factory actually dispatch" source), so its identity projection
+  // carries the same Primary Style Image every other Style-bearing screen
+  // uses — no separate style-options endpoint.
+  primaryImage: StylePrimaryImageView | null;
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder: number;
   releasedQuantity: number;
   committedQuantity: number;
   availableQuantity: number;

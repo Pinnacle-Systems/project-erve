@@ -1,19 +1,20 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse, UserOption } from '@erve/types';
 import { ConfirmDialog, PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
-import { Button, ValidationMessage } from '@erve/primitives';
+import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
-import { canManageFactories } from '../../auth/permissions.js';
+import { canManageFactories, canManageUsers } from '../../auth/permissions.js';
 import { apiClient } from '../../lib/api-client.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { UserLookupField, userLookupQueryKey } from '../users/UserLookupField.js';
+import { InlineUserCreateDialog } from '../users/InlineUserCreateDialog.js';
 import type { Factory, FactoryUser } from './types.js';
 
 function errorMessage(error: unknown, fallback: string) {
@@ -32,9 +33,23 @@ function errorMessage(error: unknown, fallback: string) {
 // detail page by removing the FACTORY_USER role, which the backend takes
 // the mapping down with atomically.
 function MappedUsers({ factory }: { factory: Factory }) {
+  const { user: currentUser } = useAuth();
   const client = useQueryClient();
   const [selected, setSelected] = useState<UserOption | null>(null);
   const [error, setError] = useState('');
+  const [creating, setCreating] = useState(false);
+  const creationGeneration = useRef(0);
+  const [generation, setGeneration] = useState(0);
+  useEffect(
+    () => () => {
+      creationGeneration.current += 1;
+    },
+    [],
+  );
+  function closeCreation() {
+    creationGeneration.current += 1;
+    setCreating(false);
+  }
   const mapped = useQuery({
     queryKey: ['factory-users', factory.id],
     queryFn: async () =>
@@ -90,6 +105,20 @@ function MappedUsers({ factory }: { factory: Factory }) {
             Users cannot be assigned to an inactive factory.
           </p>
         ) : null}
+        {/* DEMO-015: offered only when no eligible Factory User exists yet to
+            assign — gated by the User master's own create permission
+            (canManageUsers), not just this panel's broader Factory-manage
+            access. Creating with FACTORY_USER + this factoryId maps them
+            in the same call, so success only needs a list refresh. */}
+        {factory.status === 'ACTIVE' && canManageUsers(currentUser) && (
+          <Button type="button" variant="ghost" onClick={() => {
+            creationGeneration.current += 1;
+            setGeneration(creationGeneration.current);
+            setCreating(true);
+          }}>
+            + Create new Factory User
+          </Button>
+        )}
         {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
         <DataTable
           columns={[
@@ -133,6 +162,30 @@ function MappedUsers({ factory }: { factory: Factory }) {
           }
         />
       </div>
+      {creating && (
+        <Dialog
+          open
+          onOpenChange={(next) => {
+            if (!next) closeCreation();
+          }}
+        >
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" onKeyDown={(e) => e.stopPropagation()}>
+            <DialogHeader>
+              <DialogTitle>Create Factory User</DialogTitle>
+            </DialogHeader>
+            <InlineUserCreateDialog
+              defaultRoles={['FACTORY_USER']}
+              factoryId={factory.id}
+              onCancel={closeCreation}
+              onCreated={() => {
+                if (creationGeneration.current !== generation) return;
+                closeCreation();
+                void refresh();
+              }}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </Panel>
   );
 }

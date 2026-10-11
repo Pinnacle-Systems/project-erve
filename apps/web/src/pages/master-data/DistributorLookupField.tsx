@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ApiSuccessResponse, DistributorOption } from '@erve/types';
 import type { Density } from '@erve/theme';
-import { LookupField, type LookupFieldWidth } from '@erve/primitives';
+import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, LookupField, type LookupFieldWidth } from '@erve/primitives';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { useServerLookup } from '../../lib/use-server-lookup.js';
+import { DistributorEditor } from './DistributorEditor.js';
 
 export const DISTRIBUTOR_LOOKUP_LIMIT = 20;
 // Every option endpoint's maximum `limit` (/distributors/options,
@@ -70,6 +71,15 @@ export interface DistributorLookupFieldProps<
   errorMessage?: string;
   disabled?: boolean;
   required?: boolean;
+  // DEMO-015: offers "+ Create new Distributor" when true — opt-in, since
+  // most of this field's many consumers are filters or mapping panels
+  // where inline-create makes no sense, and only meaningful for
+  // T = DistributorOption (the master itself). The CALLER computes this
+  // (typically `canManageDistributorMaster(user)`), never a check made in
+  // here — this component has no AuthContext dependency of its own, so
+  // every existing consumer's tests keep working unchanged whether or not
+  // they wrap AuthProvider.
+  allowInlineCreate?: boolean;
 }
 
 // Distributor lookup: bounded server search over ACTIVE Distributors by name
@@ -95,9 +105,23 @@ export function DistributorLookupField<T extends DistributorLookupOption = Distr
   errorMessage,
   disabled,
   required,
+  allowInlineCreate = false,
 }: DistributorLookupFieldProps<T>) {
   const [searchText, setSearchText] = useState('');
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const creationGeneration = useRef(0);
+  const [generation, setGeneration] = useState(0);
+  useEffect(
+    () => () => {
+      creationGeneration.current += 1;
+    },
+    [],
+  );
+  function closeCreation() {
+    creationGeneration.current += 1;
+    setCreating(false);
+  }
   // Excluded ids are filtered here, after the server's limit, so over-fetch
   // by that many to still offer up to DISTRIBUTOR_LOOKUP_LIMIT usable rows.
   const excludedCount = excludeIds
@@ -124,32 +148,70 @@ export function DistributorLookupField<T extends DistributorLookupOption = Distr
     : lookup.options;
 
   return (
-    <LookupField<DistributorLookupValue>
-      label={label}
-      aria-label={ariaLabel}
-      id={id}
-      width={width}
-      density={density}
-      placeholder={placeholder}
-      disabled={disabled}
-      required={required}
-      errorMessage={errorMessage}
-      selectedOption={value}
-      // Anything selectable came from `lookup.options`, i.e. a full option.
-      onSelect={(distributor) => onChange(distributor as T | null)}
-      searchText={searchText}
-      onSearchTextChange={setSearchText}
-      options={options}
-      getOptionKey={(distributor) => distributor.id}
-      getOptionLabel={getDistributorLabel}
-      renderOption={(distributor) => <DistributorOptionRow distributor={distributor as T} />}
-      loading={lookup.loading}
-      searchError={
-        lookup.error ? getApiErrorMessage(lookup.error, 'Unable to search distributors') : null
-      }
-      emptyMessage={searchText.trim() ? noMatchMessage : emptyMessage}
-      loadingMessage="Searching distributors…"
-      onOpenChange={setOpen}
-    />
+    <div className="space-y-2">
+      <LookupField<DistributorLookupValue>
+        label={label}
+        aria-label={ariaLabel}
+        id={id}
+        width={width}
+        density={density}
+        placeholder={placeholder}
+        disabled={disabled}
+        required={required}
+        errorMessage={errorMessage}
+        selectedOption={value}
+        // Anything selectable came from `lookup.options`, i.e. a full option.
+        onSelect={(distributor) => onChange(distributor as T | null)}
+        searchText={searchText}
+        onSearchTextChange={setSearchText}
+        options={options}
+        getOptionKey={(distributor) => distributor.id}
+        getOptionLabel={getDistributorLabel}
+        renderOption={(distributor) => <DistributorOptionRow distributor={distributor as T} />}
+        loading={lookup.loading}
+        searchError={
+          lookup.error ? getApiErrorMessage(lookup.error, 'Unable to search distributors') : null
+        }
+        emptyMessage={searchText.trim() ? noMatchMessage : emptyMessage}
+        loadingMessage="Searching distributors…"
+        onOpenChange={setOpen}
+      />
+      {allowInlineCreate && (
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={disabled}
+          onClick={() => {
+            creationGeneration.current += 1;
+            setGeneration(creationGeneration.current);
+            setCreating(true);
+          }}
+        >
+          + Create new Distributor
+        </Button>
+      )}
+      {creating && (
+        <Dialog
+          open
+          onOpenChange={(next) => {
+            if (!next) closeCreation();
+          }}
+        >
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" onKeyDown={(e) => e.stopPropagation()}>
+            <DialogHeader>
+              <DialogTitle>Create Distributor</DialogTitle>
+            </DialogHeader>
+            <DistributorEditor
+              onCancel={closeCreation}
+              onSaved={(distributor) => {
+                if (creationGeneration.current !== generation) return;
+                closeCreation();
+                onChange(distributor as unknown as T);
+              }}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
   );
 }

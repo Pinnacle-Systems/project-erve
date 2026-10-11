@@ -4,8 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AuthUser } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { AuthProvider } from '../../auth/AuthContext.js';
+import * as AuthContext from '../../auth/AuthContext.js';
 import * as generateModule from '../../lib/pdf/generate.js';
 import * as downloadModule from '../../lib/pdf/download.js';
 import { FactoryDetailPage } from './FactoryDetailPage.js';
@@ -89,6 +91,60 @@ async function renderPage(factory: Factory) {
   });
   await waitForLoaded();
 }
+
+function mockAuth(role: 'ADMIN' | 'MERCHANDISER') {
+  const authUser: AuthUser = { id: 'u1', email: 'u1@test.local', mobile: null, name: 'U1', roles: [role] };
+  vi.spyOn(AuthContext, 'useAuth').mockReturnValue({
+    user: authUser,
+    token: 't',
+    login: vi.fn(),
+    logout: vi.fn(),
+    refreshUser: vi.fn(),
+    isInitializing: false,
+  } as unknown as ReturnType<typeof AuthContext.useAuth>);
+}
+
+async function renderPageWithRole(factory: Factory, role: 'ADMIN' | 'MERCHANDISER') {
+  mockAuth(role);
+  vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    if (url === `/factories/${factory.id}`) return { data: { data: factory } };
+    if (url === `/factories/${factory.id}/users`) return { data: { data: [] } };
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  act(() => {
+    root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={[`/master-data/factories/${factory.id}`]}>
+          <Routes>
+            <Route path="/master-data/factories/:id" element={<FactoryDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  });
+  await act(async () => {
+    await flushMicrotasks();
+  });
+  await waitForLoaded();
+}
+
+describe('FactoryDetailPage — Mapped Factory Users inline creation (DEMO-015)', () => {
+  it('offers "+ Create new Factory User" for ADMIN, and the button opens the create dialog', async () => {
+    const factory = makeFactory();
+    await renderPageWithRole(factory, 'ADMIN');
+    expect(
+      Array.from(container.querySelectorAll('button')).some((b) => b.textContent === '+ Create new Factory User'),
+    ).toBe(true);
+  });
+
+  it('never offers inline User creation to MERCHANDISER, even though it can otherwise manage this Factory', async () => {
+    const factory = makeFactory();
+    await renderPageWithRole(factory, 'MERCHANDISER');
+    expect(
+      Array.from(container.querySelectorAll('button')).some((b) => b.textContent === '+ Create new Factory User'),
+    ).toBe(false);
+  });
+});
 
 describe('FactoryDetailPage PDF actions', () => {
   it('shows Download PDF and Print actions in the header', async () => {

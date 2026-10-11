@@ -101,7 +101,7 @@ export async function createSingleFactoryApprovedSaleOrder(
       ],
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity }],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, totalQuantity: quantity }],
     })
     .expect(201);
 
@@ -317,7 +317,7 @@ export async function createApprovedSaleOrder(app: Express, options: ApprovedSal
       distributors: [{ clientKey: 'dg1', distributorId: stock.distributorId, destinations: [{ clientKey: 'd1', ...destination }] }],
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity }],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, totalQuantity: quantity }],
     })
     .expect(201);
 
@@ -399,7 +399,7 @@ export async function createTwoBatchApprovedSaleOrder(
       ],
       factoryId: stockA.factoryId,
       soDate: '2026-06-30',
-      lines: [{ destinationClientKey: 'd1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: totalQuantity }],
+      lines: [{ destinationClientKey: 'd1', styleId: stockA.styleId, totalQuantity }],
     })
     .expect(201);
 

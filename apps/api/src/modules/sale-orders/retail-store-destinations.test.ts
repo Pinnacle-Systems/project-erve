@@ -50,7 +50,7 @@ async function fixture() {
       },
     ],
     lines: [
-      { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 },
+      { destinationClientKey: 'd1', styleId: stock.styleId, totalQuantity: 20 },
     ],
   };
   return { stock, token, store, payload };
@@ -150,7 +150,7 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
           destinations: [{ ...dest, clientKey: 'd1' }],
         },
       ],
-      lines: [{ ...f.payload.lines[0]!, id: order.lines[0]!.id }],
+      lines: [f.payload.lines[0]!],
     };
     const saved = (await patch(f.token, order.id, edit).expect(200)).body.data;
     expect(saved.distributorGroups[0].destinations[0]!).toEqual(dest);
@@ -246,12 +246,11 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
           })),
         }),
       ),
-      lines: order.lines.map(
-        (l: { id: string; styleId: string; sizeId: string; quantity: number }, i: number) => ({
-          ...l,
-          destinationClientKey: `d${i + 1}`,
-        }),
-      ),
+      lines: order.lines.map((l: { styleId: string; quantity: number }, i: number) => ({
+        destinationClientKey: `d${i + 1}`,
+        styleId: l.styleId,
+        totalQuantity: l.quantity,
+      })),
     };
     await patch(f.token, order.id, edit).expect(400);
   });

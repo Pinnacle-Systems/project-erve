@@ -28,6 +28,7 @@ function makeLine(overrides: Partial<SaleOrderLine> = {}): SaleOrderLine {
     styleId: 'style-1',
     styleNumber: 'STY-0001',
     styleName: 'Basic Tee',
+    primaryImage: null,
     sizeId: 'size-1',
     sizeCode: 'M',
     sizeLabel: 'Medium',

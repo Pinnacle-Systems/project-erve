@@ -35,12 +35,16 @@ const destinationSchema = z.object({
   gstin: optionalGstinSchema,
 });
 
+// DEMO-016: one total quantity per Style per destination — the server alone
+// derives the per-Size split (exact division across the Style's currently
+// active Sizes; see expandStyleTotalsToLines in sale-orders.service.ts). No
+// client-supplied sizeId/quantity-per-size and no client-supplied line id:
+// per-Size line identity is recovered server-side by natural key against
+// the order's existing lines, not trusted from the client.
 const dispatchLineSchema = z.object({
-  id: z.string().trim().min(1).optional(),
   destinationClientKey: z.string().trim().min(1),
   styleId: z.string().trim().min(1),
-  sizeId: z.string().trim().min(1),
-  quantity: z.number().int().positive(),
+  totalQuantity: z.number().int().positive(),
 });
 
 // One Distributor group per Distributor per Dispatch Order (Correction 8) —

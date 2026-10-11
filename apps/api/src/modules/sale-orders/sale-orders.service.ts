@@ -9,11 +9,12 @@ import { HttpError } from '../../errors/http-error.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
-import { getAvailableQuantities, getEligibleQaReleaseLinesForPool } from '../job-orders/pooled-inventory.service.js';
+import { getAvailableQuantities, getEligibleQaReleaseLinesForPool, getPooledFactoryInventory } from '../job-orders/pooled-inventory.service.js';
 import { computeDispatchOrderFulfillment } from '../fulfillment/fulfillment-progress.js';
 import { buildPackingListProjection, hardDeleteFactoryDispatches } from '../fulfillment/factory-dispatch.service.js';
 import { getPhysicalPackedQuantitiesForLines } from '../fulfillment/packing-reconciliation.js';
 import { resolveRetailStoreSnapshots } from './retail-store-snapshot.js';
+import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -51,7 +52,7 @@ const soInclude = {
   },
   lines: {
     include: {
-      style: { select: { id: true, styleNumber: true, styleName: true } },
+      style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
       size: { select: { id: true, code: true, label: true, sortOrder: true } },
     },
     orderBy: { createdAt: 'asc' as const },
@@ -97,6 +98,7 @@ function toLineView(line: SOLineRecord) {
     styleId: line.styleId,
     styleNumber: line.style.styleNumber,
     styleName: line.style.styleName,
+    primaryImage: toPrimaryImageView(line.style.images),
     sizeId: line.sizeId,
     sizeCode: line.size.code,
     sizeLabel: line.size.label,
@@ -449,12 +451,24 @@ export interface DispatchOrderLineInput {
   quantity: number;
 }
 
+// DEMO-016: the client submits one total quantity per Style per
+// destination — the server is the sole authority for how that total splits
+// across the Style's currently-active Sizes (exact division only, derived
+// fresh from current Style/Size master data on every create and edit, never
+// frozen at the quantities a prior save computed). See
+// expandStyleTotalsToLines.
+export interface DispatchOrderStyleTotalInput {
+  destinationClientKey: string;
+  styleId: string;
+  totalQuantity: number;
+}
+
 export interface CreateDispatchOrderInput {
   factoryId: string;
   soDate: string;
   remarks?: string | null;
   distributors: DispatchOrderDistributorGroupInput[];
-  lines: DispatchOrderLineInput[];
+  lines: DispatchOrderStyleTotalInput[];
 }
 
 export interface UpdateDispatchOrderInput {
@@ -463,7 +477,7 @@ export interface UpdateDispatchOrderInput {
   soDate?: string;
   remarks?: string | null;
   distributors?: DispatchOrderDistributorGroupInput[];
-  lines?: DispatchOrderLineInput[];
+  lines?: DispatchOrderStyleTotalInput[];
 }
 
 type FlattenedDestinationInput = DispatchOrderDestinationInput & { groupClientKey: string };
@@ -508,7 +522,7 @@ function validateDistributorGroups(distributors: DispatchOrderDistributorGroupIn
   return flattened;
 }
 
-function validateLinesShape(destinations: DispatchOrderDestinationInput[], lines: DispatchOrderLineInput[]): void {
+function validateStyleTotalsShape(destinations: DispatchOrderDestinationInput[], lines: DispatchOrderStyleTotalInput[]): void {
   if (lines.length === 0) throw HttpError.badRequest('At least one quantity line is required');
   const clientKeySet = new Set(destinations.map((d) => d.clientKey));
   const usedDestinations = new Set<string>();
@@ -517,12 +531,12 @@ function validateLinesShape(destinations: DispatchOrderDestinationInput[], lines
     if (!clientKeySet.has(line.destinationClientKey)) {
       throw HttpError.badRequest(`Line references unknown destination clientKey ${line.destinationClientKey}`);
     }
-    if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
-      throw HttpError.badRequest('Line quantity must be a positive integer');
+    if (!Number.isInteger(line.totalQuantity) || line.totalQuantity <= 0) {
+      throw HttpError.badRequest('Total quantity must be a positive integer');
     }
     usedDestinations.add(line.destinationClientKey);
-    const key = `${line.destinationClientKey}:${line.styleId}:${line.sizeId}`;
-    if (dedupeKeys.has(key)) throw HttpError.badRequest('Duplicate destination/style/size line in the same request');
+    const key = `${line.destinationClientKey}:${line.styleId}`;
+    if (dedupeKeys.has(key)) throw HttpError.badRequest('Duplicate destination/style line in the same request — enter one total per Style per destination');
     dedupeKeys.add(key);
   }
   for (const clientKey of clientKeySet) {
@@ -530,15 +544,154 @@ function validateLinesShape(destinations: DispatchOrderDestinationInput[], lines
   }
 }
 
-async function assertStylesAndSizesExist(styleIds: string[], sizeIds: string[]): Promise<void> {
-  const [styles, sizes] = await Promise.all([
-    prisma.style.findMany({ where: { id: { in: styleIds } }, select: { id: true } }),
-    prisma.size.findMany({ where: { id: { in: sizeIds } }, select: { id: true } }),
-  ]);
+async function assertStylesExist(styleIds: string[]): Promise<void> {
+  const styles = await prisma.style.findMany({ where: { id: { in: styleIds } }, select: { id: true } });
   const styleIdSet = new Set(styles.map((s) => s.id));
-  const sizeIdSet = new Set(sizes.map((s) => s.id));
   for (const styleId of styleIds) if (!styleIdSet.has(styleId)) throw HttpError.badRequest(`Style ${styleId} not found`);
-  for (const sizeId of sizeIds) if (!sizeIdSet.has(sizeId)) throw HttpError.badRequest(`Size ${sizeId} not found`);
+}
+
+// Resolves a Style's eligible Sizes AT THIS FACTORY for equal-distribution
+// purposes. Deliberately NOT the Style/Size/StyleSize master-data active
+// status — a Dispatch Order has always allocated physically existing
+// QA-passed stock regardless of master-data status (see
+// assertStylesAndSizesExist's original "existence-only" comment, still
+// true, and the "does not require an active StyleSize mapping" regression
+// test below), so inventing an assortment-based eligibility rule here would
+// be a new business model, not a reuse of the existing one per the DEMO-016
+// plan. Eligibility is instead every Size this Style has EVER had QA-passed
+// pooled stock for at this Factory (getPooledFactoryInventory — the exact
+// same pool the allocation planner below draws from), independent of
+// current availableQuantity: a Size that has since been fully consumed
+// stays part of the split and correctly fails as an insufficient-stock
+// shortfall (reserveAcrossPools) rather than silently shrinking the Style's
+// Size count out from under a Merchandiser re-saving the same order.
+async function resolveEligibleSizeIds(client: Tx | typeof prisma, factoryId: string, styleId: string): Promise<string[]> {
+  const pool = await getPooledFactoryInventory(client, { factoryId, styleId });
+  return [...new Set(pool.map((row) => row.sizeId))];
+}
+
+async function describeStyleForError(client: Tx | typeof prisma, styleId: string): Promise<string> {
+  const style = await client.style.findUnique({ where: { id: styleId }, select: { styleNumber: true, styleName: true } });
+  return style ? `${style.styleNumber} — ${style.styleName}` : 'Selected Style';
+}
+
+// A destination's clientKey is only ever a per-request linking key, never
+// guaranteed to equal its real id (a caller may reuse the existing id as
+// its clientKey, as the Web form's edit-hydration happens to, or supply
+// any other string alongside a separate `id` field) — so recovering an
+// existing line's id below must resolve clientKey -> real destinationId
+// through this map, never assume they're the same string. Only existing
+// destinations (those with an `id`) are included; a clientKey with no
+// entry here is either brand new or wrong, and either way has nothing to
+// recover.
+function resolveDestinationIdByClientKey(destinationsInput: FlattenedDestinationInput[]): Map<string, string> {
+  const resolved = new Map<string, string>();
+  for (const d of destinationsInput) if (d.id) resolved.set(d.clientKey, d.id);
+  return resolved;
+}
+
+// DEMO-016 core: expands "one total per Style per destination" into the
+// existing per-Style+Size persisted line shape, which the allocation/
+// reconciliation machinery below is left entirely unchanged.
+//
+// Existing line id recovery is two-pass, because the new client contract
+// carries no line id at all — only (destinationClientKey, styleId):
+//   Pass 1 (exact): (destinationId, styleId, sizeId) unchanged — by far the
+//     common case (editing quantities, adding/removing Styles).
+//   Pass 2 (moved): a Style's whole demand reassigned from one destination
+//     to another — nothing matches pass 1 for either side, so an
+//     unclaimed existing line sharing just (styleId, sizeId) is treated as
+//     the SAME line moving, recovering its id so the reconciliation below
+//     updates its destinationId in place (preserving allocations) instead
+//     of deleting a possibly-already-packed line and creating a new one,
+//     which would wrongly trip the "cannot remove a packed line" guard —
+//     see the Phase 4 "moving a stable line" carton-mismatch regression.
+//     Candidates are consumed in a stable (sorted-id) order so a multi-line
+//     move is deterministic.
+// `existingLines` is empty for creation (nothing to recover) and must be
+// the CURRENT, just-loaded-under-lock lines for an update (never a
+// pre-transaction snapshot, to avoid racing a concurrent edit of the same
+// order).
+async function expandStyleTotalsToLines(
+  client: Tx | typeof prisma,
+  factoryId: string,
+  styleTotals: DispatchOrderStyleTotalInput[],
+  existingLines: Array<{ id: string; destinationId: string; styleId: string; sizeId: string }>,
+  destinationIdByClientKey: Map<string, string>,
+): Promise<DispatchOrderLineInput[]> {
+  const distinctStyleIds = [...new Set(styleTotals.map((t) => t.styleId))];
+  const sizeIdsByStyle = new Map<string, string[]>(
+    await Promise.all(
+      distinctStyleIds.map(async (styleId) => [styleId, await resolveEligibleSizeIds(client, factoryId, styleId)] as const),
+    ),
+  );
+
+  interface ExpandedEntry {
+    destinationClientKey: string;
+    destinationId: string | undefined;
+    styleId: string;
+    sizeId: string;
+    quantity: number;
+    id?: string;
+  }
+  const entries: ExpandedEntry[] = [];
+  for (const total of styleTotals) {
+    if (!Number.isInteger(total.totalQuantity) || total.totalQuantity <= 0) {
+      throw HttpError.badRequest('Total quantity must be a positive integer');
+    }
+    const sizeIds = sizeIdsByStyle.get(total.styleId) ?? [];
+    if (sizeIds.length === 0) {
+      throw HttpError.badRequest(
+        `${await describeStyleForError(client, total.styleId)} has no QA-passed pooled stock at the selected Factory and cannot be allocated`,
+      );
+    }
+    if (total.totalQuantity % sizeIds.length !== 0) {
+      throw HttpError.badRequest(
+        `${await describeStyleForError(client, total.styleId)}: ${total.totalQuantity} does not divide evenly across its ${sizeIds.length} pooled Size(s) at this Factory. Enter a total that is an exact multiple of ${sizeIds.length}.`,
+      );
+    }
+    const perSizeQuantity = total.totalQuantity / sizeIds.length;
+    const destinationId = destinationIdByClientKey.get(total.destinationClientKey);
+    for (const sizeId of sizeIds) {
+      entries.push({ destinationClientKey: total.destinationClientKey, destinationId, styleId: total.styleId, sizeId, quantity: perSizeQuantity });
+    }
+  }
+
+  const claimedIds = new Set<string>();
+  const existingByExactKey = new Map(existingLines.map((l) => [`${l.destinationId}:${l.styleId}:${l.sizeId}`, l.id]));
+  const existingPoolByStyleSize = new Map<string, string[]>();
+  for (const line of [...existingLines].sort((a, b) => a.id.localeCompare(b.id))) {
+    const poolKey = `${line.styleId}:${line.sizeId}`;
+    const pool = existingPoolByStyleSize.get(poolKey) ?? [];
+    pool.push(line.id);
+    existingPoolByStyleSize.set(poolKey, pool);
+  }
+
+  for (const entry of entries) {
+    if (!entry.destinationId) continue;
+    const exactId = existingByExactKey.get(`${entry.destinationId}:${entry.styleId}:${entry.sizeId}`);
+    if (exactId && !claimedIds.has(exactId)) {
+      entry.id = exactId;
+      claimedIds.add(exactId);
+    }
+  }
+  for (const entry of entries) {
+    if (entry.id) continue;
+    const pool = existingPoolByStyleSize.get(`${entry.styleId}:${entry.sizeId}`) ?? [];
+    const movedId = pool.find((id) => !claimedIds.has(id));
+    if (movedId) {
+      entry.id = movedId;
+      claimedIds.add(movedId);
+    }
+  }
+
+  return entries.map((entry) => ({
+    ...(entry.id ? { id: entry.id } : {}),
+    destinationClientKey: entry.destinationClientKey,
+    styleId: entry.styleId,
+    sizeId: entry.sizeId,
+    quantity: entry.quantity,
+  }));
 }
 
 interface DistributorRow {
@@ -768,9 +921,6 @@ export async function createDispatchOrder(
   idempotencyKey: string,
 ) {
   assertDispatchOrderMutationAccess(actor);
-  if (input.lines.some((line) => line.id)) {
-    throw HttpError.badRequest('Line ids may only be supplied when correcting an existing dispatch order');
-  }
   for (const group of input.distributors) {
     if (group.id) throw HttpError.badRequest('Distributor group ids may only be supplied when correcting an existing dispatch order');
     if (group.destinations.some((d) => d.id)) {
@@ -778,17 +928,14 @@ export async function createDispatchOrder(
     }
   }
   const flattenedDestinations = validateDistributorGroups(input.distributors);
-  validateLinesShape(flattenedDestinations, input.lines);
+  validateStyleTotalsShape(flattenedDestinations, input.lines);
 
   const distributorById = await loadAndValidateDistributors(input.distributors.map((g) => g.distributorId));
   const factory = await prisma.factory.findUnique({ where: { id: input.factoryId } });
   if (!factory) throw HttpError.badRequest('Factory not found');
   if (factory.status !== 'ACTIVE') throw HttpError.badRequest('Factory is not active');
 
-  await assertStylesAndSizesExist(
-    [...new Set(input.lines.map((l) => l.styleId))],
-    [...new Set(input.lines.map((l) => l.sizeId))],
-  );
+  await assertStylesExist([...new Set(input.lines.map((l) => l.styleId))]);
 
   const soId = createId();
   const hash = requestHash(input);
@@ -799,9 +946,13 @@ export async function createDispatchOrder(
 
     await resolveRetailStoreSnapshots(tx, input.distributors, flattenedDestinations);
 
+    // Nothing exists yet, so there is no line id to recover — every
+    // expanded per-Size line is a fresh create.
+    const expandedLines = await expandStyleTotalsToLines(tx, input.factoryId, input.lines, [], new Map());
+
     const groupIdByClientKey = new Map(input.distributors.map((g) => [g.clientKey, createId()]));
     const destinationIdByClientKey = new Map(flattenedDestinations.map((d) => [d.clientKey, createId()]));
-    const lineDefs = input.lines.map((line) => ({
+    const lineDefs = expandedLines.map((line) => ({
       id: createId(),
       destinationId: destinationIdByClientKey.get(line.destinationClientKey)!,
       styleId: line.styleId,
@@ -976,11 +1127,8 @@ export async function updateDispatchOrder(
   if (input.lines) {
     if (input.lines.length === 0) throw HttpError.badRequest('At least one quantity line is required');
     flattenedDestinations = validateDistributorGroups(input.distributors!);
-    validateLinesShape(flattenedDestinations, input.lines);
-    await assertStylesAndSizesExist(
-      [...new Set(input.lines.map((l) => l.styleId))],
-      [...new Set(input.lines.map((l) => l.sizeId))],
-    );
+    validateStyleTotalsShape(flattenedDestinations, input.lines);
+    await assertStylesExist([...new Set(input.lines.map((l) => l.styleId))]);
   }
   if (input.factoryId) {
     const factory = await prisma.factory.findUnique({ where: { id: input.factoryId } });
@@ -1111,6 +1259,21 @@ export async function updateDispatchOrder(
       const factoryChanging = newFactoryId !== order.factoryId;
       const linesChanging = Boolean(input.lines);
 
+      // DEMO-016: expand this edit's Style totals into the existing per-Size
+      // line shape now, against the lines just loaded under this order's
+      // advisory lock — never a pre-transaction snapshot — so id recovery
+      // (and therefore the in-place-update vs. delete+recreate distinction
+      // below) can never race a concurrent edit of the same order.
+      const expandedLines = linesChanging
+        ? await expandStyleTotalsToLines(
+            tx,
+            newFactoryId,
+            input.lines!,
+            loadedLines,
+            resolveDestinationIdByClientKey(flattenedDestinations),
+          )
+        : undefined;
+
       let releaseCount = 0;
       let hardDeletedFactoryDispatchIds: string[] = [];
       const distributorsAdded: DistributorAuditEntry[] = [];
@@ -1159,7 +1322,7 @@ export async function updateDispatchOrder(
           ? resolveDesiredLinesForFullReplacement(
               existingDestinations,
               flattenedDestinations,
-              input.lines!,
+              expandedLines!,
               groupIdByClientKey,
             )
           : {
@@ -1249,7 +1412,7 @@ export async function updateDispatchOrder(
           existingDestinations,
           loadedLines,
           flattenedDestinations,
-          input.lines!,
+          expandedLines!,
           groupIdByClientKey,
           canMoveByDestinationId,
           packedByAllocation,

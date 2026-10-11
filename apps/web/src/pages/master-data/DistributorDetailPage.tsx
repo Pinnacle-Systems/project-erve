@@ -1,19 +1,20 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse, UserOption } from '@erve/types';
 import { ConfirmDialog, PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
-import { Button, ValidationMessage } from '@erve/primitives';
+import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import { canManageDistributorMaster } from '../../auth/permissions.js';
+import { canManageDistributorMaster, canManageUsers } from '../../auth/permissions.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { UserLookupField, userLookupQueryKey } from '../users/UserLookupField.js';
+import { InlineUserCreateDialog } from '../users/InlineUserCreateDialog.js';
 import type { Distributor, DistributorUser } from './types.js';
 
 function toErrorMessage(caught: unknown, fallback: string): string {
@@ -25,10 +26,24 @@ function toErrorMessage(caught: unknown, fallback: string): string {
 }
 
 function UserMappingPanel({ distributor }: { distributor: Distributor }) {
+  const { user: currentUser } = useAuth();
   const queryClient = useQueryClient();
   const [selectedUser, setSelectedUser] = useState<UserOption | null>(null);
   const [removeTarget, setRemoveTarget] = useState<DistributorUser | null>(null);
   const [error, setError] = useState('');
+  const [creating, setCreating] = useState(false);
+  const creationGeneration = useRef(0);
+  const [generation, setGeneration] = useState(0);
+  useEffect(
+    () => () => {
+      creationGeneration.current += 1;
+    },
+    [],
+  );
+  function closeCreation() {
+    creationGeneration.current += 1;
+    setCreating(false);
+  }
 
   const mappedUsersQuery = useQuery({
     queryKey: ['distributor-users', distributor.id],
@@ -69,6 +84,19 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
       await invalidateMappings();
     },
     onError: (caught) => setError(toErrorMessage(caught, 'Unable to assign user')),
+  });
+
+  // DEMO-015: POST /users has no distributorId field (unlike factoryId for
+  // FACTORY_USER) — a Distributor User is always mapped via this SAME
+  // second call the ordinary assign flow above already uses, just chained
+  // automatically right after inline creation succeeds.
+  const assignCreatedMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      setError('');
+      await apiClient.post(`/users/${userId}/distributors`, { distributorId: distributor.id });
+    },
+    onSuccess: invalidateMappings,
+    onError: (caught) => setError(toErrorMessage(caught, 'User created, but could not be mapped to this Distributor')),
   });
 
   const removeMutation = useMutation({
@@ -119,6 +147,23 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
             Users cannot be assigned to an inactive distributor.
           </p>
         ) : null}
+        {/* DEMO-015: offered only when no eligible DISTRIBUTOR-role user
+            exists yet — gated by the User master's own create permission
+            (canManageUsers), not just this panel's broader Distributor-
+            manage access. */}
+        {distributor.status === 'ACTIVE' && canManageUsers(currentUser) && (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              creationGeneration.current += 1;
+              setGeneration(creationGeneration.current);
+              setCreating(true);
+            }}
+          >
+            + Create new Distributor User
+          </Button>
+        )}
         {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
 
         <DataTable
@@ -190,6 +235,29 @@ function UserMappingPanel({ distributor }: { distributor: Distributor }) {
           if (removeTarget) removeMutation.mutate(removeTarget.id);
         }}
       />
+      {creating && (
+        <Dialog
+          open
+          onOpenChange={(next) => {
+            if (!next) closeCreation();
+          }}
+        >
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" onKeyDown={(e) => e.stopPropagation()}>
+            <DialogHeader>
+              <DialogTitle>Create Distributor User</DialogTitle>
+            </DialogHeader>
+            <InlineUserCreateDialog
+              defaultRoles={['DISTRIBUTOR']}
+              onCancel={closeCreation}
+              onCreated={(user) => {
+                if (creationGeneration.current !== generation) return;
+                closeCreation();
+                assignCreatedMutation.mutate(user.id);
+              }}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </Panel>
   );
 }

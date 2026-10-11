@@ -5,22 +5,35 @@ import type { ApiSuccessResponse } from '@erve/types';
 import type { RetailStore } from '@erve/types';
 import { RetailStoreLookupField } from '../master-data/RetailStoreLookupField.js';
 import { createEnterToNextHandler, PageHeader } from '@erve/app-components';
-import { Badge, Button, DatePicker, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import { Badge, Button, DatePicker, NumericField, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { useAuth } from '../../auth/AuthContext.js';
+import { canManageDistributorMaster, canManageFactories } from '../../auth/permissions.js';
 import { DistributorLookupField, type DistributorLookupValue } from '../master-data/DistributorLookupField.js';
+import { FactoryLookupField, type FactoryLookupValue } from '../master-data/FactoryLookupField.js';
+import {
+  DispatchOrderStyleField,
+  groupPooledStylesForFactory,
+  type DispatchOrderStyleOption,
+} from './DispatchOrderStyleField.js';
+import { DispatchOrderQuantityGrid } from './DispatchOrderQuantityGrid.js';
 import type { Factory, PooledFactoryInventoryLine, SaleOrder } from './types.js';
 
+// DEMO-016: one total quantity per Style per destination — the server alone
+// derives the exact equal per-Size split (see expandStyleTotalsToLines in
+// sale-orders.service.ts). There is no sizeId and no per-line id here any
+// more: the per-Size persisted lines this draft eventually expands into are
+// an implementation detail the form never manipulates directly, and the
+// server recovers their identity itself by natural key on edit.
 interface LineDraft {
   key: string;
-  id?: string;
-  styleId: string;
-  sizeId: string;
-  quantity: string;
+  style: DispatchOrderStyleOption | null;
+  totalQuantity: number | null;
 }
 
 interface DestinationDraft {
@@ -85,7 +98,7 @@ function emptyDestination(): DestinationDraft {
 }
 
 function emptyLine(): LineDraft {
-  return { key: nextKey('line'), styleId: '', sizeId: '', quantity: '' };
+  return { key: nextKey('line'), style: null, totalQuantity: null };
 }
 
 function emptyDistributorGroup(): DistributorGroupDraft {
@@ -96,8 +109,20 @@ export function SaleOrderFormPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const isEdit = Boolean(id);
+  const { user } = useAuth();
+  // DEMO-015: computed once here, not inside the shared lookup fields —
+  // they have no AuthContext dependency of their own, so every other
+  // consumer's tests keep working unchanged.
+  const canCreateFactory = canManageFactories(user);
+  const canCreateDistributor = canManageDistributorMaster(user);
 
-  const [factoryId, setFactoryId] = useState('');
+  // Held as the full selected record (like Distributor/Style elsewhere in
+  // this form), never re-derived by looking `factoryId` up in the Factory
+  // options list — a Factory inline-created moments ago (DEMO-015) isn't
+  // in that list's cache yet, and an edit's hydrated Factory may since have
+  // gone INACTIVE and dropped out of it too. Both must still display.
+  const [selectedFactory, setSelectedFactory] = useState<FactoryLookupValue | null>(null);
+  const factoryId = selectedFactory?.id ?? '';
   const [soDate, setSoDate] = useState(() => getLocalDateString());
   const [remarks, setRemarks] = useState('');
   const [distributorGroups, setDistributorGroups] = useState<DistributorGroupDraft[]>([emptyDistributorGroup()]);
@@ -136,27 +161,46 @@ export function SaleOrderFormPage() {
     },
   });
 
+  // DEMO-016/DEMO-003: the Style picker and the computed Size-split preview
+  // are both built directly from the Factory's pooled inventory — no
+  // separate style-options endpoint. Re-grouped whenever the pool reloads
+  // (e.g. the Factory changes).
+  const pooledStyles = useMemo(
+    () => groupPooledStylesForFactory(pooledInventoryQuery.data ?? []),
+    [pooledInventoryQuery.data],
+  );
+  const pooledStyleById = useMemo(() => new Map(pooledStyles.map((s) => [s.styleId, s])), [pooledStyles]);
+
+  // A saved line's Style may have since dropped out of the live pool (fully
+  // consumed, or never re-released) — the server always re-derives the
+  // split from the CURRENT pool, so this form must display the same
+  // current state, not a frozen one. A style that genuinely has no current
+  // pool entry still displays (by its own last-known identity) with zero
+  // pooled Sizes, which DispatchOrderQuantityGrid reports honestly rather
+  // than silently.
+  function resolveStyleOption(fallback: DispatchOrderStyleOption): DispatchOrderStyleOption {
+    return pooledStyleById.get(fallback.styleId) ?? { ...fallback, sizes: [] };
+  }
+
   useEffect(() => {
     if (!soQuery.data) return;
     // Wait for the Factory option list too, not just the Sale Order itself,
-    // before hydrating. Radix Select keeps a hidden native <select>
-    // (SelectBubbleInput) in sync with the controlled value; if we call
-    // setFactoryId while that Select has zero <option> children yet
-    // (factoriesQuery still pending), the browser silently coerces the
-    // native element back to "" and Radix's own change handler then calls
-    // onValueChange(""), clobbering the value we just hydrated with no error
-    // and no further effect re-run (see erve-sale-order-edit-hydration-fix).
-    // Gating on the option query guarantees its <SelectItem>s already exist
-    // in the same render that first sets the hydrated id, so there is no
-    // window for the race. The Distributor lookups need no such gate: each
-    // group's value is hydrated from the Sale Order's own group record.
+    // before hydrating — keeps this whole effect's writes atomic (the
+    // Factory field is now a FactoryLookupField hydrated directly from
+    // so.factory, independent of this list, so the original Radix native-
+    // <select> race this gate was first added for — see
+    // erve-sale-order-edit-hydration-fix — no longer applies to it; the
+    // gate is kept so every field hydrates in one pass rather than Factory
+    // lagging the rest by a render). The Distributor lookups need no such
+    // gate: each group's value is hydrated from the Sale Order's own group
+    // record.
     if (!factoriesQuery.data) return;
     const so = soQuery.data;
     // Hydrates the edit form from an async-loaded record; the data isn't
     // available for a lazy initial-state computation, so this can't be done
     // without an effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFactoryId(so.factory.id);
+    setSelectedFactory(so.factory);
     setSoDate(so.soDate.slice(0, 10));
     setRemarks(so.remarks ?? '');
     setExpectedVersion(so.version);
@@ -166,93 +210,67 @@ export function SaleOrderFormPage() {
         id: group.id,
         distributorId: group.distributor.id,
         distributor: { ...group.distributor, purchaseMode: group.purchaseMode },
-        destinations: group.destinations.map((dest) => ({
-          clientKey: dest.id,
-          id: dest.id,
-          retailStoreId: dest.retailStoreId ?? null,
-          storeCode: dest.storeCode ?? null,
-          label: dest.label ?? '',
-          contactName: dest.contactName ?? '',
-          contactEmail: dest.contactEmail ?? '',
-          contactPhone: dest.contactPhone ?? '',
-          addressLine1: dest.addressLine1,
-          addressLine2: dest.addressLine2 ?? '',
-          city: dest.city,
-          state: dest.state,
-          country: dest.country,
-          postalCode: dest.postalCode ?? '',
-          gstin: dest.gstin ?? '',
-          canMoveDistributor: dest.canMoveDistributor,
-          lines: group.lines
-            .filter((line) => line.destinationId === dest.id)
-            .map((line) => ({
-              key: line.id,
-              id: line.id,
-              styleId: line.styleId,
-              sizeId: line.sizeId,
-              quantity: String(line.quantity),
-            })),
-        })),
+        destinations: group.destinations.map((dest) => {
+          // DEMO-016: the server's per-Size lines for this destination
+          // collapse into one draft row per Style, summing their
+          // quantities back into a single total — the inverse of
+          // expandStyleTotalsToLines.
+          const destLines = group.lines.filter((line) => line.destinationId === dest.id);
+          const byStyle = new Map<string, LineDraft>();
+          for (const line of destLines) {
+            const existing = byStyle.get(line.styleId);
+            if (existing) {
+              existing.totalQuantity = (existing.totalQuantity ?? 0) + line.quantity;
+              continue;
+            }
+            byStyle.set(line.styleId, {
+              key: nextKey('line'),
+              style: {
+                styleId: line.styleId,
+                styleNumber: line.styleNumber,
+                styleName: line.styleName,
+                primaryImage: line.primaryImage,
+                sizes: [],
+              },
+              totalQuantity: line.quantity,
+            });
+          }
+          return {
+            clientKey: dest.id,
+            id: dest.id,
+            retailStoreId: dest.retailStoreId ?? null,
+            storeCode: dest.storeCode ?? null,
+            label: dest.label ?? '',
+            contactName: dest.contactName ?? '',
+            contactEmail: dest.contactEmail ?? '',
+            contactPhone: dest.contactPhone ?? '',
+            addressLine1: dest.addressLine1,
+            addressLine2: dest.addressLine2 ?? '',
+            city: dest.city,
+            state: dest.state,
+            country: dest.country,
+            postalCode: dest.postalCode ?? '',
+            gstin: dest.gstin ?? '',
+            canMoveDistributor: dest.canMoveDistributor,
+            lines: [...byStyle.values()],
+          };
+        }),
       })),
     );
     setHydrated(true);
   }, [soQuery.data, factoriesQuery.data]);
 
-  // Pool key options for the Style/Size selects — the pooled inventory for
-  // the selected Factory, plus (edit mode) any style/size already on a line
-  // of this order, so an existing line's own selection is never dropped
-  // from the dropdown even if this order's own reservation currently
-  // reduces its visible "available" to zero in the naive pool view. Flattens
-  // across every Distributor group's destinations — the pool itself is
-  // Factory+Style+Size only, distributor-agnostic.
   const allDestinations = useMemo(() => distributorGroups.flatMap((g) => g.destinations), [distributorGroups]);
-
-  const poolOptions = useMemo(() => {
-    const byKey = new Map<string, { styleId: string; styleNumber: string; styleName: string; sizeId: string; sizeCode: string; sizeLabel: string; availableQuantity: number | null }>();
-    for (const row of pooledInventoryQuery.data ?? []) {
-      byKey.set(`${row.styleId}:${row.sizeId}`, { ...row, availableQuantity: row.availableQuantity });
-    }
-    for (const dest of allDestinations) {
-      for (const line of dest.lines) {
-        if (!line.styleId || !line.sizeId) continue;
-        const key = `${line.styleId}:${line.sizeId}`;
-        if (!byKey.has(key)) {
-          byKey.set(key, {
-            styleId: line.styleId,
-            styleNumber: line.styleId,
-            styleName: '',
-            sizeId: line.sizeId,
-            sizeCode: line.sizeId,
-            sizeLabel: '',
-            availableQuantity: null,
-          });
-        }
-      }
-    }
-    return [...byKey.values()];
-  }, [pooledInventoryQuery.data, allDestinations]);
-
-  const totalsByPool = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const dest of allDestinations) {
-      for (const line of dest.lines) {
-        if (!line.styleId || !line.sizeId) continue;
-        const key = `${line.styleId}:${line.sizeId}`;
-        totals.set(key, (totals.get(key) ?? 0) + (Number(line.quantity) || 0));
-      }
-    }
-    return totals;
-  }, [allDestinations]);
 
   function groupTotal(group: DistributorGroupDraft): number {
     return group.destinations.reduce(
-      (sum, dest) => sum + dest.lines.reduce((lineSum, line) => lineSum + (Number(line.quantity) || 0), 0),
+      (sum, dest) => sum + dest.lines.reduce((lineSum, line) => lineSum + (line.totalQuantity ?? 0), 0),
       0,
     );
   }
 
   function destinationTotal(dest: DestinationDraft): number {
-    return dest.lines.reduce((sum, line) => sum + (Number(line.quantity) || 0), 0);
+    return dest.lines.reduce((sum, line) => sum + (line.totalQuantity ?? 0), 0);
   }
 
   function updateGroup(groupKey: string, patch: Partial<DistributorGroupDraft>) {
@@ -406,15 +424,16 @@ export function SaleOrderFormPage() {
           gstin: d.gstin || null,
         })),
       }));
+      // DEMO-016: one total per Style per destination — no sizeId, no line
+      // id. The server derives the per-Size split and recovers existing
+      // per-Size line identity itself.
       const linesPayload = allDestinations.flatMap((d) =>
         d.lines
-          .filter((l) => l.styleId && l.sizeId && Number(l.quantity) > 0)
+          .filter((l) => l.style && (l.totalQuantity ?? 0) > 0)
           .map((l) => ({
-            ...(l.id ? { id: l.id } : {}),
             destinationClientKey: d.clientKey,
-            styleId: l.styleId,
-            sizeId: l.sizeId,
-            quantity: Number(l.quantity),
+            styleId: l.style!.styleId,
+            totalQuantity: l.totalQuantity!,
           })),
       );
       if (linesPayload.length === 0) throw new Error('At least one quantity line is required');
@@ -485,19 +504,15 @@ export function SaleOrderFormPage() {
         >
           <FormSection title="Dispatch Order Header">
             <FormGrid layout="content">
-              <SelectField
+              <FactoryLookupField
                 label="Factory"
-                value={factoryId}
-                onValueChange={setFactoryId}
+                value={selectedFactory}
+                onChange={setSelectedFactory}
+                options={factoriesQuery.data ?? []}
                 required
+                allowInlineCreate={canCreateFactory}
                 helpText={isEdit ? 'Changing Factory triggers full reallocation of all stock.' : undefined}
-              >
-                {(factoriesQuery.data ?? []).map((f) => (
-                  <SelectItem key={f.id} value={f.id}>
-                    {f.name}
-                  </SelectItem>
-                ))}
-              </SelectField>
+              />
               <DatePicker
                 label="Dispatch Order Date"
                 value={soDate}
@@ -538,6 +553,7 @@ export function SaleOrderFormPage() {
                             }
                             excludeIds={otherGroupDistributorIds}
                             required
+                            allowInlineCreate={canCreateDistributor}
                           />
                           {selectedDistributor?.purchaseMode && (
                             <div className="flex items-end pb-2">
@@ -550,7 +566,11 @@ export function SaleOrderFormPage() {
                           <EmptyState title="Select a Factory" description="Choose a Factory to see its available pooled stock before adding destinations." />
                         ) : (
                         <div className="space-y-3 pl-4">
-                          {group.destinations.map((dest, destIndex) => (
+                          {group.destinations.map((dest, destIndex) => {
+                            const chosenStyleIds = new Set(
+                              dest.lines.filter((l) => l.style).map((l) => l.style!.styleId),
+                            );
+                            return (
                             <Panel key={dest.clientKey} title={`Destination ${destIndex + 1}`}>
                               <div className="space-y-4">
                                 <RetailStoreLookupField
@@ -648,50 +668,46 @@ export function SaleOrderFormPage() {
                                   />
                                 </FormGrid>
 
-                                <div className="space-y-2">
+                                <div className="space-y-3">
                                   {dest.lines.map((line) => {
-                                    const pool = poolOptions.find((p) => p.styleId === line.styleId && p.sizeId === line.sizeId);
+                                    const resolvedStyle = line.style ? resolveStyleOption(line.style) : null;
                                     return (
-                                      <div key={line.key} className="flex items-end gap-2">
-                                        <SelectField
-                                          id={`line-${line.key}-style-size`}
-                                          label="Style / Size"
-                                          value={line.styleId && line.sizeId ? `${line.styleId}:${line.sizeId}` : ''}
-                                          onValueChange={(value) => {
-                                            const [styleId, sizeId] = value.split(':') as [string, string];
-                                            updateLine(group.clientKey, dest.clientKey, line.key, { styleId, sizeId });
-                                          }}
-                                          width="lg"
-                                        >
-                                          {poolOptions.map((p) => (
-                                            <SelectItem key={`${p.styleId}:${p.sizeId}`} value={`${p.styleId}:${p.sizeId}`}>
-                                              {p.styleNumber} {p.styleName ? `— ${p.styleName}` : ''} / {p.sizeLabel || p.sizeCode}
-                                              {p.availableQuantity !== null ? ` (${p.availableQuantity} available)` : ''}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectField>
-                                        <TextField
-                                          id={`line-${line.key}-quantity`}
-                                          label="Quantity"
-                                          type="number"
-                                          min={1}
-                                          width="xs"
-                                          value={line.quantity}
-                                          onChange={(e) => updateLine(group.clientKey, dest.clientKey, line.key, { quantity: e.target.value })}
-                                        />
-                                        {pool && (
-                                          <span className="pb-2 text-xs text-[var(--erp-text-muted)]">
-                                            Pool available: {pool.availableQuantity ?? 'n/a'}
-                                          </span>
-                                        )}
-                                        <Button type="button" variant="ghost" onClick={() => removeLine(group.clientKey, dest.clientKey, line.key)}>
-                                          Remove
-                                        </Button>
-                                      </div>
+                                      <Panel key={line.key} className="bg-surface-muted">
+                                        <div className="space-y-2">
+                                          <div className="flex items-end gap-2">
+                                            <DispatchOrderStyleField
+                                              id={`line-${line.key}-style`}
+                                              value={line.style}
+                                              onChange={(style) => updateLine(group.clientKey, dest.clientKey, line.key, { style })}
+                                              options={pooledStyles}
+                                              excludeStyleIds={
+                                                line.style
+                                                  ? new Set([...chosenStyleIds].filter((s) => s !== line.style!.styleId))
+                                                  : chosenStyleIds
+                                              }
+                                            />
+                                            <NumericField
+                                              id={`line-${line.key}-total-quantity`}
+                                              label="Total Quantity"
+                                              mode="integer"
+                                              min={1}
+                                              width="xs"
+                                              value={line.totalQuantity}
+                                              onChange={(value) => updateLine(group.clientKey, dest.clientKey, line.key, { totalQuantity: value })}
+                                            />
+                                            <Button type="button" variant="ghost" onClick={() => removeLine(group.clientKey, dest.clientKey, line.key)}>
+                                              Remove
+                                            </Button>
+                                          </div>
+                                          {resolvedStyle && (
+                                            <DispatchOrderQuantityGrid style={resolvedStyle} totalQuantity={line.totalQuantity} />
+                                          )}
+                                        </div>
+                                      </Panel>
                                     );
                                   })}
                                   <Button type="button" variant="secondary" onClick={() => addLine(group.clientKey, dest.clientKey)}>
-                                    + Add Style/Size line
+                                    + Add Style
                                   </Button>
                                 </div>
 
@@ -725,7 +741,8 @@ export function SaleOrderFormPage() {
                                 </div>
                               </div>
                             </Panel>
-                          ))}
+                            );
+                          })}
                           <Button type="button" variant="secondary" onClick={() => addDestination(group.clientKey)}>
                             + Add Destination
                           </Button>
@@ -750,32 +767,9 @@ export function SaleOrderFormPage() {
             </div>
           </FormSection>
 
-          {totalsByPool.size > 0 && (
-            <FormSection title="Summary">
-              <div className="space-y-1 text-sm">
-                {[...totalsByPool.entries()].map(([key, qty]) => {
-                  const pool = poolOptions.find((p) => `${p.styleId}:${p.sizeId}` === key);
-                  return (
-                    <div key={key} className="flex justify-between">
-                      <span>
-                        {pool ? `${pool.styleNumber} / ${pool.sizeLabel || pool.sizeCode}` : key}
-                      </span>
-                      <span>
-                        Requested {qty}
-                        {pool?.availableQuantity !== undefined && pool?.availableQuantity !== null
-                          ? ` / Available ${pool.availableQuantity}`
-                          : ''}
-                      </span>
-                    </div>
-                  );
-                })}
-                <div className="flex justify-between border-t border-[var(--erp-border)] pt-2 font-medium">
-                  <span>Dispatch Order total</span>
-                  <span>{[...totalsByPool.values()].reduce((sum, qty) => sum + qty, 0)}</span>
-                </div>
-              </div>
-            </FormSection>
-          )}
+          <div className="flex items-center justify-end border-t border-[var(--erp-border)] pt-3 text-sm font-medium">
+            Dispatch Order total: {allDestinations.reduce((sum, d) => sum + destinationTotal(d), 0)}
+          </div>
 
           {error && <ValidationMessage tone="error">{error}</ValidationMessage>}
 
