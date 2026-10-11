@@ -1,0 +1,98 @@
+name: Invoice native browser verification
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: invoice-native-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    if: github.head_ref == 'feature/invoice-inv007-workflow' || github.head_ref == 'feature/invoice-inv008-pdf'
+    name: Native Tax Invoice browser evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erve_invoice_native_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d erve_invoice_native_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erve_native_guard_placeholder
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erve_invoice_native_test
+      JWT_ACCESS_SECRET: disposable-native-access-secret-not-used-outside-this-run
+      JWT_REFRESH_SECRET: disposable-native-refresh-secret-not-used-outside-this-run
+      NODE_ENV: test
+      HOST: 127.0.0.1
+      PORT: 4107
+      CORS_ORIGIN: http://localhost:5177
+      VITE_API_URL: http://localhost:4107
+      NATIVE_FIXTURE_PATH: ${{ github.workspace }}/.artifacts/native-invoice-fixtures.json
+      FILE_STORAGE_DIR: ${{ github.workspace }}/.artifacts/native-media
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install existing package dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm --filter @erve/api prisma:generate
+      - name: Require preinstalled Chrome and install desktop utilities
+        run: |
+          chrome=$(command -v google-chrome || command -v google-chrome-stable)
+          test -n "$chrome"
+          "$chrome" --version
+          echo "NATIVE_CHROME_BINARY=$chrome" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb openbox imagemagick x11-utils xdotool
+      - name: Verify disposable target and replay schema
+        working-directory: apps/api
+        run: |
+          pnpm exec tsx -e "import {requireSafeTestDatabaseUrl} from './src/test/database-safety.ts'; const safe=requireSafeTestDatabaseUrl({testDatabaseUrl:process.env.TEST_DATABASE_URL,developmentDatabaseUrl:process.env.DATABASE_URL}); if(safe.databaseName!=='erve_invoice_native_test') throw Error('Unexpected native target'); console.log(safe.databaseName);"
+          DATABASE_URL="$TEST_DATABASE_URL" pnpm prisma:migrate:deploy
+      - name: Create synthetic operational and invoice fixtures
+        working-directory: apps/api
+        run: pnpm exec tsx src/test/native-invoice-fixtures.ts
+      - name: Start loopback API and web application
+        run: |
+          mkdir -p .artifacts
+          DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @erve/api dev > .artifacts/native-api.log 2>&1 &
+          pnpm --filter @erve/web exec vite --host 127.0.0.1 --port 5177 > .artifacts/native-web.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:5177/ > /dev/null && curl -fsS http://localhost:4107/health > /dev/null; then break; fi
+            echo "Waiting for web server ($attempt/60)"
+            sleep 1
+          done
+          curl -fsS http://localhost:5177/ > /dev/null
+          curl -fsS http://localhost:4107/health > /dev/null
+      - name: Verify native maximization, zoom and Accountant workflow
+        run: node scripts/invoice-native-browser.mjs
+      - name: Upload screenshots and native-window proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invoice-native-browser-evidence
+          path: .artifacts/native-browser-evidence/
+          retention-days: 14
+      - name: Diagnose application startup failure
+        if: failure()
+        run: |
+          for log in .artifacts/native-api.log .artifacts/native-web.log; do
+            if test -f "$log"; then
+              echo "$log"
+              tail -n 40 "$log"
+            fi
+          done

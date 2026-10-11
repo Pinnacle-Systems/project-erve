@@ -1,0 +1,181 @@
+/** @vitest-environment jsdom */
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AuthUser, Role, TaxInvoiceReviewView } from '@erve/types';
+import { apiClient } from '../../lib/api-client.js';
+import * as Auth from '../../auth/AuthContext.js';
+import { TaxInvoiceDetailPage } from './TaxInvoiceDetailPage.js';
+import { taxInvoiceFixture } from './tax-invoice-test-fixture.js';
+
+let container: HTMLDivElement;
+let root: Root;
+beforeEach(() => {
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  vi.restoreAllMocks();
+});
+const text = () => document.body.textContent ?? '';
+const button = (label: string) =>
+  Array.from(document.querySelectorAll('button')).find(
+    (node) => node.textContent?.trim() === label,
+  );
+async function render(
+  invoice: TaxInvoiceReviewView,
+  role: Role = 'ACCOUNTANT',
+  auditError = false,
+) {
+  const user: AuthUser = {
+    id: 'user-1',
+    email: 'user@test.local',
+    mobile: null,
+    name: 'Test User',
+    roles: [role],
+  };
+  vi.spyOn(Auth, 'useAuth').mockReturnValue({
+    user,
+    token: 'test-token',
+    isInitializing: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+    refreshUser: vi.fn(),
+  } as unknown as ReturnType<typeof Auth.useAuth>);
+  vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    if (url.endsWith('/review')) return { data: { data: invoice } };
+    if (url.endsWith('/audit')) {
+      if (auditError) throw new Error('Audit service unavailable');
+      return {
+        data: {
+          data: [
+            {
+              id: 'event-1',
+              action: 'TAX_INVOICE_LINE_RATE_OVERRIDDEN',
+              entityType: 'TaxInvoiceLine',
+              entityId: 'line-1',
+              metadata: {
+                calculatedUnitRate: '66.676667',
+                overrideUnitRate: '70.00',
+                reason: 'Commercial correction',
+              },
+              actor: { id: 'acct-1', name: 'Accountant One' },
+              createdAt: '2026-10-11T05:00:00.000Z',
+            },
+          ],
+        },
+      };
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  act(() =>
+    root.render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <MemoryRouter initialEntries={['/fulfillment/tax-invoices/inv-1']}>
+          <Routes>
+            <Route path="/fulfillment/tax-invoices/:id" element={<TaxInvoiceDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  );
+  await vi.waitFor(() => expect(text()).toContain('ST-001'));
+}
+describe('Tax Invoice Accountant review and immutable presentation', () => {
+  it('does not submit finalization after backend review values change', async () => {
+    await render(taxInvoiceFixture());
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { data: taxInvoiceFixture({ payableTotal: '491.00' }) },
+    });
+    const post = vi.spyOn(apiClient, 'post');
+    await act(async () => button('Finalize invoice')?.click());
+    await act(async () => button('Confirm finalization')?.click());
+    await vi.waitFor(() => expect(text()).toContain('Review values or prerequisites changed'));
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('retains the draft and explains a rejected finalization', async () => {
+    await render(taxInvoiceFixture());
+    vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('Finalization unavailable'));
+    await act(async () => button('Finalize invoice')?.click());
+    await act(async () => button('Confirm finalization')?.click());
+    await vi.waitFor(() => expect(text()).toContain('Finalization unavailable'));
+    expect(button('Finalize invoice')).toBeDefined();
+    expect(text()).not.toContain('EI/26-27/');
+  });
+  it('shows explicit draft preview, exact backend rate and read-only quantity', async () => {
+    await render(taxInvoiceFixture());
+    expect(text()).toContain('Preview');
+    expect(text()).toContain('₹66.676667');
+    expect(text()).not.toContain('EI/26-27/');
+    expect(document.querySelector('input[aria-label*="quantity"]')).toBeNull();
+    expect(button('Finalize invoice')).toBeDefined();
+  });
+  it('does not offer Accountant mutations to ADMIN', async () => {
+    await render(taxInvoiceFixture(), 'ADMIN');
+    expect(button('Finalize invoice')).toBeUndefined();
+    expect(button('Override')).toBeUndefined();
+  });
+  it('presents legacy issued totals without manufacturing zero round-off', async () => {
+    await render(
+      taxInvoiceFixture({
+        status: 'FINALIZED',
+        invoiceNumber: 'EI/26-27/0001',
+        payableTotal: null,
+        roundOffAdjustment: null,
+        roundingPolicy: null,
+        finalizedAt: '2026-10-11T05:00:00.000Z',
+        review: { state: 'FINALIZED', isPreview: false, calculatedAt: null, blockers: [] },
+      }),
+    );
+    expect(text()).toContain('Original issued total');
+    expect(text()).toContain('Not snapshotted');
+    expect(button('Finalize invoice')).toBeUndefined();
+    expect(button('Override')).toBeUndefined();
+  });
+  it('shows persisted financial audit context', async () => {
+    await render(taxInvoiceFixture());
+    await act(async () =>
+      button('History')?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      ),
+    );
+    await vi.waitFor(() => expect(text()).toContain('Commercial correction'));
+    expect(text()).toContain('Accountant One');
+    expect(text()).toContain('₹66.676667');
+  });
+  it('distinguishes audit service failure from empty history', async () => {
+    await render(taxInvoiceFixture(), 'ACCOUNTANT', true);
+    await act(async () =>
+      button('History')?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      ),
+    );
+    await vi.waitFor(() => expect(text()).toContain('Unable to load financial history'));
+    expect(text()).not.toContain('No financial history');
+  });
+  it('blocks finalization when backend review reports missing prerequisites', async () => {
+    await render(
+      taxInvoiceFixture({
+        grandTotal: null,
+        payableTotal: null,
+        review: {
+          state: 'BLOCKED',
+          isPreview: true,
+          calculatedAt: null,
+          blockers: [
+            { code: 'HSN_NOT_ASSIGNED', message: 'Complete the canonical HSN assignment' },
+          ],
+        },
+      }),
+    );
+    expect(text()).toContain('Complete the canonical HSN assignment');
+    expect((button('Finalize invoice') as HTMLButtonElement).disabled).toBe(true);
+  });
+});

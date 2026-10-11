@@ -20,6 +20,8 @@ import {
   canMutateInvoiceHandoff,
   canViewInvoiceHandoff,
   canViewFactoryInvoice,
+  canViewTaxInvoice,
+  canMutateTaxInvoice,
   canConfirmFactoryInvoice,
   canManageFactoryInvoiceFinancials,
   canViewSaleOrReturnPosition,
@@ -381,6 +383,11 @@ export const canConfirmFactoryInvoices = (user: AuthUser | null | undefined) =>
 
 export const canEditFactoryInvoiceFinancials = (user: AuthUser | null | undefined) =>
   Boolean(user && canManageFactoryInvoiceFinancials(user));
+
+export const canViewTaxInvoices = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewTaxInvoice(user));
+export const canMutateTaxInvoices = (user: AuthUser | null | undefined) =>
+  Boolean(user && canMutateTaxInvoice(user));
 
 export const canViewSaleOrReturnPositions = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewSaleOrReturnPosition(user));

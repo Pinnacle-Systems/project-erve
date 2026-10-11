@@ -10,6 +10,12 @@ import { apiClient } from '../lib/api-client.js';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock components to simplify route testing
+vi.mock('../pages/fulfillment/TaxInvoiceListPage.js', () => ({
+  TaxInvoiceListPage: () => <div>TaxInvoiceListPage</div>,
+}));
+vi.mock('../pages/fulfillment/TaxInvoiceDetailPage.js', () => ({
+  TaxInvoiceDetailPage: () => <div>TaxInvoiceDetailPage</div>,
+}));
 vi.mock('../pages/AppLayout.js', () => ({
   AppLayout: () => (
     <div data-testid="layout">
@@ -148,6 +154,24 @@ function getPageContent(): string {
 
 describe('AppRoutes Permissions', () => {
   it.each([
+    'ADMIN',
+    'ACCOUNTANT',
+    'MERCHANDISER',
+    'SENIOR_MANAGEMENT',
+    'FACTORY_USER',
+    'QA_USER',
+    'DISTRIBUTOR',
+  ] as Role[])('guards Tax Invoice list and detail for %s', async (role) => {
+    const allowed = role === 'ADMIN' || role === 'ACCOUNTANT';
+    for (const [url, page] of [
+      ['/fulfillment/tax-invoices', 'TaxInvoiceListPage'],
+      ['/fulfillment/tax-invoices/invoice-1', 'TaxInvoiceDetailPage'],
+    ]) {
+      await renderRoutes(role, url!);
+      expect(getPageContent()).toContain(allowed ? page : 'ForbiddenPage');
+    }
+  });
+  it.each([
     ['ADMIN', true],
     ['MERCHANDISER', true],
     ['FACTORY_USER', false],
@@ -183,9 +207,7 @@ describe('AppRoutes Permissions', () => {
       ['DISTRIBUTOR', false],
     ] as const)('seller registration list route for %s = %s', async (role, allowed) => {
       await renderRoutes(role, '/master-data/seller-registrations');
-      expect(getPageContent()).toContain(
-        allowed ? 'SellerRegistrationListPage' : 'ForbiddenPage',
-      );
+      expect(getPageContent()).toContain(allowed ? 'SellerRegistrationListPage' : 'ForbiddenPage');
     });
 
     it.each([
