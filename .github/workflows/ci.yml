@@ -82,6 +82,12 @@ jobs:
       - name: Run @erve/design-system-tests
         run: pnpm --filter @erve/design-system-tests test
 
+      - name: Verify shared viewer computed browser geometry
+        if: github.head_ref == 'fix/shared-image-viewer-position'
+        env:
+          CHROME_BINARY: /usr/bin/google-chrome
+        run: pnpm --filter @erve/design-system-tests test:geometry
+
       # Full web test suite execution in PR CI (CI-001 / PDF-001)
       - name: Run @erve/web tests
         run: pnpm --filter @erve/web test

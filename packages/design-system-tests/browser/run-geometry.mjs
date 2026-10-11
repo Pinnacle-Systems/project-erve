@@ -6,11 +6,12 @@ import { join, resolve } from "node:path";
 const root = resolve(import.meta.dirname);
 const vite = resolve(root, "../node_modules/vite/bin/vite.js");
 const chromeCandidates = [
+  process.env.CHROME_BINARY,
   "C:/Program Files/Google/Chrome/Application/chrome.exe",
   "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
   "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
 ];
-const chrome = chromeCandidates.find(existsSync);
+const chrome = chromeCandidates.find((candidate) => candidate && existsSync(candidate));
 if (!chrome) throw new Error("Chrome or Edge is required for computed geometry tests.");
 
 const port = 4179;
