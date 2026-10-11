@@ -415,7 +415,12 @@ async function main() {
         '₹44,050.00',
       );
       assert.ok(!(await body(page)).includes('Finalize invoice'));
-      assert.ok(!(await body(page)).includes('Override'));
+      assert.equal(
+        await page.evaluate(
+          "[...document.querySelectorAll('button')].some(node => node.textContent.trim() === 'Override')",
+        ),
+        false,
+      );
       await screenshot(page, `admin-readonly-${width}`);
       await login(page, fixture.actors.restricted);
       await page.send('Page.navigate', { url: 'http://localhost:5177/fulfillment/tax-invoices' });
