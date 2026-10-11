@@ -27,6 +27,7 @@ function makeOrder(overrides: Partial<PurchaseOrder> = {}): PurchaseOrder {
         styleId: 'style-1',
         styleNumber: 'STY-0001',
         styleName: 'Basic Tee',
+        primaryImage: null,
         lineStatus: 'ACTIVE',
         remarks: null,
         seasonSnapshots: [

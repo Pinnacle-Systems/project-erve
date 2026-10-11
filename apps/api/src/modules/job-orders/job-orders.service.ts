@@ -18,6 +18,11 @@ import { Prisma, prisma } from '../../db/prisma.js';
 import type { FactoryStatus, JobOrderStatus } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
+import {
+  resolvePrimaryStyleAcrossLines,
+  stylePrimaryImageInclude,
+  toPrimaryImageView,
+} from '../master-data/style-images.service.js';
 import { getSoleFactoryId } from '../../auth/access.js';
 import { HttpError } from '../../errors/http-error.js';
 import { normalizeDisclaimerText } from './job-orders.validation.js';
@@ -80,7 +85,7 @@ const jobOrderInclude = {
   confirmer: { select: { id: true, name: true, email: true } },
   lines: {
     include: {
-      style: { select: { id: true, styleNumber: true, styleName: true } },
+      style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
       sizes: {
         include: { size: { select: { id: true, code: true, label: true, sortOrder: true } } },
         orderBy: { size: { sortOrder: 'asc' as const } },
@@ -686,6 +691,7 @@ function toJobOrderView(
   return {
     id: jobOrder.id,
     jobOrderNumber: jobOrder.jobOrderNumber,
+    primaryStyle: resolvePrimaryStyleAcrossLines(jobOrder.lines),
     financialYear: jobOrder.financialYear,
     factory: jobOrder.factory,
     historicalImport:
@@ -775,6 +781,7 @@ function toJobOrderView(
       styleId: line.styleId,
       styleNumber: line.style.styleNumber,
       styleName: line.style.styleName,
+      primaryImage: toPrimaryImageView(line.style.images),
       orderedQuantityTotal: line.orderedQuantityTotal,
       preparedQuantityTotal: line.preparedQuantityTotal,
       status: line.status,
@@ -799,8 +806,10 @@ function toJobOrderView(
         jobOrderId: jobOrder.id,
         jobOrderNumber: jobOrder.jobOrderNumber,
         jobOrderLineSizeId: task.jobOrderLineSizeId,
+        styleId: context.line.style.id,
         styleNumber: context.line.style.styleNumber,
         styleName: context.line.style.styleName,
+        primaryImage: toPrimaryImageView(context.line.style.images),
         sizeCode: context.size.size.code,
         sizeLabel: context.size.size.label,
         assignedQuantity: task.assignedQuantity,

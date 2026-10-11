@@ -18,6 +18,7 @@ import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document
 import { getPhysicalPackedQuantitiesForLines, reconcileFactoryDispatchLineAttribution } from './packing-reconciliation.js';
 import { generateFactoryInvoiceForFinalizedDispatch } from './factory-invoice.service.js';
 import { listFactories } from '../master-data/master-data.service.js';
+import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 import type { FactoryPackingQueueLine, PaginatedResponse } from '@erve/types';
 import type { PackingQueueQuery } from './factory-dispatch.validation.js';
 
@@ -133,6 +134,7 @@ export interface PackingListCartonView {
     styleId: string;
     styleNumber: string;
     styleName: string;
+    primaryImage: ReturnType<typeof toPrimaryImageView>;
     sizeId: string;
     sizeCode: string;
     sizeLabel: string;
@@ -147,6 +149,7 @@ export interface PackingListLineView {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: ReturnType<typeof toPrimaryImageView>;
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
@@ -212,7 +215,7 @@ const packingListCartonInclude = {
         select: {
           id: true,
           destinationId: true,
-          style: { select: { id: true, styleNumber: true, styleName: true } },
+          style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
           size: { select: { id: true, code: true, label: true } },
         },
       },
@@ -261,6 +264,7 @@ function toPackingListCartonView(carton: CartonRecord): PackingListCartonView {
       styleId: line.saleOrderLine.style.id,
       styleNumber: line.saleOrderLine.style.styleNumber,
       styleName: line.saleOrderLine.style.styleName,
+      primaryImage: toPrimaryImageView(line.saleOrderLine.style.images),
       sizeId: line.saleOrderLine.size.id,
       sizeCode: line.saleOrderLine.size.code,
       sizeLabel: line.saleOrderLine.size.label,
@@ -291,7 +295,7 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
     prisma.saleOrderLine.findMany({
       where: { saleOrderId: order.id },
       include: {
-        style: { select: { id: true, styleNumber: true, styleName: true } },
+        style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
         size: { select: { id: true, code: true, label: true } },
       },
       orderBy: { createdAt: 'asc' },
@@ -332,6 +336,7 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       styleId: line.style.id,
       styleNumber: line.style.styleNumber,
       styleName: line.style.styleName,
+      primaryImage: toPrimaryImageView(line.style.images),
       sizeId: line.size.id,
       sizeCode: line.size.code,
       sizeLabel: line.size.label,

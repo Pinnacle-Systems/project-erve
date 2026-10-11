@@ -10,7 +10,7 @@ function makeHandoff(overrides: Partial<InvoiceHandoffView> = {}): InvoiceHandof
     distributor: { id: 'd1', code: 'D1', name: 'Acme Distributors' },
     purchaseMode: 'OUTRIGHT',
     saleOrderLineId: 'sol1',
-    style: { styleNumber: 'ST-1', styleName: 'Shirt' },
+    style: { id: 'style-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null },
     size: { sizeCode: 'M', sizeLabel: 'Medium' },
     quantity: 20,
     status: 'INVOICED',

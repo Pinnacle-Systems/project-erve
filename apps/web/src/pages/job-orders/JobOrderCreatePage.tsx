@@ -3,11 +3,12 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, DatePicker, SelectField, SelectItem, Textarea, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, NumericField, SelectField, SelectItem, Textarea, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import type { ProcessFlowOption, Style } from '../master-data/types.js';
 import type { PurchaseOrder } from '../purchase-orders/types.js';
 import { OrderSheetMultiSelectField } from './OrderSheetMultiSelectField.js';
@@ -458,7 +459,19 @@ export function JobOrderCreatePage() {
 
         {sizeRows.length > 0 && (
           <Panel
-          title="Combined Forecast vs Production Plan"
+          title={
+            <div className="flex items-center gap-2">
+              {styleId && (
+                <StyleThumbnailCell
+                  styleId={styleId}
+                  image={styleDetailQuery.data?.images.find((image) => image.isPrimary) ?? styleDetailQuery.data?.images[0] ?? null}
+                  size={28}
+                  viewerTitle={styleDetailQuery.data?.styleNumber}
+                />
+              )}
+              <span>Combined Forecast vs Production Plan</span>
+            </div>
+          }
           description="The Production Plan is the Job Order's own, independent production quantity per size — it defaults to the Combined Forecast but is freely editable and is never re-derived from source Order Sheets once you edit it."
           footer={
             <div className="flex items-center justify-between gap-3">
@@ -493,12 +506,12 @@ export function JobOrderCreatePage() {
                 align: 'right',
                 render: (row) =>
                   row.active ? (
-                    <TextField
+                    <NumericField
                       aria-label={`Production quantity for ${row.sizeLabel}`}
-                      type="number"
+                      mode="integer"
                       min={0}
-                      value={quantities[row.sizeId] ?? ''}
-                      onChange={(event) => setSizeQuantity(row.sizeId, Math.max(0, Number(event.target.value || 0)))}
+                      value={quantities[row.sizeId] ?? null}
+                      onChange={(next) => setSizeQuantity(row.sizeId, next ?? 0)}
                       density="compact"
                       width="xs"
                     />

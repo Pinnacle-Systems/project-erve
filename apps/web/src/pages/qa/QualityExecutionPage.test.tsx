@@ -25,6 +25,7 @@ const view: QualityExecutionView = {
   id: 'e1',
   jobOrderId: 'j1',
   jobOrderNumber: 'JO-2026-000001',
+  primaryStyle: { consistent: true, style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null } },
   processFlowActivityId: 'a1',
   activityName: 'Inline Inspection',
   qualityForm: {

@@ -1,5 +1,5 @@
 import { FormSection, Stack } from '@erve/layout';
-import { Button, SelectField, SelectItem, TextField } from '@erve/primitives';
+import { Button, NumericField, SelectField, SelectItem } from '@erve/primitives';
 import type { FactoryOption } from '../types.js';
 
 export interface StyleFactoryMappingRow {
@@ -76,16 +76,21 @@ export function StyleFactoryMappingsField({
                 </SelectItem>
               ))}
             </SelectField>
-            <TextField
-              type="number"
+            <NumericField
+              mode="currency"
+              min={0}
               aria-label="Ex-Factory Rate (₹)"
               placeholder="0.00"
-              value={mapping.exFactoryPrice}
-              onChange={(event) =>
+              // exFactoryPrice stays a string end-to-end (unchanged contract
+              // with style-form-state.ts/StyleFormPage.tsx — both still do
+              // their own Number()/String() conversion at their boundary);
+              // NumericField only needs number|null at its own edge.
+              value={mapping.exFactoryPrice === '' ? null : Number(mapping.exFactoryPrice)}
+              onChange={(next) =>
                 onChange(
                   mappings.map((item) =>
                     item.rowId === mapping.rowId
-                      ? { ...item, exFactoryPrice: event.target.value }
+                      ? { ...item, exFactoryPrice: next === null ? '' : String(next) }
                       : item,
                   ),
                 )

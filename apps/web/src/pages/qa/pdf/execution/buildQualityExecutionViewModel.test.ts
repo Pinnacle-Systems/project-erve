@@ -6,7 +6,7 @@ const META = { generatedAt: '2026-09-12T10:00:00Z', generatedBy: 'Test Admin' };
 
 describe('buildQualityExecutionViewModel', () => {
   it('PPM: prints no outcome section at all — never a synthetic PASS/FAIL', () => {
-    const viewModel = buildQualityExecutionViewModel({ execution: makePpmQualityExecutionView(), evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution: makePpmQualityExecutionView(), evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.outcome).toBeNull();
     const serialized = JSON.stringify(viewModel);
     expect(serialized).not.toMatch(/"PASS"|"FAIL"/);
@@ -14,7 +14,7 @@ describe('buildQualityExecutionViewModel', () => {
 
   it('PPM: header carries status/dates but not a fabricated outcome field value', () => {
     const viewModel = buildQualityExecutionViewModel(
-      { execution: makePpmQualityExecutionView({ status: 'FINALIZED' }), evidenceImages: new Map() },
+      { execution: makePpmQualityExecutionView({ status: 'FINALIZED' }), evidenceImages: new Map(), primaryImage: { placeholder: true } },
       META,
     );
     expect(viewModel.headerItems).toContainEqual({ label: 'Status', value: 'Finalized' });
@@ -22,7 +22,7 @@ describe('buildQualityExecutionViewModel', () => {
   });
 
   it('Inline: has an outcome (its form includes INSPECTION_OUTCOME) but no finalBatch/disposition', () => {
-    const viewModel = buildQualityExecutionViewModel({ execution: makeQualityExecutionView(), evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution: makeQualityExecutionView(), evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.outcome).toEqual({ value: 'PASS', remarks: 'Looks good', rejectionReason: null });
     expect(viewModel.finalBatch).toBeNull();
   });
@@ -34,7 +34,7 @@ describe('buildQualityExecutionViewModel', () => {
         outcome: { componentId: 'outcome-1', value: 'FAIL', remarks: null, rejectionReason: 'Should not surface' },
       },
     });
-    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.outcome).toEqual({ value: 'FAIL', remarks: null, rejectionReason: null });
   });
 
@@ -73,7 +73,7 @@ describe('buildQualityExecutionViewModel', () => {
         outcome: { componentId: 'outcome-1', value: 'FAIL', remarks: null, rejectionReason: 'Measurement out of tolerance' },
       },
     });
-    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
 
     expect(viewModel.outcome).toEqual({
       value: 'FAIL',
@@ -106,7 +106,7 @@ describe('buildQualityExecutionViewModel', () => {
         release: { id: 'release-1', releasedAt: '2026-01-09T09:00:00Z', quantity: 200 },
       },
     });
-    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.finalBatch?.dispositionLabel).toBe('Released');
     expect(viewModel.finalBatch?.releasedQuantity).toBe(200);
   });
@@ -123,7 +123,7 @@ describe('buildQualityExecutionViewModel', () => {
         release: null,
       },
     });
-    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.finalBatch?.dispositionLabel).toBe('Permanently Rejected');
   });
 
@@ -139,25 +139,25 @@ describe('buildQualityExecutionViewModel', () => {
         release: null,
       },
     });
-    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.finalBatch?.physicalQuantity).toBe(0);
   });
 
   it('never spreads the raw execution entity — explicit header fields only, no internal identifiers leak', () => {
     const execution = { ...makeQualityExecutionView(), processFlowActivityId: 'secret-internal-id' };
-    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const serialized = JSON.stringify(viewModel);
     expect(serialized).not.toContain('secret-internal-id');
   });
 
   it('uses the acronym-aware display name for the QA activity', () => {
-    const viewModel = buildQualityExecutionViewModel({ execution: makeQualityExecutionView(), evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution: makeQualityExecutionView(), evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.headerItems).toContainEqual({ label: 'QA Activity', value: 'Inline QC' });
   });
 
   it('passes through an undefined generatedBy as-is (what useOptionalAuth()?.user?.name yields with no AuthProvider), never coerced to a string', () => {
     const viewModel = buildQualityExecutionViewModel(
-      { execution: makeQualityExecutionView(), evidenceImages: new Map() },
+      { execution: makeQualityExecutionView(), evidenceImages: new Map(), primaryImage: { placeholder: true } },
       { generatedAt: META.generatedAt, generatedBy: undefined },
     );
     expect(viewModel.generatedBy).toBeUndefined();

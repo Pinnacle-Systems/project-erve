@@ -81,6 +81,7 @@ function makeViewModel(overrides: Partial<JobOrderDetailPdfViewModel> = {}): Job
     combinedForecast: [],
     stages: [],
     qualityActivities: [],
+    image: { placeholder: true },
     ...overrides,
   };
 }

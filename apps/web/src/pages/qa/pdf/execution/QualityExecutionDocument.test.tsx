@@ -9,7 +9,7 @@ const META = { generatedAt: '2026-09-12T10:00:00Z', generatedBy: 'Test Admin' };
 describe('QualityExecutionDocument', () => {
   it('renders a PPM execution (no outcome section) without throwing', async () => {
     const viewModel = buildQualityExecutionViewModel(
-      { execution: makePpmQualityExecutionView(), evidenceImages: new Map() },
+      { execution: makePpmQualityExecutionView(), evidenceImages: new Map(), primaryImage: { placeholder: true } },
       META,
     );
     const blob = await pdf(<QualityExecutionDocument viewModel={viewModel} />).toBlob();
@@ -19,7 +19,7 @@ describe('QualityExecutionDocument', () => {
 
   it('renders an Inline execution with a PASS outcome without throwing', async () => {
     const viewModel = buildQualityExecutionViewModel(
-      { execution: makeQualityExecutionView(), evidenceImages: new Map() },
+      { execution: makeQualityExecutionView(), evidenceImages: new Map(), primaryImage: { placeholder: true } },
       META,
     );
     const blob = await pdf(<QualityExecutionDocument viewModel={viewModel} />).toBlob();
@@ -33,7 +33,7 @@ describe('QualityExecutionDocument', () => {
         outcome: { componentId: 'outcome-1', value: 'FAIL', remarks: 'Defects found', rejectionReason: null },
       },
     });
-    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const blob = await pdf(<QualityExecutionDocument viewModel={viewModel} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
@@ -76,14 +76,14 @@ describe('QualityExecutionDocument', () => {
         outcome: { componentId: 'outcome-1', value: 'PASS', remarks: null, rejectionReason: null },
       },
     });
-    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const blob = await pdf(<QualityExecutionDocument viewModel={viewModel} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 
   it('renders with a broken/placeholder evidence image without throwing', async () => {
     const viewModel = buildQualityExecutionViewModel(
-      { execution: makeQualityExecutionView(), evidenceImages: new Map([['attachment-1', { placeholder: true }]]) },
+      { execution: makeQualityExecutionView(), evidenceImages: new Map([['attachment-1', { placeholder: true }]]), primaryImage: { placeholder: true } },
       META,
     );
     const blob = await pdf(<QualityExecutionDocument viewModel={viewModel} />).toBlob();
@@ -94,7 +94,7 @@ describe('QualityExecutionDocument', () => {
     const TINY_PNG =
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     const viewModel = buildQualityExecutionViewModel(
-      { execution: makeQualityExecutionView(), evidenceImages: new Map([['attachment-1', { dataUri: TINY_PNG }]]) },
+      { execution: makeQualityExecutionView(), evidenceImages: new Map([['attachment-1', { dataUri: TINY_PNG }]]), primaryImage: { placeholder: true } },
       META,
     );
     const blob = await pdf(<QualityExecutionDocument viewModel={viewModel} />).toBlob();
@@ -143,7 +143,7 @@ describe('QualityExecutionDocument', () => {
         release: { id: 'release-1', releasedAt: '2026-01-09T09:00:00Z', quantity: 500 },
       },
     });
-    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map() }, META);
+    const viewModel = buildQualityExecutionViewModel({ execution, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const blob = await pdf(<QualityExecutionDocument viewModel={viewModel} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   }, 30000);

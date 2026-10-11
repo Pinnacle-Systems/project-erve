@@ -92,7 +92,8 @@ describe('StyleFactoryMappingsField', () => {
     }
 
     render(<Wrapper />);
-    const priceInputs = () => Array.from(container.querySelectorAll<HTMLInputElement>('input[type="number"]'));
+    const priceInputs = () =>
+      Array.from(container.querySelectorAll<HTMLInputElement>('input[aria-label="Ex-Factory Rate (₹)"]'));
     expect(priceInputs().map((i) => i.value)).toEqual(['100', '200', '300']);
 
     // Remove the middle row (index 1) by its own Remove button.
@@ -116,8 +117,14 @@ describe('StyleFactoryMappingsField', () => {
       <StyleFactoryMappingsField mappings={rows} availableFactories={[factory()]} onChange={onChange} />,
     );
 
-    const priceInputs = container.querySelectorAll<HTMLInputElement>('input[type="number"]');
-    act(() => setInputValue(priceInputs[1]!, '55'));
+    const priceInputs = container.querySelectorAll<HTMLInputElement>('input[aria-label="Ex-Factory Rate (₹)"]');
+    // NumericField only commits (fires onChange) on blur — see
+    // numeric-field.tsx's commit() — so `focusout` (the bubbling event
+    // React's onBlur listens for) must follow the typed value.
+    act(() => {
+      setInputValue(priceInputs[1]!, '55');
+      priceInputs[1]!.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    });
 
     const updated = onChange.mock.calls[0]![0] as StyleFactoryMappingRow[];
     expect(updated[0]!.exFactoryPrice).toBe('');
@@ -139,6 +146,8 @@ describe('StyleFactoryMappingsField', () => {
 
     const rateInput = container.querySelector<HTMLInputElement>('input[aria-label="Ex-Factory Rate (₹)"]');
     expect(rateInput).not.toBeNull();
-    expect(rateInput?.value).toBe('150.00');
+    // NumericField's display trims trailing zeros (formatNumericValue) —
+    // '150.00' in, '150' displayed — same as every other NumericField.
+    expect(rateInput?.value).toBe('150');
   });
 });

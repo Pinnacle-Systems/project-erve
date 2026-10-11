@@ -66,6 +66,7 @@ export interface PpSamplePdfViewModel {
   sessions: PpSampleSessionRow[];
   reworkTasks: PpSampleReworkRow[];
   downstreamAvailabilityText: string;
+  image: PdfImageSource;
 }
 
 function evidenceItem(evidence: QaEvidenceMetadata, images: Map<string, PdfImageSource>): PpSampleEvidenceItem {
@@ -103,7 +104,7 @@ export function buildPpSampleViewModel(
   prepared: PreparedPpSamplePdfData,
   meta: PpSamplePdfMeta,
 ): PpSamplePdfViewModel {
-  const { detail, evidenceImages } = prepared;
+  const { detail, evidenceImages, primaryImage } = prepared;
 
   const headerItems: PdfKeyValueItem[] = [
     { label: 'Job Order Number', value: detail.jobOrderNumber },
@@ -169,5 +170,6 @@ export function buildPpSampleViewModel(
       detail.status === 'QA_APPROVED'
         ? `${detail.totals.finalApproved} units are authoritative for the future warehouse workflow.`
         : 'No quantity is downstream-ready until final QA approval.',
+    image: primaryImage,
   };
 }

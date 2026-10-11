@@ -8,7 +8,7 @@ const META = { generatedAt: '2026-09-12T10:00:00Z', generatedBy: 'Test Admin' };
 
 describe('PpSampleDocument', () => {
   it('renders a PASS session without throwing', async () => {
-    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const blob = await pdf(<PpSampleDocument viewModel={viewModel} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
     expect(blob.type).toBe('application/pdf');
@@ -29,7 +29,7 @@ describe('PpSampleDocument', () => {
         },
       ],
     });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const blob = await pdf(<PpSampleDocument viewModel={viewModel} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
@@ -38,20 +38,23 @@ describe('PpSampleDocument', () => {
     const TINY_PNG =
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     const images = new Map([['evidence-1', { dataUri: TINY_PNG }]]);
-    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: images }, META);
+    const viewModel = buildPpSampleViewModel(
+      { detail: makeQaInspectionDetail(), evidenceImages: images, primaryImage: { placeholder: true } },
+      META,
+    );
     const blob = await pdf(<PpSampleDocument viewModel={viewModel} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 
   it('renders with a broken/placeholder evidence image without throwing', async () => {
-    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const blob = await pdf(<PpSampleDocument viewModel={viewModel} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 
   it('renders with no inspection history without throwing', async () => {
     const viewModel = buildPpSampleViewModel(
-      { detail: makeQaInspectionDetail({ sessions: [] }), evidenceImages: new Map() },
+      { detail: makeQaInspectionDetail({ sessions: [] }), evidenceImages: new Map(), primaryImage: { placeholder: true } },
       META,
     );
     const blob = await pdf(<PpSampleDocument viewModel={viewModel} />).toBlob();
@@ -86,7 +89,7 @@ describe('PpSampleDocument', () => {
       })),
     }));
     const detail = makeQaInspectionDetail({ sessions: manySessions });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const blob = await pdf(<PpSampleDocument viewModel={viewModel} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   }, 30000);

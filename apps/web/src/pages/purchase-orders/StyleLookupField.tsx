@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ApiSuccessResponse, OrderSheetStyleOption } from '@erve/types';
 import { LookupField, type LookupFieldWidth } from '@erve/primitives';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { useServerLookup } from '../../lib/use-server-lookup.js';
@@ -8,9 +9,9 @@ import { useServerLookup } from '../../lib/use-server-lookup.js';
 export const STYLE_LOOKUP_LIMIT = 20;
 
 // What the field needs to display a value. A saved Order Sheet line carries
-// only id/styleNumber/styleName, so LMIX/status/season are optional until
-// the selected Style's own record has loaded.
-export type StyleLookupValue = Pick<OrderSheetStyleOption, 'id' | 'styleNumber' | 'styleName'> &
+// only id/styleNumber/styleName/primaryImage, so LMIX/status/season are
+// optional until the selected Style's own record has loaded.
+export type StyleLookupValue = Pick<OrderSheetStyleOption, 'id' | 'styleNumber' | 'styleName' | 'primaryImage'> &
   Partial<Pick<OrderSheetStyleOption, 'lmixNumber' | 'status' | 'season'>>;
 
 function isInactive(style: StyleLookupValue): boolean {
@@ -26,15 +27,24 @@ function getStyleLabel(style: StyleLookupValue): string {
 // Shirt"s), so the name alone can't tell matches apart.
 function StyleOptionRow({ style }: { style: StyleLookupValue }) {
   return (
-    <div className="min-w-0">
-      <div className="flex items-baseline gap-2">
-        <span className="truncate font-semibold">{style.styleNumber}</span>
-        {style.lmixNumber ? (
-          <span className="shrink-0 font-medium tabular-nums">{style.lmixNumber}</span>
-        ) : null}
-      </div>
-      <div className="truncate text-muted-foreground">
-        {[style.styleName, style.season?.displayName].filter(Boolean).join(' · ')}
+    <div className="flex min-w-0 items-center gap-2">
+      {/* clickable (default true): a separate, accessible preview action —
+          its own button with aria-label="View style image" and
+          stopPropagation — lets a user inspect the full-resolution image
+          before choosing; clicking it never selects the option (the
+          dropdown panel keeps focus in the search box on any internal
+          click, so this never blurs/closes it either). */}
+      <StyleThumbnailCell styleId={style.id} image={style.primaryImage} size={32} viewerTitle={style.styleNumber} />
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="truncate font-semibold">{style.styleNumber}</span>
+          {style.lmixNumber ? (
+            <span className="shrink-0 font-medium tabular-nums">{style.lmixNumber}</span>
+          ) : null}
+        </div>
+        <div className="truncate text-muted-foreground">
+          {[style.styleName, style.season?.displayName].filter(Boolean).join(' · ')}
+        </div>
       </div>
     </div>
   );

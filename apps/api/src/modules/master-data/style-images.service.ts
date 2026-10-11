@@ -40,6 +40,65 @@ export function toStyleImageView(image: StyleImageRecord) {
   };
 }
 
+// Shared across every Style-bearing projection outside the Style master
+// itself (PO/JO lines, Style lookup options) — the primary (or, if none
+// flagged, first-by-sortOrder) image only, never the full gallery; those
+// belong to the Style master (SM-000 PR3 coverage matrix).
+export const stylePrimaryImageInclude = {
+  include: { file: true },
+  orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+  take: 1,
+} satisfies Prisma.StyleImageFindManyArgs;
+
+/** `toStyleImageView` + the Date->ISO-string conversion every `@erve/types` view interface expects at the HTTP boundary. */
+export function toPrimaryImageView(images: StyleImageRecord[]) {
+  if (!images[0]) return null;
+  const image = toStyleImageView(images[0]);
+  return { ...image, createdAt: image.createdAt.toISOString(), updatedAt: image.updatedAt.toISOString() };
+}
+
+export interface ResolvedPrimaryStyle {
+  id: string;
+  styleNumber: string;
+  styleName: string;
+  primaryImage: ReturnType<typeof toPrimaryImageView>;
+}
+
+export type PrimaryStyleAcrossLinesResult =
+  | { consistent: true; style: ResolvedPrimaryStyle }
+  | { consistent: false };
+
+/**
+ * Server-side mirror of apps/web's resolveJobOrderPrimaryStyle.ts. A Job
+ * Order is exactly one Style — server-enforced on create and on adding a
+ * source Order Sheet (see "must share one Style" in job-orders.service.ts).
+ * Lines legitimately differ by Size/allocation, never by Style; this is a
+ * defensive check against corrupted/legacy data, not a "Job Orders can have
+ * several Styles" case — `consistent: false` must surface as an explicit
+ * "identity unavailable" state downstream, never nothing and never a guess
+ * at one line's Style/image. Used by views that synthesize a single
+ * resolved Style identity server-side (e.g. QualityExecutionView, which has
+ * no reason to carry raw per-line data to the client at all) rather than
+ * shipping raw `lines[]` for the client to resolve itself (as JobOrderDetail
+ * already does).
+ */
+export function resolvePrimaryStyleAcrossLines(
+  lines: Array<{ styleId: string; style: { id: string; styleNumber: string; styleName: string; images: StyleImageRecord[] } }>,
+): PrimaryStyleAcrossLinesResult {
+  const first = lines[0];
+  if (!first) return { consistent: false };
+  if (!lines.every((line) => line.styleId === first.styleId)) return { consistent: false };
+  return {
+    consistent: true,
+    style: {
+      id: first.style.id,
+      styleNumber: first.style.styleNumber,
+      styleName: first.style.styleName,
+      primaryImage: toPrimaryImageView(first.style.images),
+    },
+  };
+}
+
 function validateImageUpload(buffer: Buffer): SniffedImage {
   if (buffer.length === 0) {
     throw HttpError.badRequest('Uploaded file is empty');
