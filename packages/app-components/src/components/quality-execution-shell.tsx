@@ -56,6 +56,8 @@ export interface QualityExecutionHeaderProps extends Omit<HTMLAttributes<HTMLEle
   attemptNumber: number;
   status: ReactNode;
   context?: ReactNode;
+  /** Optional identity visual (e.g. a Primary Style Image) rendered left of the title block — same slot convention as PageHeader. Opt-in — omitted by every existing caller, so it changes nothing for them. */
+  leadingVisual?: ReactNode;
 }
 
 export function QualityExecutionHeader({
@@ -65,18 +67,26 @@ export function QualityExecutionHeader({
   attemptNumber,
   status,
   context,
+  leadingVisual,
   className,
   ...props
 }: QualityExecutionHeaderProps) {
   return (
-    <header className={cn('space-y-1', className)} data-quality-execution-header="true" {...props}>
-      <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
-      <p className="text-sm text-muted-foreground">
-        {formName}
-        {versionNumber === undefined ? null : ` v${versionNumber}`} · Attempt {attemptNumber} ·{' '}
-        <span className="font-medium text-foreground">{status}</span>
-      </p>
-      {context ? <div className="text-sm text-muted-foreground">{context}</div> : null}
+    <header
+      className={cn('flex items-start gap-3', className)}
+      data-quality-execution-header="true"
+      {...props}
+    >
+      {leadingVisual && <div className="shrink-0">{leadingVisual}</div>}
+      <div className="min-w-0 flex-1 space-y-1">
+        <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
+        <p className="text-sm text-muted-foreground">
+          {formName}
+          {versionNumber === undefined ? null : ` v${versionNumber}`} · Attempt {attemptNumber} ·{' '}
+          <span className="font-medium text-foreground">{status}</span>
+        </p>
+        {context ? <div className="text-sm text-muted-foreground">{context}</div> : null}
+      </div>
     </header>
   );
 }

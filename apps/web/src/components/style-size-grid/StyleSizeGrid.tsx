@@ -82,11 +82,12 @@ export function StyleSizeGrid({
               {columns.map((column) => {
                 const value = row.values[column.sizeId] ?? null;
                 const hasCell = column.sizeId in row.values;
+                const columnEditable = column.editable ?? true;
                 return (
                   <td key={column.sizeId} className="px-2 py-1.5">
                     {!hasCell ? (
                       <span className="block text-right text-muted-foreground">—</span>
-                    ) : variant === 'editable' ? (
+                    ) : variant === 'editable' && columnEditable ? (
                       <NumericField
                         variant="cell"
                         mode="integer"

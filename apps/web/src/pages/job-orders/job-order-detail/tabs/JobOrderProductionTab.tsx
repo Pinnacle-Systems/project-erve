@@ -30,6 +30,7 @@ import type { JobOrder, JobOrderStage } from '../../types.js';
 import { ProductionStageStepper } from '../../ProductionStageStepper.js';
 import { STAGE_LABELS, formatDateTime } from '../../job-order-ui.js';
 import { mutationErrorMessage, type FlatSize } from '../job-order-detail-utils.js';
+import { JobOrderPlanningGrid } from '../../JobOrderPlanningGrid.js';
 
 export interface JobOrderProductionTabDisclaimer {
   text: string;
@@ -635,44 +636,21 @@ export function JobOrderProductionTab({
         }
       >
         {canEditProductionPlan ? (
-          <div onKeyDown={createEnterToNextHandler()}>
-            <DataTable
-              density="compact"
-            columns={[
-              { key: 'size', header: 'Size', render: (row) => row.sizeLabel },
-              {
-                key: 'quantity',
-                header: 'Production Plan',
-                align: 'right',
-                render: (row) =>
-                  row.active ? (
-                    <TextField
-                      aria-label={`Production quantity for ${row.sizeLabel}`}
-                      type="number"
-                      min={0}
-                      value={planDrafts[row.sizeId] ?? currentPlanQuantity(row.sizeId)}
-                      onChange={(event) =>
-                        setPlanDrafts((current) => ({
-                          ...current,
-                          [row.sizeId]: Math.max(0, Number(event.target.value || 0)),
-                        }))
-                      }
-                      density="compact"
-                      width="xs"
-                    />
-                  ) : (
-                    <span className="text-xs text-muted-foreground">
-                      {currentPlanQuantity(row.sizeId) > 0
-                        ? `${currentPlanQuantity(row.sizeId).toLocaleString()} — size inactive, cannot be changed`
-                        : 'Size inactive — cannot be produced'}
-                    </span>
-                  ),
-              },
-            ]}
-            data={productionPlanRows}
-            rowKey="sizeId"
+          <JobOrderPlanningGrid
+            styleId={jobOrder.lines[0]?.styleId ?? ''}
+            styleNumber={jobOrder.lines[0]?.styleNumber ?? ''}
+            styleName={jobOrder.lines[0]?.styleName}
+            primaryImage={jobOrder.lines[0]?.primaryImage ?? null}
+            sizes={productionPlanRows.map((row) => ({
+              sizeId: row.sizeId,
+              sizeCode: row.sizeCode,
+              active: row.active,
+              quantity: planDrafts[row.sizeId] ?? currentPlanQuantity(row.sizeId),
+            }))}
+            onQuantityChange={(sizeId, value) =>
+              setPlanDrafts((current) => ({ ...current, [sizeId]: value ?? 0 }))
+            }
           />
-          </div>
         ) : (
           <DataTable
             columns={[

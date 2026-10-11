@@ -145,6 +145,7 @@ describe('JobOrderListPage Permissions', () => {
       {
         id: 'job-1',
         jobOrderNumber: 'JO-001',
+        primaryStyle: { consistent: false },
         financialYear: { id: 'fy-1', code: '2026-27' },
         purchaseOrder: { poNumber: 'PO-001' },
         factory: { name: 'Factory One' },
@@ -178,6 +179,7 @@ describe('JobOrderListPage Permissions', () => {
       {
         id: 'job-1',
         jobOrderNumber: 'JO-001',
+        primaryStyle: { consistent: false },
         financialYear: { id: 'fy-1', code: '2026-27' },
         purchaseOrder: { poNumber: 'PO-001' },
         factory: { name: 'Factory One' },
@@ -238,6 +240,7 @@ describe('JobOrderListPage Permissions', () => {
       {
         id: 'job-1',
         jobOrderNumber: 'JO-001',
+        primaryStyle: { consistent: false },
         financialYear: { id: 'fy-1', code: '2026-27' },
         purchaseOrder: { poNumber: 'PO-001' },
         factory: { name: 'Factory One' },

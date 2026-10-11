@@ -107,6 +107,24 @@ describe('StyleSizeGrid — editable/computed/readOnly variants, totals, keyboar
     expect(document.activeElement).toBe(inputs[1]);
   });
 
+  it('renders a column flagged editable: false as read-only even on an editable-variant grid, in every row', () => {
+    const onCellChange = vi.fn();
+    const mixedColumns: StyleSizeGridColumn[] = [
+      { sizeId: 'size-s', sizeCode: 'S' },
+      { sizeId: 'size-m', sizeCode: 'M', editable: false },
+    ];
+    renderGrid(<StyleSizeGrid columns={mixedColumns} rows={rows} variant="editable" onCellChange={onCellChange} />);
+
+    const inputs = Array.from(container.querySelectorAll('input')) as HTMLInputElement[];
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]!.readOnly).toBe(false);
+    expect(inputs[1]!.readOnly).toBe(true);
+
+    act(() => changeInput(inputs[1]!, '99'));
+    act(() => inputs[1]!.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+    expect(onCellChange).not.toHaveBeenCalled();
+  });
+
   it('shows the empty message when there are no rows', () => {
     renderGrid(<StyleSizeGrid columns={columns} rows={[]} variant="readOnly" emptyMessage="Nothing here" />);
     expect(container.textContent).toContain('Nothing here');

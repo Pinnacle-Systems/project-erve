@@ -69,6 +69,7 @@ function buildPO(overrides: Partial<PurchaseOrder> = {}): PurchaseOrder {
         styleId: 'style-1',
         styleNumber: 'ST-101',
         styleName: 'Oxford Shirt',
+        primaryImage: null,
         lineStatus: 'ACTIVE',
         remarks: null,
         seasonSnapshots: [],

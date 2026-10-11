@@ -49,6 +49,7 @@ export function makeQualityExecutionView(
     id: 'execution-1',
     jobOrderId: 'jo-1',
     jobOrderNumber: 'JO-1001',
+    primaryStyle: { consistent: true, style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null } },
     processFlowActivityId: 'activity-1',
     activityName: 'INLINE QC',
     qualityForm: { id: 'form-1', code: 'INLINE', name: 'Inline QC Form', versionId: 'version-1', versionNumber: 2 },

@@ -20,7 +20,7 @@ function makeCarton(overrides: Partial<FactoryPackingCartonView> = {}): FactoryP
     createdAt: '2026-09-01T00:00:00.000Z',
     updatedAt: '2026-09-01T00:00:00.000Z',
     lines: [
-      { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, currentDestinationId: 'dest-1' },
+      { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, currentDestinationId: 'dest-1' },
     ],
     auditHistory: [],
     ...overrides,
@@ -51,7 +51,7 @@ function makePackingList(overrides: Partial<PackingListView> = {}): PackingListV
         gstin: null,
         canMoveDistributor: true,
         lines: [
-          { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', requiredQuantity: 10, packedQuantity: 10 },
+          { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', requiredQuantity: 10, packedQuantity: 10 },
         ],
         cartons: [makeCarton()],
       },
@@ -97,6 +97,7 @@ describe('buildFactoryPackingListViewModel', () => {
               styleId: 'style-1',
               styleNumber: 'ST-001',
               styleName: 'Classic Tee',
+              primaryImage: null,
               sizeId: 'size-1',
               sizeCode: 'M',
               sizeLabel: 'Medium',

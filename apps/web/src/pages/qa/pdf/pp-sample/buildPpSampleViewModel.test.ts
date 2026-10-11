@@ -6,7 +6,7 @@ const META = { generatedAt: '2026-09-12T10:00:00Z', generatedBy: 'Test Admin' };
 
 describe('buildPpSampleViewModel', () => {
   it('prints the PASS decision exactly as persisted', () => {
-    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.sessions[0]!.forms[0]!.decisionLabel).toBe('PASS');
   });
 
@@ -25,7 +25,7 @@ describe('buildPpSampleViewModel', () => {
         },
       ],
     });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.sessions[0]!.forms[0]!.decisionLabel).toBe('FAIL');
   });
 
@@ -44,12 +44,12 @@ describe('buildPpSampleViewModel', () => {
         },
       ],
     });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.sessions[0]!.forms[0]!.decisionLabel).toBe('Pending');
   });
 
   it('resolves the checklist item label from QA_CHECKLIST_ITEMS and carries the recorded remarks', () => {
-    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const checklist = viewModel.sessions[0]!.forms[0]!.checklist;
     expect(checklist).toContainEqual({
       label: 'Confirm trims is available and checked as per trims card',
@@ -83,7 +83,7 @@ describe('buildPpSampleViewModel', () => {
         },
       ],
     });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.sessions[0]!.forms[0]!.checklist).toContainEqual({
       label: 'Confirm trims is available and checked as per trims card',
       status: 'N/A',
@@ -95,7 +95,7 @@ describe('buildPpSampleViewModel', () => {
     const detail = makeQaInspectionDetail({
       sessions: [{ ...makeQaInspectionDetail().sessions[0]!, evidence: [] }],
     });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.sessions[0]!.forms[0]!.evidence).toEqual([]);
   });
 
@@ -111,7 +111,7 @@ describe('buildPpSampleViewModel', () => {
         },
       ],
     });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.sessions[0]!.forms[0]!.evidence.map((e) => e.id)).toEqual(['evidence-1']);
     expect(viewModel.sessions[0]!.sessionEvidence.map((e) => e.id)).toEqual(['evidence-2']);
   });
@@ -127,7 +127,7 @@ describe('buildPpSampleViewModel', () => {
         },
       ],
     });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.sessions[0]!.forms[0]!.evidence[0]).toEqual({
       id: 'evidence-3',
       fileName: 'measurements.pdf',
@@ -140,12 +140,15 @@ describe('buildPpSampleViewModel', () => {
 
   it('resolves an image evidence file from the pre-resolved image map', () => {
     const images = new Map([['evidence-1', { dataUri: 'data:image/jpeg;base64,mock' }]]);
-    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: images }, META);
+    const viewModel = buildPpSampleViewModel(
+      { detail: makeQaInspectionDetail(), evidenceImages: images, primaryImage: { placeholder: true } },
+      META,
+    );
     expect(viewModel.sessions[0]!.forms[0]!.evidence[0]!.image).toEqual({ dataUri: 'data:image/jpeg;base64,mock' });
   });
 
   it('falls back to a placeholder when a resolved image is missing from the map (broken/failed fetch)', () => {
-    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail: makeQaInspectionDetail(), evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.sessions[0]!.forms[0]!.evidence[0]!.image).toEqual({ placeholder: true });
   });
 
@@ -156,7 +159,7 @@ describe('buildPpSampleViewModel', () => {
         { ...makeQaInspectionDetail().sessions[0]!, id: 'session-2', cycleNumber: 2 },
       ],
     });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.sessions[0]!.cycleLabel).toBe('Cycle 1');
     expect(viewModel.sessions[1]!.cycleLabel).toBe('Cycle 2 · Reinspection');
   });
@@ -169,8 +172,10 @@ describe('buildPpSampleViewModel', () => {
           jobOrderId: 'jo-1',
           jobOrderNumber: 'JO-1001',
           jobOrderLineSizeId: 'size-1',
+          styleId: 'style-1',
           styleNumber: 'STY-0001',
           styleName: 'Basic Tee',
+          primaryImage: null,
           sizeCode: 'M',
           sizeLabel: 'Medium',
           assignedQuantity: 5,
@@ -194,7 +199,7 @@ describe('buildPpSampleViewModel', () => {
         },
       ],
     });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.reworkTasks[0]).toMatchObject({
       statusLabel: 'Correction required',
       quantity: 5,
@@ -204,14 +209,14 @@ describe('buildPpSampleViewModel', () => {
 
   it('never spreads the raw detail entity — explicit field mapping only, no internal identifiers leak', () => {
     const detail = { ...makeQaInspectionDetail(), id: 'secret-internal-id' };
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     const serialized = JSON.stringify(viewModel);
     expect(serialized).not.toContain('secret-internal-id');
   });
 
   it('prints a QA_APPROVED status downstream-availability message with the final approved total', () => {
     const detail = makeQaInspectionDetail({ status: 'QA_APPROVED' });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map() }, META);
+    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
     expect(viewModel.downstreamAvailabilityText).toBe(
       '80 units are authoritative for the future warehouse workflow.',
     );
@@ -219,7 +224,7 @@ describe('buildPpSampleViewModel', () => {
 
   it('passes through an undefined generatedBy as-is (what useOptionalAuth()?.user?.name yields with no AuthProvider), never coerced to a string', () => {
     const viewModel = buildPpSampleViewModel(
-      { detail: makeQaInspectionDetail(), evidenceImages: new Map() },
+      { detail: makeQaInspectionDetail(), evidenceImages: new Map(), primaryImage: { placeholder: true } },
       { generatedAt: META.generatedAt, generatedBy: undefined },
     );
     expect(viewModel.generatedBy).toBeUndefined();

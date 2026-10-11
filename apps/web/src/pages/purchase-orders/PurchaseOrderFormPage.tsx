@@ -12,6 +12,7 @@ import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
 import { StyleLookupField, type StyleLookupValue } from './StyleLookupField.js';
+import { OrderSheetSizeGrid } from './OrderSheetSizeGrid.js';
 import { DistributorLookupField } from '../master-data/DistributorLookupField.js';
 import type { PurchaseOrder } from './types.js';
 
@@ -19,7 +20,7 @@ interface SizeRow {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
-  orderedQuantity: string;
+  orderedQuantity: number | null;
 }
 
 interface LineState {
@@ -34,7 +35,7 @@ interface LineState {
 const emptyLine = (): LineState => ({ styleId: '', remarks: '', sizes: [] });
 
 function toBlankSizeRows(sizes: OrderSheetStyleDetail['sizes']): SizeRow[] {
-  return sizes.map((sz) => ({ sizeId: sz.id, sizeCode: sz.code, sizeLabel: sz.label, orderedQuantity: '' }));
+  return sizes.map((sz) => ({ sizeId: sz.id, sizeCode: sz.code, sizeLabel: sz.label, orderedQuantity: null }));
 }
 
 export function PurchaseOrderFormPage() {
@@ -94,7 +95,7 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
             sizeId: sz.sizeId,
             sizeCode: sz.sizeCode,
             sizeLabel: sz.sizeLabel,
-            orderedQuantity: String(sz.orderedQuantity),
+            orderedQuantity: sz.orderedQuantity,
           })),
         }
       : emptyLine(),
@@ -104,7 +105,12 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
   // would never appear in a new-selection search.
   const [selectedStyle, setSelectedStyle] = useState<StyleLookupValue | null>(() =>
     existingLine
-      ? { id: existingLine.styleId, styleNumber: existingLine.styleNumber, styleName: existingLine.styleName }
+      ? {
+          id: existingLine.styleId,
+          styleNumber: existingLine.styleNumber,
+          styleName: existingLine.styleName,
+          primaryImage: existingLine.primaryImage,
+        }
       : null,
   );
   const [error, setError] = useState('');
@@ -153,11 +159,11 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
     setLine((current) => ({ ...current, styleId: style?.id ?? '', sizes: [] }));
   }
 
-  function handleQtyChange(sizeIndex: number, value: string) {
+  function handleQtyChange(sizeId: string, value: number | null) {
     setLine((current) => ({
       ...current,
-      sizes: (current.sizes.length > 0 ? current.sizes : sizeRows).map((sz, j) =>
-        j === sizeIndex ? { ...sz, orderedQuantity: value } : sz,
+      sizes: (current.sizes.length > 0 ? current.sizes : sizeRows).map((sz) =>
+        sz.sizeId === sizeId ? { ...sz, orderedQuantity: value } : sz,
       ),
     }));
   }
@@ -187,8 +193,8 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
             styleId: line.styleId,
             remarks: line.remarks || null,
             sizes: sizeRows
-              .filter((sz) => sz.orderedQuantity && Number(sz.orderedQuantity) > 0)
-              .map((sz) => ({ sizeId: sz.sizeId, orderedQuantity: Number(sz.orderedQuantity) })),
+              .filter((sz) => sz.orderedQuantity !== null && sz.orderedQuantity > 0)
+              .map((sz) => ({ sizeId: sz.sizeId, orderedQuantity: sz.orderedQuantity! })),
           },
         ],
       };
@@ -310,21 +316,14 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
                     <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
                       Size Quantities
                     </div>
-                    <FormGrid layout="content" gap="sm">
-                      {sizeRows.map((sz, szIndex) => (
-                        <TextField
-                          key={sz.sizeId}
-                          label={sz.sizeCode}
-                          type="number"
-                          min="1"
-                          value={sz.orderedQuantity}
-                          onChange={(e) => handleQtyChange(szIndex, e.target.value)}
-                          placeholder="0"
-                          density="compact"
-                          width="xs"
-                        />
-                      ))}
-                    </FormGrid>
+                    <OrderSheetSizeGrid
+                      styleId={line.styleId}
+                      styleNumber={(styleDetail ?? selectedStyle)?.styleNumber ?? ''}
+                      styleName={(styleDetail ?? selectedStyle)?.styleName}
+                      primaryImage={(styleDetail ?? selectedStyle)?.primaryImage ?? null}
+                      sizes={sizeRows}
+                      onQuantityChange={handleQtyChange}
+                    />
                   </div>
                 )}
                 {line.styleId && sizeRows.length === 0 && (

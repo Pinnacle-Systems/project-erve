@@ -1,6 +1,7 @@
 import type { QualityExecutionView } from '@erve/types';
 import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 import { displayQualityActivityName } from '../shared/displayQualityActivityName.js';
 import { buildQualitySections, type QualityPdfSection } from '../shared/qualityResponseBlocks.js';
 import type { PreparedQualityExecutionPdfData } from './prepareQualityExecutionPdfData.js';
@@ -71,6 +72,7 @@ export interface QualityExecutionPdfViewModel {
   outcome: QualityExecutionOutcomeViewModel | null;
   finalBatch: QualityFinalBatchViewModel | null;
   sections: QualityPdfSection[];
+  image: PdfImageSource;
 }
 
 /**
@@ -89,7 +91,7 @@ export function buildQualityExecutionViewModel(
   prepared: PreparedQualityExecutionPdfData,
   meta: QualityExecutionPdfMeta,
 ): QualityExecutionPdfViewModel {
-  const { execution, evidenceImages } = prepared;
+  const { execution, evidenceImages, primaryImage } = prepared;
   const activityDisplayName = displayQualityActivityName(execution.activityName);
 
   const hasOutcomeComponent = execution.sections.some((section) =>
@@ -154,5 +156,6 @@ export function buildQualityExecutionViewModel(
     outcome,
     finalBatch,
     sections: buildQualitySections(execution, evidenceImages),
+    image: primaryImage,
   };
 }

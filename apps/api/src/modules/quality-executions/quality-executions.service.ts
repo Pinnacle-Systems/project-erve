@@ -8,6 +8,7 @@ import { HttpError } from '../../errors/http-error.js';
 import { env } from '../../config/env.js';
 import { FileNotFoundInStorageError, getFileStorage } from '../../storage/index.js';
 import { sanitizeDisplayFileName, sniffImage } from '../../storage/image-sniff.js';
+import { resolvePrimaryStyleAcrossLines, stylePrimaryImageInclude } from '../master-data/style-images.service.js';
 import type { QualityExecutionPayload } from './quality-executions.validation.js';
 import { calculateQualityExecutionOutcome } from '@erve/types';
 import type { QualityExecutionValidationError } from '@erve/types';
@@ -529,7 +530,7 @@ async function loadJobOrder(jobOrderId: string) {
       orderSheets: { include: { distributor: true, merchandiser: true } },
       lines: {
         include: {
-          style: true,
+          style: { include: { images: stylePrimaryImageInclude } },
           sizes: { include: { size: true } },
         },
       },
@@ -1709,6 +1710,11 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
     id: execution.id,
     jobOrderId: execution.jobOrderId,
     jobOrderNumber: jobOrder.jobOrderNumber,
+    // `consistent: false` when the Job Order's lines disagree on Style
+    // (legacy/corrupted data — never legitimate, a Job Order is exactly one
+    // Style by business rule) or it has no lines at all — same invariant as
+    // the Job Order detail header/PDF, see resolvePrimaryStyleAcrossLines.
+    primaryStyle: resolvePrimaryStyleAcrossLines(jobOrder.lines),
     processFlowActivityId: execution.processFlowActivityId,
     activityName: execution.processFlowActivity.name,
     qualityForm: {

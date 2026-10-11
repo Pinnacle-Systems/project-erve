@@ -11,6 +11,7 @@ function makeViewModel(overrides: Partial<InvoiceHandoffDetailPdfViewModel> = {}
     generatedBy: 'Test Admin',
     identityItems: [{ label: 'Style / Size', value: 'ST-1 / Medium' }],
     tallyItems: [{ label: 'Tally Invoice #', value: 'TALLY-001' }],
+    image: { placeholder: true },
     ...overrides,
   };
 }

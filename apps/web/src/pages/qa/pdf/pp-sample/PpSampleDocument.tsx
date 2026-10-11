@@ -17,6 +17,9 @@ import type {
 } from './buildPpSampleViewModel.js';
 
 const styles = StyleSheet.create({
+  identityRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  identityImageWrapper: { marginRight: 16 },
+  identityContent: { flex: 1 },
   formBlock: {
     marginBottom: 10,
     padding: 8,
@@ -147,7 +150,14 @@ export function PpSampleDocument({ viewModel }: PpSampleDocumentProps) {
       <PdfMetaSection generatedAt={viewModel.generatedAt} generatedBy={viewModel.generatedBy} />
 
       <PdfSection title="Inspection Context">
-        <PdfKeyValueSection items={viewModel.headerItems} columns={4} />
+        <View style={styles.identityRow}>
+          <View style={styles.identityImageWrapper}>
+            <PdfThumbnail image={viewModel.image} width={90} height={90} />
+          </View>
+          <View style={styles.identityContent}>
+            <PdfKeyValueSection items={viewModel.headerItems} columns={4} />
+          </View>
+        </View>
       </PdfSection>
 
       {viewModel.sessions.length === 0 ? (

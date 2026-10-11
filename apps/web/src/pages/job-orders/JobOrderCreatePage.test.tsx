@@ -52,6 +52,21 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+// The Production Plan quantity cell is a NumericField now: like every
+// NumericField, it only commits (fires onChange) on blur — see
+// numeric-field.tsx's commit() — so a test whose later assertion depends
+// on the committed `quantities` state (not just the displayed draft) must
+// also dispatch `focusout` (the bubbling event React's onBlur listens for;
+// plain `blur` doesn't bubble), matching the convention already
+// established in StyleSizeGrid.test.tsx. Both dispatches in one `act()`
+// to avoid a race with this page's other pending effects/queries.
+function setQuantityAndCommit(input: HTMLInputElement, value: string): void {
+  act(() => {
+    setInputValue(input, value);
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+  });
+}
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -106,6 +121,7 @@ function makePurchaseOrder(overrides: {
         styleId: overrides.styleId ?? 'style-1',
         styleNumber: overrides.styleNumber ?? 'ST-1',
         styleName: overrides.styleName ?? 'Test Style',
+        primaryImage: null,
         lineStatus: 'ACTIVE',
         remarks: null,
         seasonSnapshots: [],
@@ -200,7 +216,9 @@ const benignStyleLookup = {
   data: {
     data: {
       id: 'style-1',
+      styleNumber: 'ST-001',
       factories: [],
+      images: [],
       sizes: [
         {
           id: 'sz-1',
@@ -667,7 +685,7 @@ describe('Order Sheet multi-select', () => {
     // Pre-filled from the Combined Forecast (10), not empty.
     expect(quantityInput.value).toBe('10');
     // Freely editable beyond the forecast — no remaining-balance cap.
-    act(() => setInputValue(quantityInput, '15'));
+    setQuantityAndCommit(quantityInput, '15');
     await flush();
 
     const unitPriceInput = container.querySelector<HTMLInputElement>(
@@ -852,7 +870,11 @@ describe('Order Sheet multi-select', () => {
     const quantityInput = () =>
       container.querySelector<HTMLInputElement>('[aria-label="Production quantity for Small"]')!;
     expect(quantityInput().value).toBe('10');
-    act(() => setInputValue(quantityInput(), '4'));
+    // Realistic user behavior: type, then blur away (e.g. to search for
+    // the next Order Sheet) — the quantity only counts as "touched" once
+    // committed, matching NumericField's commit-on-blur model everywhere
+    // else in this workstream.
+    setQuantityAndCommit(quantityInput(), '4');
     await flush();
     expect(quantityInput().value).toBe('4');
 

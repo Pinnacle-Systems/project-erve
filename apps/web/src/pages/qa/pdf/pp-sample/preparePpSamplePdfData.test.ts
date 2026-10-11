@@ -20,8 +20,10 @@ describe('preparePpSamplePdfData', () => {
           jobOrderId: 'jo-1',
           jobOrderNumber: 'JO-1001',
           jobOrderLineSizeId: 'size-1',
+          styleId: 'style-1',
           styleNumber: 'STY-0001',
           styleName: 'Basic Tee',
+          primaryImage: null,
           sizeCode: 'M',
           sizeLabel: 'Medium',
           assignedQuantity: 5,
@@ -94,5 +96,59 @@ describe('preparePpSamplePdfData', () => {
     await preparePpSamplePdfData(detail);
 
     expect(resolveImagesForPdfMock).toHaveBeenCalledWith([], { maxDimension: 400 });
+  });
+
+  it("returns the explicit inconsistent marker — never a guess, never a plain placeholder — for a Job Order with no lines at all (the shared fixture's default)", async () => {
+    resolveImagesForPdfMock.mockResolvedValue(new Map());
+    const result = await preparePpSamplePdfData(makeQaInspectionDetail());
+    expect(result.primaryImage).toEqual({ inconsistent: true });
+  });
+
+  it("resolves the header image from the one Style every line agrees on", async () => {
+    const detail = makeQaInspectionDetail({
+      lines: [
+        {
+          jobOrderLineSizeId: 'size-1',
+          styleId: 'style-1',
+          styleNumber: 'STY-0001',
+          styleName: 'Basic Tee',
+          primaryImage: {
+            id: 'img-1',
+            styleId: 'style-1',
+            fileId: 'file-1',
+            fileName: 'x',
+            mimeType: 'image/jpeg',
+            sizeBytes: 1,
+            isPrimary: true,
+            sortOrder: 0,
+            createdAt: '',
+            updatedAt: '',
+          },
+          colour: null,
+          sizeCode: 'M',
+          sizeLabel: 'Medium',
+          orderedQuantity: 10,
+          preparedQuantity: 10,
+          availableToInspect: 10,
+          acceptedQuantity: 0,
+          reworkQuantity: 0,
+          awaitingReinspectionQuantity: 0,
+          permanentlyRejectedQuantity: 0,
+        },
+      ],
+      sessions: [{ ...makeQaInspectionDetail().sessions[0]!, evidence: [] }],
+    });
+    resolveImagesForPdfMock.mockImplementation(async (refs: Array<{ id: string }>) => {
+      if (refs[0]?.id === 'file-1') return new Map([['file-1', { dataUri: 'data:image/jpeg;base64,header' }]]);
+      return new Map();
+    });
+
+    const result = await preparePpSamplePdfData(detail);
+
+    expect(resolveImagesForPdfMock).toHaveBeenCalledWith(
+      [{ id: 'file-1', path: '/styles/style-1/images/img-1/content' }],
+      { maxDimension: 480 },
+    );
+    expect(result.primaryImage).toEqual({ dataUri: 'data:image/jpeg;base64,header' });
   });
 });

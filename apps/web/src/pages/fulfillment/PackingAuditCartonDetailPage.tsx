@@ -13,6 +13,7 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canConfirmPackingAudits } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import type { PackingAuditQueueItem } from './types.js';
 
 // Lightweight carton inspection view — the inspector sees carton identity,
@@ -121,7 +122,16 @@ export function PackingAuditCartonDetailPage() {
           rowKey="saleOrderLineId"
           data={carton.lines}
           columns={[
-            { key: 'style', header: 'Style', render: (r) => `${r.styleNumber} — ${r.styleName}` },
+            {
+              key: 'style',
+              header: 'Style',
+              render: (r) => (
+                <div className="flex items-center gap-2">
+                  <StyleThumbnailCell styleId={r.styleId} image={r.primaryImage} size={32} viewerTitle={r.styleNumber} />
+                  <span>{`${r.styleNumber} — ${r.styleName}`}</span>
+                </div>
+              ),
+            },
             { key: 'size', header: 'Size', accessor: 'sizeLabel' },
             { key: 'quantity', header: 'Quantity', align: 'right', render: (r) => r.quantity.toLocaleString() },
           ]}

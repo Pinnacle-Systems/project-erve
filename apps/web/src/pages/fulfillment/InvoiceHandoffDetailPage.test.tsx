@@ -47,7 +47,7 @@ function buildHandoff(overrides: Partial<InvoiceHandoffView> = {}): InvoiceHando
     distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
     purchaseMode: 'OUTRIGHT',
     saleOrderLineId: 'line-1',
-    style: { styleNumber: 'ST-001', styleName: 'Classic Tee' },
+    style: { id: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null },
     size: { sizeCode: 'M', sizeLabel: 'Medium' },
     quantity: 10,
     status: 'PENDING_TALLY',

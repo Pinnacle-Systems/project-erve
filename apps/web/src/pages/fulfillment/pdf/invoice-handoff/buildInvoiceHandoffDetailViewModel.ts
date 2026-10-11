@@ -1,5 +1,6 @@
 import { formatPdfDate, formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 import { INVOICE_HANDOFF_STATUS_LABELS } from '../shared/fulfillmentPdfLabels.js';
 import type { InvoiceHandoffView } from '../../types.js';
 
@@ -15,6 +16,7 @@ export interface InvoiceHandoffDetailPdfViewModel {
   generatedBy?: string | null;
   identityItems: PdfKeyValueItem[];
   tallyItems: PdfKeyValueItem[];
+  image: PdfImageSource;
 }
 
 /**
@@ -32,6 +34,7 @@ export interface InvoiceHandoffDetailPdfViewModel {
 export function buildInvoiceHandoffDetailViewModel(
   handoff: InvoiceHandoffView,
   meta: InvoiceHandoffDetailPdfMeta,
+  primaryImage: PdfImageSource = { placeholder: true },
 ): InvoiceHandoffDetailPdfViewModel {
   const modeLabel = handoff.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale-or-Return';
 
@@ -61,5 +64,6 @@ export function buildInvoiceHandoffDetailViewModel(
     generatedBy: meta.generatedBy,
     identityItems,
     tallyItems,
+    image: primaryImage,
   };
 }

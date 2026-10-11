@@ -34,6 +34,10 @@ import { QaInspectionForm } from './QaInspectionForm.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
+import { resolveJobOrderPrimaryStyle } from '../job-orders/resolveJobOrderPrimaryStyle.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
+import { StyleIdentityUnavailable } from '../../components/style/StyleIdentityUnavailable.js';
+import { IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
 
 const qaTotalLabels: Record<string, string> = {
   prepared: 'Prepared',
@@ -95,6 +99,25 @@ export function QaDetailPage() {
   const canReopen = canReopenQaForm(user?.roles);
   const ppSampleSession = data.sessions.find((session) => session.processFlowPpSample);
   const hasProcessFlowPpSample = Boolean(ppSampleSession);
+  // A QA record belongs to one Job Order, which is exactly one Style by
+  // business rule (server-enforced) — same invariant resolveJobOrderPrimaryStyle
+  // already checks for the Job Order detail header/PDF. QaInspectionDetail's
+  // lines carry the same styleId/styleNumber/styleName/primaryImage shape,
+  // duck-typed compatible with no extra mapping.
+  const primaryStyle = resolveJobOrderPrimaryStyle(data.lines);
+  const identityVisual = primaryStyle.consistent ? (
+    <StyleThumbnailCell
+      styleId={primaryStyle.style.styleId}
+      image={primaryStyle.style.primaryImage}
+      size={IDENTITY_HEADER_IMAGE_SIZE}
+      viewerTitle={primaryStyle.style.styleNumber}
+    />
+  ) : (
+    <StyleIdentityUnavailable
+      size={IDENTITY_HEADER_IMAGE_SIZE}
+      reason="Style identity unavailable — this Job Order's lines disagree on Style, which should never happen. Reported for investigation, not guessed."
+    />
+  );
   const content = (
     <div className="space-y-5">
       {ppSampleSession ? (
@@ -114,9 +137,11 @@ export function QaDetailPage() {
           attemptNumber={ppSampleSession.cycleNumber}
           status={ppSampleSession.status}
           context={`${data.jobOrderNumber} · ${data.factory.name}`}
+          leadingVisual={identityVisual}
         />
       ) : (
         <PageHeader
+          leadingVisual={identityVisual}
           title={data.jobOrderNumber}
           subtitle={data.factory.name}
           status={
@@ -183,7 +208,12 @@ export function QaDetailPage() {
               {
                 key: 'styleSize',
                 header: 'Style / size',
-                render: (line) => `${line.styleNumber} · ${line.sizeLabel}`,
+                render: (line) => (
+                  <div className="flex items-center gap-2">
+                    <StyleThumbnailCell styleId={line.styleId} image={line.primaryImage} size={32} viewerTitle={line.styleNumber} />
+                    <span>{`${line.styleNumber} · ${line.sizeLabel}`}</span>
+                  </div>
+                ),
               },
               {
                 key: 'preparedQuantity',

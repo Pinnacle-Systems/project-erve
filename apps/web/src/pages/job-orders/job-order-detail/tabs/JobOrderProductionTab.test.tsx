@@ -398,6 +398,27 @@ describe('JobOrderProductionTab Undo completed stage (DEMO-010)', () => {
   });
 });
 
+// Size quantities are now entered through the shared StyleSizeGrid
+// (NumericField "cell" variant), whose cells carry an `aria-label` ending
+// with "<sizeCode> quantity" (e.g. "ST-1 S quantity") instead of the old
+// TextField's fixed "Production quantity for <sizeLabel>" — the suffix
+// match keeps this query independent of the fixture's styleNumber. Unlike
+// a plain TextField, NumericField only commits (fires onChange) on blur —
+// see numeric-field.tsx's commit() — so a `focusout` must follow the typed
+// value, matching the convention established in StyleSizeGrid.test.tsx.
+function productionQuantityInput(sizeCode: string): HTMLInputElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLInputElement>('input[aria-label]')).find((el) =>
+    el.getAttribute('aria-label')?.endsWith(` ${sizeCode} quantity`),
+  );
+}
+
+function changeAndCommit(input: HTMLInputElement, value: string): void {
+  act(() => {
+    changeInput(input, value);
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+  });
+}
+
 describe('JobOrderProductionTab Production Plan (Phase 2.1)', () => {
   it('renders an editable Production Plan for a DRAFT job order and saves via PATCH .../production-plan', async () => {
     await renderJobOrderDetail(container, root, {
@@ -409,12 +430,12 @@ describe('JobOrderProductionTab Production Plan (Phase 2.1)', () => {
     act(() => switchJobOrderTab(container, 'Production'));
 
     const quantityInput = await vi.waitFor(() => {
-      const input = container.querySelector<HTMLInputElement>('[aria-label="Production quantity for Small"]');
-      expect(input).not.toBeNull();
+      const input = productionQuantityInput('S');
+      expect(input).not.toBeUndefined();
       return input!;
     });
     expect(quantityInput.value).toBe('10');
-    changeInput(quantityInput, '7');
+    changeAndCommit(quantityInput, '7');
 
     vi.spyOn(apiClient, 'patch').mockResolvedValue({
       data: { data: mockJobOrder('DRAFT', standardStages, draftOverrides) },
@@ -434,7 +455,7 @@ describe('JobOrderProductionTab Production Plan (Phase 2.1)', () => {
   it('does not render an editable Production Plan once the job order leaves DRAFT', async () => {
     await renderProduction('SENT_TO_FACTORY', standardStages, draftOverrides);
     const panel = getActiveTabPanel(container);
-    expect(panel.querySelector('[aria-label="Production quantity for Small"]')).toBeNull();
+    expect(productionQuantityInput('S')).toBeUndefined();
     expect(
       Array.from(panel.querySelectorAll('button')).some((button) => button.textContent === 'Save Production Plan'),
     ).toBe(false);

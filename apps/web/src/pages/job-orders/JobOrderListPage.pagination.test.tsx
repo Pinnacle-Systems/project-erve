@@ -26,6 +26,7 @@ function jobOrder(n: number) {
   return {
     id: `jo-${n}`,
     jobOrderNumber: `EIJOH/26-27/${String(n).padStart(4, '0')}`,
+    primaryStyle: { consistent: false },
     financialYear: { id: 'fy-1', code: '2026-27' },
     factory: { name: 'Clifton' },
     processFlowVersion: { versionNumber: 2, processFlow: { name: 'Erve Production + Quality' } },

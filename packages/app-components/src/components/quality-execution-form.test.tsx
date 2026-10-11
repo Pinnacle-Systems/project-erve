@@ -56,6 +56,7 @@ const execution = (status: 'DRAFT' | 'FINALIZED' = 'DRAFT'): QualityExecutionVie
   id: 'execution-1',
   jobOrderId: 'job-1',
   jobOrderNumber: 'JO-2026-000001',
+  primaryStyle: { consistent: true, style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null } },
   processFlowActivityId: 'activity-1',
   activityName: 'Inline Inspection',
   qualityForm: {
