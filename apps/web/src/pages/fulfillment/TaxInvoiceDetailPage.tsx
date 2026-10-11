@@ -151,7 +151,7 @@ function TaxInvoiceDetail({
   return (
     <div className="space-y-4">
       <PageHeader
-        className="[&>div]:flex-col sm:[&>div]:flex-row [&_h1]:break-words"
+        className="[&>div]:flex-col [&>div]:items-stretch sm:[&>div]:flex-row sm:[&>div]:items-start [&_h1]:break-words"
         title={invoice.invoiceNumber ?? `Draft · ${invoice.ervePackingList.ervePackingListNumber}`}
         subtitle={`${invoice.billTo.name} · ${invoice.shipTo.label ?? 'Destination not snapshotted'}`}
         status={

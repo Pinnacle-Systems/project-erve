@@ -177,12 +177,21 @@ async function main() {
         }),
       );
       await pause(750);
+      const profile = path.resolve(`.artifacts/native-chrome-${width}`);
+      await fs.mkdir(path.join(profile, 'Default'), { recursive: true });
+      await fs.writeFile(
+        path.join(profile, 'Default', 'Preferences'),
+        JSON.stringify({
+          credentials_enable_service: false,
+          profile: { password_manager_enabled: false },
+        }),
+      );
       const chrome = spawn(
         chromeBinary,
         [
           '--remote-debugging-address=127.0.0.1',
           '--remote-debugging-port=9337',
-          `--user-data-dir=${path.resolve(`.artifacts/native-chrome-${width}`)}`,
+          `--user-data-dir=${profile}`,
           '--no-first-run',
           '--no-default-browser-check',
           '--disable-search-engine-choice-screen',
