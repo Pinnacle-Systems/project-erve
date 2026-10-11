@@ -34,14 +34,14 @@ export function DispatchOrderQuantityGrid({ style, totalQuantity }: DispatchOrde
     <div className="space-y-1.5">
       {sizeCount === 0 ? (
         <p className="text-xs text-[var(--erp-form-field-error-text-color)]" role="alert">
-          This Style has no pooled stock at the selected Factory and cannot be allocated.
+          This Style has no pooled stock and no configured Sizes at the selected Factory, and cannot be allocated.
         </p>
       ) : (
         <>
           <StyleSizeGrid columns={columns} rows={[row]} variant="computed" showColumnTotals={false} />
           {totalQuantity !== null && !dividesEvenly && (
             <p className="text-xs text-[var(--erp-form-field-error-text-color)]" role="alert">
-              {totalQuantity} does not divide evenly across {sizeCount} pooled Size(s). Enter a total that is an
+              {totalQuantity} does not divide evenly across {sizeCount} Size(s). Enter a total that is an
               exact multiple of {sizeCount}.
             </p>
           )}

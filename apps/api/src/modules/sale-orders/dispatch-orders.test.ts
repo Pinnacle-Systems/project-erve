@@ -832,7 +832,7 @@ describe('Dispatch Orders — equal-distribution Style quantity entry (DEMO-016)
     }).expect(400);
 
     expect(res.body.error.message).toMatch(/does not divide evenly/);
-    expect(res.body.error.message).toContain('2 pooled Size');
+    expect(res.body.error.message).toContain('2 Size');
     expect(await prisma.saleOrder.count()).toBe(0);
     expect(await prisma.stockAllocation.count()).toBe(0);
   });
@@ -855,6 +855,51 @@ describe('Dispatch Orders — equal-distribution Style quantity entry (DEMO-016)
     // Neither Size got a partial reservation — the whole order rolled back.
     expect(await prisma.stockAllocation.count({ where: { qaReleaseLineId: sizeA.qaReleaseLineId } })).toBe(0);
     expect(await prisma.stockAllocation.count({ where: { qaReleaseLineId: sizeB.qaReleaseLineId } })).toBe(0);
+  });
+
+  // DEMO-016 fix regression: a configured Size that has NEVER had any
+  // QA-passed stock released at this Factory (unlike sizeA/sizeB below,
+  // which have stock but can still run out — covered above) must still
+  // count toward the equal-split divisor and fail as an explicit
+  // insufficient-stock error, never silently drop out of the split the way
+  // the original PR4 pool-only eligibility (getPooledFactoryInventory
+  // alone) did. Mirrors the "six configured Sizes, only five ever pooled"
+  // scenario, scaled down to two pooled + two configured-only Sizes to keep
+  // the fixture light.
+  it('keeps a configured Size with zero pooled history in the equal-split divisor instead of dropping it', async () => {
+    const sizeA = await createReleasedQaStock({ quantity: 60 });
+    const sizeB = await createReleasedQaStock({ styleId: sizeA.styleId, factoryId: sizeA.factoryId, quantity: 60 });
+    const sizeC = await prisma.size.create({ data: { id: createId(), code: `SZ-${createId()}`, label: 'L', sizeType: 'ALPHA', sortOrder: 2 } });
+    const sizeD = await prisma.size.create({ data: { id: createId(), code: `SZ-${createId()}`, label: 'XL', sizeType: 'ALPHA', sortOrder: 3 } });
+    await prisma.styleSize.createMany({
+      data: [sizeA.sizeId, sizeB.sizeId, sizeC.id, sizeD.id].map((sizeId) => ({ id: createId(), styleId: sizeA.styleId, sizeId })),
+    });
+    const merchToken = await roleToken(['MERCHANDISER']);
+
+    // 4 configured Sizes now (sizeA, sizeB, sizeC, sizeD) — a total that
+    // only divides evenly across the 2 POOLED Sizes must be rejected as
+    // uneven, proving the divisor is 4, not 2.
+    const uneven = await createDispatchOrder(merchToken, {
+      factoryId: sizeA.factoryId,
+      soDate: '2026-06-30',
+      distributors: [distributorGroup(sizeA.distributorId, [destination()])],
+      lines: [{ destinationClientKey: 'd1', styleId: sizeA.styleId, totalQuantity: 30 }],
+    }).expect(400);
+    expect(uneven.body.error.message).toMatch(/does not divide evenly/);
+    expect(uneven.body.error.message).toContain('4 Size');
+
+    // An exact multiple of 4 must fail as insufficient stock for the
+    // never-pooled Sizes (sizeC/sizeD), never silently allocate only
+    // sizeA/sizeB and succeed.
+    const insufficient = await createDispatchOrder(merchToken, {
+      factoryId: sizeA.factoryId,
+      soDate: '2026-06-30',
+      distributors: [distributorGroup(sizeA.distributorId, [destination()])],
+      lines: [{ destinationClientKey: 'd1', styleId: sizeA.styleId, totalQuantity: 40 }],
+    }).expect(409);
+    expect(insufficient.body.error.message).toMatch(/short by 10 unit\(s\)/);
+    expect(await prisma.saleOrder.count()).toBe(0);
+    expect(await prisma.stockAllocation.count()).toBe(0);
   });
 
   it('rejects a Style with no pooled stock at all at the selected Factory', async () => {

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import type { RetailStore } from '@erve/types';
+import type { Style as StyleMasterRecord } from '../master-data/types.js';
 import { RetailStoreLookupField } from '../master-data/RetailStoreLookupField.js';
 import { createEnterToNextHandler, PageHeader } from '@erve/app-components';
 import { Badge, Button, DatePicker, NumericField, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
@@ -171,6 +172,48 @@ export function SaleOrderFormPage() {
   );
   const pooledStyleById = useMemo(() => new Map(pooledStyles.map((s) => [s.styleId, s])), [pooledStyles]);
 
+  // DEMO-016 fix: the server's eligible-Size set for the equal split is the
+  // union of pooled Sizes and the Style's currently ACTIVE configured
+  // Sizes (see resolveEligibleSizeIds in sale-orders.service.ts) — a
+  // configured Size with no pooled stock must still show up here (with 0
+  // available) rather than silently vanish from the preview's divisor
+  // while the server's own divisor includes it. Fetched per distinct Style
+  // actually selected on this form (GET /styles/:id, the same ADMIN /
+  // MERCHANDISER / SENIOR_MANAGEMENT roles as this form already requires).
+  const selectedStyleIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const group of distributorGroups) {
+      for (const dest of group.destinations) {
+        for (const line of dest.lines) if (line.style) ids.add(line.style.styleId);
+      }
+    }
+    return [...ids];
+  }, [distributorGroups]);
+
+  const styleMasterQueries = useQueries({
+    queries: selectedStyleIds.map((styleId) => ({
+      queryKey: ['styles', styleId],
+      queryFn: async () => {
+        const res = await apiClient.get<ApiSuccessResponse<StyleMasterRecord>>(`/styles/${styleId}`);
+        return res.data.data;
+      },
+    })),
+  });
+  const configuredActiveSizesByStyleId = useMemo(() => {
+    const map = new Map<string, DispatchOrderStyleOption['sizes']>();
+    selectedStyleIds.forEach((styleId, index) => {
+      const style = styleMasterQueries[index]?.data;
+      if (!style) return;
+      map.set(
+        styleId,
+        style.sizes
+          .filter((size) => size.status === 'ACTIVE' && size.mappingStatus === 'ACTIVE')
+          .map((size) => ({ sizeId: size.id, sizeCode: size.code, sizeLabel: size.label, sizeSortOrder: size.sortOrder, availableQuantity: 0 })),
+      );
+    });
+    return map;
+  }, [selectedStyleIds, styleMasterQueries]);
+
   // A saved line's Style may have since dropped out of the live pool (fully
   // consumed, or never re-released) — the server always re-derives the
   // split from the CURRENT pool, so this form must display the same
@@ -179,7 +222,12 @@ export function SaleOrderFormPage() {
   // pooled Sizes, which DispatchOrderQuantityGrid reports honestly rather
   // than silently.
   function resolveStyleOption(fallback: DispatchOrderStyleOption): DispatchOrderStyleOption {
-    return pooledStyleById.get(fallback.styleId) ?? { ...fallback, sizes: [] };
+    const pooled = pooledStyleById.get(fallback.styleId) ?? { ...fallback, sizes: [] };
+    const configured = configuredActiveSizesByStyleId.get(fallback.styleId);
+    if (!configured || configured.length === 0) return pooled;
+    const sizesBySizeId = new Map(pooled.sizes.map((size) => [size.sizeId, size]));
+    for (const size of configured) if (!sizesBySizeId.has(size.sizeId)) sizesBySizeId.set(size.sizeId, size);
+    return { ...pooled, sizes: [...sizesBySizeId.values()].sort((a, b) => a.sizeSortOrder - b.sizeSortOrder) };
   }
 
   useEffect(() => {
