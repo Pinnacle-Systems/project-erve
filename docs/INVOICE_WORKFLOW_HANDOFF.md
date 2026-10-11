@@ -3,7 +3,9 @@
 Branch: `feature/invoice-inv007-workflow`. Implementation began on PR0 main
 `5749bbe37fc434de98237a96d7133c02bf2ac495`. Style PR65 has since merged as
 `2f133c767f94d9c29f2ff266b63169df5909ff0b` and is integrated. PR1 publication
-is for CI and review; merge acceptance remains pending.
+is for CI and review; merge acceptance remains pending. Separately approved shared
+viewer positioning dependency PR68 merged as
+`3e09608cc5b62d845958dbd4bc6d8e4e0ad033c5` and is integrated.
 
 ## Workflow
 
@@ -96,7 +98,17 @@ preinstalled Chrome, verifies actual native maximization and 100% zoom at 1440/1
 issuance, audit, legacy/error states, image checksums and role restrictions.
 820/390 viewport checks are supplemental and explicitly labelled non-canonical.
 Only screenshots/window proof are uploaded; fixture credentials are excluded.
-Native acceptance remains pending its successful run and visual inspection.
+The native run on `58e9ea0` passed these workflow assertions and all three full
+PR CI jobs also passed, but screenshot inspection found the pre-existing shared
+viewer clipped off-screen. The user explicitly approved a separate narrow fix.
+PR68's computed geometry regression reproduced off-screen viewer/control bounds,
+then passed at 1440/390/320 after clearing inherited centering translation and
+full-width sizing. All PR68 mandatory CI jobs passed before its merge.
+Native verification now explicitly asserts viewer/control bounds. INV-007 still
+requires a fresh successful native run, screenshot inspection and all mandatory
+CI checks on the latest head after integrating the dependency. Narrow header and
+table overflow and queue action visibility were corrected in invoice-owned pages;
+shared component changes belong entirely to the merged dependency PR.
 
 ## Delivery boundaries
 

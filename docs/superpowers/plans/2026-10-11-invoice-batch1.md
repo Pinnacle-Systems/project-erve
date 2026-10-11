@@ -6,6 +6,8 @@
 **Spec:** user-supplied SOP v1.6 Batch 1 authorization, 11 October 2026.
 **Baseline:** implementation began at 5749bbe (PR0). Style PR65 has since
 merged at 2f133c7 and was integrated into PR1 without conflicts.
+Separately approved shared viewer positioning dependency PR68 merged at 3e09608
+and is integrated; its geometry and full PR CI passed before merge.
 **Architecture:** existing accounting functions and lifecycle services remain
 authoritative. Add invoice-scoped read/review integration, normalized web pages,
 then a finalized-snapshot PDF adapter. Reuse the established UI and PDF systems.
