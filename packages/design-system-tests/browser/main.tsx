@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { FilterBar } from "@erve/app-components";
+import { FilterBar, ImageViewerDialog } from "@erve/app-components";
 import { Pagination } from "@erve/data-display";
 import {
   Checkbox,
@@ -22,6 +22,7 @@ import "./styles.css";
 const density = (new URLSearchParams(location.search).get("density") ?? "compact") as Density;
 
 function Harness() {
+  const [viewerOpen, setViewerOpen] = useState(false);
   useEffect(() => {
     document.querySelector<HTMLButtonElement>('[aria-label="Open date picker calendar"]')?.click();
     let cancelled = false;
@@ -128,6 +129,23 @@ function Harness() {
         failures.push("dateMonthNamesNotFull");
       }
 
+      // Check computed viewer bounds after the other control measurements.
+      setViewerOpen(true);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const dialog = document.querySelector<HTMLElement>('[aria-label="Close viewer"]')!
+        .closest<HTMLElement>('[role="dialog"]')!;
+      const viewerBox = dialog.getBoundingClientRect();
+      if (viewerBox.left < 0 || viewerBox.top < 0 || viewerBox.right > innerWidth || viewerBox.bottom > innerHeight) {
+        failures.push(`viewerOutsideViewport=${viewerBox.left}:${viewerBox.top}:${viewerBox.right}:${viewerBox.bottom}/${innerWidth}x${innerHeight}`);
+      }
+      for (const label of ["Zoom in", "Zoom out", "Close viewer"]) {
+        const control = dialog.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
+        const box = control.getBoundingClientRect();
+        if (box.left < 0 || box.top < 0 || box.right > innerWidth || box.bottom > innerHeight) {
+          failures.push(`viewerControlOutsideViewport=${label}`);
+        }
+      }
+
       const result = document.createElement("pre");
       result.id = "geometry-result";
       result.dataset.status = failures.length ? "fail" : "pass";
@@ -148,6 +166,12 @@ function Harness() {
 
   return (
     <div className="space-y-2 p-2">
+      <ImageViewerDialog
+        open={viewerOpen}
+        onOpenChange={setViewerOpen}
+        title="Viewport positioning regression"
+        images={[{ src: null }]}
+      />
       <Checkbox data-test="checkbox" aria-label="Checkbox" />
       <RadioGroup defaultValue="one">
         <Radio data-test="radio" aria-label="Radio" value="one" />
