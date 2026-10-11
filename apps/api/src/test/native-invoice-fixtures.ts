@@ -39,14 +39,17 @@ const app = createApp();
 function markerPng(index: number): Buffer {
   const width = index % 2 ? 192 : 320;
   const height = index % 2 ? 320 : 192;
-  const raw = Buffer.alloc((width * 3 + 1) * height);
+  const channels = index === 1 ? 4 : 3;
+  const raw = Buffer.alloc((width * channels + 1) * height);
   for (let y = 0; y < height; y++)
     for (let x = 0; x < width; x++) {
-      const offset = y * (width * 3 + 1) + 1 + x * 3;
+      const offset = y * (width * channels + 1) + 1 + x * channels;
       const band = x < 8 || y < 8 || x >= width - 8 || y >= height - 8 || (x + index * 9) % 47 < 7;
       raw[offset] = band ? 245 : index % 2 ? 32 : 196;
       raw[offset + 1] = band ? 245 : 54 + index * 5;
       raw[offset + 2] = band ? 245 : index % 2 ? 98 : 67;
+      if (channels === 4)
+        raw[offset + 3] = x < 8 || y < 8 || x >= width - 8 || y >= height - 8 ? 0 : 255;
     }
   function chunk(name: string, data: Buffer) {
     const body = Buffer.concat([Buffer.from(name), data]);
@@ -65,7 +68,7 @@ function markerPng(index: number): Buffer {
   header.writeUInt32BE(width);
   header.writeUInt32BE(height, 4);
   header[8] = 8;
-  header[9] = 2;
+  header[9] = channels === 4 ? 6 : 2;
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk('IHDR', header),
@@ -255,6 +258,26 @@ async function main() {
     multiSources.push(item);
   }
   const multi = await invoice(multiSources, true);
+  if (process.env.NATIVE_VERIFY_PDF === 'true') {
+    // Mutate only this disposable Style after issuance. The archived bytes and
+    // issued presentation must remain independent of the current master.
+    const styleId = issued.sources[0]!.styleId;
+    const images = await prisma.styleImage.findMany({ where: { styleId } });
+    for (const image of images)
+      await request(app)
+        .put(`/styles/${styleId}/images/${image.id}`)
+        .set('Authorization', `Bearer ${actors.admin.token}`)
+        .attach('image', markerPng(101), { filename: 'replacement.png', contentType: 'image/png' })
+        .expect(200);
+    await prisma.style.update({
+      where: { id: styleId },
+      data: {
+        styleName: 'EDITED-AFTER-ISSUE',
+        description: 'Edited current master',
+        colour: 'Edited',
+      },
+    });
+  }
   const fixturePath = path.resolve(
     process.env.NATIVE_FIXTURE_PATH ?? '.artifacts/native-invoice-fixtures.json',
   );
