@@ -245,7 +245,7 @@ async function main() {
         'server-paginated queue records',
       );
       const desktop = await page.evaluate(
-        '({innerWidth,outerWidth,devicePixelRatio,scale:visualViewport.scale,font:getComputedStyle(document.body).fontSize})',
+        '({innerWidth,innerHeight,outerWidth,devicePixelRatio,scale:visualViewport.scale,font:getComputedStyle(document.body).fontSize})',
       );
       assert.equal(desktop.innerWidth, width);
       assert.equal(desktop.devicePixelRatio, 1);
@@ -377,6 +377,24 @@ async function main() {
         await until(
           async () => (await body(page)).includes(`Issued image · ${imageStyle}`),
           'shared image viewer',
+        );
+        const viewerBounds = await page.evaluate(`(() => {
+          const close = document.querySelector('[aria-label="Close viewer"]');
+          const viewer = close.closest('[role="dialog"]');
+          return [viewer, close, viewer.querySelector('[aria-label="Zoom in"]'), viewer.querySelector('[aria-label="Zoom out"]')].map(node => {
+            const rect = node.getBoundingClientRect();
+            return {left:rect.left, top:rect.top, right:rect.right, bottom:rect.bottom};
+          });
+        })()`);
+        assert.ok(
+          viewerBounds.every(
+            (rect) =>
+              rect.left >= 0 &&
+              rect.top >= 0 &&
+              rect.right <= width &&
+              rect.bottom <= desktop.innerHeight,
+          ),
+          'Shared viewer and controls stay inside the native viewport',
         );
         await screenshot(page, 'shared-archive-viewer-1440');
         await page.send('Input.dispatchKeyEvent', {
