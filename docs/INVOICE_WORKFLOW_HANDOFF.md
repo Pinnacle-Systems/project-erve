@@ -73,7 +73,7 @@ Safety-verified disposable databases received the nullable migration:
 `erve_inv007_test_f2765e00` and `erve_inv007_browser_test_f2765e00`.
 No development/production datasets changed.
 
-Latest coverage passes: 85 full invoice/calculation regressions, 100 focused web
+Latest coverage passes: 85 full invoice/calculation regressions, 102 focused web
 tests, 2 versioned-reader tests and 6 integration cases covering multiple orders, frozen identity/size/LR, missing source
 bytes, partial-upload recovery, failed-finalization retry, concurrency/idempotency,
 restricted/cross-invoice media access, master-image replacement/deletion, orphan
@@ -87,10 +87,16 @@ unchanged PR0 main; the isolated case still fails after integrating PR65. Style
 files were not modified. All three CI jobs on merged PR65 main are successful;
 PR1 still needs its own exact-head required CI. No check is waived.
 
-Automatic approval review rejected both normal and debugging Chrome launch,
-reporting only "blocked by policy". No browser tool is exposed. The user selected
-provision of a browser-enabled environment; required native maximized/100%-zoom
-and responsive evidence stays pending until available.
+Automatic approval review rejected both normal and debugging local Chrome launch,
+reporting only "blocked by policy". The user selected provision of a browser-enabled
+environment. A test-only GitHub workflow now provisions a headful Chrome/X11 desktop
+on a separate ephemeral runner, with no production secrets or datasets. It requires
+preinstalled Chrome, verifies actual native maximization and 100% zoom at 1440/1280/
+1024, captures the desktop, and checks real sign-in, keyboard rate submission,
+issuance, audit, legacy/error states, image checksums and role restrictions.
+820/390 viewport checks are supplemental and explicitly labelled non-canonical.
+Only screenshots/window proof are uploaded; fixture credentials are excluded.
+Native acceptance remains pending its successful run and visual inspection.
 
 ## Delivery boundaries
 

@@ -22,8 +22,10 @@ Vitest, React-PDF, installed Chrome/Edge with native-window verification.
 - The user explicitly approved the nullable versioned documentSnapshot,
   invoice-owned archival copies and ADMIN/ACCOUNTANT invoice-image reads.
   Existing finalized records stay null; no retrospective archival.
-- Native launches are rejected by automatic approval review. The user selected
-  provision of a browser-enabled environment; browser acceptance stays pending.
+- Local native launches are rejected by automatic approval review. The user
+  selected provision of a browser-enabled environment. Test-only ephemeral CI
+  now provides a headful native desktop; verify maximization/zoom and inspect
+  canonical captures before accepting it. Browser acceptance remains pending.
 
 ## PR1: INV-007
 

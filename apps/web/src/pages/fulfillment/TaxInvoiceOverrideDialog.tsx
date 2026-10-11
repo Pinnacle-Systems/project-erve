@@ -30,20 +30,31 @@ export function TaxInvoiceOverrideDialog({
   const [rate, setRate] = useState<number | null>(
     line.overrideUnitRate === null ? null : Number(line.overrideUnitRate),
   );
-  const [valid, setValid] = useState(true);
+  const rateInput = useRef<HTMLInputElement>(null);
+  const committed = useRef({ rate, valid: true });
   const [reason, setReason] = useState(line.overrideReason ?? '');
   const [error, setError] = useState('');
   const saving = useRef(false);
   async function save(event: FormEvent) {
     event.preventDefault();
     if (pending || saving.current) return;
-    if (rate === null || rate <= 0 || !valid || !reason.trim()) {
+    // Enter submits a form before the focused NumericField naturally blurs.
+    // Commit its draft first; callbacks update this ref synchronously.
+    rateInput.current?.blur();
+    const submittedRate = committed.current.rate;
+    if (
+      submittedRate === null ||
+      submittedRate <= 0 ||
+      !committed.current.valid ||
+      !reason.trim()
+    ) {
       setError('Enter a positive rate and a reason for this override.');
       return;
     }
+    setError('');
     saving.current = true;
     try {
-      await onSave({ lineId: line.id, overrideUnitRate: rate, reason: reason.trim() });
+      await onSave({ lineId: line.id, overrideUnitRate: submittedRate, reason: reason.trim() });
       onClose();
     } catch (caught) {
       setError(
@@ -71,14 +82,20 @@ export function TaxInvoiceOverrideDialog({
         <form onSubmit={save}>
           <FormSection title="Accountant rate correction">
             <NumericField
+              ref={rateInput}
               label="Override unit rate (₹)"
               required
               mode="currency"
               precision={2}
               min={0.01}
               value={rate}
-              onChange={setRate}
-              onValidationChange={setValid}
+              onChange={(value) => {
+                committed.current.rate = value;
+                setRate(value);
+              }}
+              onValidationChange={(valid) => {
+                committed.current.valid = valid;
+              }}
               disabled={pending}
               helpText="Normal currency entry, up to two decimal places. Quantities remain unchanged."
             />
