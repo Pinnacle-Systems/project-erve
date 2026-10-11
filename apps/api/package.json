@@ -17,6 +17,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
     "prisma:studio": "prisma studio",
+    "invoice-media:reconcile": "tsx src/cli/invoice-media-reconcile.cli.ts",
     "admin:bootstrap": "tsx src/cli/admin-bootstrap.cli.ts",
     "roles:bootstrap": "tsx src/cli/roles-bootstrap.cli.ts",
     "quality:bootstrap": "tsx src/cli/quality-bootstrap.cli.ts",

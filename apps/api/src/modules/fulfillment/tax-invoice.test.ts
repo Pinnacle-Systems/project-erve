@@ -1,8 +1,10 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createId } from '@erve/shared';
+import { getFileStorage } from '../../storage/index.js';
 import { createApp } from '../../app.js';
-import { prisma } from '../../db/prisma.js';
+import { prisma, Prisma } from '../../db/prisma.js';
+import { reconcileInvoiceImageArchives } from './tax-invoice-document.service.js';
 import { createTestSellerRegistration, resetDatabase } from '../../test/helpers.js';
 import {
   consolidateAndDispatch,
@@ -20,6 +22,7 @@ import {
 
 const app = createApp();
 beforeEach(resetDatabase);
+afterEach(() => vi.restoreAllMocks());
 afterAll(() => prisma.$disconnect());
 
 /** Finalizes (but does NOT dispatch) a single-carton Erve Packing List. */
@@ -349,6 +352,7 @@ describe('Tax Invoice — quantity and provenance', () => {
       .send({})
       .expect(200);
 
+    await setDistributorAddress(distributorId, { state: 'Maharashtra', gstin: '27AAAAA0000A1Z5' });
     const accountantToken = await createAccountantToken();
     const res = await request(app)
       .post('/tax-invoices')
@@ -365,7 +369,24 @@ describe('Tax Invoice — quantity and provenance', () => {
       (l: { saleOrderLineId: string }) => l.saleOrderLineId,
     );
     expect(new Set(saleOrderLineIds).size).toBe(2);
-  });
+    await activateGarmentGstRuleAndAssignHsn(fixtureA.stock.styleId);
+    await activateGarmentGstRuleAndAssignHsn(fixtureB.stock.styleId);
+    const issued = await request(app)
+      .post(`/tax-invoices/${res.body.data.id}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({})
+      .expect(200);
+    expect(
+      new Set(
+        issued.body.data.documentSnapshot.dispatchOrders.map((order: { id: string }) => order.id),
+      ),
+    ).toEqual(new Set([fixtureA.saleOrder.id, fixtureB.saleOrder.id]));
+    expect(
+      issued.body.data.documentSnapshot.dispatchOrders.every(
+        (order: { cartonIds: string[] }) => order.cartonIds.length > 0,
+      ),
+    ).toBe(true);
+  }, 30000);
 
   it('does not change already-drafted frozen MRP/pricing when the Style MRP or Distributor pricing changes afterwards', async () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO' });
@@ -1117,6 +1138,456 @@ describe('Tax Invoice — production EI sequence auto-seed guard (INV-012 §8.1)
   });
 });
 
+describe('Tax Invoice — Accountant workflow reads (INV-007)', () => {
+  it('records a missing source image honestly without attaching another Style image', async () => {
+    const { taxInvoiceId, fixture, accountantToken } = await createReadyDraftInvoice(1);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4X8AAAAASUVORK5CYII=',
+      'base64',
+    );
+    const uploaded = await request(app)
+      .post(`/styles/${fixture.stock.styleId}/images`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('image', png, { filename: 'missing.png', contentType: 'image/png' })
+      .expect(201);
+    const file = await prisma.file.findUniqueOrThrow({ where: { id: uploaded.body.data.fileId } });
+    await getFileStorage().delete(file.storageKey);
+    const issued = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({})
+      .expect(200);
+    expect(issued.body.data.documentSnapshot.lines[0]).toMatchObject({
+      style: { id: fixture.stock.styleId },
+      image: null,
+      imageAvailability: 'SOURCE_UNAVAILABLE',
+    });
+  });
+  it('rolls back finalization after presentation changes during archival and safely retries', async () => {
+    const { taxInvoiceId, fixture, accountantToken } = await createReadyDraftInvoice(1);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4X8AAAAASUVORK5CYII=',
+      'base64',
+    );
+    await request(app)
+      .post(`/styles/${fixture.stock.styleId}/images`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('image', png, { filename: 'garment.png', contentType: 'image/png' })
+      .expect(201);
+    const storage = getFileStorage();
+    const originalPut = storage.put.bind(storage);
+    vi.spyOn(storage, 'put').mockImplementationOnce(async (key, data) => {
+      await originalPut(key, data);
+      await prisma.style.update({
+        where: { id: fixture.stock.styleId },
+        data: { colour: 'Changed during archive' },
+      });
+    });
+    const failed = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({})
+      .expect(409);
+    expect(failed.body.error.details.reason).toBe('INVOICE_DOCUMENT_CHANGED_RETRY');
+    expect(
+      await prisma.taxInvoice.findUniqueOrThrow({ where: { id: taxInvoiceId } }),
+    ).toMatchObject({ status: 'DRAFT', invoiceNumber: null, documentSnapshot: null });
+    expect(await prisma.documentSequence.count({ where: { documentType: 'TAX_INVOICE' } })).toBe(0);
+    const retry = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({})
+      .expect(200);
+    expect(retry.body.data.documentSnapshot.lines[0].style.colour).toBe('Changed during archive');
+    expect(
+      await prisma.file.count({
+        where: { storageKey: { startsWith: `invoice-images/${taxInvoiceId}/` } },
+      }),
+    ).toBe(1);
+  });
+  it('archives original bytes, restricts invoice image membership, and recovers a failed upload safely', async () => {
+    const { taxInvoiceId, fixture, accountantToken } = await createReadyDraftInvoice(2);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4X8AAAAASUVORK5CYII=',
+      'base64',
+    );
+    const uploaded = await request(app)
+      .post(`/styles/${fixture.stock.styleId}/images`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('image', png, { filename: 'garment.png', contentType: 'image/png' })
+      .expect(201);
+    const storage = getFileStorage();
+    const originalPut = storage.put.bind(storage);
+    const put = vi.spyOn(storage, 'put').mockImplementationOnce(async (key, data) => {
+      await originalPut(key, data.subarray(0, 12));
+      throw new Error('Simulated partial write');
+    });
+    const failed = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({})
+      .expect(409);
+    expect(failed.body.error.details.reason).toBe('INVOICE_IMAGE_ARCHIVE_FAILED');
+    expect(await prisma.taxInvoice.findUnique({ where: { id: taxInvoiceId } })).toMatchObject({
+      status: 'DRAFT',
+      invoiceNumber: null,
+      documentSnapshot: null,
+    });
+    put.mockRestore();
+    expect((await reconcileInvoiceImageArchives(taxInvoiceId, false)).removableIds).toEqual([]);
+    const finalize = () =>
+      request(app)
+        .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({});
+    const [a, b] = await Promise.all([finalize(), finalize()]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(a.body.data.documentSnapshot).toEqual(b.body.data.documentSnapshot);
+    const image = a.body.data.documentSnapshot.lines[0].image;
+    expect(image.id).not.toBe(uploaded.body.data.fileId);
+    expect(
+      await prisma.file.count({
+        where: { storageKey: { startsWith: `invoice-images/${taxInvoiceId}/` } },
+      }),
+    ).toBe(1);
+    const path = `/tax-invoices/${taxInvoiceId}/images/${image.id}/content`;
+    for (const token of [adminToken, accountantToken]) {
+      const read = await request(app).get(path).set('Authorization', `Bearer ${token}`).expect(200);
+      expect(Buffer.from(read.body)).toEqual(png);
+      expect(read.headers['cache-control']).toContain('private');
+    }
+    await request(app).get(path).expect(401);
+    for (const role of [
+      'MERCHANDISER',
+      'SENIOR_MANAGEMENT',
+      'QA_USER',
+      'FACTORY_USER',
+      'DISTRIBUTOR',
+    ] as const) {
+      const { token } = await createRoleToken(role);
+      await request(app).get(path).set('Authorization', `Bearer ${token}`).expect(403);
+    }
+    await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/images/${uploaded.body.data.fileId}/content`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(404);
+    await request(app)
+      .get(`/tax-invoices/${createId()}/images/${image.id}/content`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(404);
+    const replacement = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      Buffer.alloc(32, 0x22),
+    ]);
+    await request(app)
+      .put(`/styles/${fixture.stock.styleId}/images/${uploaded.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('image', replacement, { filename: 'changed.jpg', contentType: 'image/jpeg' })
+      .expect(200);
+    await request(app)
+      .delete(`/styles/${fixture.stock.styleId}/images/${uploaded.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const unchanged = await request(app)
+      .get(path)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(Buffer.from(unchanged.body)).toEqual(png);
+    const other = await createReadyDraftInvoice(1);
+    await request(app)
+      .post(`/tax-invoices/${other.taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${other.accountantToken}`)
+      .send({})
+      .expect(200);
+    await request(app)
+      .get(`/tax-invoices/${other.taxInvoiceId}/images/${image.id}/content`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(404);
+    const orphanId = createId();
+    const orphanKey = `invoice-images/${taxInvoiceId}/${orphanId}.png`;
+    await storage.put(orphanKey, png);
+    await prisma.file.create({
+      data: {
+        id: orphanId,
+        fileName: 'orphan.png',
+        storageKey: orphanKey,
+        mimeType: 'image/png',
+        sizeBytes: png.length,
+        createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000),
+      },
+    });
+    expect((await reconcileInvoiceImageArchives(taxInvoiceId)).removableIds).toEqual([orphanId]);
+    expect(await storage.exists(orphanKey)).toBe(true);
+    await reconcileInvoiceImageArchives(taxInvoiceId, false);
+    expect(await storage.exists(orphanKey)).toBe(false);
+    await request(app).get(path).set('Authorization', `Bearer ${accountantToken}`).expect(200);
+  }, 45000);
+  it('freezes versioned issued Style/colour/size and genuine source-order references', async () => {
+    const { taxInvoiceId, fixture, accountantToken, ervePackingListId } =
+      await createReadyDraftInvoice(3);
+    const dispatch = await request(app)
+      .post('/erve-dispatches')
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
+      .send({
+        ervePackingListId,
+        dispatchDate: '2026-07-01',
+        lrNumber: 'LR/TEST/003',
+        transporter: 'Verified Carrier',
+      })
+      .expect(201);
+    await prisma.style.update({
+      where: { id: fixture.stock.styleId },
+      data: { colour: 'Navy', description: 'Issued garment' },
+    });
+    const issued = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({})
+      .expect(200);
+    const snapshot = issued.body.data.documentSnapshot;
+    expect(snapshot.transport).toMatchObject({
+      erveDispatchId: dispatch.body.data.id,
+      lrNumber: 'LR/TEST/003',
+      transporter: 'Verified Carrier',
+    });
+    expect(snapshot).toMatchObject({
+      schemaVersion: 'ERVE_TAX_INVOICE_DOCUMENT_V1',
+      dispatchOrders: [{ id: fixture.saleOrder.id, number: fixture.saleOrder.saleOrderNumber }],
+    });
+    expect(snapshot.lines[0]).toMatchObject({
+      quantity: 3,
+      style: { id: fixture.stock.styleId, colour: 'Navy', description: 'Issued garment' },
+      image: null,
+    });
+    const original = issued.body.data.lines[0].style;
+    const originalSize = issued.body.data.lines[0].size;
+    await prisma.style.update({
+      where: { id: fixture.stock.styleId },
+      data: { styleNumber: `EDIT-${createId()}`, styleName: 'Edited Style', colour: 'Red' },
+    });
+    await prisma.size.update({
+      where: { id: fixture.stock.sizeId },
+      data: { label: 'Edited size label' },
+    });
+    await prisma.erveDispatch.update({
+      where: { id: dispatch.body.data.id },
+      data: { lrNumber: 'LR/EDITED' },
+    });
+    const again = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({})
+      .expect(200);
+    expect(again.body.data.documentSnapshot).toEqual(snapshot);
+    expect(again.body.data.lines[0].style).toEqual(original);
+    expect(again.body.data.lines[0].size).toEqual(originalSize);
+  });
+  it('reviews a draft using authoritative calculations without financial or numbering writes', async () => {
+    const { taxInvoiceId, lineId, accountantToken } = await createReadyDraftInvoice(1);
+    await request(app)
+      .patch(`/tax-invoices/${taxInvoiceId}/lines/${lineId}/override`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ overrideUnitRate: 10.95, reason: 'Review fixture' })
+      .expect(200);
+    const before = await prisma.taxInvoice.findUniqueOrThrow({
+      where: { id: taxInvoiceId },
+      include: { lines: true },
+    });
+    const auditCount = await prisma.auditLog.count();
+    const sequences = await prisma.documentSequence.findMany();
+    const reviewed = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/review`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(reviewed.body.data).toMatchObject({
+      status: 'DRAFT',
+      invoiceNumber: null,
+      grandTotal: '11.50',
+      payableTotal: '11.00',
+      roundOffAdjustment: '-0.50',
+      review: { state: 'READY', isPreview: true, blockers: [] },
+    });
+    expect(reviewed.body.data.lines[0]).toMatchObject({
+      quantity: 1,
+      finalUnitRate: '10.95',
+      cgstAmount: '0.27375',
+      sgstAmount: '0.27375',
+    });
+    expect(
+      await prisma.taxInvoice.findUniqueOrThrow({
+        where: { id: taxInvoiceId },
+        include: { lines: true },
+      }),
+    ).toEqual(before);
+    expect(await prisma.auditLog.count()).toBe(auditCount);
+    expect(await prisma.documentSequence.findMany()).toEqual(sequences);
+    const finalized = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(finalized.body.data.grandTotal).toBe(reviewed.body.data.grandTotal);
+    expect(finalized.body.data.payableTotal).toBe(reviewed.body.data.payableTotal);
+    expect(finalized.body.data.hsnSummary).toEqual(reviewed.body.data.hsnSummary);
+  });
+
+  it('returns actionable blocked review without fabricating tax or payable totals', async () => {
+    const { taxInvoiceId, fixture, accountantToken } = await createReadyDraftInvoice(1);
+    await prisma.style.update({ where: { id: fixture.stock.styleId }, data: { hsnId: null } });
+    const reviewed = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/review`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(reviewed.body.data.review).toMatchObject({ state: 'BLOCKED', isPreview: true });
+    expect(reviewed.body.data.review.blockers[0].code).toBe('HSN_NOT_ASSIGNED');
+    expect(reviewed.body.data.grandTotal).toBeNull();
+    expect(reviewed.body.data.payableTotal).toBeNull();
+  });
+
+  it('serves persisted finalized review even if current HSN/GST prerequisites change', async () => {
+    const { taxInvoiceId, fixture, accountantToken } = await createReadyDraftInvoice(1);
+    const finalized = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    await prisma.style.update({ where: { id: fixture.stock.styleId }, data: { hsnId: null } });
+    const reviewed = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/review`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(reviewed.body.data.review).toMatchObject({
+      state: 'FINALIZED',
+      isPreview: false,
+      blockers: [],
+    });
+    expect(reviewed.body.data.payableTotal).toBe(finalized.body.data.payableTotal);
+    expect(reviewed.body.data.hsnSummary).toEqual(finalized.body.data.hsnSummary);
+  });
+
+  it('exposes only the requested invoice and line audit events to authorized readers', async () => {
+    const { taxInvoiceId, lineId, accountantToken } = await createReadyDraftInvoice(1);
+    await request(app)
+      .patch(`/tax-invoices/${taxInvoiceId}/lines/${lineId}/override`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ overrideUnitRate: 10.95, reason: 'Accountant review correction' })
+      .expect(200);
+    await prisma.auditLog.create({
+      data: {
+        id: createId(),
+        action: 'TAX_INVOICE_FINALIZED',
+        entityType: 'TaxInvoice',
+        entityId: 'unrelated-invoice',
+        metadata: { invoiceNumber: 'DO-NOT-EXPOSE' },
+      },
+    });
+    const history = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/audit`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(history.body.data.map((event: { action: string }) => event.action)).toEqual([
+      'TAX_INVOICE_DRAFT_CREATED',
+      'TAX_INVOICE_LINE_RATE_OVERRIDDEN',
+    ]);
+    expect(history.body.data[1].metadata.reason).toBe('Accountant review correction');
+    expect(history.body.data[1].actor).toMatchObject({
+      id: expect.any(String),
+      name: expect.any(String),
+    });
+    expect(JSON.stringify(history.body.data)).not.toContain('DO-NOT-EXPOSE');
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/audit`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const { token: merchToken } = await createRoleToken('MERCHANDISER');
+    for (const suffix of ['audit', 'review'])
+      await request(app)
+        .get(`/tax-invoices/${taxInvoiceId}/${suffix}`)
+        .set('Authorization', `Bearer ${merchToken}`)
+        .expect(403);
+  });
+
+  it('applies invoice identifier search before cursor pagination', async () => {
+    const a = await createReadyDraftInvoice(1);
+    const finalized = await request(app)
+      .post(`/tax-invoices/${a.taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${a.accountantToken}`)
+      .expect(200);
+    await createReadyDraftInvoice(1);
+    const found = await request(app)
+      .get('/tax-invoices')
+      .query({ search: finalized.body.data.invoiceNumber, limit: 1 })
+      .set('Authorization', `Bearer ${a.accountantToken}`)
+      .expect(200);
+    expect(found.body.data.items.map((row: { id: string }) => row.id)).toEqual([a.taxInvoiceId]);
+    const missing = await request(app)
+      .get('/tax-invoices')
+      .query({ search: 'NO-MATCH-INVOICE', limit: 1 })
+      .set('Authorization', `Bearer ${a.accountantToken}`)
+      .expect(200);
+    expect(missing.body.data.items).toEqual([]);
+    expect(missing.body.data.pageInfo.hasMore).toBe(false);
+  }, 30000); // Two complete operational fixtures, rather than one invoice.
+
+  it('displays the finalized frozen HSN code after an HSN master edit', async () => {
+    const { taxInvoiceId, accountantToken } = await createReadyDraftInvoice(1);
+    const finalized = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    const frozen = finalized.body.data.lines[0].hsn.code;
+    const line = await prisma.taxInvoiceLine.findFirstOrThrow({ where: { taxInvoiceId } });
+    await prisma.hsn.update({ where: { id: line.hsnId! }, data: { code: randomHsnCode() } });
+    const read = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(read.body.data.lines[0].hsn.code).toBe(frozen);
+    expect(read.body.data.hsnSummary[0].hsnCode).toBe(frozen);
+  });
+
+  it('offers limited finalized EIPL source context only to Accountants and removes drafted sources', async () => {
+    await ensureTestSellerRegistration();
+    const { ervePackingListId } = await createFinalizedEipl(1);
+    const accountantToken = await createAccountantToken();
+    const available = await request(app)
+      .get('/tax-invoices/sources')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(available.body.data.items).toContainEqual(
+      expect.objectContaining({
+        id: ervePackingListId,
+        status: 'FINALIZED',
+        commercialSnapshotAvailable: true,
+      }),
+    );
+    expect(JSON.stringify(available.body.data)).not.toMatch(
+      /factoryId|factoryDispatch|bankAccountNumber/,
+    );
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    await request(app)
+      .get('/tax-invoices/sources')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(403);
+    const draft = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
+    expect(draft.body.data.invoiceNumber).toBeNull();
+    const after = await request(app)
+      .get('/tax-invoices/sources')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(after.body.data.items.some((row: { id: string }) => row.id === ervePackingListId)).toBe(
+      false,
+    );
+  });
+});
+
 describe('Tax Invoice — final payable round-off snapshots', () => {
   it.each([
     [10.01, '10.51', '11.00', '0.49'],
@@ -1193,7 +1664,12 @@ describe('Tax Invoice — final payable round-off snapshots', () => {
     // unavailable, and its original finalization audit has no payable fields.
     await prisma.taxInvoice.update({
       where: { id: taxInvoiceId },
-      data: { payableTotal: null, roundOffAdjustment: null, roundingPolicy: null },
+      data: {
+        payableTotal: null,
+        roundOffAdjustment: null,
+        roundingPolicy: null,
+        documentSnapshot: Prisma.DbNull,
+      },
     });
     const audit = await prisma.auditLog.findFirstOrThrow({
       where: { entityId: taxInvoiceId, action: 'TAX_INVOICE_FINALIZED' },

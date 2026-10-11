@@ -9,8 +9,17 @@ import { resolveSoleActiveSellerRegistration } from '../master-data/seller-regis
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
-import { toBusinessCalendarDate } from '../master-data/financial-year.util.js';
+import {
+  computeFinancialYearWindow,
+  toBusinessCalendarDate,
+} from '../master-data/financial-year.util.js';
 import { resolveGstRuleForHsn } from '../tax-rules/gst-rule-sets.service.js';
+import {
+  prepareInvoiceDocument,
+  uploadInvoiceDocument,
+  validatePreparedInvoiceDocument,
+  readInvoiceDocumentSnapshot,
+} from './tax-invoice-document.service.js';
 import {
   aggregateHsnSummary,
   aggregateInvoiceTotals,
@@ -65,6 +74,23 @@ function assertMutationAccess(actor: CurrentUser): void {
   if (!canMutateTaxInvoice(actor)) {
     throw HttpError.forbidden('You do not have permission to create a Tax Invoice draft');
   }
+}
+
+async function assertDraftNumberingReady(tx: Tx, businessDate: Date): Promise<void> {
+  if (env.NODE_ENV !== 'production') return;
+  const window = computeFinancialYearWindow(businessDate);
+  const financialYear = await tx.financialYear.findUnique({ where: { code: window.code } });
+  const sequence = financialYear
+    ? await tx.documentSequence.findUnique({
+        where: {
+          documentType_financialYearId: {
+            documentType: 'TAX_INVOICE',
+            financialYearId: financialYear.id,
+          },
+        },
+      })
+    : null;
+  assertTaxInvoiceSequenceBaselined(env.NODE_ENV, sequence !== null, window.code);
 }
 
 function assertViewAccess(actor: CurrentUser): void {
@@ -196,6 +222,8 @@ const taxInvoiceInclude = {
 type TaxInvoiceRecord = Prisma.TaxInvoiceGetPayload<{ include: typeof taxInvoiceInclude }>;
 
 function toTaxInvoiceView(record: TaxInvoiceRecord) {
+  const documentSnapshot =
+    record.status === 'FINALIZED' ? readInvoiceDocumentSnapshot(record.documentSnapshot) : null;
   // Derived at read time from the already-persisted, immutable line
   // snapshots — never a separately stored/duplicated table. Null for a
   // DRAFT (nothing to summarize yet); every finalized line always has
@@ -298,19 +326,32 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
       saleOrderLineId: line.saleOrderLineId,
       style: {
         id: line.style.id,
-        styleNumber: line.style.styleNumber,
-        styleName: line.style.styleName,
+        styleNumber:
+          documentSnapshot?.lines.find((item) => item.lineId === line.id)?.style.styleNumber ??
+          line.style.styleNumber,
+        styleName:
+          documentSnapshot?.lines.find((item) => item.lineId === line.id)?.style.styleName ??
+          line.style.styleName,
       },
       // The line's own frozen HSN (set only at finalization) takes
       // precedence; a DRAFT line still falls back to the live Style join,
       // exactly as INV-005 already did (see the TaxInvoice model's schema
       // doc comment).
-      hsn: line.hsn
-        ? { code: line.hsn.code, description: line.hsn.description }
-        : line.style.hsn
-          ? { code: line.style.hsn.code, description: line.style.hsn.description }
-          : null,
-      size: { code: line.saleOrderLine.size.code, label: line.saleOrderLine.size.label },
+      hsn: line.hsnCode
+        ? { code: line.hsnCode, description: null }
+        : line.hsn
+          ? { code: line.hsn.code, description: line.hsn.description }
+          : line.style.hsn
+            ? { code: line.style.hsn.code, description: line.style.hsn.description }
+            : null,
+      size: {
+        code:
+          documentSnapshot?.lines.find((item) => item.lineId === line.id)?.size.code ??
+          line.saleOrderLine.size.code,
+        label:
+          documentSnapshot?.lines.find((item) => item.lineId === line.id)?.size.label ??
+          line.saleOrderLine.size.label,
+      },
       quantity: line.quantity,
       styleMrp: line.styleMrp.toString(),
       distributorPricingPercentage: line.distributorPricingPercentage.toString(),
@@ -348,6 +389,7 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
     payableTotal: record.payableTotal?.toFixed(2) ?? null,
     roundOffAdjustment: record.roundOffAdjustment?.toFixed(2) ?? null,
     roundingPolicy: record.roundingPolicy,
+    documentSnapshot,
     hsnSummary,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
@@ -571,6 +613,7 @@ export async function getTaxInvoiceByErveDispatchId(actor: CurrentUser, erveDisp
 }
 
 export interface TaxInvoiceListFilters {
+  search?: string;
   distributorId?: string;
   status?: 'DRAFT' | 'FINALIZED';
   cursor?: string;
@@ -581,7 +624,24 @@ export async function getTaxInvoiceList(actor: CurrentUser, filters: TaxInvoiceL
   assertViewAccess(actor);
 
   const records = await prisma.taxInvoice.findMany({
-    where: { distributorId: filters.distributorId, status: filters.status },
+    where: {
+      distributorId: filters.distributorId,
+      status: filters.status,
+      ...(filters.search
+        ? {
+            OR: [
+              { invoiceNumber: { contains: filters.search, mode: 'insensitive' as const } },
+              { billToName: { contains: filters.search, mode: 'insensitive' as const } },
+              { shipToLabel: { contains: filters.search, mode: 'insensitive' as const } },
+              {
+                ervePackingList: {
+                  ervePackingListNumber: { contains: filters.search, mode: 'insensitive' as const },
+                },
+              },
+            ],
+          }
+        : {}),
+    },
     include: taxInvoiceInclude,
     orderBy: { id: 'desc' },
     take: filters.limit + 1,
@@ -593,6 +653,43 @@ export async function getTaxInvoiceList(actor: CurrentUser, filters: TaxInvoiceL
   const items = page.map(toTaxInvoiceView);
   return {
     items,
+    pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
+  };
+}
+
+/** Limited creation-source context; this does not grant access to EIPL factory provenance. */
+export async function getTaxInvoiceSources(actor: CurrentUser, filters: TaxInvoiceListFilters) {
+  assertMutationAccess(actor);
+  const rows = await prisma.ervePackingList.findMany({
+    where: {
+      status: { in: ['FINALIZED', 'DISPATCHED'] },
+      taxInvoice: { is: null },
+      ...(filters.search
+        ? { ervePackingListNumber: { contains: filters.search, mode: 'insensitive' as const } }
+        : {}),
+    },
+    select: {
+      id: true,
+      ervePackingListNumber: true,
+      status: true,
+      finalizedAt: true,
+      destinationLabel: true,
+      distributor: { select: { id: true, code: true, name: true } },
+      _count: { select: { commercialLines: true } },
+    },
+    orderBy: { id: 'desc' },
+    take: filters.limit + 1,
+    cursor: filters.cursor ? { id: filters.cursor } : undefined,
+    skip: filters.cursor ? 1 : undefined,
+  });
+  const hasMore = rows.length > filters.limit;
+  const page = rows.slice(0, filters.limit);
+  return {
+    items: page.map(({ _count, finalizedAt, ...row }) => ({
+      ...row,
+      finalizedAt: finalizedAt?.toISOString() ?? null,
+      commercialSnapshotAvailable: _count.commercialLines > 0,
+    })),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }
@@ -677,6 +774,229 @@ export async function overrideTaxInvoiceLineRate(
 }
 
 // ---------------------------------------------------------------------------
+type InvoiceCalculationRecord = Prisma.TaxInvoiceGetPayload<{ include: { lines: true } }>;
+
+export async function getTaxInvoiceAudit(actor: CurrentUser, id: string) {
+  assertViewAccess(actor);
+  const record = await loadTaxInvoiceById(id);
+  const rows = await prisma.auditLog.findMany({
+    where: {
+      action: { startsWith: 'TAX_INVOICE_' },
+      OR: [
+        { entityType: 'TaxInvoice', entityId: id },
+        { entityType: 'TaxInvoiceLine', entityId: { in: record.lines.map((line) => line.id) } },
+      ],
+    },
+    select: {
+      id: true,
+      action: true,
+      entityType: true,
+      entityId: true,
+      metadata: true,
+      createdAt: true,
+      actor: { select: { id: true, name: true } },
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
+  return rows.map(({ createdAt, ...entry }) => ({ ...entry, createdAt: createdAt.toISOString() }));
+}
+
+export async function getTaxInvoiceReview(actor: CurrentUser, id: string) {
+  assertViewAccess(actor);
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(id)}))`;
+    const record = await tx.taxInvoice.findUnique({ where: { id }, include: taxInvoiceInclude });
+    if (!record) throw HttpError.notFound('Tax invoice not found');
+    const view = toTaxInvoiceView(record);
+    if (record.status === 'FINALIZED')
+      return {
+        ...view,
+        review: { state: 'FINALIZED' as const, isPreview: false, calculatedAt: null, blockers: [] },
+      };
+    try {
+      await loadAndValidateCommercialLines(tx, record.ervePackingListId);
+      const calculation = await prepareInvoiceCalculation(tx, record);
+      // Review is read-only: check cutover readiness without creating a FY
+      // or seeding a document sequence. Finalization remains authoritative.
+      await assertDraftNumberingReady(tx, calculation.businessDate);
+      const byId = new Map(calculation.resolvedLines.map((line) => [line.id, line]));
+      return {
+        ...view,
+        billTo: { ...view.billTo, stateCode: calculation.billToStateCode },
+        gstTreatment: calculation.gstTreatment,
+        lines: view.lines.map((line) => {
+          const resolved = byId.get(line.id)!;
+          return {
+            ...line,
+            hsn: { code: resolved.hsnCode, description: null },
+            calculatedUnitRate: resolved.calculatedUnitRate.toString(),
+            finalUnitRate: resolved.finalUnitRate.toString(),
+            gstPercent: resolved.gstPercent.toString(),
+            taxableValue: resolved.taxableValue.toString(),
+            cgstAmount: resolved.cgstAmount.toString(),
+            sgstAmount: resolved.sgstAmount.toString(),
+            igstAmount: resolved.igstAmount.toString(),
+          };
+        }),
+        subtotal: calculation.totals.subtotal.toString(),
+        totalCgst: calculation.totals.totalCgst.toString(),
+        totalSgst: calculation.totals.totalSgst.toString(),
+        totalIgst: calculation.totals.totalIgst.toString(),
+        totalGst: calculation.totals.totalGst.toString(),
+        grandTotal: calculation.grandTotal.toFixed(2),
+        payableTotal: calculation.payableRounding.payableTotal.toFixed(2),
+        roundOffAdjustment: calculation.payableRounding.roundOffAdjustment.toFixed(2),
+        roundingPolicy: calculation.payableRounding.roundingPolicy,
+        hsnSummary: aggregateHsnSummary(calculation.resolvedLines).map((row) => ({
+          hsnCode: row.hsnCode,
+          gstPercent: row.gstPercent.toString(),
+          taxableValue: row.taxableValue.toString(),
+          cgstAmount: row.cgstAmount.toString(),
+          sgstAmount: row.sgstAmount.toString(),
+          igstAmount: row.igstAmount.toString(),
+        })),
+        review: {
+          state: 'READY' as const,
+          isPreview: true,
+          calculatedAt: calculation.finalizedAt.toISOString(),
+          blockers: [],
+        },
+      };
+    } catch (error) {
+      if (!(error instanceof HttpError) || ![400, 409].includes(error.statusCode)) throw error;
+      const details =
+        error.details && typeof error.details === 'object'
+          ? (error.details as Record<string, unknown>)
+          : {};
+      return {
+        ...view,
+        lines: view.lines.map((line) => {
+          const calculated = computeNormalUnitRate(
+            new Prisma.Decimal(line.styleMrp),
+            new Prisma.Decimal(line.distributorPricingPercentage),
+          );
+          return {
+            ...line,
+            calculatedUnitRate: calculated.toString(),
+            finalUnitRate: resolveFinalUnitRate(
+              calculated,
+              line.overrideUnitRate === null ? null : new Prisma.Decimal(line.overrideUnitRate),
+            ).toString(),
+          };
+        }),
+        review: {
+          state: 'BLOCKED' as const,
+          isPreview: true,
+          calculatedAt: null,
+          blockers: [{ code: String(details.reason ?? error.code), message: error.message }],
+        },
+      };
+    }
+  });
+}
+
+/** Shared read-only preparation: review and finalization use identical inputs and arithmetic. */
+async function prepareInvoiceCalculation(tx: Tx, invoice: InvoiceCalculationRecord) {
+  // --- Place of Supply: resolve from the snapshotted Bill-To ADDRESS
+  // state (never the GSTIN, never Ship-To), then cross-validate against
+  // the Bill-To GSTIN's own 2-digit prefix. Fails closed on either step.
+  const billToStateCode = resolveGstStateCode(invoice.billToState);
+  if (!billToStateCode) {
+    throw HttpError.badRequest(
+      'The Bill-To address state could not be resolved to a recognized GST state/UT name — finalization cannot proceed',
+      { reason: 'BILL_TO_STATE_UNRESOLVED', billToState: invoice.billToState },
+    );
+  }
+  const billToGstinStateCode = invoice.billToGstin.slice(0, 2);
+  if (billToStateCode !== billToGstinStateCode) {
+    throw HttpError.badRequest(
+      "The Bill-To address state does not match the Bill-To GSTIN's registered state — finalization cannot proceed",
+      { reason: 'BILL_TO_STATE_GSTIN_MISMATCH', billToStateCode, billToGstinStateCode },
+    );
+  }
+  const gstTreatment = classifyGstTreatment(invoice.sellerStateCode, billToStateCode);
+
+  const finalizedAt = new Date();
+  const businessDate = toBusinessCalendarDate(finalizedAt);
+
+  const styleIds = [...new Set(invoice.lines.map((line) => line.styleId))];
+  const styles = await tx.style.findMany({
+    where: { id: { in: styleIds } },
+    select: { id: true, hsnId: true },
+  });
+  const hsnIdByStyleId = new Map(styles.map((style) => [style.id, style.hsnId]));
+
+  interface ResolvedLine extends LineTaxResult {
+    id: string;
+    hsnId: string;
+    hsnCode: string;
+    gstRuleSetVersionId: string;
+    gstValueBandId: string;
+    calculatedUnitRate: Prisma.Decimal;
+    finalUnitRate: Prisma.Decimal;
+    gstPercent: Prisma.Decimal;
+  }
+  const resolvedLines: ResolvedLine[] = [];
+
+  for (const line of invoice.lines) {
+    const hsnId = hsnIdByStyleId.get(line.styleId);
+    if (!hsnId) {
+      throw HttpError.badRequest(
+        "A line's Style has no assigned HSN — finalization cannot proceed until HSN master data is complete",
+        { reason: 'HSN_NOT_ASSIGNED', taxInvoiceLineId: line.id, styleId: line.styleId },
+      );
+    }
+
+    const calculatedUnitRate = computeNormalUnitRate(
+      line.styleMrp,
+      line.distributorPricingPercentage,
+    );
+    const finalUnitRate = resolveFinalUnitRate(calculatedUnitRate, line.overrideUnitRate);
+
+    const resolution = await resolveGstRuleForHsn({
+      hsnId,
+      date: businessDate,
+      value: finalUnitRate,
+    });
+    if (!resolution.found) {
+      throw HttpError.badRequest(
+        "No applicable GST rule could be resolved for a line's HSN — finalization cannot proceed until GST configuration is complete and active",
+        { reason: resolution.reason, taxInvoiceLineId: line.id, hsnId },
+      );
+    }
+
+    const gstPercent = new Prisma.Decimal(resolution.band.gstPercent);
+    const lineTax = computeLineTax(finalUnitRate, line.quantity, gstPercent, gstTreatment);
+
+    resolvedLines.push({
+      id: line.id,
+      hsnId: resolution.hsnId,
+      hsnCode: resolution.hsnCode,
+      gstRuleSetVersionId: resolution.versionId,
+      gstValueBandId: resolution.band.id,
+      calculatedUnitRate,
+      finalUnitRate,
+      gstPercent,
+      ...lineTax,
+    });
+  }
+
+  const totals = aggregateInvoiceTotals(resolvedLines);
+  const grandTotal = calculateGrandTotal(totals.subtotal, totals.totalGst);
+  const payableRounding = calculatePayableRounding(totals.subtotal, totals.totalGst, grandTotal);
+
+  return {
+    billToStateCode,
+    gstTreatment,
+    finalizedAt,
+    businessDate,
+    resolvedLines,
+    totals,
+    grandTotal,
+    payableRounding,
+  };
+}
+
 // INV-006: Atomic DRAFT -> FINALIZED finalization.
 //
 // Idempotent: if the invoice is already FINALIZED when the lock is
@@ -707,6 +1027,29 @@ export async function finalizeTaxInvoice(
 ): Promise<TaxInvoiceView> {
   assertMutationAccess(actor);
 
+  // Preparatory transaction journals private archive metadata. Uploads happen
+  // only after that commit, before the original atomic financial transaction.
+  const prepared = await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(taxInvoiceId)}))`;
+      const invoice = await tx.taxInvoice.findUnique({
+        where: { id: taxInvoiceId },
+        include: { lines: true },
+      });
+      if (!invoice) throw HttpError.notFound('Tax invoice not found');
+      if (invoice.status === 'FINALIZED') return null;
+      if (invoice.lines.length === 0)
+        throw HttpError.conflict('A Tax Invoice with no lines cannot be finalized');
+      await loadAndValidateCommercialLines(tx, invoice.ervePackingListId);
+      const calculation = await prepareInvoiceCalculation(tx, invoice);
+      await assertDraftNumberingReady(tx, calculation.businessDate);
+      return prepareInvoiceDocument(tx, invoice, actor.id);
+    },
+    { timeout: 30000 },
+  );
+  if (!prepared) return toTaxInvoiceView(await loadTaxInvoiceById(taxInvoiceId));
+  await uploadInvoiceDocument(taxInvoiceId, prepared);
+
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(taxInvoiceId)}))`;
 
@@ -733,93 +1076,18 @@ export async function finalizeTaxInvoice(
     // rather than duplicated.
     await loadAndValidateCommercialLines(tx, invoice.ervePackingListId);
 
-    // --- Place of Supply: resolve from the snapshotted Bill-To ADDRESS
-    // state (never the GSTIN, never Ship-To), then cross-validate against
-    // the Bill-To GSTIN's own 2-digit prefix. Fails closed on either step.
-    const billToStateCode = resolveGstStateCode(invoice.billToState);
-    if (!billToStateCode) {
-      throw HttpError.badRequest(
-        'The Bill-To address state could not be resolved to a recognized GST state/UT name — finalization cannot proceed',
-        { reason: 'BILL_TO_STATE_UNRESOLVED', billToState: invoice.billToState },
-      );
-    }
-    const billToGstinStateCode = invoice.billToGstin.slice(0, 2);
-    if (billToStateCode !== billToGstinStateCode) {
-      throw HttpError.badRequest(
-        "The Bill-To address state does not match the Bill-To GSTIN's registered state — finalization cannot proceed",
-        { reason: 'BILL_TO_STATE_GSTIN_MISMATCH', billToStateCode, billToGstinStateCode },
-      );
-    }
-    const gstTreatment = classifyGstTreatment(invoice.sellerStateCode, billToStateCode);
+    const {
+      billToStateCode,
+      gstTreatment,
+      finalizedAt,
+      businessDate,
+      resolvedLines,
+      totals,
+      grandTotal,
+      payableRounding,
+    } = await prepareInvoiceCalculation(tx, invoice);
 
-    const finalizedAt = new Date();
-    const businessDate = toBusinessCalendarDate(finalizedAt);
-
-    const styleIds = [...new Set(invoice.lines.map((line) => line.styleId))];
-    const styles = await tx.style.findMany({
-      where: { id: { in: styleIds } },
-      select: { id: true, hsnId: true },
-    });
-    const hsnIdByStyleId = new Map(styles.map((style) => [style.id, style.hsnId]));
-
-    interface ResolvedLine extends LineTaxResult {
-      id: string;
-      hsnId: string;
-      hsnCode: string;
-      gstRuleSetVersionId: string;
-      gstValueBandId: string;
-      calculatedUnitRate: Prisma.Decimal;
-      finalUnitRate: Prisma.Decimal;
-      gstPercent: Prisma.Decimal;
-    }
-    const resolvedLines: ResolvedLine[] = [];
-
-    for (const line of invoice.lines) {
-      const hsnId = hsnIdByStyleId.get(line.styleId);
-      if (!hsnId) {
-        throw HttpError.badRequest(
-          "A line's Style has no assigned HSN — finalization cannot proceed until HSN master data is complete",
-          { reason: 'HSN_NOT_ASSIGNED', taxInvoiceLineId: line.id, styleId: line.styleId },
-        );
-      }
-
-      const calculatedUnitRate = computeNormalUnitRate(
-        line.styleMrp,
-        line.distributorPricingPercentage,
-      );
-      const finalUnitRate = resolveFinalUnitRate(calculatedUnitRate, line.overrideUnitRate);
-
-      const resolution = await resolveGstRuleForHsn({
-        hsnId,
-        date: businessDate,
-        value: finalUnitRate,
-      });
-      if (!resolution.found) {
-        throw HttpError.badRequest(
-          "No applicable GST rule could be resolved for a line's HSN — finalization cannot proceed until GST configuration is complete and active",
-          { reason: resolution.reason, taxInvoiceLineId: line.id, hsnId },
-        );
-      }
-
-      const gstPercent = new Prisma.Decimal(resolution.band.gstPercent);
-      const lineTax = computeLineTax(finalUnitRate, line.quantity, gstPercent, gstTreatment);
-
-      resolvedLines.push({
-        id: line.id,
-        hsnId: resolution.hsnId,
-        hsnCode: resolution.hsnCode,
-        gstRuleSetVersionId: resolution.versionId,
-        gstValueBandId: resolution.band.id,
-        calculatedUnitRate,
-        finalUnitRate,
-        gstPercent,
-        ...lineTax,
-      });
-    }
-
-    const totals = aggregateInvoiceTotals(resolvedLines);
-    const grandTotal = calculateGrandTotal(totals.subtotal, totals.totalGst);
-    const payableRounding = calculatePayableRounding(totals.subtotal, totals.totalGst, grandTotal);
+    await validatePreparedInvoiceDocument(tx, invoice, prepared);
 
     const financialYear = await ensureFinancialYear(tx, businessDate);
 
@@ -884,6 +1152,7 @@ export async function finalizeTaxInvoice(
         totalGst: totals.totalGst,
         grandTotal,
         ...payableRounding,
+        documentSnapshot: prepared.snapshot as unknown as Prisma.InputJsonValue,
         finalizedById: actor.id,
         finalizedAt,
       },
@@ -904,6 +1173,8 @@ export async function finalizeTaxInvoice(
           roundOffAdjustment: payableRounding.roundOffAdjustment.toFixed(2),
           roundingPolicy: payableRounding.roundingPolicy,
           lineCount: resolvedLines.length,
+          documentSchemaVersion: prepared.snapshot.schemaVersion,
+          archivedImageCount: prepared.uploads.length,
         },
       },
       tx,

@@ -2560,6 +2560,8 @@ model TaxInvoice {
   payableTotal       Decimal? @map("payable_total") @db.Decimal(14, 2)
   roundOffAdjustment Decimal? @map("round_off_adjustment") @db.Decimal(14, 2)
   roundingPolicy     String?  @map("rounding_policy")
+  // Issued presentation only; legacy finalized documents remain null.
+  documentSnapshot   Json?    @map("document_snapshot")
 
   createdById   String    @map("created_by_id")
   createdAt     DateTime  @default(now()) @map("created_at")

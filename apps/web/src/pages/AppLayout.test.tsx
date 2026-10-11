@@ -106,6 +106,20 @@ function sidebarTextContent(): string {
 }
 
 describe('AppLayout — role-gated navigation', () => {
+  it.each([
+    'ADMIN',
+    'ACCOUNTANT',
+    'MERCHANDISER',
+    'SENIOR_MANAGEMENT',
+    'FACTORY_USER',
+    'QA_USER',
+    'DISTRIBUTOR',
+  ] as Role[])('shows Tax Invoices only to authorized %s', async (role) => {
+    await renderAppLayout([role]);
+    expect(sidebarLinkLabels().includes('Tax Invoices')).toBe(
+      role === 'ADMIN' || role === 'ACCOUNTANT',
+    );
+  });
   it('ADMIN sees every Master Data and Orders link', async () => {
     await renderAppLayout(['ADMIN']);
     const labels = sidebarLinkLabels();

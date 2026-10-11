@@ -10,6 +10,7 @@ import {
   overrideTaxInvoiceLineRateSchema,
 } from './tax-invoice.validation.js';
 import * as taxInvoiceService from './tax-invoice.service.js';
+import { readArchivedInvoiceImage } from './tax-invoice-document.service.js';
 
 export const taxInvoicesRouter = Router();
 taxInvoicesRouter.use(requireAuth);
@@ -29,7 +30,10 @@ taxInvoicesRouter.post(
   canCreateTaxInvoice,
   asyncHandler(async (req, res) => {
     const input = createTaxInvoiceDraftSchema.parse(req.body);
-    const result = await taxInvoiceService.createOrGetTaxInvoiceDraft(req.user!, input.ervePackingListId);
+    const result = await taxInvoiceService.createOrGetTaxInvoiceDraft(
+      req.user!,
+      input.ervePackingListId,
+    );
     res.status(result.created ? 201 : 200).json(successResponse(result.taxInvoice));
   }),
 );
@@ -41,6 +45,17 @@ taxInvoicesRouter.get(
     const filters = listTaxInvoicesQuerySchema.parse(req.query);
     const result = await taxInvoiceService.getTaxInvoiceList(req.user!, filters);
     res.status(200).json(successResponse(result));
+  }),
+);
+
+taxInvoicesRouter.get(
+  '/sources',
+  canCreateTaxInvoice,
+  asyncHandler(async (req, res) => {
+    const filters = listTaxInvoicesQuerySchema.parse(req.query);
+    res
+      .status(200)
+      .json(successResponse(await taxInvoiceService.getTaxInvoiceSources(req.user!, filters)));
   }),
 );
 
@@ -69,10 +84,65 @@ taxInvoicesRouter.get(
 );
 
 taxInvoicesRouter.get(
+  '/:id/images/:imageId/content',
+  canViewTaxInvoices,
+  asyncHandler(async (req, res) => {
+    const image = await readArchivedInvoiceImage(
+      req.user!,
+      req.params.id as string,
+      req.params.imageId as string,
+    );
+    // Membership and role checks run before conditional-cache handling.
+    res.set({
+      'Content-Type': image.mimeType,
+      'Cache-Control': 'private, no-cache',
+      'X-Content-Type-Options': 'nosniff',
+      ETag: image.etag,
+    });
+    if (req.headers['if-none-match'] === image.etag) {
+      res.status(304).end();
+      return;
+    }
+    res.status(200).set('Content-Length', String(image.data.length)).send(image.data);
+  }),
+);
+
+taxInvoicesRouter.get(
+  '/:id/review',
+  canViewTaxInvoices,
+  asyncHandler(async (req, res) => {
+    res
+      .status(200)
+      .json(
+        successResponse(
+          await taxInvoiceService.getTaxInvoiceReview(req.user!, req.params.id! as string),
+        ),
+      );
+  }),
+);
+
+taxInvoicesRouter.get(
+  '/:id/audit',
+  canViewTaxInvoices,
+  asyncHandler(async (req, res) => {
+    res
+      .status(200)
+      .json(
+        successResponse(
+          await taxInvoiceService.getTaxInvoiceAudit(req.user!, req.params.id! as string),
+        ),
+      );
+  }),
+);
+
+taxInvoicesRouter.get(
   '/:id',
   canViewTaxInvoices,
   asyncHandler(async (req, res) => {
-    const invoice = await taxInvoiceService.getTaxInvoiceDetail(req.user!, req.params.id! as string);
+    const invoice = await taxInvoiceService.getTaxInvoiceDetail(
+      req.user!,
+      req.params.id! as string,
+    );
     res.status(200).json(successResponse(invoice));
   }),
 );

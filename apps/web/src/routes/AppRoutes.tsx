@@ -56,7 +56,10 @@ import { SaleOrderListPage } from '../pages/sale-orders/SaleOrderListPage.js';
 import { SaleOrderFormPage } from '../pages/sale-orders/SaleOrderFormPage.js';
 import { SaleOrderDetailPage } from '../pages/sale-orders/SaleOrderDetailPage.js';
 import { FactoryPackingQueuePage } from '../pages/fulfillment/FactoryPackingQueuePage.js';
-import { FactoryDispatchDetailPage, PackingListPage } from '../pages/fulfillment/PackingListPage.js';
+import {
+  FactoryDispatchDetailPage,
+  PackingListPage,
+} from '../pages/fulfillment/PackingListPage.js';
 import { PackingAuditQueuePage } from '../pages/fulfillment/PackingAuditQueuePage.js';
 import { PackingAuditCartonDetailPage } from '../pages/fulfillment/PackingAuditCartonDetailPage.js';
 import { ErvePackingListListPage } from '../pages/fulfillment/ErvePackingListListPage.js';
@@ -68,6 +71,8 @@ import { InvoiceHandoffListPage } from '../pages/fulfillment/InvoiceHandoffListP
 import { InvoiceHandoffDetailPage } from '../pages/fulfillment/InvoiceHandoffDetailPage.js';
 import { FactoryInvoiceListPage } from '../pages/fulfillment/FactoryInvoiceListPage.js';
 import { FactoryInvoiceDetailPage } from '../pages/fulfillment/FactoryInvoiceDetailPage.js';
+import { TaxInvoiceListPage } from '../pages/fulfillment/TaxInvoiceListPage.js';
+import { TaxInvoiceDetailPage } from '../pages/fulfillment/TaxInvoiceDetailPage.js';
 import { SaleOrReturnPositionListPage } from '../pages/fulfillment/SaleOrReturnPositionListPage.js';
 import { DistributorSalesReportListPage } from '../pages/fulfillment/DistributorSalesReportListPage.js';
 import { DistributorSalesReportDetailPage } from '../pages/fulfillment/DistributorSalesReportDetailPage.js';
@@ -109,6 +114,7 @@ import {
 import {
   FACTORY_DISPATCH_VIEW_ROLES,
   FACTORY_INVOICE_VIEW_ROLES,
+  TAX_INVOICE_VIEW_ROLES,
   PACKING_AUDIT_VIEW_ROLES,
   ERVE_DISPATCH_VIEW_ROLES,
   ERVE_DISPATCH_MUTATION_ROLES,
@@ -648,6 +654,17 @@ export function AppRoutes() {
       >
         <Route index element={<FactoryPackingQueuePage />} />
         <Route path=":id" element={<FactoryDispatchDetailPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/tax-invoices"
+        element={
+          <RoleRoute allowed={TAX_INVOICE_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<TaxInvoiceListPage />} />
+        <Route path=":id" element={<TaxInvoiceDetailPage />} />
       </Route>
       <Route
         path="/fulfillment/factory-invoices"
