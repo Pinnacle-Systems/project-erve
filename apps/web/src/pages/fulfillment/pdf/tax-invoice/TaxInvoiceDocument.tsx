@@ -97,7 +97,7 @@ const lineColumns: PdfTableColumn<DisplayRow>[] = [
     width: '9%',
     render: (row) => (
       <View>
-        <Text>{row.styleNumber}</Text>
+        <Text style={{ fontSize: 7 }}>{textParts(row.styleNumber, 6).join('\n')}</Text>
         {row.continuation && <Text style={styles.continuation}>continued</Text>}
       </View>
     ),

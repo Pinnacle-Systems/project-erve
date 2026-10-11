@@ -72,6 +72,8 @@ for name in ['rounded', 'rounded-admin', 'multi', 'legacy']:
         assert abs(page.rect.width - 595.28) < .1 and abs(page.rect.height - 841.89) < .1
         for word in page.get_text('words'):
             assert word[0] >= 0 and word[1] >= 0 and word[2] <= page.rect.width + .1 and word[3] <= page.rect.height + .1, (name, 'clipped text', word)
+            if word[4].startswith('UAT-'):
+                assert word[2] < 79, (name, 'Style identifier overlaps description column', word)
         for image in page.get_image_info():
             box = pymupdf.Rect(image['bbox'])
             assert abs(box.width / box.height - image['width'] / image['height']) < .03, (name, 'distorted image')

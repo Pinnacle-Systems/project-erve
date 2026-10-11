@@ -109,7 +109,8 @@ describe('issued Tax Invoice PDF document', () => {
     }));
     const result = await render(invoice);
     expect(result.bytes.match(/\/Type \/Page\b/g)!.length).toBeGreaterThan(1);
-    for (let index = 0; index < 40; index++) expect(result.text).toContain(`FROZEN-${index}`);
+    for (let index = 0; index < 40; index++)
+      expect(result.text.replace(/\s/g, '')).toContain(`FROZEN-${index}`);
     expect(result.text.match(/INR Forty Four Thousand Fifty Only\./g)).toHaveLength(1);
   });
 });

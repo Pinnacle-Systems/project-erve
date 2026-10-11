@@ -120,3 +120,13 @@ existing shared PDF resolver emits JPEG and loses transparency. This preserves
 issued image fidelity without altering shared media behavior; JPEG still reuses
 the shared resolver. Final review is a separate author self-review under the
 single-agent workflow, with CI and visual evidence required before merge.
+
+Native run 38182729536 passed actual maximized 1440/1280/1024 browser checks,
+real downloads/print preview and PDF reconciliation. The earlier narrow-screen
+assertion ran before responsive layout settled; matching the existing 250 ms
+settling step passed. Visual review then found unbroken Style identifiers spilling
+into descriptions. A PDF word-boundary regression failed on UAT-STYLE-01 (right
+90.87 pt, column limit 79 pt). Invoice-local identifier wrapping retained every
+character and moved the rendered prefix inside the column (right 55.18 pt).
+All 41 focused invoice/PDF tests passed again. Latest-head native/required CI
+must rerun after this rendering correction; earlier success cannot authorize merge.
