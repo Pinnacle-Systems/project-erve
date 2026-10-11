@@ -1,11 +1,12 @@
 import { useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
+import type { ApiSuccessResponse, StylePrimaryImageView } from '@erve/types';
 import { AuditTrail, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import { apiClient } from '../../lib/api-client.js';
 import { fetchAllPaginatedRecords } from '../../lib/pdf/fetchAllPaginatedRecords.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -14,7 +15,7 @@ import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canMutateDispatchOrders, canViewDispatchOrderAudit, canViewErveDispatches, canViewFactoryDispatches } from '../../auth/permissions.js';
 import type { ErveDispatchView, FactoryDispatchSummary, PaginatedResult } from '../fulfillment/types.js';
-import type { DispatchOrderFulfillmentStage, SaleOrder, SaleOrderAuditEntry } from './types.js';
+import type { DispatchOrderFulfillmentStage, SaleOrder, SaleOrderAuditEntry, SaleOrderLine } from './types.js';
 
 const FULFILLMENT_STAGE_LABELS: Record<DispatchOrderFulfillmentStage, string> = {
   AWAITING_PACKING: 'Awaiting Packing',
@@ -26,6 +27,29 @@ const FULFILLMENT_STAGE_LABELS: Record<DispatchOrderFulfillmentStage, string> = 
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// DEMO-003: a compact inline thumbnail beside the Style identity, not a
+// dedicated image column — this stays a dense, multi-Style financial table.
+function StyleIdentityCell({
+  styleId,
+  styleNumber,
+  styleName,
+  primaryImage,
+}: {
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  primaryImage: StylePrimaryImageView | null;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <StyleThumbnailCell styleId={styleId} image={primaryImage} size={24} viewerTitle={styleNumber} />
+      <span>
+        {styleNumber} — {styleName}
+      </span>
+    </div>
+  );
 }
 
 export function SaleOrderDetailPage() {
@@ -218,7 +242,18 @@ export function SaleOrderDetailPage() {
                           rowKey="id"
                           data={destLines}
                           columns={[
-                            { key: 'style', header: 'Style', render: (l) => `${l.styleNumber} — ${l.styleName}` },
+                            {
+                              key: 'style',
+                              header: 'Style',
+                              render: (l) => (
+                                <StyleIdentityCell
+                                  styleId={l.styleId}
+                                  styleNumber={l.styleNumber}
+                                  styleName={l.styleName}
+                                  primaryImage={l.primaryImage}
+                                />
+                              ),
+                            },
                             { key: 'size', header: 'Size', accessor: 'sizeLabel' },
                             { key: 'quantity', header: 'Quantity', align: 'right', render: (l) => l.quantity.toLocaleString() },
                           ]}
@@ -237,20 +272,41 @@ export function SaleOrderDetailPage() {
         <DataTable
           rowKey="key"
           data={Object.values(
-            so.lines.reduce<Record<string, { key: string; styleNumber: string; styleName: string; sizeLabel: string; quantity: number }>>(
-              (acc, line) => {
-                const key = `${line.styleId}:${line.sizeId}`;
-                if (!acc[key]) {
-                  acc[key] = { key, styleNumber: line.styleNumber, styleName: line.styleName, sizeLabel: line.sizeLabel, quantity: 0 };
-                }
-                acc[key]!.quantity += line.quantity;
-                return acc;
-              },
-              {},
-            ),
+            so.lines.reduce<
+              Record<
+                string,
+                { key: string; styleId: string; styleNumber: string; styleName: string; primaryImage: SaleOrderLine['primaryImage']; sizeLabel: string; quantity: number }
+              >
+            >((acc, line) => {
+              const key = `${line.styleId}:${line.sizeId}`;
+              if (!acc[key]) {
+                acc[key] = {
+                  key,
+                  styleId: line.styleId,
+                  styleNumber: line.styleNumber,
+                  styleName: line.styleName,
+                  primaryImage: line.primaryImage,
+                  sizeLabel: line.sizeLabel,
+                  quantity: 0,
+                };
+              }
+              acc[key]!.quantity += line.quantity;
+              return acc;
+            }, {}),
           )}
           columns={[
-            { key: 'style', header: 'Style', render: (r) => `${r.styleNumber} — ${r.styleName}` },
+            {
+              key: 'style',
+              header: 'Style',
+              render: (r) => (
+                <StyleIdentityCell
+                  styleId={r.styleId}
+                  styleNumber={r.styleNumber}
+                  styleName={r.styleName}
+                  primaryImage={r.primaryImage}
+                />
+              ),
+            },
             { key: 'size', header: 'Size', accessor: 'sizeLabel' },
             { key: 'quantity', header: 'Total Quantity', align: 'right', render: (r) => r.quantity.toLocaleString() },
           ]}

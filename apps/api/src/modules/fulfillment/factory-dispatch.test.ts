@@ -1004,8 +1004,8 @@ describe('Factory Packing Cartons', () => {
         factoryId: stock.factoryId,
         soDate: '2026-06-30',
         lines: [
-          { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 },
-          { destinationClientKey: 'd2', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 30 },
+          { destinationClientKey: 'd1', styleId: stock.styleId, totalQuantity: 20 },
+          { destinationClientKey: 'd2', styleId: stock.styleId, totalQuantity: 30 },
         ],
       })
       .expect(201);
@@ -1425,7 +1425,7 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
       fixture.merchToken,
       fixture.saleOrder.id,
       editBody(soDetail.body.data, [
-        { id: soDetail.body.data.lines[0].id, destinationClientKey: soDetail.body.data.distributorGroups[0].destinations[0].id, styleId: fixture.stock.styleId, sizeId: fixture.stock.sizeId, quantity: 70 },
+        { destinationClientKey: soDetail.body.data.distributorGroups[0].destinations[0].id, styleId: fixture.stock.styleId, totalQuantity: 70 },
       ]),
     );
     const finalizePromise = request(app)
@@ -1496,7 +1496,7 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
       fixture.merchToken,
       fixture.saleOrder.id,
       editBody(soDetail.body.data, [
-        { id: soDetail.body.data.lines[0].id, destinationClientKey: soDetail.body.data.distributorGroups[0].destinations[0].id, styleId: fixture.stock.styleId, sizeId: fixture.stock.sizeId, quantity: 30 },
+        { destinationClientKey: soDetail.body.data.distributorGroups[0].destinations[0].id, styleId: fixture.stock.styleId, totalQuantity: 30 },
       ]),
     );
     const packMorePromise = createCarton(factoryToken, fixture.saleOrder.id, {
@@ -1599,8 +1599,8 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
         factoryId: stock.factoryId,
         soDate: '2026-06-30',
         lines: [
-          { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: qtyA },
-          { destinationClientKey: 'd2', styleId: stock.styleId, sizeId: stock.sizeId, quantity: qtyB },
+          { destinationClientKey: 'd1', styleId: stock.styleId, totalQuantity: qtyA },
+          { destinationClientKey: 'd2', styleId: stock.styleId, totalQuantity: qtyB },
         ],
       })
       .expect(201);
@@ -1652,8 +1652,8 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
         },
       ],
       lines: [
-        { id: lineA.id, destinationClientKey: destA.id, styleId: lineA.styleId, sizeId: lineA.sizeId, quantity: lineA.quantity },
-        { id: lineB.id, destinationClientKey: destB.id, styleId: lineB.styleId, sizeId: lineB.sizeId, quantity: lineB.quantity },
+        { destinationClientKey: destA.id, styleId: lineA.styleId, totalQuantity: lineA.quantity },
+        { destinationClientKey: destB.id, styleId: lineB.styleId, totalQuantity: lineB.quantity },
       ],
     }).expect(200);
 
@@ -1703,9 +1703,9 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
         factoryId: stockA.factoryId,
         soDate: '2026-06-30',
         lines: [
-          { destinationClientKey: 'd1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 10 },
-          { destinationClientKey: 'd1', styleId: stockKeeperA.styleId, sizeId: stockKeeperA.sizeId, quantity: 1 },
-          { destinationClientKey: 'd2', styleId: stockKeeperB.styleId, sizeId: stockKeeperB.sizeId, quantity: 1 },
+          { destinationClientKey: 'd1', styleId: stockA.styleId, totalQuantity: 10 },
+          { destinationClientKey: 'd1', styleId: stockKeeperA.styleId, totalQuantity: 1 },
+          { destinationClientKey: 'd2', styleId: stockKeeperB.styleId, totalQuantity: 1 },
         ],
       })
       .expect(201);
@@ -1747,21 +1747,9 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
         },
       ],
       lines: [
-        { id: lineA.id, destinationClientKey: destB.id, styleId: lineA.styleId, sizeId: lineA.sizeId, quantity: lineA.quantity },
-        {
-          id: lineKeeperA.id,
-          destinationClientKey: destA.id,
-          styleId: lineKeeperA.styleId,
-          sizeId: lineKeeperA.sizeId,
-          quantity: lineKeeperA.quantity,
-        },
-        {
-          id: lineKeeperB.id,
-          destinationClientKey: destB.id,
-          styleId: lineKeeperB.styleId,
-          sizeId: lineKeeperB.sizeId,
-          quantity: lineKeeperB.quantity,
-        },
+        { destinationClientKey: destB.id, styleId: lineA.styleId, totalQuantity: lineA.quantity },
+        { destinationClientKey: destA.id, styleId: lineKeeperA.styleId, totalQuantity: lineKeeperA.quantity },
+        { destinationClientKey: destB.id, styleId: lineKeeperB.styleId, totalQuantity: lineKeeperB.quantity },
       ],
     }).expect(200);
 

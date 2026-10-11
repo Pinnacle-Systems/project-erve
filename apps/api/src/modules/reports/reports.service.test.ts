@@ -257,7 +257,7 @@ describe('QA-passed available stock (RPT1 6.4) — no join multiplication', () =
         ],
         factoryId: stockA.factoryId,
         soDate: '2026-06-30',
-        lines: [{ destinationClientKey: 'd1', styleId: stockA.styleId, sizeId: stockA.sizeId, quantity: 12 }],
+        lines: [{ destinationClientKey: 'd1', styleId: stockA.styleId, totalQuantity: 12 }],
       })
       .expect(201);
     expect(created.body.data.id).toBeTruthy();

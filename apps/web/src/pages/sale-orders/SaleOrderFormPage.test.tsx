@@ -125,9 +125,11 @@ async function renderCreateForm() {
               styleId: 'style-1',
               styleNumber: 'ST-001',
               styleName: 'Classic Tee',
+              primaryImage: null,
               sizeId: 'size-1',
               sizeCode: 'M',
               sizeLabel: 'Medium',
+              sizeSortOrder: 1,
               releasedQuantity: 100,
               committedQuantity: 0,
               availableQuantity: 100,
@@ -166,12 +168,12 @@ describe('SaleOrderFormPage destination/line repeater', () => {
     await selectOption('Factory', 'Factory One');
     await flush();
 
-    // Add a second destination and a second Style/Size line on it, so the
+    // Add a second destination and a second Style line on it, so the
     // page renders two of every destination-level field and two of every
     // line-level field at once.
     clickButtonByText('+ Add Destination');
     await flush();
-    clickButtonByText('+ Add Style/Size line'); // Destination 1's line (first match).
+    clickButtonByText('+ Add Style'); // Destination 1's line (first match).
     await flush();
 
     const allIds = Array.from(container.querySelectorAll('[id]')).map((el) => el.id);
@@ -217,8 +219,33 @@ async function typeText(label: string, value: string, scope: ParentNode = contai
     el.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
+// NumericField commits on blur, not on every keystroke — input and focusout
+// must fire within the SAME act() call (splitting them across two act()
+// calls races NumericField's own state update; see JobOrderProductionTab's
+// identical NumericField test gotcha).
+async function setNumericField(label: string, value: string, scope: ParentNode = container) {
+  await act(async () => {
+    const el = textInput(label, scope);
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('focusout', { bubbles: true }));
+  });
+}
 async function chooseDistributor(name: string, occurrence = 0) {
   const lookup = triggerByLabel('Distributor', occurrence) as unknown as HTMLInputElement;
+  await act(async () => {
+    lookup.focus();
+    lookup.click();
+  });
+  await flush();
+  await flush();
+  const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (e) => e.textContent?.includes(name),
+  )!;
+  await act(async () => option.click());
+}
+async function chooseStyle(name: string, occurrence = 0) {
+  const lookup = triggerByLabel('Style', occurrence) as unknown as HTMLInputElement;
   await act(async () => {
     lookup.focus();
     lookup.click();
@@ -236,9 +263,9 @@ async function prepareInline() {
   await flush();
   await chooseDistributor('Distributor One');
   await typeText('Remarks', 'Keep my unsaved notes');
-  await act(async () => clickButtonByText('+ Add Style/Size line'));
-  await selectOption('Style / Size', 'Classic Tee');
-  await typeText('Quantity', '7');
+  await act(async () => clickButtonByText('+ Add Style'));
+  await chooseStyle('Classic Tee');
+  await setNumericField('Total Quantity', '7');
   // Keep a real parent validation error while creating the missing Store.
   await act(async () =>
     container
@@ -279,7 +306,7 @@ describe('DEMO-014 Store selection and inline creation context', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBe(reopened);
     expect(textInput('Store Code', reopened).value).toBe('SECOND');
     expect(textInput('Retail Store').value).toBe('');
-    expect(textInput('Quantity').value).toBe('7');
+    expect(textInput('Total Quantity').value).toBe('7');
     expect(textInput('Remarks').value).toBe('Keep my unsaved notes');
   });
 
@@ -341,7 +368,7 @@ describe('DEMO-014 Store selection and inline creation context', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(container.querySelector('form')).toBe(parent);
     expect(textInput('Remarks').value).toBe('Keep my unsaved notes');
-    expect(textInput('Quantity').value).toBe('7');
+    expect(textInput('Total Quantity').value).toBe('7');
     expect(textInput('Retail Store').value).toContain('New Store');
     expect(textInput('Address Line 1').value).toBe('New Address');
     expect(container.textContent).toContain('Destination address is required');
@@ -370,7 +397,7 @@ describe('DEMO-014 Store selection and inline creation context', () => {
       (e) => e.textContent === 'Cancel',
     )!;
     await act(async () => cancel.click());
-    expect(textInput('Quantity').value).toBe('7');
+    expect(textInput('Total Quantity').value).toBe('7');
     expect(textInput('Remarks').value).toBe('Keep my unsaved notes');
     expect(textInput('Retail Store').value).toBe('');
   });
@@ -436,6 +463,48 @@ describe('SaleOrderFormPage Distributor lookup (P1L6)', () => {
   });
 });
 
+describe('SaleOrderFormPage inline Factory/Distributor creation (DEMO-015)', () => {
+  it('creates a Factory inline and selects it without leaving the form', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: { id: 'fac-new', code: 'FAC2', name: 'Factory Two', status: 'ACTIVE' } },
+    });
+    await renderCreateForm();
+    clickButtonByText('+ Create new Factory');
+    await flush();
+    await typeText('Code', 'FAC2', document.body);
+    await typeText('Name', 'Factory Two', document.body);
+    await act(async () => {
+      document.body.querySelector('[role="dialog"] form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(post).toHaveBeenCalledWith('/factories', expect.objectContaining({ code: 'FAC2', name: 'Factory Two' }));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect((triggerByLabel('Factory') as unknown as HTMLInputElement).value).toContain('Factory Two');
+  });
+
+  it('creates a Distributor inline for a group and selects it without resetting other groups', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: { id: 'dist-new', code: 'D3', name: 'Distributor Three', purchaseMode: 'OUTRIGHT', status: 'ACTIVE' } },
+    });
+    await renderCreateForm();
+    clickButtonByText('+ Create new Distributor');
+    await flush();
+    await typeText('Code', 'D3', document.body);
+    await typeText('Name', 'Distributor Three', document.body);
+    await typeText('GSTIN', '22AAAAA0000A1Z5', document.body);
+    await act(async () => {
+      document.body.querySelector('[role="dialog"] form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(post).toHaveBeenCalledWith(
+      '/distributors',
+      expect.objectContaining({ code: 'D3', name: 'Distributor Three', gstin: '22AAAAA0000A1Z5' }),
+    );
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(distributorInputs()[0]!.value).toBe('Distributor Three');
+  });
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => {
@@ -463,6 +532,7 @@ describe('SaleOrderFormPage edit hydration', () => {
       styleId: 'style-1',
       styleNumber: 'ST-001',
       styleName: 'Classic Tee',
+      primaryImage: null,
       sizeId: 'size-1',
       sizeCode: 'M',
       sizeLabel: 'Medium',
@@ -541,8 +611,8 @@ describe('SaleOrderFormPage edit hydration', () => {
     // triggered the original bug. The Factory select has no options yet, so
     // there is nothing to assert hydrated correctly still.
     const distributorInput = () => distributorInputs()[0]!;
-    const factoryTrigger = () => triggerByLabel('Factory');
-    expect(factoryTrigger().textContent).not.toContain('Factory One');
+    const factoryInput = () => triggerByLabel('Factory') as unknown as HTMLInputElement;
+    expect(factoryInput().value).not.toContain('Factory One');
 
     // Now let the option list resolve late.
     await act(async () => {
@@ -555,7 +625,7 @@ describe('SaleOrderFormPage edit hydration', () => {
     // no Distributor master or option request is needed.
     expect(distributorInput().value).toBe('Distributor One');
     expect(container.textContent).toContain('Purchase Mode: OUTRIGHT');
-    expect(factoryTrigger().textContent).toContain('Factory One');
+    expect(factoryInput().value).toContain('Factory One');
     expect(
       vi.mocked(apiClient.get).mock.calls.some((call) => String(call[0]).startsWith('/distributors')),
     ).toBe(false);

@@ -1,5 +1,6 @@
 import type { PooledFactoryInventoryLine } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
+import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 
 type Client = Prisma.TransactionClient | typeof prisma;
 
@@ -63,11 +64,11 @@ export async function getPooledFactoryInventory(
       jobOrderLineSize: {
         select: {
           sizeId: true,
-          size: { select: { code: true, label: true } },
+          size: { select: { code: true, label: true, sortOrder: true } },
           jobOrderLine: {
             select: {
               styleId: true,
-              style: { select: { styleNumber: true, styleName: true } },
+              style: { select: { styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
               jobOrder: {
                 select: { factoryId: true, factory: { select: { code: true, name: true } } },
               },
@@ -106,9 +107,11 @@ export async function getPooledFactoryInventory(
       styleId: jobOrderLine.styleId,
       styleNumber: jobOrderLine.style.styleNumber,
       styleName: jobOrderLine.style.styleName,
+      primaryImage: toPrimaryImageView(jobOrderLine.style.images),
       sizeId: line.jobOrderLineSize.sizeId,
       sizeCode: line.jobOrderLineSize.size.code,
       sizeLabel: line.jobOrderLineSize.size.label,
+      sizeSortOrder: line.jobOrderLineSize.size.sortOrder,
       releasedQuantity: line.quantity,
       committedQuantity,
       availableQuantity,

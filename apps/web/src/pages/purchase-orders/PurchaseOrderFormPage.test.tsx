@@ -8,6 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '../../lib/api-client.js';
 import { PurchaseOrderFormPage } from './PurchaseOrderFormPage.js';
 
+// DEMO-015: the page now reads the current user (canManageDistributorMaster)
+// to gate the Distributor lookup's inline-create affordance — mocked here
+// exactly like SaleOrderFormPage.test.tsx's identical need.
+vi.mock('../../auth/AuthContext.js', () => ({
+  useAuth: () => ({ user: { roles: ['MERCHANDISER'] } }),
+}));
+
 function ok<T>(config: InternalAxiosRequestConfig, data: T): AxiosResponse<T> {
   return { data, status: 200, statusText: 'OK', headers: {}, config };
 }

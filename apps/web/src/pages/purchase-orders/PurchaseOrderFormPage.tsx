@@ -11,6 +11,8 @@ import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-ch
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { toCompactFinancialYearCode } from '../../lib/financial-years.js';
+import { useAuth } from '../../auth/AuthContext.js';
+import { canManageDistributorMaster } from '../../auth/permissions.js';
 import { StyleLookupField, type StyleLookupValue } from './StyleLookupField.js';
 import { OrderSheetSizeGrid } from './OrderSheetSizeGrid.js';
 import { DistributorLookupField } from '../master-data/DistributorLookupField.js';
@@ -77,6 +79,8 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
   const navigate = useNavigate();
   const isEdit = Boolean(existing);
   const existingLine = existing?.lines[0];
+  const { user } = useAuth();
+  const canCreateDistributor = canManageDistributorMaster(user);
 
   // Create mode only — the Distributor is immutable on edit, which shows the
   // Order Sheet's own distributor instead.
@@ -254,6 +258,7 @@ function PurchaseOrderForm({ existing }: { existing?: PurchaseOrder }) {
                   value={selectedDistributor}
                   onChange={setSelectedDistributor}
                   width="md"
+                  allowInlineCreate={canCreateDistributor}
                 />
               )}
 

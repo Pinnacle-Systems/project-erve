@@ -51,7 +51,7 @@ async function createAndAllocate(
       ],
       factoryId: stock.factoryId,
       soDate: '2026-06-30',
-      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity }],
+      lines: [{ destinationClientKey: 'd1', styleId: stock.styleId, totalQuantity: quantity }],
     })
     .expect(201);
   const saleOrder = created.body.data;
@@ -201,7 +201,7 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
             destinations: [{ clientKey: destination.id, id: destination.id, ...destination }],
           },
         ],
-        lines: [{ id: dispatchOrder.lines[0].id, destinationClientKey: destination.id, styleId: stock.styleId, sizeId: stock.sizeId, quantity: 10 }],
+        lines: [{ destinationClientKey: destination.id, styleId: stock.styleId, totalQuantity: 10 }],
       })
       .expect(200);
 

@@ -224,8 +224,8 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
         factoryId: stock.factoryId,
         soDate: '2026-06-30',
         lines: [
-          { destinationClientKey: 'd1', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 },
-          { destinationClientKey: 'd2', styleId: stock.styleId, sizeId: stock.sizeId, quantity: 20 },
+          { destinationClientKey: 'd1', styleId: stock.styleId, totalQuantity: 20 },
+          { destinationClientKey: 'd2', styleId: stock.styleId, totalQuantity: 20 },
         ],
       })
       .expect(201);
