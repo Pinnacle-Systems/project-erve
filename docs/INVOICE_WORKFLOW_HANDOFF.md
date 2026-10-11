@@ -2,8 +2,8 @@
 
 Branch: `feature/invoice-inv007-workflow`. Implementation began on PR0 main
 `5749bbe37fc434de98237a96d7133c02bf2ac495`. Style PR65 has since merged as
-`2f133c767f94d9c29f2ff266b63169df5909ff0b` and is being integrated. No INV-007
-PR or merge has occurred yet.
+`2f133c767f94d9c29f2ff266b63169df5909ff0b` and is integrated. PR1 publication
+is for CI and review; merge acceptance remains pending.
 
 ## Workflow
 
@@ -73,18 +73,19 @@ Safety-verified disposable databases received the nullable migration:
 `erve_inv007_test_f2765e00` and `erve_inv007_browser_test_f2765e00`.
 No development/production datasets changed.
 
-Latest focused coverage passes: 100 web tests, 2 versioned-reader tests and 6
-integration cases covering multiple orders, frozen identity/size/LR, missing source
+Latest coverage passes: 85 full invoice/calculation regressions, 100 focused web
+tests, 2 versioned-reader tests and 6 integration cases covering multiple orders, frozen identity/size/LR, missing source
 bytes, partial-upload recovery, failed-finalization retry, concurrency/idempotency,
 restricted/cross-invoice media access, master-image replacement/deletion, orphan
-recovery and legacy preservation. API/web typechecks pass. Full invoice regressions
-and final baseline/build checks are in progress; logs are ignored local artifacts.
-Earlier client regressions passed all 56 tests.
+recovery and legacy preservation. Workspace typecheck, lint and integrated build
+pass. After integrating PR65, 19 affected API regressions and 119 design-system
+tests passed. All 56 client regressions passed. Logs are ignored local artifacts.
 
 The earlier bounded full web run passed 1,554 tests across 219 files but had a Style
 worker-start error. Isolated reruns reproduced a Style PDF-error-state timeout on
-unchanged PR0 main. Style files were not modified; recheck after integrating PR65.
-This was not a clean passing full-suite invocation; no check is waived.
+unchanged PR0 main; the isolated case still fails after integrating PR65. Style
+files were not modified. All three CI jobs on merged PR65 main are successful;
+PR1 still needs its own exact-head required CI. No check is waived.
 
 Automatic approval review rejected both normal and debugging Chrome launch,
 reporting only "blocked by policy". No browser tool is exposed. The user selected
@@ -98,3 +99,8 @@ reviews and integration safeguards pass. No production migration, GST activation
 EI baselining, live issuance or deployment dispatch. No cancellation, Credit Note
 or Style workstream changes. INV-008 consumes the contract after verified PR1
 integration; Batch 2 remains read-only planning afterward.
+
+INV-008 must use existing frozen monetary fields and the authorized archived-image
+endpoint. Future Credit Note and reporting consumers must explicitly distinguish
+issued payable from the pre-round-off grand total; their calculations, ledgers and
+lifecycles are not changed here.

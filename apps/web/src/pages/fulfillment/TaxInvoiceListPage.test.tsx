@@ -47,20 +47,18 @@ async function render(role: Role = 'ACCOUNTANT') {
 }
 describe('Tax Invoice queue', () => {
   it('loads only server pages and follows the supplied cursor', async () => {
-    const get = vi
-      .spyOn(apiClient, 'get')
-      .mockImplementation(async (_url, config) => ({
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (_url, config) => ({
+      data: {
         data: {
-          data: {
-            items: [taxInvoiceFixture({ id: config?.params?.cursor ? 'inv-2' : 'inv-1' })],
-            pageInfo: {
-              limit: 25,
-              hasMore: !config?.params?.cursor,
-              nextCursor: config?.params?.cursor ? null : 'next-1',
-            },
+          items: [taxInvoiceFixture({ id: config?.params?.cursor ? 'inv-2' : 'inv-1' })],
+          pageInfo: {
+            limit: 25,
+            hasMore: !config?.params?.cursor,
+            nextCursor: config?.params?.cursor ? null : 'next-1',
           },
         },
-      }));
+      },
+    }));
     await render();
     await vi.waitFor(() => expect(container.textContent).toContain('Buyer One'));
     expect(get).toHaveBeenCalledTimes(1);

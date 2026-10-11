@@ -5,7 +5,7 @@
 **Goal:** deliver INV-007 and INV-008 as sequential verified GitHub PRs.
 **Spec:** user-supplied SOP v1.6 Batch 1 authorization, 11 October 2026.
 **Baseline:** implementation began at 5749bbe (PR0). Style PR65 has since
-merged at 2f133c7; integrate it before publishing PR1.
+merged at 2f133c7 and was integrated into PR1 without conflicts.
 **Architecture:** existing accounting functions and lifecycle services remain
 authoritative. Add invoice-scoped read/review integration, normalized web pages,
 then a finalized-snapshot PDF adapter. Reuse the established UI and PDF systems.
