@@ -47,11 +47,11 @@ async function runChrome(density, width, height) {
     `--remote-debugging-port=${debuggingPort}`,
     `--user-data-dir=${profileDirectory}`,
     "about:blank",
-  ], { stdio: "ignore" });
+  ], { stdio: ["ignore", "ignore", "inherit"] });
 
   try {
     let page;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
       try {
         const targets = await fetch(`http://127.0.0.1:${debuggingPort}/json`).then((response) => response.json());
         page = targets.find((target) => target.type === "page");
@@ -59,7 +59,7 @@ async function runChrome(density, width, height) {
       } catch {
         // Chrome may not have opened its DevTools socket yet.
       }
-      await delay(50);
+      await delay(100);
     }
     if (!page) throw new Error("Chrome DevTools endpoint did not become ready.");
 
