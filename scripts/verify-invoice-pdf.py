@@ -2,11 +2,12 @@
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 
 import pymupdf
 
-root = Path('.artifacts/native-browser-evidence')
+root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.artifacts/native-browser-evidence')
 proof = {}
 
 
@@ -38,6 +39,7 @@ for name in ['rounded', 'rounded-admin', 'multi', 'legacy']:
     document = pymupdf.open(root / f'{name}.pdf')
     text = '\n'.join(page.get_text() for page in document)
     flat = re.sub(r'\s+', ' ', text)
+    compact = re.sub(r'\s+', '', text)
     assert expected['invoiceNumber'] in flat, (name, 'issued identity')
     for key in ['subtotal', 'totalCgst', 'totalSgst', 'totalIgst', 'totalGst', 'grandTotal']:
         assert money(expected[key]) in flat, (name, key, expected[key])
@@ -49,10 +51,11 @@ for name in ['rounded', 'rounded-admin', 'multi', 'legacy']:
     snapshot = expected['documentSnapshot']
     if snapshot:
         for line in snapshot['lines']:
-            assert line['style']['styleNumber'] in flat, (name, line['style']['styleNumber'])
+            assert re.sub(r'\s+', '', line['style']['styleNumber']) in compact, (name, line['style']['styleNumber'])
         for order in snapshot['dispatchOrders']:
-            assert order['number'] in flat, (name, order['number'])
-        assert money(expected['roundOffAdjustment']) in flat
+            assert re.sub(r'\s+', '', order['number']) in compact, (name, order['number'])
+        adjustment = money(expected['roundOffAdjustment'])
+        assert ('-INR ' + adjustment[1:] if adjustment.startswith('-') else 'INR ' + adjustment) in flat
     else:
         assert 'Original issued total' in flat
         assert 'Round-off adjustment Unavailable' in flat

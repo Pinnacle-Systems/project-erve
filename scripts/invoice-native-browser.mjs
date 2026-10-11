@@ -535,9 +535,13 @@ async function main() {
           deviceScaleFactor: 1,
           mobile: false,
         });
+        await pause(250);
+        const narrowGeometry = await page.evaluate(
+          `({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].filter(node=>node.getBoundingClientRect().right>innerWidth+1).slice(0,25).map(node=>({tag:node.tagName,className:typeof node.className==='string'?node.className:'',right:node.getBoundingClientRect().right,overflow:getComputedStyle(node).overflowX}))})`,
+        );
         assert.ok(
-          await page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'),
-          'Finalized invoice PDF actions fit narrow layout',
+          narrowGeometry.scrollWidth <= narrowGeometry.width + 1,
+          `Finalized invoice PDF actions fit narrow layout: ${JSON.stringify(narrowGeometry)}`,
         );
         const capture = await page.send('Page.captureScreenshot', { format: 'png' });
         await fs.writeFile(
