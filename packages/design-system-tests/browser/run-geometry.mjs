@@ -6,11 +6,12 @@ import { join, resolve } from "node:path";
 const root = resolve(import.meta.dirname);
 const vite = resolve(root, "../node_modules/vite/bin/vite.js");
 const chromeCandidates = [
+  process.env.CHROME_BINARY,
   "C:/Program Files/Google/Chrome/Application/chrome.exe",
   "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
   "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
 ];
-const chrome = chromeCandidates.find(existsSync);
+const chrome = chromeCandidates.find((candidate) => candidate && existsSync(candidate));
 if (!chrome) throw new Error("Chrome or Edge is required for computed geometry tests.");
 
 const port = 4179;
@@ -46,11 +47,11 @@ async function runChrome(density, width, height) {
     `--remote-debugging-port=${debuggingPort}`,
     `--user-data-dir=${profileDirectory}`,
     "about:blank",
-  ], { stdio: "ignore" });
+  ], { stdio: ["ignore", "ignore", "inherit"] });
 
   try {
     let page;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
       try {
         const targets = await fetch(`http://127.0.0.1:${debuggingPort}/json`).then((response) => response.json());
         page = targets.find((target) => target.type === "page");
@@ -58,7 +59,7 @@ async function runChrome(density, width, height) {
       } catch {
         // Chrome may not have opened its DevTools socket yet.
       }
-      await delay(50);
+      await delay(100);
     }
     if (!page) throw new Error("Chrome DevTools endpoint did not become ready.");
 

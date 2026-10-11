@@ -142,7 +142,7 @@ export function ImageViewerDialog({ open, onOpenChange, images, initialIndex = 0
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="fixed inset-4 z-50 flex max-w-none flex-col overflow-hidden rounded-card border border-border bg-surface p-0 shadow-popover sm:inset-10"
+        className="fixed inset-4 z-50 flex w-auto max-w-none translate-x-0 translate-y-0 flex-col overflow-hidden rounded-card border border-border bg-surface p-0 shadow-popover sm:inset-10"
         onKeyDown={handleKeyDown}
       >
         <DialogTitle className="sr-only">{title ?? 'Image viewer'}</DialogTitle>
