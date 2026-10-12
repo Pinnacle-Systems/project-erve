@@ -138,6 +138,24 @@ async function renderCreateForm() {
         },
       };
     }
+    if (url === '/styles/style-1') {
+      // DEMO-016 fix: a Style's configured ACTIVE Sizes may exceed the
+      // Factory's pooled inventory above (which only has size-1) — size-2
+      // is configured but has never had pooled stock here, and must still
+      // show up in DispatchOrderQuantityGrid's divisor (see the dedicated
+      // regression test below).
+      return {
+        data: {
+          data: {
+            id: 'style-1',
+            sizes: [
+              { id: 'size-1', code: 'M', label: 'Medium', sizeType: 'ALPHA', sortOrder: 1, status: 'ACTIVE', mappingStatus: 'ACTIVE' },
+              { id: 'size-2', code: 'L', label: 'Large', sizeType: 'ALPHA', sortOrder: 2, status: 'ACTIVE', mappingStatus: 'ACTIVE' },
+            ],
+          },
+        },
+      };
+    }
     throw new Error(`Unexpected GET: ${url} ${JSON.stringify(config?.params)}`);
   });
 
@@ -202,6 +220,41 @@ describe('SaleOrderFormPage destination/line repeater', () => {
     const firstInput = document.getElementById(firstLabelFor) as HTMLInputElement;
     expect(firstInput.value).toBe('');
     expect(secondInput.value).toBe('456 Second Destination Road');
+  });
+});
+
+// DEMO-016 fix regression (frontend/backend consistency): the Style's
+// configured ACTIVE Sizes (GET /styles/:id) may include a Size the
+// Factory's pooled inventory has never carried — that Size must still
+// appear in the equal-split preview and its divisor, matching
+// resolveEligibleSizeIds on the server, never silently vanish the way a
+// pooled-inventory-only Size list would.
+describe('SaleOrderFormPage — equal-split preview includes configured Sizes with no pooled stock (DEMO-016)', () => {
+  it('shows the Style\'s configured-only Size in the grid and requires the total to divide across both', async () => {
+    await renderCreateForm();
+    await selectOption('Factory', 'Factory One');
+    await flush();
+    await act(async () => clickButtonByText('+ Add Style'));
+    await chooseStyle('Classic Tee');
+    await flush();
+    await flush();
+
+    // size-2 (Large) has zero pooled stock at this Factory but is an
+    // ACTIVE configured Size for this Style — it must render in the
+    // preview grid, not just size-1 (Medium).
+    expect(container.textContent).toContain('Large');
+    expect(container.textContent).toContain('0 available');
+
+    // An odd total doesn't divide evenly across the real 2-Size divisor —
+    // must be rejected by the client-side preview exactly like the server
+    // would reject it.
+    await setNumericField('Total Quantity', '7');
+    await flush();
+    expect(container.textContent).toMatch(/does not divide evenly across 2 Size/);
+
+    await setNumericField('Total Quantity', '20');
+    await flush();
+    expect(container.textContent).not.toMatch(/does not divide evenly/);
   });
 });
 

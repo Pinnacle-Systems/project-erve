@@ -550,24 +550,43 @@ async function assertStylesExist(styleIds: string[]): Promise<void> {
   for (const styleId of styleIds) if (!styleIdSet.has(styleId)) throw HttpError.badRequest(`Style ${styleId} not found`);
 }
 
-// Resolves a Style's eligible Sizes AT THIS FACTORY for equal-distribution
-// purposes. Deliberately NOT the Style/Size/StyleSize master-data active
-// status — a Dispatch Order has always allocated physically existing
-// QA-passed stock regardless of master-data status (see
-// assertStylesAndSizesExist's original "existence-only" comment, still
-// true, and the "does not require an active StyleSize mapping" regression
-// test below), so inventing an assortment-based eligibility rule here would
-// be a new business model, not a reuse of the existing one per the DEMO-016
-// plan. Eligibility is instead every Size this Style has EVER had QA-passed
+// Resolves a Style's eligible Sizes for equal-distribution purposes
+// (DEMO-016 fix): the union of (a) every Size currently configured ACTIVE
+// for this Style in master data (StyleSize), independent of any stock
+// history at all, and (b) every Size this Style has EVER had QA-passed
 // pooled stock for at this Factory (getPooledFactoryInventory — the exact
 // same pool the allocation planner below draws from), independent of
-// current availableQuantity: a Size that has since been fully consumed
-// stays part of the split and correctly fails as an insufficient-stock
-// shortfall (reserveAcrossPools) rather than silently shrinking the Style's
-// Size count out from under a Merchandiser re-saving the same order.
+// current availableQuantity.
+//
+// (b) alone was the original PR4 implementation and is deliberately kept
+// as a floor, never narrowed: it preserves "does not require an active
+// StyleSize mapping" (see the regression test below) — a Size that has
+// since been deactivated or fully consumed still stays part of the split,
+// correctly failing as an insufficient-stock shortfall (reserveAcrossPools)
+// rather than silently shrinking the Style's Size count out from under a
+// Merchandiser re-saving the same order.
+//
+// (a) is the actual DEMO-016 correction: a configured Size that has NEVER
+// had pooled stock at this Factory (e.g. a Style with six configured Sizes
+// where only five have ever been produced/QA-released here) was being
+// silently dropped from the divisor entirely — the approved business rule
+// requires every configured Size to remain in the split and fail as an
+// explicit insufficient-stock error, never disappear. Only ACTIVE StyleSize
+// rows are pulled in by (a); whether a genuinely INACTIVE/retired StyleSize
+// with no stock history should also force itself into every future split is
+// a separate, currently undecided business question (see SM-000 DEMO-016
+// follow-up note) — (b) already covers the case where such a Size has real
+// stock history, so nothing already-dispatchable regresses here.
 async function resolveEligibleSizeIds(client: Tx | typeof prisma, factoryId: string, styleId: string): Promise<string[]> {
-  const pool = await getPooledFactoryInventory(client, { factoryId, styleId });
-  return [...new Set(pool.map((row) => row.sizeId))];
+  const [pool, configuredSizes] = await Promise.all([
+    getPooledFactoryInventory(client, { factoryId, styleId }),
+    // "Active" here matches the existing convention elsewhere (e.g.
+    // JobOrderProductionTab/JobOrderCreatePage: size.status === 'ACTIVE' &&
+    // size.mappingStatus === 'ACTIVE') — both the StyleSize mapping and the
+    // Size master row itself must be ACTIVE, not just one of the two.
+    client.styleSize.findMany({ where: { styleId, status: 'ACTIVE', size: { status: 'ACTIVE' } }, select: { sizeId: true } }),
+  ]);
+  return [...new Set([...pool.map((row) => row.sizeId), ...configuredSizes.map((row) => row.sizeId)])];
 }
 
 async function describeStyleForError(client: Tx | typeof prisma, styleId: string): Promise<string> {
@@ -642,12 +661,12 @@ async function expandStyleTotalsToLines(
     const sizeIds = sizeIdsByStyle.get(total.styleId) ?? [];
     if (sizeIds.length === 0) {
       throw HttpError.badRequest(
-        `${await describeStyleForError(client, total.styleId)} has no QA-passed pooled stock at the selected Factory and cannot be allocated`,
+        `${await describeStyleForError(client, total.styleId)} has no configured Sizes and no QA-passed pooled stock at the selected Factory, and cannot be allocated`,
       );
     }
     if (total.totalQuantity % sizeIds.length !== 0) {
       throw HttpError.badRequest(
-        `${await describeStyleForError(client, total.styleId)}: ${total.totalQuantity} does not divide evenly across its ${sizeIds.length} pooled Size(s) at this Factory. Enter a total that is an exact multiple of ${sizeIds.length}.`,
+        `${await describeStyleForError(client, total.styleId)}: ${total.totalQuantity} does not divide evenly across its ${sizeIds.length} Size(s) at this Factory. Enter a total that is an exact multiple of ${sizeIds.length}.`,
       );
     }
     const perSizeQuantity = total.totalQuantity / sizeIds.length;
