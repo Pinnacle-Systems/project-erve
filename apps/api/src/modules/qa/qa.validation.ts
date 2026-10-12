@@ -66,7 +66,8 @@ export const saveSizeInspectionFormSchema = z
           remarks: z.string().trim().max(2000).nullable(),
         }),
       )
-      .length(15)
+      .min(1)
+      .max(15)
       .superRefine((items, context) => {
         if (new Set(items.map((item) => item.itemCode)).size !== items.length)
           context.addIssue({

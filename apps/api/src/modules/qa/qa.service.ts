@@ -1,3 +1,4 @@
+import { resolvePpSampleChecklist, QA_CHECKLIST_ITEMS } from '@erve/types';
 import { createHash } from 'node:crypto';
 import { canPerformQaOperation, createId } from '@erve/shared';
 import type {
@@ -16,7 +17,10 @@ import type { CurrentUser } from '../../auth/current-user.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { HttpError } from '../../errors/http-error.js';
 import { Prisma, prisma } from '../../db/prisma.js';
-import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
+import {
+  stylePrimaryImageInclude,
+  toPrimaryImageView,
+} from '../master-data/style-images.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -99,7 +103,15 @@ const detailInclude = {
   seasonSnapshots: { select: { code: true, displayName: true } },
   lines: {
     include: {
-      style: { select: { id: true, styleNumber: true, styleName: true, colour: true, images: stylePrimaryImageInclude } },
+      style: {
+        select: {
+          id: true,
+          styleNumber: true,
+          styleName: true,
+          colour: true,
+          images: stylePrimaryImageInclude,
+        },
+      },
       sizes: { include: { size: { select: { code: true, label: true, sortOrder: true } } } },
     },
   },
@@ -108,7 +120,11 @@ const detailInclude = {
       inspector: { select: { id: true, name: true, email: true } },
       forms: { include: { checklist: true } },
       evidence: { include: { file: true } },
-      qualityActivityExecution: true,
+      qualityActivityExecution: {
+        include: {
+          qualityFormVersion: { include: { sections: { include: { components: true } } } },
+        },
+      },
     },
     orderBy: { createdAt: 'asc' as const },
   },
@@ -317,9 +333,20 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
           sizeLabel: size.s.size.label,
           preparedQuantity: size.s.preparedQuantity,
           sampleQuantity: line.sampleQuantity,
-          checklist: checklistOrder.map((itemCode) => {
+          checklist: (session.qualityActivityExecution
+            ? resolvePpSampleChecklist(
+                session.qualityActivityExecution.qualityFormVersion.sections,
+                line.checklist,
+              )
+            : QA_CHECKLIST_ITEMS
+          ).map(({ code: itemCode, label }) => {
             const item = line.checklist.find((check) => check.itemCode === itemCode);
-            return { itemCode, status: item?.status ?? null, remarks: item?.remarks ?? null };
+            return {
+              itemCode,
+              label,
+              status: item?.status ?? null,
+              remarks: item?.remarks ?? null,
+            };
           }),
           inspectionRemarks: line.inspectionRemarks,
           inspectedQuantity: line.inspectedQuantity,
@@ -549,7 +576,16 @@ export async function saveSizeInspectionForm(
     const form = await tx.qaSizeInspectionForm.findUnique({
       where: { id: formId },
       include: {
-        session: { include: { jobOrder: true, qualityActivityExecution: true } },
+        session: {
+          include: {
+            jobOrder: true,
+            qualityActivityExecution: {
+              include: {
+                qualityFormVersion: { include: { sections: { include: { components: true } } } },
+              },
+            },
+          },
+        },
         checklist: true,
       },
     });
@@ -574,8 +610,23 @@ export async function saveSizeInspectionForm(
     )
       throw HttpError.conflict('PP Sample size and quantity are locked after inspection starts');
     const ppSample = Boolean(form.session.qualityActivityExecution);
+    const applicableItems = form.session.qualityActivityExecution
+      ? resolvePpSampleChecklist(
+          form.session.qualityActivityExecution.qualityFormVersion.sections,
+          form.checklist,
+        )
+      : QA_CHECKLIST_ITEMS;
+    if (
+      input.checklist.length !== applicableItems.length ||
+      input.checklist.some(
+        (item) => !applicableItems.some((definition) => definition.code === item.itemCode),
+      )
+    )
+      throw HttpError.badRequest('Checklist item is not applicable to this form version');
     if (ppSample && input.checklist.some((item) => item.status === 'AVAILABLE'))
-      throw HttpError.badRequest('PP Sample checklist responses must be Yes, No, N/A, or unanswered');
+      throw HttpError.badRequest(
+        'PP Sample checklist responses must be Yes, No, N/A, or unanswered',
+      );
     const dispositionQuantities = [
       input.inspectedQuantity,
       input.acceptedQuantity,
@@ -708,7 +759,12 @@ export async function finalizeSizeInspectionForm(
         session: {
           include: {
             jobOrder: true,
-            qualityActivityExecution: { include: { processFlowActivity: true } },
+            qualityActivityExecution: {
+              include: {
+                processFlowActivity: true,
+                qualityFormVersion: { include: { sections: { include: { components: true } } } },
+              },
+            },
           },
         },
       },
@@ -742,8 +798,14 @@ export async function finalizeSizeInspectionForm(
     const incomplete: Array<{ field: string; message: string }> = [];
     if (form.sampleQuantity === null)
       incomplete.push({ field: 'sampleQuantity', message: 'Sample quantity is required.' });
+    const applicableItems = ppExecution
+      ? resolvePpSampleChecklist(ppExecution.qualityFormVersion.sections, form.checklist)
+      : QA_CHECKLIST_ITEMS;
     if (
-      form.checklist.length !== checklistOrder.length ||
+      form.checklist.length !== applicableItems.length ||
+      applicableItems.some(
+        (definition) => !form.checklist.some((item) => item.itemCode === definition.code),
+      ) ||
       form.checklist.some(
         (item) => item.status === null || (ppExecution && item.status === 'AVAILABLE'),
       )
@@ -790,7 +852,9 @@ export async function finalizeSizeInspectionForm(
         where: { inspectionSessionId: sessionId, inspectionLineId: formId },
       });
       if (!evidence)
-        throw HttpError.badRequest('Photo evidence is required before a PP Sample can be finalized');
+        throw HttpError.badRequest(
+          'Photo evidence is required before a PP Sample can be finalized',
+        );
     }
     if (form.reworkQuantity > 0 && !ppExecution) {
       const attempt =
@@ -1116,7 +1180,10 @@ export async function getReworkQueue(user: CurrentUser) {
     // for them already — recordOrigin is included anyway so every
     // operational queue enforces the same explicit rule, not a mix of
     // explicit and incidental ones.
-    where: { recordOrigin: 'LIVE_WORKFLOW', qaReworkTasks: { some: { status: { not: 'REINSPECTED' } } } },
+    where: {
+      recordOrigin: 'LIVE_WORKFLOW',
+      qaReworkTasks: { some: { status: { not: 'REINSPECTED' } } },
+    },
     include: detailInclude,
   });
   return jobs.flatMap((job) =>

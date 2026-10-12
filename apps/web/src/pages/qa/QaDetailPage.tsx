@@ -210,7 +210,12 @@ export function QaDetailPage() {
                 header: 'Style / size',
                 render: (line) => (
                   <div className="flex items-center gap-2">
-                    <StyleThumbnailCell styleId={line.styleId} image={line.primaryImage} size={32} viewerTitle={line.styleNumber} />
+                    <StyleThumbnailCell
+                      styleId={line.styleId}
+                      image={line.primaryImage}
+                      size={32}
+                      viewerTitle={line.styleNumber}
+                    />
                     <span>{`${line.styleNumber} · ${line.sizeLabel}`}</span>
                   </div>
                 ),
@@ -308,9 +313,11 @@ export function QaDetailPage() {
                         <QualityChecklist supplementaryHeading="Remarks">
                           {form.checklist.map((item) => {
                             const label =
+                              item.label ??
                               QA_CHECKLIST_ITEMS.find(
                                 (definition) => definition.code === item.itemCode,
-                              )?.label ?? item.itemCode.replaceAll('_', ' ');
+                              )?.label ??
+                              item.itemCode.replaceAll('_', ' ');
                             return (
                               <QualityChecklistRow
                                 key={item.itemCode}
@@ -335,9 +342,11 @@ export function QaDetailPage() {
                           .filter((item) => item.status || item.remarks)
                           .map((item) => (
                             <li key={item.itemCode}>
-                              {QA_CHECKLIST_ITEMS.find(
-                                (definition) => definition.code === item.itemCode,
-                              )?.label ?? item.itemCode.replaceAll('_', ' ')}
+                              {item.label ??
+                                QA_CHECKLIST_ITEMS.find(
+                                  (definition) => definition.code === item.itemCode,
+                                )?.label ??
+                                item.itemCode.replaceAll('_', ' ')}
                               : {item.status ?? '—'}
                               {item.remarks ? ` · ${item.remarks}` : ''}
                             </li>

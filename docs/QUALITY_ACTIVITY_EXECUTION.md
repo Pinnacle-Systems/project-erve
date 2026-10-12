@@ -48,3 +48,9 @@ Prepared quantity is entered per Job Order size after Production completion in t
 ## Guard
 
 The existing guard that prevents assigning Quality-enabled Process Flows to normal new Job Orders remains active. Controlled fixtures exercise this runtime until a separate feature deliberately removes that guard.
+
+## DEMO-007 version transition
+
+Canonical successors remove Inline packing/corrective-action capture and Final's duplicate packing/labelling component and on-site GSM. Summary GSM and packing/labelling, Metal Detection outside PP Sample, global AQL levels, calculated outcomes, Inline PASS completion gating, and Final batch release accounting remain intact. Final attachment capture is optional; mandatory failure/rejection explanations remain enforced independently.
+
+The bootstrap publishes successor forms and an active successor Process Flow referencing the current forms. New Job Orders explicitly select the active flow through the existing selection/API contract. Existing Job Orders, drafts, and finalized executions retain their pinned versions. Development/test seeding uses frozen historical definitions before installing canonical successors; reruns never replace historical content or downgrade an active successor. Production bootstrap or deployment requires separate authorization.

@@ -1,3 +1,4 @@
+import { runQualityBootstrap } from '../../cli/quality-bootstrap.js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createId } from '@erve/shared';
@@ -35,7 +36,7 @@ const checklistCodes = [
   'SOURCE_DECLARATION_FORM',
 ] as const;
 
-async function workflow() {
+async function workflow(cleaned = false) {
   const qa = await createTestUserAndToken({
     email: `qa-${createId()}@test.local`,
     password: 'pass',
@@ -114,6 +115,46 @@ async function workflow() {
           versionNumber: 1,
           activityType: 'INSPECTION',
           executionScope: 'SIZE',
+          ...(cleaned
+            ? {
+                sections: {
+                  create: {
+                    id: createId(),
+                    sequence: 1,
+                    title: 'Sample',
+                    components: {
+                      create: {
+                        id: createId(),
+                        sequence: 1,
+                        type: 'CHECKLIST' as const,
+                        title: 'Checklist',
+                        config: {
+                          items: checklistCodes
+                            .filter(
+                              (code) =>
+                                ![
+                                  'METAL_DETECTION',
+                                  'FIT_SAMPLE_BUYER_COMMENTS',
+                                  'SOURCE_DECLARATION_FORM',
+                                ].includes(code),
+                            )
+                            .map((code) => ({
+                              key: code
+                                .toLowerCase()
+                                .replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+                              label:
+                                code === 'P_AND_P'
+                                  ? 'Confirm PP have been checked and are correct'
+                                  : code,
+                            })),
+                          responseOptions: ['YES', 'NO', 'N/A'],
+                        },
+                      },
+                    },
+                  },
+                },
+              }
+            : {}),
           status: 'PUBLISHED',
           publishedAt: new Date(),
         },
@@ -918,14 +959,18 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       })
       .expect(200);
     const savedChecklist = saved.body.data.sessions
-      .flatMap((candidate: { forms: Array<{ id: string; checklist: unknown[] }> }) => candidate.forms)
+      .flatMap(
+        (candidate: { forms: Array<{ id: string; checklist: unknown[] }> }) => candidate.forms,
+      )
       .find((candidate: { id: string }) => candidate.id === form.id).checklist;
     expect(savedChecklist[0]).toMatchObject({ status: 'NOT_APPLICABLE' });
     expect(savedChecklist.slice(1).every((item: { status: string }) => item.status === 'YES')).toBe(
       true,
     );
     await attachPpEvidence(f, session.id, form.id);
-    const savedForm = await prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } });
+    const savedForm = await prisma.qaSizeInspectionForm.findUniqueOrThrow({
+      where: { id: form.id },
+    });
     await request(app)
       .post(`/qa/inspections/${session.id}/forms/${form.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
@@ -1325,7 +1370,12 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       expectedVersion: version,
       checklistResponses: [],
       aqlResults: [
-        { componentId: aqlComponentId, severity: 'MAJOR', maxAllowed: 0, found: outcome === 'FAIL' ? 1 : 0 },
+        {
+          componentId: aqlComponentId,
+          severity: 'MAJOR',
+          maxAllowed: 0,
+          found: outcome === 'FAIL' ? 1 : 0,
+        },
       ],
       defects: [],
       correctiveActions: [],
@@ -1391,7 +1441,9 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
     await request(app)
       .post(`/quality-executions/${inlineStarted.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
-      .send(qualityPayload(inlineStarted.version, f.inlineOutcomeId, f.inlineAqlComponentId, 'FAIL'))
+      .send(
+        qualityPayload(inlineStarted.version, f.inlineOutcomeId, f.inlineAqlComponentId, 'FAIL'),
+      )
       .expect(200);
     expect((await prisma.jobOrder.findUniqueOrThrow({ where: { id: f.job.id } })).status).toBe(
       'IN_PRODUCTION',
@@ -1457,7 +1509,12 @@ describe('Process Flow PP Sample bridge and PPM gate', () => {
       .post(`/quality-executions/${firstFinal.id}/finalize`)
       .set('Authorization', `Bearer ${f.qa.token}`)
       .send(
-        qualityPayload(firstSaved.body.data.version, f.finalOutcomeId, f.finalAqlComponentId, 'PASS'),
+        qualityPayload(
+          firstSaved.body.data.version,
+          f.finalOutcomeId,
+          f.finalAqlComponentId,
+          'PASS',
+        ),
       )
       .expect(200);
 
@@ -1753,12 +1810,202 @@ describe('QA quality-work queue isolation from historical-import rows', () => {
     const f = await workflow();
     await confirmFactory(f);
     const listed = async () =>
-      (await request(app).get('/job-orders/quality-work').set('Authorization', `Bearer ${f.qa.token}`).expect(200)).body.data.items.some(
-        (item: { jobOrderId: string }) => item.jobOrderId === f.job.id,
-      );
+      (
+        await request(app)
+          .get('/job-orders/quality-work')
+          .set('Authorization', `Bearer ${f.qa.token}`)
+          .expect(200)
+      ).body.data.items.some((item: { jobOrderId: string }) => item.jobOrderId === f.job.id);
     expect(await listed()).toBe(true);
 
-    await prisma.jobOrder.update({ where: { id: f.job.id }, data: { recordOrigin: 'HISTORICAL_IMPORT' } });
+    await prisma.jobOrder.update({
+      where: { id: f.job.id },
+      data: { recordOrigin: 'HISTORICAL_IMPORT' },
+    });
     expect(await listed()).toBe(false);
   });
+});
+
+describe('DEMO-007 pinned PP checklist', () => {
+  it('creates, saves and finalizes twelve pinned rows without resurrecting removed items', async () => {
+    const f = await workflow(true);
+    await confirmFactory(f);
+    const started = await startPp(f).expect(201);
+    const session = await prisma.qaInspectionSession.findUniqueOrThrow({
+      where: { qualityActivityExecutionId: started.body.data.id },
+      include: { forms: { include: { checklist: true } } },
+    });
+    const form = session.forms[0]!;
+    expect(form.checklist).toHaveLength(12);
+    const path = `/qa/inspections/${session.id}/forms/${form.id}`;
+    const payload = {
+      expectedVersion: form.version,
+      sampleQuantity: form.sampleQuantity,
+      checklist: form.checklist.map((x) => ({
+        itemCode: x.itemCode,
+        status: 'NOT_APPLICABLE',
+        remarks: null,
+      })),
+    };
+    await request(app)
+      .put(path)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send({
+        ...payload,
+        checklist: [
+          ...payload.checklist,
+          { itemCode: 'METAL_DETECTION', status: 'YES', remarks: null },
+        ],
+      })
+      .expect(400);
+    await request(app)
+      .put(path)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send(payload)
+      .expect((res) => expect(res.status, JSON.stringify(res.body)).toBe(200));
+    await attachPpEvidence(f, session.id, form.id);
+    const saved = await prisma.qaSizeInspectionForm.findUniqueOrThrow({ where: { id: form.id } });
+    await request(app)
+      .post(`${path}/finalize`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .set('Idempotency-Key', createId())
+      .send({ expectedVersion: saved.version })
+      .expect(200);
+    const detail = await request(app)
+      .get(`/qa/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    const checklist = detail.body.data.sessions[0].forms[0].checklist;
+    expect(checklist).toHaveLength(12);
+    expect(checklist.find((x: { itemCode: string }) => x.itemCode === 'P_AND_P').label).toBe(
+      'Confirm PP have been checked and are correct',
+    );
+    expect(detail.body.data.sessions[0].processFlowPpSample.decision).toBe('PASS');
+  });
+});
+
+it('DEMO-007 exposes the successor flow to normal new Job Orders without repinning existing jobs', async () => {
+  const f = await workflow();
+  await confirmFactory(f);
+  const originalFlow = f.job.processFlowVersionId;
+  const oldExecution = await startPp(f).expect(201);
+  const originalVersion = oldExecution.body.data.qualityForm.id;
+  const bootstrap = await runQualityBootstrap(
+    { nodeEnv: 'test', confirmProduction: false, dryRun: false },
+    { databaseUrl: process.env.DATABASE_URL! },
+  );
+  const active = await prisma.processFlowVersion.findFirstOrThrow({
+    where: { processFlow: { code: 'ERVE_PRODUCTION_QUALITY' }, status: 'ACTIVE' },
+    include: { stages: true },
+  });
+  for (const stage of active.stages.filter((stage) => stage.activityType === 'QUALITY')) {
+    const code = stage.code === 'PP_SAMPLE' ? 'SAMPLE' : stage.code;
+    expect(stage.qualityFormVersionId).toBe(
+      bootstrap.forms.find((form) => form.code === code)?.qualityFormVersionId,
+    );
+  }
+  const sheet = await prisma.distributorPurchaseOrder.findFirstOrThrow({
+    where: { jobOrderId: f.job.id },
+  });
+  await prisma.distributorPurchaseOrder.update({
+    where: { id: sheet.id },
+    data: { jobOrderId: null },
+  });
+  const styleId = f.job.lines[0]!.styleId;
+  await prisma.styleFactoryMapping.create({
+    data: { id: createId(), styleId, factoryId: f.job.factoryId, exFactoryPrice: 10 },
+  });
+  for (const size of f.job.lines[0]!.sizes)
+    await prisma.styleSize.create({ data: { id: createId(), styleId, sizeId: size.sizeId } });
+  const created = await request(app)
+    .post('/job-orders')
+    .set('Authorization', `Bearer ${f.merchandiser.token}`)
+    .send({
+      orderSheetIds: [sheet.id],
+      factoryId: f.job.factoryId,
+      processFlowVersionId: active.id,
+      unitPrice: '10',
+      sizes: f.job.lines[0]!.sizes.map((size) => ({ sizeId: size.sizeId, quantity: 10 })),
+    })
+    .expect((res) => expect(res.status, JSON.stringify(res.body)).toBe(201));
+  const newJob = await prisma.jobOrder.findUniqueOrThrow({
+    where: { id: created.body.data.id },
+    include: { lines: { include: { sizes: true } } },
+  });
+  await prisma.jobOrder.update({
+    where: { id: newJob.id },
+    data: { status: 'CONFIRMED_BY_FACTORY', factoryConfirmationStatus: 'CONFIRMED' },
+  });
+  const newPp = active.stages.find((stage) => stage.code === 'PP_SAMPLE')!;
+  const started = await request(app)
+    .post(`/job-orders/${newJob.id}/quality-activities/${newPp.id}/executions`)
+    .set('Authorization', `Bearer ${f.qa.token}`)
+    .send({ sampleJobOrderLineSizeId: newJob.lines[0]!.sizes[0]!.id, sampleQuantity: 5 })
+    .expect(201);
+  const detail = await request(app)
+    .get(`/qa/job-orders/${newJob.id}`)
+    .set('Authorization', `Bearer ${f.qa.token}`)
+    .expect(200);
+  expect(detail.body.data.sessions[0].forms[0].checklist).toHaveLength(12);
+  expect(
+    (await prisma.jobOrder.findUniqueOrThrow({ where: { id: f.job.id } })).processFlowVersionId,
+  ).toBe(originalFlow);
+  expect(
+    (
+      await prisma.qaInspectionSession.findUniqueOrThrow({
+        where: { qualityActivityExecutionId: oldExecution.body.data.id },
+        include: { forms: { include: { checklist: true } } },
+      })
+    ).forms[0]!.checklist,
+  ).toHaveLength(15);
+  expect(
+    (
+      await request(app)
+        .get(`/quality-executions/${oldExecution.body.data.id}`)
+        .set('Authorization', `Bearer ${f.qa.token}`)
+        .expect(200)
+    ).body.data.qualityForm.id,
+  ).toBe(originalVersion);
+  expect(started.body.data.qualityForm.id).not.toBe(originalVersion);
+  const repeated = await runQualityBootstrap(
+    { nodeEnv: 'test', confirmProduction: false, dryRun: false },
+    { databaseUrl: process.env.DATABASE_URL! },
+  );
+  expect(repeated.forms.every((form) => form.action === 'unchanged')).toBe(true);
+  expect(repeated.processFlow.action).toBe('unchanged');
+});
+
+it('preserves all fifteen legacy recorded rows even on a pinned subset definition', async () => {
+  const f = await workflow(true);
+  await confirmFactory(f);
+  const started = await startPp(f).expect(201);
+  const session = await prisma.qaInspectionSession.findUniqueOrThrow({
+    where: { qualityActivityExecutionId: started.body.data.id },
+    include: { forms: true },
+  });
+  const form = session.forms[0]!;
+  // Reproduce the pre-DEMO007 adapter's stored contract for a custom subset definition.
+  await prisma.qaSizeInspectionChecklistItem.createMany({
+    data: ['METAL_DETECTION', 'FIT_SAMPLE_BUYER_COMMENTS', 'SOURCE_DECLARATION_FORM'].map(
+      (itemCode) => ({
+        id: createId(),
+        inspectionFormId: form.id,
+        itemCode: itemCode as
+          'METAL_DETECTION' | 'FIT_SAMPLE_BUYER_COMMENTS' | 'SOURCE_DECLARATION_FORM',
+      }),
+    ),
+  });
+  await finalizeStartedPp(f, started.body.data.id, 'PASS');
+  const detail = await request(app)
+    .get(`/qa/job-orders/${f.job.id}`)
+    .set('Authorization', `Bearer ${f.qa.token}`)
+    .expect(200);
+  expect(detail.body.data.sessions[0].forms[0].checklist).toHaveLength(15);
+  expect(
+    detail.body.data.sessions[0].forms[0].checklist.find(
+      (item: { itemCode: string }) => item.itemCode === 'METAL_DETECTION',
+    ).status,
+  ).toBe('YES');
 });

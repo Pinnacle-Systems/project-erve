@@ -69,7 +69,10 @@ export interface PpSamplePdfViewModel {
   image: PdfImageSource;
 }
 
-function evidenceItem(evidence: QaEvidenceMetadata, images: Map<string, PdfImageSource>): PpSampleEvidenceItem {
+function evidenceItem(
+  evidence: QaEvidenceMetadata,
+  images: Map<string, PdfImageSource>,
+): PpSampleEvidenceItem {
   const isImage = IMAGE_CONTENT_TYPES.has(evidence.contentType);
   return {
     id: evidence.id,
@@ -82,7 +85,10 @@ function evidenceItem(evidence: QaEvidenceMetadata, images: Map<string, PdfImage
 }
 
 function checklistLabel(itemCode: string): string {
-  return QA_CHECKLIST_ITEMS.find((definition) => definition.code === itemCode)?.label ?? itemCode.replaceAll('_', ' ');
+  return (
+    QA_CHECKLIST_ITEMS.find((definition) => definition.code === itemCode)?.label ??
+    itemCode.replaceAll('_', ' ')
+  );
 }
 
 // DEMO-005: an explicit N/A must render as a deliberate value, not the raw
@@ -125,10 +131,12 @@ export function buildPpSampleViewModel(
       sizeLabel: form.sizeLabel,
       styleNumber: form.styleNumber,
       sampleQuantity: session.processFlowPpSample?.sampleQuantity ?? form.sampleQuantity,
-      decisionLabel: session.processFlowPpSample ? (session.processFlowPpSample.decision ?? 'Pending') : '—',
+      decisionLabel: session.processFlowPpSample
+        ? (session.processFlowPpSample.decision ?? 'Pending')
+        : '—',
       statusLabel: form.status,
       checklist: form.checklist.map((item) => ({
-        label: checklistLabel(item.itemCode),
+        label: item.label ?? checklistLabel(item.itemCode),
         status: checklistStatusLabel(item.status),
         remarks: item.remarks,
       })),
