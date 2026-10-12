@@ -86,9 +86,9 @@ async function renderEditPage(role: Role) {
   act(() => {
     root.render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <MemoryRouter initialEntries={['/master-data/hsns/hsn-1/edit']}>
+        <MemoryRouter initialEntries={['/hsns/hsn-1/edit']}>
           <Routes>
-            <Route path="/master-data/hsns/:id/edit" element={<HsnFormPage />} />
+            <Route path="/hsns/:id/edit" element={<HsnFormPage />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,

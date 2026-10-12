@@ -87,7 +87,7 @@ export function HsnFormPage() {
     onSuccess: async (hsn) => {
       await queryClient.invalidateQueries({ queryKey: ['hsns'] });
       await queryClient.invalidateQueries({ queryKey: ['hsn', hsn.id] });
-      navigate(`/master-data/hsns/${hsn.id}`);
+      navigate(`/hsns/${hsn.id}`);
     },
     onError: (caught) => setError(toErrorMessage(caught)),
   });
