@@ -4,8 +4,11 @@ import { createId } from '@erve/shared';
 import { getFileStorage } from '../../storage/index.js';
 import { createApp } from '../../app.js';
 import { prisma, Prisma } from '../../db/prisma.js';
+import { env } from '../../config/env.js';
 import { reconcileInvoiceImageArchives } from './tax-invoice-document.service.js';
 import { createTestSellerRegistration, resetDatabase } from '../../test/helpers.js';
+import { ensureFinancialYear } from '../master-data/financial-year.service.js';
+import { toBusinessCalendarDate } from '../master-data/financial-year.util.js';
 import {
   consolidateAndDispatch,
   createApprovedSaleOrder,
@@ -1007,6 +1010,121 @@ describe('Tax Invoice — GST/HSN configuration fail-closed', () => {
       .set('Authorization', `Bearer ${accountantToken}`)
       .expect(400);
     expect(res.body.error.details.reason).toBe('HSN_HAS_NO_GST_RULE_SET');
+  });
+});
+
+// ISS-016: getTaxInvoiceReview must not let a numbering-readiness failure
+// (production-only, see assertTaxInvoiceSequenceBaselined above) hide a
+// financial calculation that actually succeeded. env.NODE_ENV is a plain
+// parsed object (config/env.ts), so it's mutated directly for the duration
+// of each test here and restored in `finally` — no process-level mocking.
+describe('Tax Invoice — ISS-016: review preview independent of numbering readiness', () => {
+  it('returns calculated GST/totals as a BLOCKED preview when only the production EI sequence is unbaselined', async () => {
+    const { taxInvoiceId, accountantToken } = await createReadyDraftInvoice(10);
+
+    const original = env.NODE_ENV;
+    env.NODE_ENV = 'production';
+    try {
+      const res = await request(app)
+        .get(`/tax-invoices/${taxInvoiceId}/review`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200);
+
+      expect(res.body.data.review.state).toBe('BLOCKED');
+      expect(res.body.data.review.isPreview).toBe(true);
+      expect(res.body.data.review.blockers).toHaveLength(1);
+      expect(res.body.data.review.blockers[0].code).toBe('TAX_INVOICE_SEQUENCE_NOT_BASELINED');
+
+      // The calculation itself succeeded — GST/totals must not be discarded.
+      expect(res.body.data.lines[0].gstPercent).not.toBeNull();
+      expect(res.body.data.lines[0].taxableValue).not.toBeNull();
+      expect(res.body.data.hsnSummary).not.toBeNull();
+      expect(res.body.data.hsnSummary.length).toBeGreaterThan(0);
+      expect(res.body.data.subtotal).not.toBeNull();
+      expect(res.body.data.grandTotal).not.toBeNull();
+      expect(res.body.data.payableTotal).not.toBeNull();
+
+      // Finalization itself remains blocked under the identical condition.
+      await request(app)
+        .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(409);
+
+      // The review never allocated a serial or persisted a snapshot.
+      const persisted = await prisma.taxInvoice.findUniqueOrThrow({ where: { id: taxInvoiceId } });
+      expect(persisted.status).toBe('DRAFT');
+      expect(persisted.invoiceNumber).toBeNull();
+      expect(await prisma.documentSequence.count({ where: { documentType: 'TAX_INVOICE' } })).toBe(
+        0,
+      );
+    } finally {
+      env.NODE_ENV = original;
+    }
+  });
+
+  it('still reports BLOCKED with no preview when the financial calculation genuinely fails, even in production', async () => {
+    await createTestSellerRegistration({ branchCode: 'ERVE-HO', gstin: '27AAAAA0000A1Z5' });
+    const { fixture, ervePackingListId } = await createFinalizedEipl(5);
+    await setDistributorAddress(fixture.stock.distributorId, {
+      state: 'Maharashtra',
+      gstin: '27AAAAA0000A1Z5',
+    });
+    // Deliberately no HSN assignment — Style.hsnId stays null.
+
+    const accountantToken = await createAccountantToken();
+    const draft = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
+
+    const original = env.NODE_ENV;
+    env.NODE_ENV = 'production';
+    try {
+      const res = await request(app)
+        .get(`/tax-invoices/${draft.body.data.id}/review`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200);
+
+      expect(res.body.data.review.state).toBe('BLOCKED');
+      expect(res.body.data.review.blockers).toHaveLength(1);
+      expect(res.body.data.review.blockers[0].code).toBe('HSN_NOT_ASSIGNED');
+      expect(res.body.data.lines[0].gstPercent).toBeNull();
+      expect(res.body.data.lines[0].taxableValue).toBeNull();
+      expect(res.body.data.hsnSummary).toBeNull();
+      expect(res.body.data.subtotal).toBeNull();
+    } finally {
+      env.NODE_ENV = original;
+    }
+  });
+
+  it('returns READY with the full preview once numbering is also baselined', async () => {
+    const { taxInvoiceId, accountantToken } = await createReadyDraftInvoice(10);
+
+    const original = env.NODE_ENV;
+    env.NODE_ENV = 'production';
+    try {
+      const financialYear = await ensureFinancialYear(prisma, toBusinessCalendarDate(new Date()));
+      await prisma.documentSequence.create({
+        data: {
+          id: createId(),
+          documentType: 'TAX_INVOICE',
+          financialYearId: financialYear.id,
+          lastAllocatedSerial: 0,
+        },
+      });
+
+      const res = await request(app)
+        .get(`/tax-invoices/${taxInvoiceId}/review`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .expect(200);
+
+      expect(res.body.data.review.state).toBe('READY');
+      expect(res.body.data.review.blockers).toHaveLength(0);
+      expect(res.body.data.lines[0].gstPercent).not.toBeNull();
+    } finally {
+      env.NODE_ENV = original;
+    }
   });
 });
 

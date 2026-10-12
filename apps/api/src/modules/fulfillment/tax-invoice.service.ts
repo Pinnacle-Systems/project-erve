@@ -801,6 +801,63 @@ export async function getTaxInvoiceAudit(actor: CurrentUser, id: string) {
   return rows.map(({ createdAt, ...entry }) => ({ ...entry, createdAt: createdAt.toISOString() }));
 }
 
+/** Maps a caught HttpError into the review endpoint's blocker shape. Rethrows anything unexpected. */
+function toReviewBlocker(error: unknown): { code: string; message: string } {
+  if (!(error instanceof HttpError) || ![400, 409].includes(error.statusCode)) throw error;
+  const details =
+    error.details && typeof error.details === 'object' ? (error.details as Record<string, unknown>) : {};
+  return { code: String(details.reason ?? error.code), message: error.message };
+}
+
+/**
+ * Projects a successful financial calculation onto the base view. Shared by
+ * the READY and numbering-BLOCKED branches of getTaxInvoiceReview — both
+ * display the exact same calculated GST/totals, differing only in
+ * review.state. Never called with a failed calculation.
+ */
+function projectInvoiceReviewPreview(
+  view: ReturnType<typeof toTaxInvoiceView>,
+  calculation: Awaited<ReturnType<typeof prepareInvoiceCalculation>>,
+) {
+  const byId = new Map(calculation.resolvedLines.map((line) => [line.id, line]));
+  return {
+    ...view,
+    billTo: { ...view.billTo, stateCode: calculation.billToStateCode },
+    gstTreatment: calculation.gstTreatment,
+    lines: view.lines.map((line) => {
+      const resolved = byId.get(line.id)!;
+      return {
+        ...line,
+        hsn: { code: resolved.hsnCode, description: null },
+        calculatedUnitRate: resolved.calculatedUnitRate.toString(),
+        finalUnitRate: resolved.finalUnitRate.toString(),
+        gstPercent: resolved.gstPercent.toString(),
+        taxableValue: resolved.taxableValue.toString(),
+        cgstAmount: resolved.cgstAmount.toString(),
+        sgstAmount: resolved.sgstAmount.toString(),
+        igstAmount: resolved.igstAmount.toString(),
+      };
+    }),
+    subtotal: calculation.totals.subtotal.toString(),
+    totalCgst: calculation.totals.totalCgst.toString(),
+    totalSgst: calculation.totals.totalSgst.toString(),
+    totalIgst: calculation.totals.totalIgst.toString(),
+    totalGst: calculation.totals.totalGst.toString(),
+    grandTotal: calculation.grandTotal.toFixed(2),
+    payableTotal: calculation.payableRounding.payableTotal.toFixed(2),
+    roundOffAdjustment: calculation.payableRounding.roundOffAdjustment.toFixed(2),
+    roundingPolicy: calculation.payableRounding.roundingPolicy,
+    hsnSummary: aggregateHsnSummary(calculation.resolvedLines).map((row) => ({
+      hsnCode: row.hsnCode,
+      gstPercent: row.gstPercent.toString(),
+      taxableValue: row.taxableValue.toString(),
+      cgstAmount: row.cgstAmount.toString(),
+      sgstAmount: row.sgstAmount.toString(),
+      igstAmount: row.igstAmount.toString(),
+    })),
+  };
+}
+
 export async function getTaxInvoiceReview(actor: CurrentUser, id: string) {
   assertViewAccess(actor);
   return prisma.$transaction(async (tx) => {
@@ -813,61 +870,15 @@ export async function getTaxInvoiceReview(actor: CurrentUser, id: string) {
         ...view,
         review: { state: 'FINALIZED' as const, isPreview: false, calculatedAt: null, blockers: [] },
       };
+
+    // Step A: financial calculation. A failure here means GST/totals are
+    // genuinely unavailable (bad HSN/GST/Bill-To config) — no preview to show.
+    let calculation: Awaited<ReturnType<typeof prepareInvoiceCalculation>>;
     try {
       await loadAndValidateCommercialLines(tx, record.ervePackingListId);
-      const calculation = await prepareInvoiceCalculation(tx, record);
-      // Review is read-only: check cutover readiness without creating a FY
-      // or seeding a document sequence. Finalization remains authoritative.
-      await assertDraftNumberingReady(tx, calculation.businessDate);
-      const byId = new Map(calculation.resolvedLines.map((line) => [line.id, line]));
-      return {
-        ...view,
-        billTo: { ...view.billTo, stateCode: calculation.billToStateCode },
-        gstTreatment: calculation.gstTreatment,
-        lines: view.lines.map((line) => {
-          const resolved = byId.get(line.id)!;
-          return {
-            ...line,
-            hsn: { code: resolved.hsnCode, description: null },
-            calculatedUnitRate: resolved.calculatedUnitRate.toString(),
-            finalUnitRate: resolved.finalUnitRate.toString(),
-            gstPercent: resolved.gstPercent.toString(),
-            taxableValue: resolved.taxableValue.toString(),
-            cgstAmount: resolved.cgstAmount.toString(),
-            sgstAmount: resolved.sgstAmount.toString(),
-            igstAmount: resolved.igstAmount.toString(),
-          };
-        }),
-        subtotal: calculation.totals.subtotal.toString(),
-        totalCgst: calculation.totals.totalCgst.toString(),
-        totalSgst: calculation.totals.totalSgst.toString(),
-        totalIgst: calculation.totals.totalIgst.toString(),
-        totalGst: calculation.totals.totalGst.toString(),
-        grandTotal: calculation.grandTotal.toFixed(2),
-        payableTotal: calculation.payableRounding.payableTotal.toFixed(2),
-        roundOffAdjustment: calculation.payableRounding.roundOffAdjustment.toFixed(2),
-        roundingPolicy: calculation.payableRounding.roundingPolicy,
-        hsnSummary: aggregateHsnSummary(calculation.resolvedLines).map((row) => ({
-          hsnCode: row.hsnCode,
-          gstPercent: row.gstPercent.toString(),
-          taxableValue: row.taxableValue.toString(),
-          cgstAmount: row.cgstAmount.toString(),
-          sgstAmount: row.sgstAmount.toString(),
-          igstAmount: row.igstAmount.toString(),
-        })),
-        review: {
-          state: 'READY' as const,
-          isPreview: true,
-          calculatedAt: calculation.finalizedAt.toISOString(),
-          blockers: [],
-        },
-      };
+      calculation = await prepareInvoiceCalculation(tx, record);
     } catch (error) {
-      if (!(error instanceof HttpError) || ![400, 409].includes(error.statusCode)) throw error;
-      const details =
-        error.details && typeof error.details === 'object'
-          ? (error.details as Record<string, unknown>)
-          : {};
+      const blocker = toReviewBlocker(error);
       return {
         ...view,
         lines: view.lines.map((line) => {
@@ -884,14 +895,32 @@ export async function getTaxInvoiceReview(actor: CurrentUser, id: string) {
             ).toString(),
           };
         }),
-        review: {
-          state: 'BLOCKED' as const,
-          isPreview: true,
-          calculatedAt: null,
-          blockers: [{ code: String(details.reason ?? error.code), message: error.message }],
-        },
+        review: { state: 'BLOCKED' as const, isPreview: true, calculatedAt: null, blockers: [blocker] },
       };
     }
+
+    const preview = projectInvoiceReviewPreview(view, calculation);
+
+    // Step B: issuance readiness, independent of the calculation above.
+    // Review is read-only: check cutover readiness without creating a FY
+    // or seeding a document sequence. Finalization remains authoritative
+    // and re-runs this same check itself before ever allocating a serial.
+    try {
+      await assertDraftNumberingReady(tx, calculation.businessDate);
+    } catch (error) {
+      const blocker = toReviewBlocker(error);
+      return { ...preview, review: { state: 'BLOCKED' as const, isPreview: true, calculatedAt: null, blockers: [blocker] } };
+    }
+
+    return {
+      ...preview,
+      review: {
+        state: 'READY' as const,
+        isPreview: true,
+        calculatedAt: calculation.finalizedAt.toISOString(),
+        blockers: [],
+      },
+    };
   });
 }
 
