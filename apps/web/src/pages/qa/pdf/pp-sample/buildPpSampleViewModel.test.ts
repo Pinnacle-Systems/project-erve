@@ -230,3 +230,27 @@ describe('buildPpSampleViewModel', () => {
     expect(viewModel.generatedBy).toBeUndefined();
   });
 });
+
+
+it('prints the pinned PP label and only the recorded successor rows', () => {
+  const detail = makeQaInspectionDetail();
+  detail.sessions[0]!.forms[0]!.checklist = [
+    {
+      itemCode: 'P_AND_P',
+      label: 'Confirm PP have been checked and are correct',
+      status: 'NOT_APPLICABLE',
+      remarks: 'Recorded remark',
+    },
+  ];
+  const vm = buildPpSampleViewModel(
+    { detail, evidenceImages: new Map(), primaryImage: { placeholder: true } },
+    META,
+  );
+  expect(vm.sessions[0]!.forms[0]!.checklist).toEqual([
+    {
+      label: 'Confirm PP have been checked and are correct',
+      status: 'N/A',
+      remarks: 'Recorded remark',
+    },
+  ]);
+});

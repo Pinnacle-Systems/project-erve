@@ -1,3 +1,4 @@
+import { resolvePpSampleChecklist } from '@erve/types';
 import { createHash } from 'node:crypto';
 import { canPerformQaOperation, createId } from '@erve/shared';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -8,7 +9,10 @@ import { HttpError } from '../../errors/http-error.js';
 import { env } from '../../config/env.js';
 import { FileNotFoundInStorageError, getFileStorage } from '../../storage/index.js';
 import { sanitizeDisplayFileName, sniffImage } from '../../storage/image-sniff.js';
-import { resolvePrimaryStyleAcrossLines, stylePrimaryImageInclude } from '../master-data/style-images.service.js';
+import {
+  resolvePrimaryStyleAcrossLines,
+  stylePrimaryImageInclude,
+} from '../master-data/style-images.service.js';
 import type { QualityExecutionPayload } from './quality-executions.validation.js';
 import { calculateQualityExecutionOutcome } from '@erve/types';
 import type { QualityExecutionValidationError } from '@erve/types';
@@ -963,23 +967,10 @@ export async function start(
                 reworkQuantity: 0,
                 permanentlyRejectedQuantity: 0,
                 checklist: {
-                  create: [
-                    'FABRIC_COLOUR_QUALITY',
-                    'TRIMS_CARD',
-                    'FABRIC_GSM',
-                    'MEASUREMENTS_REPORT',
-                    'GARMENT_CONSTRUCTION',
-                    'GENERAL_QUALITY_PRESENTATION',
-                    'LABELLING_POSITION',
-                    'FIT_SAMPLE_BUYER_COMMENTS',
-                    'SPI',
-                    'SAMPLE_TAG',
-                    'DATA_SHEET_PULL_TEST_PINCH_SETTING',
-                    'METAL_DETECTION',
-                    'P_AND_P',
-                    'PP_SAMPLE_FIT_COMMENTS',
-                    'SOURCE_DECLARATION_FORM',
-                  ].map((itemCode) => ({ id: createId(), itemCode: itemCode as never })),
+                  create: resolvePpSampleChecklist(form.sections).map(({ code }) => ({
+                    id: createId(),
+                    itemCode: code,
+                  })),
                 },
               },
             },

@@ -61,3 +61,9 @@ users can start, save, edit and finalize an inspection there, while the
 existing detail sections retain evidence, approval, reopen, reconciliation and
 audit access. Mobile provides the operational form using the same API contract
 and persisted data. Authorization remains enforced by the API.
+
+## DEMO-007 successor checklist
+
+New Sample definitions omit `FIT_SAMPLE_BUYER_COMMENTS`, `METAL_DETECTION`, and `SOURCE_DECLARATION_FORM`, leaving 12 explicitly answered rows. `P_AND_P` retains its stable code and displays PP. The typed bridge resolves rows and labels from the execution's pinned Quality Form version; section-less legacy versions retain the original 15-row checklist. General QA retains its checklist and Metal Detection. Historical definitions and responses are not rewritten.
+
+PP Sample results remain server-calculated under DEMO-005: any No fails, Yes and explicit N/A do not fail, unanswered rows block finalization. No outcome override is introduced.

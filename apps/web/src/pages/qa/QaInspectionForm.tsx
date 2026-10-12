@@ -6,6 +6,7 @@ import {
   canStartQaInspection,
   qaChecklistChoices,
   QA_CHECKLIST_ITEMS,
+  qaChecklistItems,
   type ApiErrorResponse,
   type ApiSuccessResponse,
   type QaChecklistStatus,
@@ -130,6 +131,7 @@ function validate(
   finalizing: boolean,
   evidence: number,
   ppSample: boolean,
+  items = QA_CHECKLIST_ITEMS,
 ): Errors {
   const errors: Errors = {};
   const quantity = (value: string, name: string) => {
@@ -173,7 +175,7 @@ function validate(
     errors.other = 'Clear OTHER details unless OTHER is selected.';
   if (finalizing) {
     if (!draft.sample.trim()) errors.sample = 'Sample quantity is required to finalize.';
-    for (const item of QA_CHECKLIST_ITEMS)
+    for (const item of items)
       if (
         !draft.checks[item.code]?.status ||
         (ppSample && draft.checks[item.code]?.status === 'AVAILABLE')
@@ -335,7 +337,10 @@ export function QaInspectionForm({
       const issues =
         (
           api?.details as
-            { issues?: Array<{ path?: Array<string | number>; field?: string; message?: string }> } | undefined
+            | {
+                issues?: Array<{ path?: Array<string | number>; field?: string; message?: string }>;
+              }
+            | undefined
         )?.issues ?? [];
       const own: Errors = {};
       const others: Record<string, string> = {};
@@ -378,7 +383,7 @@ export function QaInspectionForm({
       if (!issues.length) {
         own.form = isRawTransport
           ? 'Please review and correct the highlighted fields before saving.'
-          : rawMessage ?? 'Unable to update the size inspection form.';
+          : (rawMessage ?? 'Unable to update the size inspection form.');
       } else if (!Object.keys(own).length && !Object.keys(others).length) {
         own.form = isRawTransport
           ? 'Please review and correct the highlighted fields before saving.'
@@ -447,17 +452,25 @@ export function QaInspectionForm({
       </Panel>
     ) : null;
   if (!selected || !draft) return null;
+  const checklistItems = qaChecklistItems(selected.checklist);
   const readonly = selected.status === 'FINALIZED' || !canMutate;
   // DEMO-005: the PP Sample result is calculated from the checklist, never
   // chosen manually — any explicit No fails it, N/A and Yes never do.
   const calculatedPpSampleDecision = ppSample
     ? calculatePpSampleOutcome(
-        QA_CHECKLIST_ITEMS.map((item) => ({ status: draft.checks[item.code]?.status || null })),
+        checklistItems.map((item) => ({ status: draft.checks[item.code]?.status || null })),
       )
     : null;
   const save = (finalizing: boolean) => {
     setNotice('');
-    const next = validate(draft, capacity, finalizing, evidence.length, Boolean(ppSample));
+    const next = validate(
+      draft,
+      capacity,
+      finalizing,
+      evidence.length,
+      Boolean(ppSample),
+      checklistItems,
+    );
     if (Object.keys(next).length) {
       setErrors({
         ...next,
@@ -471,8 +484,7 @@ export function QaInspectionForm({
     const disposition = ppSample
       ? {}
       : {
-          inspectedQuantity:
-            Number(draft.accepted) + Number(draft.rework) + Number(draft.rejected),
+          inspectedQuantity: Number(draft.accepted) + Number(draft.rework) + Number(draft.rejected),
           acceptedQuantity: Number(draft.accepted),
           reworkQuantity: Number(draft.rework),
           permanentlyRejectedQuantity: Number(draft.rejected),
@@ -481,7 +493,7 @@ export function QaInspectionForm({
       expectedVersion: selected.version,
       sampleQuantity: draft.sample ? Number(draft.sample) : null,
       inspectionRemarks: draft.remarks.trim() || null,
-      checklist: QA_CHECKLIST_ITEMS.map((item) => ({
+      checklist: checklistItems.map((item) => ({
         itemCode: item.code,
         status:
           ppSample && draft.checks[item.code]?.status === 'AVAILABLE'
@@ -614,7 +626,12 @@ export function QaInspectionForm({
                 value={
                   <div className="flex items-center gap-2">
                     {line && (
-                      <StyleThumbnailCell styleId={line.styleId} image={line.primaryImage} size={32} viewerTitle={line.styleNumber} />
+                      <StyleThumbnailCell
+                        styleId={line.styleId}
+                        image={line.primaryImage}
+                        size={32}
+                        viewerTitle={line.styleNumber}
+                      />
                     )}
                     <span>{`${selected.styleNumber} · ${selected.colour ?? '—'}`}</span>
                   </div>
@@ -666,7 +683,7 @@ export function QaInspectionForm({
           )}
           <FormSection title="Inspection Checklist">
             <QualityChecklist supplementaryHeading="Remarks">
-              {QA_CHECKLIST_ITEMS.map((item) => {
+              {checklistItems.map((item) => {
                 const check = draft.checks[item.code] ?? { status: '', remarks: '' };
                 const choices = qaChecklistChoices(Boolean(ppSample));
                 return (
@@ -868,7 +885,12 @@ export function QaInspectionForm({
           {stale && (
             <ValidationMessage tone="error" role="alert">
               <span>This size inspection has changed since you opened it.</span>{' '}
-              <Button type="button" variant="ghost" density="compact" onClick={() => void handleReloadClick()}>
+              <Button
+                type="button"
+                variant="ghost"
+                density="compact"
+                onClick={() => void handleReloadClick()}
+              >
                 Reload latest
               </Button>
             </ValidationMessage>

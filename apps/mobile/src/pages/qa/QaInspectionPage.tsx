@@ -16,6 +16,7 @@ import {
   qaChecklistChoices,
   qaInspectionAction,
   QA_CHECKLIST_ITEMS,
+  qaChecklistItems,
 } from '@erve/types';
 import {
   ConfirmDialog,
@@ -106,6 +107,7 @@ export function validateDraft(
   finalizing: boolean,
   evidenceCount: number,
   ppSample = false,
+  items = QA_CHECKLIST_ITEMS,
 ): Errors {
   const errors: Errors = {};
   const integer = (value: string) => /^\d+$/.test(value);
@@ -125,13 +127,13 @@ export function validateDraft(
   if (finalizing) {
     if (!draft.sampleQuantity) errors.sampleQuantity ??= 'Sample quantity is required to finalize.';
     if (
-      QA_CHECKLIST_ITEMS.some(
+      items.some(
         (item) =>
           !draft.checklist[item.code]?.status ||
           (ppSample && draft.checklist[item.code]?.status === 'AVAILABLE'),
       )
     )
-      errors.checklist = 'Complete all 15 checklist responses before finalizing.';
+      errors.checklist = `Complete all ${items.length} checklist responses before finalizing.`;
     if (!ppSample && total === 0)
       errors.quantities ??= 'Record an inspection outcome before finalizing.';
     if (ppSample && evidenceCount === 0)
@@ -141,7 +143,12 @@ export function validateDraft(
   }
   return errors;
 }
-function formPayload(draft: QaFormDraft, version: number, ppSample = false) {
+function formPayload(
+  draft: QaFormDraft,
+  version: number,
+  ppSample = false,
+  items = QA_CHECKLIST_ITEMS,
+) {
   const accepted = Number(draft.accepted || 0),
     rework = Number(draft.rework || 0),
     rejected = Number(draft.rejected || 0);
@@ -149,7 +156,7 @@ function formPayload(draft: QaFormDraft, version: number, ppSample = false) {
     expectedVersion: version,
     sampleQuantity: draft.sampleQuantity === '' ? null : Number(draft.sampleQuantity),
     inspectionRemarks: draft.remarks.trim() || null,
-    checklist: QA_CHECKLIST_ITEMS.map((item) => ({
+    checklist: items.map((item) => ({
       itemCode: item.code,
       status:
         ppSample && draft.checklist[item.code]?.status === 'AVAILABLE'
@@ -318,19 +325,27 @@ export function QaInspectionPage() {
   const evidence = selected
     ? (displayedSession?.evidence.filter((item) => item.inspectionLineId === selected.id) ?? [])
     : [];
+  const checklistItems = qaChecklistItems(selected?.checklist ?? []);
   const readonly = !editableSession || selected?.status === 'FINALIZED';
   // DEMO-005: the PP Sample result is calculated from the checklist, never
   // chosen manually — any explicit No fails it, N/A and Yes never do.
   const calculatedPpSampleDecision = ppSample
     ? calculatePpSampleOutcome(
-        QA_CHECKLIST_ITEMS.map((item) => ({ status: draft.checklist[item.code]?.status || null })),
+        checklistItems.map((item) => ({ status: draft.checklist[item.code]?.status || null })),
       )
     : null;
   const change = (patch: Partial<QaFormDraft>) =>
     selected && setDrafts((all) => ({ ...all, [selected.id]: { ...draft, ...patch } }));
   const submit = (finalizing: boolean) => {
     if (!selected || !editableSession) return;
-    const next = validateDraft(draft, capacity, finalizing, evidence.length, Boolean(ppSample));
+    const next = validateDraft(
+      draft,
+      capacity,
+      finalizing,
+      evidence.length,
+      Boolean(ppSample),
+      checklistItems,
+    );
     setErrors(next);
     setServerIssues([]);
     if (Object.keys(next).length) return;
@@ -339,7 +354,7 @@ export function QaInspectionPage() {
       method: finalizing ? 'post' : 'put',
       body: finalizing
         ? { expectedVersion: selected.version }
-        : formPayload(draft, selected.version, Boolean(ppSample)),
+        : formPayload(draft, selected.version, Boolean(ppSample), checklistItems),
       key: requestKey(finalizing ? 'finalize' : 'save', selected.version),
     };
     if (finalizing && ppSample) {
@@ -434,9 +449,9 @@ export function QaInspectionPage() {
             </label>
             {errors.sampleQuantity && <p role="alert">{errors.sampleQuantity}</p>}
             <section>
-              <h3>Checklist (15 items)</h3>
+              <h3>Checklist ({checklistItems.length} items)</h3>
               <QualityChecklist supplementaryHeading="Remarks">
-                {QA_CHECKLIST_ITEMS.map((item) => {
+                {checklistItems.map((item) => {
                   const check = draft.checklist[item.code] ?? { status: '', remarks: '' };
                   const choices = qaChecklistChoices(Boolean(ppSample));
                   return (
@@ -597,7 +612,9 @@ export function QaInspectionPage() {
             {ppSample && (
               <section>
                 <h3>PP Sample Result</h3>
-                <p>Calculated automatically from the checklist responses; it cannot be overridden.</p>
+                <p>
+                  Calculated automatically from the checklist responses; it cannot be overridden.
+                </p>
                 <QualityChecklistResult
                   label="PP Sample result"
                   value={ppSample.decision ?? calculatedPpSampleDecision ?? ''}
@@ -668,8 +685,10 @@ export function QaInspectionPage() {
                     <QualityChecklist supplementaryHeading="Remarks">
                       {form.checklist.map((item) => {
                         const label =
+                          item.label ??
                           QA_CHECKLIST_ITEMS.find((definition) => definition.code === item.itemCode)
-                            ?.label ?? item.itemCode.replaceAll('_', ' ');
+                            ?.label ??
+                          item.itemCode.replaceAll('_', ' ');
                         return (
                           <QualityChecklistRow
                             key={item.itemCode}

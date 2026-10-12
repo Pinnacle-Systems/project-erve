@@ -1419,3 +1419,25 @@ describe('QaInspectionForm', () => {
     });
   });
 });
+
+
+it('renders only pinned checklist rows and the saved form label', async () => {
+  const data = detail();
+  const form = data.sessions[0]!.forms[0]!;
+  form.checklist = form.checklist
+    .filter(
+      (item) =>
+        !['METAL_DETECTION', 'FIT_SAMPLE_BUYER_COMMENTS', 'SOURCE_DECLARATION_FORM'].includes(
+          item.itemCode,
+        ),
+    )
+    .map((item) => ({
+      ...item,
+      label:
+        item.itemCode === 'P_AND_P' ? 'Confirm PP have been checked and are correct' : undefined,
+    }));
+  await renderHarness(data);
+  expect(container.textContent).not.toContain('Confirm Metal Detection');
+  expect(container.textContent).not.toContain('Fit sample made based on buyer comments');
+  expect(container.textContent).toContain('Confirm PP have been checked and are correct');
+});

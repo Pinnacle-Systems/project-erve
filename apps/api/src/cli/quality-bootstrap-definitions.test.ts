@@ -1,3 +1,4 @@
+import { resolvePpSampleChecklist, QA_CHECKLIST_ITEMS } from '@erve/types';
 import { describe, expect, it } from 'vitest';
 import { CANONICAL_QUALITY_FORMS } from './quality-bootstrap-definitions.js';
 
@@ -49,4 +50,90 @@ describe('DEMO-006: global AQL acceptance thresholds', () => {
     expect(formsWithAql.has('SAMPLE')).toBe(false);
     expect(formsWithAql.has('PPM')).toBe(false);
   });
+});
+
+describe('DEMO-007 successor content', () => {
+  it('offers the cleaned Sample checklist while retaining Final Metal Detection', () => {
+    const sample = CANONICAL_QUALITY_FORMS.find((x) => x.code === 'SAMPLE')!;
+    const checklist = sample.sections
+      .flatMap((x) => x.components)
+      .find((x) => x.type === 'CHECKLIST')!;
+    const items = (checklist.config as { items: Array<{ key: string; label: string }> }).items;
+    expect(items).toHaveLength(12);
+    expect(items.map((x) => x.key)).not.toContain('metalDetection');
+    expect(items.map((x) => x.key)).not.toContain('fitSampleBuyerComments');
+    expect(items.map((x) => x.key)).not.toContain('sourceDeclarationForm');
+    expect(items.find((x) => x.key === 'pAndP')?.label).toBe(
+      'Confirm PP have been checked and are correct',
+    );
+    const final = CANONICAL_QUALITY_FORMS.find((x) => x.code === 'FINAL')!;
+    const tests = final.sections
+      .flatMap((x) => x.components)
+      .find((x) => x.type === 'TEST_RESULTS')!;
+    expect((tests.config as { tests: Array<{ label: string }> }).tests.map((x) => x.label)).toEqual(
+      ['Metal Detection', 'Needle Policy', 'Pull Test'],
+    );
+  });
+  it('removes Inline packing/actions and keeps Final summary GSM with optional attachments', () => {
+    const inline = CANONICAL_QUALITY_FORMS.find((x) => x.code === 'INLINE')!;
+    expect(
+      inline.sections
+        .flatMap((x) => x.components)
+        .some((x) => x.type === 'CORRECTIVE_ACTIONS' || x.title === 'Pre-packing check'),
+    ).toBe(false);
+    const final = CANONICAL_QUALITY_FORMS.find((x) => x.code === 'FINAL')!;
+    const components = final.sections.flatMap((x) => x.components);
+    expect(components.some((x) => x.title === 'Packing and labelling')).toBe(false);
+    const summary = components.find((x) => x.title === 'Summary inspection checklist')!;
+    expect(
+      (summary.config as { items: Array<{ label: string }> }).items.map((x) => x.label),
+    ).toContain('GSM');
+    const attachments = components.find((x) => x.type === 'ATTACHMENTS')!;
+    expect(
+      (attachments.config as { requirements: Array<{ required?: boolean }> }).requirements.some(
+        (x) => x.required,
+      ),
+    ).toBe(false);
+  });
+});
+
+it('keeps the legacy typed adapter usable for custom checklist keys', () => {
+  const items = resolvePpSampleChecklist([
+    {
+      components: [
+        { type: 'CHECKLIST', config: { items: [{ key: 'customCheck', label: 'Custom check' }] } },
+      ],
+    },
+  ]);
+  expect(items).toHaveLength(15);
+  expect(items.some((item) => item.code === 'METAL_DETECTION')).toBe(true);
+});
+it('does not hide recorded legacy rows when an old custom definition declares a subset', () => {
+  const items = resolvePpSampleChecklist(
+    [
+      {
+        components: [
+          { type: 'CHECKLIST', config: { items: [{ key: 'fabricGsm', label: 'Custom GSM' }] } },
+        ],
+      },
+    ],
+    QA_CHECKLIST_ITEMS.map((item) => ({ itemCode: item.code })),
+  );
+  expect(items).toHaveLength(15);
+  expect(items.find((item) => item.code === 'P_AND_P')?.label).toBe(
+    'Confirm P&P have been checked and are correct',
+  );
+});
+
+it('retains legacy typed rows for duplicate keys across checklist components', () => {
+  const items = resolvePpSampleChecklist([
+    {
+      components: [1, 2].map(() => ({
+        type: 'CHECKLIST',
+        config: { items: Array.from({ length: 6 }, () => ({ key: 'fabricGsm', label: 'GSM' })) },
+      })),
+    },
+  ]);
+  expect(items).toHaveLength(15);
+  expect(new Set(items.map((item) => item.code)).size).toBe(15);
 });

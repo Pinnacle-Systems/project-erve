@@ -1527,7 +1527,58 @@ export const QA_CHECKLIST_ITEMS: ReadonlyArray<{ code: QaChecklistItemCode; labe
   { code: 'PP_SAMPLE_FIT_COMMENTS', label: 'Confirm PP sample made based on fit comments' },
   { code: 'SOURCE_DECLARATION_FORM', label: 'Source declaration form available' },
 ];
+/** Resolve canonical typed content while retaining the pre-existing contract of custom/legacy forms. */
+export function resolvePpSampleChecklist(
+  sections: ReadonlyArray<{ components: ReadonlyArray<{ type: string; config: unknown }> }>,
+  recorded?: ReadonlyArray<unknown>,
+): ReadonlyArray<{ code: QaChecklistItemCode; label: string }> {
+  const definitions = sections
+    .flatMap((section) => section.components)
+    .filter((component) => component.type === 'CHECKLIST')
+    .flatMap(
+      (component) =>
+        (component.config as { items?: Array<{ key: string; label: string }> }).items ?? [],
+    );
+  const byKey = new Map(
+    QA_CHECKLIST_ITEMS.map((item) => [
+      item.code.toLowerCase().replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+      item,
+    ]),
+  );
+  // The old SIZE adapter did not interpret arbitrary custom definition keys.
+  // Keep its original contract rather than making those pinned histories unreadable.
+  if (
+    ![12, 15].includes(definitions.length) ||
+    new Set(definitions.map((item) => item.key)).size !== definitions.length ||
+    definitions.some((item) => !byKey.has(item.key))
+  )
+    return QA_CHECKLIST_ITEMS;
+  const resolved = definitions.map((item) => ({
+    code: byKey.get(item.key)!.code,
+    label: item.label,
+  }));
+  // Pre-successor drafts may already contain all 15 typed rows even when their
+  // custom definition declared a smaller set. Never discard their recorded rows.
+  if (recorded?.length === 15 && resolved.length !== 15) return QA_CHECKLIST_ITEMS;
+  return resolved;
+}
+
+/** Consume the API's version-specific rows; keep legacy labels for older responses. */
+export function qaChecklistItems(
+  checklist: ReadonlyArray<QaChecklistItemView>,
+): ReadonlyArray<{ code: QaChecklistItemCode; label: string }> {
+  return checklist.map((item) => ({
+    code: item.itemCode,
+    label:
+      item.label ??
+      QA_CHECKLIST_ITEMS.find((definition) => definition.code === item.itemCode)?.label ??
+      item.itemCode,
+  }));
+}
+
 export interface QaChecklistItemView {
+  /** Display label from the pinned form version; optional for older API consumers. */
+  label?: string;
   itemCode: QaChecklistItemCode;
   status: QaChecklistStatus | null;
   remarks: string | null;

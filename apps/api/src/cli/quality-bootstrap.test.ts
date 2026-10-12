@@ -208,7 +208,7 @@ describe('runQualityBootstrap — legacy/mixed data', () => {
     const newConfig = newVersion.sections[0]!.components.find((c) => c.type === 'CHECKLIST')!.config as {
       responseOptions: string[];
     };
-    expect(newConfig.responseOptions).toEqual(['YES', 'NO']);
+    expect(newConfig.responseOptions).toEqual(['YES', 'NO', 'N/A']);
   });
 
   it('a historical Inline version with PRODUCTION_PROGRESS is left untouched, and the canonical version has none', async () => {

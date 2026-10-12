@@ -146,11 +146,18 @@ const SAMPLE: CanonicalQualityFormDefinition = {
           type: 'CHECKLIST',
           title: 'Sample checklist',
           config: {
-            items: QA_CHECKLIST_ITEMS.map(({ code, label }) => ({
+            items: QA_CHECKLIST_ITEMS.filter(
+              (item) =>
+                ![
+                  'METAL_DETECTION',
+                  'FIT_SAMPLE_BUYER_COMMENTS',
+                  'SOURCE_DECLARATION_FORM',
+                ].includes(item.code),
+            ).map(({ code, label }) => ({
               key: definitionKey(code),
-              label,
+              label: code === 'P_AND_P' ? 'Confirm PP have been checked and are correct' : label,
             })),
-            responseOptions: ['YES', 'NO'],
+            responseOptions: ['YES', 'NO', 'N/A'],
           },
         },
         defects,
@@ -280,31 +287,8 @@ const INLINE: CanonicalQualityFormDefinition = {
       components: [aql, defects],
     },
     {
-      title: 'Packing and corrective action',
+      title: 'Conclusion and sign-off',
       components: [
-        {
-          type: 'CHECKLIST',
-          title: 'Pre-packing check',
-          config: {
-            items: [{ key: 'packing', label: 'Packing and carton information is correct' }],
-            responseOptions: ['YES', 'NO', 'N/A'],
-          },
-        },
-        {
-          type: 'CORRECTIVE_ACTIONS',
-          title: 'Corrective actions',
-          config: {
-            columns: [
-              {
-                key: 'defectSpecification',
-                label: 'Defect specifications',
-                dataType: 'TEXT',
-                required: true,
-              },
-              { key: 'action', label: 'Actions to be taken', dataType: 'TEXT', required: true },
-            ],
-          },
-        },
         { type: 'COMMENTS', title: 'Conclusion and remarks', config: { maxLength: 5000 } },
         {
           type: 'INSPECTION_OUTCOME',
@@ -344,10 +328,10 @@ const FINAL: CanonicalQualityFormDefinition = {
       components: [
         {
           type: 'ATTACHMENTS',
-          title: 'Required evidence',
+          title: 'Optional evidence',
           config: {
             requirements: [
-              { key: 'measurementSheet', label: 'Measurement Sheet', required: true },
+              { key: 'measurementSheet', label: 'Measurement Sheet' },
               { key: 'washingReport', label: 'Washing Report' },
             ],
           },
@@ -408,22 +392,12 @@ const FINAL: CanonicalQualityFormDefinition = {
             responseOptions: ['PASSED', 'FAILED', 'N/A'],
           },
         },
-        {
-          type: 'CHECKLIST',
-          title: 'Packing and labelling',
-          config: {
-            items: [
-              { key: 'packingAndLabelling', label: 'Packing and labelling requirements are met' },
-            ],
-            responseOptions: ['YES', 'NO', 'N/A'],
-          },
-        },
         defects,
         {
           type: 'TEST_RESULTS',
           title: 'On-site tests',
           config: {
-            tests: ['GSM', 'Metal Detection', 'Needle Policy', 'Pull Test'].map((label) => ({
+            tests: ['Metal Detection', 'Needle Policy', 'Pull Test'].map((label) => ({
               key: definitionKey(label),
               label,
               responseOptions: ['PASSED', 'FAILED', 'N/A'],
@@ -448,7 +422,12 @@ const FINAL: CanonicalQualityFormDefinition = {
 };
 
 // Order matters only for CLI reporting; the bootstrap resolves forms by code.
-export const CANONICAL_QUALITY_FORMS: CanonicalQualityFormDefinition[] = [SAMPLE, PPM, INLINE, FINAL];
+export const CANONICAL_QUALITY_FORMS: CanonicalQualityFormDefinition[] = [
+  SAMPLE,
+  PPM,
+  INLINE,
+  FINAL,
+];
 
 export interface CanonicalProcessFlowStage {
   sequence: number;

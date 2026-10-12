@@ -1,3 +1,5 @@
+import { HISTORICAL_QUALITY_FORMS as CANONICAL_QUALITY_FORMS } from './quality-form-history.js';
+import { runQualityBootstrap } from '../src/cli/quality-bootstrap.js';
 import { createId } from '@erve/shared';
 import { prisma, type RoleName } from '../src/db/prisma.js';
 import { hashPassword } from '../src/auth/password.js';
@@ -7,7 +9,6 @@ import {
   getCurrentFinancialYear,
 } from '../src/modules/master-data/financial-year.service.js';
 import {
-  CANONICAL_QUALITY_FORMS,
   type CanonicalQualityFormDefinition,
   type SeedComponent,
   type SeedSection,
@@ -352,7 +353,14 @@ const legacyInlineProductionProgress: SeedComponent = {
 // Quality Form versions must remain reproducible for local dev/test seeding.
 const legacyInlineV1Sections: SeedSection[] = canonicalInline.sections.map((section) =>
   section.title === 'Inspection results'
-    ? { ...section, components: [section.components[0]!, legacyInlineProductionProgress, section.components[1]!] }
+    ? {
+        ...section,
+        components: [
+          section.components[0]!,
+          legacyInlineProductionProgress,
+          section.components[1]!,
+        ],
+      }
     : section,
 );
 
@@ -382,16 +390,10 @@ async function seedQualityForms(): Promise<void> {
     const existing = await prisma.qualityFormVersion.findUnique({
       where: { qualityFormId_versionNumber: { qualityFormId: form.id, versionNumber } },
     });
-    if (existing) {
-      await prisma.qualityFormVersion.update({
-        where: { id: existing.id },
-        data: {
-          status: isLatestSeededVersion ? 'PUBLISHED' : 'RETIRED',
-          publishedAt: existing.publishedAt ?? new Date(),
-        },
-      });
-      continue;
-    }
+    if (existing) continue; // Never republish or alter existing historical versions.
+    const published = await prisma.qualityFormVersion.findFirst({
+      where: { qualityFormId: form.id, status: 'PUBLISHED' },
+    });
     await prisma.qualityFormVersion.create({
       data: {
         id: createId(),
@@ -399,7 +401,7 @@ async function seedQualityForms(): Promise<void> {
         versionNumber,
         activityType: definition.activityType,
         executionScope: definition.executionScope,
-        status: isLatestSeededVersion ? 'PUBLISHED' : 'RETIRED',
+        status: isLatestSeededVersion && !published ? 'PUBLISHED' : 'RETIRED',
         publishedAt: new Date(),
         sections: {
           create: parsedDefinition.sections.map((section, sectionIndex) => ({
@@ -568,6 +570,10 @@ async function seedErveProductionQualityFlow(): Promise<void> {
   await seedVersion(1, 1);
   await seedVersion(2, 2);
   const activeVersionId = await seedVersion(3, 2);
+  const newerActive = await prisma.processFlowVersion.findFirst({
+    where: { processFlowId: flow.id, status: 'ACTIVE', versionNumber: { gt: 3 } },
+  });
+  if (newerActive) return;
   await prisma.$transaction([
     prisma.processFlowVersion.updateMany({
       where: { processFlowId: flow.id, id: { not: activeVersionId }, status: 'ACTIVE' },
@@ -607,6 +613,14 @@ async function main(): Promise<void> {
   await seedDefaultProcessFlow();
   await seedQualityForms();
   await seedErveProductionQualityFlow();
+  await runQualityBootstrap(
+    {
+      nodeEnv: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+      confirmProduction: false,
+      dryRun: false,
+    },
+    { databaseUrl: process.env.DATABASE_URL! },
+  );
   await seedGstRuleSets();
   await seedStyles();
 }
