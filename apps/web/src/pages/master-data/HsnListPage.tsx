@@ -34,7 +34,7 @@ export function HsnListPage() {
         primaryAction={
           canManage ? (
             <Button asChild variant="default">
-              <Link to="/master-data/hsns/new">Create HSN</Link>
+              <Link to="/hsns/new">Create HSN</Link>
             </Button>
           ) : undefined
         }
@@ -64,7 +64,7 @@ export function HsnListPage() {
             key: 'code',
             header: 'HSN Code',
             render: (hsn) => (
-              <Link className="font-medium text-[var(--erp-text-link)]" to={`/master-data/hsns/${hsn.id}`}>
+              <Link className="font-medium text-[var(--erp-text-link)]" to={`/hsns/${hsn.id}`}>
                 {hsn.code}
               </Link>
             ),

@@ -46,10 +46,10 @@ export function HsnDetailPage() {
           <>
             {canManage && (
               <Button asChild variant="secondary">
-                <Link to={`/master-data/hsns/${id}/edit`}>Edit</Link>
+                <Link to={`/hsns/${id}/edit`}>Edit</Link>
               </Button>
             )}
-            <Button variant="secondary" onClick={() => navigate('/master-data/hsns')}>
+            <Button variant="secondary" onClick={() => navigate('/hsns')}>
               Back
             </Button>
           </>
