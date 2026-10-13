@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PageHeader } from '@erve/app-components';
+import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
@@ -72,6 +72,13 @@ export function ErveDispatchListPage() {
               { key: 'transporter', header: 'Transporter', render: (r) => r.transporter ?? '—' },
               { key: 'lr', header: 'LR Number', render: (r) => r.lrNumber ?? '—' },
               { key: 'qty', header: 'Qty', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },
+              {
+                key: 'status',
+                header: 'Status',
+                render: (r) => r.status === 'DELIVERED'
+                  ? <StatusBadge label="Delivered" tone="posted" />
+                  : <StatusBadge label="Dispatched" tone="approved" />,
+              },
             ]}
           />
         </Panel>
