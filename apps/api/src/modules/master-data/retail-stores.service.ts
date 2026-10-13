@@ -10,6 +10,11 @@ import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import { listAllOrPage } from '../../utils/pagination.js';
+import {
+  allocateMasterCode,
+  assertImmutableMasterCode,
+  type MasterCreateOptions,
+} from './master-code.service.js';
 import type {
   createRetailStoreSchema,
   updateRetailStoreSchema,
@@ -79,23 +84,29 @@ async function withDuplicateGuard<T>(operation: () => Promise<T>): Promise<T> {
 export async function createRetailStore(
   actor: CurrentUser,
   input: z.infer<typeof createRetailStoreSchema>,
+  options: MasterCreateOptions = {},
 ) {
   assertAccess(actor, true);
   return withDuplicateGuard(() =>
     prisma.$transaction(async (tx) => {
       const distributor = await tx.distributor.findUnique({ where: { id: input.distributorId } });
       if (!distributor) throw HttpError.badRequest('Distributor not found');
-      const store = await tx.retailStore.create({ data: { id: createId(), ...input }, include });
+      const code = await allocateMasterCode(tx, 'STR');
+      const store = await tx.retailStore.create({
+        data: { ...input, id: createId(), code },
+        include,
+      });
       await recordAuditLog(
         {
           actorId: actor.id,
           action: 'retail_store.created',
           entityType: 'RetailStore',
           entityId: store.id,
-          metadata: { after: input },
+          metadata: { after: { ...input, code } },
         },
         tx,
       );
+      await options.onCreatedInTransaction?.(tx, store);
       return store;
     }),
   );
@@ -111,6 +122,7 @@ export async function updateRetailStore(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`retail-store-${id}`}))`;
       const before = await tx.retailStore.findUnique({ where: { id } });
       if (!before) throw HttpError.notFound('Retail Store not found');
+      assertImmutableMasterCode(input, before.code);
       const store = await tx.retailStore.update({ where: { id }, data: input, include });
       await recordAuditLog(
         {

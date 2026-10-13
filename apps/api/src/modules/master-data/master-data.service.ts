@@ -18,6 +18,13 @@ import { toStyleImageView } from './style-images.service.js';
 import { evaluateProcessFlowRuntimeSupport } from '../process-flow-runtime/process-flow-runtime-capability.js';
 import { toCompactFinancialYearCode } from './financial-year.util.js';
 import { generateStyleSizeBarcode, normalizeSuppliedBarcode } from './barcode.util.js';
+import {
+  allocateMasterCode,
+  assertImmutableMasterCode,
+  reserveLegacyFactoryCode,
+  type FactoryCreateOptions,
+  type MasterCreateOptions,
+} from './master-code.service.js';
 
 const styleInclude = {
   season: { include: { financialYear: { select: { id: true, code: true } } } },
@@ -1378,24 +1385,37 @@ export async function getFactoryById(actor: CurrentUser, id: string) {
 
 export async function createFactory(
   actor: CurrentUser,
-  input: Omit<Prisma.FactoryUncheckedCreateInput, 'id'>,
+  input: Omit<Prisma.FactoryUncheckedCreateInput, 'id' | 'code'> & { code?: string },
+  options: FactoryCreateOptions = {},
 ) {
-  const existingByName = await prisma.factory.findFirst({ where: { name: input.name } });
-  if (existingByName) {
-    throw HttpError.conflict('A factory with this code or name already exists');
+  if (options.legacyImportCode !== undefined) {
+    if (!actor.roles.includes('ADMIN')) throw HttpError.forbidden();
+    if (!options.legacyImportCode.trim()) throw HttpError.badRequest('Legacy Factory Code is required');
   }
-
   try {
-    const factory = await prisma.factory.create({
-      data: { id: createId(), status: 'ACTIVE', ...input },
+    return await prisma.$transaction(async (tx) => {
+      const code = options.legacyImportCode === undefined
+        ? await allocateMasterCode(tx, 'FAC')
+        : await reserveLegacyFactoryCode(tx, options.legacyImportCode);
+      const existingByName = await tx.factory.findFirst({ where: { name: input.name } });
+      if (existingByName) {
+        throw HttpError.conflict('A factory with this code or name already exists');
+      }
+      const factory = await tx.factory.create({
+        data: { status: 'ACTIVE', ...input, id: createId(), code },
+      });
+      await recordAuditLog(
+        {
+          actorId: actor.id,
+          action: 'FACTORY_CREATED',
+          entityType: 'Factory',
+          entityId: factory.id,
+        },
+        tx,
+      );
+      await options.onCreatedInTransaction?.(tx, factory);
+      return factory;
     });
-    await recordAuditLog({
-      actorId: actor.id,
-      action: 'FACTORY_CREATED',
-      entityType: 'Factory',
-      entityId: factory.id,
-    });
-    return factory;
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('A factory with this code or name already exists');
@@ -1421,6 +1441,7 @@ export async function updateFactory(
   try {
     const existing = await prisma.factory.findUnique({ where: { id } });
     if (!existing) throw HttpError.notFound('Factory not found');
+    assertImmutableMasterCode(input, existing.code);
     const factory = await prisma.factory.update({
       where: { id },
       data: input as Prisma.FactoryUncheckedUpdateInput,
@@ -2230,17 +2251,26 @@ export async function getDistributorById(actor: CurrentUser, id: string) {
 
 export async function createDistributor(
   actor: CurrentUser,
-  input: Omit<Prisma.DistributorUncheckedCreateInput, 'id'>,
+  input: Omit<Prisma.DistributorUncheckedCreateInput, 'id' | 'code'> & { code?: string },
+  options: MasterCreateOptions = {},
 ) {
-  const existingByName = await prisma.distributor.findFirst({ where: { name: input.name } });
-  if (existingByName) {
-    throw HttpError.conflict('A distributor with this code or name already exists');
-  }
-
-  let distributor;
   try {
-    distributor = await prisma.distributor.create({
-      data: { id: createId(), status: 'ACTIVE', ...input },
+    return await prisma.$transaction(async (tx) => {
+      const code = await allocateMasterCode(tx, 'DST');
+      const distributor = await tx.distributor.create({
+        data: { status: 'ACTIVE', ...input, id: createId(), code },
+      });
+      await recordAuditLog(
+        {
+          actorId: actor.id,
+          action: 'DISTRIBUTOR_CREATED',
+          entityType: 'Distributor',
+          entityId: distributor.id,
+        },
+        tx,
+      );
+      await options.onCreatedInTransaction?.(tx, distributor);
+      return distributor;
     });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
@@ -2248,15 +2278,6 @@ export async function createDistributor(
     }
     throw error;
   }
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'DISTRIBUTOR_CREATED',
-    entityType: 'Distributor',
-    entityId: distributor.id,
-  });
-
-  return distributor;
 }
 
 export async function updateDistributor(
@@ -2264,13 +2285,11 @@ export async function updateDistributor(
   id: string,
   input: Record<string, unknown>,
 ) {
-  if (typeof input.name === 'string') {
-    const existingByName = await prisma.distributor.findFirst({
-      where: { name: input.name, NOT: { id } },
-    });
-    if (existingByName) {
-      throw HttpError.conflict('A distributor with this code or name already exists');
-    }
+  const existing = await prisma.distributor.findUnique({ where: { id } });
+  if (!existing) throw HttpError.notFound('Distributor not found');
+  assertImmutableMasterCode(input, existing.code);
+  if (input.purchaseMode !== undefined && input.purchaseMode !== existing.purchaseMode) {
+    throw HttpError.badRequest('Purchase Mode cannot be changed after creation');
   }
 
   let distributor;
