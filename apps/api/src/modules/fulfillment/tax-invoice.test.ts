@@ -787,6 +787,136 @@ async function createReadyDraftInvoice(quantity = 20) {
   };
 }
 
+describe('ISS-015 Draft invoice media scope', () => {
+  it('exposes minimal Draft metadata and enforces roles, membership, primary state and cache authorization', async () => {
+    const { taxInvoiceId, fixture, accountantToken } = await createReadyDraftInvoice(2);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    const { token: restrictedToken } = await createRoleToken('MERCHANDISER');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4X8AAAAASUVORK5CYII=',
+      'base64',
+    );
+    const uploaded = await request(app)
+      .post(`/styles/${fixture.stock.styleId}/images`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('image', png, 'primary.png')
+      .expect(201);
+    const imageId = uploaded.body.data.id as string;
+    const path = `/tax-invoices/${taxInvoiceId}/styles/${fixture.stock.styleId}/images/${imageId}/content`;
+    const review = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/review`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(review.body.data.lines[0].style.primaryImage).toEqual({
+      id: imageId,
+      mimeType: 'image/png',
+      updatedAt: expect.any(String),
+    });
+    expect(review.body.data.lines[0].size.sortOrder).toEqual(expect.any(Number));
+    for (const token of [accountantToken, adminToken]) {
+      const read = await request(app).get(path).set('Authorization', `Bearer ${token}`).expect(200);
+      expect(Buffer.from(read.body)).toEqual(png);
+      await request(app)
+        .get(path)
+        .set('Authorization', `Bearer ${token}`)
+        .set('If-None-Match', read.headers.etag!)
+        .expect(304);
+      await request(app)
+        .get(path)
+        .set('Authorization', `Bearer ${restrictedToken}`)
+        .set('If-None-Match', read.headers.etag!)
+        .expect(403);
+    }
+    await request(app).get(path).expect(401);
+    await request(app)
+      .get(`/styles/${fixture.stock.styleId}/images/${imageId}/content`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(403);
+    await request(app)
+      .get(`/tax-invoices/${createId()}/styles/${fixture.stock.styleId}/images/${imageId}/content`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(404);
+    await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/styles/${createId()}/images/${imageId}/content`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(404);
+    const another = await request(app)
+      .post(`/styles/${fixture.stock.styleId}/images`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('image', Buffer.concat([png, Buffer.from('second')]), 'second.png')
+      .expect(201);
+    await request(app)
+      .get(path.replace(imageId, another.body.data.id))
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(404);
+    await request(app)
+      .patch(`/styles/${fixture.stock.styleId}/images/${another.body.data.id}/primary`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+      .expect(200);
+    await request(app)
+      .get(path)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .set('If-None-Match', 'stale')
+      .expect(404);
+    const issued = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({})
+      .expect(200);
+    expect(issued.body.data.documentSnapshot.lines[0].size.sortOrder).toEqual(expect.any(Number));
+    expect(issued.body.data.lines[0].style.primaryImage ?? null).toBeNull();
+    await request(app)
+      .get(path.replace(imageId, another.body.data.id))
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(404);
+  });
+  it('returns updated primary bytes on replacement and honest missing-file errors', async () => {
+    const { taxInvoiceId, fixture, accountantToken } = await createReadyDraftInvoice(1);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4X8AAAAASUVORK5CYII=',
+      'base64',
+    );
+    const uploaded = await request(app)
+      .post(`/styles/${fixture.stock.styleId}/images`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('image', png, 'primary.png')
+      .expect(201);
+    const path = `/tax-invoices/${taxInvoiceId}/styles/${fixture.stock.styleId}/images/${uploaded.body.data.id}/content`;
+    const old = await request(app)
+      .get(path)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    const oldReview = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/review`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    const replacement = Buffer.concat([png, Buffer.from('replacement')]);
+    const updated = await request(app)
+      .put(`/styles/${fixture.stock.styleId}/images/${uploaded.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('image', replacement, 'replacement.png')
+      .expect(200);
+    const fresh = await request(app)
+      .get(path)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .set('If-None-Match', old.headers.etag!)
+      .expect(200);
+    const refreshed = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}/review`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(refreshed.body.data.lines[0].style.primaryImage.updatedAt).not.toBe(
+      oldReview.body.data.lines[0].style.primaryImage.updatedAt,
+    );
+    expect(Buffer.from(fresh.body)).toEqual(replacement);
+    const file = await prisma.file.findUniqueOrThrow({ where: { id: updated.body.data.fileId } });
+    await getFileStorage().delete(file.storageKey);
+    await request(app).get(path).set('Authorization', `Bearer ${accountantToken}`).expect(404);
+  });
+});
+
 describe('Tax Invoice — finalization: normal rate, GST and precision', () => {
   it('computes and persists the exact calculated rate, taxable value and CGST/SGST split (intrastate)', async () => {
     const { taxInvoiceId, lineId } = await createReadyDraftInvoice(20);

@@ -1,3 +1,4 @@
+import { buildTaxInvoiceLineGroups, sumInvoiceAmounts } from '../../tax-invoice-line-groups.js';
 import type { TaxInvoiceAddress, TaxInvoiceView } from '@erve/types';
 import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 import { formatInvoiceDate, formatInvoiceMoney } from '../../tax-invoice-ui.js';
@@ -15,20 +16,6 @@ export function taxInvoicePdfMoney(value: string | null, currency = true): strin
     .replace('−', '-');
   if (text === 'Unavailable') throw new Error('Invalid frozen monetary value');
   return text;
-}
-
-/** Adds already-issued component strings for presentation, never calculates tax. */
-function sumFrozenAmounts(values: Array<string | null>): string | null {
-  if (values.some((value) => value === null)) return null;
-  const parts = values.map((value) => decimal(value!).split('.'));
-  const scale = Math.max(2, ...parts.map((part) => part[1]!.length));
-  const sum = parts.reduce((total, [whole, fraction]) => {
-    const negative = whole!.startsWith('-');
-    const magnitude = BigInt(whole!.replace('-', '') + fraction!.padEnd(scale, '0'));
-    return total + (negative ? -magnitude : magnitude);
-  }, 0n);
-  const digits = (sum < 0n ? -sum : sum).toString().padStart(scale + 1, '0');
-  return `${sum < 0n ? '-' : ''}${digits.slice(0, -scale)}.${digits.slice(-scale)}`;
 }
 
 const units = [
@@ -178,78 +165,27 @@ export function buildTaxInvoiceViewModel(
     invoice.documentSnapshot?.schemaVersion === 'ERVE_TAX_INVOICE_DOCUMENT_V1'
       ? invoice.documentSnapshot
       : null;
-  const groups = new Map<
-    string,
-    {
-      group: TaxInvoicePdfGroup;
-      amounts: Array<string | null>;
-      sizes: Map<string, { label: string; quantity: number }>;
-    }
-  >();
-  for (const line of invoice.lines) {
-    const issued = snapshot?.lines.find((item) => item.lineId === line.id);
-    if (issued && (issued.quantity !== line.quantity || issued.style.id !== line.style.id)) {
-      throw new Error('Issued presentation does not match its financial line');
-    }
-    const key = issued
-      ? JSON.stringify([
-          issued.style,
-          line.hsn?.code,
-          line.styleMrp,
-          line.finalUnitRate,
-          line.gstPercent,
-          invoice.gstTreatment,
-          issued.image?.id,
-        ])
-      : `legacy:${line.id}`;
-    let entry = groups.get(key);
-    if (!entry) {
-      entry = {
-        amounts: [],
-        sizes: new Map(),
-        group: {
-          id: line.id,
-          sourceLineIds: [],
-          styleNumber: issued?.style.styleNumber ?? 'Not recorded',
-          styleName: issued?.style.styleName ?? '',
-          description: issued?.style.description ?? null,
-          colour: issued?.style.colour ?? 'Not recorded',
-          sizes: '',
-          quantity: 0,
-          hsnCode: line.hsn?.code ?? 'Unavailable',
-          gstPercent: line.gstPercent ?? 'Unavailable',
-          mrp: taxInvoicePdfMoney(line.styleMrp, false),
-          rate: taxInvoicePdfMoney(line.finalUnitRate, false),
-          taxable: '',
-          imageId: issued?.image?.id ?? null,
-          image:
-            issued?.image &&
-            images.get(issued.image.id) &&
-            'dataUri' in images.get(issued.image.id)!
-              ? images.get(issued.image.id)!
-              : { inconsistent: true },
-        },
-      };
-      groups.set(key, entry);
-    }
-    entry.group.sourceLineIds.push(line.id);
-    entry.group.quantity += line.quantity;
-    if (!Number.isSafeInteger(entry.group.quantity))
-      throw new Error('Invoice quantity exceeds safe presentation range');
-    entry.amounts.push(line.taxableValue);
-    const sizeKey = issued ? JSON.stringify(issued.size) : line.id;
-    const size = entry.sizes.get(sizeKey) ?? {
-      label: issued?.size.label ?? 'Not recorded',
-      quantity: 0,
+  const rows: TaxInvoicePdfGroup[] = buildTaxInvoiceLineGroups(invoice).map((group) => {
+    const line = group.sourceLines[0]!;
+    const image = group.image ? images.get(group.image.id) : undefined;
+    return {
+      id: group.id,
+      sourceLineIds: group.sourceLineIds,
+      styleNumber: group.styleNumber,
+      styleName: group.styleName,
+      description: group.description,
+      colour: group.colour ?? 'Not recorded',
+      sizes: group.sizes,
+      quantity: group.quantity,
+      hsnCode: line.hsn?.code ?? 'Unavailable',
+      gstPercent: line.gstPercent ?? 'Unavailable',
+      mrp: taxInvoicePdfMoney(line.styleMrp, false),
+      rate: taxInvoicePdfMoney(line.finalUnitRate, false),
+      taxable: taxInvoicePdfMoney(group.taxableValue, false),
+      imageId: group.image?.id ?? null,
+      image: image && 'dataUri' in image ? image : { inconsistent: true },
     };
-    size.quantity += line.quantity;
-    entry.sizes.set(sizeKey, size);
-  }
-  const rows = [...groups.values()].map((entry) => ({
-    ...entry.group,
-    sizes: [...entry.sizes.values()].map((size) => `${size.label}: ${size.quantity}`).join(', '),
-    taxable: taxInvoicePdfMoney(sumFrozenAmounts(entry.amounts), false),
-  }));
+  });
   const issuedAmount = invoice.payableTotal ?? invoice.grandTotal;
   const adjustment = invoice.roundOffAdjustment;
   const positiveAdjustment =
@@ -317,7 +253,7 @@ export function buildTaxInvoiceViewModel(
         sgst: taxInvoicePdfMoney(row.sgstAmount, false),
         igst: taxInvoicePdfMoney(row.igstAmount, false),
         totalGst: taxInvoicePdfMoney(
-          sumFrozenAmounts([row.cgstAmount, row.sgstAmount, row.igstAmount]),
+          sumInvoiceAmounts([row.cgstAmount, row.sgstAmount, row.igstAmount]),
           false,
         ),
       })) ?? null,

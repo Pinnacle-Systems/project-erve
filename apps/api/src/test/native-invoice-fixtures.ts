@@ -99,22 +99,32 @@ async function main() {
     actors[name] = { email, password, token: user.token };
   }
   let marker = 0;
-  async function source(quantity: number, distributorId?: string, image = true, hsn = true) {
+  async function source(
+    quantity: number,
+    distributorId?: string,
+    image = true,
+    hsn = true,
+    shared?: { styleId: string; sizeId: string },
+  ) {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, quantity, 'OUTRIGHT', {
       distributorId,
+      ...shared,
     });
     marker++;
-    const styleNumber = `UAT-STYLE-${String(marker).padStart(2, '0')}`;
-    await prisma.style.update({
-      where: { id: fixture.stock.styleId },
-      data: {
-        styleNumber,
-        styleName: `Synthetic native marker ${marker}`,
-        colour: marker % 2 ? 'Navy' : 'Coral',
-        finalMrp: '3499.99',
-        description: 'Disposable native acceptance data',
-      },
-    });
+    const styleNumber = shared
+      ? (await prisma.style.findUniqueOrThrow({ where: { id: shared.styleId } })).styleNumber
+      : `UAT-STYLE-${String(marker).padStart(2, '0')}`;
+    if (!shared)
+      await prisma.style.update({
+        where: { id: fixture.stock.styleId },
+        data: {
+          styleNumber,
+          styleName: `Synthetic native marker ${marker}`,
+          colour: marker % 2 ? 'Navy' : 'Coral',
+          finalMrp: '3499.99',
+          description: 'Disposable native acceptance data',
+        },
+      });
     await prisma.distributor.update({
       where: { id: fixture.stock.distributorId },
       data: {
@@ -128,7 +138,7 @@ async function main() {
         gstin: '27AAAAA0000A1Z5',
       },
     });
-    if (hsn) {
+    if (hsn && !shared) {
       const rule = createId();
       const version = createId();
       const hsnId = createId();
@@ -168,7 +178,7 @@ async function main() {
       await prisma.style.update({ where: { id: fixture.stock.styleId }, data: { hsnId } });
     }
     let expectedImageChecksum: string | null = null;
-    if (image) {
+    if (image && !shared) {
       const png = markerPng(marker);
       expectedImageChecksum = createHash('sha256').update(png).digest('hex');
       await request(app)
@@ -258,6 +268,62 @@ async function main() {
     multiSources.push(item);
   }
   const multi = await invoice(multiSources, true);
+  let grouped: Awaited<ReturnType<typeof invoice>> | undefined;
+  let groupedIssued: Awaited<ReturnType<typeof invoice>> | undefined;
+  if (process.env.NATIVE_VERIFY_GROUPING === 'true') {
+    async function groupedSources() {
+      const first = await source(2);
+      await prisma.size.update({
+        where: { id: first.fixture.stock.sizeId },
+        data: { label: '3', sortOrder: 3 },
+      });
+      await prisma.style.update({
+        where: { id: first.fixture.stock.styleId },
+        data: {
+          styleName: 'Synthetic grouped Style with a long description for compact invoice review',
+          // A synthetic two-decimal calculated rate permits split/rejoin through
+          // the unchanged currency override validation (never round a real rate).
+          finalMrp: '200.00',
+        },
+      });
+      const sources = [first];
+      for (const label of [8, 4, 7, 5, 6]) {
+        const size = await prisma.size.create({
+          data: {
+            id: createId(),
+            code: `ISS015-${first.fixture.stock.styleId}-${label}`,
+            label: String(label),
+            sizeType: 'AGE',
+            sortOrder: label,
+          },
+        });
+        sources.push(
+          await source(2, first.fixture.stock.distributorId, false, true, {
+            styleId: first.fixture.stock.styleId,
+            sizeId: size.id,
+          }),
+        );
+      }
+      return sources;
+    }
+    grouped = await invoice(await groupedSources());
+    const issuedSources = await groupedSources();
+    groupedIssued = await invoice(issuedSources);
+    await request(app)
+      .patch(
+        `/tax-invoices/${groupedIssued.id}/lines/${groupedIssued.invoice.lines[0].id}/override`,
+      )
+      .set('Authorization', `Bearer ${actors.accountant.token}`)
+      .send({ overrideUnitRate: 75.5, reason: 'Synthetic incompatible-rate group' })
+      .expect(200);
+    groupedIssued.invoice = (
+      await request(app)
+        .post(`/tax-invoices/${groupedIssued.id}/actions/finalize`)
+        .set('Authorization', `Bearer ${actors.accountant.token}`)
+        .send({})
+        .expect(200)
+    ).body.data;
+  }
   if (process.env.NATIVE_VERIFY_PDF === 'true') {
     // Mutate only this disposable Style after issuance. The archived bytes and
     // issued presentation must remain independent of the current master.
@@ -285,7 +351,11 @@ async function main() {
   // Private inputs are not uploaded with browser evidence.
   await fs.writeFile(
     fixturePath,
-    JSON.stringify({ actors, issued, drafts, blocked, legacy, multi }, null, 2),
+    JSON.stringify(
+      { actors, issued, drafts, blocked, legacy, multi, grouped, groupedIssued },
+      null,
+      2,
+    ),
     { mode: 0o600 },
   );
   console.log(`Prepared synthetic native fixtures in ${safe.databaseName}`);

@@ -207,6 +207,16 @@ const taxInvoiceInclude = {
           id: true,
           styleNumber: true,
           styleName: true,
+          images: {
+            select: { id: true, file: { select: { mimeType: true, updatedAt: true } } },
+            orderBy: [
+              { isPrimary: 'desc' },
+              { sortOrder: 'asc' },
+              { createdAt: 'asc' },
+              { id: 'asc' },
+            ],
+            take: 1,
+          },
           hsn: { select: { code: true, description: true } },
         },
       },
@@ -214,7 +224,12 @@ const taxInvoiceInclude = {
       // precedence over the live style.hsn join below once present.
       hsn: { select: { code: true, description: true } },
       overriddenBy: { select: { id: true, name: true, email: true } },
-      saleOrderLine: { select: { id: true, size: { select: { code: true, label: true } } } },
+      saleOrderLine: {
+        select: {
+          id: true,
+          size: { select: { id: true, code: true, label: true, sortOrder: true } },
+        },
+      },
     },
   },
 } satisfies Prisma.TaxInvoiceInclude;
@@ -326,6 +341,14 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
       saleOrderLineId: line.saleOrderLineId,
       style: {
         id: line.style.id,
+        primaryImage:
+          record.status === 'DRAFT' && line.style.images[0]
+            ? {
+                id: line.style.images[0].id,
+                mimeType: line.style.images[0].file.mimeType,
+                updatedAt: line.style.images[0].file.updatedAt.toISOString(),
+              }
+            : null,
         styleNumber:
           documentSnapshot?.lines.find((item) => item.lineId === line.id)?.style.styleNumber ??
           line.style.styleNumber,
@@ -345,6 +368,14 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
             ? { code: line.style.hsn.code, description: line.style.hsn.description }
             : null,
       size: {
+        id:
+          record.status === 'DRAFT'
+            ? line.saleOrderLine.size.id
+            : documentSnapshot?.lines.find((item) => item.lineId === line.id)?.size.id,
+        sortOrder:
+          record.status === 'DRAFT'
+            ? line.saleOrderLine.size.sortOrder
+            : documentSnapshot?.lines.find((item) => item.lineId === line.id)?.size.sortOrder,
         code:
           documentSnapshot?.lines.find((item) => item.lineId === line.id)?.size.code ??
           line.saleOrderLine.size.code,

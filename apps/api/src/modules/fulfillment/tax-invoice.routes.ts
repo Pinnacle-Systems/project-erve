@@ -11,6 +11,7 @@ import {
 } from './tax-invoice.validation.js';
 import * as taxInvoiceService from './tax-invoice.service.js';
 import { readArchivedInvoiceImage } from './tax-invoice-document.service.js';
+import { readDraftInvoiceImage } from './tax-invoice-draft-media.service.js';
 
 export const taxInvoicesRouter = Router();
 taxInvoicesRouter.use(requireAuth);
@@ -80,6 +81,31 @@ taxInvoicesRouter.get(
       req.params.erveDispatchId! as string,
     );
     res.status(200).json(successResponse(invoice));
+  }),
+);
+
+taxInvoicesRouter.get(
+  '/:id/styles/:styleId/images/:imageId/content',
+  canViewTaxInvoices,
+  asyncHandler(async (req, res) => {
+    const image = await readDraftInvoiceImage(
+      req.user!,
+      req.params.id as string,
+      req.params.styleId as string,
+      req.params.imageId as string,
+    );
+    // Authorization, Draft state and current-primary checks precede caching.
+    res.set({
+      'Content-Type': image.mimeType,
+      'Cache-Control': 'private, no-cache',
+      'X-Content-Type-Options': 'nosniff',
+      ETag: image.etag,
+    });
+    if (req.headers['if-none-match'] === image.etag) {
+      res.status(304).end();
+      return;
+    }
+    res.status(200).set('Content-Length', String(image.data.length)).send(image.data);
   }),
 );
 

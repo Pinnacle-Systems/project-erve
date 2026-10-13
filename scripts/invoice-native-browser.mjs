@@ -152,6 +152,111 @@ async function screenshot(page, name) {
     env: { ...process.env, DISPLAY: ':99' },
   });
 }
+async function screenshotInvoiceTable(page, name) {
+  await page.evaluate("document.querySelector('table').scrollIntoView({block:'start'})");
+  await pause(300);
+  execFileSync('import', ['-window', 'root', path.join(evidence, `${name}.png`)], {
+    env: { ...process.env, DISPLAY: ':99' },
+  });
+}
+
+async function verifyStyleGrouping(page, width) {
+  await go(
+    page,
+    `http://localhost:5177/fulfillment/tax-invoices/${fixture.grouped.id}`,
+    'Review lines (6)',
+  );
+  assert.equal(await page.evaluate("document.querySelector('table tbody').children.length"), 1);
+  assert.ok((await body(page)).includes('3-2, 4-2, 5-2, 6-2, 7-2, 8-2'));
+  await screenshotInvoiceTable(page, `iss015-grouped-draft-${width}`);
+  assert.ok(await page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'));
+  const reviewLabel = 'Review lines (6)';
+  await click(page, reviewLabel);
+  assert.equal(
+    await page.evaluate("document.querySelector('[role=region] table tbody').children.length"),
+    6,
+  );
+  await screenshotInvoiceTable(page, `iss015-source-disclosure-${width}`);
+  if (width === 1440) {
+    const styleNumber = fixture.grouped.sources[0].styleNumber;
+    await click(page, `View primary image for ${styleNumber}`);
+    await until(
+      async () => (await body(page)).includes(`Primary image · ${styleNumber}`),
+      'Draft shared viewer',
+    );
+    await screenshot(page, 'iss015-draft-primary-viewer');
+    await page.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+    });
+    await page.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+    });
+    await until(
+      async () => !(await page.evaluate("Boolean(document.querySelector('[role=dialog]'))")),
+      'Draft viewer Escape',
+    );
+    assert.equal(
+      await page.evaluate('document.activeElement.getAttribute("aria-label")'),
+      `View primary image for ${styleNumber}`,
+    );
+    await click(page, 'Override');
+    await type(page, '[role="dialog"] textarea', 'ISS-015 source override');
+    await type(page, '[role="dialog"] input', '75.50');
+    await enter(page);
+    await until(
+      async () =>
+        !(await page.evaluate("Boolean(document.querySelector('[role=dialog]'))")) &&
+        (await page.evaluate("document.querySelector('table tbody').children.length === 2")),
+      'incompatible source rate splits groups',
+    );
+    await screenshotInvoiceTable(page, 'iss015-incompatible-draft-rates');
+    const current = (await api(page, `/tax-invoices/${fixture.grouped.id}/review`)).data;
+    const overridden = current.lines.find(
+      (line) => line.overrideReason === 'ISS-015 source override',
+    );
+    assert.ok(overridden);
+    const restore = await api(
+      page,
+      `/tax-invoices/${fixture.grouped.id}/lines/${overridden.id}/override`,
+      'PATCH',
+      {
+        overrideUnitRate: Number(overridden.calculatedUnitRate),
+        reason: 'Synthetic equal-rate provenance retained',
+      },
+    );
+    assert.equal(restore.status, 200);
+    await go(
+      page,
+      `http://localhost:5177/fulfillment/tax-invoices/${fixture.grouped.id}`,
+      'Review lines (6)',
+    );
+    assert.equal(await page.evaluate("document.querySelector('table tbody').children.length"), 1);
+  }
+  await go(
+    page,
+    `http://localhost:5177/fulfillment/tax-invoices/${fixture.groupedIssued.id}`,
+    'Finalized',
+  );
+  assert.equal(await page.evaluate("document.querySelector('table tbody').children.length"), 2);
+  assert.ok(!(await body(page)).includes('Finalize invoice'));
+  await click(page, 'Review lines (1)');
+  assert.equal(
+    await page.evaluate(
+      "[...document.querySelectorAll('button')].some(node=>node.textContent.trim()==='Override')",
+    ),
+    false,
+  );
+  await screenshotInvoiceTable(page, `iss015-issued-rate-groups-${width}`);
+  proof.assertions.push(
+    `ISS-015 ${width}px: six source sizes consolidated, disclosure preserves lines, incompatible issued rates separated`,
+  );
+}
 async function downloadPdf(page, browser, record, name) {
   const directory = path.join(evidence, `downloads-${name}`);
   await fs.mkdir(directory, { recursive: true });
@@ -313,6 +418,7 @@ async function main() {
         ...desktop,
       });
       await screenshot(page, `queue-${width}`);
+      if (process.env.NATIVE_VERIFY_GROUPING === 'true') await verifyStyleGrouping(page, width);
       const draft = fixture.drafts[index];
       await go(
         page,
@@ -326,6 +432,7 @@ async function main() {
       );
       await screenshot(page, `draft-review-${width}`);
       if (index === 0) {
+        await click(page, 'Review lines (1)');
         await click(page, 'Override');
         await until(
           async () => (await body(page)).includes('Accountant rate correction'),
@@ -386,6 +493,7 @@ async function main() {
           true,
         );
         await screenshot(page, 'blocked-hsn-1440');
+        assert.ok((await body(page)).includes('Image unavailable'));
         await go(
           page,
           `http://localhost:5177/fulfillment/tax-invoices/${fixture.legacy.id}`,
@@ -402,6 +510,10 @@ async function main() {
         `http://localhost:5177/fulfillment/tax-invoices/${fixture.multi.id}`,
         'Finalized',
       );
+      // Exercise lazy loading through native scrolling before checking all markers.
+      await page.evaluate("document.querySelector('table').scrollIntoView({block:'start'})");
+      await pause(300);
+      await page.evaluate('window.scrollTo(0,document.body.scrollHeight)');
       await until(
         async () =>
           await page.evaluate(
@@ -467,7 +579,7 @@ async function main() {
         // comes from real maximized windows, never viewport substitution.
         await go(
           page,
-          `http://localhost:5177/fulfillment/tax-invoices/${fixture.drafts[2].id}`,
+          `http://localhost:5177/fulfillment/tax-invoices/${process.env.NATIVE_VERIFY_GROUPING === 'true' ? fixture.grouped.id : fixture.drafts[2].id}`,
           'Finalize invoice',
         );
         proof.responsiveSupplements = [];
@@ -509,11 +621,28 @@ async function main() {
         await inspectNativePdf(page, browser, rounded);
         await downloadPdf(page, browser, fixture.multi, 'multi');
         await downloadPdf(page, browser, fixture.legacy, 'legacy');
+        if (process.env.NATIVE_VERIFY_GROUPING === 'true')
+          await downloadPdf(page, browser, fixture.groupedIssued, 'grouped');
         proof.assertions.push(
           'ACCOUNTANT downloaded frozen rounded, multi-order and legacy PDFs; native PDF and print previews opened',
         );
       }
       await login(page, fixture.actors.admin);
+      if (process.env.NATIVE_VERIFY_GROUPING === 'true') {
+        await go(
+          page,
+          `http://localhost:5177/fulfillment/tax-invoices/${fixture.grouped.id}`,
+          'Review lines (6)',
+        );
+        await click(page, 'Review lines (6)');
+        assert.equal(
+          await page.evaluate(
+            "[...document.querySelectorAll('button')].some(node=>['Override','Finalize invoice'].includes(node.textContent.trim()))",
+          ),
+          false,
+        );
+        await screenshotInvoiceTable(page, `iss015-admin-draft-readonly-${width}`);
+      }
       await go(
         page,
         `http://localhost:5177/fulfillment/tax-invoices/${fixture.issued.id}`,
