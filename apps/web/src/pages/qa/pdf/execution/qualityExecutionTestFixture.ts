@@ -39,7 +39,14 @@ export function makeQualityExecutionView(
       { componentId: 'fields-1', fieldKey: 'meetingDate', value: '2026-01-15' },
       { componentId: 'fields-1', fieldKey: 'isReady', value: 'true' },
     ],
-    attendees: [{ componentId: 'attendees-1', roleKey: 'MERCHANDISER', attendeeName: 'Alice Merchant' }],
+    attendees: [
+      {
+        componentId: 'attendees-1',
+        roleKey: 'MERCHANDISER',
+        attendeeName: 'Alice Merchant',
+        remarks: 'Discussed delivery timeline',
+      },
+    ],
     actions: [{ componentId: 'actions-1', values: { action: 'Fix seam', dueDate: '2026-02-01' } }],
     signoffs: [{ componentId: 'signatures-1', roleKey: 'qa', signatoryName: 'Bob QA' }],
     outcome: { componentId: 'outcome-1', value: 'PASS', remarks: 'Looks good', rejectionReason: null },

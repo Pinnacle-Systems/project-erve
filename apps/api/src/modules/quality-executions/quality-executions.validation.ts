@@ -101,7 +101,16 @@ export const qualityExecutionPayloadSchema = z
       .default([]),
     attendees: z
       .array(
-        z.object({ componentId, roleKey: key, attendeeName: z.string().trim().min(1).max(160) }),
+        z.object({
+          componentId,
+          roleKey: key,
+          attendeeName: z.string().trim().min(1).max(160),
+          // DEMO-008: optional per-participant remarks. Omitting it (older
+          // compatible clients) leaves existing remarks untouched by the
+          // required-field checks below; it never causes data loss on its
+          // own because the whole attendee row is always rewritten together.
+          remarks: optionalRemarks,
+        }),
       )
       .default([]),
     actions: z

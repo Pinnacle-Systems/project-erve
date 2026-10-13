@@ -97,6 +97,48 @@ describe('DEMO-007 successor content', () => {
   });
 });
 
+describe('DEMO-008 successor PPM content', () => {
+  const ppm = () => CANONICAL_QUALITY_FORMS.find((x) => x.code === 'PPM')!;
+
+  it('configures exactly the 6 confirmed participant categories, with no free-text "other" escape hatch', () => {
+    const components = ppm().sections.flatMap((x) => x.components);
+    const attendeeList = components.find((x) => x.type === 'ATTENDEE_LIST')!;
+    const config = attendeeList.config as { roles: string[]; allowOther?: boolean };
+    expect(config.roles).toEqual(['Merchandiser', 'QA', 'Outward Processing', 'Sewing', 'Fabric', 'Others']);
+    expect(config.allowOther).toBeUndefined();
+  });
+
+  it('replaces the repeating follow-up action list with one COMMENTS component', () => {
+    const components = ppm().sections.flatMap((x) => x.components);
+    expect(components.some((x) => x.type === 'ACTION_LIST')).toBe(false);
+    const followUp = components.find((x) => x.title === 'Follow-up')!;
+    expect(followUp.type).toBe('COMMENTS');
+  });
+
+  it('adds optional (not required) photo evidence, reusing the ATTACHMENTS component', () => {
+    const components = ppm().sections.flatMap((x) => x.components);
+    const attachments = components.find((x) => x.type === 'ATTACHMENTS')!;
+    const config = attachments.config as {
+      requirements: Array<{ required?: boolean; requiredWhen?: string }>;
+    };
+    expect(config.requirements.length).toBeGreaterThan(0);
+    for (const requirement of config.requirements) {
+      expect(requirement.required).not.toBe(true);
+      expect(requirement.requiredWhen).toBeUndefined();
+    }
+  });
+
+  it('keeps the existing sign-off roles and the Job Order/meeting context untouched', () => {
+    const components = ppm().sections.flatMap((x) => x.components);
+    const signatures = components.find((x) => x.type === 'SIGNATURES')!;
+    expect(
+      (signatures.config as { roles: Array<{ label: string }> }).roles.map((x) => x.label),
+    ).toEqual(['Inspector', 'QA Manager', 'Supplier']);
+    expect(ppm().activityType).toBe('MEETING');
+    expect(ppm().executionScope).toBe('JOB_ORDER');
+  });
+});
+
 it('keeps the legacy typed adapter usable for custom checklist keys', () => {
   const items = resolvePpSampleChecklist([
     {

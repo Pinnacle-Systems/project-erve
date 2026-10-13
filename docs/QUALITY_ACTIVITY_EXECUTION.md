@@ -25,9 +25,17 @@ The PP Sample adapter reuses the strongly typed checklist, remarks, defect infor
 
 ## PPM / Size Set
 
-PPM is one `MEETING + JOB_ORDER` execution. Its authoritative Job Order context is read-only; meeting/planning fields are user-entered `FIELD_GROUP` values. `ATTENDEE_LIST`, `ACTION_LIST`, and `SIGNATURES` use normalized runtime records and definition-driven finalization validation. PPM has no size tabs and no fabricated PASS/FAIL. PPM becomes available at the same time as PP Sample, immediately after factory confirmation, and can be started, edited, or finalized independently of PP Sample's lifecycle or result. A `FINALIZED` PPM gate satisfies PPM's own requirement toward the first valid Production activity in normal sequence, but Cutting also independently requires PP Sample to be finalized with `PASS`.
+PPM is one `MEETING + JOB_ORDER` execution. Its authoritative Job Order context is read-only; meeting/planning fields are user-entered `FIELD_GROUP` values. `ATTENDEE_LIST` and `SIGNATURES` use normalized runtime records and definition-driven finalization validation. PPM has no size tabs and no fabricated PASS/FAIL. PPM becomes available at the same time as PP Sample, immediately after factory confirmation, and can be started, edited, or finalized independently of PP Sample's lifecycle or result. A `FINALIZED` PPM gate satisfies PPM's own requirement toward the first valid Production activity in normal sequence, but Cutting also independently requires PP Sample to be finalized with `PASS`.
 
 Corrected published definitions are created as successor versions only when an existing published PPM definition needs correction. Historical definitions and Process Flow references are not silently rewritten.
+
+### DEMO-008: participants, remarks, follow-up, evidence
+
+The current (successor) PPM definition's `ATTENDEE_LIST` carries exactly 6 confirmed participant categories — Merchandiser, QA, Outward Processing, Sewing, Fabric, Others — each a person-name entry, not a Yes/No attendance flag. `QualityAttendeeResponse` carries an additive, nullable `remarks` column alongside `attendeeName`: remarks belong to the corresponding participant record, are optional, and historical rows (and older client payloads that omit the field) read back as `null` with no validation or rendering failure.
+
+The old repeating `ACTION_LIST` follow-up (action / follow-up person / settle date rows) is replaced in the current definition by a single `COMMENTS` component ("Follow-up") — one free-text note, no task assignment, deadlines, or escalation. An optional `ATTACHMENTS` component ("Photo evidence") was added with no `required`/`requiredWhen` flag, so PPM saves and finalizes with or without photos.
+
+Both changes only affect the *current* PPM Quality Form version. Executions pinned to an earlier published PPM version keep rendering their original `ACTION_LIST` content and attendee rows without remarks — every Quality Form version (current or historical) renders generically from its own stored component types and responses, so no historical rewrite or migration of past executions is needed or performed.
 
 ## Inline and Final
 

@@ -142,6 +142,14 @@ async function fixture(
         ],
       },
     },
+    {
+      // DEMO-008: used by the attendee-remarks round-trip tests below.
+      id: createId(),
+      sequence: 8,
+      type: 'ATTENDEE_LIST' as const,
+      title: 'Attendees',
+      config: { roles: ['Merchandiser', 'QA'] },
+    },
   ];
   const form = await prisma.qualityForm.create({
     data: {
@@ -453,6 +461,87 @@ describe('Quality Activity Execution API', () => {
           .send(empty)
       ).body.error.code,
     ).toBe('STALE_VERSION');
+  });
+
+  it('DEMO-008: saves, reloads, and updates attendee remarks alongside participant names', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.jobOrder.stageStatuses[0]!.id },
+      data: { status: 'IN_PROGRESS' },
+    });
+    const execution = (await start(f)).body.data;
+    const empty = {
+      expectedVersion: execution.version,
+      checklistResponses: [],
+      aqlResults: [],
+      defects: [],
+      correctiveActions: [],
+      testResults: [],
+      quantities: [],
+      comments: [],
+      signoffs: [],
+      outcome: null,
+    };
+    const attendeesComponentId = f.components[7]!.id;
+
+    // Multiple participant rows, with and without remarks, round-trip
+    // independently and don't overwrite each other.
+    const saved = await request(app)
+      .put(`/quality-executions/${execution.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({
+        ...empty,
+        attendees: [
+          {
+            componentId: attendeesComponentId,
+            roleKey: 'Merchandiser',
+            attendeeName: 'Meera',
+            remarks: 'Confirmed trims sign-off',
+          },
+          { componentId: attendeesComponentId, roleKey: 'QA', attendeeName: 'Nina' },
+        ],
+      });
+    expect(saved.status).toBe(200);
+    const savedAttendees = saved.body.data.responses.attendees;
+    expect(savedAttendees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          roleKey: 'Merchandiser',
+          attendeeName: 'Meera',
+          remarks: 'Confirmed trims sign-off',
+        }),
+        expect.objectContaining({ roleKey: 'QA', attendeeName: 'Nina' }),
+      ]),
+    );
+    const ninaRow = savedAttendees.find((a: { roleKey: string }) => a.roleKey === 'QA');
+    expect(ninaRow.remarks ?? null).toBeNull();
+
+    const reloaded = await request(app)
+      .get(`/quality-executions/${execution.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`);
+    expect(reloaded.body.data.responses.attendees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ roleKey: 'Merchandiser', remarks: 'Confirmed trims sign-off' }),
+      ]),
+    );
+
+    // An older-shaped client payload that omits `remarks` entirely for the
+    // attendees it resends is still accepted (schema validation does not
+    // require the field) and the attendee name keeps round-tripping.
+    const compatibleResave = await request(app)
+      .put(`/quality-executions/${execution.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({
+        ...empty,
+        expectedVersion: saved.body.data.version,
+        attendees: [
+          { componentId: attendeesComponentId, roleKey: 'Merchandiser', attendeeName: 'Meera' },
+        ],
+      });
+    expect(compatibleResave.status).toBe(200);
+    expect(compatibleResave.body.data.responses.attendees).toEqual([
+      expect.objectContaining({ roleKey: 'Merchandiser', attendeeName: 'Meera' }),
+    ]);
   });
 
   it('uses strict finalization, persists PASS/FAIL truthfully, and strands no started draft', async () => {

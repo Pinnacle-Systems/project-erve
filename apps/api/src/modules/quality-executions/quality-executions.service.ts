@@ -1070,10 +1070,11 @@ function currentPayload(execution: Execution): QualityExecutionPayload {
       fieldKey,
       value,
     })),
-    attendees: execution.attendeeResponses.map(({ componentId, roleKey, attendeeName }) => ({
+    attendees: execution.attendeeResponses.map(({ componentId, roleKey, attendeeName, remarks }) => ({
       componentId,
       roleKey,
       attendeeName,
+      remarks,
     })),
     actions: execution.actionResponses
       .sort((a, b) => a.rowNumber - b.rowNumber)

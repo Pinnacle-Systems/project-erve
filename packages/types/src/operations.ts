@@ -1040,7 +1040,12 @@ export interface QualityExecutionPayload {
   quantities: Array<{ componentId: string; fieldKey: string; value: number }>;
   comments: Array<{ componentId: string; value: string }>;
   fieldResponses: Array<{ componentId: string; fieldKey: string; value: string }>;
-  attendees: Array<{ componentId: string; roleKey: string; attendeeName: string }>;
+  attendees: Array<{
+    componentId: string;
+    roleKey: string;
+    attendeeName: string;
+    remarks?: string | null;
+  }>;
   actions: Array<{
     componentId: string;
     values: Record<string, string | number | boolean | null>;

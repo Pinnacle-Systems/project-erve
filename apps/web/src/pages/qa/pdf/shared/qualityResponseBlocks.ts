@@ -131,7 +131,15 @@ function attendeeListBlock(
     const current = responses.attendees.find(
       (value) => value.componentId === component.id && value.roleKey === roleKey,
     );
-    return { label: roleLabel, value: current?.attendeeName };
+    // DEMO-008: participant remarks print alongside the name in the same
+    // cell. Historical executions (remarks always null/undefined) render
+    // exactly as before — name only.
+    const value = current?.attendeeName
+      ? current.remarks
+        ? `${current.attendeeName} — ${current.remarks}`
+        : current.attendeeName
+      : undefined;
+    return { label: roleLabel, value };
   });
   return { kind: 'grid', heading: component.title, description: component.description, items };
 }
