@@ -35,11 +35,27 @@ import {
   type SourceLocation,
 } from './master-source-normalization.js';
 
-const workbookBytes = (rows: CanonicalRow[], headers: string[], worksheet: string): Buffer => {
+const workbookBytes = (
+  rows: CanonicalRow[],
+  headers: string[],
+  worksheet: string,
+  oversizedValues?: Map<string, string>,
+): Buffer => {
+  const cellValue = (value: string | number) => {
+    if (typeof value !== 'string' || value.length <= 32767) return value;
+    if (!oversizedValues)
+      throw new Error('Oversized workbook evidence requires an external report');
+    const checksum = sha256(value);
+    oversizedValues.set(checksum, value);
+    return JSON.stringify({ report: 'reports/oversized-cell-values.json', sha256: checksum });
+  };
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     wb,
-    XLSX.utils.aoa_to_sheet([headers, ...rows.map((row) => headers.map((h) => row[h] ?? ''))]),
+    XLSX.utils.aoa_to_sheet([
+      headers,
+      ...rows.map((row) => headers.map((h) => cellValue(row[h] ?? ''))),
+    ]),
     worksheet,
   );
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
@@ -49,12 +65,14 @@ const workbookBytes = (rows: CanonicalRow[], headers: string[], worksheet: strin
 export function buildStylesWorkbook(
   rows: CanonicalRow[],
   images: Array<{ rowNumber: number; bytes: Buffer }>,
+  oversizedValues?: Map<string, string>,
 ): Buffer {
   const zip = new AdmZip(
     workbookBytes(
       rows,
       [...STYLE_HEADERS, 'Dashboard MRP', 'Invoice MRP', 'Invoice HSN', 'Exceptions'],
       'Styles',
+      oversizedValues,
     ),
   );
   if (images.length === 0) return zip.toBuffer();
@@ -189,6 +207,7 @@ export async function runSourceNormalization(options: NormalizationOptions) {
   await mkdir(reports, { recursive: true });
   await mkdir(correctionRoot, { recursive: true });
   const exceptions: SourceException[] = [];
+  const oversizedValues = new Map<string, string>();
   const sources: SourceManifest[] = [];
   const sourceBytes = new Map<string, Buffer>();
   const sourcePaths = new Map<string, string>();
@@ -710,7 +729,7 @@ export async function runSourceNormalization(options: NormalizationOptions) {
     exceptions.push(
       finding(
         'DISTRIBUTOR_PURCHASE_MODE_MISSING',
-        'Commercial sources do not verify CONSIGNMENT/OUTRIGHT; Purchase Mode left blank',
+        'Commercial sources do not verify SALE_RETURN/OUTRIGHT; Purchase Mode left blank',
         [raw[2], raw[9]],
         entries[0]!.location,
         key,
@@ -902,8 +921,35 @@ export async function runSourceNormalization(options: NormalizationOptions) {
       sizeBytes: buffer.length,
     });
   };
-  const saveRows = (file: string, rows: CanonicalRow[], headers: string[]) =>
-    save(generated, file, csv(rows, headers));
+  const saveRows = async (file: string, rows: CanonicalRow[], headers: string[]) => {
+    // CSV quoting does not prevent spreadsheet formula execution. Hold unsafe
+    // rows out of CSV and preserve their exact values as literal XLSX cells.
+    // Do not prefix apostrophes: that would change the downstream import values.
+    const safeRows = rows.filter((row) => {
+      const unsafeFields = headers.filter((h) => /^[\s\uFEFF]*[=+@-]/.test(text(row[h])));
+      if (unsafeFields.length === 0) return true;
+      exceptions.push(
+        finding(
+          'CSV_FORMULA_RISK',
+          `Row excluded from ${file}; exact literal values available in ${file.replace(/\.csv$/, '.xlsx')}`,
+          { fields: unsafeFields, row },
+          undefined,
+          text(row['Source Key']),
+        ),
+      );
+      return false;
+    });
+    const worksheet = file
+      .replace(/\.csv$/, '')
+      .replace(/_/g, ' ')
+      .replace(/^./, (c) => c.toUpperCase());
+    await save(
+      generated,
+      file.replace(/\.csv$/, '.xlsx'),
+      workbookBytes(rows, headers, worksheet, oversizedValues),
+    );
+    await save(generated, file, csv(safeRows, headers));
+  };
   await saveRows('seasons.csv', seasons, [
     'Code',
     'Name',
@@ -921,7 +967,11 @@ export async function runSourceNormalization(options: NormalizationOptions) {
   await saveRows('factories.csv', factories, FACTORY_HEADERS);
   await saveRows('distributors.csv', distributors, DISTRIBUTOR_HEADERS);
   await saveRows('retail_stores.csv', stores, STORE_HEADERS);
-  await save(generated, 'styles.xlsx', buildStylesWorkbook(styleRows, embeddedImages));
+  await save(
+    generated,
+    'styles.xlsx',
+    buildStylesWorkbook(styleRows, embeddedImages, oversizedValues),
+  );
   await saveRows('style_factory_rates.csv', rates, [
     'Style Number',
     'Season Code',
@@ -963,9 +1013,15 @@ export async function runSourceNormalization(options: NormalizationOptions) {
         'rawValues',
       ],
       'Exceptions',
+      oversizedValues,
     ),
   );
   await save(reports, 'exceptions.json', JSON.stringify(exceptions, null, 2));
+  await save(
+    reports,
+    'oversized-cell-values.json',
+    JSON.stringify(Object.fromEntries(oversizedValues), null, 2),
+  );
   await save(reports, 'image-manifest.json', JSON.stringify(imageManifest, null, 2));
   await save(
     reports,

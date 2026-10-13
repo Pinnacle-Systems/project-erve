@@ -18,6 +18,22 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 describe('historical source normalization', () => {
+  it('preserves oversized spreadsheet evidence in checksum-linked JSON without Excel cell overflow', () => {
+    const evidence = JSON.stringify({ raw: 'x'.repeat(32768) });
+    const overflow = new Map<string, string>();
+    const bytes = buildStylesWorkbook(
+      [{ 'Style Name': '=1+1', 'Source Provenance': evidence }],
+      [],
+      overflow,
+    );
+    const sheet = XLSX.read(bytes, { type: 'buffer' }).Sheets.Styles!;
+    expect(sheet.B2).toMatchObject({ t: 's', v: '=1+1' });
+    expect(sheet.B2.f).toBeUndefined();
+    const reference = JSON.parse(sheet.S2.v as string);
+    expect(reference.report).toBe('reports/oversized-cell-values.json');
+    expect(reference.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(overflow.get(reference.sha256)).toBe(evidence);
+  });
   it('requires an explicit named worksheet and preserves blank physical rows and cached cell errors', () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['decoy']]), 'Decoy');
@@ -81,13 +97,56 @@ describe('historical source normalization', () => {
     expect(new Set(result.records.map((r) => r['Source Key'])).size).toBe(3);
     expect(result.exceptions.some((e) => e.code === 'MULTIPLE_DESTINATIONS')).toBe(true);
     const conflicts = commercialConflicts(
-      [{ rowNumber: 6, cells: [4, 'GS CLOTHING', 25] }],
-      [{ rowNumber: 6, cells: [4, 'GS CLOTHING', 21] }],
-      [{ rowNumber: 5, cells: [3, 'GS CLOTHING', 20] }],
+      [
+        { rowNumber: 3, cells: [null, 'S.NO', 'DISTRIBUTOR', 'NO.OF STORES'] },
+        { rowNumber: 7, cells: [null, 4, 'GS CLOTHING', 25] },
+      ],
+      [
+        { rowNumber: 3, cells: [null, 'S.NO', 'DISTRIBUTOR', 'NO.OF STORES'] },
+        { rowNumber: 7, cells: [null, 4, 'GS CLOTHING', 21] },
+      ],
+      [
+        { rowNumber: 3, cells: [null, 'S.NO', 'DISTRIBUTOR', 'NO.OF STORES'] },
+        { rowNumber: 6, cells: [null, 3, 'GS CLOTHING', 20] },
+      ],
     );
     expect(conflicts[0]).toMatchObject({ code: 'STORE_COUNT_CONFLICT' });
     expect(JSON.parse(conflicts[0]!.rawValues)).toEqual([25, 21, 20]);
+    expect(conflicts[0]!.rowNumber).toBe(7);
   });
+  it.each([
+    ['factory', 'Name'],
+    ['distributor', 'Name'],
+    ['distributor', 'GSTIN'],
+    ['style', 'Style Number'],
+    ['style', 'LMIX Number'],
+    ['style', 'Season Code'],
+    ['style', 'Size Codes'],
+    ['style', 'Barcodes'],
+    ['style', 'Factory Name Mappings'],
+  ])(
+    'rejects unsupported %s reference corrections to %s instead of breaking other outputs',
+    (kind, field) => {
+      const key = businessSourceKey(kind!, ['identity']);
+      const location = { sha256: 'a'.repeat(64), worksheet: 'Sheet', rowNumber: 2 };
+      expect(() =>
+        applyCorrections({ 'Source Key': key, [field!]: 'old' }, location, [
+          {
+            sourceKey: key,
+            sourceSha256: location.sha256,
+            worksheet: location.worksheet,
+            rowNumber: 2,
+            field: field!,
+            previousValue: 'old',
+            value: 'new',
+            status: 'APPROVED',
+            reviewedBy: 'Reviewer',
+            reason: 'Reviewed change',
+          },
+        ]),
+      ).toThrow('Reference-changing correction');
+    },
+  );
   it('binds reviewed corrections to exact checksum, worksheet, physical row and previous value, preserving the source key', () => {
     const key = businessSourceKey('store', ['Parent', 'Name', 'Old Address']);
     const row = {
@@ -209,106 +268,126 @@ describe('historical source normalization', () => {
     expect(result.imagesByRow.has(2)).toBe(false);
     expect(result.imagesByRow.get(3)?.[0]?.buffer.equals(png)).toBe(true);
   });
-  it('generates persistent source manifest and exceptions without a database or silent MRP conflict winner', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'erve-source-fixture-'));
-    try {
-      const sourceRoot = join(root, 'source');
-      const auditRoot = join(root, 'audit');
-      const outputRoot = join(root, 'output');
-      await mkdir(sourceRoot);
-      await mkdir(join(auditRoot, 'corrected-pdf-parse'), { recursive: true });
-      const workbook = (file: string, sheets: Record<string, unknown[][]>) => {
-        const wb = XLSX.utils.book_new();
-        for (const [name, rows] of Object.entries(sheets))
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
-        return writeFile(
-          join(sourceRoot, file),
-          XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }),
-        );
-      };
-      const mrpHeaders = [
-        'Season',
-        'Heads',
-        'Description',
-        "IP's",
-        'Category',
-        'Licensor',
-        'Factory',
-        'Base code',
-        'MRP',
-        'Exfactory',
-        'Factory',
-        'Colour',
-        'Season',
-      ];
-      await workbook('AW26 - Dashboard.xlsx', {
-        'MRP & Ex Factory': [
-          mrpHeaders,
-          [
-            'AW-26',
-            null,
-            'Hoody',
-            'IP',
-            'Category',
-            'Licensor',
-            'Factory',
-            12345678,
-            999,
-            100,
-            'Factory',
-            'Colour',
-            'AW-26',
+  it.each(['Factory', '=1+1', '+919876543210', '-1+1', '@SUM(1)', '\t=1+1', '  =1+1'])(
+    'exports exact literal workbook values and holds formula-risk CSV rows for %j',
+    async (factoryName) => {
+      const root = await mkdtemp(join(tmpdir(), 'erve-source-fixture-'));
+      try {
+        const sourceRoot = join(root, 'source');
+        const auditRoot = join(root, 'audit');
+        const outputRoot = join(root, 'output');
+        await mkdir(sourceRoot);
+        await mkdir(join(auditRoot, 'corrected-pdf-parse'), { recursive: true });
+        const workbook = (file: string, sheets: Record<string, unknown[][]>) => {
+          const wb = XLSX.utils.book_new();
+          for (const [name, rows] of Object.entries(sheets))
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
+          return writeFile(
+            join(sourceRoot, file),
+            XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }),
+          );
+        };
+        const mrpHeaders = [
+          'Season',
+          'Heads',
+          'Description',
+          "IP's",
+          'Category',
+          'Licensor',
+          'Factory',
+          'Base code',
+          'MRP',
+          'Exfactory',
+          'Factory',
+          'Colour',
+          'Season',
+        ];
+        await workbook('AW26 - Dashboard.xlsx', {
+          'MRP & Ex Factory': [
+            mrpHeaders,
+            [
+              'AW-26',
+              null,
+              'Hoody',
+              'IP',
+              'Category',
+              'Licensor',
+              factoryName,
+              12345678,
+              999,
+              100,
+              factoryName,
+              'Colour',
+              'AW-26',
+            ],
           ],
-        ],
-      });
-      await workbook('Book1.xlsx', {
-        Sheet1: [
-          ['Season', 'Style Number', 'Barcode'],
-          ['AW-26', 12345678, '3123456789'],
-        ],
-      });
-      await workbook('Dispatch Qty and Store details AW26 - as on 12th Oct.xlsx', {
-        'Store Address': [],
-        'DeepStorewise Details': [],
-        'Storewise Details factory': [],
-        'Storewise dispatch address': [],
-      });
-      await writeFile(join(auditRoot, 'corrected-pdf-parse/source-staging.json'), '[]');
-      await writeFile(join(auditRoot, 'image-provenance-comparison.json'), '[]');
-      const result = await runSourceNormalization({
-        sourceRoot,
-        auditRoot,
-        outputRoot,
-        invoiceEvidence: [
-          {
-            lineNumber: 1,
-            businessStyle: '12345678',
-            hsn: '61091000',
-            mrp: 1099,
-            raw: 'source invoice evidence',
-          },
-        ],
-      });
-      expect(result.counts.styles).toBe(1);
-      const styles = readExplicitSheet(
-        await readFile(join(outputRoot, 'generated/styles.xlsx')),
-        'Styles',
-      );
-      expect(styles.rows[1]?.cells[2]).toBe('');
-      const manifest = JSON.parse(
-        await readFile(join(outputRoot, 'reports/source-manifest.json'), 'utf8'),
-      );
-      expect(manifest.sources).toHaveLength(3);
-      expect(
-        manifest.sources.every((s: { sha256: string }) => /^[a-f0-9]{64}$/.test(s.sha256)),
-      ).toBe(true);
-      expect(result.exceptions.some((e) => e.code === 'MRP_CONFLICT')).toBe(true);
-      expect(result.exceptions.some((e) => e.code === 'AW26_IMAGE_PROVENANCE_MISSING')).toBe(true);
-      await expect(
-        readFile(join(outputRoot, 'generated/factories.csv'), 'utf8'),
-      ).resolves.toContain('Name');
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+        });
+        await workbook('Book1.xlsx', {
+          Sheet1: [
+            ['Season', 'Style Number', 'Barcode'],
+            ['AW-26', 12345678, '3123456789'],
+          ],
+        });
+        await workbook('Dispatch Qty and Store details AW26 - as on 12th Oct.xlsx', {
+          'Store Address': [],
+          'DeepStorewise Details': [],
+          'Storewise Details factory': [],
+          'Storewise dispatch address': [],
+        });
+        await writeFile(join(auditRoot, 'corrected-pdf-parse/source-staging.json'), '[]');
+        await writeFile(join(auditRoot, 'image-provenance-comparison.json'), '[]');
+        const result = await runSourceNormalization({
+          sourceRoot,
+          auditRoot,
+          outputRoot,
+          invoiceEvidence: [
+            {
+              lineNumber: 1,
+              businessStyle: '12345678',
+              hsn: '61091000',
+              mrp: 1099,
+              raw: 'source invoice evidence',
+            },
+          ],
+        });
+        expect(result.counts.styles).toBe(1);
+        const styles = readExplicitSheet(
+          await readFile(join(outputRoot, 'generated/styles.xlsx')),
+          'Styles',
+        );
+        expect(styles.rows[1]?.cells[2]).toBe('');
+        const manifest = JSON.parse(
+          await readFile(join(outputRoot, 'reports/source-manifest.json'), 'utf8'),
+        );
+        expect(manifest.sources).toHaveLength(3);
+        expect(
+          manifest.sources.every((s: { sha256: string }) => /^[a-f0-9]{64}$/.test(s.sha256)),
+        ).toBe(true);
+        expect(result.exceptions.some((e) => e.code === 'MRP_CONFLICT')).toBe(true);
+        expect(result.exceptions.some((e) => e.code === 'AW26_IMAGE_PROVENANCE_MISSING')).toBe(
+          true,
+        );
+        await expect(
+          readFile(join(outputRoot, 'generated/factories.csv'), 'utf8'),
+        ).resolves.toContain('Name');
+        const csvRows = XLSX.utils.sheet_to_json(
+          XLSX.read(await readFile(join(outputRoot, 'generated/factories.csv')), {
+            type: 'buffer',
+            raw: true,
+          }).Sheets.Sheet1!,
+        );
+        expect(csvRows).toHaveLength(factoryName === 'Factory' ? 1 : 0);
+        const factories = readExplicitSheet(
+          await readFile(join(outputRoot, 'generated/factories.xlsx')),
+          'Factories',
+        );
+        expect(factories.rows[1]?.cells[0]).toBe(factoryName.trim());
+        expect(result.exceptions.some((e) => e.code === 'CSV_FORMULA_RISK')).toBe(
+          factoryName !== 'Factory',
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

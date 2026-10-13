@@ -153,6 +153,26 @@ export function applyCorrections(
       throw new Error(`Correction worksheet/physical row mismatch for ${c.sourceKey}`);
     if (!c.reviewedBy.trim() || !c.reason.trim())
       throw new Error('Approved corrections require reviewer and reason');
+    const referenceFields: Record<string, string[]> = {
+      factory: ['Name'],
+      distributor: ['Name', 'GSTIN'],
+      style: [
+        'Style Number',
+        'LMIX Number',
+        'Season Code',
+        'Business Style',
+        'Size Codes',
+        'Barcodes',
+        'Factory Mappings',
+        'Factory Name Mappings',
+      ],
+      store: ['Distributor Name', 'Distributor GSTIN'],
+    };
+    const kind = text(row['Source Key']).split(':')[0]!;
+    if (c.value !== c.previousValue && referenceFields[kind]?.includes(c.field))
+      throw new Error(
+        `Reference-changing correction ${c.field} requires coordinated source re-normalization`,
+      );
     if (
       c.field === 'Source Key' ||
       c.field === 'Source Provenance' ||
@@ -283,7 +303,12 @@ export function storeCandidates(rows: PhysicalRow[]) {
       // silently dropped.
       if (row.cells.some((v) => v !== null && v !== ''))
         exceptions.push(
-          finding('STORE_ROW_UNRECOGNIZED', 'Row does not match the expected serial/name shape', row.cells, row),
+          finding(
+            'STORE_ROW_UNRECOGNIZED',
+            'Row does not match the expected serial/name shape',
+            row.cells,
+            row,
+          ),
         );
       continue;
     }
@@ -368,12 +393,22 @@ export function commercialConflicts(
     ['Storewise Details factory', factory],
     ['Storewise dispatch address', dispatch],
   ] as const) {
+    const header = rows.find((row) => row.cells.some((cell) => normalized(cell) === 'DISTRIBUTOR'));
+    if (!header) continue;
+    const nameColumn = header.cells.findIndex((cell) => normalized(cell) === 'DISTRIBUTOR');
+    const countColumn = header.cells.findIndex(
+      (cell) => normalized(cell).replace(/[^A-Z]/g, '') === 'NOOFSTORES',
+    );
+    const serialColumn = header.cells.findIndex(
+      (cell) => normalized(cell).replace(/[^A-Z]/g, '') === 'SNO',
+    );
+    if (countColumn < 0 || serialColumn < 0) continue;
     for (const row of rows)
-      if (typeof row.cells[0] === 'number' && row.cells[1]) {
-        const name = normalized(row.cells[1]);
+      if (typeof row.cells[serialColumn] === 'number' && row.cells[nameColumn]) {
+        const name = normalized(row.cells[nameColumn]);
         groups.set(name, [
           ...(groups.get(name) ?? []),
-          { worksheet, rowNumber: row.rowNumber, value: row.cells[2] },
+          { worksheet, rowNumber: row.rowNumber, value: row.cells[countColumn] },
         ]);
       }
   }
