@@ -186,6 +186,7 @@ describe('PackingListPage carton edit (Phase 4)', () => {
     await flush();
 
     expect(content()).toContain('Editing Carton C1');
+    expect(content()).toContain('Net Weight, Gross Weight, and Dimensions can be entered later, but are required before finalizing the Factory Packing List.');
 
     const packageInput = Array.from(container.querySelectorAll('input')).find(
       (i) => (i as HTMLInputElement).value === '1 poly bag per unit',
@@ -345,14 +346,15 @@ describe('PackingListPage carton edit (Phase 4)', () => {
 // Factory Packing List finalization, where the API returns a dedicated
 // cartonsMissingPackingMetadata blocker this page must render.
 describe('PackingListPage carton packing metadata (DEMO-018)', () => {
-  it('renders Net Weight, Gross Weight and Dimensions fields on the Add Carton form, all optional', async () => {
+  it('labels packing metadata clearly as required before finalization but optional during draft save', async () => {
     await renderPage(buildPackingList());
     buttonByText('Add Carton')!.click();
     await flush();
 
-    expect(triggerByLabel('Net Weight, kg (optional)')).toBeTruthy();
-    expect(triggerByLabel('Gross Weight, kg (optional)')).toBeTruthy();
-    expect(triggerByLabel('Dimensions (optional)')).toBeTruthy();
+    expect(triggerByLabel('Net Weight, kg')).toBeTruthy();
+    expect(triggerByLabel('Gross Weight, kg')).toBeTruthy();
+    expect(triggerByLabel('Dimensions')).toBeTruthy();
+    expect(content()).toContain('Net Weight, Gross Weight, and Dimensions can be entered later, but are required before finalizing the Factory Packing List.');
   });
 
   it('does not block Add Carton when Net Weight/Gross Weight/Dimensions are left blank', async () => {

@@ -371,6 +371,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                         </ValidationMessage>
                       )}
                       <div className="mt-3 space-y-3">
+                        <p className="text-xs text-muted-foreground">Net Weight, Gross Weight, and Dimensions can be entered later, but are required before finalizing the Factory Packing List.</p>
                         <div className="flex flex-wrap gap-3">
                           <SelectField label="Destination" value={editDestinationId} onValueChange={changeEditDestination} width="fill">
                             {packingList.destinations.map((d) => (
@@ -385,21 +386,21 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                             onChange={(e) => setEditPackageDetails(e.target.value)}
                           />
                           <TextField
-                            label="Net Weight, kg (optional)"
+                            label="Net Weight, kg"
                             type="number"
                             min={0}
                             value={editNetWeight}
                             onChange={(e) => setEditNetWeight(e.target.value)}
                           />
                           <TextField
-                            label="Gross Weight, kg (optional)"
+                            label="Gross Weight, kg"
                             type="number"
                             min={0}
                             value={editGrossWeight}
                             onChange={(e) => setEditGrossWeight(e.target.value)}
                           />
                           <TextField
-                            label="Dimensions (optional)"
+                            label="Dimensions"
                             value={editDimensions}
                             onChange={(e) => setEditDimensions(e.target.value)}
                           />
@@ -503,12 +504,13 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                 <div className="rounded-md border border-dashed border-border p-3">
                   {addingForDestination === destination.id ? (
                     <div className="space-y-3" onKeyDown={createEnterToNextHandler()}>
+                      <p className="text-xs text-muted-foreground">Net Weight, Gross Weight, and Dimensions can be entered later, but are required before finalizing the Factory Packing List.</p>
                       <div className="flex flex-wrap gap-3">
                         <TextField label="Carton Number" value={cartonNumber} onChange={(e) => setCartonNumber(e.target.value)} />
                         <TextField label="Package Details (optional)" value={packageDetails} onChange={(e) => setPackageDetails(e.target.value)} />
-                        <TextField label="Net Weight, kg (optional)" type="number" min={0} value={netWeight} onChange={(e) => setNetWeight(e.target.value)} />
-                        <TextField label="Gross Weight, kg (optional)" type="number" min={0} value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} />
-                        <TextField label="Dimensions (optional)" value={dimensions} onChange={(e) => setDimensions(e.target.value)} />
+                        <TextField label="Net Weight, kg" type="number" min={0} value={netWeight} onChange={(e) => setNetWeight(e.target.value)} />
+                        <TextField label="Gross Weight, kg" type="number" min={0} value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} />
+                        <TextField label="Dimensions" value={dimensions} onChange={(e) => setDimensions(e.target.value)} />
                       </div>
                       <div className="space-y-2">
                         {destination.lines.map((line) => {
