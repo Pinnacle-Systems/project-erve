@@ -205,6 +205,9 @@ export async function attachStagedStyleImage(
     } catch (error) {
       if (!(error instanceof FileNotFoundInStorageError)) throw error;
     }
+    // Missing or corrupted — repoint at the freshly staged bytes and
+    // remove the stale blob so a corrupted copy never lingers in storage.
+    await getFileStorage().delete(duplicate.file.storageKey);
     await tx.file.update({ where: { id: duplicate.fileId }, data: { storageKey: staged.storageKey } });
     return { image: duplicate, created: true };
   }

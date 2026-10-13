@@ -42,7 +42,7 @@ import {
   type EmbeddedImage,
   type EmbeddedImageAmbiguity,
 } from '../../cli/xlsx-embedded-images.js';
-import { createStyle, validateStyleCreate, StyleCommittedReadError, type StyleFactoryMappingRequest, type StyleSizeRequest } from './master-data.service.js';
+import { createStyle, validateStyleCreate, styleCommittedDespiteError, type StyleFactoryMappingRequest, type StyleSizeRequest } from './master-data.service.js';
 import { stageStyleImage, attachStagedStyleImage, discardStagedStyleImage, validateImageUpload, type StagedStyleImage } from './style-images.service.js';
 
 function sha256Hex(buffer: Buffer): string {
@@ -537,7 +537,11 @@ export async function executeBulkStyleImport(
       }
       const alreadyPresent = styleId && await expectedImagesPresent(styleId, create.images);
       if (!alreadyPresent) {
-        for (const image of create.images) staged.push(await stageStyleImage({ buffer: image.buffer, originalName: image.fileName }));
+        // A new Style's id isn't known until the create commits below, so
+        // its images are staged under a placeholder path and relocated to
+        // style-images/<styleId>/... inside commit() once it is.
+        for (const image of create.images)
+          staged.push(await stageStyleImage({ buffer: image.buffer, originalName: image.fileName }, styleId ?? undefined));
       }
       const commit = async (tx: Prisma.TransactionClient, created: { id: string }) => {
         await requireBulkStyleImportActor(actor, tx);
@@ -546,6 +550,12 @@ export async function executeBulkStyleImport(
           throw HttpError.conflict('Expected images changed during recovery; retry this import');
         }
         for (const image of staged) {
+          if (image.storageKey.startsWith('style-images/staged/')) {
+            const relocatedKey = image.storageKey.replace('style-images/staged/', `style-images/${created.id}/`);
+            await getFileStorage().put(relocatedKey, await getFileStorage().read(image.storageKey));
+            await getFileStorage().delete(image.storageKey);
+            image.storageKey = relocatedKey;
+          }
           const attached = await attachStagedStyleImage(actor, tx, created.id, image);
           if (attached.created) retained.add(image.storageKey);
         }
@@ -571,11 +581,12 @@ export async function executeBulkStyleImport(
       }
       results.push({ ...base, outcome: 'COMPLETED', styleId });
     } catch (error) {
-      if (error instanceof StyleCommittedReadError) {
+      const committedStyleId = styleCommittedDespiteError(error);
+      if (committedStyleId) {
         // createStyle's transaction (Style, images and the COMPLETED
         // row-result) already committed; this is a separate failure in
         // the post-commit read-back, not the write itself rolling back.
-        results.push({ ...base, outcome: 'COMPLETED', styleId: error.styleId });
+        results.push({ ...base, outcome: 'COMPLETED', styleId: committedStyleId });
         continue;
       }
       retained.clear(); // Every metadata/provenance write rolled back.

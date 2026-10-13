@@ -339,24 +339,36 @@ export async function createStyle(
 
   // The transaction above has already committed by this point; a failure in
   // this read-back is a separate, non-transactional failure and must not be
-  // mistaken by callers for the write itself having rolled back.
+  // mistaken by callers for the write itself having rolled back. Tag the
+  // ORIGINAL error (rather than wrapping it in a new class) so callers that
+  // don't check this marker see the exact same error shape/status they
+  // always did — only the bulk importer looks for it.
   try {
     return await getStyleById(styleId);
   } catch (error) {
-    throw new StyleCommittedReadError(styleId, error);
+    markStyleCommittedBeforeError(error, styleId);
+    throw error;
   }
 }
 
-/** Thrown only when createStyle's write has already committed and a
- * subsequent read-back of the created row failed; callers that only need
- * the id (e.g. bulk import) can treat this as success. */
-export class StyleCommittedReadError extends Error {
-  constructor(
-    public readonly styleId: string,
-    public readonly cause: unknown,
-  ) {
-    super(cause instanceof Error ? cause.message : String(cause));
+const STYLE_COMMITTED_BEFORE_ERROR = Symbol('styleCommittedBeforeError');
+interface TaggableError {
+  [STYLE_COMMITTED_BEFORE_ERROR]?: string;
+}
+
+function markStyleCommittedBeforeError(error: unknown, styleId: string): void {
+  if (error && typeof error === 'object') {
+    (error as TaggableError)[STYLE_COMMITTED_BEFORE_ERROR] = styleId;
   }
+}
+
+/** When createStyle's post-commit read-back (not the write itself) fails,
+ * returns the id of the Style that was already durably committed; null for
+ * any other error, including the write rolling back. */
+export function styleCommittedDespiteError(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const styleId = (error as TaggableError)[STYLE_COMMITTED_BEFORE_ERROR];
+  return typeof styleId === 'string' ? styleId : null;
 }
 
 /** Read-only create planning, shared by manual and bulk Style creates. */

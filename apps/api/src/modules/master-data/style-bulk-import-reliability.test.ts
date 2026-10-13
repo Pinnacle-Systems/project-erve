@@ -176,4 +176,17 @@ describe('Style import reliability', () => {
     expect((await executeBulkStyleImport(actor, plan, 'old.xlsx')).results[0]!.outcome).toBe('COMPLETED');
     expect(await prisma.styleImage.count({ where: { styleId: style.id } })).toBe(2);
   });
+  it('stores a newly imported Style image under its own styleId, never under the staging path', async () => {
+    const { actor } = await setup();
+    const plan = await planBulkStyleImport(embeddedWorkbook([['ST-PATH', 'Tee', 100, 'AW25', 'S', 'BC-PATH']], [{ row: 2, bytes: png }]), 'Styles');
+    const summary = await executeBulkStyleImport(actor, plan, 'styles.xlsx');
+    expect(summary.results[0]!.outcome).toBe('COMPLETED');
+    const image = await prisma.styleImage.findFirstOrThrow({
+      where: { styleId: summary.results[0]!.styleId! },
+      include: { file: true },
+    });
+    expect(image.file.storageKey).toBe(`style-images/${summary.results[0]!.styleId}/${image.fileId}.png`);
+    expect(await getFileStorage().exists(`style-images/staged/${image.fileId}.png`)).toBe(false);
+    expect(await getFileStorage().read(image.file.storageKey)).toEqual(png);
+  });
 });
