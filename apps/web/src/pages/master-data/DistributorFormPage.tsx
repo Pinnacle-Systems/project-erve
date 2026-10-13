@@ -49,7 +49,7 @@ const fieldLabels: Record<keyof typeof emptyForm, string> = {
 };
 
 // Required at creation; the backend rejects a create/update without these.
-const requiredFieldKeys = new Set<keyof typeof emptyForm>(['code', 'name', 'gstin']);
+const requiredFieldKeys = new Set<keyof typeof emptyForm>(['name', 'gstin']);
 
 const identityFieldKeys = ['code', 'name', 'gstin', 'purchaseMode', 'status'] as const;
 const contactFieldKeys = ['contactName', 'contactEmail', 'contactPhone'] as const;
@@ -67,7 +67,7 @@ export const PURCHASE_MODE_HELP_TEXT =
 
 function cleanPayload(form: typeof emptyForm) {
   return Object.fromEntries(
-    Object.entries(form).map(([key, value]) => [key, value === '' ? null : value]),
+    Object.entries(form).filter(([key]) => key !== 'code').map(([key, value]) => [key, value === '' ? null : value]),
   ) as Record<string, string | null>;
 }
 
@@ -125,8 +125,8 @@ export function DistributorFormPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!form.code.trim() || !form.name.trim() || !form.gstin.trim()) {
-        throw new Error('Code, name, and GSTIN are required');
+      if (!form.name.trim() || !form.gstin.trim()) {
+        throw new Error('Name and GSTIN are required');
       }
       const gstin = form.gstin.trim().toUpperCase();
       if (!GSTIN_PATTERN.test(gstin)) {
@@ -134,7 +134,6 @@ export function DistributorFormPage() {
       }
       const payload: Record<string, string | null> = {
         ...cleanPayload(form),
-        code: form.code.trim(),
         name: form.name.trim(),
         gstin,
         status: form.status,
@@ -205,10 +204,10 @@ export function DistributorFormPage() {
         required={requiredFieldKeys.has(key)}
         type={key === 'contactEmail' ? 'email' : 'text'}
         value={form[key]}
+        readOnly={key === 'code'}
         errorMessage={
           error &&
-          ((key === 'code' && !form.code) ||
-            (key === 'name' && !form.name) ||
+          ((key === 'name' && !form.name) ||
             (key === 'gstin' && !form.gstin))
             ? 'Required'
             : undefined
@@ -241,7 +240,7 @@ export function DistributorFormPage() {
           }}
         >
           <FormSection title="Identity / Business">
-            <FormGrid columns={3}>{identityFieldKeys.map(renderField)}</FormGrid>
+            <FormGrid columns={3}>{identityFieldKeys.filter((key) => isEdit || key !== 'code').map(renderField)}</FormGrid>
           </FormSection>
 
           <FormSection title="Contact">

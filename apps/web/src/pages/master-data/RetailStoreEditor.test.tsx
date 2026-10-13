@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '../../lib/api-client.js';
 import { RetailStoreEditor } from './RetailStoreEditor.js';
+import type { RetailStore } from '@erve/types';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -32,13 +33,14 @@ function type(label: string, value: string) {
     el.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
-async function renderEditor(onSaved = vi.fn()) {
+async function renderEditor(onSaved = vi.fn(), store?: RetailStore) {
   act(() =>
     root.render(
       <QueryClientProvider
         client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}
       >
         <RetailStoreEditor
+          store={store}
           distributor={{ id: 'd1', name: 'Distributor One' }}
           onSaved={onSaved}
           onCancel={vi.fn()}
@@ -49,13 +51,32 @@ async function renderEditor(onSaved = vi.fn()) {
   return onSaved;
 }
 describe('Retail Store contained editor', () => {
+  it('displays the existing Store Code read-only and omits it from updates', async () => {
+    const store: RetailStore = {
+      id: 's1', distributorId: 'd1', code: 'LEGACY-STORE', name: 'Store One',
+      addressLine1: '12 Road', addressLine2: null, city: 'Chennai', state: 'TN',
+      country: 'India', postalCode: '600001', gstin: null, contactName: null,
+      contactEmail: null, contactPhone: null, status: 'ACTIVE', createdAt: '', updatedAt: '',
+    };
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: store } });
+    await renderEditor(vi.fn(), store);
+    expect(input('Store Code').value).toBe('LEGACY-STORE');
+    expect(input('Store Code').readOnly).toBe(true);
+    type('City', 'Mumbai');
+    await act(async () => {
+      container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(patch).toHaveBeenCalledWith('/retail-stores/s1', expect.objectContaining({ city: 'Mumbai' }));
+    expect(patch.mock.calls[0]![1]).not.toHaveProperty('code');
+  });
   it('keeps the Distributor fixed and submits complete address/contact fields', async () => {
     const post = vi
       .spyOn(apiClient, 'post')
       .mockResolvedValue({ data: { data: { id: 'new-store', code: 'S1', name: 'Store One' } } });
     const saved = await renderEditor();
     expect(input('Distributor').value).toBe('Distributor One');
-    type('Store Code', 'S1');
+
     type('Store Name', 'Store One');
     type('Address Line 1', '12 Road');
     type('City', 'Chennai');
@@ -71,19 +92,19 @@ describe('Retail Store contained editor', () => {
       '/retail-stores',
       expect.objectContaining({
         distributorId: 'd1',
-        code: 'S1',
         name: 'Store One',
         city: 'Chennai',
         postalCode: '600001',
         country: 'India',
       }),
     );
+    expect(post.mock.calls[0]![1]).not.toHaveProperty('code');
     expect(saved).toHaveBeenCalledWith(expect.objectContaining({ id: 'new-store' }));
   });
   it('preserves entered fields and displays server errors after failure', async () => {
     vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('Duplicate Store Code'));
     await renderEditor();
-    type('Store Code', 'S1');
+
     type('Store Name', 'Store One');
     type('Address Line 1', '12 Road');
     type('City', 'Chennai');
@@ -95,7 +116,7 @@ describe('Retail Store contained editor', () => {
         .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
       await new Promise((r) => setTimeout(r, 20));
     });
-    expect(input('Store Code').value).toBe('S1');
+    expect(input('Store Name').value).toBe('Store One');
     expect(container.textContent).toContain('Duplicate Store Code');
   });
 });
