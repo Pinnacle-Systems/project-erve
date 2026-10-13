@@ -365,6 +365,30 @@ describe('QaInspectionForm', () => {
     expect(canReopenQaForm(undefined)).toBe(false);
   });
 
+  it('marks missing PP Sample evidence as a design-system validation error', async () => {
+    const source = detail();
+    const form = source.sessions[0]!.forms[0]!;
+    source.sessions[0]!.forms = [form];
+    source.sessions[0]!.processFlowPpSample = {
+      executionId: 'execution-1',
+      processFlowActivityId: 'activity-1',
+      qualityFormVersionId: 'sample-v1',
+      sampleQuantity: 5,
+      decision: null,
+    };
+    source.sessions[0]!.evidence = [];
+    await renderHarness(source);
+
+    await act(async () => button('Finalize size M').click());
+
+    const error = Array.from(container.querySelectorAll('[role="alert"]')).find(
+      (element) =>
+        element.textContent?.includes('Evidence is required before a PP Sample can be finalized.'),
+    );
+    expect(error).toBeDefined();
+    expect(error?.className).toContain('text-danger');
+  });
+
   it('renders one locked PP Sample context and sends the calculated QA decision', async () => {
     const source = detail();
     const form = source.sessions[0]!.forms[0]!;
