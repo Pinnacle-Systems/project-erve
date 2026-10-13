@@ -72,6 +72,13 @@ const executeResponse = {
 };
 
 describe('StyleBulkImportPage', () => {
+  it('offers template, worksheet selection and history in the existing Style workflow', () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
+    render();
+    expect(container.textContent).toContain('Download template');
+    expect(container.querySelector('[aria-label="Worksheet"]')).not.toBeNull();
+    expect(container.textContent).toContain('Execution history');
+  });
   it('enables Preview only once a file is chosen, then shows the preflight summary and per-row table', async () => {
     const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue(preflightResponse);
     render();

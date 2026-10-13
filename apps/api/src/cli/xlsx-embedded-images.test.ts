@@ -98,6 +98,10 @@ function buildXlsxFixture(options: FixtureOptions = {}): Buffer {
 }
 
 describe('extractEmbeddedImagesByRow', () => {
+  it('reports broken expected drawing parts instead of declaring there are no images', () => {
+    const result = extractEmbeddedImagesByRow(buildXlsxFixture({ includeDrawing: false }));
+    expect(result.ambiguous).toMatchObject([{ reason: 'BROKEN_DRAWING_REFERENCE' }]);
+  });
   it('resolves a single embedded PNG to its 1-indexed spreadsheet row', () => {
     const buffer = buildXlsxFixture();
     const result = extractEmbeddedImagesByRow(buffer);

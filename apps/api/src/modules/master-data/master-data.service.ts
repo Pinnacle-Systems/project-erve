@@ -284,18 +284,12 @@ export async function createStyle(
 ) {
   const { sizes = [], factoryMappings = [], ...styleFields } = input;
   const styleId = createId();
-  const season = await assertActiveSeason(input.seasonId);
+  const { plannedSizes, plannedFactories } = await validateStyleCreate({ ...input, sizes, factoryMappings });
   if (styleFields.hsnId !== undefined && styleFields.hsnId !== null) {
     const hsn = await assertActiveHsn(styleFields.hsnId as string);
     styleFields.hsnCode = hsn.code;
     styleFields.hsnDescription = hsn.description;
   }
-  const plannedSizes = await planStyleSizes(
-    { lmixNumber: styleFields.lmixNumber as string | null | undefined, season },
-    sizes,
-    { generateMissing: true },
-  );
-  const plannedFactories = await planStyleFactoryMappings(factoryMappings);
   const barcodes = plannedSizes.flatMap((planned) => (planned.barcode ? [planned.barcode] : []));
 
   try {
@@ -325,6 +319,15 @@ export async function createStyle(
       if (options.onCommitted) {
         await options.onCommitted(tx, { id: styleId });
       }
+      await recordAuditLog({
+        actorId: actor.id,
+        action: 'STYLE_CREATED',
+        entityType: 'Style',
+        entityId: styleId,
+        metadata: plannedSizes.length > 0 || plannedFactories.length > 0
+          ? { sizes: plannedSizes.map((p) => ({ sizeId: p.data.sizeId, barcode: p.barcode })), factories: plannedFactories.map((f) => f.factoryId) }
+          : undefined,
+      }, tx);
     });
   } catch (error) {
     await throwIfBarcodeConflict(error, barcodes);
@@ -334,21 +337,44 @@ export async function createStyle(
     throw error;
   }
 
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'STYLE_CREATED',
-    entityType: 'Style',
-    entityId: styleId,
-    metadata:
-      plannedSizes.length > 0 || plannedFactories.length > 0
-        ? {
-            sizes: plannedSizes.map((p) => ({ sizeId: p.data.sizeId, barcode: p.barcode })),
-            factories: plannedFactories.map((f) => f.factoryId),
-          }
-        : undefined,
-  });
+  // The transaction above has already committed by this point; a failure in
+  // this read-back is a separate, non-transactional failure and must not be
+  // mistaken by callers for the write itself having rolled back.
+  try {
+    return await getStyleById(styleId);
+  } catch (error) {
+    throw new StyleCommittedReadError(styleId, error);
+  }
+}
 
-  return getStyleById(styleId);
+/** Thrown only when createStyle's write has already committed and a
+ * subsequent read-back of the created row failed; callers that only need
+ * the id (e.g. bulk import) can treat this as success. */
+export class StyleCommittedReadError extends Error {
+  constructor(
+    public readonly styleId: string,
+    public readonly cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
+/** Read-only create planning, shared by manual and bulk Style creates. */
+export async function validateStyleCreate(input: {
+  seasonId: string;
+  lmixNumber?: unknown;
+  hsnId?: string | null;
+  sizes?: StyleSizeRequest[];
+  factoryMappings?: StyleFactoryMappingRequest[];
+}) {
+  const season = await assertActiveSeason(input.seasonId);
+  if (input.hsnId) await assertActiveHsn(input.hsnId);
+  const plannedSizes = await planStyleSizes(
+    { lmixNumber: input.lmixNumber as string | null | undefined, season },
+    input.sizes ?? [], { generateMissing: true },
+  );
+  const plannedFactories = await planStyleFactoryMappings(input.factoryMappings ?? []);
+  return { season, plannedSizes, plannedFactories };
 }
 
 // A Style save is one logical operation from the user's point of view, even

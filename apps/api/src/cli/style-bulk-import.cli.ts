@@ -42,7 +42,13 @@ function parseArgs(argv: string[]) {
   if (execute && !actorUserId) {
     throw new CliError('--execute requires --actor-user-id <id> (the authorized User this import is attributed to)');
   }
-  return { file, execute, actorUserId };
+  const worksheetIndex = argv.indexOf('--worksheet');
+  const worksheet = worksheetIndex >= 0 ? argv[worksheetIndex + 1] : undefined;
+  if (worksheetIndex >= 0 && (!worksheet || worksheet.startsWith('--'))) throw new CliError('--worksheet requires an exact worksheet name');
+  const checksumIndex = argv.indexOf('--expected-checksum');
+  const expectedChecksum = checksumIndex >= 0 ? argv[checksumIndex + 1] : undefined;
+  if (checksumIndex >= 0 && (!expectedChecksum || !/^[a-f0-9]{64}$/.test(expectedChecksum))) throw new CliError('--expected-checksum requires the preview SHA-256');
+  return { file, execute, actorUserId, worksheet, expectedChecksum };
 }
 
 function printRows(title: string, rows: BulkStyleImportPlanRow[]) {
@@ -55,12 +61,14 @@ function printRows(title: string, rows: BulkStyleImportPlanRow[]) {
 }
 
 async function main(): Promise<void> {
-  const { file, execute, actorUserId } = parseArgs(process.argv.slice(2));
+  const { file, execute, actorUserId, worksheet, expectedChecksum } = parseArgs(process.argv.slice(2));
   console.log(`Target database: ${describeDatabaseTarget(process.env.DATABASE_URL ?? '')}`);
   console.log(execute ? 'Mode: EXECUTE' : 'Mode: DRY RUN (no data is written)');
 
   const buffer = await readFile(file);
-  const plan = await planBulkStyleImport(buffer);
+  const plan = await planBulkStyleImport(buffer, worksheet);
+  if (expectedChecksum && expectedChecksum !== plan.sourceFileChecksum) throw new CliError('Workbook checksum changed since review');
+  console.log(`Worksheet: ${plan.worksheet}; SHA-256: ${plan.sourceFileChecksum}`);
   console.table(summarizeBulkStyleImportPlan(plan));
   printRows('Rejected', plan.rows.filter((row) => row.status === 'REJECTED'));
   printRows('Resumable (created by a prior interrupted run, image pending)', plan.rows.filter((row) => row.status === 'RESUME_IMAGE_PENDING'));
@@ -72,6 +80,7 @@ async function main(): Promise<void> {
 
   if (!execute) {
     console.log('\nDry run complete — nothing was written.');
+    if (plan.rows.some((row) => row.status === 'REJECTED') || plan.fileLevelImageWarnings.length > 0) process.exitCode = 2;
     return;
   }
 
@@ -87,12 +96,14 @@ async function main(): Promise<void> {
 
   const needsAttention = summary.results.filter((result) => result.outcome === 'FAILED' || result.outcome === 'IMAGE_PENDING');
   if (needsAttention.length > 0) {
+    process.exitCode = 2;
     console.log('\nRows needing attention:');
     for (const result of needsAttention) {
       console.log(`  row ${result.rowNumber} [${result.styleNumber}] ${result.outcome}: ${result.detail ?? ''}`);
     }
     console.log('\nIMAGE_PENDING rows are safe to retry — re-run this exact command again once the issue is fixed.');
   }
+  if (plan.fileLevelImageWarnings.length > 0) process.exitCode = 2;
 }
 
 main()
