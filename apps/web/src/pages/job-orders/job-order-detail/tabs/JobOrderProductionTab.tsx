@@ -322,9 +322,7 @@ export function JobOrderProductionTab({
 
       {disclaimerMutation.isError && (
         <ValidationMessage tone="error">
-          {disclaimerMutation.error instanceof Error
-            ? disclaimerMutation.error.message
-            : 'Unable to update disclaimer'}
+          {mutationErrorMessage(disclaimerMutation.error, 'Unable to update disclaimer.')}
         </ValidationMessage>
       )}
 
