@@ -20,6 +20,7 @@ import {
   stylesRouter,
 } from './modules/master-data/master-data.routes.js';
 import { styleBulkImportRouter } from './modules/master-data/style-bulk-import.routes.js';
+import { masterImportsRouter } from './modules/master-data/master-import.routes.js';
 import { financialYearsRouter } from './modules/master-data/financial-year.routes.js';
 import { sellerRegistrationsRouter } from './modules/master-data/seller-registration.routes.js';
 import { retailStoresRouter } from './modules/master-data/retail-stores.routes.js';
@@ -111,6 +112,7 @@ export function createApp() {
   // Registered before stylesRouter: /styles/bulk-import/* must never risk
   // being matched by stylesRouter's GET /:id.
   app.use('/styles/bulk-import', styleBulkImportRouter);
+  app.use('/master-imports', masterImportsRouter);
   app.use('/styles', stylesRouter);
   app.use('/sizes', sizesRouter);
   app.use('/seasons', seasonsRouter);

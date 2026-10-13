@@ -48,6 +48,8 @@ export async function resetDatabase(): Promise<void> {
     });
   }
   await prisma.auditLog.deleteMany();
+  await prisma.masterImportSource.deleteMany();
+  await prisma.masterImportRun.deleteMany();
   // Invoice/Actual-Sale rows must go before ErveDispatch below — both
   // InvoiceHandoff.erveDispatchId and DistributorSalesReportLine.erveDispatchId
   // are onDelete: Restrict, and InvoiceHandoff.saleOrderLineId /
