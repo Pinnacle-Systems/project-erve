@@ -282,7 +282,7 @@ describe('Packing Audit carton classification (RPT1 6.5/6.9)', () => {
       roles: ['FACTORY_USER'],
     });
     const distributor = await prisma.distributor.create({
-      data: { id: createId(), code: `D-${createId()}`, name: 'Fixture Distributor', gstin: '27AAAAA0000A1Z5', purchaseMode: 'OUTRIGHT' },
+      data: { id: createId(), code: `D-${createId()}`, name: `Fixture Distributor ${createId()}`, gstin: '27AAAAA0000A1Z5', purchaseMode: 'OUTRIGHT' },
     });
     const saleOrder = await prisma.saleOrder.create({
       data: {

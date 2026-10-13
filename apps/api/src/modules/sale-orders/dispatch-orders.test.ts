@@ -1131,12 +1131,18 @@ describe('GET /sale-orders/distributor-options — bounded search (P1L8)', () =>
   it('treats an empty search as the bounded initial options in name then id order (LU0)', async () => {
     const token = await roleToken(['ADMIN']);
     const twins = [];
-    for (let index = 0; index < 3; index += 1) {
-      twins.push(await createTestDistributor({ code: `INIT-TWIN-${index}`, name: 'Acme Twin' }));
+    for (let index = 0; index < 2; index += 1) {
+      twins.push(
+        await createTestDistributor({
+          code: `INIT-TWIN-${index}`,
+          name: 'Acme Twin',
+          purchaseMode: index === 0 ? 'OUTRIGHT' : 'SALE_RETURN',
+        }),
+      );
     }
     await createTestDistributor({ code: 'INIT-LATER', name: 'Zeta Later' });
 
-    const res = await searchOptions(token, { search: '', limit: 3 });
+    const res = await searchOptions(token, { search: '', limit: 2 });
 
     expect(res.status).toBe(200);
     expect(res.body.data.map((row: { id: string }) => row.id)).toEqual(twins.map((twin) => twin.id).sort());

@@ -959,15 +959,21 @@ describe('GET /price-lists/distributor-options — bounded search (P1L8)', () =>
       await createTestDistributor({ code: `INIT-OFF-${index}`, name: `AAA Retired ${index}`, status: 'INACTIVE' });
     }
     const twins = [];
-    for (let index = 0; index < 3; index += 1) {
-      twins.push(await createTestDistributor({ code: `INIT-TWIN-${index}`, name: 'Bharat Twin' }));
+    for (let index = 0; index < 2; index += 1) {
+      twins.push(
+        await createTestDistributor({
+          code: `INIT-TWIN-${index}`,
+          name: 'Bharat Twin',
+          purchaseMode: index === 0 ? 'OUTRIGHT' : 'SALE_RETURN',
+        }),
+      );
     }
 
-    const res = await searchOptions(token, { search: '', status: 'ACTIVE', limit: 2 });
+    const res = await searchOptions(token, { search: '', status: 'ACTIVE', limit: 1 });
 
     expect(res.status).toBe(200);
     expect(res.body.data.map((row: { id: string }) => row.id)).toEqual(
-      twins.map((twin) => twin.id).sort().slice(0, 2),
+      twins.map((twin) => twin.id).sort().slice(0, 1),
     );
   });
 
