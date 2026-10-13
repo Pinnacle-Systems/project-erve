@@ -194,6 +194,13 @@ afterEach(() => {
 });
 
 describe('FactoryTaskDetailPage production stages', () => {
+  it('renders legible QA coverage separators without encoding artifacts', async () => {
+    await renderTask(job({ qualityActivities: [finalQualityActivity()] }));
+
+    expect(container.textContent).toContain('Coverage UNKNOWN · Passed 0 · Failed 0');
+    expect(container.textContent).not.toContain('Â·');
+  });
+
   it('validates a Final size allocation and starts only after correction', async () => {
     authState.roles = ['QA_USER'];
     vi.mocked(apiClient.post).mockResolvedValue({
