@@ -11,7 +11,8 @@ export const retailStoreStatusSchema = z.object({ status: z.enum(['ACTIVE', 'INA
 export const createRetailStoreSchema = z
   .object({
     distributorId: text,
-    code: text,
+    // Deprecated compatibility field; the service allocates ordinary codes.
+    code: z.string().trim().optional(),
     name: text,
     addressLine1: text,
     addressLine2: optionalText,

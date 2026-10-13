@@ -506,7 +506,9 @@ export async function executeH3aImport(
   const actor = toCurrentUser(adminRecord);
 
   for (const f of before.factories.filter((r) => r.action === 'MISSING_CREATE')) {
-    await createFactory(actor, { code: f.code, name: f.name, status: 'ACTIVE' });
+    // Sealed historical profiles resolve exact legacy codes during re-plan.
+    // Ordinary/manual creation ignores input.code and allocates a new code.
+    await createFactory(actor, { name: f.name, status: 'ACTIVE' }, { legacyImportCode: f.code });
     created.factories.push(f.code);
     log(`Factory created: ${f.code} ${f.name}`);
   }

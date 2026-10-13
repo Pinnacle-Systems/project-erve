@@ -74,7 +74,7 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
     const order = (await create(f.token, f.payload).expect(201)).body.data;
     expect(order.distributorGroups[0].destinations[0]!).toMatchObject({
       retailStoreId: f.store.id,
-      storeCode: storeFields.code,
+      storeCode: f.store.code,
       label: storeFields.name,
       addressLine1: storeFields.addressLine1,
       addressLine2: storeFields.addressLine2,
@@ -128,7 +128,6 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
       .set('Authorization', `Bearer ${f.token}`)
       .send({
         name: 'Changed Store',
-        code: 'CHANGED',
         addressLine1: 'Changed Road',
         status: 'INACTIVE',
       })
@@ -158,7 +157,7 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
     edit.distributors[0]!.destinations[0]!.addressLine1 = 'Explicit correction';
     const corrected = (await patch(f.token, order.id, edit).expect(200)).body.data;
     expect(corrected.distributorGroups[0].destinations[0]!).toMatchObject({
-      storeCode: 'SAME',
+      storeCode: f.store.code,
       label: 'Retail Store',
       addressLine1: 'Explicit correction',
       retailStoreId: f.store.id,
@@ -181,7 +180,7 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
     };
     const refreshed = (await patch(f.token, order.id, refresh).expect(200)).body.data;
     expect(refreshed.distributorGroups[0].destinations[0]).toMatchObject({
-      storeCode: 'CHANGED',
+      storeCode: f.store.code,
       label: 'Changed Store',
       addressLine1: 'Changed Road',
     });
@@ -292,7 +291,7 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
       distributorId: f.stock.distributorId,
       originDestinationId: dest.id,
       destinationLabel: storeFields.name,
-      destinationStoreCode: storeFields.code,
+      destinationStoreCode: f.store.code,
       destinationGstin: storeFields.gstin,
       destinationAddressLine1: storeFields.addressLine1,
       destinationPostalCode: storeFields.postalCode,
@@ -300,7 +299,7 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
     });
     expect(await prisma.invoiceHandoff.count({ where: { erveDispatchId: dispatch.id } })).toBe(1);
     const detail = await request(app).get(`/erve-dispatches/${dispatch.id}`).set('Authorization', `Bearer ${f.token}`).expect(200);
-    expect(detail.body.data.destination).toMatchObject({ storeCode: storeFields.code, gstin: storeFields.gstin, label: storeFields.name, addressLine1: storeFields.addressLine1 });
+    expect(detail.body.data.destination).toMatchObject({ storeCode: f.store.code, gstin: storeFields.gstin, label: storeFields.name, addressLine1: storeFields.addressLine1 });
     await patch(f.token, order.id, {
       expectedVersion: 0,
       remarks: 'Cannot edit after Factory Dispatch',

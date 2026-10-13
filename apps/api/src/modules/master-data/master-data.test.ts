@@ -749,7 +749,7 @@ describe('sizes API', () => {
 });
 
 describe('factories API', () => {
-  it('validates unique factory code and name', async () => {
+  it('allocates factory codes while retaining unique factory names', async () => {
     const { token } = await createTestUserAndToken({
       email: 'admin@test.local',
       password: 'admin-password',
@@ -771,7 +771,8 @@ describe('factories API', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ code: 'FAC-002', name: 'Acme Factory' });
 
-    expect(duplicateCode.status).toBe(409);
+    expect(duplicateCode.status).toBe(201);
+    expect(duplicateCode.body.data.code).toBe('FAC-000002');
     expect(duplicateName.status).toBe(409);
   });
 
@@ -1421,7 +1422,7 @@ describe('distributors API', () => {
     const res = await createDistributorViaApi(token);
 
     expect(res.status).toBe(201);
-    expect(res.body.data.code).toBe('DIST-001');
+    expect(res.body.data.code).toBe('DST-000001');
     expect(res.body.data.status).toBe('ACTIVE');
     expect(res.body.data.gstin).toBe('27AAAAA0000A1Z5');
 
@@ -1497,7 +1498,7 @@ describe('distributors API', () => {
     },
   );
 
-  it('validates required fields and rejects duplicate code or name', async () => {
+  it('validates required fields, allocates codes and rejects duplicate names within purchase mode', async () => {
     const { token } = await createAdmin();
 
     const created = await createDistributorViaApi(token);
@@ -1508,7 +1509,8 @@ describe('distributors API', () => {
     const duplicateName = await createDistributorViaApi(token, { code: 'DIST-003' });
 
     expect(missingName.status).toBe(400);
-    expect(duplicateCode.status).toBe(409);
+    expect(duplicateCode.status).toBe(201);
+    expect(duplicateCode.body.data.code).toBe('DST-000002');
     expect(duplicateName.status).toBe(409);
   });
 
@@ -1963,8 +1965,8 @@ describe('Distributor lookup — GET /distributors/options (P1L3)', () => {
       await createTestDistributor({ code: `INIT-OFF-${index}`, name: `AAA Retired ${index}`, status: 'INACTIVE' });
     }
     const twins = [];
-    for (let index = 0; index < 3; index += 1) {
-      twins.push(await createTestDistributor({ code: `INIT-TWIN-${index}`, name: 'Bharat Twin' }));
+    for (let index = 0; index < 2; index += 1) {
+      twins.push(await createTestDistributor({ code: `INIT-TWIN-${index}`, name: 'Bharat Twin', purchaseMode: index === 0 ? 'OUTRIGHT' : 'SALE_RETURN' }));
     }
     for (let index = 0; index < 20; index += 1) {
       await createTestDistributor({ code: `INIT-${index}`, name: `Zeta ${String(index).padStart(2, '0')}` });
@@ -1977,9 +1979,9 @@ describe('Distributor lookup — GET /distributors/options (P1L3)', () => {
     expect(rows).toHaveLength(20);
     expect(rows.every((row) => row.status === 'ACTIVE')).toBe(true);
     // Identical names fall back to id order, so the bounded page is stable.
-    expect(rows.slice(0, 3).map((row) => row.id)).toEqual(twins.map((twin) => twin.id).sort());
-    expect(rows.slice(3).map((row) => row.name)).toEqual(
-      Array.from({ length: 17 }, (_, index) => `Zeta ${String(index).padStart(2, '0')}`),
+    expect(rows.slice(0, 2).map((row) => row.id)).toEqual(twins.map((twin) => twin.id).sort());
+    expect(rows.slice(2).map((row) => row.name)).toEqual(
+      Array.from({ length: 18 }, (_, index) => `Zeta ${String(index).padStart(2, '0')}`),
     );
   });
 
@@ -2057,7 +2059,7 @@ describe('Style/Distributor list pagination (PAG5)', () => {
     const token = await adminToken();
     const created = [];
     for (let index = 0; index < 5; index += 1) {
-      created.push(await createTestDistributor({ code: `TIE-${index}`, name: 'Same Name Traders' }));
+      created.push(await createTestDistributor({ code: `TIE-${index}`, name: index < 2 ? 'Same Name Traders' : `Same Name Traders ${index}`, purchaseMode: index === 1 ? 'SALE_RETURN' : 'OUTRIGHT' }));
     }
     created.push(await createTestDistributor({ code: 'AAA-1', name: 'Alpha Traders' }));
     created.push(await createTestDistributor({ code: 'ZZZ-1', name: 'Zulu Traders', status: 'INACTIVE' }));

@@ -409,6 +409,17 @@ model UserRole {
   @@map("user_roles")
 }
 
+// Namespace-scoped high-water marks, independent of document numbering/FY.
+// Incremented only inside the transaction that creates the master and audit.
+model MasterCodeCounter {
+  namespace           String @id
+  lastAllocatedSerial BigInt @default(0) @map("last_allocated_serial")
+
+  @@map("master_code_counters")
+}
+
+// Normalized name + purchase mode uniqueness is an expression index in
+// 20261013000000_master_identity; names/codes are preserved verbatim.
 model Distributor {
   id           String            @id
   code         String            @unique

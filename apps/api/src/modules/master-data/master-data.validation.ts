@@ -127,7 +127,8 @@ export const updateSizeSchema = createSizeSchema
 export const updateSizeStatusSchema = z.object({ status: sizeStatusSchema });
 
 export const createFactorySchema = z.object({
-  code: z.string().trim().min(1),
+  // Deprecated compatibility field; ordinary creation always allocates a code.
+  code: z.string().trim().optional(),
   name: z.string().trim().min(1),
   contactName: optionalText,
   contactEmail: z.string().trim().pipe(z.email()).optional().nullable(),
@@ -166,7 +167,8 @@ const gstinSchema = z
 export const distributorPurchaseModeSchema = z.enum(['OUTRIGHT', 'SALE_RETURN']);
 
 const distributorMutableFieldsSchema = z.object({
-  code: z.string().trim().min(1),
+  // Deprecated compatibility field; ordinary creation always allocates a code.
+  code: z.string().trim().optional(),
   name: z.string().trim().min(1),
   gstin: gstinSchema,
   contactName: optionalText,

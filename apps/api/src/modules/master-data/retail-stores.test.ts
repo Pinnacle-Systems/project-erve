@@ -39,14 +39,25 @@ const post = (auth: string, distributorId: string, patch = {}) =>
     .send({ ...fields, distributorId, ...patch });
 
 describe('DEMO-014 Retail Store master', () => {
-  it('creates multiple stores per Distributor, rejects duplicates and permits the same code for another Distributor', async () => {
+  it('allocates codes for multiple stores per Distributor while retaining legacy composite code scope', async () => {
     const auth = await token();
     const a = await createTestDistributor();
     const b = await createTestDistributor();
     await post(auth, a.id).expect(201);
     await post(auth, a.id, { code: 'ST-002' }).expect(201);
-    await post(auth, a.id).expect(409);
+    await post(auth, a.id).expect(201);
     await post(auth, b.id).expect(201);
+    await prisma.retailStore.create({
+      data: { id: createId(), ...fields, distributorId: a.id, code: 'LEGACY' },
+    });
+    await prisma.retailStore.create({
+      data: { id: createId(), ...fields, distributorId: b.id, code: 'LEGACY' },
+    });
+    await expect(
+      prisma.retailStore.create({
+        data: { id: createId(), ...fields, distributorId: a.id, code: 'LEGACY' },
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
     const list = await request(app)
       .get('/retail-stores')
       .query({ distributorId: a.id, limit: 1 })
@@ -81,7 +92,7 @@ describe('DEMO-014 Retail Store master', () => {
     const lookup = () =>
       request(app)
         .get('/retail-stores/options')
-        .query({ distributorId: a.id, search: 'ST-001' })
+        .query({ distributorId: a.id, search: created.code })
         .set('Authorization', `Bearer ${auth}`);
     expect((await lookup().expect(200)).body.data).toHaveLength(1);
     await request(app)
@@ -90,7 +101,11 @@ describe('DEMO-014 Retail Store master', () => {
       .send({ status: 'INACTIVE' })
       .expect(200);
     expect((await lookup().expect(200)).body.data).toHaveLength(0);
-    await request(app).patch(`/retail-stores/${created.id}`).set('Authorization', `Bearer ${auth}`).send({ contactName: 'New Manager' }).expect(200);
+    await request(app)
+      .patch(`/retail-stores/${created.id}`)
+      .set('Authorization', `Bearer ${auth}`)
+      .send({ contactName: 'New Manager' })
+      .expect(200);
     const detail = await request(app)
       .get(`/retail-stores/${created.id}`)
       .set('Authorization', `Bearer ${auth}`)

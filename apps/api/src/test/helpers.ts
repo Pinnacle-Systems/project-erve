@@ -175,6 +175,7 @@ export async function resetDatabase(): Promise<void> {
   // against this persistent database, since FY rows are otherwise meant to
   // be stable, never-deleted reference data.
   await prisma.documentSequence.deleteMany();
+  await prisma.masterCodeCounter.deleteMany();
   await prisma.financialYear.deleteMany();
   await prisma.size.deleteMany();
   await prisma.refreshSession.deleteMany();
@@ -248,7 +249,7 @@ export async function createTestDistributor(overrides?: {
 }): Promise<{ id: string; code: string; name: string }> {
   const id = createId();
   const code = overrides?.code ?? `DIST-${id}`;
-  const name = overrides?.name ?? 'Test Distributor';
+  const name = overrides?.name ?? `Test Distributor ${id}`;
   const gstin = overrides?.gstin ?? '27AAAAA0000A1Z5';
   await prisma.distributor.create({
     data: {
