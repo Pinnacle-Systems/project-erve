@@ -48,6 +48,36 @@ describe('buildQualitySections', () => {
     });
   });
 
+  it('DEMO-008: builds an ATTENDEE_LIST grid with the participant name and remarks combined per category', () => {
+    const sections = buildQualitySections(makeQualityExecutionView(), new Map());
+    const block = sections[1]!.blocks.find((b) => b.heading === 'Attendees');
+    expect(block).toMatchObject({
+      kind: 'grid',
+      items: [
+        { label: 'MERCHANDISER', value: 'Alice Merchant — Discussed delivery timeline' },
+        { label: 'QA_USER', value: undefined },
+      ],
+    });
+  });
+
+  it('DEMO-008: prints only the name when a historical/unanswered attendee has no remarks', () => {
+    const view = makeQualityExecutionView({
+      responses: {
+        ...makeQualityExecutionView().responses,
+        attendees: [{ componentId: 'attendees-1', roleKey: 'MERCHANDISER', attendeeName: 'Alice Merchant' }],
+      },
+    });
+    const sections = buildQualitySections(view, new Map());
+    const block = sections[1]!.blocks.find((b) => b.heading === 'Attendees');
+    expect(block).toMatchObject({
+      kind: 'grid',
+      items: [
+        { label: 'MERCHANDISER', value: 'Alice Merchant' },
+        { label: 'QA_USER', value: undefined },
+      ],
+    });
+  });
+
   it('builds an ACTION_LIST table with one row per action, columns from config', () => {
     const sections = buildQualitySections(makeQualityExecutionView(), new Map());
     const block = sections[1]!.blocks.find((b) => b.heading === 'Follow-up Actions');

@@ -483,7 +483,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                         ))}
                       {component.type === 'ATTENDEE_LIST' &&
                         (readOnlyView ? (
-                          <QualityReadOnlyGrid>
+                          <QualityRepeatingList>
                             {(Array.isArray(config.roles) ? config.roles : []).map((role) => {
                               const roleConfig =
                                 typeof role === 'string' ? null : (role as ConfigRow);
@@ -493,23 +493,28 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                 typeof role === 'string'
                                   ? role
                                   : text(roleConfig?.label ?? roleKey);
+                              const current = draft.attendees.find(
+                                (value) =>
+                                  value.componentId === component.id && value.roleKey === roleKey,
+                              );
                               return (
-                                <QualityReadOnlyValue
-                                  key={roleKey}
-                                  label={roleLabel}
-                                  value={
-                                    draft.attendees.find(
-                                      (value) =>
-                                        value.componentId === component.id &&
-                                        value.roleKey === roleKey,
-                                    )?.attendeeName
-                                  }
-                                />
+                                <QualityRepeatingRow key={roleKey}>
+                                  <QualityReadOnlyGrid columns={2}>
+                                    <QualityReadOnlyValue
+                                      label={roleLabel}
+                                      value={current?.attendeeName}
+                                    />
+                                    <QualityReadOnlyValue
+                                      label="Remarks"
+                                      value={current?.remarks ?? undefined}
+                                    />
+                                  </QualityReadOnlyGrid>
+                                </QualityRepeatingRow>
                               );
                             })}
-                          </QualityReadOnlyGrid>
+                          </QualityRepeatingList>
                         ) : (
-                          <QualityFieldGrid>
+                          <QualityRepeatingList>
                             {(Array.isArray(config.roles) ? config.roles : []).map((role) => {
                               const roleConfig =
                                 typeof role === 'string' ? null : (role as ConfigRow);
@@ -524,50 +529,82 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                   value.componentId === component.id && value.roleKey === roleKey,
                               );
                               const validation = fieldError(component.id, roleKey);
-                              return (
-                                <TextField
-                                  key={roleKey}
-                                  id={controlId(component.id, roleKey)}
-                                  label={roleLabel}
-                                  required={roleConfig?.required === true}
-                                  errorMessage={validation?.message}
-                                  placeholder="Attendee name"
-                                  width="full"
-                                  value={current?.attendeeName ?? ''}
-                                  onChange={(event) => {
-                                    clearFieldError(
-                                      component.id,
-                                      roleKey,
-                                      undefined,
-                                      Boolean(event.target.value.trim()),
-                                    );
-                                    set(
-                                      'attendees',
-                                      event.target.value
-                                        ? replace(
-                                            draft.attendees,
-                                            (value) =>
-                                              value.componentId === component.id &&
-                                              value.roleKey === roleKey,
-                                            {
-                                              componentId: component.id,
-                                              roleKey,
-                                              attendeeName: event.target.value,
-                                            },
-                                          )
-                                        : draft.attendees.filter(
-                                            (value) =>
-                                              !(
-                                                value.componentId === component.id &&
-                                                value.roleKey === roleKey
-                                              ),
+                              const hasName = Boolean(current?.attendeeName?.trim());
+                              const updateAttendee = (
+                                patch: Partial<{
+                                  attendeeName: string;
+                                  remarks: string | null;
+                                }>,
+                              ) => {
+                                const nextName =
+                                  patch.attendeeName ?? current?.attendeeName ?? '';
+                                const nextRemarks =
+                                  patch.remarks !== undefined
+                                    ? patch.remarks
+                                    : current?.remarks ?? null;
+                                set(
+                                  'attendees',
+                                  nextName.trim()
+                                    ? replace(
+                                        draft.attendees,
+                                        (value) =>
+                                          value.componentId === component.id &&
+                                          value.roleKey === roleKey,
+                                        {
+                                          componentId: component.id,
+                                          roleKey,
+                                          attendeeName: nextName,
+                                          remarks: nextRemarks?.trim() ? nextRemarks : null,
+                                        },
+                                      )
+                                    : draft.attendees.filter(
+                                        (value) =>
+                                          !(
+                                            value.componentId === component.id &&
+                                            value.roleKey === roleKey
                                           ),
-                                    );
-                                  }}
-                                />
+                                      ),
+                                );
+                              };
+                              return (
+                                <QualityRepeatingRow key={roleKey}>
+                                  <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <TextField
+                                      id={controlId(component.id, roleKey)}
+                                      label={roleLabel}
+                                      required={roleConfig?.required === true}
+                                      errorMessage={validation?.message}
+                                      placeholder="Attendee name"
+                                      width="full"
+                                      value={current?.attendeeName ?? ''}
+                                      onChange={(event) => {
+                                        clearFieldError(
+                                          component.id,
+                                          roleKey,
+                                          undefined,
+                                          Boolean(event.target.value.trim()),
+                                        );
+                                        updateAttendee({ attendeeName: event.target.value });
+                                      }}
+                                    />
+                                    <TextField
+                                      id={controlId(component.id, `${roleKey}.remarks`)}
+                                      label="Remarks"
+                                      placeholder={
+                                        hasName ? 'Optional remarks' : 'Enter a name first'
+                                      }
+                                      disabled={!hasName}
+                                      width="full"
+                                      value={current?.remarks ?? ''}
+                                      onChange={(event) =>
+                                        updateAttendee({ remarks: event.target.value })
+                                      }
+                                    />
+                                  </div>
+                                </QualityRepeatingRow>
                               );
                             })}
-                          </QualityFieldGrid>
+                          </QualityRepeatingList>
                         ))}
                       {component.type === 'ACTION_LIST' && (
                         <QualityRepeatingList>

@@ -220,43 +220,35 @@ const PPM: CanonicalQualityFormDefinition = {
       ],
     },
     {
+      // DEMO-008: successor PPM shape. Exactly the 6 confirmed participant
+      // categories (person-name entries, not Yes/No attendance), one
+      // free-text follow-up note (replacing the old repeating action-row
+      // list), and optional photo evidence. ACTION_LIST's multi-row
+      // action/person/date capture — and the old 12-role attendee list — are
+      // intentionally dropped from this *current* shape; historical/
+      // finalized executions pinned to the prior published version keep
+      // rendering their original ATTENDEE_LIST/ACTION_LIST content exactly
+      // as before, since the runtime renders every Quality Form version
+      // generically from its own stored component types.
       title: 'People and follow-up',
       components: [
         {
           type: 'ATTENDEE_LIST',
           title: 'Attendees',
           config: {
-            roles: [
-              'Merchandiser',
-              'Sample Man',
-              'Fabric',
-              'Cutting',
-              'Molding',
-              'Sewing',
-              'Outward Processing',
-              'Finishing',
-              'QA',
-              'Mechanic',
-              'Washing',
-              'Others',
-            ],
-            allowOther: true,
+            roles: ['Merchandiser', 'QA', 'Outward Processing', 'Sewing', 'Fabric', 'Others'],
           },
         },
         {
-          type: 'ACTION_LIST',
-          title: 'Follow-up actions',
+          type: 'COMMENTS',
+          title: 'Follow-up',
+          config: { maxLength: 5000 },
+        },
+        {
+          type: 'ATTACHMENTS',
+          title: 'Photo evidence',
           config: {
-            columns: [
-              { key: 'action', label: 'Comments / action', dataType: 'TEXT', required: true },
-              {
-                key: 'followUpPerson',
-                label: 'Follow-up person',
-                dataType: 'TEXT',
-                required: true,
-              },
-              { key: 'settleDate', label: 'Settle date', dataType: 'DATE' },
-            ],
+            requirements: [{ key: 'meetingEvidence', label: 'Meeting evidence photos' }],
           },
         },
       ],

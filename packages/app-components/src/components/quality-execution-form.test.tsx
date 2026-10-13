@@ -922,7 +922,7 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
           { componentId: 'meeting', fieldKey: 'conductedBy', value: 'Leela' },
         ]),
         attendees: expect.arrayContaining([
-          { componentId: 'attendees', roleKey: 'QA', attendeeName: 'Nina' },
+          { componentId: 'attendees', roleKey: 'QA', attendeeName: 'Nina', remarks: null },
         ]),
         actions: [{ componentId: 'follow-up', values: { action: 'Book lab test' } }],
       }),
@@ -950,6 +950,86 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
         (input) => input.value === 'Book lab test',
       ),
     ).toBe(true);
+  });
+
+  it('DEMO-008: captures attendee remarks alongside the name, keeps rows independent, and renders historical rows without remarks', async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    act(() =>
+      root.render(
+        <QualityExecutionForm execution={ppmExecution()} onSave={save} onFinalize={vi.fn()} />,
+      ),
+    );
+
+    // The pre-existing Merchandiser row (from the fixture) has no remarks —
+    // a historical/undecorated row must still render without remarks input
+    // being disabled, since it already has a name.
+    const merchandiserRemarks = container.querySelector(
+      '#quality-attendees-Merchandiser-remarks',
+    ) as HTMLInputElement;
+    expect(merchandiserRemarks.disabled).toBe(false);
+    expect(merchandiserRemarks.value).toBe('');
+
+    // A row with no name yet (QA) starts with its remarks field disabled —
+    // remarks belong to a named participant record.
+    const qaRemarks = container.querySelector(
+      '#quality-attendees-QA-remarks',
+    ) as HTMLInputElement;
+    expect(qaRemarks.disabled).toBe(true);
+
+    act(() => setInputValue(container.querySelector('#quality-attendees-QA')!, 'Nina'));
+    expect(qaRemarks.disabled).toBe(false);
+    act(() => setInputValue(qaRemarks, 'Confirmed on call'));
+    act(() => setInputValue(merchandiserRemarks, 'No issues raised'));
+
+    await act(async () => button('Save draft').click());
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attendees: expect.arrayContaining([
+          {
+            componentId: 'attendees',
+            roleKey: 'Merchandiser',
+            attendeeName: 'Meera',
+            remarks: 'No issues raised',
+          },
+          {
+            componentId: 'attendees',
+            roleKey: 'QA',
+            attendeeName: 'Nina',
+            remarks: 'Confirmed on call',
+          },
+        ]),
+      }),
+    );
+
+    const saved = save.mock.calls[0]![0];
+    act(() =>
+      root.render(
+        <QualityExecutionForm
+          key="reloaded-draft"
+          execution={{ ...ppmExecution(), version: 3, responses: saved }}
+          onSave={vi.fn()}
+          onFinalize={vi.fn()}
+        />,
+      ),
+    );
+    expect(
+      (container.querySelector('#quality-attendees-QA-remarks') as HTMLInputElement).value,
+    ).toBe('Confirmed on call');
+
+    // Read-only (finalized) view renders both name and remarks for every
+    // configured category.
+    act(() =>
+      root.render(
+        <QualityExecutionForm
+          key="finalized"
+          execution={{ ...ppmExecution('FINALIZED'), responses: saved }}
+          onSave={vi.fn()}
+          onFinalize={vi.fn()}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain('Confirmed on call');
+    expect(container.textContent).toContain('No issues raised');
   });
 
   it('shows configured required indicators and maps finalize errors inline and into a navigable summary', () => {
