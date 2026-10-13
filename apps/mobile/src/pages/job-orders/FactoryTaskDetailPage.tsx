@@ -539,8 +539,8 @@ export function FactoryTaskDetailPage() {
                     {activity.coverage.remainingQuantity ?? 'Pending prepared quantity'}
                   </p>
                   <p>
-                    Coverage {activity.coverage.state} Â· Passed {activity.coverage.passedBatches}{' '}
-                    Â· Failed {activity.coverage.failedBatches}
+                    Coverage {activity.coverage.state} · Passed {activity.coverage.passedBatches}{' '}
+                    · Failed {activity.coverage.failedBatches}
                   </p>
                 </div>
               )}
@@ -549,8 +549,8 @@ export function FactoryTaskDetailPage() {
                 activity.executionHistory.map((cycle) => (
                   <p key={cycle.id} className="text-sm">
                     Cycle {cycle.attemptNumber}:{' '}
-                    {cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size'} Â· Qty{' '}
-                    {cycle.sampleQuantity} Â·{' '}
+                    {cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size'} · Qty{' '}
+                    {cycle.sampleQuantity} ·{' '}
                     {cycle.status === 'DRAFT' ? 'IN PROGRESS' : cycle.outcome}
                   </p>
                 ))}
@@ -595,7 +595,7 @@ export function FactoryTaskDetailPage() {
                           <option value="">Select one size</option>
                           {sizes.map((size) => (
                             <option key={size.id} value={size.id}>
-                              {size.style} Â· {size.sizeLabel}
+                              {size.style} · {size.sizeLabel}
                             </option>
                           ))}
                         </select>
@@ -659,7 +659,7 @@ export function FactoryTaskDetailPage() {
                             startQualityBatch(activity.processFlowVersionStageId, activity.coverage)
                           }
                         >
-                          {startQuality.isPending ? 'Startingâ€¦' : 'Start Next Batch'}
+                          {startQuality.isPending ? 'Starting…' : 'Start Next Batch'}
                         </button>
                       </div>
                     )}
@@ -753,7 +753,7 @@ export function FactoryTaskDetailPage() {
                       });
                     }}
                   >
-                    {startQuality.isPending ? 'Startingâ€¦' : 'Start Inspection'}
+                    {startQuality.isPending ? 'Starting…' : 'Start Inspection'}
                   </button>
                 </div>
               ) : null}
