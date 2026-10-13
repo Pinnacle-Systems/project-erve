@@ -7,6 +7,7 @@ import { Button, DatePicker, NumericField, SelectField, SelectItem, Textarea, Te
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import type { ProcessFlowOption, Style } from '../master-data/types.js';
@@ -478,9 +479,7 @@ export function JobOrderCreatePage() {
               <div>
                 {createMutation.isError && (
                   <ValidationMessage tone="error">
-                    {createMutation.error instanceof Error
-                      ? createMutation.error.message
-                      : 'Unable to create job order'}
+                    {getApiErrorMessage(createMutation.error, 'Unable to create Job Order.')}
                   </ValidationMessage>
                 )}
               </div>
