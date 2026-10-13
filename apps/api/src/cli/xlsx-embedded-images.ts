@@ -40,7 +40,9 @@ export interface EmbeddedImageAmbiguity {
     | 'NO_IMAGE_REFERENCE'
     | 'UNRESOLVED_IMAGE_REFERENCE'
     | 'MISSING_MEDIA_FILE'
-    | 'NON_PNG_IMAGE';
+    | 'NON_PNG_IMAGE'
+    | 'BROKEN_DRAWING_REFERENCE'
+    | 'ORPHAN_IMAGE_ANCHOR';
   detail: string;
   /** The 1-indexed spreadsheet row this ambiguity is attributable to, when known — absent for UNSUPPORTED_ANCHOR_SHAPE/UNPARSEABLE_ROW, where the row itself couldn't be determined. */
   rowNumber?: number;
@@ -84,6 +86,7 @@ interface OoxmlRelationship {
 }
 
 interface OoxmlSheetRef {
+  name?: string;
   'r:id'?: string;
   id?: string;
 }
@@ -98,7 +101,7 @@ interface OoxmlAnchor {
  * isn't a workbook with a readable drawing — that's the common, expected
  * case of "a sheet with no embedded images", not an error.
  */
-export function extractEmbeddedImagesByRow(buffer: Buffer, sheetIndex = 0): EmbeddedImageExtractionResult {
+export function extractEmbeddedImagesByRow(buffer: Buffer, sheetIndex: number | string = 0): EmbeddedImageExtractionResult {
   const result: EmbeddedImageExtractionResult = { imagesByRow: new Map(), ambiguous: [] };
 
   let zip: AdmZip;
@@ -113,7 +116,7 @@ export function extractEmbeddedImagesByRow(buffer: Buffer, sheetIndex = 0): Embe
   if (!workbookXml || !workbookRels) return result;
 
   const sheets = asArray<OoxmlSheetRef>(get(workbookXml, ['workbook', 'sheets', 'sheet']) as OoxmlSheetRef | OoxmlSheetRef[] | undefined);
-  const targetSheet = sheets[sheetIndex];
+  const targetSheet = typeof sheetIndex === 'string' ? sheets.find((sheet) => sheet.name === sheetIndex) : sheets[sheetIndex];
   if (!targetSheet) return result;
   const sheetRid = targetSheet['r:id'] ?? targetSheet.id;
   const workbookRelationships = asArray<OoxmlRelationship>(
@@ -125,21 +128,31 @@ export function extractEmbeddedImagesByRow(buffer: Buffer, sheetIndex = 0): Embe
   const sheetPath = resolveRelationshipTarget('xl', sheetRel.Target);
   const sheetDir = path.posix.dirname(sheetPath);
   const sheetFileName = path.posix.basename(sheetPath);
+  const sheetXml = readXml(zip, sheetPath);
+  const drawing = get(sheetXml, ['worksheet', 'drawing']) as { 'r:id'?: string } | undefined;
+  const declaredDrawingId = drawing?.['r:id'];
+  const brokenDrawing = () => {
+    result.ambiguous.push({ reason: 'BROKEN_DRAWING_REFERENCE', detail: 'The worksheet declares images but its drawing relationship is missing or unreadable; review the source images' });
+    return result;
+  };
   const sheetRelsXml = readXml(zip, path.posix.join(sheetDir, `_rels/${sheetFileName}.rels`));
-  if (!sheetRelsXml) return result;
+  if (!sheetRelsXml) return drawing ? brokenDrawing() : result;
 
   const sheetRelationships = asArray<OoxmlRelationship>(
     get(sheetRelsXml, ['Relationships', 'Relationship']) as OoxmlRelationship | OoxmlRelationship[] | undefined,
   );
-  const drawingRel = sheetRelationships.find((rel) => String(rel.Type).endsWith('/drawing'));
-  if (!drawingRel?.Target) return result;
+  const drawingRel = sheetRelationships.find((rel) => String(rel.Type).endsWith('/drawing') && (!drawing || rel.Id === declaredDrawingId));
+  if (!drawingRel?.Target) return drawing ? brokenDrawing() : result;
 
   const drawingPath = resolveRelationshipTarget(sheetDir, drawingRel.Target);
   const drawingDir = path.posix.dirname(drawingPath);
   const drawingFileName = path.posix.basename(drawingPath);
   const drawingXml = readXml(zip, drawingPath);
   const drawingRelsXml = readXml(zip, path.posix.join(drawingDir, `_rels/${drawingFileName}.rels`));
-  if (!drawingXml || !drawingRelsXml) return result;
+  if (!drawingXml || !drawingRelsXml) {
+    result.ambiguous.push({ reason: 'BROKEN_DRAWING_REFERENCE', detail: 'The worksheet references drawing parts that are missing or unreadable; review the source images' });
+    return result;
+  }
 
   const mediaByRid = new Map<string, string>();
   const drawingRelationships = asArray<OoxmlRelationship>(
@@ -152,7 +165,10 @@ export function extractEmbeddedImagesByRow(buffer: Buffer, sheetIndex = 0): Embe
   }
 
   const wsDr = get(drawingXml, ['xdr:wsDr']) as Record<string, unknown> | undefined;
-  if (!wsDr) return result;
+  if (!wsDr) {
+    result.ambiguous.push({ reason: 'BROKEN_DRAWING_REFERENCE', detail: 'The expected worksheet drawing has no readable anchors' });
+    return result;
+  }
   const anchors = [
     ...asArray<OoxmlAnchor>(wsDr['xdr:twoCellAnchor'] as OoxmlAnchor | OoxmlAnchor[] | undefined),
     ...asArray<OoxmlAnchor>(wsDr['xdr:oneCellAnchor'] as OoxmlAnchor | OoxmlAnchor[] | undefined),
