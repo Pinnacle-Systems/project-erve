@@ -605,6 +605,10 @@ export async function runSourceNormalization(options: NormalizationOptions) {
       if (imageBytes && !reason) {
         const imageRelative = `images/${mrp.season}/${identity.lmix}.png`;
         const output = join(generated, imageRelative);
+        // Season/LMIX come from vendor-supplied workbook cells; refuse to
+        // write anywhere outside the generated images directory.
+        if (!within(join(generated, 'images'), output))
+          throw new Error(`Refusing to write image outside generated/images for ${styleNumber}`);
         await mkdir(join(generated, 'images', mrp.season), { recursive: true });
         await writeFile(output, imageBytes);
         embeddedImages.push({ rowNumber: styleRows.length + 1, bytes: imageBytes });

@@ -122,6 +122,30 @@ describe('historical source normalization', () => {
       businessSourceKey('distributor', ['parent', 'gst']),
     );
   });
+  it('rejects a correction field that only exists via the prototype chain', () => {
+    const key = businessSourceKey('store', ['Parent', 'Name', 'Old Address']);
+    const row = { 'Source Key': key, Name: 'Name' };
+    const location = { sha256: 'a'.repeat(64), worksheet: 'Store Address', rowNumber: 19 };
+    for (const field of ['__proto__', 'toString', 'constructor', 'hasOwnProperty']) {
+      expect(() =>
+        applyCorrections(row, location, [
+          {
+            sourceSha256: location.sha256,
+            worksheet: location.worksheet,
+            rowNumber: location.rowNumber,
+            sourceKey: key,
+            field,
+            previousValue: '',
+            value: 'polluted',
+            status: 'APPROVED' as const,
+            reviewedBy: 'Reviewer',
+            reason: 'Attempted prototype-chain correction',
+          },
+        ]),
+      ).toThrow('Unsupported correction field');
+    }
+    expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+  });
   it('accepts only checksum verified images with matching PO identity and no extraction collision', () => {
     const source = {
       season: 'AW25',

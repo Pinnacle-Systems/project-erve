@@ -153,7 +153,11 @@ export function applyCorrections(
       throw new Error(`Correction worksheet/physical row mismatch for ${c.sourceKey}`);
     if (!c.reviewedBy.trim() || !c.reason.trim())
       throw new Error('Approved corrections require reviewer and reason');
-    if (c.field === 'Source Key' || c.field === 'Source Provenance' || !(c.field in result))
+    if (
+      c.field === 'Source Key' ||
+      c.field === 'Source Provenance' ||
+      !Object.prototype.hasOwnProperty.call(result, c.field)
+    )
       throw new Error(`Unsupported correction field ${c.field}`);
     if (result[c.field] !== c.previousValue)
       throw new Error(`Correction previous value mismatch for ${c.sourceKey}`);
@@ -273,7 +277,16 @@ export function storeCandidates(rows: PhysicalRow[]) {
         );
       continue;
     }
-    if (typeof row.cells[0] !== 'number' || !row.cells[1]) continue;
+    if (typeof row.cells[0] !== 'number' || !row.cells[1]) {
+      // A genuinely blank row is skipped silently; anything else that
+      // doesn't fit the expected serial/name shape is flagged, never
+      // silently dropped.
+      if (row.cells.some((v) => v !== null && v !== ''))
+        exceptions.push(
+          finding('STORE_ROW_UNRECOGNIZED', 'Row does not match the expected serial/name shape', row.cells, row),
+        );
+      continue;
+    }
     const [name, city, state, addressLine1, postalCode, phone, email, gstin] = row.cells
       .slice(1)
       .map(text);
