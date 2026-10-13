@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   native:
-    if: github.head_ref == 'feature/invoice-inv007-workflow' || github.head_ref == 'feature/invoice-inv008-pdf'
+    if: github.head_ref == 'feature/invoice-inv007-workflow' || github.head_ref == 'feature/invoice-inv008-pdf' || github.head_ref == 'feature/iss-015-tax-invoice-style-grouping'
     name: Native Tax Invoice browser evidence
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -40,7 +40,8 @@ jobs:
       VITE_API_URL: http://localhost:4107
       NATIVE_FIXTURE_PATH: ${{ github.workspace }}/.artifacts/native-invoice-fixtures.json
       FILE_STORAGE_DIR: ${{ github.workspace }}/.artifacts/native-media
-      NATIVE_VERIFY_PDF: ${{ github.head_ref == 'feature/invoice-inv008-pdf' }}
+      NATIVE_VERIFY_PDF: ${{ github.head_ref == 'feature/invoice-inv008-pdf' || github.head_ref == 'feature/iss-015-tax-invoice-style-grouping' }}
+      NATIVE_VERIFY_GROUPING: ${{ github.head_ref == 'feature/iss-015-tax-invoice-style-grouping' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -82,7 +83,7 @@ jobs:
       - name: Verify native maximization, zoom and Accountant workflow
         run: node scripts/invoice-native-browser.mjs
       - name: Inspect generated invoice PDF content and geometry
-        if: github.head_ref == 'feature/invoice-inv008-pdf'
+        if: github.head_ref == 'feature/invoice-inv008-pdf' || github.head_ref == 'feature/iss-015-tax-invoice-style-grouping'
         run: |
           python -m venv .artifacts/pdf-check-tools
           .artifacts/pdf-check-tools/bin/pip install --quiet pymupdf==1.28.2

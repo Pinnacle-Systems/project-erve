@@ -93,7 +93,7 @@ async function render(
       </QueryClientProvider>,
     ),
   );
-  await vi.waitFor(() => expect(text()).toContain('ST-001'));
+  await vi.waitFor(() => expect(text()).toContain('physical quantities are read-only'));
 }
 describe('Tax Invoice Accountant review and immutable presentation', () => {
   it.each(['ADMIN', 'ACCOUNTANT'] as const)(

@@ -42,7 +42,12 @@ const documentSchema = z
           description: z.string().nullable(),
           colour: z.string().nullable(),
         }),
-        size: z.object({ id: z.string(), code: z.string(), label: z.string() }),
+        size: z.object({
+          id: z.string(),
+          code: z.string(),
+          label: z.string(),
+          sortOrder: z.number().int().optional(),
+        }),
         image: archivedImageSchema.nullable(),
         imageAvailability: z.enum(['ARCHIVED', 'NO_IMAGE', 'SOURCE_UNAVAILABLE']),
       }),
@@ -138,6 +143,7 @@ async function documentMetadata(tx: Tx, invoice: InvoiceBasis) {
           id: source.saleOrderLine.size.id,
           code: source.saleOrderLine.size.code,
           label: source.saleOrderLine.size.label,
+          sortOrder: source.saleOrderLine.size.sortOrder,
         },
         sourceImage: style.images[0]?.file ?? null,
       };

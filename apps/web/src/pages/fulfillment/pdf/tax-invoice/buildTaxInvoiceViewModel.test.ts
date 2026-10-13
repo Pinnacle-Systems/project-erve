@@ -3,6 +3,22 @@ import { buildTaxInvoiceViewModel, invoiceAmountInWords } from './buildTaxInvoic
 import { issuedTaxInvoiceFixture } from './taxInvoicePdfFixture.js';
 
 describe('issued Tax Invoice PDF data', () => {
+  it('uses frozen configured size order and printed numeric formatting', () => {
+    const invoice = issuedTaxInvoiceFixture();
+    invoice.documentSnapshot!.lines[0]!.size = {
+      id: 'size-8',
+      code: 'AGE_8',
+      label: '8',
+      sortOrder: 8,
+    };
+    invoice.lines.push({ ...invoice.lines[0]!, id: 'line-2' });
+    invoice.documentSnapshot!.lines.push({
+      ...invoice.documentSnapshot!.lines[0]!,
+      lineId: 'line-2',
+      size: { id: 'size-3', code: 'AGE_3', label: '3', sortOrder: 3 },
+    });
+    expect(buildTaxInvoiceViewModel(invoice).groups[0]!.sizes).toBe('3-20, 8-20');
+  });
   it('presents frozen Bill-To place of supply independently of Ship-To state', () => {
     const invoice = issuedTaxInvoiceFixture();
     invoice.shipTo.state = 'Tamil Nadu';

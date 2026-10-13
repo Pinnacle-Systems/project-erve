@@ -1,70 +1,105 @@
-import { DataTable } from '@erve/data-display';
+import { useState } from 'react';
+import { DataTable, ErrorState } from '@erve/data-display';
 import { Button } from '@erve/primitives';
 import { Panel } from '@erve/layout';
-import type { TaxInvoiceLineView, TaxInvoiceDocumentSnapshot } from '@erve/types';
+import type { TaxInvoiceLineView, TaxInvoiceView } from '@erve/types';
 import { TaxInvoiceArchivedImageCell } from './TaxInvoiceArchivedImageCell.js';
+import { TaxInvoiceDraftImageCell } from './TaxInvoiceDraftImageCell.js';
+import { buildTaxInvoiceLineGroups, type TaxInvoiceLineGroup } from './tax-invoice-line-groups.js';
+import { TaxInvoiceLineDisclosure } from './TaxInvoiceLineDisclosure.js';
 import { formatInvoiceMoney } from './tax-invoice-ui.js';
 
 export function TaxInvoiceLines({
-  lines,
+  invoice,
   canOverride,
   pending,
   onOverride,
-  invoiceId,
-  documentSnapshot,
 }: {
-  lines: TaxInvoiceLineView[];
+  invoice: TaxInvoiceView;
   canOverride: boolean;
   pending: boolean;
   onOverride: (line: TaxInvoiceLineView) => void;
-  invoiceId: string;
-  documentSnapshot: TaxInvoiceDocumentSnapshot | null;
 }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  let groups: TaxInvoiceLineGroup[];
+  try {
+    groups = buildTaxInvoiceLineGroups(invoice);
+  } catch {
+    return (
+      <ErrorState
+        title="Invoice line presentation unavailable"
+        description="The issued presentation does not match its source lines. Contact support; financial totals remain unchanged."
+      />
+    );
+  }
+  const active = groups.find((group) => group.id === selected);
+  const regionId = 'invoice-source-lines';
   return (
     <Panel title="Invoice lines · physical quantities are read-only" padding="none">
       <DataTable
+        density="compact"
+        className="[&_th]:px-2 [&_td]:px-2"
         rowKey="id"
-        data={lines}
+        data={groups}
         columns={[
-          {
-            key: 'image',
-            header: 'Image',
-            render: (row) => (
-              <TaxInvoiceArchivedImageCell
-                invoiceId={invoiceId}
-                image={
-                  documentSnapshot?.lines.find((item) => item.lineId === row.id)?.image ?? null
-                }
-                styleNumber={row.style.styleNumber}
-              />
-            ),
-          },
           {
             key: 'style',
             header: 'Style',
-            render: (row) => (
-              <div>
-                <span className="font-medium">{row.style.styleNumber}</span>
-                <div className="text-xs text-muted-foreground">{row.style.styleName}</div>
-              </div>
-            ),
+            className: 'whitespace-normal max-w-none',
+            render: (group) => {
+              const line = group.sourceLines[0]!;
+              return (
+                <div className="flex items-center gap-2">
+                  <div className="shrink-0">
+                    {invoice.status === 'DRAFT' ? (
+                      <TaxInvoiceDraftImageCell
+                        invoiceId={invoice.id}
+                        styleId={line.style.id}
+                        image={line.style.primaryImage ?? null}
+                        styleNumber={group.styleNumber}
+                      />
+                    ) : (
+                      <TaxInvoiceArchivedImageCell
+                        invoiceId={invoice.id}
+                        image={group.image}
+                        styleNumber={group.styleNumber}
+                      />
+                    )}
+                  </div>
+                  <div className="min-w-0 break-words">
+                    <span className="font-medium">{group.styleNumber}</span>
+                    <div className="text-xs text-muted-foreground">{group.styleName}</div>
+                  </div>
+                </div>
+              );
+            },
           },
-          { key: 'size', header: 'Size', render: (row) => row.size.label },
+          {
+            key: 'sizes',
+            header: 'Size : Quantity',
+            className: 'whitespace-normal max-w-none',
+            render: (group) => <span className="block break-words">{group.sizes}</span>,
+          },
           {
             key: 'quantity',
-            header: 'Qty',
+            header: 'Total Qty',
             align: 'right',
-            render: (row) => row.quantity.toLocaleString('en-IN'),
+            render: (group) => group.quantity.toLocaleString('en-IN'),
           },
           {
             key: 'mrp',
-            header: 'Frozen MRP / pricing',
+            header: (
+              <span>
+                Frozen MRP /<br />
+                pricing
+              </span>
+            ),
             align: 'right',
-            render: (row) => (
+            render: (group) => (
               <div>
-                {formatInvoiceMoney(row.styleMrp)}
+                {formatInvoiceMoney(group.sourceLines[0]!.styleMrp)}
                 <div className="text-xs text-muted-foreground">
-                  {row.distributorPricingPercentage}% of MRP
+                  {group.sourceLines[0]!.distributorPricingPercentage}% of MRP
                 </div>
               </div>
             ),
@@ -73,16 +108,11 @@ export function TaxInvoiceLines({
             key: 'rate',
             header: 'Unit rate',
             align: 'right',
-            render: (row) => (
+            render: (group) => (
               <div>
-                {formatInvoiceMoney(row.finalUnitRate)}
-                {row.overrideUnitRate !== null && (
-                  <div
-                    className="text-xs text-muted-foreground"
-                    title={row.overrideReason ?? undefined}
-                  >
-                    Override · original {formatInvoiceMoney(row.calculatedUnitRate)}
-                  </div>
+                {formatInvoiceMoney(group.sourceLines[0]!.finalUnitRate)}
+                {group.sourceLines.some((line) => line.overrideUnitRate !== null) && (
+                  <div className="text-xs text-muted-foreground">Override · see lines</div>
                 )}
               </div>
             ),
@@ -90,41 +120,57 @@ export function TaxInvoiceLines({
           {
             key: 'hsn',
             header: 'HSN / GST',
-            render: (row) => (
+            render: (group) => (
               <div>
-                {row.hsn?.code ?? 'Unassigned'}
+                {group.sourceLines[0]!.hsn?.code ?? 'Unassigned'}
                 <div className="text-xs text-muted-foreground">
-                  {row.gstPercent === null ? 'Unavailable' : `${row.gstPercent}%`}
+                  {group.sourceLines[0]!.gstPercent === null
+                    ? 'Unavailable'
+                    : group.sourceLines[0]!.gstPercent + '%'}
                 </div>
               </div>
             ),
           },
           {
             key: 'taxable',
-            header: 'Taxable amount',
+            header: 'Taxable',
             align: 'right',
-            render: (row) => formatInvoiceMoney(row.taxableValue),
+            render: (group) => formatInvoiceMoney(group.taxableValue),
           },
-          ...(canOverride
-            ? [
-                {
-                  key: 'action',
-                  header: 'Review',
-                  render: (row: TaxInvoiceLineView) => (
-                    <Button
-                      variant="secondary"
-                      density="compact"
-                      disabled={pending}
-                      onClick={() => onOverride(row)}
-                    >
-                      Override
-                    </Button>
-                  ),
-                },
-              ]
-            : []),
+          {
+            key: 'review',
+            header: 'Review',
+            render: (group) => (
+              <Button
+                variant="secondary"
+                density="compact"
+                aria-expanded={selected === group.id}
+                aria-controls={regionId}
+                onClick={() => setSelected(selected === group.id ? null : group.id)}
+              >
+                Review lines ({group.sourceLines.length})
+              </Button>
+            ),
+          },
         ]}
       />
+      {active && (
+        <div
+          id={regionId}
+          role="region"
+          aria-label={'Source lines for ' + active.styleNumber}
+          className="space-y-2 p-3"
+        >
+          <h3 className="text-sm font-medium">{active.styleNumber} · individual source lines</h3>
+          <TaxInvoiceLineDisclosure
+            invoice={invoice}
+            group={active}
+            canOverride={canOverride && invoice.status === 'DRAFT'}
+            pending={pending}
+            onOverride={onOverride}
+          />
+        </div>
+      )}
     </Panel>
   );
 }

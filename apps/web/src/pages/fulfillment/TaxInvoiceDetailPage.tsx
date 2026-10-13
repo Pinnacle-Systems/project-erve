@@ -329,9 +329,7 @@ function TaxInvoiceDetail({
               </div>
             </Panel>
             <TaxInvoiceLines
-              invoiceId={invoice.id}
-              documentSnapshot={invoice.documentSnapshot}
-              lines={invoice.lines}
+              invoice={invoice}
               canOverride={mutable}
               pending={busy || refreshError}
               onOverride={setEditing}
@@ -346,7 +344,7 @@ function TaxInvoiceDetail({
             {invoice.status === 'FINALIZED' && invoice.documentSnapshot === null && (
               <p className="text-sm text-muted-foreground">
                 Legacy document: issued Style, size, image and order presentation was not
-                snapshotted. Current master labels are shown for reference.
+                snapshotted. Missing issued labels and images are shown as unavailable.
               </p>
             )}
             <details className="text-sm">

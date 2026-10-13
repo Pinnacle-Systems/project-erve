@@ -34,7 +34,10 @@ def photo_fingerprints(document):
     return result
 
 
-for name in ['rounded', 'rounded-admin', 'multi', 'legacy']:
+names = ['rounded', 'rounded-admin', 'multi', 'legacy']
+if (root / 'grouped.pdf').exists():
+    names.append('grouped')
+for name in names:
     expected = json.loads((root / f'{name}-expected.json').read_text())
     document = pymupdf.open(root / f'{name}.pdf')
     text = '\n'.join(page.get_text() for page in document)
@@ -49,6 +52,11 @@ for name in ['rounded', 'rounded-admin', 'multi', 'legacy']:
     assert 'Authorised Signatory' in flat and 'system-generated invoice' in flat
     assert 'EDITED-AFTER-ISSUE' not in flat
     snapshot = expected['documentSnapshot']
+    if name == 'grouped':
+        # Two rate groups preserve all six numeric Size/Quantity pairs.
+        for label in ['3', '4', '5', '6', '7', '8']:
+            assert f'{label}-2' in compact, (name, 'size quantity', label)
+        assert '75.50' in flat, (name, 'separate overridden rate')
     if snapshot:
         for line in snapshot['lines']:
             assert re.sub(r'\s+', '', line['style']['styleNumber']) in compact, (name, line['style']['styleNumber'])

@@ -15,9 +15,14 @@ export interface TaxInvoiceLineView {
   id: string;
   ervePackingListCommercialLineId: string;
   saleOrderLineId: string;
-  style: { id: string; styleNumber: string; styleName: string };
+  style: {
+    id: string;
+    styleNumber: string;
+    styleName: string;
+    primaryImage?: TaxInvoiceDraftImage | null;
+  };
   hsn: { code: string; description: string | null } | null;
-  size: { code: string; label: string };
+  size: { id?: string; code: string; label: string; sortOrder?: number };
   quantity: number;
   styleMrp: string;
   distributorPricingPercentage: string;
@@ -120,6 +125,12 @@ export interface TaxInvoiceArchivedImage {
   sizeBytes: number;
   checksumSha256: string;
 }
+/** Current Primary media exposed only in authorized Draft invoice presentation. */
+export interface TaxInvoiceDraftImage {
+  id: string;
+  mimeType: string;
+  updatedAt: string;
+}
 
 export interface TaxInvoiceDocumentSnapshot {
   schemaVersion: 'ERVE_TAX_INVOICE_DOCUMENT_V1';
@@ -133,7 +144,7 @@ export interface TaxInvoiceDocumentSnapshot {
       description: string | null;
       colour: string | null;
     };
-    size: { id: string; code: string; label: string };
+    size: { id: string; code: string; label: string; sortOrder?: number };
     image: TaxInvoiceArchivedImage | null;
     imageAvailability: 'ARCHIVED' | 'NO_IMAGE' | 'SOURCE_UNAVAILABLE';
   }>;
