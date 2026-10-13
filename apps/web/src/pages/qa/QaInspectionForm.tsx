@@ -859,7 +859,11 @@ export function QaInspectionForm({
             {!ppSample && Number(draft.rejected || 0) > 0 && !errors.evidence && (
               <p>Permanent rejection requires evidence attached to this exact size.</p>
             )}
-            {errors.evidence && <p role="alert">{errors.evidence}</p>}
+            {errors.evidence && (
+              <ValidationMessage tone="error" role="alert">
+                {errors.evidence}
+              </ValidationMessage>
+            )}
           </FormSection>
           {stale && (
             <ValidationMessage tone="error" role="alert">
