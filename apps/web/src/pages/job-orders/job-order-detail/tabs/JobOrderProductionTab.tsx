@@ -442,6 +442,16 @@ export function JobOrderProductionTab({
                     </Button>
                   )}
                 </div>
+                {startStageMutation.isError && (
+                  <ValidationMessage tone="error">
+                    {mutationErrorMessage(startStageMutation.error, `Unable to start ${nextStage.stageNameSnapshot}.`)}
+                  </ValidationMessage>
+                )}
+                {completeStageMutation.isError && (
+                  <ValidationMessage tone="error">
+                    {mutationErrorMessage(completeStageMutation.error, `Unable to complete ${nextStage.stageNameSnapshot}.`)}
+                  </ValidationMessage>
+                )}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -451,12 +461,6 @@ export function JobOrderProductionTab({
           </Panel>
         )}
 
-      {(completeStageMutation.isError || preparedMutation.isError) && (
-        <ValidationMessage tone="error">
-          {[completeStageMutation.error, preparedMutation.error].find((error) => error instanceof Error)
-            ?.message ?? 'Unable to update job order'}
-        </ValidationMessage>
-      )}
 
       {jobOrder.status === 'IN_PRODUCTION' && (
         <Panel title="Production Completion">
@@ -595,6 +599,11 @@ export function JobOrderProductionTab({
                 'the configured Production activity'}{' '}
               satisfies the Process Flow rule.
             </div>
+          )}
+          {preparedMutation.isError && (
+            <ValidationMessage tone="error">
+              {mutationErrorMessage(preparedMutation.error, 'Unable to save prepared quantities.')}
+            </ValidationMessage>
           )}
         </Panel>
       )}

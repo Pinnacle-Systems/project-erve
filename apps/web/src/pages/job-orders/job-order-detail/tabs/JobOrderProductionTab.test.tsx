@@ -170,6 +170,64 @@ describe('JobOrderProductionTab stage completion mutation', () => {
     expect(content(container)).toContain('Current Stage: Cutting');
   });
 
+  it('shows the Inline QA business requirement instead of a raw 409 on Sewing completion', async () => {
+    await renderProduction('IN_PRODUCTION', [stage('stage-sewing', 'Sewing', 3, 'IN_PROGRESS')]);
+    vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      message: 'Request failed with status code 409',
+      response: {
+        data: {
+          error: { code: 'CONFLICT', message: 'Sewing cannot be completed until Inline QA has passed.' },
+        },
+      },
+    });
+    const panel = getActiveTabPanel(container);
+    const button = Array.from(panel.querySelectorAll('button')).find((item) => item.textContent === 'Complete Sewing');
+    act(() => button?.click());
+
+    await vi.waitFor(() =>
+      expect(panel.textContent).toContain('Sewing cannot be completed until Inline QA has passed.'),
+    );
+    expect(panel.textContent).not.toContain('Request failed with status code 409');
+    expect(panel.textContent).toContain('Current Stage: Sewing');
+    expect(panel.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
+  it('shows a safe fallback when stage completion fails without a business message', async () => {
+    await renderProduction('IN_PRODUCTION', [stage('stage-sewing', 'Sewing', 3, 'IN_PROGRESS')]);
+    vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      message: 'Request failed with status code 409',
+      response: { data: { error: { code: 'CONFLICT' } } },
+    });
+    const panel = getActiveTabPanel(container);
+    const button = Array.from(panel.querySelectorAll('button')).find((item) => item.textContent === 'Complete Sewing');
+    act(() => button?.click());
+
+    await vi.waitFor(() => expect(panel.textContent).toContain('Unable to complete Sewing.'));
+    expect(panel.textContent).not.toContain('Request failed with status code 409');
+  });
+
+  it('displays Start Stage failures beside the stage action instead of silently failing', async () => {
+    await renderProduction('CONFIRMED_BY_FACTORY', [stage('stage-1', 'Cutting', 1, 'NOT_STARTED')]);
+    vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      message: 'Request failed with status code 409',
+      response: {
+        data: { error: { code: 'CONFLICT', message: 'Pre-production QA must pass before Cutting starts.' } },
+      },
+    });
+    const panel = getActiveTabPanel(container);
+    const button = Array.from(panel.querySelectorAll('button')).find((item) => item.textContent === 'Start Cutting');
+    act(() => button?.click());
+
+    await vi.waitFor(() =>
+      expect(panel.textContent).toContain('Pre-production QA must pass before Cutting starts.'),
+    );
+    expect(panel.textContent).toContain('Current Stage: Cutting');
+    expect(panel.textContent).not.toContain('Request failed with status code 409');
+  });
+
   it.each([
     ['CONFIRMED_BY_FACTORY', 'NOT_STARTED'],
     ['IN_PRODUCTION', 'IN_PROGRESS'],
