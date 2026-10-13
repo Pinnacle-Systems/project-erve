@@ -69,6 +69,77 @@ describe('ErvePackingListListPage — request failure handling (UXAUTH-018)', ()
   });
 });
 
+describe('ErvePackingListListPage status filters (BUG-012)', () => {
+  it('passes the selected status to the server and resets the list on filter changes', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (_url, config) => {
+      const status = (config?.params as { status?: string } | undefined)?.status;
+      const items = status === 'FINALIZED'
+        ? [buildSummary({ id: 'final-1', ervePackingListNumber: 'EIPL-FINAL', status: 'FINALIZED' })]
+        : [buildSummary({ id: 'open-1', ervePackingListNumber: 'EIPL-OPEN', status: 'OPEN' })];
+      return { data: { data: { items, pageInfo: { limit: 50, hasMore: false, nextCursor: null } } } } as never;
+    });
+
+    renderPage();
+    await vi.waitFor(() => expect(content()).toContain('EIPL-OPEN'));
+
+    const finalized = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Finalized')!;
+    act(() => finalized.click());
+    await vi.waitFor(() => expect(content()).toContain('EIPL-FINAL'));
+
+    expect(content()).not.toContain('EIPL-OPEN');
+    expect(finalized.getAttribute('aria-pressed')).toBe('true');
+    expect(get).toHaveBeenCalledWith('/erve-packing-lists', {
+      params: { limit: 50, status: 'FINALIZED', cursor: undefined },
+    });
+
+    const all = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'All')!;
+    act(() => all.click());
+    await vi.waitFor(() => expect(content()).toContain('EIPL-OPEN'));
+    expect(content()).not.toContain('EIPL-FINAL');
+    expect(get).toHaveBeenCalledWith('/erve-packing-lists', {
+      params: { limit: 50, status: undefined, cursor: undefined },
+    });
+  });
+
+  it('preserves the status filter when loading the next server page', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (_url, config) => {
+      const params = config?.params as { status?: string; cursor?: string } | undefined;
+      if (params?.status === 'DISPATCHED') {
+        return {
+          data: {
+            data: {
+              items: [buildSummary({
+                id: params.cursor ? 'dispatched-2' : 'dispatched-1',
+                ervePackingListNumber: params.cursor ? 'EIPL-D2' : 'EIPL-D1',
+                status: 'DISPATCHED',
+              })],
+              pageInfo: { limit: 50, hasMore: !params.cursor, nextCursor: params.cursor ? null : 'next-dispatched' },
+            },
+          },
+        } as never;
+      }
+      return { data: { data: { items: [], pageInfo: { limit: 50, hasMore: false, nextCursor: null } } } } as never;
+    });
+
+    renderPage();
+    await vi.waitFor(() => expect(content()).toContain('No Erve Packing Lists yet'));
+
+    const dispatched = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Dispatched')!;
+    act(() => dispatched.click());
+    await vi.waitFor(() => expect(content()).toContain('EIPL-D1'));
+
+    const loadMore = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Load more');
+    expect(loadMore).toBeDefined();
+    act(() => loadMore?.click());
+    await vi.waitFor(() => expect(content()).toContain('EIPL-D2'));
+
+    expect(content()).toContain('EIPL-D1');
+    expect(get).toHaveBeenCalledWith('/erve-packing-lists', {
+      params: { limit: 50, status: 'DISPATCHED', cursor: 'next-dispatched' },
+    });
+  });
+});
+
 function mockAuth(role: Role) {
   const user: AuthUser = { id: 'user-1', email: 'user@test.local', mobile: null, name: 'Test User', roles: [role] };
   vi.spyOn(AuthContext, 'useAuth').mockReturnValue({

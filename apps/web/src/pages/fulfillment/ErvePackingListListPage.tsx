@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
@@ -13,6 +13,15 @@ import { canMutateErveDispatches, canViewErveFactoryProvenanceField } from '../.
 import { useAuth } from '../../auth/AuthContext.js';
 import type { ErvePackingListSummary } from './types.js';
 
+type PackingListStatusFilter = ErvePackingListSummary['status'] | 'ALL';
+
+const STATUS_TABS: Array<{ value: PackingListStatusFilter; label: string }> = [
+  { value: 'ALL', label: 'All' },
+  { value: 'OPEN', label: 'Open' },
+  { value: 'FINALIZED', label: 'Finalized' },
+  { value: 'DISPATCHED', label: 'Dispatched' },
+];
+
 const STATUS_LABEL: Record<ErvePackingListSummary['status'], string> = {
   OPEN: 'Open',
   FINALIZED: 'Finalized',
@@ -22,13 +31,14 @@ const STATUS_LABEL: Record<ErvePackingListSummary['status'], string> = {
 export function ErvePackingListListPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [status, setStatus] = useState<PackingListStatusFilter>('ALL');
 
   // Cursor-paginated: Load more appends every further page (the page size
   // is only the batch size, never a cap on what the list can reach).
   const { query, items } = useCursorList<ErvePackingListSummary>({
     queryKey: ['erve-packing-lists'],
     path: '/erve-packing-lists',
-    params: { limit: 50 },
+    params: { limit: 50, status: status === 'ALL' ? undefined : status },
   });
 
   const generateErvePackingListListPdf = useCallback(async () => {
@@ -73,6 +83,21 @@ export function ErvePackingListListPage() {
         }
       />
 
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter Erve Packing Lists by status">
+        {STATUS_TABS.map((tab) => (
+          <Button
+            key={tab.value}
+            type="button"
+            density="compact"
+            variant={status === tab.value ? 'default' : 'ghost'}
+            aria-pressed={status === tab.value}
+            onClick={() => setStatus(tab.value)}
+          >
+            {tab.label}
+          </Button>
+        ))}
+      </div>
+
       {query.isLoading ? (
         <LoadingState label="Loading Erve Packing Lists" />
       ) : (
@@ -81,7 +106,7 @@ export function ErvePackingListListPage() {
             rowKey="id"
             data={items}
             onRowClick={(row) => navigate(`/fulfillment/erve-packing-lists/${row.id}`)}
-            emptyState={<EmptyState title="No Erve Packing Lists yet" />}
+            emptyState={<EmptyState title={status === 'ALL' ? 'No Erve Packing Lists yet' : 'No Erve Packing Lists match this status.'} />}
             error={
               query.isError ? (
                 <ErrorState title="Unable to load Erve Packing Lists" description={query.error.message} />
