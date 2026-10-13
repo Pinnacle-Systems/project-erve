@@ -39,9 +39,14 @@ export function RetailStoreListPage() {
         subtitle="Delivery stores maintained per Distributor"
         primaryAction={
           canManageRetailStores(user) ? (
-            <Button asChild>
-              <Link to={`${base}/new`}>Create Retail Store</Link>
-            </Button>
+            <div className="flex gap-2">
+              <Button asChild variant="secondary">
+                <Link to={`${base}/import`}>Import Retail Stores</Link>
+              </Button>
+              <Button asChild>
+                <Link to={`${base}/new`}>Create Retail Store</Link>
+              </Button>
+            </div>
           ) : undefined
         }
       />
