@@ -102,6 +102,26 @@ describe('JobOrderProductionTab workflow rendering', () => {
   });
 });
 
+describe('JobOrderProductionTab disclaimer error feedback', () => {
+  it('shows the API business message instead of a raw 409 on disclaimer save', async () => {
+    await renderProduction('DRAFT', standardStages, { disclaimerText: 'Existing factory terms' });
+    vi.spyOn(apiClient, 'patch').mockRejectedValue({
+      isAxiosError: true,
+      message: 'Request failed with status code 409',
+      response: {
+        data: { error: { code: 'CONFLICT', message: 'The disclaimer changed since it was loaded.' } },
+      },
+    });
+    const panel = getActiveTabPanel(container);
+    const button = Array.from(panel.querySelectorAll('button')).find((item) => item.textContent === 'Save disclaimer');
+    expect(button).toBeDefined();
+    act(() => button?.click());
+
+    await vi.waitFor(() => expect(panel.textContent).toContain('The disclaimer changed since it was loaded.'));
+    expect(panel.textContent).not.toContain('Request failed with status code 409');
+  });
+});
+
 describe('JobOrderProductionTab stage completion mutation', () => {
   it('shows only Start for a not-started Production stage with primary styling', async () => {
     await renderProduction('CONFIRMED_BY_FACTORY', [stage('stage-1', 'Cutting', 1, 'NOT_STARTED')]);
