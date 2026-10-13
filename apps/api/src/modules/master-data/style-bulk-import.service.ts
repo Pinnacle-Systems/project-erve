@@ -546,6 +546,17 @@ export async function executeBulkStyleImport(
       const commit = async (tx: Prisma.TransactionClient, created: { id: string }) => {
         await requireBulkStyleImportActor(actor, tx);
         await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('style_images:' || ${created.id}, 0))::text`;
+        if (row.status === 'RESUME_IMAGE_PENDING') {
+          // Ordinary Style updates acquire the row lock too. Validate identity
+          // after staging and retain this lock through image/provenance commit.
+          const identities = await tx.$queryRaw<Array<{ styleNumber: string; seasonId: string; lmixNumber: string | null }>>`
+            SELECT style_number AS "styleNumber", season_id AS "seasonId", lmix_number AS "lmixNumber"
+            FROM styles WHERE id = ${created.id} FOR UPDATE`;
+          const identity = identities[0];
+          if (!identity || identity.styleNumber !== row.styleNumber || identity.seasonId !== create.seasonId || identity.lmixNumber !== create.lmixNumber) {
+            throw HttpError.conflict('Recovery Style identity no longer matches the reviewed source');
+          }
+        }
         if (alreadyPresent && !await expectedImagesPresent(created.id, create.images, tx)) {
           throw HttpError.conflict('Expected images changed during recovery; retry this import');
         }

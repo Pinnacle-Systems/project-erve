@@ -42,6 +42,31 @@ beforeEach(resetDatabase);
 afterEach(() => vi.restoreAllMocks());
 
 describe('Style import reliability', () => {
+  it.each(['season', 'lmix', 'during-staging'])('refuses interrupted image recovery after %s identity drift', async (drift) => {
+    const { season, size, actor } = await setup();
+    const style = await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-DRIFT', styleName: 'Tee', finalMrp: 100, seasonId: season.id } });
+    const run = await prisma.styleBulkImportRun.create({ data: { id: createId(), sourceFileName: 'old.xlsx', sourceFileChecksum: 'old', status: 'EXECUTED', actorUserId: actor.id, totalRows: 1 } });
+    await prisma.styleBulkImportRowResult.create({ data: { id: createId(), runId: run.id, rowNumber: 2, styleNumber: style.styleNumber, styleId: style.id, outcome: 'IMAGE_PENDING', expectedImageChecksum: createHash('sha256').update(png).digest('hex') } });
+    const plan = { sourceFileChecksum: 'old', totalRows: 1, fileLevelImageWarnings: [], rows: [{ rowNumber: 2, styleNumber: style.styleNumber, status: 'RESUME_IMAGE_PENDING' as const, existingStyleId: style.id, imageCount: 1, create: { styleName: 'Tee', finalMrp: 100, seasonId: season.id, lmixNumber: null, sizes: [{ sizeId: size.id, barcode: 'BC-DRIFT' }], factoryMappings: [], images: [{ buffer: png, fileName: 'expected.png', rowNumber: 2 }] } }] };
+    if (drift === 'season') {
+      const other = await createTestSeason({ code: 'SS26' });
+      await prisma.style.update({ where: { id: style.id }, data: { seasonId: other.id } });
+    } else if (drift === 'lmix') {
+      await prisma.style.update({ where: { id: style.id }, data: { lmixNumber: 'LMIX99999999' } });
+    } else {
+      const storage = getFileStorage();
+      const put = storage.put.bind(storage);
+      vi.spyOn(storage, 'put').mockImplementation(async (...args) => {
+        await prisma.style.update({ where: { id: style.id }, data: { styleNumber: 'ST-CHANGED' } });
+        return put(...args);
+      });
+    }
+    expect((await executeBulkStyleImport(actor, plan, 'old.xlsx')).results[0]).toMatchObject({
+      outcome: 'IMAGE_PENDING', detail: expect.stringContaining('identity'),
+    });
+    expect(await prisma.styleImage.count({ where: { styleId: style.id } })).toBe(0);
+    expect(await prisma.styleBulkImportRowResult.count({ where: { styleId: style.id, outcome: 'COMPLETED' } })).toBe(0);
+  });
   it('does not turn an already committed row into failure after a separate projection read fails', async () => {
     const { actor } = await setup();
     const plan = await planBulkStyleImport(embeddedWorkbook([['ST-COMMIT', 'Tee', 100, 'AW25', 'S', 'BC-COMMIT']], [{ row: 2, bytes: png }]), 'Styles');

@@ -128,14 +128,21 @@ export function extractEmbeddedImagesByRow(buffer: Buffer, sheetIndex: number | 
   const sheetPath = resolveRelationshipTarget('xl', sheetRel.Target);
   const sheetDir = path.posix.dirname(sheetPath);
   const sheetFileName = path.posix.basename(sheetPath);
+  const sheetXml = readXml(zip, sheetPath);
+  const drawing = get(sheetXml, ['worksheet', 'drawing']) as { 'r:id'?: string } | undefined;
+  const declaredDrawingId = drawing?.['r:id'];
+  const brokenDrawing = () => {
+    result.ambiguous.push({ reason: 'BROKEN_DRAWING_REFERENCE', detail: 'The worksheet declares images but its drawing relationship is missing or unreadable; review the source images' });
+    return result;
+  };
   const sheetRelsXml = readXml(zip, path.posix.join(sheetDir, `_rels/${sheetFileName}.rels`));
-  if (!sheetRelsXml) return result;
+  if (!sheetRelsXml) return drawing ? brokenDrawing() : result;
 
   const sheetRelationships = asArray<OoxmlRelationship>(
     get(sheetRelsXml, ['Relationships', 'Relationship']) as OoxmlRelationship | OoxmlRelationship[] | undefined,
   );
-  const drawingRel = sheetRelationships.find((rel) => String(rel.Type).endsWith('/drawing'));
-  if (!drawingRel?.Target) return result;
+  const drawingRel = sheetRelationships.find((rel) => String(rel.Type).endsWith('/drawing') && (!drawing || rel.Id === declaredDrawingId));
+  if (!drawingRel?.Target) return drawing ? brokenDrawing() : result;
 
   const drawingPath = resolveRelationshipTarget(sheetDir, drawingRel.Target);
   const drawingDir = path.posix.dirname(drawingPath);
