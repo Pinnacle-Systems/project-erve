@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge, type StatusBadgeTone } from '@erve/app-components';
@@ -18,6 +18,8 @@ interface PreflightRow {
 
 interface PreflightResponse {
   sourceFileChecksum: string;
+  worksheet?: string;
+  confirmationToken?: string;
   summary: {
     totalRows: number;
     create: number;
@@ -66,34 +68,81 @@ export function StyleBulkImportPage() {
   const [file, setFile] = useState<File | null>(null);
   const [preflight, setPreflight] = useState<PreflightResponse | null>(null);
   const [results, setResults] = useState<ExecuteResponse | null>(null);
-
-  const preflightMutation = useMutation({
+  const [worksheet, setWorksheet] = useState('');
+  const [worksheets, setWorksheets] = useState<string[]>([]);
+  const currentSelection = useRef({ file: null as File | null, worksheet: '' });
+  const sheetsMutation = useMutation({
     mutationFn: async (selected: File) => {
       const body = new FormData();
       body.append('file', selected);
+      return (await apiClient.post<ApiSuccessResponse<string[]>>('/styles/bulk-import/worksheets', body)).data.data;
+    },
+    onSuccess: (names, selected) => {
+      if (currentSelection.current.file !== selected || !Array.isArray(names)) return;
+      setWorksheets(names);
+      setWorksheet(names[0] ?? '');
+      currentSelection.current.worksheet = names[0] ?? '';
+      setPreflight(null);
+    },
+  });
+  const historyMutation = useMutation({
+    mutationFn: async () => (await apiClient.get<ApiSuccessResponse<Array<{ id: string; sourceFileName: string; createdAt: string; totalRows: number }>>>('/styles/bulk-import/history')).data.data,
+  });
+  const downloadMutation = useMutation({
+    mutationFn: async ({ path, name, upload }: { path: string; name: string; upload?: FormData }) => {
+      const response = upload ? await apiClient.post<Blob>(path, upload, { responseType: 'blob' }) : await apiClient.get<Blob>(path, { responseType: 'blob' });
+      const url = URL.createObjectURL(response.data);
+      const link = document.createElement('a');
+      link.href = url; link.download = name; link.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+  const downloadExceptions = () => {
+    if (!file) return;
+    const upload = new FormData();
+    upload.append('file', file); upload.append('worksheet', worksheet);
+    downloadMutation.mutate({ path: '/styles/bulk-import/exceptions', name: 'style-import-exceptions.xlsx', upload });
+  };
+
+  const preflightMutation = useMutation({
+    mutationFn: async ({ selected, sheet }: { selected: File; sheet: string }) => {
+      const body = new FormData();
+      body.append('file', selected);
+      body.append('worksheet', sheet);
       const response = await apiClient.post<ApiSuccessResponse<PreflightResponse>>('/styles/bulk-import/preflight', body);
       return response.data.data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, selection) => {
+      if (selection.selected !== currentSelection.current.file || selection.sheet !== currentSelection.current.worksheet) return;
       setPreflight(data);
       setResults(null);
     },
   });
 
   const executeMutation = useMutation({
-    mutationFn: async (selected: File) => {
+    mutationFn: async ({ selected, sheet }: { selected: File; sheet: string }) => {
       const body = new FormData();
       body.append('file', selected);
+      body.append('worksheet', preflight?.worksheet ?? sheet);
+      body.append('sourceFileChecksum', preflight?.sourceFileChecksum ?? '');
+      body.append('confirmationToken', preflight?.confirmationToken ?? '');
       const response = await apiClient.post<ApiSuccessResponse<ExecuteResponse>>('/styles/bulk-import/execute', body);
       return response.data.data;
     },
-    onSuccess: (data) => setResults(data),
+    onSuccess: (data, selection) => {
+      if (selection.selected === currentSelection.current.file && selection.sheet === currentSelection.current.worksheet) {
+        setResults(data); setPreflight(null);
+      }
+    },
   });
 
   const handleFileChange = (selected: File | null) => {
     setFile(selected);
+    currentSelection.current = { file: selected, worksheet: '' };
+    setWorksheet(''); setWorksheets([]);
     setPreflight(null);
     setResults(null);
+    if (selected) sheetsMutation.mutate(selected);
   };
 
   return (
@@ -104,6 +153,7 @@ export function StyleBulkImportPage() {
       />
 
       <Panel title="1. Choose workbook">
+        <Button type="button" onClick={() => downloadMutation.mutate({ path: '/styles/bulk-import/template', name: 'styles.xlsx' })}>Download template</Button>
         <div className="flex items-center gap-3">
           <input
             type="file"
@@ -115,21 +165,33 @@ export function StyleBulkImportPage() {
             type="button"
             disabled={!file || preflightMutation.isPending}
             loading={preflightMutation.isPending}
-            onClick={() => file && preflightMutation.mutate(file)}
+            onClick={() => file && preflightMutation.mutate({ selected: file, sheet: worksheet })}
           >
             Preview
           </Button>
         </div>
+        <label className="mt-3 block text-sm">
+          Worksheet
+          <select aria-label="Worksheet" value={worksheet} onChange={(event) => {
+            setWorksheet(event.target.value); currentSelection.current.worksheet = event.target.value; setPreflight(null); setResults(null);
+          }}>
+            {worksheets.length === 0 && <option value="">First worksheet</option>}
+            {worksheets.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+        </label>
         <p className="mt-2 text-xs text-muted-foreground">
           Required columns: Style Number, Style Name, Final MRP, Season Code, Size Codes. Optional: LMIX Number
           (needed only if any Barcode is left blank, for auto-generation), HSN Code (leave blank if not yet known —
           the Style is still created, HSN can be added later), Barcodes (parallel to Size Codes — blank generates),
-          Factory Mappings (&quot;CODE:PRICE;CODE:PRICE&quot;). Primary Style images are PNGs embedded directly in the
+          Financial Year (required when a Season Code exists in more than one year), Factory Name Mappings
+          (&quot;NAME:PRICE;NAME:PRICE&quot;) or legacy Factory Mappings (&quot;CODE:PRICE;CODE:PRICE&quot;). Primary Style images are PNGs embedded directly in the
           workbook, anchored to their Style&apos;s row.
         </p>
         {preflightMutation.isError && (
           <ErrorState title="Could not preview this file" description={(preflightMutation.error as Error).message} />
         )}
+        {sheetsMutation.isError && <ErrorState title="Could not read worksheets" description={(sheetsMutation.error as Error).message} />}
+        {downloadMutation.isError && <ErrorState title="Download failed" description={(downloadMutation.error as Error).message} />}
       </Panel>
 
       {preflight && (
@@ -181,11 +243,12 @@ export function StyleBulkImportPage() {
           />
 
           <div className="mt-4 flex items-center gap-3">
+            <Button type="button" onClick={downloadExceptions}>Download exceptions</Button>
             <Button
               type="button"
               disabled={!file || executeMutation.isPending || preflight.summary.create + preflight.summary.resumeImagePending === 0}
               loading={executeMutation.isPending}
-              onClick={() => file && executeMutation.mutate(file)}
+              onClick={() => file && executeMutation.mutate({ selected: file, sheet: worksheet })}
             >
               Confirm &amp; Import
             </Button>
@@ -201,6 +264,7 @@ export function StyleBulkImportPage() {
 
       {results && (
         <Panel title="3. Results">
+          <Button type="button" onClick={() => downloadMutation.mutate({ path: `/styles/bulk-import/history/${results.runId}/report`, name: 'style-import-results.csv' })}>Download report</Button>
           <DataTable
             columns={[
               { key: 'rowNumber', header: 'Row', accessor: 'rowNumber', width: '64px' },
@@ -224,6 +288,14 @@ export function StyleBulkImportPage() {
           )}
         </Panel>
       )}
+      <Panel title="Execution history">
+        <Button type="button" loading={historyMutation.isPending} onClick={() => historyMutation.mutate()}>Load history</Button>
+        {historyMutation.isError && <ErrorState title="Could not load history" description={(historyMutation.error as Error).message} />}
+        {historyMutation.data?.map((run) => <div key={run.id} className="mt-2 flex items-center gap-3 text-sm">
+          <span>{run.sourceFileName} · {new Date(run.createdAt).toLocaleString()} · {run.totalRows} rows</span>
+          <Button type="button" onClick={() => downloadMutation.mutate({ path: `/styles/bulk-import/history/${run.id}/report`, name: 'style-import-results.csv' })}>Download report</Button>
+        </div>)}
+      </Panel>
     </div>
   );
 }

@@ -99,7 +99,7 @@ export function resolvePrimaryStyleAcrossLines(
   };
 }
 
-function validateImageUpload(buffer: Buffer): SniffedImage {
+export function validateImageUpload(buffer: Buffer): SniffedImage {
   if (buffer.length === 0) {
     throw HttpError.badRequest('Uploaded file is empty');
   }
@@ -148,6 +148,87 @@ async function requireStyle(styleId: string): Promise<void> {
   }
 }
 
+export interface StagedStyleImage {
+  fileId: string;
+  storageKey: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  checksum: string;
+}
+
+/** Stage bytes before a logical create and verify the bytes storage actually retained. */
+export async function stageStyleImage(upload: StyleImageUpload, styleId = 'staged'): Promise<StagedStyleImage> {
+  const sniffed = validateImageUpload(upload.buffer);
+  const fileId = createId();
+  const staged = {
+    fileId, storageKey: `style-images/${styleId}/${fileId}.${sniffed.extension}`,
+    fileName: sanitizeDisplayFileName(upload.originalName, sniffed.extension),
+    mimeType: sniffed.mimeType, sizeBytes: upload.buffer.length, checksum: sha256Hex(upload.buffer),
+  };
+  try {
+    await getFileStorage().put(staged.storageKey, upload.buffer);
+    await verifyStagedStyleImage(staged);
+    return staged;
+  } catch (error) {
+    await discardStagedStyleImage(staged);
+    throw error;
+  }
+}
+
+export async function verifyStagedStyleImage(staged: StagedStyleImage): Promise<void> {
+  const bytes = await getFileStorage().read(staged.storageKey);
+  if (bytes.length !== staged.sizeBytes || sha256Hex(bytes) !== staged.checksum) {
+    throw HttpError.badRequest('Stored image checksum does not match the expected image');
+  }
+}
+
+export async function discardStagedStyleImage(staged: StagedStyleImage): Promise<void> {
+  await deleteFromStorageBestEffort(staged.storageKey);
+}
+
+/** Same image locking, deduplication and auditing for manual and atomic import writes. */
+export async function attachStagedStyleImage(
+  actor: CurrentUser, tx: Prisma.TransactionClient, styleId: string, staged: StagedStyleImage,
+) {
+  await acquireStyleImagesLock(tx, styleId);
+  await verifyStagedStyleImage(staged);
+  const duplicate = await tx.styleImage.findFirst({
+    where: { styleId, file: { checksumSha256: staged.checksum, sizeBytes: staged.sizeBytes } },
+    include: styleImageInclude,
+  });
+  if (duplicate) {
+    // Verify/repair retained bytes too: metadata alone cannot establish image completion.
+    try {
+      const bytes = await getFileStorage().read(duplicate.file.storageKey);
+      if (bytes.length === staged.sizeBytes && sha256Hex(bytes) === staged.checksum) return { image: duplicate, created: false };
+    } catch (error) {
+      if (!(error instanceof FileNotFoundInStorageError)) throw error;
+    }
+    // Missing or corrupted — repoint at the freshly staged bytes and
+    // remove the stale blob so a corrupted copy never lingers in storage.
+    await getFileStorage().delete(duplicate.file.storageKey);
+    await tx.file.update({ where: { id: duplicate.fileId }, data: { storageKey: staged.storageKey } });
+    return { image: duplicate, created: true };
+  }
+  const [maxSort, primaryCount] = await Promise.all([
+    tx.styleImage.aggregate({ where: { styleId }, _max: { sortOrder: true } }),
+    tx.styleImage.count({ where: { styleId, isPrimary: true } }),
+  ]);
+  const image = await tx.styleImage.create({
+    data: {
+      id: createId(), style: { connect: { id: styleId } },
+      sortOrder: (maxSort._max.sortOrder ?? -1) + 1, isPrimary: primaryCount === 0,
+      file: { create: { id: staged.fileId, fileName: staged.fileName, mimeType: staged.mimeType,
+        sizeBytes: staged.sizeBytes, storageKey: staged.storageKey, checksumSha256: staged.checksum, uploadedById: actor.id } },
+    }, include: styleImageInclude,
+  });
+  await recordAuditLog({ actorId: actor.id, action: 'STYLE_IMAGE_UPLOADED', entityType: 'Style', entityId: styleId,
+    metadata: { imageId: image.id, fileId: staged.fileId, fileName: staged.fileName, mimeType: staged.mimeType,
+      sizeBytes: staged.sizeBytes, storageKey: staged.storageKey, isPrimary: image.isPrimary } }, tx);
+  return { image, created: true };
+}
+
 export async function listStyleImages(styleId: string) {
   await requireStyle(styleId);
   const images = await prisma.styleImage.findMany({
@@ -164,95 +245,15 @@ export async function uploadStyleImage(
   upload: StyleImageUpload,
 ) {
   await requireStyle(styleId);
-  const sniffed = validateImageUpload(upload.buffer);
-  const checksum = sha256Hex(upload.buffer);
-  const fileName = sanitizeDisplayFileName(upload.originalName, sniffed.extension);
-
-  const fileId = createId();
-  const storageKey = `style-images/${styleId}/${fileId}.${sniffed.extension}`;
-  const storage = getFileStorage();
-
-  // Store first, commit metadata second: an orphaned stored file (cleaned
-  // up below on failure) is recoverable, while committed metadata pointing
-  // at a file that was never stored is not.
-  await storage.put(storageKey, upload.buffer);
-
+  const staged = await stageStyleImage(upload, styleId);
   let outcome: { image: StyleImageRecord; created: boolean };
   try {
-    outcome = await prisma.$transaction(async (tx) => {
-      await acquireStyleImagesLock(tx, styleId);
-
-      // A retried/duplicated upload of identical content returns the
-      // existing record instead of creating a duplicate gallery entry.
-      const duplicate = await tx.styleImage.findFirst({
-        where: {
-          styleId,
-          file: { checksumSha256: checksum, sizeBytes: upload.buffer.length },
-        },
-        include: styleImageInclude,
-      });
-      if (duplicate) {
-        return { image: duplicate, created: false };
-      }
-
-      const [maxSort, primaryCount] = await Promise.all([
-        tx.styleImage.aggregate({ where: { styleId }, _max: { sortOrder: true } }),
-        tx.styleImage.count({ where: { styleId, isPrimary: true } }),
-      ]);
-
-      const image = await tx.styleImage.create({
-        data: {
-          id: createId(),
-          style: { connect: { id: styleId } },
-          sortOrder: (maxSort._max.sortOrder ?? -1) + 1,
-          isPrimary: primaryCount === 0,
-          file: {
-            create: {
-              id: fileId,
-              fileName,
-              mimeType: sniffed.mimeType,
-              sizeBytes: upload.buffer.length,
-              storageKey,
-              checksumSha256: checksum,
-              uploadedById: actor.id,
-            },
-          },
-        },
-        include: styleImageInclude,
-      });
-
-      await recordAuditLog(
-        {
-          actorId: actor.id,
-          action: 'STYLE_IMAGE_UPLOADED',
-          entityType: 'Style',
-          entityId: styleId,
-          metadata: {
-            imageId: image.id,
-            fileId,
-            fileName,
-            mimeType: sniffed.mimeType,
-            sizeBytes: upload.buffer.length,
-            storageKey,
-            isPrimary: image.isPrimary,
-          },
-        },
-        tx,
-      );
-
-      return { image, created: true };
-    });
+    outcome = await prisma.$transaction((tx) => attachStagedStyleImage(actor, tx, styleId, staged));
   } catch (error) {
-    await deleteFromStorageBestEffort(storageKey);
+    await discardStagedStyleImage(staged);
     throw error;
   }
-
-  if (!outcome.created) {
-    // The freshly stored copy is redundant — the existing record's file
-    // stays authoritative.
-    await deleteFromStorageBestEffort(storageKey);
-  }
-
+  if (!outcome.created) await discardStagedStyleImage(staged);
   return { image: toStyleImageView(outcome.image), created: outcome.created };
 }
 

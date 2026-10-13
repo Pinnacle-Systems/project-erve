@@ -98,6 +98,17 @@ function buildXlsxFixture(options: FixtureOptions = {}): Buffer {
 }
 
 describe('extractEmbeddedImagesByRow', () => {
+  it.each(['missing', 'wrong-id'])('reports a declared image drawing with %s worksheet relationships', (mode) => {
+    const zip = new AdmZip(buildXlsxFixture({ includeSheetRels: mode !== 'missing' }));
+    zip.updateFile('xl/worksheets/sheet1.xml', Buffer.from('<worksheet><drawing r:id="declaredImages"/></worksheet>'));
+    const result = extractEmbeddedImagesByRow(zip.toBuffer());
+    expect(result.imagesByRow.size).toBe(0);
+    expect(result.ambiguous).toMatchObject([{ reason: 'BROKEN_DRAWING_REFERENCE' }]);
+  });
+  it('reports broken expected drawing parts instead of declaring there are no images', () => {
+    const result = extractEmbeddedImagesByRow(buildXlsxFixture({ includeDrawing: false }));
+    expect(result.ambiguous).toMatchObject([{ reason: 'BROKEN_DRAWING_REFERENCE' }]);
+  });
   it('resolves a single embedded PNG to its 1-indexed spreadsheet row', () => {
     const buffer = buildXlsxFixture();
     const result = extractEmbeddedImagesByRow(buffer);

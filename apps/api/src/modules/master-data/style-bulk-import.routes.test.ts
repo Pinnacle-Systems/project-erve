@@ -36,6 +36,32 @@ async function qaUserToken() {
 }
 
 describe('POST /styles/bulk-import/preflight and /execute', () => {
+  it('serves a generic template and authorized execution history', async () => {
+    const token = await adminToken();
+    const template = await request(app).get('/styles/bulk-import/template').set('Authorization', `Bearer ${token}`)
+      .buffer(true).parse((response, callback) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () => callback(null, Buffer.concat(chunks)));
+      });
+    expect(template.status).toBe(200);
+    const book = XLSX.read(template.body, { type: 'buffer' });
+    const header = XLSX.utils.sheet_to_json<unknown[]>(book.Sheets.Styles!, { header: 1 })[0];
+    expect(header).toContain('Financial Year');
+    expect(header).toContain('Factory Name Mappings');
+    const history = await request(app).get('/styles/bulk-import/history').set('Authorization', `Bearer ${token}`);
+    expect(history.status).toBe(200);
+    expect(history.body.data).toEqual([]);
+  });
+  it('binds execution confirmation to the workbook checksum and sheet', async () => {
+    const token = await adminToken();
+    const buffer = buildSheet([{ 'Style Number': 'ST-X', 'Style Name': 'Tee', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }]);
+    const response = await request(app).post('/styles/bulk-import/execute').set('Authorization', `Bearer ${token}`)
+      .field('sourceFileChecksum', 'changed-bytes').field('worksheet', 'Sheet1')
+      .attach('file', buffer, 'styles.xlsx');
+    expect(response.status).toBe(409);
+    expect(await prisma.styleBulkImportRun.count()).toBe(0);
+  });
   it('requires authentication', async () => {
     const response = await request(app).post('/styles/bulk-import/preflight');
     expect(response.status).toBe(401);
@@ -102,6 +128,8 @@ describe('POST /styles/bulk-import/preflight and /execute', () => {
     const execute = await request(app)
       .post('/styles/bulk-import/execute')
       .set('Authorization', `Bearer ${token}`)
+      .field('confirmationToken', preflight.body.data.confirmationToken)
+      .field('worksheet', preflight.body.data.worksheet)
       .attach('file', buffer, { filename: 'styles.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     expect(execute.status).toBe(200);
     expect(execute.body.data.results[0]).toMatchObject({ outcome: 'COMPLETED', styleNumber: 'ST-ROUTE-1' });
