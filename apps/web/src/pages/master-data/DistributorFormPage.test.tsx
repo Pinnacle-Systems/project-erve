@@ -180,7 +180,8 @@ describe('DistributorFormPage — UXAUTH-019 edit-load gating', () => {
     );
 
     expect(container.querySelector('form')).not.toBeNull();
-    const codeInput = findInput('Code *');
+    const codeInput = findInput('Code');
+    expect(codeInput.readOnly).toBe(true);
     const nameInput = findInput('Name *');
     expect(codeInput.value).toBe('DIST-9001');
     expect(nameInput.value).toBe('Server Hydrated Distributor');
@@ -200,8 +201,7 @@ describe('DistributorFormPage — UXAUTH-019 edit-load gating', () => {
     expect(container.textContent).not.toContain('Loading distributor');
     expect(container.textContent).not.toContain('Unable to load distributor');
     expect(container.querySelector('form')).not.toBeNull();
-    const codeInput = findInput('Code *');
-    expect(codeInput.value).toBe('');
+    expect(Array.from(container.querySelectorAll('label')).some((label) => label.textContent === 'Code *')).toBe(false);
   });
 });
 
@@ -216,7 +216,6 @@ describe('DistributorFormPage — U3B section grouping and required-field presen
     const sectionTitles = Array.from(container.querySelectorAll('h4')).map((h) => h.textContent);
     expect(sectionTitles).toEqual(['Identity / Business', 'Contact', 'Address']);
 
-    expect(findInput('Code *')).toBeTruthy();
     expect(findInput('Name *')).toBeTruthy();
     expect(findInput('GSTIN *')).toBeTruthy();
     expect(findInput('Contact Name')).toBeTruthy();
@@ -304,7 +303,7 @@ describe('DistributorFormPage — U3B section grouping and required-field presen
     });
 
     act(() => {
-      setInputValue(findInput('Code *'), 'DIST-9');
+
       setInputValue(findInput('Name *'), 'Test Distributor');
       setInputValue(findInput('GSTIN *'), 'NOT-A-GSTIN');
     });
@@ -328,7 +327,7 @@ describe('DistributorFormPage — U3B section grouping and required-field presen
     });
 
     act(() => {
-      setInputValue(findInput('Code *'), 'DIST-9');
+
       setInputValue(findInput('Name *'), 'Test Distributor');
       setInputValue(findInput('GSTIN *'), '27aaaaa0000a1z5');
     });

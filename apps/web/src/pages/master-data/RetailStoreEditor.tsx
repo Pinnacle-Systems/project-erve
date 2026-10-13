@@ -39,7 +39,6 @@ const labels: Record<keyof typeof empty, string> = {
   status: 'Status',
 };
 const required = new Set([
-  'code',
   'name',
   'addressLine1',
   'city',
@@ -81,10 +80,10 @@ export function RetailStoreEditor({
       if (!owner) throw new Error('Distributor is required');
       if ([...required].some((key) => !form[key as keyof typeof empty].trim()))
         throw new Error(
-          'Store Code, Store Name, address, City, State, Country and PIN are required',
+          'Store Name, address, City, State, Country and PIN are required',
         );
       const payload = Object.fromEntries(
-        Object.entries(form).map(([k, v]) => [k, v.trim() || null]),
+        Object.entries(form).filter(([key]) => key !== 'code').map(([k, v]) => [k, v.trim() || null]),
       );
       const response = store
         ? await apiClient.patch<ApiSuccessResponse<RetailStore>>(
@@ -114,6 +113,7 @@ export function RetailStoreEditor({
         required={required.has(key)}
         type={key === 'contactEmail' ? 'email' : 'text'}
         value={form[key]}
+        readOnly={key === 'code'}
         onChange={(e) => setForm((current) => ({ ...current, [key]: e.target.value }))}
         errorMessage={error && required.has(key) && !form[key].trim() ? 'Required' : undefined}
         disabled={mutation.isPending}
@@ -144,7 +144,7 @@ export function RetailStoreEditor({
               disabled={mutation.isPending}
             />
           )}
-          {field('code')}
+          {store ? field('code') : null}
           {field('name')}
           {field('gstin')}
           <SelectField

@@ -56,13 +56,12 @@ export function FactoryEditor({ onSaved, onCancel }: { onSaved: (factory: Factor
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!form.code.trim() || !form.name.trim()) throw new Error('Code and name are required');
+      if (!form.name.trim()) throw new Error('Name is required');
       const payload = Object.fromEntries(
-        Object.entries(form).map(([key, value]) => [key, value.trim() || null]),
+        Object.entries(form).filter(([key]) => key !== 'code').map(([key, value]) => [key, value.trim() || null]),
       );
       const response = await apiClient.post<ApiSuccessResponse<Factory>>('/factories', {
         ...payload,
-        code: form.code.trim(),
         name: form.name.trim(),
       });
       return response.data.data;
@@ -82,11 +81,11 @@ export function FactoryEditor({ onSaved, onCancel }: { onSaved: (factory: Factor
       <TextField
         key={key}
         label={labels[key]}
-        required={key === 'code' || key === 'name'}
+        required={key === 'name'}
         type={key === 'contactEmail' ? 'email' : 'text'}
         value={form[key]}
         onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
-        errorMessage={error && (key === 'code' || key === 'name') && !form[key].trim() ? 'Required' : undefined}
+        errorMessage={error && key === 'name' && !form[key].trim() ? 'Required' : undefined}
         disabled={mutation.isPending}
       />
     );
@@ -105,7 +104,6 @@ export function FactoryEditor({ onSaved, onCancel }: { onSaved: (factory: Factor
     >
       <FormSection title="Identity">
         <FormGrid layout="content">
-          {field('code')}
           {field('name')}
         </FormGrid>
       </FormSection>

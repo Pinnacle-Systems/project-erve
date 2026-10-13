@@ -59,7 +59,7 @@ function message(error: unknown): string {
 
 function cleanPayload(form: FactoryFormFields) {
   return Object.fromEntries(
-    Object.entries(form).map(([key, value]) => [key, value.trim() || null]),
+    Object.entries(form).filter(([key]) => key !== 'code').map(([key, value]) => [key, value.trim() || null]),
   ) as Record<string, string | null>;
 }
 
@@ -93,12 +93,11 @@ export function FactoryFormPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!form.code.trim() || !form.name.trim()) {
-        throw new Error('Code and name are required');
+      if (!form.name.trim()) {
+        throw new Error('Name is required');
       }
       const payload = {
         ...cleanPayload(form),
-        code: form.code.trim(),
         name: form.name.trim(),
       };
       const response = isEdit
@@ -124,11 +123,12 @@ export function FactoryFormPage() {
     <TextField
       key={key}
       label={labels[key]}
-      required={key === 'code' || key === 'name'}
+      required={key === 'name'}
       type={key === 'contactEmail' ? 'email' : 'text'}
       value={form[key]}
+      readOnly={key === 'code'}
       errorMessage={
-        error && ((key === 'code' && !form.code.trim()) || (key === 'name' && !form.name.trim()))
+        error && (key === 'name' && !form.name.trim())
           ? 'Required'
           : undefined
       }
@@ -158,7 +158,7 @@ export function FactoryFormPage() {
           }}
         >
           <FormSection title="Identity">
-            <FormGrid columns={2}>{identityFields.map(renderField)}</FormGrid>
+            <FormGrid columns={2}>{identityFields.filter((key) => isEdit || key !== 'code').map(renderField)}</FormGrid>
           </FormSection>
           <FormSection title="Contact">
             <FormGrid columns={3}>{contactFields.map(renderField)}</FormGrid>

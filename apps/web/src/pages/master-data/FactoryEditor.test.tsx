@@ -50,34 +50,34 @@ async function submit() {
 }
 
 describe('Factory contained editor (DEMO-015)', () => {
-  it('submits Code and Name, calling onSaved with the created Factory', async () => {
+  it('submits Name without an internal code, calling onSaved with the created Factory', async () => {
     const post = vi
       .spyOn(apiClient, 'post')
-      .mockResolvedValue({ data: { data: { id: 'new-factory', code: 'F1', name: 'Factory One', status: 'ACTIVE' } } });
+      .mockResolvedValue({ data: { data: { id: 'new-factory', name: 'Factory One', status: 'ACTIVE' } } });
     const saved = await renderEditor();
-    type('Code', 'F1');
+
     type('Name', 'Factory One');
     await submit();
-    expect(post).toHaveBeenCalledWith('/factories', expect.objectContaining({ code: 'F1', name: 'Factory One' }));
+    expect(post).toHaveBeenCalledWith('/factories', expect.objectContaining({ name: 'Factory One' }));
+    expect(post.mock.calls[0]![1]).not.toHaveProperty('code');
     expect(saved).toHaveBeenCalledWith(expect.objectContaining({ id: 'new-factory' }));
   });
 
-  it('rejects submission with Code or Name missing, without calling the API', async () => {
+  it('rejects submission with Name missing, without calling the API', async () => {
     const post = vi.spyOn(apiClient, 'post');
     await renderEditor();
-    type('Name', 'Factory One');
     await submit();
     expect(post).not.toHaveBeenCalled();
-    expect(container.textContent).toContain('Code and name are required');
+    expect(container.textContent).toContain('Name is required');
   });
 
   it('preserves entered fields and displays the server error after a rejected create', async () => {
     vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('Factory code already exists'));
     await renderEditor();
-    type('Code', 'F1');
+
     type('Name', 'Factory One');
     await submit();
-    expect(input('Code').value).toBe('F1');
+    expect(input('Name').value).toBe('Factory One');
     expect(container.textContent).toContain('Factory code already exists');
   });
 });

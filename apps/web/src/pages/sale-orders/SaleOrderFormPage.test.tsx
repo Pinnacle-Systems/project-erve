@@ -332,7 +332,7 @@ async function prepareInline() {
 }
 async function fillInline() {
   const dialog = document.body.querySelector('[role="dialog"]')!;
-  await typeText('Store Code', 'NEW', dialog);
+
   await typeText('Store Name', 'New Store', dialog);
   await typeText('Address Line 1', 'New Address', dialog);
   await typeText('City', 'Chennai', dialog);
@@ -353,11 +353,12 @@ describe('DEMO-014 Store selection and inline creation context', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => clickButtonByText('+ Create new Retail Store'));
     const reopened = document.body.querySelector('[role="dialog"]')!;
-    await typeText('Store Code', 'SECOND', reopened);
+    await typeText('Store Name', 'Second Store', reopened);
+
     await act(async () => pending.resolve({ data: { data: { id: 'canceled', distributorId: 'dist-1', code: 'FIRST', name: 'Canceled Store', addressLine1: 'Canceled address', city: 'Chennai', state: 'TN', country: 'India', postalCode: '600001', status: 'ACTIVE' } } }));
     await flush();
     expect(document.body.querySelector('[role="dialog"]')).toBe(reopened);
-    expect(textInput('Store Code', reopened).value).toBe('SECOND');
+    expect(textInput('Store Name', reopened).value).toBe('Second Store');
     expect(textInput('Retail Store').value).toBe('');
     expect(textInput('Total Quantity').value).toBe('7');
     expect(textInput('Remarks').value).toBe('Keep my unsaved notes');
@@ -444,7 +445,7 @@ describe('DEMO-014 Store selection and inline creation context', () => {
     );
     await flush();
     expect(dialog.textContent).toContain('Store Code already exists');
-    expect(textInput('Store Code', dialog).value).toBe('NEW');
+    expect(textInput('Store Name', dialog).value).toBe('New Store');
     expect(textInput('Remarks').value).toBe('Keep my unsaved notes');
     const cancel = Array.from(dialog.querySelectorAll('button')).find(
       (e) => e.textContent === 'Cancel',
@@ -524,13 +525,13 @@ describe('SaleOrderFormPage inline Factory/Distributor creation (DEMO-015)', () 
     await renderCreateForm();
     clickButtonByText('+ Create new Factory');
     await flush();
-    await typeText('Code', 'FAC2', document.body);
+
     await typeText('Name', 'Factory Two', document.body);
     await act(async () => {
       document.body.querySelector('[role="dialog"] form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
       await new Promise((r) => setTimeout(r, 20));
     });
-    expect(post).toHaveBeenCalledWith('/factories', expect.objectContaining({ code: 'FAC2', name: 'Factory Two' }));
+    expect(post).toHaveBeenCalledWith('/factories', expect.objectContaining({ name: 'Factory Two' }));
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect((triggerByLabel('Factory') as unknown as HTMLInputElement).value).toContain('Factory Two');
   });
@@ -542,7 +543,7 @@ describe('SaleOrderFormPage inline Factory/Distributor creation (DEMO-015)', () 
     await renderCreateForm();
     clickButtonByText('+ Create new Distributor');
     await flush();
-    await typeText('Code', 'D3', document.body);
+
     await typeText('Name', 'Distributor Three', document.body);
     await typeText('GSTIN', '22AAAAA0000A1Z5', document.body);
     await act(async () => {
@@ -551,7 +552,7 @@ describe('SaleOrderFormPage inline Factory/Distributor creation (DEMO-015)', () 
     });
     expect(post).toHaveBeenCalledWith(
       '/distributors',
-      expect.objectContaining({ code: 'D3', name: 'Distributor Three', gstin: '22AAAAA0000A1Z5' }),
+      expect.objectContaining({ name: 'Distributor Three', gstin: '22AAAAA0000A1Z5' }),
     );
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(distributorInputs()[0]!.value).toBe('Distributor Three');

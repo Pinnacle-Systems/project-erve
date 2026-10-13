@@ -184,7 +184,7 @@ async function renderEdit(factory: Factory, overrides: AdapterOverrides = {}): P
 }
 
 describe('FactoryFormPage — Create', () => {
-  it('renders all 11 supported fields, grouped into Identity / Contact / Address', async () => {
+  it('renders all 10 supported fields, grouped into Identity / Contact / Address', async () => {
     await renderCreate();
 
     expect(container.textContent).toContain('Identity');
@@ -192,7 +192,6 @@ describe('FactoryFormPage — Create', () => {
     expect(container.textContent).toContain('Address');
 
     for (const label of [
-      'Code *',
       'Name *',
       'Contact Name',
       'Contact Email',
@@ -208,13 +207,13 @@ describe('FactoryFormPage — Create', () => {
     }
   });
 
-  it('Identity section contains Code and Name', async () => {
+  it('Identity section contains Name and omits generated Code', async () => {
     await renderCreate();
     const identityHeading = Array.from(container.querySelectorAll('h4')).find(
       (el) => el.textContent === 'Identity',
     );
     const section = identityHeading?.closest('section');
-    expect(section?.textContent).toContain('Code');
+    expect(section?.textContent).not.toContain('Code');
     expect(section?.textContent).toContain('Name');
     expect(section?.textContent).not.toContain('Contact Name');
   });
@@ -245,7 +244,7 @@ describe('FactoryFormPage — Create', () => {
     expect(section?.textContent).toContain('Postal Code');
   });
 
-  it('requires Code and Name before submitting', async () => {
+  it('requires Name before submitting', async () => {
     const postSpy = vi.fn();
     await renderCreate({ post: async (config) => { postSpy(); return ok(config, { success: true, data: makeFactory() }); } });
 
@@ -256,8 +255,8 @@ describe('FactoryFormPage — Create', () => {
     await flush();
 
     expect(postSpy).not.toHaveBeenCalled();
-    expect(container.textContent).toContain('Code and name are required');
-    expect(findInput('Code *').getAttribute('aria-invalid')).toBe('true');
+    expect(container.textContent).toContain('Name is required');
+
     expect(findInput('Name *').getAttribute('aria-invalid')).toBe('true');
   });
 
@@ -273,7 +272,6 @@ describe('FactoryFormPage — Create', () => {
       },
     });
 
-    setInputValue(findInput('Code *'), 'FAC-9');
     setInputValue(findInput('Name *'), 'New Factory');
     setInputValue(findInput('Contact Name'), 'Jane Doe');
     setInputValue(findInput('Contact Email'), 'jane@example.com');
@@ -285,8 +283,8 @@ describe('FactoryFormPage — Create', () => {
     await act(async () => submit!.click());
     await flush();
 
+    expect(postBody).not.toHaveProperty('code');
     expect(postBody).toMatchObject({
-      code: 'FAC-9',
       name: 'New Factory',
       contactName: 'Jane Doe',
       contactEmail: 'jane@example.com',
@@ -300,7 +298,6 @@ describe('FactoryFormPage — Create', () => {
       post: async (config) => fail(config, 409, 'A factory with this code already exists'),
     });
 
-    setInputValue(findInput('Code *'), 'FAC-9');
     setInputValue(findInput('Name *'), 'New Factory');
 
     const submit = Array.from(container.querySelectorAll('button')).find(
@@ -311,7 +308,6 @@ describe('FactoryFormPage — Create', () => {
 
     expect(container.textContent).toContain('A factory with this code already exists');
     expect(navigateSpy).not.toHaveBeenCalled();
-    expect(findInput('Code *').value).toBe('FAC-9');
     expect(findInput('Name *').value).toBe('New Factory');
   });
 });
@@ -323,7 +319,8 @@ describe('FactoryFormPage — Edit', () => {
     );
 
     expect(container.textContent).toContain('Edit Factory');
-    expect(findInput('Code *').value).toBe('FAC-2');
+    expect(findInput('Code').value).toBe('FAC-2');
+    expect(findInput('Code').readOnly).toBe(true);
     expect(findInput('Name *').value).toBe('Second Factory');
     expect(findInput('City').value).toBe('Delhi');
     expect(findInput('Contact Name').value).toBe('Sam');
@@ -346,6 +343,7 @@ describe('FactoryFormPage — Edit', () => {
     await act(async () => submit!.click());
     await flush();
 
+    expect(patchBody).not.toHaveProperty('code');
     expect(patchBody).toMatchObject({ city: 'Chennai' });
     expect(navigateSpy).toHaveBeenCalledWith(`/master-data/factories/${factory.id}`);
   });

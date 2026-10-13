@@ -66,19 +66,18 @@ export function DistributorEditor({
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!form.code.trim() || !form.name.trim() || !form.gstin.trim()) {
-        throw new Error('Code, Name, and GSTIN are required');
+      if (!form.name.trim() || !form.gstin.trim()) {
+        throw new Error('Name and GSTIN are required');
       }
       const gstin = form.gstin.trim().toUpperCase();
       if (!GSTIN_PATTERN.test(gstin)) {
         throw new Error('Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
       }
       const payload = Object.fromEntries(
-        Object.entries(form).map(([key, value]) => [key, value === '' ? null : value]),
+        Object.entries(form).filter(([key]) => key !== 'code').map(([key, value]) => [key, value === '' ? null : value]),
       );
       const response = await apiClient.post<ApiSuccessResponse<DistributorOption>>('/distributors', {
         ...payload,
-        code: form.code.trim(),
         name: form.name.trim(),
         gstin,
       });
@@ -99,12 +98,12 @@ export function DistributorEditor({
       <TextField
         key={key}
         label={labels[key]}
-        required={key === 'code' || key === 'name' || key === 'gstin'}
+        required={key === 'name' || key === 'gstin'}
         type={key === 'contactEmail' ? 'email' : 'text'}
         value={form[key]}
         onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
         errorMessage={
-          error && (key === 'code' || key === 'name' || key === 'gstin') && !form[key].trim()
+          error && (key === 'name' || key === 'gstin') && !form[key].trim()
             ? 'Required'
             : undefined
         }
@@ -126,7 +125,6 @@ export function DistributorEditor({
     >
       <FormSection title="Identity / Business">
         <FormGrid layout="content">
-          {field('code')}
           {field('name')}
           {field('gstin')}
           <SelectField
