@@ -41,6 +41,50 @@ function renderPage() {
   });
 }
 
+describe('ErveDispatchListPage status (BUG-008)', () => {
+  it('renders the same Dispatched and Delivered status badges as the detail page', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: {
+        data: {
+          items: [
+            {
+              id: 'dispatch-1',
+              erveDispatchNumber: 'EIED/26-27/0001',
+              status: 'DISPATCHED',
+              saleOrder: { saleOrderNumber: 'EISO/26-27/0001' },
+              distributor: { name: 'Distributor One' },
+              dispatchDate: '2026-10-01T00:00:00.000Z',
+              transporter: null,
+              lrNumber: null,
+              totalQuantity: 12,
+            },
+            {
+              id: 'dispatch-2',
+              erveDispatchNumber: 'EIED/26-27/0002',
+              status: 'DELIVERED',
+              saleOrder: null,
+              distributor: { name: 'Distributor Two' },
+              dispatchDate: '2026-10-02T00:00:00.000Z',
+              transporter: 'Carrier',
+              lrNumber: 'LR-2',
+              totalQuantity: 4,
+            },
+          ],
+          pageInfo: { limit: 50, hasMore: false, nextCursor: null },
+        },
+      },
+    } as never);
+
+    renderPage();
+    await vi.waitFor(() => expect(content()).toContain('EIED/26-27/0002'));
+
+    const headers = Array.from(container.querySelectorAll('th')).map((header) => header.textContent);
+    expect(headers).toContain('Status');
+    expect(content()).toContain('Dispatched');
+    expect(content()).toContain('Delivered');
+  });
+});
+
 describe('ErveDispatchListPage — request failure handling (UXAUTH-018)', () => {
   it('shows a visible error, not a silent empty list, when the request fails', async () => {
     vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('Network Error'));
