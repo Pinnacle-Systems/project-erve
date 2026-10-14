@@ -22,6 +22,8 @@ node tools/pr8/compare-rebuilds.mjs $pr8Run
 
 Rebuild acceptance executes migrations, system/bootstrap definitions, reference and shared master imports, Style/image imports, semantic snapshots and exact reruns. Interruption injection follows committed Factory and Style/image stages; recovery must match the independently fresh snapshot. Domain integration tests additionally exercise image failure/recovery and ownership refusals.
 
+Style acceptance also independently compares loaded descriptive fields against raw canonical XLSX cells, so identical rebuilds cannot conceal dropped IP Name, Licensor, Colour, Description or Category. Loaded Style counts and rejected source rows remain separate reconciliation facts; metadata equality alone does not prove that every source row was eligible. Supplied metadata conflicts require review, and optional columns that are absent preserve existing values.
+
 Launch the API and frontend in separate terminal sessions:
 
 ```powershell

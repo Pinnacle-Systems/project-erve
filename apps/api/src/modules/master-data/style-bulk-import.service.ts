@@ -77,6 +77,11 @@ export interface BulkStyleImportSheetRow {
   rowNumber: number;
   styleNumber: string;
   styleName: string;
+  description?: string;
+  categoryDescription?: string;
+  ipName?: string;
+  licensor?: string;
+  colour?: string;
   finalMrpRaw: string;
   seasonCode: string;
   financialYear: string;
@@ -101,6 +106,11 @@ const SHEET_HEADERS: Record<
 > = {
   'style number': 'styleNumber',
   'style name': 'styleName',
+  description: 'description',
+  category: 'categoryDescription',
+  'ip name': 'ipName',
+  licensor: 'licensor',
+  colour: 'colour',
   'final mrp': 'finalMrpRaw',
   'season code': 'seasonCode',
   'financial year': 'financialYear',
@@ -111,6 +121,8 @@ const SHEET_HEADERS: Record<
 export function listBulkStyleImportWorksheets(buffer: Buffer): string[] {
   return XLSX.read(buffer, { type: 'buffer' }).SheetNames;
 }
+
+const styleMetadataFields = ['description', 'categoryDescription', 'ipName', 'licensor', 'colour'] as const;
 
 export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): BulkStyleImportSheetRow[] {
   const workbook = XLSX.read(buffer, { type: 'buffer', raw: true });
@@ -136,7 +148,10 @@ export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): B
       const key = SHEET_HEADERS[headerCell];
       if (key) row[key] = String(cells[column] ?? '').trim();
     });
+    const metadata: Partial<Pick<BulkStyleImportSheetRow, (typeof styleMetadataFields)[number]>> = {};
+    for (const field of styleMetadataFields) if (Object.hasOwn(row, field)) metadata[field] = row[field];
     return {
+      ...metadata,
       rowNumber: index + 2,
       styleNumber: row.styleNumber ?? '',
       styleName: row.styleName ?? '',
@@ -197,6 +212,11 @@ export type BulkStyleImportRowStatus = 'CREATE' | 'SKIP_EXISTING' | 'RESUME_IMAG
 
 export interface BulkStyleImportCreateFields {
   styleName: string;
+  description?: string | null;
+  categoryDescription?: string | null;
+  ipName?: string | null;
+  licensor?: string | null;
+  colour?: string | null;
   finalMrp: number;
   seasonId: string;
   lmixNumber: string | null;
@@ -381,7 +401,10 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
       continue;
     }
 
+    const metadata: Pick<BulkStyleImportCreateFields, (typeof styleMetadataFields)[number]> = {};
+    for (const field of styleMetadataFields) if (sheetRow[field] !== undefined) metadata[field] = sheetRow[field] || null;
     const create: BulkStyleImportCreateFields = {
+      ...metadata,
       styleName: sheetRow.styleName,
       finalMrp,
       seasonId: season.id,
@@ -476,6 +499,7 @@ async function existingStyleConflict(styleId: string, styleNumber: string, input
   if (!existing) return 'Existing Style changed; preview again';
   const changed: string[] = [];
   if (existing.styleNumber !== styleNumber || existing.styleName !== input.styleName) changed.push('Style identity/name');
+  for (const field of styleMetadataFields) if (input[field] !== undefined && (existing[field] ?? '') !== (input[field] ?? '')) changed.push(field);
   if (existing.status !== 'ACTIVE') changed.push('inactive Style');
   if (Number(existing.finalMrp) !== input.finalMrp) changed.push('MRP');
   if (existing.seasonId !== input.seasonId || (existing.lmixNumber ?? null) !== input.lmixNumber) changed.push('Season/LMIX');
@@ -669,6 +693,7 @@ export function buildBulkStyleImportTemplate(): Buffer {
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([[
     'Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes', 'Financial Year',
     'LMIX Number', 'HSN Code', 'Barcodes', 'Factory Name Mappings', 'Factory Mappings',
+    'Description', 'Category', 'IP Name', 'Licensor', 'Colour',
   ]]), 'Styles');
   return XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }

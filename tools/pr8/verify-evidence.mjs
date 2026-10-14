@@ -17,8 +17,13 @@ const secrets = [
   values.DATABASE_URL,
   values.TEST_DATABASE_URL,
 ];
-for (const profile of ['first', 'second', 'interruption', 'regression'])
-  secrets.push((await readFile(join(runRoot, `${profile}-password.txt`), 'utf8')).trimEnd());
+for (const profile of ['first', 'second', 'interruption', 'regression']) {
+  try {
+    secrets.push((await readFile(join(runRoot, `${profile}-password.txt`), 'utf8')).trimEnd());
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
 const config = JSON.parse(await readFile(join(runRoot, 'first-config.json')));
 const credentials = JSON.parse(
   await readFile(join(config.reportRoot, 'operational-fixture-credentials.json')),

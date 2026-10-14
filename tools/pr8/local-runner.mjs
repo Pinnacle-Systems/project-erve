@@ -163,12 +163,15 @@ if (action === 'setup') {
       'src/cli/disposable-rebuild-ownership.test.ts',
       'src/cli/disposable-rebuild-outcomes.test.ts',
       'src/cli/disposable-rebuild-safety.test.ts',
+      'src/cli/pr8-acceptance-state.test.ts',
+      'src/cli/pr8-source-fidelity.test.ts',
       'src/modules/master-data/master-import.service.test.ts',
       'src/modules/master-data/master-import.routes.test.ts',
       'src/modules/master-data/master-import.parser.test.ts',
       'src/modules/master-data/style-bulk-import.test.ts',
       'src/modules/master-data/style-bulk-import.routes.test.ts',
       'src/modules/master-data/style-bulk-import-reliability.test.ts',
+      'src/modules/master-data/style-bulk-import-metadata.test.ts',
     ];
   }
   const child = spawn(process.execPath, args, {

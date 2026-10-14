@@ -269,6 +269,25 @@ try {
   await browser.fill('input[placeholder="Search styles"]', 'PR8 ENGINEERING ONLY STYLE');
   await browser.waitFor(text('PR8 ENGINEERING ONLY STYLE'), 60000);
   await capture('PR8-UI-004', 'persisted', 'Synthetic Style persists after navigation');
+  const sourceStyle = snapshot.business.styles.find(
+    (style) => style.ipName && style.licensor && style.colour,
+  );
+  if (!sourceStyle) throw Error('Canonical rebuild lacks source-derived IP/Licensor/Colour');
+  await browser.fill('input[placeholder="Search styles"]', sourceStyle.styleNumber);
+  await browser.waitFor(text(sourceStyle.styleNumber));
+  for (const field of ['ipName', 'licensor', 'colour'])
+    await browser.assert(
+      'PR8-STYLE-METADATA',
+      `Source-derived ${field} is displayed`,
+      text(sourceStyle[field]),
+    );
+  await capture(
+    'PR8-STYLE-METADATA',
+    'source-values',
+    'Historical Style displays source IP, Licensor and Colour',
+  );
+  await browser.fill('input[placeholder="Search styles"]', 'PR8 ENGINEERING ONLY STYLE');
+  await browser.waitFor(text('PR8 ENGINEERING ONLY STYLE'));
   const styles = await persisted('styles', 'PR8 ENGINEERING ONLY STYLE');
   if (styles.length !== 1)
     throw Error('Expected exactly one synthetic Style after repeated browser verification');

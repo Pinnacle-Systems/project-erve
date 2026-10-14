@@ -48,7 +48,9 @@ async function waitForLoaded(): Promise<void> {
 // eager bundle), which takes an unpredictable number of extra ticks beyond a single
 // flushMicrotasks() to settle — poll instead.
 async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 40; i++) {
+  // A tick-count budget can expire while Vite is still loading the lazy PDF module under CI load.
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
     if (predicate()) return;
     await act(async () => {
       await flushMicrotasks();

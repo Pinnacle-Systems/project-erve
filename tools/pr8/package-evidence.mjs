@@ -92,8 +92,18 @@ await cp(
   join(config.reportRoot, 'operational-acceptance.json'),
   join(output, 'reports', 'operational-acceptance.json'),
 );
-for (const name of ['operational-attempt-01.json', 'operational-attempt-02.json'])
-  await copy(name, `reports/${name}`);
+for (const name of [
+  'operational-attempt-01.json',
+  'operational-attempt-02.json',
+  'style-metadata-diagnosis.json',
+  'provenance-verification.json',
+]) {
+  try {
+    await copy(name, `reports/${name}`);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
 const latest = await json('browser-latest.json');
 const browserGood = sessions.filter(
   (session) =>
@@ -123,7 +133,9 @@ const matrix = [
   [
     'A',
     'Fresh database rebuild',
-    first.freshEmpty && first.status === 'PASS' ? 'PASS' : 'FAIL',
+    first.freshEmpty && first.status === 'PASS' && first.styleMetadataFidelity?.status === 'PASS'
+      ? 'PASS'
+      : 'FAIL',
     'rebuild/first-rebuild.json',
   ],
   ['B', 'Identical rerun', first.identicalRerun ? 'PASS' : 'FAIL', 'rebuild/first-rerun.json'],
@@ -140,6 +152,8 @@ const matrix = [
   [
     'D',
     'Independent second rebuild',
+    first.styleMetadataFidelity?.status === 'PASS' &&
+    second.styleMetadataFidelity?.status === 'PASS' &&
     comparison.status === 'PASS' &&
     comparison.independentTargets &&
     comparison.firstFresh &&
@@ -151,7 +165,11 @@ const matrix = [
   [
     'E',
     'Interruption and recovery',
-    comparison.recoveryEquivalent && recovery.attempts.length === 2 ? 'PASS' : 'FAIL',
+    recovery.styleMetadataFidelity?.status === 'PASS' &&
+    comparison.recoveryEquivalent &&
+    recovery.attempts.length === 2
+      ? 'PASS'
+      : 'FAIL',
     'rebuild/interruption-rebuild.json',
   ],
   [
@@ -211,7 +229,8 @@ const result = {
   engineeringReadiness:
     matrix.every((row) => row[2] === 'PASS') &&
     gates.pr7.status === 'PASS' &&
-    gates.ci.status === 'PASS'
+    gates.ci.status === 'PASS' &&
+    gates.correctness?.status === 'PASS'
       ? 'VERIFIED'
       : 'FINAL_GATES_PENDING',
   commercialDataReadiness: 'NEEDS_REVIEW',
@@ -268,6 +287,16 @@ await write(
   '# Defect register\n\n| ID | Severity | Reproduction / expected versus actual | Root cause and status | Evidence |\n|---|---|---|---|---|\n| PR8-001 | Medium | Open Styles at 390px: expected 390px with no page overflow; actual viewport expanded to 514px | Filter/export row could not wrap. Fixed locally; desktop/tablet/mobile rerun passes | responsive-01 FAIL → responsive-02 PASS, actual PNGs and geometry |\n| PR8-002 | Medium | Run lint after bundle generation: source lint expected, generated bundle produced no-undef errors | dist-bundle was outside ESLint ignores. Fixed by excluding generated artifacts; source lint remains enabled | lint.log and lint-02.log |\n| PR8-003 | High tooling | In-repository output could receive credentials before later rebuild refusal | Early external-root guard now rejects repository descendants, ancestors and linked aliases before writes | Native artifact-safety tests |\n| PR8-004 | High tooling | Crash between HTTP commit/checkpoint could repeat an uncertain mutation; cached PASS could conceal a finalized invoice | Atomic checkpoints, stable request identities, fail-closed uncertain-request journal, pinned fixture date, live draft revalidation | pr8-acceptance-state regression tests; live operational revalidation |\n\nHarness attempts are retained, including invalid synthetic GSTIN, case-sensitive Style badge selection, paginated persistence lookup, Radix tab click and pending-button timing assumptions. Those failures were corrected without weakening business validation. Prior synthetic Purchase Mode assigned to a real historical pair is preserved outside this package and explicitly excluded.\n',
 );
 // Combine actual source exception workbooks into one correction-ready evidence workbook.
+await writeFile(
+  join(output, 'reports/defects.md'),
+  (await readFile(join(output, 'reports/defects.md'), 'utf8')) +
+    '\n## PR8-005 — descriptive Style fields dropped (High, fixed)\n\nThe owner observed blank IP/Licensor/Colour in the loaded Styles table. Canonical cells were populated (107 source rows); stored values were NULL. The bulk parser/planner omitted IP Name, Licensor, Colour, Description and Category. The fix maps all five supplied fields, compares them before skip/recovery and refuses conflicting values without overwriting. Eight regressions failed before the fix; all metadata regressions now pass.\n\nThe initial acceptance run is invalidated for source fidelity and retained for diagnosis. Fresh corrected targets independently compare 92 loaded Styles / 460 descriptive values against raw canonical cells. The remaining 15 canonical rows are separately documented rejection outcomes, not silently omitted. Actual browser screenshots under PR8-STYLE-METADATA show the historical values. See style-metadata-diagnosis.json and each rebuild’s styleMetadataFidelity.\n',
+);
+await writeFile(
+  join(output, 'reports/data-reconciliation.md'),
+  (await readFile(join(output, 'reports/data-reconciliation.md'), 'utf8')) +
+    `\nDescriptive source fidelity: **${first.styleMetadataFidelity?.stylesChecked ?? 0} loaded Styles / ${first.styleMetadataFidelity?.valuesChecked ?? 0} metadata values**, compared independently against raw canonical IP Name, Licensor, Colour, Description and Category cells. Canonical Style rows: 107; 92 loaded and 15 rejected with recorded source outcomes. Source provenance and all 552 non-null distinct original barcodes are independently compared across the fresh, second and recovered targets in provenance-verification.json.\n`,
+);
 const require = createRequire(join(repository, 'apps/api/package.json')),
   XLSX = require('xlsx');
 const exceptions = XLSX.utils.book_new();
@@ -291,7 +320,7 @@ if (exceptions.SheetNames.length)
   );
 for (const file of await readdir(runRoot))
   if (
-    /^(api-regression|web-regression|typecheck|api-typecheck|lint|build|native-tests|deployment-validation).*\.log$/.test(
+    /^(api-regression|web-regression|typecheck|api-typecheck|lint|build|native-tests|deployment-validation|metadata).*\.log$/.test(
       file,
     )
   )

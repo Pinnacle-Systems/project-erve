@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { prisma } from '../db/prisma.js';
 import { executeDisposableRebuild, planDisposableRebuild } from './disposable-rebuild.js';
+import { assertCanonicalStyleMetadata } from './pr8-source-fidelity.js';
 
 async function main() {
   if (!process.env.PR8_CONFIG || !process.env.PR8_RUN_ROOT)
@@ -73,6 +74,21 @@ async function main() {
   )
     throw new Error('Rebuild contains unexpected failures');
   const same = JSON.stringify(first.report.snapshot) === JSON.stringify(repeat.report.snapshot);
+  const fidelityOptions = {
+    allowedSyntheticStyleNumbers: profile === 'synthetic-correction' ? ['PR8-SYNTHETIC-001'] : [],
+  };
+  const styleMetadataFidelity = assertCanonicalStyleMetadata(
+    first.report.snapshot,
+    planning.loaded.files.styles.buffer,
+    config.styleWorksheet,
+    fidelityOptions,
+  );
+  assertCanonicalStyleMetadata(
+    repeat.report.snapshot,
+    planning.loaded.files.styles.buffer,
+    config.styleWorksheet,
+    fidelityOptions,
+  );
   if (!same) throw new Error('Identical rerun changed the semantic snapshot');
   const result = {
     profile,
@@ -86,6 +102,7 @@ async function main() {
     repeatReport: repeat.reportPath,
     snapshot: first.report.snapshot,
     identicalRerun: same,
+    styleMetadataFidelity,
     readiness: first.report.readiness,
   };
   await writeFile(
