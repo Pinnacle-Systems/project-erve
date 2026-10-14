@@ -211,6 +211,8 @@ export function AppRoutes() {
             </RoleRoute>
           }
         />
+        <Route path="seasons/import" element={<RoleRoute allowed={SEASON_MANAGE_ROLES}><BusinessMasterImportPage kind="seasons" /></RoleRoute>} />
+        <Route path="sizes/import" element={<RoleRoute allowed={SIZE_MANAGE_ROLES}><BusinessMasterImportPage kind="sizes" /></RoleRoute>} />
         <Route
           path="sizes"
           element={
@@ -530,6 +532,7 @@ export function AppRoutes() {
         }
       >
         <Route index element={<HsnListPage />} />
+        <Route path="import" element={<RoleRoute allowed={HSN_MANAGE_ROLES}><BusinessMasterImportPage kind="hsns" /></RoleRoute>} />
         <Route
           path="new"
           element={

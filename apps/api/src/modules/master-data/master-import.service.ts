@@ -12,9 +12,21 @@ import { prisma, type Prisma } from '../../db/prisma.js';
 import { env } from '../../config/env.js';
 import { currentUserSelect, toCurrentUser, type CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
-import { createFactory, createDistributor } from './master-data.service.js';
+import {
+  createFactory,
+  createDistributor,
+  createSeason,
+  createSize,
+} from './master-data.service.js';
+import { createHsn } from '../tax-rules/hsn.service.js';
+import { createHsnSchema } from '../tax-rules/hsn.validation.js';
 import { createRetailStore } from './retail-stores.service.js';
-import { createFactorySchema, createDistributorSchema } from './master-data.validation.js';
+import {
+  createFactorySchema,
+  createDistributorSchema,
+  createSeasonSchema,
+  createSizeSchema,
+} from './master-data.validation.js';
 import { createRetailStoreSchema } from './retail-stores.validation.js';
 import { parseMasterImportFile, type ParsedMasterImportRow } from './master-import.parser.js';
 
@@ -29,24 +41,40 @@ const normalized = (value: unknown) =>
     .replace(/\s+/g, ' ')
     .toUpperCase();
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
-export const masterImportKindSchema = z.enum(['factories', 'distributors', 'retail-stores']);
+export const masterImportKindSchema = z.enum([
+  'factories',
+  'distributors',
+  'retail-stores',
+  'seasons',
+  'sizes',
+  'hsns',
+]);
+const referenceKind = (kind: MasterImportKind) => ['seasons', 'sizes', 'hsns'].includes(kind);
 export async function requireMasterImportActor(
   actor: CurrentUser,
   db: Db = prisma,
+  kind?: MasterImportKind,
 ): Promise<CurrentUser> {
   const record = await db.user.findUnique({ where: { id: actor.id }, select: currentUserSelect });
   const current = record ? toCurrentUser(record) : undefined;
   if (
     !current ||
     current.status !== 'ACTIVE' ||
-    !current.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER')
+    !current.roles.some(
+      (role) =>
+        role === 'ADMIN' || role === 'MERCHANDISER' || (kind === 'hsns' && role === 'ACCOUNTANT'),
+    )
   )
-    throw HttpError.forbidden(
-      'Business imports require an active authorized ADMIN or MERCHANDISER',
-    );
+    throw HttpError.forbidden('Import requires an active authorized master-maintenance role');
   return current;
 }
 function identity(kind: MasterImportKind, input: Record<string, unknown>): string {
+  if (referenceKind(kind))
+    return checksum(
+      JSON.stringify(
+        kind === 'seasons' ? [normalized(input.code), input.financialYearId] : [input.code],
+      ),
+    );
   const fields =
     kind === 'factories'
       ? ['name']
@@ -65,6 +93,9 @@ function identity(kind: MasterImportKind, input: Record<string, unknown>): strin
   return checksum(JSON.stringify(fields.map((field) => normalized(input[field]))));
 }
 async function masters(kind: MasterImportKind, db: Db): Promise<MasterRecord[]> {
+  if (kind === 'seasons') return (await db.season.findMany()) as unknown as MasterRecord[];
+  if (kind === 'sizes') return (await db.size.findMany()) as unknown as MasterRecord[];
+  if (kind === 'hsns') return (await db.hsn.findMany()) as unknown as MasterRecord[];
   return (kind === 'factories'
     ? await db.factory.findMany()
     : kind === 'distributors'
@@ -82,6 +113,41 @@ async function validatedInput(
   db: Db,
 ): Promise<Record<string, string | null>> {
   if (parsed.error) throw HttpError.badRequest(parsed.error);
+  const strings = (input: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.entries(input).map(([key, value]) => [key, value == null ? null : String(value)]),
+    );
+  if (kind === 'seasons') {
+    const years = await db.financialYear.findMany();
+    const year = years.find((fy) => normalized(fy.code) === normalized(parsed.input.financialYear));
+    if (!year)
+      throw HttpError.badRequest('Financial Year code must reference an existing Financial Year');
+    const { financialYear: _year, ...input } = parsed.input;
+    return strings(
+      createSeasonSchema.parse({
+        ...input,
+        financialYearId: year.id,
+        barcodeSerial: input.barcodeSerial ?? null,
+        status: input.status ?? 'ACTIVE',
+      }),
+    );
+  }
+  if (kind === 'sizes') {
+    if (!parsed.input.sortOrder) throw HttpError.badRequest('Sort Order is required');
+    return strings(
+      createSizeSchema.parse({ ...parsed.input, status: parsed.input.status ?? 'ACTIVE' }),
+    );
+  }
+  if (kind === 'hsns')
+    return strings(
+      createHsnSchema
+        .omit({ gstRuleSetId: true })
+        .parse({
+          ...parsed.input,
+          description: parsed.input.description ?? null,
+          status: parsed.input.status ?? 'ACTIVE',
+        }),
+    );
   if (kind === 'factories') return createFactorySchema.parse(parsed.input);
   if (kind === 'distributors') {
     if (!parsed.input.purchaseMode) {
@@ -129,6 +195,20 @@ async function classify(
     where: { kind_sourceKey: { kind, sourceKey: row.sourceKey! } },
   });
   const records = (await masters(kind, db)).filter((record) => record.id !== excludeId);
+  if (
+    kind === 'seasons' &&
+    row.input.barcodeSerial != null &&
+    records.some(
+      (record) =>
+        String(record.barcodeSerial) === row.input.barcodeSerial &&
+        identity(kind, record) !== row.identity,
+    )
+  )
+    return {
+      ...row,
+      outcome: 'NEEDS_REVIEW',
+      detail: 'Barcode Serial is already used by another Season',
+    };
   const identityMapping = await db.masterImportSource.findUnique({
     where: { kind_businessIdentity: { kind, businessIdentity: row.identity! } },
   });
@@ -160,12 +240,13 @@ async function classify(
     };
   const existing = matches[0]!;
   const changed = Object.entries(row.input)
-    .filter(
-      ([field, value]) =>
-        value !== null && value !== '' && normalized(existing[field]) !== normalized(value),
+    .filter(([field, value]) =>
+      referenceKind(kind)
+        ? (existing[field] == null ? null : String(existing[field])) !== value
+        : value !== null && value !== '' && normalized(existing[field]) !== normalized(value),
     )
     .map(([field]) => field);
-  if (existing.status !== 'ACTIVE' || changed.length)
+  if ((!referenceKind(kind) && existing.status !== 'ACTIVE') || changed.length)
     return {
       ...row,
       outcome: 'NEEDS_REVIEW',
@@ -252,8 +333,21 @@ export async function planMasterImport(
   worksheet?: string,
 ): Promise<MasterImportPlan> {
   masterImportKindSchema.parse(kind);
-  actor = await requireMasterImportActor(actor);
+  actor = await requireMasterImportActor(actor, prisma, kind);
   const parsed = parseMasterImportFile(kind, buffer, fileName, worksheet);
+  // Invalid metadata must not hide duplicate business-assigned codes in the source.
+  const sourceIdentities = new Map(
+    parsed.rows.map((source) => [
+      source.rowNumber,
+      referenceKind(kind) && source.input.code
+        ? JSON.stringify(
+            kind === 'seasons'
+              ? [normalized(source.input.code), normalized(source.input.financialYear)]
+              : [source.input.code],
+          )
+        : undefined,
+    ]),
+  );
   const rows: MasterImportRow[] = [];
   for (const source of parsed.rows) {
     let row: MasterImportRow = {
@@ -272,6 +366,13 @@ export async function planMasterImport(
         input,
         identity: businessIdentity,
         sourceKey: source.sourceKey ?? `${kind}:v1:${businessIdentity}`,
+        ...(kind === 'seasons' && input.barcodeSerial === null
+          ? {
+              warnings: [
+                'Barcode Serial is absent and will remain NULL; automatic Style barcode generation may require it.',
+              ],
+            }
+          : {}),
       };
       if (row.sourceKey!.length > 256)
         throw HttpError.badRequest('Source Key exceeds 256 characters');
@@ -298,11 +399,17 @@ export async function planMasterImport(
         (other) =>
           other !== row &&
           ((row.identity && row.identity === other.identity) ||
+            (sourceIdentities.get(row.rowNumber) &&
+              sourceIdentities.get(row.rowNumber) === sourceIdentities.get(other.rowNumber)) ||
+            (kind === 'seasons' &&
+              row.input.barcodeSerial != null &&
+              row.input.barcodeSerial === other.input.barcodeSerial) ||
             (row.sourceKey && row.sourceKey === other.sourceKey)),
       )
     ) {
       row.outcome = 'NEEDS_REVIEW';
-      row.detail = 'Duplicate source key or business identity in this upload; review all copies';
+      row.detail =
+        'Duplicate source key, business identity or Season Barcode Serial in this upload; review all copies';
     }
   const plan = {
     kind,
@@ -322,8 +429,14 @@ export async function executeMasterImport(
   worksheet: string | undefined,
   token: string,
 ): Promise<MasterImportResult> {
-  actor = await requireMasterImportActor(actor);
+  actor = await requireMasterImportActor(actor, prisma, kind);
   const plan = await planMasterImport(actor, kind, buffer, fileName, worksheet);
+  const parsedRows = new Map(
+    parseMasterImportFile(kind, buffer, fileName, worksheet).rows.map((row) => [
+      row.rowNumber,
+      row,
+    ]),
+  );
   const reviewed = reviewedRows(plan, actor.id, token);
   const runId = createId();
   await prisma.masterImportRun.create({
@@ -357,7 +470,7 @@ export async function executeMasterImport(
       let row = planned;
       if (row.outcome === 'CREATE' && reviewed.has(row.rowNumber)) {
         try {
-          actor = await requireMasterImportActor(actor);
+          actor = await requireMasterImportActor(actor, prisma, kind);
           row = await classify(kind, row, prisma);
           if (row.outcome === 'CREATE') {
             const hook = async (
@@ -365,7 +478,13 @@ export async function executeMasterImport(
               created: { id: string; code: string },
             ) => {
               await tx.$queryRaw`SELECT id FROM users WHERE id = ${actor.id} FOR SHARE`;
-              await requireMasterImportActor(actor, tx);
+              await requireMasterImportActor(actor, tx, kind);
+              if (kind === 'seasons') {
+                await tx.$queryRaw`SELECT id FROM financial_years WHERE id = ${row.input.financialYearId!} FOR SHARE`;
+                const input = await validatedInput(kind, parsedRows.get(row.rowNumber)!, tx);
+                if (JSON.stringify(input) !== JSON.stringify(row.input))
+                  throw HttpError.conflict('Financial Year changed; preview again');
+              }
               if (kind === 'retail-stores') {
                 await tx.$queryRaw`SELECT id FROM distributors WHERE id = ${row.input.distributorId!} FOR SHARE`;
                 const parent = await tx.distributor.findUnique({
@@ -398,6 +517,16 @@ export async function executeMasterImport(
               await createFactory(actor, createFactorySchema.parse(row.input), options);
             else if (kind === 'distributors')
               await createDistributor(actor, createDistributorSchema.parse(row.input), options);
+            else if (kind === 'seasons')
+              await createSeason(actor, createSeasonSchema.parse(row.input), options);
+            else if (kind === 'sizes')
+              await createSize(actor, createSizeSchema.parse(row.input), options);
+            else if (kind === 'hsns')
+              await createHsn(
+                actor,
+                createHsnSchema.omit({ gstRuleSetId: true }).parse(row.input),
+                options,
+              );
             else await createRetailStore(actor, createRetailStoreSchema.parse(row.input), options);
             rows.push(row);
             continue;
@@ -424,11 +553,17 @@ export async function executeMasterImport(
         try {
           await prisma.$transaction(async (tx) => {
             await tx.$queryRaw`SELECT id FROM users WHERE id = ${actor.id} FOR SHARE`;
-            await requireMasterImportActor(actor, tx);
+            await requireMasterImportActor(actor, tx, kind);
             if (kind === 'factories')
               await tx.$queryRaw`SELECT id FROM factories WHERE id = ${row.masterId!} FOR UPDATE`;
             else if (kind === 'distributors')
               await tx.$queryRaw`SELECT id FROM distributors WHERE id = ${row.masterId!} FOR UPDATE`;
+            else if (kind === 'seasons')
+              await tx.$queryRaw`SELECT id FROM seasons WHERE id = ${row.masterId!} FOR UPDATE`;
+            else if (kind === 'sizes')
+              await tx.$queryRaw`SELECT id FROM sizes WHERE id = ${row.masterId!} FOR UPDATE`;
+            else if (kind === 'hsns')
+              await tx.$queryRaw`SELECT id FROM hsns WHERE id = ${row.masterId!} FOR UPDATE`;
             else
               await tx.$queryRaw`SELECT id FROM retail_stores WHERE id = ${row.masterId!} FOR UPDATE`;
             const current = await classify(kind, row, tx);
@@ -482,7 +617,7 @@ export async function executeMasterImport(
   }
 }
 export async function masterImportHistory(actor: CurrentUser, kind: MasterImportKind) {
-  await requireMasterImportActor(actor);
+  await requireMasterImportActor(actor, prisma, kind);
   masterImportKindSchema.parse(kind);
   return prisma.masterImportRun.findMany({
     where: { kind },
@@ -495,7 +630,7 @@ export async function masterImportRunDetail(
   kind: MasterImportKind,
   id: string,
 ) {
-  await requireMasterImportActor(actor);
+  await requireMasterImportActor(actor, prisma, kind);
   masterImportKindSchema.parse(kind);
   const run = await prisma.masterImportRun.findFirst({
     where: { id, kind },

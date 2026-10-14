@@ -149,7 +149,7 @@ export function StyleBulkImportPage() {
     <div className="space-y-5">
       <PageHeader
         title="Bulk Import Styles"
-        subtitle="Create-only — existing Styles are never modified. PNG images embedded in the workbook are attached automatically."
+        subtitle="Create-only — existing Styles are never modified. Embedded PNG and JPEG pictures are attached as PNG images."
       />
 
       <Panel title="1. Choose workbook">
@@ -184,8 +184,8 @@ export function StyleBulkImportPage() {
           (needed only if any Barcode is left blank, for auto-generation), HSN Code (leave blank if not yet known —
           the Style is still created, HSN can be added later), Barcodes (parallel to Size Codes — blank generates),
           Financial Year (required when a Season Code exists in more than one year), Factory Name Mappings
-          (&quot;NAME:PRICE;NAME:PRICE&quot;) or legacy Factory Mappings (&quot;CODE:PRICE;CODE:PRICE&quot;). Primary Style images are PNGs embedded directly in the
-          workbook, anchored to their Style&apos;s row.
+          (&quot;NAME:PRICE;NAME:PRICE&quot;) or legacy Factory Mappings (&quot;CODE:PRICE;CODE:PRICE&quot;). Embed PNG or JPEG pictures anchored to their Style&apos;s row,
+          or use Excel Picture in Cell on that row, in any column. No filename, base64 or URL column is needed. Cached web pictures must be packaged in the workbook.
         </p>
         {preflightMutation.isError && (
           <ErrorState title="Could not preview this file" description={(preflightMutation.error as Error).message} />

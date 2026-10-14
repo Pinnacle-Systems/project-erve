@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { ConfirmDialog, PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
@@ -139,7 +140,7 @@ export function SeasonListPage() {
     setFormKey((key) => key + 1);
   };
   return <div className="space-y-3">
-    <PageHeader title="Seasons" subtitle="Season master records used by Styles. Inactive Seasons remain visible on historical records." />
+    <PageHeader title="Seasons" subtitle="Season master records used by Styles. Inactive Seasons remain visible on historical records." primaryAction={<Button asChild variant="secondary"><Link to="/master-data/seasons/import">Import</Link></Button>} />
     <Panel title={editing ? 'Edit Season' : 'Add Season'}>
       <form className="space-y-4" noValidate onKeyDown={createEnterToNextHandler()} onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
         <FormGrid layout="content">

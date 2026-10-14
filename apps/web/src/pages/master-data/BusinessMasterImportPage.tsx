@@ -17,12 +17,18 @@ import {
   canManageFactories,
   canManageDistributorMaster,
   canManageRetailStores,
+  canManageSeasons,
+  canManageSizes,
+  canManageHsns,
 } from '../../auth/permissions.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { downloadPdfBlob as downloadBlob } from '../../lib/pdf/download.js';
 
 const labels: Record<MasterImportKind, string> = {
+  seasons: 'Seasons',
+  sizes: 'Sizes',
+  hsns: 'HSNs',
   factories: 'Factories',
   distributors: 'Distributors',
   'retail-stores': 'Retail Stores',
@@ -35,7 +41,7 @@ const tones: Record<MasterImportRow['outcome'], StatusBadgeTone> = {
   FAILED: 'danger',
 };
 
-function ImportRows({ rows }: { rows: MasterImportRow[] }) {
+function ImportRows({ rows, kind }: { rows: MasterImportRow[]; kind: MasterImportKind }) {
   const [limit, setLimit] = useState(50);
   return (
     <>
@@ -44,14 +50,72 @@ function ImportRows({ rows }: { rows: MasterImportRow[] }) {
         rowKey={(row) => String(row.rowNumber)}
         columns={[
           { key: 'row', header: 'Source row', render: (row) => row.rowNumber },
-          { key: 'name', header: 'Name', render: (row) => row.input.name ?? row.raw.Name ?? '' },
+          ...(kind === 'seasons'
+            ? [
+                {
+                  key: 'name',
+                  header: 'Season name',
+                  render: (row: MasterImportRow) => row.input.name ?? row.raw['Season Name'] ?? '',
+                },
+                {
+                  key: 'year',
+                  header: 'Financial year',
+                  render: (row: MasterImportRow) => row.raw['Financial Year'] ?? '',
+                },
+                {
+                  key: 'serial',
+                  header: 'Barcode serial',
+                  render: (row: MasterImportRow) => row.input.barcodeSerial ?? 'NULL',
+                },
+              ]
+            : kind === 'sizes'
+              ? [
+                  {
+                    key: 'label',
+                    header: 'Size label',
+                    render: (row: MasterImportRow) => row.input.label ?? '',
+                  },
+                  {
+                    key: 'type',
+                    header: 'Size type',
+                    render: (row: MasterImportRow) => row.input.sizeType ?? '',
+                  },
+                  {
+                    key: 'sort',
+                    header: 'Sort order',
+                    render: (row: MasterImportRow) => row.input.sortOrder ?? '',
+                  },
+                ]
+              : kind === 'hsns'
+                ? [
+                    {
+                      key: 'description',
+                      header: 'Description',
+                      render: (row: MasterImportRow) => row.input.description ?? '',
+                    },
+                  ]
+                : [
+                    {
+                      key: 'name',
+                      header: 'Name',
+                      render: (row: MasterImportRow) => row.input.name ?? row.raw.Name ?? '',
+                    },
+                  ]),
           {
             key: 'outcome',
             header: 'Outcome',
             render: (row) => <StatusBadge tone={tones[row.outcome]} label={row.outcome} />,
           },
-          { key: 'code', header: 'Generated code', render: (row) => row.code ?? '' },
-          { key: 'detail', header: 'Detail', render: (row) => row.detail ?? '' },
+          {
+            key: 'code',
+            header: ['seasons', 'sizes', 'hsns'].includes(kind) ? 'Code' : 'Generated code',
+            render: (row) => row.code ?? row.input.code ?? '',
+          },
+          {
+            key: 'detail',
+            header: 'Detail',
+            render: (row) => [row.detail, ...(row.warnings ?? [])].filter(Boolean).join(' '),
+          },
         ]}
       />
       {rows.length > limit && (
@@ -66,11 +130,17 @@ function ImportRows({ rows }: { rows: MasterImportRow[] }) {
 export function BusinessMasterImportPage({ kind }: { kind: MasterImportKind }) {
   const { user } = useAuth();
   const allowed =
-    kind === 'factories'
-      ? canManageFactories(user)
-      : kind === 'distributors'
-        ? canManageDistributorMaster(user)
-        : canManageRetailStores(user);
+    kind === 'seasons'
+      ? canManageSeasons(user)
+      : kind === 'sizes'
+        ? canManageSizes(user)
+        : kind === 'hsns'
+          ? canManageHsns(user)
+          : kind === 'factories'
+            ? canManageFactories(user)
+            : kind === 'distributors'
+              ? canManageDistributorMaster(user)
+              : canManageRetailStores(user);
   if (!allowed)
     return (
       <ErrorState
@@ -249,8 +319,14 @@ function ImportWorkflow({ kind }: { kind: MasterImportKind }) {
           </Button>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Internal codes are generated automatically. Files may contain up to 10,000 rows. Missing
-          Purchase Modes and uncertain Distributor matches require review.
+          {kind === 'seasons'
+            ? 'Season Code + Financial Year identifies a Season. Financial Year must exist. Blank Barcode Serial stays NULL; automatic Style barcodes may require it.'
+            : kind === 'sizes'
+              ? 'Supply the original Size Code, label, valid Size Type and integer Sort Order. Existing metadata is never changed.'
+              : kind === 'hsns'
+                ? 'Store HSN Code as text with exactly 8 digits, preserving leading zeroes. GST Rule Set assignment is outside this import.'
+                : 'Internal codes are generated automatically. Missing Purchase Modes and uncertain Distributor matches require review.'}{' '}
+          Files may contain up to 10,000 rows.
         </p>
         {worksheets.isPending && <p role="status">Reading worksheets…</p>}
       </Panel>
@@ -261,7 +337,7 @@ function ImportWorkflow({ kind }: { kind: MasterImportKind }) {
             {plan.summary.CREATE} new records; {plan.summary.SKIP_EXISTING} existing;{' '}
             {plan.summary.NEEDS_REVIEW} need review; {plan.summary.REJECTED} rejected.
           </p>
-          <ImportRows key={plan.confirmationToken} rows={plan.rows} />
+          <ImportRows key={plan.confirmationToken} kind={kind} rows={plan.rows} />
           <div className="mt-3 flex gap-3">
             <Button variant="secondary" disabled={busy} onClick={() => download.mutate('preview')}>
               Download exceptions
@@ -286,7 +362,7 @@ function ImportWorkflow({ kind }: { kind: MasterImportKind }) {
             {result.summary.NEEDS_REVIEW} need review; {result.summary.REJECTED} rejected;{' '}
             {result.summary.FAILED} failed.
           </p>
-          <ImportRows key={result.runId} rows={result.rows} />
+          <ImportRows key={result.runId} kind={kind} rows={result.rows} />
         </Panel>
       )}
       <Panel title="Import history">
@@ -337,7 +413,11 @@ function ImportWorkflow({ kind }: { kind: MasterImportKind }) {
             )}
             {detail.data && (
               <>
-                <ImportRows key={selectedRun} rows={detail.data.rows.map((row) => row.payload)} />
+                <ImportRows
+                  key={selectedRun}
+                  kind={kind}
+                  rows={detail.data.rows.map((row) => row.payload)}
+                />
                 <Button variant="secondary" disabled={busy} onClick={() => download.mutate('run')}>
                   Download run exceptions
                 </Button>

@@ -10,8 +10,10 @@ import { getFileStorage } from '../../storage/index.js';
 import { executeBulkStyleImport, parseBulkStyleImportSheet, planBulkStyleImport, bulkStyleImportConfirmationToken, verifyBulkStyleImportConfirmation } from './style-bulk-import.service.js';
 import { uploadStyleImage, removeStyleImage } from './style-images.service.js';
 import * as auditService from '../../audit/audit.service.js';
+import sharp from 'sharp';
+import { pictureInCellFixture, tinyPng } from '../../cli/picture-in-cell.fixture.js';
 
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7ioAAAAASUVORK5CYII=', 'base64');
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 const headers = ['Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes', 'Barcodes', 'Financial Year', 'Factory Name Mappings'];
 function workbook(rows: unknown[][], extraSheet = false) {
   const book = XLSX.utils.book_new();
@@ -42,6 +44,55 @@ beforeEach(resetDatabase);
 afterEach(() => vi.restoreAllMocks());
 
 describe('Style import reliability', () => {
+  it('reports differing existing gallery content for review without overwriting it', async () => {
+    const { actor } = await setup();
+    const original = embeddedWorkbook([['ST-GALLERY', 'Tee', 100, 'AW25', 'S', 'BC-GALLERY']], [{ row: 2, bytes: png }]);
+    await executeBulkStyleImport(actor, await planBulkStyleImport(original, 'Styles'), 's.xlsx');
+    const other = await sharp(png).flatten({ background: '#ff0000' }).png().toBuffer();
+    const changed = embeddedWorkbook([['ST-GALLERY', 'Tee', 100, 'AW25', 'S', 'BC-GALLERY']], [{ row: 2, bytes: other }]);
+    expect((await planBulkStyleImport(changed, 'Styles')).rows[0]).toMatchObject({ status: 'REJECTED', reason: 'IMAGE_PROVENANCE_MISMATCH' });
+    const image = await prisma.styleImage.findFirstOrThrow({ include: { file: true } });
+    expect(await getFileStorage().read(image.file.storageKey)).toEqual(png);
+  });
+  it.each(['png', 'jpeg'] as const)('persists modern %s with exact Style association, normalized bytes and original provenance', async (format) => {
+    const { actor } = await setup();
+    const source = format === 'jpeg' ? await sharp(tinyPng).jpeg().toBuffer() : tinyPng;
+    const zip = new AdmZip(workbook([['ST-MODERN', 'Modern', 100, 'AW25', 'S', 'BC-MODERN']], true));
+    const modern = new AdmZip(pictureInCellFixture({ media: source, web: format === 'jpeg' }));
+    for (const entry of modern.getEntries()) if (/^xl\/(richData|media)\//.test(entry.entryName) || entry.entryName === 'xl/metadata.xml') zip.addFile(entry.entryName, entry.getData());
+    const rels = modern.getEntry('xl/_rels/workbook.xml.rels')!.getData().toString().match(/<Relationship [^>]+\/>/g)!.filter(r => !r.includes('/worksheet'));
+    // Replace SheetJS's own metadata relationship with the synthetic rich-image metadata.
+    const baseRelationships = zip.getEntry('xl/_rels/workbook.xml.rels')!.getData().toString()
+      .replace(/<Relationship\b[^>]*Type="[^"]+\/sheetMetadata"[^>]*\/>/g, '');
+    zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(baseRelationships.replace('</Relationships>', rels.join('') + '</Relationships>')));
+    zip.addFile('xl/worksheets/sheet2.xml', Buffer.from(zip.getEntry('xl/worksheets/sheet2.xml')!.getData().toString().replace(/(<row r="2"[^>]*>)([\s\S]*?)(<\/row>)/, '$1$2<c r="N2" vm="1" t="e"><v>#VALUE!</v></c>$3')));
+    const file = zip.toBuffer();
+    const plan = await planBulkStyleImport(file, 'Styles');
+    expect(plan.rows[0]).toMatchObject({ status: 'CREATE', imageCount: 1 });
+    const done = await executeBulkStyleImport(actor, plan, 'modern.xlsx');
+    expect(done.results[0]!.outcome).toBe('COMPLETED');
+    const image = await prisma.styleImage.findFirstOrThrow({ include: { file: true, style: true } });
+    expect(image.style.styleNumber).toBe('ST-MODERN');
+    const stored = await getFileStorage().read(image.file.storageKey);
+    expect((await sharp(stored).metadata()).format).toBe('png');
+    if (format === 'png') expect(stored).toEqual(source);
+    const provenance = await prisma.styleBulkImportRowResult.findFirstOrThrow({ where: { outcome: 'COMPLETED' } });
+    expect(JSON.parse(provenance.expectedImageChecksum!).images[0].originalChecksum).toBe(createHash('sha256').update(source).digest('hex'));
+    expect((await planBulkStyleImport(file, 'Styles')).rows[0]!.status).toBe('SKIP_EXISTING');
+  });
+  it('persists genuine repeated picture occurrences and skips a repeat import without collapsing them', async () => {
+    const { actor } = await setup();
+    const file = embeddedWorkbook([['ST-REPEATED', 'Tee', 100, 'AW25', 'S', 'BC-REPEATED']], [{ row: 2, bytes: png }, { row: 2, bytes: png }]);
+    const plan = await planBulkStyleImport(file, 'Styles');
+    expect(plan.rows[0]!.imageCount).toBe(2);
+    const done = await executeBulkStyleImport(actor, plan, 'styles.xlsx');
+    expect(done.results[0]!.outcome).toBe('COMPLETED');
+    const images = await prisma.styleImage.findMany({ include: { file: true } });
+    expect(images).toHaveLength(2);
+    for (const image of images) expect(await getFileStorage().read(image.file.storageKey)).toEqual(png);
+    const repeated = await planBulkStyleImport(file, 'Styles');
+    expect(repeated.rows[0]!.status).toBe('SKIP_EXISTING');
+  });
   it.each(['season', 'lmix', 'during-staging'])('refuses interrupted image recovery after %s identity drift', async (drift) => {
     const { season, size, actor } = await setup();
     const style = await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-DRIFT', styleName: 'Tee', finalMrp: 100, seasonId: season.id } });

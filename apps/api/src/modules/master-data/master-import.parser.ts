@@ -14,6 +14,25 @@ const common = [
   'Email',
 ];
 export const masterImportHeaders: Record<MasterImportKind, string[]> = {
+  seasons: [
+    'Season Code',
+    'Season Name',
+    'Financial Year',
+    'Barcode Serial',
+    'Status',
+    'Source Key',
+    'Source Provenance',
+  ],
+  sizes: [
+    'Size Code',
+    'Size Label',
+    'Size Type',
+    'Sort Order',
+    'Status',
+    'Source Key',
+    'Source Provenance',
+  ],
+  hsns: ['HSN Code', 'Description', 'Status', 'Source Key', 'Source Provenance'],
   factories: ['Name', ...common, 'Source Key', 'Source Provenance'],
   distributors: ['Name', 'GSTIN', 'Purchase Mode', ...common, 'Source Key', 'Source Provenance'],
   'retail-stores': [
@@ -28,11 +47,24 @@ export const masterImportHeaders: Record<MasterImportKind, string[]> = {
   ],
 };
 export const masterImportWorksheets: Record<MasterImportKind, string> = {
+  seasons: 'Seasons',
+  sizes: 'Sizes',
+  hsns: 'HSNs',
   factories: 'Factories',
   distributors: 'Distributors',
   'retail-stores': 'Retail stores',
 };
 const fields: Record<string, string> = {
+  'season code': 'code',
+  'season name': 'name',
+  'financial year': 'financialYear',
+  'barcode serial': 'barcodeSerial',
+  'size code': 'code',
+  'size label': 'label',
+  'size type': 'sizeType',
+  'sort order': 'sortOrder',
+  'hsn code': 'code',
+  description: 'description',
   name: 'name',
   gstin: 'gstin',
   'purchase mode': 'purchaseMode',
@@ -110,12 +142,22 @@ export function parseMasterImportFile(
     .map((header) => (Object.hasOwn(fields, header) ? fields[header] : header));
   if (new Set(semantic).size !== semantic.length)
     throw HttpError.badRequest('Duplicate import headers');
+  if (kind === 'hsns' && normalizedHeaders.some((header) => /gst|rule.?set/i.test(header)))
+    throw HttpError.badRequest(
+      'GST Rule Set assignment is outside HSN bulk import; remove GST configuration columns',
+    );
   const required =
-    kind === 'factories'
-      ? ['name']
-      : kind === 'distributors'
-        ? ['name', 'gstin']
-        : ['name', 'address line 1', 'city', 'state', 'postal code'];
+    kind === 'seasons'
+      ? ['season code', 'season name', 'financial year']
+      : kind === 'sizes'
+        ? ['size code', 'size label', 'size type', 'sort order']
+        : kind === 'hsns'
+          ? ['hsn code']
+          : kind === 'factories'
+            ? ['name']
+            : kind === 'distributors'
+              ? ['name', 'gstin']
+              : ['name', 'address line 1', 'city', 'state', 'postal code'];
   for (const header of required)
     if (!normalizedHeaders.includes(header))
       throw HttpError.badRequest(`Missing required header: ${header === 'name' ? 'Name' : header}`);
@@ -138,6 +180,13 @@ export function parseMasterImportFile(
       const normalized = normalizedHeaders[column]!;
       const field = Object.hasOwn(fields, normalized) ? fields[normalized] : undefined;
       if (field && value.trim()) input[field] = value.trim();
+      if (kind === 'hsns' && normalized === 'hsn code' && cell?.t === 'n') {
+        const literal = String(cell.v);
+        if (!/^\d{8}$/.test(literal))
+          error =
+            'HSN numeric cell may have lost leading zeroes; correct the source to exactly 8 digits stored as text';
+        input.code = literal;
+      }
       if (normalized === 'source key' && value.trim()) sourceKey = value.trim();
       if (sheet[XLSX.utils.encode_cell({ r: index + 1, c: column })]?.t === 'e')
         error = `Review cached Excel error in ${header}`;

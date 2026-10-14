@@ -190,12 +190,15 @@ export async function discardStagedStyleImage(staged: StagedStyleImage): Promise
 /** Same image locking, deduplication and auditing for manual and atomic import writes. */
 export async function attachStagedStyleImage(
   actor: CurrentUser, tx: Prisma.TransactionClient, styleId: string, staged: StagedStyleImage,
+  options: { occurrence?: number } = {},
 ) {
   await acquireStyleImagesLock(tx, styleId);
   await verifyStagedStyleImage(staged);
   const duplicate = await tx.styleImage.findFirst({
     where: { styleId, file: { checksumSha256: staged.checksum, sizeBytes: staged.sizeBytes } },
     include: styleImageInclude,
+    orderBy: styleImageOrder,
+    skip: options.occurrence ?? 0,
   });
   if (duplicate) {
     // Verify/repair retained bytes too: metadata alone cannot establish image completion.

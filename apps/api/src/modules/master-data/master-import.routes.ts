@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { MasterImportRow } from '@erve/types';
 import { requireAuth } from '../../auth/auth.middleware.js';
-import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { singleBulkImportFileUpload } from '../../middleware/bulk-file-upload.js';
 import { successResponse } from '../../utils/response.js';
@@ -19,19 +18,31 @@ import {
   masterImportKindSchema,
   masterImportHistory,
   masterImportRunDetail,
+  requireMasterImportActor,
 } from './master-import.service.js';
 
 export const masterImportsRouter = Router();
-masterImportsRouter.use(requireAuth, requireRoles('ADMIN', 'MERCHANDISER'));
+masterImportsRouter.use(requireAuth);
+masterImportsRouter.use(
+  '/:kind',
+  asyncHandler(async (req, _res, next) => {
+    await requireMasterImportActor(
+      req.user!,
+      undefined,
+      masterImportKindSchema.parse(req.params.kind),
+    );
+    next();
+  }),
+);
 function file(req: { file?: Express.Multer.File }): Express.Multer.File {
   if (!req.file) throw HttpError.badRequest('An import file is required (multipart field "file")');
   return req.file;
 }
 function exceptions(rows: MasterImportRow[]): Buffer {
   const metadata = ['Source Row', 'Import Outcome', 'Import Detail'];
-  const headers = [...new Set(rows.flatMap((row) => row.sourceHeaders ?? Object.keys(row.raw)))].filter(
-    (header) => !metadata.some((label) => label.toLowerCase() === header.toLowerCase()),
-  );
+  const headers = [
+    ...new Set(rows.flatMap((row) => row.sourceHeaders ?? Object.keys(row.raw))),
+  ].filter((header) => !metadata.some((label) => label.toLowerCase() === header.toLowerCase()));
   return buildMasterImportWorkbook(
     [...headers, ...metadata],
     rows

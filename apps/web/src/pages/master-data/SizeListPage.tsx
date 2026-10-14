@@ -70,7 +70,7 @@ export function SizeListPage() {
 
   return (
     <div className="space-y-3">
-      <PageHeader title="Sizes" subtitle="Size codes available for style mapping" />
+      <PageHeader title="Sizes" subtitle="Size codes available for style mapping" primaryAction={<Button asChild variant="secondary"><Link to="/master-data/sizes/import">Import</Link></Button>} />
 
       <Panel title="Add Size">
         <form

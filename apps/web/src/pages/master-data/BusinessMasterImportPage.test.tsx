@@ -72,6 +72,21 @@ const rows = [
 ];
 const plan = { confirmationToken: 'signed-review', worksheet: '', summary, rows };
 describe('business import workflow', () => {
+  it('allows ACCOUNTANT to import HSN identity but not other masters', async () => {
+    auth.role = 'ACCOUNTANT';
+    render('hsns');
+    await flush();
+    expect(container.textContent).toContain('Import HSNs');
+    expect(container.textContent).toContain('GST Rule Set');
+    render('sizes');
+    expect(container.textContent).toContain('Import not permitted');
+  });
+  it.each(['seasons', 'sizes', 'hsns'] as const)('shows business-assigned code columns for %s', async (kind) => {
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: { ...plan, rows: [{ ...rows[0], input: { code: '01234567', name: 'Winter', label: 'Small', sizeType: 'ALPHA', sortOrder: '0' } }] } } });
+    render(kind); select(); act(() => button('Preview').click()); await flush();
+    expect(container.textContent).toContain('01234567');
+    expect(container.textContent).not.toContain('Generated code');
+  });
   it('downloads templates and correction-ready preview exceptions through authenticated requests', async () => {
     const blob = new Blob(['xlsx']);
     vi.mocked(apiClient.get).mockImplementation(async (url: string) => ({
