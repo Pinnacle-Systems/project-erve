@@ -242,6 +242,7 @@ Verify that `sequenceState.exists` is reported as uninitialized (or at approved 
 3. Create and finalize a second invoice; confirm serial is `EI/26-27/0002`.
 
 #### A.7 Error Inspection & Recovery
+- **Missing `NODE_ENV=production`:** In production mutation mode, omitting `NODE_ENV=production` fails closed with: `ERROR: Production mutation requires explicit NODE_ENV="production", but found "<env>".`
 - **Missing `--confirm-production`:** The CLI exits immediately with code 1: `ERROR: Production execution requires explicit confirmation via --confirm-production`.
 - **Missing `--expect-schema`:** In production mutation mode, omitting `--expect-schema` fails closed with: `ERROR: Production mutation requires --expect-schema <schema> (e.g. "public")`.
 - **Database Mismatch:** If `--expect-database` does not match `SELECT current_database()`, the CLI exits with code 1 without executing SQL transactions.

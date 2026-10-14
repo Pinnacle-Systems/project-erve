@@ -146,6 +146,36 @@ describe('SequenceTargetGuard', () => {
       ).not.toThrow();
     });
 
+    it('rejects production mutation when NODE_ENV is unset or non-production', () => {
+      expect(() =>
+        verifyDatabaseTarget(
+          {
+            target: 'PRODUCTION',
+            nodeEnv: undefined,
+            confirmProduction: true,
+            expectedDatabase: 'erve_prod',
+            expectedSchema: 'public',
+            isMutation: true,
+          },
+          validLiveProd,
+        ),
+      ).toThrow(/Production mutation requires explicit NODE_ENV="production", but found "unset"/);
+
+      expect(() =>
+        verifyDatabaseTarget(
+          {
+            target: 'PRODUCTION',
+            nodeEnv: 'local',
+            confirmProduction: true,
+            expectedDatabase: 'erve_prod',
+            expectedSchema: 'public',
+            isMutation: true,
+          },
+          validLiveProd,
+        ),
+      ).toThrow(/Production mutation requires explicit NODE_ENV="production", but found "local"/);
+    });
+
     it('rejects production mutation when --expect-schema is missing', () => {
       expect(() =>
         verifyDatabaseTarget(
@@ -268,32 +298,30 @@ describe('SequenceTargetGuard', () => {
       ).toThrow(/Conflicting environment configuration: NODE_ENV is "production" but --target was specified as "dev"/);
     });
 
-    it('rejects conflicting environment: target=production but NODE_ENV=development', () => {
+    it('rejects conflicting environment in preflight: target=production but NODE_ENV=development', () => {
       expect(() =>
         verifyDatabaseTarget(
           {
             target: 'PRODUCTION',
             nodeEnv: 'development',
-            confirmProduction: true,
             expectedDatabase: 'erve_prod',
             expectedSchema: 'public',
-            isMutation: true,
+            isMutation: false,
           },
           validLiveProd,
         ),
       ).toThrow(/Conflicting environment configuration: --target is "production" but NODE_ENV is "development"/);
     });
 
-    it('rejects conflicting environment: target=production but NODE_ENV=test', () => {
+    it('rejects conflicting environment in preflight: target=production but NODE_ENV=test', () => {
       expect(() =>
         verifyDatabaseTarget(
           {
             target: 'PRODUCTION',
             nodeEnv: 'test',
-            confirmProduction: true,
             expectedDatabase: 'erve_prod',
             expectedSchema: 'public',
-            isMutation: true,
+            isMutation: false,
           },
           validLiveProd,
         ),

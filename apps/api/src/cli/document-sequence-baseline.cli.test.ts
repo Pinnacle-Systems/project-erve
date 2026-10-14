@@ -136,6 +136,44 @@ describe('Packaged CLI Process Invariants', () => {
     expect(err?.stderr || err?.stdout).toMatch(/Production execution requires explicit confirmation via --confirm-production/);
   });
 
+  it('baseline CLI rejects production mutation when NODE_ENV is unset or non-production', async () => {
+    let err: ExecError | undefined;
+    try {
+      await execFileAsync(
+        process.execPath,
+        [
+          bundledBaselineCli,
+          '--target',
+          'production',
+          '--document-type',
+          'TAX_INVOICE',
+          '--financial-year',
+          '2026-27',
+          '--serial',
+          '100',
+          '--expect-database',
+          testDatabaseName,
+          '--expect-schema',
+          'public',
+          '--confirm-production',
+        ],
+        {
+          env: {
+            ...process.env,
+            NODE_ENV: 'test',
+            DATABASE_URL: testDatabaseUrl,
+          },
+        },
+      );
+    } catch (e: unknown) {
+      err = e as ExecError;
+    }
+
+    expect(err).toBeDefined();
+    expect(err?.code).not.toBe(0);
+    expect(err?.stderr || err?.stdout).toMatch(/Production mutation requires explicit NODE_ENV="production"/);
+  });
+
   it('baseline CLI rejects production mutation when --expect-schema is missing', async () => {
     let err: ExecError | undefined;
     try {

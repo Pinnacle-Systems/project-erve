@@ -450,6 +450,11 @@ jobs:
             echo "Expected document-sequence-baseline.js to fail without --confirm-production"; exit 1
           fi
 
+          echo "--- without NODE_ENV=production on production mutation: must refuse ---"
+          if NODE_ENV=test node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database "$EXPECTED_DB" --expect-schema public --confirm-production; then
+            echo "Expected document-sequence-baseline.js to fail without explicit NODE_ENV=production"; exit 1
+          fi
+
           echo "--- without --expect-schema on production: must refuse ---"
           if node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database "$EXPECTED_DB" --confirm-production; then
             echo "Expected document-sequence-baseline.js to fail without --expect-schema"; exit 1

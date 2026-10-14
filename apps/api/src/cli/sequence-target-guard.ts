@@ -216,15 +216,23 @@ export function verifyDatabaseTarget(
   }
 
   if (target === 'PRODUCTION') {
-    if (normalizedNodeEnv === 'development') {
-      throw new DocumentSequenceBaselineError(
-        'Conflicting environment configuration: --target is "production" but NODE_ENV is "development".',
-      );
-    }
-    if (normalizedNodeEnv === 'test') {
-      throw new DocumentSequenceBaselineError(
-        'Conflicting environment configuration: --target is "production" but NODE_ENV is "test".',
-      );
+    if (isMutation) {
+      if (normalizedNodeEnv !== 'production') {
+        throw new DocumentSequenceBaselineError(
+          `Production mutation requires explicit NODE_ENV="production", but found "${nodeEnv || 'unset'}".`,
+        );
+      }
+    } else {
+      if (normalizedNodeEnv === 'development') {
+        throw new DocumentSequenceBaselineError(
+          'Conflicting environment configuration: --target is "production" but NODE_ENV is "development".',
+        );
+      }
+      if (normalizedNodeEnv === 'test') {
+        throw new DocumentSequenceBaselineError(
+          'Conflicting environment configuration: --target is "production" but NODE_ENV is "test".',
+        );
+      }
     }
 
     // 2. Mandatory independent database verification for production (both mutation and read-only)
