@@ -33,6 +33,9 @@ await build({
     { in: path.join(__dirname, 'src/cli/roles-bootstrap.cli.ts'), out: 'roles-bootstrap' },
     { in: path.join(__dirname, 'src/cli/quality-bootstrap.cli.ts'), out: 'quality-bootstrap' },
     { in: path.join(__dirname, 'src/cli/financial-year-bootstrap.cli.ts'), out: 'financial-year-bootstrap' },
+    { in: path.join(__dirname, 'src/cli/master-source-normalize.cli.ts'), out: 'master-source-normalize' },
+    { in: path.join(__dirname, 'src/cli/disposable-rebuild.cli.ts'), out: 'disposable-rebuild' },
+    { in: path.join(__dirname, 'src/cli/style-bulk-import.cli.ts'), out: 'style-bulk-import' },
     // INV-002: idempotent install of the current garment GST Rule Set.
     { in: path.join(__dirname, 'src/cli/gst-rule-set-bootstrap.cli.ts'), out: 'gst-rule-set-bootstrap' },
     // H3A: forward-only historical import of a sealed bundle (DEPLOYMENT.md §12.6).

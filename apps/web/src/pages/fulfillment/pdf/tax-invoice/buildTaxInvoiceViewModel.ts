@@ -88,6 +88,9 @@ export interface TaxInvoicePdfViewModel {
   financialYear: string | null;
   placeOfSupply: string;
   legacyPresentation: boolean;
+  isCancelled: boolean;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
   references: {
     dispatchOrders: string[];
     historicalEiso: string | null;
@@ -96,6 +99,7 @@ export interface TaxInvoicePdfViewModel {
     lrNumber: string | null;
     transporter: string | null;
     vehicleNumber: string | null;
+    replacesInvoiceNumber: string | null;
   };
   sellerName: string;
   sellerAddress: string;
@@ -154,12 +158,12 @@ export function buildTaxInvoiceViewModel(
   images: Map<string, PdfImageSource> = new Map(),
 ): TaxInvoicePdfViewModel {
   if (
-    invoice.status !== 'FINALIZED' ||
+    (invoice.status !== 'FINALIZED' && invoice.status !== 'CANCELLED') ||
     !invoice.invoiceNumber ||
     !invoice.finalizedAt ||
     invoice.grandTotal === null
   ) {
-    throw new Error('A finalized invoice with issued identity and total is required');
+    throw new Error('A finalized or cancelled invoice with issued identity and total is required');
   }
   const snapshot =
     invoice.documentSnapshot?.schemaVersion === 'ERVE_TAX_INVOICE_DOCUMENT_V1'
@@ -198,6 +202,9 @@ export function buildTaxInvoiceViewModel(
     placeOfSupply:
       [invoice.billTo.state, invoice.billTo.stateCode].filter(Boolean).join(' / ') || 'Unavailable',
     legacyPresentation: snapshot === null,
+    isCancelled: invoice.status === 'CANCELLED',
+    cancelledAt: invoice.cancelledAt ? formatInvoiceDate(invoice.cancelledAt) : null,
+    cancellationReason: invoice.cancellationReason ?? null,
     references: {
       dispatchOrders: snapshot?.dispatchOrders.map((order) => order.number) ?? [],
       historicalEiso: snapshot?.historicalBuyerOrderReference?.value ?? null,
@@ -206,6 +213,7 @@ export function buildTaxInvoiceViewModel(
       lrNumber: snapshot?.transport?.lrNumber ?? null,
       transporter: snapshot?.transport?.transporter ?? null,
       vehicleNumber: snapshot?.transport?.vehicleNumber ?? null,
+      replacesInvoiceNumber: invoice.replacesInvoiceNumber ?? null,
     },
     sellerName: invoice.seller.legalName,
     sellerAddress: address(invoice.seller),

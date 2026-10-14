@@ -235,7 +235,7 @@ describe('planBulkStyleImport', () => {
     expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'INACTIVE_HSN' });
   });
 
-  it('plans SKIP_EXISTING for a Style Number that already exists with no matching provenance', async () => {
+  it('reports differing existing Style values for review without modifying them', async () => {
     const season = await createTestSeason({ code: 'AW25' });
     await createSize('S');
     await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-EXISTS', styleName: 'Pre-existing', finalMrp: 1, seasonId: season.id } });
@@ -243,7 +243,7 @@ describe('planBulkStyleImport', () => {
       { 'Style Number': 'ST-EXISTS', 'Style Name': 'Renamed', 'Final MRP': '999', 'Season Code': 'AW25', 'Size Codes': 'S' },
     ]);
     const plan = await planBulkStyleImport(buffer);
-    expect(plan.rows[0]!.status).toBe('SKIP_EXISTING');
+    expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'EXISTING_STYLE_CONFLICT' });
   });
 });
 
@@ -307,8 +307,9 @@ describe('executeBulkStyleImport — atomicity and recovery', () => {
 
   it('planBulkStyleImport itself detects a resumable row by styleNumber + matching image checksum', async () => {
     const season = await createTestSeason({ code: 'AW25' });
-    await createSize('S');
+    const size = await createSize('S');
     const style = await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-DETECT', styleName: 'x', finalMrp: 1, seasonId: season.id } });
+    await prisma.styleSize.create({ data: { id: createId(), styleId: style.id, sizeId: size.id, barcode: 'TEST-ST-DETECT' } });
     await prisma.styleBulkImportRowResult.create({
       data: {
         id: createId(),

@@ -56,5 +56,6 @@ export function PdfThumbnail({ image, width, height }: PdfThumbnailProps) {
   if (!image || 'placeholder' in image) {
     return <View style={[styles.placeholder, box]} />;
   }
+  // Keep the thumbnail bounds fixed, but fit portrait/landscape images without stretching or cropping.
   return <Image src={image.dataUri} style={{ ...box, objectFit: 'contain' }} />;
 }

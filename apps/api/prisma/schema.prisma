@@ -356,6 +356,7 @@ model User {
   addedHistoricalDocuments             HistoricalDocument[]
   createdTaxInvoices                   TaxInvoice[]                @relation("TaxInvoiceCreator")
   finalizedTaxInvoices                 TaxInvoice[]                @relation("TaxInvoiceFinalizer")
+  cancelledTaxInvoices                 TaxInvoice[]                @relation("TaxInvoiceCanceller")
   overriddenTaxInvoiceLines            TaxInvoiceLine[]            @relation("TaxInvoiceLineOverriddenBy")
 
   @@index([status])
@@ -2223,7 +2224,7 @@ model ErvePackingList {
   cartons           FactoryPackingCarton[]
   dispatch          ErveDispatch?
   commercialLines   ErvePackingListCommercialLine[]
-  taxInvoice        TaxInvoice?
+  taxInvoices       TaxInvoice[]
 
   @@unique([financialYearId, ervePackingListSerial])
   @@index([saleOrderId, status])
@@ -2266,11 +2267,11 @@ model ErvePackingListCommercialLine {
   priceListId                  String   @map("price_list_id")
   createdAt                    DateTime @default(now()) @map("created_at")
 
-  ervePackingList ErvePackingList @relation(fields: [ervePackingListId], references: [id], onDelete: Cascade)
-  saleOrderLine   SaleOrderLine   @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
-  style           Style           @relation(fields: [styleId], references: [id], onDelete: Restrict)
-  priceList       PriceList       @relation(fields: [priceListId], references: [id], onDelete: Restrict)
-  taxInvoiceLine  TaxInvoiceLine?
+  ervePackingList ErvePackingList  @relation(fields: [ervePackingListId], references: [id], onDelete: Cascade)
+  saleOrderLine   SaleOrderLine    @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+  style           Style            @relation(fields: [styleId], references: [id], onDelete: Restrict)
+  priceList       PriceList        @relation(fields: [priceListId], references: [id], onDelete: Restrict)
+  taxInvoiceLines TaxInvoiceLine[]
 
   @@unique([ervePackingListId, saleOrderLineId])
   @@index([saleOrderLineId])
@@ -2494,6 +2495,7 @@ model ErveDispatchDeliveryLine {
 enum TaxInvoiceStatus {
   DRAFT
   FINALIZED
+  CANCELLED
 }
 
 enum TaxInvoiceGstTreatment {
@@ -2505,7 +2507,7 @@ model TaxInvoice {
   id                String           @id
   status            TaxInvoiceStatus @default(DRAFT)
   invoiceNumber     String?          @unique @map("invoice_number")
-  ervePackingListId String           @unique @map("erve_packing_list_id")
+  ervePackingListId String           @map("erve_packing_list_id")
   distributorId     String           @map("distributor_id")
   purchaseMode      PurchaseMode     @map("purchase_mode")
 
@@ -2574,6 +2576,12 @@ model TaxInvoice {
   // Issued presentation only; legacy finalized documents remain null.
   documentSnapshot   Json?    @map("document_snapshot")
 
+  // INV-009A: Cancellation metadata and replacement provenance.
+  cancelledAt        DateTime? @map("cancelled_at")
+  cancelledById      String?   @map("cancelled_by_id")
+  cancellationReason String?   @map("cancellation_reason")
+  replacesInvoiceId  String?   @map("replaces_invoice_id")
+
   createdById   String    @map("created_by_id")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
@@ -2587,22 +2595,26 @@ model TaxInvoice {
   financialYear      FinancialYear?     @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
   createdBy          User               @relation("TaxInvoiceCreator", fields: [createdById], references: [id], onDelete: Restrict)
   finalizedBy        User?              @relation("TaxInvoiceFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict)
+  cancelledBy        User?              @relation("TaxInvoiceCanceller", fields: [cancelledById], references: [id], onDelete: Restrict)
+  replacesInvoice    TaxInvoice?        @relation("TaxInvoiceReplacement", fields: [replacesInvoiceId], references: [id], onDelete: Restrict)
+  replacedBy         TaxInvoice[]       @relation("TaxInvoiceReplacement")
   lines              TaxInvoiceLine[]
 
   @@index([distributorId])
   @@index([status])
   @@index([financialYearId])
+  @@index([ervePackingListId])
+  @@index([replacesInvoiceId])
   @@map("tax_invoices")
 }
 
 // One row per ErvePackingListCommercialLine actually consumed — identical
 // grain to INV-004 (one SaleOrderLine, which is already Style+Size+
-// Destination-specific). ervePackingListCommercialLineId is @unique (not
-// merely unique-per-invoice): a commercial line belongs to exactly one
-// EIPL, and one EIPL maps to at most one TaxInvoice
-// (TaxInvoice.ervePackingListId @unique), so "unique per invoice" and
-// "globally unique" are the same invariant here — only the single-column
-// unique is declared, to avoid a redundant composite.
+// Destination-specific). ervePackingListCommercialLineId belongs to exactly one
+// EIPL, but with INV-009A replacement invoices, multiple historical (cancelled)
+// and active invoices may reference the same commercial line over time.
+// Unique per invoice is enforced by @@unique([taxInvoiceId, ervePackingListCommercialLineId]).
+//
 // INV-006 precision model (verified by direct decimal computation, not
 // assumed — see tax-invoice-calculation.ts header comment and its tests):
 //   calculatedUnitRate/overrideUnitRate/finalUnitRate = styleMrp(2dp) *
@@ -2618,7 +2630,7 @@ model TaxInvoice {
 model TaxInvoiceLine {
   id                              String   @id
   taxInvoiceId                    String   @map("tax_invoice_id")
-  ervePackingListCommercialLineId String   @unique @map("erve_packing_list_commercial_line_id")
+  ervePackingListCommercialLineId String   @map("erve_packing_list_commercial_line_id")
   saleOrderLineId                 String   @map("sale_order_line_id")
   styleId                         String   @map("style_id")
   quantity                        Int
@@ -2657,6 +2669,7 @@ model TaxInvoiceLine {
   gstValueBand                  GstValueBand?                 @relation(fields: [gstValueBandId], references: [id], onDelete: Restrict)
   overriddenBy                  User?                         @relation("TaxInvoiceLineOverriddenBy", fields: [overriddenById], references: [id], onDelete: Restrict)
 
+  @@unique([taxInvoiceId, ervePackingListCommercialLineId])
   @@index([taxInvoiceId])
   @@index([saleOrderLineId])
   @@index([hsnId])

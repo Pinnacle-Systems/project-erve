@@ -75,6 +75,9 @@ jobs:
       - name: Run @erve/client tests
         run: pnpm --filter @erve/client test
 
+      - name: Verify native PR8 CDP driver contracts
+        run: node --test tools/pr8/*.test.mjs
+
       # Cross-package design-system integration tests (portal scoping,
       # accent-role contrast regressions) — relocated out of @erve/theme so
       # that package could drop its dev-only dependency on @erve/primitives

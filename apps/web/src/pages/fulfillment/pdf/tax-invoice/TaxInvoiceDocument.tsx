@@ -55,6 +55,34 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   unavailable: { fontSize: 8, color: '#555555', marginTop: 4 },
+  cancelledWatermark: {
+    position: 'absolute',
+    top: 260,
+    left: 40,
+    right: 40,
+    textAlign: 'center',
+    fontSize: 54,
+    fontWeight: 700,
+    color: '#E11D48',
+    opacity: 0.16,
+  },
+  cancelledBanner: {
+    borderWidth: 1,
+    borderColor: '#E11D48',
+    backgroundColor: '#FFF1F2',
+    padding: 6,
+    marginBottom: 6,
+  },
+  cancelledBannerTitle: {
+    color: '#9F1239',
+    fontSize: 9,
+    fontWeight: 700,
+  },
+  cancelledBannerDetails: {
+    color: '#BE123C',
+    fontSize: 8,
+    marginTop: 2,
+  },
 });
 
 interface DisplayRow extends TaxInvoicePdfGroup {
@@ -189,6 +217,11 @@ export function TaxInvoiceDocument({
 }) {
   return (
     <PdfDocument orientation="portrait">
+      {model.isCancelled && (
+        <Text style={styles.cancelledWatermark} fixed>
+          CANCELLED
+        </Text>
+      )}
       <View style={styles.header} fixed>
         {logoSrc ? (
           <Image src={logoSrc} style={styles.logo} />
@@ -202,7 +235,23 @@ export function TaxInvoiceDocument({
           </Text>
         </View>
       </View>
+      {model.isCancelled && (
+        <View style={styles.cancelledBanner}>
+          <Text style={styles.cancelledBannerTitle}>THIS TAX INVOICE HAS BEEN CANCELLED</Text>
+          <Text style={styles.cancelledBannerDetails}>
+            {model.cancelledAt ? `Cancelled date: ${model.cancelledAt}` : 'Cancelled'}
+            {model.cancellationReason ? ` · Reason: ${model.cancellationReason}` : ''}
+          </Text>
+        </View>
+      )}
       <View style={styles.references}>
+        {model.references.replacesInvoiceNumber !== null && (
+          <View style={styles.referenceRow}>
+            <Text style={[styles.referenceCell, styles.bold]}>
+              Replaces Cancelled Invoice: {model.references.replacesInvoiceNumber}
+            </Text>
+          </View>
+        )}
         <View style={styles.referenceRow}>
           <Text style={styles.referenceCell}>
             Dispatch Orders: {model.references.dispatchOrders.join(', ') || 'Unavailable'}

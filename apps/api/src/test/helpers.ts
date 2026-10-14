@@ -79,7 +79,7 @@ export async function resetDatabase(): Promise<void> {
   // ervePackingList.deleteMany() below, and before the later
   // user/distributor/sellerRegistration deletes further down this function
   // (TaxInvoice also FKs onDelete: Restrict to all three). TaxInvoiceLine
-  // cascades automatically once its parent TaxInvoice is deleted.
+  await prisma.$executeRawUnsafe('UPDATE "tax_invoices" SET "replaces_invoice_id" = NULL');
   await prisma.taxInvoice.deleteMany();
   // Fulfillment rows must go before Sale Order/StockAllocation/Factory
   // below — every FK in this chain (ErveDispatch -> ErvePackingList ->

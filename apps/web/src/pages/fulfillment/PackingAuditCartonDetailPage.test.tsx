@@ -169,6 +169,19 @@ describe('PackingAuditCartonDetailPage Confirm Inspected mutation visibility by 
     expect(content()).not.toContain('Confirm Inspected');
   });
 
+  it('does not offer Confirm Inspected while carton destinations mismatch', async () => {
+    await renderCarton('QA_USER', { auditState: 'NOT_INSPECTED', destinationMismatch: true });
+
+    expect(content()).toContain('it must be reconciled by the Factory before it can be');
+    expect(content()).not.toContain('Confirm Inspected');
+  });
+
+  it('does not offer reinspection confirmation when carton destinations mismatch', async () => {
+    await renderCarton('QA_USER', { auditState: 'NEEDS_REINSPECTION', destinationMismatch: true });
+
+    expect(content()).not.toContain('Confirm Inspected');
+  });
+
   it('document-state gating: QA_USER loses Confirm Inspected on a retired carton', async () => {
     await renderCarton('QA_USER', { auditState: 'NOT_INSPECTED', retired: true, retiredAt: '2026-09-02T00:00:00.000Z' });
     expect(content()).not.toContain('Confirm Inspected');

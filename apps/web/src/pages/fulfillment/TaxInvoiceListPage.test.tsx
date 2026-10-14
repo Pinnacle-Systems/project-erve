@@ -84,4 +84,28 @@ describe('Tax Invoice queue', () => {
     await vi.waitFor(() => expect(container.textContent).toContain('No Tax Invoices'));
     expect(container.textContent).not.toContain('Create draft');
   });
+
+  it('displays CANCELLED invoice with Cancelled badge and replacement link', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: {
+        data: {
+          items: [
+            taxInvoiceFixture({
+              id: 'inv-1',
+              status: 'CANCELLED',
+              invoiceNumber: 'EI/26-27/0001',
+              finalizedAt: '2026-10-11T05:00:00Z',
+              replacedByInvoiceId: 'inv-2',
+              replacedByInvoiceNumber: 'EI/26-27/0002',
+            }),
+          ],
+          pageInfo: { limit: 25, hasMore: false, nextCursor: null },
+        },
+      },
+    });
+    await render();
+    await vi.waitFor(() => expect(container.textContent).toContain('EI/26-27/0001'));
+    expect(container.textContent).toContain('Cancelled');
+    expect(container.textContent).toContain('Replaced by EI/26-27/0002');
+  });
 });

@@ -93,6 +93,35 @@ describe('Style import reliability', () => {
     const repeated = await planBulkStyleImport(file, 'Styles');
     expect(repeated.rows[0]!.status).toBe('SKIP_EXISTING');
   });
+  it.each(['mrp', 'lmix', 'barcode', 'image'] as const)('holds changed %s inputs instead of reporting a completed Style as an exact skip', async change => {
+    const { actor } = await setup();
+    const original = embeddedWorkbook([['ST-EXACT', 'Tee', 100, 'AW25', 'S', 'BC-EXACT']], [{ row: 2, bytes: png }]);
+    await executeBulkStyleImport(actor, await planBulkStyleImport(original, 'Styles'), 'original.xlsx');
+    const row: (string | number)[] = ['ST-EXACT', 'Tee', change === 'mrp' ? 101 : 100, 'AW25', 'S', change === 'barcode' ? 'BC-CHANGED' : 'BC-EXACT'];
+    if (change === 'lmix') await prisma.style.update({ where: { styleNumber: 'ST-EXACT' }, data: { lmixNumber: 'LMIX123456' } });
+    const changedImage = change === 'image' ? await sharp(png).flatten({ background: '#ff0000' }).png().toBuffer() : png;
+    const changed = embeddedWorkbook([row], [{ row: 2, bytes: changedImage }]);
+    const plan = await planBulkStyleImport(changed, 'Styles');
+    expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: change === 'image' ? 'IMAGE_PROVENANCE_MISMATCH' : 'EXISTING_STYLE_CONFLICT' });
+    expect(await prisma.style.count()).toBe(1); expect(await prisma.styleImage.count()).toBe(1);
+    expect((await prisma.style.findUniqueOrThrow({ where: { styleNumber: 'ST-EXACT' } })).finalMrp.toString()).toBe('100');
+  });
+  it('still skips identical completed Style values and images', async () => {
+    const { actor } = await setup();
+    const bytes = embeddedWorkbook([['ST-EXACT', 'Tee', 100, 'AW25', 'S', 'BC-EXACT']], [{ row: 2, bytes: png }]);
+    await executeBulkStyleImport(actor, await planBulkStyleImport(bytes, 'Styles'), 'original.xlsx');
+    expect((await planBulkStyleImport(bytes, 'Styles')).rows[0]).toMatchObject({ status: 'SKIP_EXISTING' });
+  });
+  it('rechecks a planned skip when the existing Style changes before execution', async () => {
+    const { actor } = await setup();
+    const bytes = embeddedWorkbook([['ST-SKIP-RACE', 'Tee', 100, 'AW25', 'S', 'BC-SKIP-RACE']], [{ row: 2, bytes: png }]);
+    await executeBulkStyleImport(actor, await planBulkStyleImport(bytes, 'Styles'), 'original.xlsx');
+    const plan = await planBulkStyleImport(bytes, 'Styles');
+    expect(plan.rows[0]!.status).toBe('SKIP_EXISTING');
+    await prisma.style.update({ where: { styleNumber: 'ST-SKIP-RACE' }, data: { finalMrp: 101 } });
+    expect((await executeBulkStyleImport(actor, plan, 'original.xlsx')).results[0]).toMatchObject({ outcome: 'FAILED', detail: expect.stringContaining('MRP') });
+    expect((await prisma.style.findUniqueOrThrow({ where: { styleNumber: 'ST-SKIP-RACE' } })).finalMrp.toString()).toBe('101');
+  });
   it.each(['season', 'lmix', 'during-staging'])('refuses interrupted image recovery after %s identity drift', async (drift) => {
     const { season, size, actor } = await setup();
     const style = await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-DRIFT', styleName: 'Tee', finalMrp: 100, seasonId: season.id } });
