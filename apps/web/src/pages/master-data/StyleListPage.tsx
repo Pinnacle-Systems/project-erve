@@ -70,8 +70,8 @@ export function StyleListPage() {
         }
       />
 
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-full sm:basis-0">
           <FilterBar
             searchValue={search}
             onSearchChange={setSearch}

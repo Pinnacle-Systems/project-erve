@@ -183,7 +183,7 @@ export function StyleBulkImportPage() {
           Required columns: Style Number, Style Name, Final MRP, Season Code, Size Codes. Optional: LMIX Number
           (needed only if any Barcode is left blank, for auto-generation), HSN Code (leave blank if not yet known —
           the Style is still created, HSN can be added later), Barcodes (parallel to Size Codes — blank generates),
-          Financial Year (required when a Season Code exists in more than one year), Factory Name Mappings
+          Description, Category, IP Name, Licensor, Colour, Financial Year (required when a Season Code exists in more than one year), Factory Name Mappings
           (&quot;NAME:PRICE;NAME:PRICE&quot;) or legacy Factory Mappings (&quot;CODE:PRICE;CODE:PRICE&quot;). Primary Style images are PNGs embedded directly in the
           workbook, anchored to their Style&apos;s row.
         </p>
