@@ -22,6 +22,7 @@ import {
   canViewFactoryInvoice,
   canViewTaxInvoice,
   canMutateTaxInvoice,
+  canCancelTaxInvoice,
   canConfirmFactoryInvoice,
   canManageFactoryInvoiceFinancials,
   canViewSaleOrReturnPosition,
@@ -388,6 +389,8 @@ export const canViewTaxInvoices = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewTaxInvoice(user));
 export const canMutateTaxInvoices = (user: AuthUser | null | undefined) =>
   Boolean(user && canMutateTaxInvoice(user));
+export const canCancelTaxInvoices = (user: AuthUser | null | undefined) =>
+  Boolean(user && canCancelTaxInvoice(user));
 
 export const canViewSaleOrReturnPositions = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewSaleOrReturnPosition(user));

@@ -244,4 +244,125 @@ describe('Tax Invoice Accountant review and immutable presentation', () => {
     expect(text()).toContain('Complete the canonical HSN assignment');
     expect((button('Finalize invoice') as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it('shows cancellation banner, reason and preserves PDF download for a CANCELLED invoice', async () => {
+    const invoice = taxInvoiceFixture({
+      status: 'CANCELLED',
+      invoiceNumber: 'EI/26-27/0001',
+      finalizedAt: '2026-10-11T05:00:00Z',
+      cancelledAt: '2026-10-12T06:00:00Z',
+      cancellationReason: 'Wrong distributor address',
+      cancelledBy: { id: 'acct-1', name: 'Accountant One' },
+      replacedByInvoiceId: 'inv-2',
+      replacedByInvoiceNumber: 'EI/26-27/0002',
+      review: { state: 'CANCELLED', isPreview: false, calculatedAt: null, blockers: [] },
+    });
+    const blob = new Blob(['pdf'], { type: 'application/pdf' });
+    generatePdf.mockResolvedValue(blob);
+    const download = vi.spyOn(PdfDownloads, 'downloadPdfBlob').mockImplementation(() => {});
+
+    await render(invoice, 'ACCOUNTANT');
+
+    expect(text()).toContain('Invoice Cancelled');
+    expect(text()).toContain('Reason: Wrong distributor address');
+    expect(text()).toContain('Accountant One');
+    expect(text()).toContain('View replacement (EI/26-27/0002)');
+    expect(button('Download PDF')).toBeDefined();
+    expect(button('Print')).toBeDefined();
+    expect(button('Finalize invoice')).toBeUndefined();
+    expect(button('Cancel invoice')).toBeUndefined();
+
+    await act(async () => button('Download PDF')?.click());
+    await vi.waitFor(() =>
+      expect(download).toHaveBeenCalledWith(blob, 'ERVE-Tax-Invoice-EI-26-27-0001.pdf'),
+    );
+  });
+
+  it('allows ACCOUNTANT to cancel a FINALIZED invoice with a mandatory reason', async () => {
+    const invoice = taxInvoiceFixture({
+      status: 'FINALIZED',
+      invoiceNumber: 'EI/26-27/0001',
+      finalizedAt: '2026-10-11T05:00:00Z',
+      review: { state: 'FINALIZED', isPreview: false, calculatedAt: null, blockers: [] },
+    });
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: invoice } });
+
+    await render(invoice, 'ACCOUNTANT');
+
+    expect(button('Cancel invoice')).toBeDefined();
+    await act(async () => button('Cancel invoice')?.click());
+
+    await vi.waitFor(() => expect(text()).toContain('Cancel Tax Invoice'));
+    expect(text()).toContain('Cancelling invoice EI/26-27/0001 is permanent.');
+
+    const initialBtn = button('Confirm cancellation') as HTMLButtonElement;
+    expect(initialBtn.disabled).toBe(true);
+
+    const input = document.querySelector(
+      'input[placeholder*="why this invoice is being cancelled"]',
+    ) as HTMLInputElement;
+    expect(input).not.toBeNull();
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      valueSetter?.call(input, 'Distributor GSTIN changed');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await vi.waitFor(() => {
+      const btn = button('Confirm cancellation') as HTMLButtonElement;
+      expect(btn).toBeDefined();
+      expect(btn.disabled).toBe(false);
+    });
+
+    await act(async () => (button('Confirm cancellation') as HTMLButtonElement).click());
+
+    await vi.waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/tax-invoices/inv-1/actions/cancel',
+        { reason: 'Distributor GSTIN changed' },
+      ),
+    );
+  });
+
+  it('does not offer cancel invoice button to ADMIN on a finalized invoice', async () => {
+    const invoice = taxInvoiceFixture({
+      status: 'FINALIZED',
+      invoiceNumber: 'EI/26-27/0001',
+      finalizedAt: '2026-10-11T05:00:00Z',
+      review: { state: 'FINALIZED', isPreview: false, calculatedAt: null, blockers: [] },
+    });
+    await render(invoice, 'ADMIN');
+    expect(button('Cancel invoice')).toBeUndefined();
+  });
+
+  it('offers Create replacement invoice to ACCOUNTANT on a CANCELLED invoice without replacement', async () => {
+    const invoice = taxInvoiceFixture({
+      status: 'CANCELLED',
+      invoiceNumber: 'EI/26-27/0001',
+      finalizedAt: '2026-10-11T05:00:00Z',
+      cancelledAt: '2026-10-12T06:00:00Z',
+      cancellationReason: 'Distributor requested correction',
+      cancelledBy: { id: 'acct-1', name: 'Accountant One' },
+      replacedByInvoiceId: null,
+      replacedByInvoiceNumber: null,
+      review: { state: 'CANCELLED', isPreview: false, calculatedAt: null, blockers: [] },
+    });
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: taxInvoiceFixture({ id: 'draft-2', replacesInvoiceId: 'inv-1' }) },
+    });
+
+    await render(invoice, 'ACCOUNTANT');
+
+    expect(button('Create replacement invoice')).toBeDefined();
+    await act(async () => button('Create replacement invoice')?.click());
+
+    await vi.waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/tax-invoices', {
+        ervePackingListId: 'eipl-1',
+        replacesInvoiceId: 'inv-1',
+      }),
+    );
+  });
 });

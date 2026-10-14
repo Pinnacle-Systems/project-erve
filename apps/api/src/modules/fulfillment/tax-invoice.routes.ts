@@ -5,6 +5,7 @@ import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
 import {
+  cancelTaxInvoiceSchema,
   createTaxInvoiceDraftSchema,
   listTaxInvoicesQuerySchema,
   overrideTaxInvoiceLineRateSchema,
@@ -16,14 +17,15 @@ import { readDraftInvoiceImage } from './tax-invoice-draft-media.service.js';
 export const taxInvoicesRouter = Router();
 taxInvoicesRouter.use(requireAuth);
 
-// INV-005/INV-006: ACCOUNTANT-only draft creation, override and
-// finalization; ADMIN+ACCOUNTANT read-only — see TAX_INVOICE_MUTATION_ROLES/
-// TAX_INVOICE_VIEW_ROLES in @erve/shared's rbac.ts for the reasoning
+// INV-005/INV-006/INV-009A: ACCOUNTANT-only draft creation, override,
+// finalization, and cancellation; ADMIN+ACCOUNTANT read-only — see TAX_INVOICE_MUTATION_ROLES/
+// TAX_INVOICE_CANCEL_ROLES/TAX_INVOICE_VIEW_ROLES in @erve/shared's rbac.ts for the reasoning
 // (mirrors FACTORY_INVOICE_FINANCIAL_ROLES' ADMIN-excluded precedent).
-// Confirmed business decision: ADMIN never gains override/finalize rights
-// under INV-006 — reusing the same unwidened role set for both new routes.
+// Confirmed business decision: ADMIN never gains override/finalize/cancel rights
+// under INV-006 and INV-009A.
 const canCreateTaxInvoice = requireRoles('ACCOUNTANT');
 const canMutateTaxInvoice = requireRoles('ACCOUNTANT');
+const canCancelTaxInvoice = requireRoles('ACCOUNTANT');
 const canViewTaxInvoices = requireRoles('ADMIN', 'ACCOUNTANT');
 
 taxInvoicesRouter.post(
@@ -34,6 +36,7 @@ taxInvoicesRouter.post(
     const result = await taxInvoiceService.createOrGetTaxInvoiceDraft(
       req.user!,
       input.ervePackingListId,
+      input.replacesInvoiceId,
     );
     res.status(result.created ? 201 : 200).json(successResponse(result.taxInvoice));
   }),
@@ -197,6 +200,35 @@ taxInvoicesRouter.post(
   canMutateTaxInvoice,
   asyncHandler(async (req, res) => {
     const invoice = await taxInvoiceService.finalizeTaxInvoice(req.user!, req.params.id! as string);
+    res.status(200).json(successResponse(invoice));
+  }),
+);
+
+// INV-009A: ACCOUNTANT-only cancellation of a finalized invoice with mandatory reason.
+taxInvoicesRouter.post(
+  '/:id/cancel',
+  canCancelTaxInvoice,
+  asyncHandler(async (req, res) => {
+    const input = cancelTaxInvoiceSchema.parse(req.body);
+    const invoice = await taxInvoiceService.cancelTaxInvoice(
+      req.user!,
+      req.params.id! as string,
+      input,
+    );
+    res.status(200).json(successResponse(invoice));
+  }),
+);
+
+taxInvoicesRouter.post(
+  '/:id/actions/cancel',
+  canCancelTaxInvoice,
+  asyncHandler(async (req, res) => {
+    const input = cancelTaxInvoiceSchema.parse(req.body);
+    const invoice = await taxInvoiceService.cancelTaxInvoice(
+      req.user!,
+      req.params.id! as string,
+      input,
+    );
     res.status(200).json(successResponse(invoice));
   }),
 );

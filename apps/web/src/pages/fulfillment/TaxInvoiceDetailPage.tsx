@@ -10,12 +10,19 @@ import {
   TabsTrigger,
   TabsContent,
   ValidationMessage,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  TextField,
 } from '@erve/primitives';
 import { Panel, DescriptionList } from '@erve/layout';
 import { LoadingState, EmptyState, ErrorState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
 import {
   canMutateTaxInvoices,
+  canCancelTaxInvoices,
   canViewTaxInvoices,
   canViewErvePackingLists,
   canViewErveDispatches,
@@ -28,6 +35,7 @@ import {
   useTaxInvoiceReview,
   useTaxInvoiceAudit,
   useTaxInvoiceActions,
+  useCreateTaxInvoiceDraft,
 } from './tax-invoice-queries.js';
 import {
   formatInvoiceDate,
@@ -119,11 +127,26 @@ function TaxInvoiceDetail({
   const [confirm, setConfirm] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState('');
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelError, setCancelError] = useState('');
+
   const actions = useTaxInvoiceActions(invoice.id);
+  const createReplacementMutation = useCreateTaxInvoiceDraft();
   const audit = useTaxInvoiceAudit(invoice.id, tab === 'history');
   const mutable = canMutateTaxInvoices(user) && invoice.status === 'DRAFT';
-  const busy = actions.override.isPending || actions.finalize.isPending || verifying;
-  const canPrint = canViewTaxInvoices(user) && invoice.status === 'FINALIZED';
+  const canCancel = canCancelTaxInvoices(user) && invoice.status === 'FINALIZED';
+  const canPrint =
+    canViewTaxInvoices(user) && (invoice.status === 'FINALIZED' || invoice.status === 'CANCELLED');
+  const canCreateReplacement =
+    canMutateTaxInvoices(user) && invoice.status === 'CANCELLED' && !invoice.replacedByInvoiceId;
+  const busy =
+    actions.override.isPending ||
+    actions.finalize.isPending ||
+    actions.cancel.isPending ||
+    createReplacementMutation.isPending ||
+    verifying;
+
   const pdfActions = usePdfAction({
     generate: async () => {
       if (!canPrint) throw new Error('Issued invoice read permission is required');
@@ -133,6 +156,36 @@ function TaxInvoiceDetail({
     },
     filename: () => buildPdfFilename(['ERVE-Tax-Invoice', invoice.invoiceNumber]),
   });
+
+  async function handleCancel() {
+    const trimmed = cancelReason.trim();
+    if (!trimmed) {
+      setCancelError('A cancellation reason is required.');
+      return;
+    }
+    setCancelError('');
+    try {
+      await actions.cancel.mutateAsync({ reason: trimmed });
+      setCancelDialogOpen(false);
+      setCancelReason('');
+    } catch (caught) {
+      setCancelError(getApiErrorMessage(caught, 'Unable to cancel this invoice.'));
+    }
+  }
+
+  async function handleCreateReplacement() {
+    setError('');
+    try {
+      const draft = await createReplacementMutation.mutateAsync({
+        ervePackingListId: invoice.ervePackingList.id,
+        replacesInvoiceId: invoice.id,
+      });
+      navigate(`/fulfillment/tax-invoices/${draft.id}`);
+    } catch (caught) {
+      setError(getApiErrorMessage(caught, 'Unable to create replacement invoice.'));
+    }
+  }
+
   async function finalize() {
     setVerifying(true);
     setError('');
@@ -170,8 +223,20 @@ function TaxInvoiceDetail({
         subtitle={`${invoice.billTo.name} · ${invoice.shipTo.label ?? 'Destination not snapshotted'}`}
         status={
           <StatusBadge
-            label={invoice.status === 'DRAFT' ? 'Draft' : 'Finalized'}
-            tone={invoice.status === 'DRAFT' ? 'warning' : 'success'}
+            label={
+              invoice.status === 'DRAFT'
+                ? 'Draft'
+                : invoice.status === 'CANCELLED'
+                  ? 'Cancelled'
+                  : 'Finalized'
+            }
+            tone={
+              invoice.status === 'DRAFT'
+                ? 'warning'
+                : invoice.status === 'CANCELLED'
+                  ? 'cancelled'
+                  : 'success'
+            }
           />
         }
         primaryAction={
@@ -189,6 +254,21 @@ function TaxInvoiceDetail({
             >
               Finalize invoice
             </Button>
+          ) : canCreateReplacement ? (
+            <Button
+              onClick={() => void handleCreateReplacement()}
+              disabled={busy || refreshing || refreshError}
+              loading={createReplacementMutation.isPending}
+            >
+              Create replacement invoice
+            </Button>
+          ) : invoice.status === 'CANCELLED' && invoice.replacedByInvoiceId ? (
+            <Button
+              variant="secondary"
+              onClick={() => navigate(`/fulfillment/tax-invoices/${invoice.replacedByInvoiceId}`)}
+            >
+              View replacement {invoice.replacedByInvoiceNumber ? `(${invoice.replacedByInvoiceNumber})` : 'draft'}
+            </Button>
           ) : undefined
         }
         secondaryActions={
@@ -196,6 +276,19 @@ function TaxInvoiceDetail({
             <Button variant="secondary" onClick={() => navigate('/fulfillment/tax-invoices')}>
               Back to invoices
             </Button>
+            {canCancel && (
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setCancelReason('');
+                  setCancelError('');
+                  setCancelDialogOpen(true);
+                }}
+                disabled={busy || refreshing}
+              >
+                Cancel invoice
+              </Button>
+            )}
             {canPrint && (
               <PdfActionButtons
                 isGenerating={pdfActions.isGenerating}
@@ -211,6 +304,32 @@ function TaxInvoiceDetail({
           </>
         }
       />
+      {invoice.status === 'CANCELLED' && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-900 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
+          <div className="flex flex-wrap items-center gap-2 font-semibold">
+            <span>Invoice Cancelled</span>
+            {invoice.cancelledAt && <span>· {formatInvoiceTimestamp(invoice.cancelledAt)}</span>}
+            {invoice.cancelledBy && <span>by {invoice.cancelledBy.name}</span>}
+          </div>
+          {invoice.cancellationReason && (
+            <div className="mt-1 text-sm">
+              <span className="font-medium">Reason: </span>
+              <span>{invoice.cancellationReason}</span>
+            </div>
+          )}
+          {invoice.replacedByInvoiceId && (
+            <div className="mt-2 text-sm">
+              <span className="font-medium">Replacement invoice: </span>
+              <Link
+                to={`/fulfillment/tax-invoices/${invoice.replacedByInvoiceId}`}
+                className="font-medium underline hover:text-red-800 dark:hover:text-red-100"
+              >
+                {invoice.replacedByInvoiceNumber ?? 'Replacement Draft'}
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
       {refreshError && (
         <ErrorState
           title="Unable to refresh Tax Invoice"
@@ -280,6 +399,46 @@ function TaxInvoiceDetail({
             <DescriptionList.Item
               label="Historical EISO"
               value={invoice.documentSnapshot.historicalBuyerOrderReference.value}
+            />
+          )}
+          {invoice.replacesInvoiceNumber && (
+            <DescriptionList.Item
+              label="Replaces invoice"
+              value={
+                invoice.replacesInvoiceId ? (
+                  <Link to={`/fulfillment/tax-invoices/${invoice.replacesInvoiceId}`}>
+                    {invoice.replacesInvoiceNumber}
+                  </Link>
+                ) : (
+                  invoice.replacesInvoiceNumber
+                )
+              }
+            />
+          )}
+          {invoice.replacedByInvoiceNumber && (
+            <DescriptionList.Item
+              label="Replaced by"
+              value={
+                invoice.replacedByInvoiceId ? (
+                  <Link to={`/fulfillment/tax-invoices/${invoice.replacedByInvoiceId}`}>
+                    {invoice.replacedByInvoiceNumber}
+                  </Link>
+                ) : (
+                  invoice.replacedByInvoiceNumber
+                )
+              }
+            />
+          )}
+          {invoice.cancelledAt && (
+            <DescriptionList.Item
+              label="Cancelled on"
+              value={`${formatInvoiceDate(invoice.cancelledAt)}${invoice.cancelledBy ? ` (${invoice.cancelledBy.name})` : ''}`}
+            />
+          )}
+          {invoice.cancellationReason && (
+            <DescriptionList.Item
+              label="Cancellation reason"
+              value={invoice.cancellationReason}
             />
           )}
           <DescriptionList.Item
@@ -387,7 +546,13 @@ function TaxInvoiceDetail({
                         ? `Override ${formatInvoiceMoney(String(metadata.overrideUnitRate))}`
                         : '',
                       metadata.reason ? `Reason: ${String(metadata.reason)}` : '',
+                      metadata.cancellationReason
+                        ? `Reason: ${String(metadata.cancellationReason)}`
+                        : '',
                       metadata.invoiceNumber ? `Invoice ${String(metadata.invoiceNumber)}` : '',
+                      metadata.replacesInvoiceId
+                        ? `Replaces invoice: ${String(metadata.replacesInvoiceId)}`
+                        : '',
                     ]
                       .filter(Boolean)
                       .join(' · '),
@@ -419,6 +584,51 @@ function TaxInvoiceDetail({
         loading={busy}
         onConfirm={() => void finalize()}
       />
+      <Dialog
+        open={cancelDialogOpen}
+        onOpenChange={(open) => {
+          if (!busy) setCancelDialogOpen(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel Tax Invoice</DialogTitle>
+            <DialogDescription>
+              Cancelling invoice {invoice.invoiceNumber} is permanent. The issued document and number
+              are preserved for audit and cannot be reused. A replacement invoice may then be drafted
+              against the same EIPL.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {cancelError && <ValidationMessage tone="error">{cancelError}</ValidationMessage>}
+            <TextField
+              label="Cancellation reason (mandatory)"
+              placeholder="State why this invoice is being cancelled..."
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              required
+              autoFocus
+            />
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="secondary"
+                onClick={() => setCancelDialogOpen(false)}
+                disabled={busy}
+              >
+                Keep invoice
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => void handleCancel()}
+                loading={actions.cancel.isPending}
+                disabled={!cancelReason.trim()}
+              >
+                Confirm cancellation
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

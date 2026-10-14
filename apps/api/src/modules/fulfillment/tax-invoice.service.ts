@@ -1,5 +1,5 @@
 import { createId, resolveGstStateCode } from '@erve/shared';
-import { canMutateTaxInvoice, canViewTaxInvoice } from '@erve/shared';
+import { canCancelTaxInvoice, canMutateTaxInvoice, canViewTaxInvoice } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { env } from '../../config/env.js';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -34,8 +34,8 @@ import {
 
 type Tx = Prisma.TransactionClient;
 
-// Shared by override and finalize so the two can never race each other on
-// the same invoice — both acquire this exact lock before reading status.
+// Shared by override, cancel, and finalize so operations can never race each
+// other on the same invoice — all acquire this exact lock before reading status.
 function taxInvoiceLifecycleLockKey(taxInvoiceId: string): string {
   return `tax-invoice-finalize-${taxInvoiceId}`;
 }
@@ -73,6 +73,12 @@ export function assertTaxInvoiceSequenceBaselined(
 function assertMutationAccess(actor: CurrentUser): void {
   if (!canMutateTaxInvoice(actor)) {
     throw HttpError.forbidden('You do not have permission to create a Tax Invoice draft');
+  }
+}
+
+function assertCancelAccess(actor: CurrentUser): void {
+  if (!canCancelTaxInvoice(actor)) {
+    throw HttpError.forbidden('You do not have permission to cancel a Tax Invoice');
   }
 }
 
@@ -200,6 +206,13 @@ const taxInvoiceInclude = {
   financialYear: { select: { id: true, code: true } },
   createdBy: { select: { id: true, name: true, email: true } },
   finalizedBy: { select: { id: true, name: true, email: true } },
+  cancelledBy: { select: { id: true, name: true, email: true } },
+  replacesInvoice: { select: { id: true, invoiceNumber: true } },
+  replacedBy: {
+    select: { id: true, invoiceNumber: true },
+    orderBy: [{ createdAt: 'desc' }],
+    take: 1,
+  },
   lines: {
     include: {
       style: {
@@ -237,14 +250,15 @@ const taxInvoiceInclude = {
 type TaxInvoiceRecord = Prisma.TaxInvoiceGetPayload<{ include: typeof taxInvoiceInclude }>;
 
 function toTaxInvoiceView(record: TaxInvoiceRecord) {
+  const isHistoricalIssued = record.status === 'FINALIZED' || record.status === 'CANCELLED';
   const documentSnapshot =
-    record.status === 'FINALIZED' ? readInvoiceDocumentSnapshot(record.documentSnapshot) : null;
+    isHistoricalIssued ? readInvoiceDocumentSnapshot(record.documentSnapshot) : null;
   // Derived at read time from the already-persisted, immutable line
   // snapshots — never a separately stored/duplicated table. Null for a
-  // DRAFT (nothing to summarize yet); every finalized line always has
-  // hsnCode/gstPercent/amounts set together, so this is safe once FINALIZED.
+  // DRAFT (nothing to summarize yet); every finalized or cancelled line always has
+  // hsnCode/gstPercent/amounts set together, so this is safe once FINALIZED or CANCELLED.
   const hsnSummary =
-    record.status === 'FINALIZED'
+    isHistoricalIssued
       ? aggregateHsnSummary(
           record.lines.map((line) => ({
             hsnCode: line.hsnCode!,
@@ -422,6 +436,13 @@ function toTaxInvoiceView(record: TaxInvoiceRecord) {
     roundingPolicy: record.roundingPolicy,
     documentSnapshot,
     hsnSummary,
+    cancelledAt: record.cancelledAt?.toISOString() ?? null,
+    cancelledBy: record.cancelledBy,
+    cancellationReason: record.cancellationReason,
+    replacesInvoiceId: record.replacesInvoiceId,
+    replacesInvoiceNumber: record.replacesInvoice?.invoiceNumber ?? null,
+    replacedByInvoiceId: record.replacedBy[0]?.id ?? null,
+    replacedByInvoiceNumber: record.replacedBy[0]?.invoiceNumber ?? null,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
@@ -455,6 +476,7 @@ export interface TaxInvoiceDraftResult {
 export async function createOrGetTaxInvoiceDraft(
   actor: CurrentUser,
   ervePackingListId: string,
+  replacesInvoiceId?: string,
 ): Promise<TaxInvoiceDraftResult> {
   assertMutationAccess(actor);
 
@@ -462,11 +484,64 @@ export async function createOrGetTaxInvoiceDraft(
   const taxInvoiceId = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`tax-invoice-${ervePackingListId}`}))`;
 
-    const existing = await tx.taxInvoice.findUnique({
-      where: { ervePackingListId },
+    const existing = await tx.taxInvoice.findFirst({
+      where: { ervePackingListId, status: { not: 'CANCELLED' } },
+      select: { id: true, replacesInvoiceId: true },
+    });
+
+    const latestCancelled = await tx.taxInvoice.findFirst({
+      where: { ervePackingListId, status: 'CANCELLED' },
+      orderBy: [{ cancelledAt: 'desc' }, { createdAt: 'desc' }],
       select: { id: true },
     });
-    if (existing) return existing.id;
+
+    let targetReplacesInvoiceId: string | null = null;
+    if (replacesInvoiceId) {
+      const prior = await tx.taxInvoice.findUnique({
+        where: { id: replacesInvoiceId },
+        select: { id: true, ervePackingListId: true, status: true },
+      });
+      if (!prior) {
+        throw HttpError.notFound('Prior tax invoice to replace not found');
+      }
+      if (prior.ervePackingListId !== ervePackingListId) {
+        throw HttpError.badRequest(
+          'The invoice to be replaced does not belong to this Erve Packing List',
+        );
+      }
+      if (prior.status !== 'CANCELLED') {
+        throw HttpError.conflict('Only a CANCELLED Tax Invoice can be replaced');
+      }
+      if (!latestCancelled || prior.id !== latestCancelled.id) {
+        throw HttpError.conflict(
+          'A replacement invoice must reference the most recently cancelled Tax Invoice for this Erve Packing List',
+          {
+            reason: 'STALE_REPLACEMENT_REFERENCE',
+            latestCancelledInvoiceId: latestCancelled?.id ?? null,
+            requestedReplacesInvoiceId: prior.id,
+          },
+        );
+      }
+      targetReplacesInvoiceId = prior.id;
+    } else {
+      if (latestCancelled) {
+        targetReplacesInvoiceId = latestCancelled.id;
+      }
+    }
+
+    if (existing) {
+      if (replacesInvoiceId && existing.replacesInvoiceId !== targetReplacesInvoiceId) {
+        throw HttpError.conflict(
+          'An active Tax Invoice already exists for this Erve Packing List with a different replacement reference',
+          {
+            existingTaxInvoiceId: existing.id,
+            existingReplacesInvoiceId: existing.replacesInvoiceId,
+            requestedReplacesInvoiceId: targetReplacesInvoiceId,
+          },
+        );
+      }
+      return existing.id;
+    }
 
     const packingList = await tx.ervePackingList.findUnique({
       where: { id: ervePackingListId },
@@ -508,6 +583,7 @@ export async function createOrGetTaxInvoiceDraft(
         id,
         status: 'DRAFT',
         ervePackingListId,
+        replacesInvoiceId: targetReplacesInvoiceId,
         distributorId: distributor.id,
         // Required, never nullable — see the model's schema doc comment on
         // why an EIPL can never genuinely mix Purchase Modes.
@@ -589,6 +665,7 @@ export async function createOrGetTaxInvoiceDraft(
           ervePackingListNumber: packingList.ervePackingListNumber,
           distributorId: distributor.id,
           lineCount: commercialLines.length,
+          ...(targetReplacesInvoiceId ? { replacesInvoiceId: targetReplacesInvoiceId } : {}),
         },
       },
       tx,
@@ -616,11 +693,11 @@ export async function getTaxInvoiceByErvePackingListId(
   ervePackingListId: string,
 ) {
   assertViewAccess(actor);
-  const record = await prisma.taxInvoice.findUnique({
-    where: { ervePackingListId },
+  const record = await prisma.taxInvoice.findFirst({
+    where: { ervePackingListId, status: { not: 'CANCELLED' } },
     include: taxInvoiceInclude,
   });
-  if (!record) throw HttpError.notFound('No Tax Invoice draft exists for this Erve Packing List');
+  if (!record) throw HttpError.notFound('No active Tax Invoice exists for this Erve Packing List');
   return toTaxInvoiceView(record);
 }
 
@@ -635,18 +712,18 @@ export async function getTaxInvoiceByErveDispatchId(actor: CurrentUser, erveDisp
   });
   if (!dispatch) throw HttpError.notFound('Erve dispatch not found');
 
-  const record = await prisma.taxInvoice.findUnique({
-    where: { ervePackingListId: dispatch.ervePackingListId },
+  const record = await prisma.taxInvoice.findFirst({
+    where: { ervePackingListId: dispatch.ervePackingListId, status: { not: 'CANCELLED' } },
     include: taxInvoiceInclude,
   });
-  if (!record) throw HttpError.notFound('No Tax Invoice draft exists for this Erve Dispatch');
+  if (!record) throw HttpError.notFound('No active Tax Invoice exists for this Erve Dispatch');
   return toTaxInvoiceView(record);
 }
 
 export interface TaxInvoiceListFilters {
   search?: string;
   distributorId?: string;
-  status?: 'DRAFT' | 'FINALIZED';
+  status?: 'DRAFT' | 'FINALIZED' | 'CANCELLED';
   cursor?: string;
   limit: number;
 }
@@ -694,7 +771,7 @@ export async function getTaxInvoiceSources(actor: CurrentUser, filters: TaxInvoi
   const rows = await prisma.ervePackingList.findMany({
     where: {
       status: { in: ['FINALIZED', 'DISPATCHED'] },
-      taxInvoice: { is: null },
+      taxInvoices: { none: { status: { not: 'CANCELLED' } } },
       ...(filters.search
         ? { ervePackingListNumber: { contains: filters.search, mode: 'insensitive' as const } }
         : {}),
@@ -723,6 +800,83 @@ export async function getTaxInvoiceSources(actor: CurrentUser, filters: TaxInvoi
     })),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
+}
+
+export interface CancelTaxInvoiceInput {
+  reason: string;
+}
+
+export async function cancelTaxInvoice(
+  actor: CurrentUser,
+  taxInvoiceId: string,
+  input: CancelTaxInvoiceInput,
+): Promise<TaxInvoiceView> {
+  assertCancelAccess(actor);
+
+  const reason = input.reason?.trim();
+  if (!reason) {
+    throw HttpError.badRequest('Cancellation reason is mandatory and cannot be blank');
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(taxInvoiceId)}))`;
+
+    const invoice = await tx.taxInvoice.findUnique({
+      where: { id: taxInvoiceId },
+      select: {
+        id: true,
+        status: true,
+        invoiceNumber: true,
+        ervePackingListId: true,
+        cancellationReason: true,
+      },
+    });
+    if (!invoice) throw HttpError.notFound('Tax invoice not found');
+
+    if (invoice.status === 'CANCELLED') {
+      if (invoice.cancellationReason === reason) {
+        return; // genuinely identical retry
+      }
+      throw HttpError.conflict('Tax invoice is already cancelled with a different reason', {
+        reason: 'CANCELLATION_REASON_CONFLICT',
+        existingReason: invoice.cancellationReason,
+      });
+    }
+
+    if (invoice.status !== 'FINALIZED') {
+      throw HttpError.conflict('Only FINALIZED Tax Invoices can be cancelled');
+    }
+
+    const cancelledAt = new Date();
+    await tx.taxInvoice.update({
+      where: { id: taxInvoiceId },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt,
+        cancelledById: actor.id,
+        cancellationReason: reason,
+        version: { increment: 1 },
+      },
+    });
+
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'TAX_INVOICE_CANCELLED',
+        entityType: 'TaxInvoice',
+        entityId: taxInvoiceId,
+        metadata: {
+          invoiceNumber: invoice.invoiceNumber,
+          ervePackingListId: invoice.ervePackingListId,
+          cancellationReason: reason,
+          cancelledAt: cancelledAt.toISOString(),
+        },
+      },
+      tx,
+    );
+  });
+
+  return toTaxInvoiceView(await loadTaxInvoiceById(taxInvoiceId));
 }
 
 // ---------------------------------------------------------------------------
@@ -900,6 +1054,11 @@ export async function getTaxInvoiceReview(actor: CurrentUser, id: string) {
       return {
         ...view,
         review: { state: 'FINALIZED' as const, isPreview: false, calculatedAt: null, blockers: [] },
+      };
+    if (record.status === 'CANCELLED')
+      return {
+        ...view,
+        review: { state: 'CANCELLED' as const, isPreview: false, calculatedAt: null, blockers: [] },
       };
 
     // Step A: financial calculation. A failure here means GST/totals are
@@ -1098,6 +1257,12 @@ export async function finalizeTaxInvoice(
       });
       if (!invoice) throw HttpError.notFound('Tax invoice not found');
       if (invoice.status === 'FINALIZED') return null;
+      if (invoice.status === 'CANCELLED') {
+        throw HttpError.conflict('A CANCELLED Tax Invoice cannot be finalized');
+      }
+      if (invoice.status !== 'DRAFT') {
+        throw HttpError.conflict('Only a DRAFT Tax Invoice can be finalized');
+      }
       if (invoice.lines.length === 0)
         throw HttpError.conflict('A Tax Invoice with no lines cannot be finalized');
       await loadAndValidateCommercialLines(tx, invoice.ervePackingListId);
@@ -1120,6 +1285,9 @@ export async function finalizeTaxInvoice(
     if (!invoice) throw HttpError.notFound('Tax invoice not found');
 
     if (invoice.status === 'FINALIZED') return; // idempotent — see header comment
+    if (invoice.status === 'CANCELLED') {
+      throw HttpError.conflict('A CANCELLED Tax Invoice cannot be finalized');
+    }
     if (invoice.status !== 'DRAFT') {
       throw HttpError.conflict('Only a DRAFT Tax Invoice can be finalized');
     }

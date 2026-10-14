@@ -60,6 +60,7 @@ export function TaxInvoiceListPage() {
           <SelectItem value="ALL">All invoices</SelectItem>
           <SelectItem value="DRAFT">Draft</SelectItem>
           <SelectItem value="FINALIZED">Finalized</SelectItem>
+          <SelectItem value="CANCELLED">Cancelled</SelectItem>
         </SelectField>
       </div>
       {query.isLoading ? (
@@ -95,20 +96,41 @@ export function TaxInvoiceListPage() {
                 key: 'identity',
                 header: 'Invoice',
                 render: (row) => (
-                  <div className="font-medium">
-                    {row.invoiceNumber ?? `Draft · ${row.ervePackingList.ervePackingListNumber}`}
+                  <div>
+                    <div className="font-medium">
+                      {row.invoiceNumber ?? `Draft · ${row.ervePackingList.ervePackingListNumber}`}
+                    </div>
+                    {row.replacesInvoiceNumber && (
+                      <div className="text-xs text-muted-foreground">
+                        Replaces {row.replacesInvoiceNumber}
+                      </div>
+                    )}
                   </div>
                 ),
               },
               {
                 key: 'status',
                 header: 'Status',
-                render: (row) => (
-                  <StatusBadge
-                    label={row.status === 'DRAFT' ? 'Draft' : 'Finalized'}
-                    tone={row.status === 'DRAFT' ? 'warning' : 'success'}
-                  />
-                ),
+                render: (row) => {
+                  if (row.status === 'CANCELLED') {
+                    return (
+                      <div>
+                        <StatusBadge label="Cancelled" tone="cancelled" />
+                        {row.replacedByInvoiceNumber && (
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            Replaced by {row.replacedByInvoiceNumber}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                  return (
+                    <StatusBadge
+                      label={row.status === 'DRAFT' ? 'Draft' : 'Finalized'}
+                      tone={row.status === 'DRAFT' ? 'warning' : 'success'}
+                    />
+                  );
+                },
               },
               {
                 key: 'date',

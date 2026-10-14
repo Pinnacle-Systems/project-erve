@@ -264,7 +264,7 @@ export async function uploadInvoiceDocument(
     async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceDocumentLockKey(invoiceId)}))`;
       const invoice = await tx.taxInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
-      if (invoice.status === 'FINALIZED') return;
+      if (invoice.status === 'FINALIZED' || invoice.status === 'CANCELLED') return;
       for (const upload of prepared.uploads) {
         const storage = getFileStorage();
         try {
@@ -327,7 +327,9 @@ export async function readArchivedInvoiceImage(
     throw HttpError.forbidden('You do not have permission to view archived invoice images');
   const invoice = await prisma.taxInvoice.findUnique({ where: { id: invoiceId } });
   const snapshot =
-    invoice?.status === 'FINALIZED' ? readInvoiceDocumentSnapshot(invoice.documentSnapshot) : null;
+    invoice?.status === 'FINALIZED' || invoice?.status === 'CANCELLED'
+      ? readInvoiceDocumentSnapshot(invoice.documentSnapshot)
+      : null;
   const image = snapshot?.lines.find((line) => line.image?.id === imageId)?.image;
   if (!image) throw HttpError.notFound('Archived invoice image not found');
   const file = await prisma.file.findUnique({ where: { id: imageId } });
@@ -369,7 +371,7 @@ export async function reconcileInvoiceImageArchives(invoiceId: string, dryRun = 
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     const orphaned = files.filter((file) => !referenced.has(file.id));
     const removable =
-      invoice.status === 'FINALIZED' && snapshot !== null
+      (invoice.status === 'FINALIZED' || invoice.status === 'CANCELLED') && snapshot !== null
         ? orphaned.filter((file) => file.createdAt.getTime() < cutoff)
         : [];
     if (!dryRun)
