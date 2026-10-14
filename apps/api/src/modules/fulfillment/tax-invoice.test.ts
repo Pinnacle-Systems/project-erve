@@ -2206,17 +2206,25 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
       .send({ reason: 'First cancellation' })
       .expect(200);
 
-    // Idempotent cancel
+    // Idempotent cancel with identical reason -> 200
     const secondCancel = await request(app)
       .post(`/tax-invoices/${taxInvoiceId}/actions/cancel`)
       .set('Authorization', `Bearer ${accountantToken}`)
-      .send({ reason: 'Duplicate cancellation attempt' })
+      .send({ reason: 'First cancellation' })
       .expect(200);
 
     expect(secondCancel.body.data.cancelledAt).toBe(firstCancel.body.data.cancelledAt);
     expect(secondCancel.body.data.cancellationReason).toBe(
       firstCancel.body.data.cancellationReason,
     );
+
+    // Cancel retry with conflicting reason -> 409
+    const conflictingCancel = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/cancel`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ reason: 'Conflicting cancellation reason' })
+      .expect(409);
+    expect(conflictingCancel.body.error.details.reason).toBe('CANCELLATION_REASON_CONFLICT');
 
     const cancelAuditCount = await prisma.auditLog.count({
       where: { entityType: 'TaxInvoice', entityId: taxInvoiceId, action: 'TAX_INVOICE_CANCELLED' },
@@ -2618,26 +2626,22 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
     expect(lookupDispatch1.body.data.id).toBe(inv1Id);
     expect(lookupDispatch1.body.data.status).toBe('FINALIZED');
 
-    // 2. Cancel invoice 1 (no replacement exists yet)
+    // 2. Cancel invoice 1 (no replacement exists yet) -> lookups return 404 Not Found
     await request(app)
       .post(`/tax-invoices/${inv1Id}/actions/cancel`)
       .set('Authorization', `Bearer ${accountantToken}`)
       .send({ reason: 'Commercial dispute' })
       .expect(200);
 
-    const lookupEiplCancelled = await request(app)
+    await request(app)
       .get(`/tax-invoices/by-erve-packing-list/${ervePackingListId}`)
       .set('Authorization', `Bearer ${accountantToken}`)
-      .expect(200);
-    expect(lookupEiplCancelled.body.data.id).toBe(inv1Id);
-    expect(lookupEiplCancelled.body.data.status).toBe('CANCELLED');
+      .expect(404);
 
-    const lookupDispatchCancelled = await request(app)
+    await request(app)
       .get(`/tax-invoices/by-erve-dispatch/${erveDispatchId}`)
       .set('Authorization', `Bearer ${accountantToken}`)
-      .expect(200);
-    expect(lookupDispatchCancelled.body.data.id).toBe(inv1Id);
-    expect(lookupDispatchCancelled.body.data.status).toBe('CANCELLED');
+      .expect(404);
 
     // 3. Draft replacement invoice 2 -> lookup returns the active DRAFT
     const draft2 = await request(app)
@@ -2690,16 +2694,16 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
       .set('Authorization', `Bearer ${accountantToken}`)
       .expect(200);
 
-    // Two concurrent cancellation calls on the same invoice
+    // Two concurrent cancellation calls on the same invoice with identical reason
     const [c1, c2] = await Promise.all([
       request(app)
         .post(`/tax-invoices/${taxInvoiceId}/actions/cancel`)
         .set('Authorization', `Bearer ${accountantToken}`)
-        .send({ reason: 'Concurrent cancel attempt 1' }),
+        .send({ reason: 'Concurrent cancellation' }),
       request(app)
         .post(`/tax-invoices/${taxInvoiceId}/actions/cancel`)
         .set('Authorization', `Bearer ${accountantToken}`)
-        .send({ reason: 'Concurrent cancel attempt 2' }),
+        .send({ reason: 'Concurrent cancellation' }),
     ]);
     expect(c1.status).toBe(200);
     expect(c2.status).toBe(200);

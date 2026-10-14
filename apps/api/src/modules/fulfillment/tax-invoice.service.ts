@@ -668,17 +668,11 @@ export async function getTaxInvoiceByErvePackingListId(
   ervePackingListId: string,
 ) {
   assertViewAccess(actor);
-  const record =
-    (await prisma.taxInvoice.findFirst({
-      where: { ervePackingListId, status: { not: 'CANCELLED' } },
-      include: taxInvoiceInclude,
-    })) ??
-    (await prisma.taxInvoice.findFirst({
-      where: { ervePackingListId },
-      orderBy: [{ cancelledAt: 'desc' }, { createdAt: 'desc' }],
-      include: taxInvoiceInclude,
-    }));
-  if (!record) throw HttpError.notFound('No Tax Invoice exists for this Erve Packing List');
+  const record = await prisma.taxInvoice.findFirst({
+    where: { ervePackingListId, status: { not: 'CANCELLED' } },
+    include: taxInvoiceInclude,
+  });
+  if (!record) throw HttpError.notFound('No active Tax Invoice exists for this Erve Packing List');
   return toTaxInvoiceView(record);
 }
 
@@ -693,17 +687,11 @@ export async function getTaxInvoiceByErveDispatchId(actor: CurrentUser, erveDisp
   });
   if (!dispatch) throw HttpError.notFound('Erve dispatch not found');
 
-  const record =
-    (await prisma.taxInvoice.findFirst({
-      where: { ervePackingListId: dispatch.ervePackingListId, status: { not: 'CANCELLED' } },
-      include: taxInvoiceInclude,
-    })) ??
-    (await prisma.taxInvoice.findFirst({
-      where: { ervePackingListId: dispatch.ervePackingListId },
-      orderBy: [{ cancelledAt: 'desc' }, { createdAt: 'desc' }],
-      include: taxInvoiceInclude,
-    }));
-  if (!record) throw HttpError.notFound('No Tax Invoice exists for this Erve Dispatch');
+  const record = await prisma.taxInvoice.findFirst({
+    where: { ervePackingListId: dispatch.ervePackingListId, status: { not: 'CANCELLED' } },
+    include: taxInvoiceInclude,
+  });
+  if (!record) throw HttpError.notFound('No active Tax Invoice exists for this Erve Dispatch');
   return toTaxInvoiceView(record);
 }
 
@@ -810,12 +798,24 @@ export async function cancelTaxInvoice(
 
     const invoice = await tx.taxInvoice.findUnique({
       where: { id: taxInvoiceId },
-      select: { id: true, status: true, invoiceNumber: true, ervePackingListId: true },
+      select: {
+        id: true,
+        status: true,
+        invoiceNumber: true,
+        ervePackingListId: true,
+        cancellationReason: true,
+      },
     });
     if (!invoice) throw HttpError.notFound('Tax invoice not found');
 
     if (invoice.status === 'CANCELLED') {
-      return; // idempotent
+      if (invoice.cancellationReason === reason) {
+        return; // genuinely identical retry
+      }
+      throw HttpError.conflict('Tax invoice is already cancelled with a different reason', {
+        reason: 'CANCELLATION_REASON_CONFLICT',
+        existingReason: invoice.cancellationReason,
+      });
     }
 
     if (invoice.status !== 'FINALIZED') {

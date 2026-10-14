@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { pdf } from '@react-pdf/renderer';
 import { describe, expect, it } from 'vitest';
 import { TaxInvoiceDocument, taxInvoiceDisplayRows } from './TaxInvoiceDocument.js';
@@ -115,6 +117,9 @@ describe('issued Tax Invoice PDF document', () => {
   });
 
   it('renders CANCELLED watermark, cancellation banner and replacement references visually on PDF', async () => {
+    const artifactDir = path.resolve('.artifacts/cancelled-invoice-visual-qa');
+    await fs.mkdir(artifactDir, { recursive: true });
+
     // 1. Verify CANCELLED invoice PDF
     const cancelledInvoice = issuedTaxInvoiceFixture();
     cancelledInvoice.status = 'CANCELLED';
@@ -127,6 +132,10 @@ describe('issued Tax Invoice PDF document', () => {
     expect(cancelledResult.text).toContain('CANCELLED');
     expect(cancelledResult.text).toContain('THIS TAX INVOICE HAS BEEN CANCELLED');
     expect(cancelledResult.text).toContain('Reason: Wrong customer state registered');
+    await fs.writeFile(
+      path.join(artifactDir, 'cancelled-single-page.pdf'),
+      Buffer.from(await cancelledResult.blob.arrayBuffer()),
+    );
 
     // 2. Verify Replacement invoice PDF with provenance
     const replacementInvoice = issuedTaxInvoiceFixture();
@@ -140,6 +149,55 @@ describe('issued Tax Invoice PDF document', () => {
       'Replaces Cancelled Invoice: EI/26-27/0001',
     );
     expect(replacementResult.text).not.toContain('THIS TAX INVOICE HAS BEEN CANCELLED');
+    await fs.writeFile(
+      path.join(artifactDir, 'replacement-single-page.pdf'),
+      Buffer.from(await replacementResult.blob.arrayBuffer()),
+    );
+  });
+
+  it('paginates a CANCELLED invoice across multiple pages with fixed CANCELLED watermark on all pages and banner on page 1', async () => {
+    const artifactDir = path.resolve('.artifacts/cancelled-invoice-visual-qa');
+    await fs.mkdir(artifactDir, { recursive: true });
+
+    const invoice = issuedTaxInvoiceFixture();
+    invoice.status = 'CANCELLED';
+    invoice.cancelledAt = '2026-10-14T08:00:00.000Z';
+    invoice.cancellationReason = 'Commercial dispute and specification change';
+    invoice.cancelledBy = { id: 'user-acct', name: 'Lead Accountant' };
+    invoice.billTo.addressLine2 = 'Long synthetic address for pagination verification. '.repeat(8);
+    const line = invoice.lines[0]!;
+    const issued = invoice.documentSnapshot!.lines[0]!;
+    invoice.lines = Array.from({ length: 40 }, (_, index) => ({
+      ...line,
+      id: `line-${index}`,
+      style: { ...line.style, id: `style-${index}` },
+    }));
+    invoice.documentSnapshot!.lines = invoice.lines.map((item, index) => ({
+      ...issued,
+      lineId: item.id,
+      style: {
+        ...issued.style,
+        id: item.style.id,
+        styleNumber: `FROZEN-${index}`,
+        styleName: `Long synthetic Style ${index} for pagination verification`,
+      },
+    }));
+    const result = await render(invoice);
+    const pageMatches = result.bytes.match(/\/Type \/Page\b/g);
+    expect(pageMatches).toBeDefined();
+    expect(pageMatches!.length).toBeGreaterThan(1);
+    expect(result.text).toContain('CANCELLED');
+    expect(result.text).toContain('THIS TAX INVOICE HAS BEEN CANCELLED');
+    expect(result.text).toContain('Reason: Commercial dispute and specification change');
+    for (let index = 0; index < 40; index++) {
+      expect(result.text.replace(/\s/g, '')).toContain(`FROZEN-${index}`);
+    }
+    expect(result.text.match(/INR Forty Four Thousand Fifty Only\./g)).toHaveLength(1);
+
+    await fs.writeFile(
+      path.join(artifactDir, 'cancelled-multipage.pdf'),
+      Buffer.from(await result.blob.arrayBuffer()),
+    );
   });
 });
 
