@@ -61,9 +61,14 @@ export function DistributorListPage() {
         subtitle="Distributor master records and contacts"
         primaryAction={
           canManage ? (
-            <Button asChild variant="default">
-              <Link to="/master-data/distributors/new">Create Distributor</Link>
-            </Button>
+            <div className="flex gap-2">
+              <Button asChild variant="secondary">
+                <Link to="/master-data/distributors/import">Import Distributors</Link>
+              </Button>
+              <Button asChild variant="default">
+                <Link to="/master-data/distributors/new">Create Distributor</Link>
+              </Button>
+            </div>
           ) : undefined
         }
       />
@@ -146,7 +151,9 @@ export function DistributorListPage() {
           ) : undefined
         }
       />
-      <LoadMoreFooter {...loadMoreProps(distributorsQuery, distributors.length, ['distributor', 'distributors'])} />
+      <LoadMoreFooter
+        {...loadMoreProps(distributorsQuery, distributors.length, ['distributor', 'distributors'])}
+      />
     </div>
   );
 }

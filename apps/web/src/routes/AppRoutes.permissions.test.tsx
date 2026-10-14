@@ -28,6 +28,9 @@ vi.mock('../pages/ForbiddenPage.js', () => ({ ForbiddenPage: () => <div>Forbidde
 vi.mock('../pages/master-data/FactoryListPage.js', () => ({
   FactoryListPage: () => <div>FactoryListPage</div>,
 }));
+vi.mock('../pages/master-data/BusinessMasterImportPage.js', () => ({
+  BusinessMasterImportPage: ({ kind }: { kind: string }) => <div>Import {kind}</div>,
+}));
 vi.mock('../pages/master-data/FactoryFormPage.js', () => ({
   FactoryFormPage: () => <div>FactoryFormPage</div>,
 }));
@@ -153,6 +156,22 @@ function getPageContent(): string {
 }
 
 describe('AppRoutes Permissions', () => {
+  it.each([
+    'ADMIN',
+    'MERCHANDISER',
+    'ACCOUNTANT',
+    'QA_USER',
+    'FACTORY_USER',
+    'DISTRIBUTOR',
+    'SENIOR_MANAGEMENT',
+  ] as Role[])('guards every business import route for %s', async (role) => {
+    for (const kind of ['factories', 'distributors', 'retail-stores']) {
+      await renderRoutes(role, `/master-data/${kind}/import`);
+      expect(getPageContent()).toContain(
+        role === 'ADMIN' || role === 'MERCHANDISER' ? `Import ${kind}` : 'ForbiddenPage',
+      );
+    }
+  });
   it.each([
     'ADMIN',
     'ACCOUNTANT',

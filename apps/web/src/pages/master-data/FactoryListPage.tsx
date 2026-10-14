@@ -39,7 +39,10 @@ export function FactoryListPage() {
     [],
   );
 
-  const pdfAction = usePdfAction({ generate: generateFactoryListPdf, filename: factoryListPdfFilename });
+  const pdfAction = usePdfAction({
+    generate: generateFactoryListPdf,
+    filename: factoryListPdfFilename,
+  });
 
   return (
     <div className="space-y-5">
@@ -48,9 +51,14 @@ export function FactoryListPage() {
         subtitle="Factory master records and contacts"
         primaryAction={
           canManage ? (
-            <Button asChild>
-              <Link to="/master-data/factories/new">Add Factory</Link>
-            </Button>
+            <div className="flex gap-2">
+              <Button asChild variant="secondary">
+                <Link to="/master-data/factories/import">Import Factories</Link>
+              </Button>
+              <Button asChild>
+                <Link to="/master-data/factories/new">Add Factory</Link>
+              </Button>
+            </div>
           ) : undefined
         }
       />
@@ -118,7 +126,9 @@ export function FactoryListPage() {
           ) : undefined
         }
       />
-      <LoadMoreFooter {...loadMoreProps(factoriesQuery, factories.length, ['factory', 'factories'])} />
+      <LoadMoreFooter
+        {...loadMoreProps(factoriesQuery, factories.length, ['factory', 'factories'])}
+      />
     </div>
   );
 }

@@ -31,6 +31,7 @@ import { SizeDetailPage } from '../pages/master-data/SizeDetailPage.js';
 import { SizeFormPage } from '../pages/master-data/SizeFormPage.js';
 import { SeasonListPage } from '../pages/master-data/SeasonListPage.js';
 import { StyleBulkImportPage } from '../pages/master-data/StyleBulkImportPage.js';
+import { BusinessMasterImportPage } from '../pages/master-data/BusinessMasterImportPage.js';
 import { StyleDetailPage } from '../pages/master-data/StyleDetailPage.js';
 import { StyleFormPage } from '../pages/master-data/StyleFormPage.js';
 import { StyleListPage } from '../pages/master-data/StyleListPage.js';
@@ -243,6 +244,14 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="factories/import"
+          element={
+            <RoleRoute allowed={FACTORY_MANAGE_ROLES}>
+              <BusinessMasterImportPage kind="factories" />
+            </RoleRoute>
+          }
+        />
+        <Route
           path="factories/new"
           element={
             <RoleRoute allowed={FACTORY_MANAGE_ROLES}>
@@ -283,6 +292,14 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="retail-stores/import"
+          element={
+            <RoleRoute allowed={RETAIL_STORE_MANAGE_ROLES}>
+              <BusinessMasterImportPage kind="retail-stores" />
+            </RoleRoute>
+          }
+        />
+        <Route
           path="retail-stores/new"
           element={
             <RoleRoute allowed={RETAIL_STORE_MANAGE_ROLES}>
@@ -303,6 +320,14 @@ export function AppRoutes() {
           element={
             <RoleRoute allowed={RETAIL_STORE_MANAGE_ROLES}>
               <RetailStoreFormPage />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="distributors/import"
+          element={
+            <RoleRoute allowed={DISTRIBUTOR_MANAGE_ROLES}>
+              <BusinessMasterImportPage kind="distributors" />
             </RoleRoute>
           }
         />
