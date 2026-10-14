@@ -16,12 +16,12 @@
  *     [--expect-database <name>] \
  *     [--expect-host <host>] \
  *     [--expect-schema <schema>] \
+ *     [--env-file <path>] \
  *     [--json]
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import dotenv from 'dotenv';
 import type {
   PreflightOptions,
   PreflightReport,
@@ -29,6 +29,12 @@ import type {
   AuthoritativeExternalRecord,
   ExternalSourceManifest,
 } from '../modules/fulfillment/ei-numbering-preflight.types.js';
+import {
+  loadRuntimeEnvironment,
+  parseTargetEnvironment,
+  inspectLiveDatabase,
+  verifyDatabaseTarget,
+} from './sequence-target-guard.js';
 
 export function printHelp(): void {
   console.log(`
@@ -45,6 +51,7 @@ Usage:
     [--expect-database <name>] \\
     [--expect-host <host>] \\
     [--expect-schema <schema>] \\
+    [--env-file <path>] \\
     [--json]
 
 Required arguments:
@@ -58,8 +65,10 @@ Authoritative Source Options:
 
 Safety & Verification Options:
   --expect-database        Expected database name to verify against live connected database.
+                           Required when target is production.
   --expect-host            Expected database host to verify against live connected host.
   --expect-schema          Expected database schema to verify against live connected schema.
+  --env-file               Explicit path to environment file (e.g. /var/www/erve/shared/api.env).
   --json                   Output diagnostic report in machine-readable JSON format.
   --help, -h               Show this help message.
 
@@ -86,20 +95,19 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
   process.exit(0);
 }
 
-// 2. Load .env from cwd or fallback to apps/api/.env if run from monorepo root
-dotenv.config();
-const localApiEnv = path.join(process.cwd(), 'apps', 'api', '.env');
-if (!process.env.DATABASE_URL && fs.existsSync(localApiEnv)) {
-  dotenv.config({ path: localApiEnv });
+// 2. Predictable runtime environment configuration loading
+function getEarlyArg(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  return index >= 0 ? process.argv[index + 1] : undefined;
 }
+loadRuntimeEnvironment({
+  explicitEnvFile: getEarlyArg('--env-file'),
+  scriptPath: process.argv[1],
+});
 
-// 3. Dynamically import modules requiring environment configuration
+// 3. Dynamically import Prisma Client and preflight service only after environment is loaded
 const { prisma } = await import('../db/prisma.js');
 const { runEiNumberingPreflight } = await import('../modules/fulfillment/ei-numbering-preflight.service.js');
-const {
-  inspectLiveDatabase,
-  verifyDatabaseTarget,
-} = await import('./sequence-target-guard.js');
 
 export function parseArgs(argv: string[]): {
   financialYearCode: string;
@@ -111,6 +119,7 @@ export function parseArgs(argv: string[]): {
   expectDatabase?: string;
   expectHost?: string;
   expectSchema?: string;
+  envFile?: string;
 } {
   const get = (flag: string): string | undefined => {
     const index = argv.indexOf(flag);
@@ -128,23 +137,21 @@ export function parseArgs(argv: string[]): {
   if (hwmRaw !== undefined) {
     externalHighWaterMark = Number.parseInt(hwmRaw, 10);
     if (Number.isNaN(externalHighWaterMark) || externalHighWaterMark < 0) {
-      throw new Error('--external-high-water-mark must be a non-negative integer');
+      throw new Error(
+        `--external-high-water-mark must be a non-negative integer, got: ${hwmRaw}`,
+      );
     }
   }
 
   const externalRecordsFile = get('--external-records-file');
   const manifestFile = get('--manifest-file');
-
-  const targetRaw = (get('--target') ?? 'local').toUpperCase() as TargetEnvironment;
-  const validTargets: TargetEnvironment[] = ['LOCAL', 'DEV', 'STAGING', 'PRODUCTION', 'TEST'];
-  if (!validTargets.includes(targetRaw)) {
-    throw new Error(`--target must be one of: ${validTargets.join(', ')}`);
-  }
+  const targetRaw = parseTargetEnvironment(get('--target'));
 
   const jsonOutput = has('--json');
   const expectDatabase = get('--expect-database');
   const expectHost = get('--expect-host');
   const expectSchema = get('--expect-schema');
+  const envFile = get('--env-file');
 
   return {
     financialYearCode,
@@ -156,12 +163,13 @@ export function parseArgs(argv: string[]): {
     expectDatabase,
     expectHost,
     expectSchema,
+    envFile,
   };
 }
 
 function printFormattedReport(report: PreflightReport): void {
   console.log('======================================================================');
-  console.log(`ERVE India — EI Numbering Cutover Preflight Diagnostic Report`);
+  console.log('ERVE India — EI Numbering Cutover Preflight Diagnostic Report');
   console.log('======================================================================');
   console.log(`Timestamp:            ${report.timestamp}`);
   console.log(`Target Environment:   ${report.environment}`);
@@ -226,23 +234,20 @@ function printFormattedReport(report: PreflightReport): void {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
-  // If safety verification parameters were provided, verify connected database identity
-  if (args.expectDatabase || args.expectHost || args.expectSchema) {
-    const liveTarget = await inspectLiveDatabase(prisma, process.env.DATABASE_URL);
-    verifyDatabaseTarget(
-      {
-        target: args.target,
-        nodeEnv: process.env.NODE_ENV,
-        configuredDatabaseUrl: process.env.DATABASE_URL,
-        expectedDatabase: args.expectDatabase,
-        expectedHost: args.expectHost,
-        expectedSchema: args.expectSchema,
-        // Preflight is strictly read-only, so confirmProduction is not required for read-only inspection
-        confirmProduction: true,
-      },
-      liveTarget,
-    );
-  }
+  // Consistent target and live database verification (without mutation authorization)
+  const liveTarget = await inspectLiveDatabase(prisma, process.env.DATABASE_URL);
+  verifyDatabaseTarget(
+    {
+      target: args.target,
+      nodeEnv: process.env.NODE_ENV,
+      configuredDatabaseUrl: process.env.DATABASE_URL,
+      expectedDatabase: args.expectDatabase,
+      expectedHost: args.expectHost,
+      expectedSchema: args.expectSchema,
+      isMutation: false,
+    },
+    liveTarget,
+  );
 
   let externalRecords: AuthoritativeExternalRecord[] | undefined;
   if (args.externalRecordsFile) {

@@ -1,14 +1,58 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   parseTargetEnvironment,
   parseConfiguredDatabaseTarget,
   verifyDatabaseTarget,
   formatOperationSummary,
+  loadRuntimeEnvironment,
   type LiveDatabaseTarget,
 } from './sequence-target-guard.js';
 import { DocumentSequenceBaselineError } from './document-sequence-baseline.js';
 
 describe('SequenceTargetGuard', () => {
+  describe('loadRuntimeEnvironment', () => {
+    it('loads environment variables from an explicit --env-file', () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'erve-env-test-'));
+      const envPath = path.join(tempDir, 'custom.env');
+      fs.writeFileSync(envPath, 'CUSTOM_CLI_TEST_VAR=explicit_loaded_value\n');
+
+      try {
+        const result = loadRuntimeEnvironment({ explicitEnvFile: envPath });
+        expect(result.loadedPath).toBe(envPath);
+        expect(process.env.CUSTOM_CLI_TEST_VAR).toBe('explicit_loaded_value');
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        delete process.env.CUSTOM_CLI_TEST_VAR;
+      }
+    });
+
+    it('throws if specified --env-file does not exist', () => {
+      expect(() =>
+        loadRuntimeEnvironment({ explicitEnvFile: '/nonexistent/path/does-not-exist.env' }),
+      ).toThrow(/Specified --env-file not found/);
+    });
+
+    it('loads from script-adjacent .env when available', () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'erve-adjacent-test-'));
+      const scriptPath = path.join(tempDir, 'cli.js');
+      const envPath = path.join(tempDir, '.env');
+      fs.writeFileSync(scriptPath, '// dummy script');
+      fs.writeFileSync(envPath, 'ADJACENT_TEST_VAR=adjacent_loaded_value\n');
+
+      try {
+        const result = loadRuntimeEnvironment({ scriptPath, cwd: os.tmpdir() });
+        expect(result.loadedPath).toBe(envPath);
+        expect(process.env.ADJACENT_TEST_VAR).toBe('adjacent_loaded_value');
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        delete process.env.ADJACENT_TEST_VAR;
+      }
+    });
+  });
+
   describe('parseTargetEnvironment', () => {
     it('accepts valid target environment names case-insensitively', () => {
       expect(parseTargetEnvironment('production')).toBe('PRODUCTION');
@@ -61,12 +105,14 @@ describe('SequenceTargetGuard', () => {
   describe('verifyDatabaseTarget', () => {
     const validLiveProd: LiveDatabaseTarget = {
       databaseName: 'erve_prod',
-      serverHost: 'prod-db.internal',
+      serverAddress: '10.0.1.5',
       serverPort: '5432',
+      configuredHost: 'prod-db.internal',
+      configuredPort: '5432',
       schema: 'public',
     };
 
-    it('passes for production when all guards and independent expectations match', () => {
+    it('passes for production mutation when all guards, expectations, and schema match', () => {
       expect(() =>
         verifyDatabaseTarget(
           {
@@ -76,10 +122,72 @@ describe('SequenceTargetGuard', () => {
             expectedDatabase: 'erve_prod',
             expectedHost: 'prod-db.internal',
             expectedSchema: 'public',
+            isMutation: true,
           },
           validLiveProd,
         ),
       ).not.toThrow();
+    });
+
+    it('accepts server-reported address as expected host', () => {
+      expect(() =>
+        verifyDatabaseTarget(
+          {
+            target: 'PRODUCTION',
+            nodeEnv: 'production',
+            confirmProduction: true,
+            expectedDatabase: 'erve_prod',
+            expectedHost: '10.0.1.5',
+            expectedSchema: 'public',
+            isMutation: true,
+          },
+          validLiveProd,
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects production mutation when --expect-schema is missing', () => {
+      expect(() =>
+        verifyDatabaseTarget(
+          {
+            target: 'PRODUCTION',
+            nodeEnv: 'production',
+            confirmProduction: true,
+            expectedDatabase: 'erve_prod',
+            expectedSchema: undefined,
+            isMutation: true,
+          },
+          validLiveProd,
+        ),
+      ).toThrow(/Production mutation requires --expect-schema <schema>/);
+    });
+
+    it('passes for read-only preflight in production without --confirm-production', () => {
+      expect(() =>
+        verifyDatabaseTarget(
+          {
+            target: 'PRODUCTION',
+            nodeEnv: 'production',
+            expectedDatabase: 'erve_prod',
+            isMutation: false,
+          },
+          validLiveProd,
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects read-only preflight in production when --expect-database is missing', () => {
+      expect(() =>
+        verifyDatabaseTarget(
+          {
+            target: 'PRODUCTION',
+            nodeEnv: 'production',
+            expectedDatabase: undefined,
+            isMutation: false,
+          },
+          validLiveProd,
+        ),
+      ).toThrow(/Production target requires --expect-database <name>/);
     });
 
     it('rejects incorrect database name', () => {
@@ -90,6 +198,8 @@ describe('SequenceTargetGuard', () => {
             nodeEnv: 'production',
             confirmProduction: true,
             expectedDatabase: 'wrong_prod_db',
+            expectedSchema: 'public',
+            isMutation: true,
           },
           validLiveProd,
         ),
@@ -105,10 +215,12 @@ describe('SequenceTargetGuard', () => {
             confirmProduction: true,
             expectedDatabase: 'erve_prod',
             expectedHost: 'wrong-host.internal',
+            expectedSchema: 'public',
+            isMutation: true,
           },
           validLiveProd,
         ),
-      ).toThrow(/Database host mismatch: connected host is "prod-db.internal", but --expect-host specified "wrong-host.internal"/);
+      ).toThrow(/Database host mismatch: configured endpoint host is "prod-db.internal"/);
     });
 
     it('rejects incorrect database schema', () => {
@@ -120,13 +232,14 @@ describe('SequenceTargetGuard', () => {
             confirmProduction: true,
             expectedDatabase: 'erve_prod',
             expectedSchema: 'tenant_schema',
+            isMutation: true,
           },
           validLiveProd,
         ),
       ).toThrow(/Database schema mismatch: connected schema is "public", but --expect-schema specified "tenant_schema"/);
     });
 
-    it('rejects production execution without explicit confirmation', () => {
+    it('rejects production mutation execution without explicit confirmation', () => {
       expect(() =>
         verifyDatabaseTarget(
           {
@@ -134,24 +247,12 @@ describe('SequenceTargetGuard', () => {
             nodeEnv: 'production',
             confirmProduction: false,
             expectedDatabase: 'erve_prod',
+            expectedSchema: 'public',
+            isMutation: true,
           },
           validLiveProd,
         ),
       ).toThrow(/Production execution requires explicit confirmation via --confirm-production/);
-    });
-
-    it('rejects production execution without expected database declaration', () => {
-      expect(() =>
-        verifyDatabaseTarget(
-          {
-            target: 'PRODUCTION',
-            nodeEnv: 'production',
-            confirmProduction: true,
-            expectedDatabase: undefined,
-          },
-          validLiveProd,
-        ),
-      ).toThrow(/Production target requires --expect-database <name> to independently verify connected database identity/);
     });
 
     it('rejects conflicting environment: NODE_ENV=production but target=dev', () => {
@@ -175,6 +276,8 @@ describe('SequenceTargetGuard', () => {
             nodeEnv: 'development',
             confirmProduction: true,
             expectedDatabase: 'erve_prod',
+            expectedSchema: 'public',
+            isMutation: true,
           },
           validLiveProd,
         ),
@@ -189,6 +292,8 @@ describe('SequenceTargetGuard', () => {
             nodeEnv: 'test',
             confirmProduction: true,
             expectedDatabase: 'erve_prod',
+            expectedSchema: 'public',
+            isMutation: true,
           },
           validLiveProd,
         ),
@@ -198,8 +303,10 @@ describe('SequenceTargetGuard', () => {
     it('passes for dev target when NODE_ENV is development and expected database matches', () => {
       const liveDev: LiveDatabaseTarget = {
         databaseName: 'erve_dev',
-        serverHost: 'localhost',
+        serverAddress: '127.0.0.1',
         serverPort: '5432',
+        configuredHost: 'localhost',
+        configuredPort: '5432',
         schema: 'public',
       };
       expect(() =>
@@ -221,8 +328,10 @@ describe('SequenceTargetGuard', () => {
         target: 'PRODUCTION',
         liveTarget: {
           databaseName: 'erve_prod',
-          serverHost: 'db.prod.internal',
+          serverAddress: '10.0.2.15',
           serverPort: '5432',
+          configuredHost: 'db.prod.internal',
+          configuredPort: '5432',
           schema: 'public',
         },
         documentType: 'TAX_INVOICE',
@@ -233,15 +342,16 @@ describe('SequenceTargetGuard', () => {
         dryRun: false,
       });
 
-      expect(summary).toContain('Target Environment:  PRODUCTION');
-      expect(summary).toContain('Database Host:       db.prod.internal:5432');
-      expect(summary).toContain('Database Name:       erve_prod');
-      expect(summary).toContain('Database Schema:     public');
-      expect(summary).toContain('Document Type:       TAX_INVOICE');
-      expect(summary).toContain('Financial Year:      2026-27');
-      expect(summary).toContain('Requested Serial:    100');
-      expect(summary).toContain('Current Baseline:    50');
-      expect(summary).toContain('Action:              ADVANCE sequence from 50 to 100');
+      expect(summary).toContain('Target Environment:      PRODUCTION');
+      expect(summary).toContain('Configured Endpoint:     db.prod.internal:5432');
+      expect(summary).toContain('Server-Reported Address: 10.0.2.15:5432');
+      expect(summary).toContain('Database Name:           erve_prod');
+      expect(summary).toContain('Database Schema:         public');
+      expect(summary).toContain('Document Type:           TAX_INVOICE');
+      expect(summary).toContain('Financial Year:          2026-27');
+      expect(summary).toContain('Requested Serial:        100');
+      expect(summary).toContain('Current Baseline:        50');
+      expect(summary).toContain('Action:                  ADVANCE sequence from 50 to 100');
       expect(summary).not.toContain('password');
       expect(summary).not.toContain('postgres:');
     });
@@ -251,8 +361,10 @@ describe('SequenceTargetGuard', () => {
         target: 'PRODUCTION',
         liveTarget: {
           databaseName: 'erve_prod',
-          serverHost: 'db.prod.internal',
-          serverPort: '5432',
+          serverAddress: '',
+          serverPort: '',
+          configuredHost: 'localhost',
+          configuredPort: '5432',
           schema: 'public',
         },
         documentType: 'TAX_INVOICE',
@@ -263,8 +375,9 @@ describe('SequenceTargetGuard', () => {
       });
 
       expect(summary).toContain('[DRY RUN]');
-      expect(summary).toContain('Current Baseline:    Uninitialized (row does not exist)');
-      expect(summary).toContain('Action:              INITIALIZE sequence at 0 (next allocated serial will be 1)');
+      expect(summary).toContain('Current Baseline:        Uninitialized (row does not exist)');
+      expect(summary).toContain('Action:                  INITIALIZE sequence at 0 (next allocated serial will be 1)');
+      expect(summary).toContain('Server-Reported Address: local socket / unavailable');
     });
   });
 });

@@ -1,8 +1,8 @@
-import { prisma } from '../db/prisma.js';
 import type { Prisma, DocumentType } from '../db/prisma.js';
 import { setDocumentSequenceBaseline } from '../modules/master-data/document-sequence.service.js';
+import { DocumentSequenceBaselineError } from './sequence-target-guard.js';
 
-export class DocumentSequenceBaselineError extends Error {}
+export { DocumentSequenceBaselineError };
 
 class DryRunRollbackSignal {
   constructor(public readonly result: { previous: number; current: number; created: boolean }) {}
@@ -37,7 +37,7 @@ export async function runDocumentSequenceBaseline(
   options: DocumentSequenceBaselineOptions,
   deps?: { prisma?: { $transaction: Prisma.TransactionClient['$transaction'] } },
 ): Promise<DocumentSequenceBaselineResult> {
-  const client = (deps?.prisma ?? prisma) as typeof prisma;
+  const client = (deps?.prisma ?? (await import('../db/prisma.js')).prisma);
 
   let outcome: { previous: number; current: number; created: boolean };
 

@@ -1,11 +1,13 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db/prisma.js';
-import { resetDatabase, createTestDistributor, createTestSellerRegistration, createTestUser } from '../test/helpers.js';
+import {
+  resetDatabase,
+  createTestTaxInvoice,
+} from '../test/helpers.js';
 import { ensureFinancialYear } from '../modules/master-data/financial-year.service.js';
 import { allocateDocumentSerial, setDocumentSequenceBaseline } from '../modules/master-data/document-sequence.service.js';
 import { formatDocumentNumber } from '../modules/master-data/document-number.util.js';
 import { runDocumentSequenceBaseline } from './document-sequence-baseline.js';
-import { createId } from '@erve/shared';
 
 beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
@@ -169,51 +171,9 @@ describe('runDocumentSequenceBaseline', () => {
 
   it('attempt to initialize behind existing invoice records fails safely (high-water-mark collision prevention)', async () => {
     const fy = await ensureFinancialYear(prisma, new Date('2034-06-01'));
-    const distributor = await createTestDistributor({ code: 'DST-HWM-TEST', name: 'HWM Test Distributor' });
-    const sellerSummary = await createTestSellerRegistration();
-    const seller = await prisma.sellerRegistration.findUniqueOrThrow({ where: { id: sellerSummary.id } });
-    const userId = await createTestUser({ email: 'hwm-test@erve.com', password: 'password123', roles: ['ADMIN'] });
-
-    // Create minimal erve packing list
-    const eipl = await prisma.ervePackingList.create({
-      data: {
-        id: createId(),
-        ervePackingListNumber: 'EPL-TEST-HWM',
-        distributorId: distributor.id,
-        createdById: userId,
-        financialYearId: fy.id,
-        ervePackingListSerial: 1,
-      },
-    });
-
-    await prisma.taxInvoice.create({
-      data: {
-        id: createId(),
-        invoiceNumber: 'EI/34-35/0075',
-        ervePackingListId: eipl.id,
-        distributorId: distributor.id,
-        sellerRegistrationId: seller.id,
-        sellerLegalName: seller.legalName,
-        sellerGstin: seller.gstin,
-        sellerEinvoiceApplicable: seller.einvoiceApplicable,
-        sellerAddressLine1: seller.addressLine1,
-        sellerCity: seller.city,
-        sellerState: seller.state,
-        sellerStateCode: seller.stateCode,
-        sellerPostalCode: seller.postalCode,
-        sellerCountry: seller.country,
-        sellerBankName: seller.bankName,
-        sellerBankAccountName: seller.bankAccountName,
-        sellerBankAccountNumber: seller.bankAccountNumber,
-        sellerBankIfsc: seller.bankIfsc,
-        sellerBankBranchName: seller.bankBranchName,
-        billToName: 'Test Buyer',
-        billToGstin: seller.gstin,
-        purchaseMode: 'OUTRIGHT',
-        financialYearId: fy.id,
-        status: 'FINALIZED',
-        createdById: userId,
-      },
+    await createTestTaxInvoice({
+      financialYearId: fy.id,
+      invoiceNumber: 'EI/34-35/0075',
     });
 
     // Attempting to set baseline behind existing record (e.g. 50 < 75) must fail

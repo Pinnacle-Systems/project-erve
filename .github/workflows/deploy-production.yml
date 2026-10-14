@@ -423,6 +423,73 @@ jobs:
 
           echo "historical-import-production CLI smoke test passed: packaged, loadable, guards enforced"
 
+      # Proves document-sequence-baseline.js and ei-numbering-preflight.js are
+      # present in and runnable from the real packaged artifact (esbuild bundle +
+      # its own installed node_modules in .deploy-build/verify-extract/api),
+      # verifying production target guards, live database inspection, dry-run
+      # simulation rollback, and zero tsx/dev dependency.
+      - name: Smoke-test the packaged document-sequence-baseline CLI against the disposable database
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/verify-extract/api
+
+          export NODE_ENV=production
+          export DATABASE_URL="${{ env.TEST_DATABASE_URL }}"
+          export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
+          export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          export FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads"
+
+          echo "--- --help runs without database connection ---"
+          node document-sequence-baseline.js --help | grep -q "ERVE India — Document Sequence Baseline CLI"
+
+          echo "--- without --confirm-production: must refuse ---"
+          if node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database erve_test --expect-schema public; then
+            echo "Expected document-sequence-baseline.js to fail without --confirm-production"; exit 1
+          fi
+
+          echo "--- without --expect-schema on production: must refuse ---"
+          if node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database erve_test --confirm-production; then
+            echo "Expected document-sequence-baseline.js to fail without --expect-schema"; exit 1
+          fi
+
+          echo "--- wrong expected database: must refuse ---"
+          if node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database wrong_db --expect-schema public --confirm-production; then
+            echo "Expected document-sequence-baseline.js to refuse wrong database"; exit 1
+          fi
+
+          echo "--- dry-run simulation: must succeed without persistent mutations ---"
+          DRY_OUTPUT="$(node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database erve_test --expect-schema public --confirm-production --dry-run)"
+          echo "$DRY_OUTPUT"
+          echo "$DRY_OUTPUT" | grep -q '\[DRY RUN\] Verification passed'
+
+          echo "Document-sequence-baseline CLI smoke test passed: packaged, executable, guards enforced, dry-run verified"
+
+      - name: Smoke-test the packaged ei-numbering-preflight CLI against the disposable database
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/verify-extract/api
+
+          export NODE_ENV=production
+          export DATABASE_URL="${{ env.TEST_DATABASE_URL }}"
+          export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
+          export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          export FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads"
+
+          echo "--- --help runs without database connection ---"
+          node ei-numbering-preflight.js --help | grep -q "ERVE India — EI Numbering Cutover Preflight Diagnostic CLI"
+
+          echo "--- without --expect-database on production target: must refuse ---"
+          if node ei-numbering-preflight.js --target production --financial-year 2026-27; then
+            echo "Expected ei-numbering-preflight.js to fail without --expect-database"; exit 1
+          fi
+
+          echo "--- read-only preflight diagnostic run: must succeed and report status ---"
+          PREFLIGHT_OUTPUT="$(node ei-numbering-preflight.js --target production --financial-year 2026-27 --expect-database erve_test)"
+          echo "$PREFLIGHT_OUTPUT"
+          echo "$PREFLIGHT_OUTPUT" | grep -q "ERVE India — EI Numbering Cutover Preflight Diagnostic Report"
+
+          echo "EI-numbering-preflight CLI smoke test passed: packaged, read-only diagnostic executed through the extracted artifact"
+
       - name: Compute artifact name
         id: artifact-name
         run: echo "value=erve-release-${{ github.sha }}" >> "$GITHUB_OUTPUT"

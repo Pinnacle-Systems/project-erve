@@ -13,6 +13,9 @@
 //     --financial-year <YYYY-YY> \
 //     --serial <N> \
 //     [--expect-database <name>] \
+//     [--expect-schema <schema>] \
+//     [--expect-host <host>] \
+//     [--env-file <path>] \
 //     [--confirm-production] \
 //     [--dry-run]
 //
@@ -23,11 +26,16 @@
 // baseline command must run against the verified external high-water mark
 // before the first production Tax Invoice can ever be finalized.
 
-import fs from 'node:fs';
-import path from 'node:path';
-import dotenv from 'dotenv';
 import type { DocumentType } from '../db/prisma.js';
+import {
+  parseTargetEnvironment,
+  loadRuntimeEnvironment,
+  inspectLiveDatabase,
+  verifyDatabaseTarget,
+  formatOperationSummary,
+} from './sequence-target-guard.js';
 import type { TargetEnvironment } from './sequence-target-guard.js';
+import { DocumentSequenceBaselineError } from './document-sequence-baseline.js';
 
 export function printHelp(): void {
   console.log(`
@@ -41,8 +49,9 @@ Usage:
     --financial-year <YYYY-YY> \\
     --serial <N> \\
     [--expect-database <name>] \\
-    [--expect-host <host>] \\
     [--expect-schema <schema>] \\
+    [--expect-host <host>] \\
+    [--env-file <path>] \\
     [--confirm-production] \\
     [--dry-run]
 
@@ -56,12 +65,13 @@ Required arguments:
 
 Production Safeguards:
   --expect-database   Expected PostgreSQL database name (e.g. erve_prod). Required for production.
+  --expect-schema     Expected PostgreSQL schema name (e.g. public). Required for production mutation.
   --expect-host       Expected PostgreSQL host name (optional extra check).
-  --expect-schema     Expected PostgreSQL schema name (optional, defaults to public).
   --confirm-production Explicit confirmation flag required whenever targeting production or when
                       NODE_ENV=production.
 
-Operational Flags:
+Environment & Operational Flags:
+  --env-file          Explicit path to environment file (e.g. /var/www/erve/shared/api.env).
   --dry-run           Validates targets, checks prerequisites, and executes inside a transaction
                       that is immediately rolled back. Zero persistent mutations performed.
   --help, -h          Show this help message.
@@ -74,6 +84,7 @@ Examples:
     --financial-year 2026-27 \\
     --serial 0 \\
     --expect-database erve_prod \\
+    --expect-schema public \\
     --confirm-production
 
   # Advance Tax Invoice sequence to verified external high-water mark:
@@ -83,6 +94,7 @@ Examples:
     --financial-year 2026-27 \\
     --serial 100 \\
     --expect-database erve_prod \\
+    --expect-schema public \\
     --confirm-production
 
   # Preview with dry-run mode:
@@ -92,6 +104,7 @@ Examples:
     --financial-year 2026-27 \\
     --serial 100 \\
     --expect-database erve_prod \\
+    --expect-schema public \\
     --confirm-production \\
     --dry-run
 `);
@@ -103,22 +116,19 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
   process.exit(0);
 }
 
-// 2. Load .env from cwd or fallback to apps/api/.env if run from monorepo root
-dotenv.config();
-const localApiEnv = path.join(process.cwd(), 'apps', 'api', '.env');
-if (!process.env.DATABASE_URL && fs.existsSync(localApiEnv)) {
-  dotenv.config({ path: localApiEnv });
+// 2. Predictable runtime environment configuration loading
+function getEarlyArg(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  return index >= 0 ? process.argv[index + 1] : undefined;
 }
+loadRuntimeEnvironment({
+  explicitEnvFile: getEarlyArg('--env-file'),
+  scriptPath: process.argv[1],
+});
 
-// 3. Dynamically import modules requiring environment configuration
+// 3. Dynamically import Prisma Client only after environment is loaded
 const { prisma } = await import('../db/prisma.js');
-const { runDocumentSequenceBaseline, DocumentSequenceBaselineError } = await import('./document-sequence-baseline.js');
-const {
-  parseTargetEnvironment,
-  inspectLiveDatabase,
-  verifyDatabaseTarget,
-  formatOperationSummary,
-} = await import('./sequence-target-guard.js');
+const { runDocumentSequenceBaseline } = await import('./document-sequence-baseline.js');
 
 const DOCUMENT_TYPES: DocumentType[] = ['PURCHASE_ORDER', 'JOB_ORDER', 'TAX_INVOICE'];
 
@@ -132,6 +142,7 @@ export interface ParsedBaselineCliArgs {
   expectedSchema?: string;
   confirmProduction: boolean;
   dryRun: boolean;
+  envFile?: string;
 }
 
 export function parseArgs(argv: string[]): ParsedBaselineCliArgs {
@@ -165,6 +176,7 @@ export function parseArgs(argv: string[]): ParsedBaselineCliArgs {
   const expectedSchema = get('--expect-schema');
   const confirmProduction = has('--confirm-production');
   const dryRun = has('--dry-run');
+  const envFile = get('--env-file');
 
   return {
     target,
@@ -176,6 +188,7 @@ export function parseArgs(argv: string[]): ParsedBaselineCliArgs {
     expectedSchema,
     confirmProduction,
     dryRun,
+    envFile,
   };
 }
 
@@ -185,7 +198,7 @@ async function main(): Promise<void> {
   // 1. Inspect live database target directly over connection
   const liveTarget = await inspectLiveDatabase(prisma, process.env.DATABASE_URL);
 
-  // 2. Enforce database target and environment safety guards
+  // 2. Enforce database target and environment safety guards for mutation
   verifyDatabaseTarget(
     {
       target: options.target,
@@ -195,6 +208,7 @@ async function main(): Promise<void> {
       expectedHost: options.expectedHost,
       expectedSchema: options.expectedSchema,
       confirmProduction: options.confirmProduction,
+      isMutation: true,
     },
     liveTarget,
   );

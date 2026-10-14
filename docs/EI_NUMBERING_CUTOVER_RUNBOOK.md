@@ -163,15 +163,19 @@ To unblock customer testing and Tax Invoice finalization during internal UAT. In
 After UAT concludes and prior to commercial go-live, the database will undergo a formal approved reset and bootstrap, followed by Procedure B.
 
 #### A.2 Preconditions & Target Verification
-1. Confirm the release artifact has been extracted to `/var/www/erve/current/` (or staging path).
-2. Verify executable availability:
+1. Confirm the release artifact has been extracted to `/var/www/erve/current/` (or staging path). Note: Prisma Client is generated during release artifact construction on the build runner by `package-production.sh` (as part of `pnpm deploy`), not on the VPS during extraction.
+2. Verify executable availability without needing database connectivity:
    ```bash
    node /var/www/erve/current/api/document-sequence-baseline.js --help
    node /var/www/erve/current/api/ei-numbering-preflight.js --help
    ```
-3. Inspect connected database parameters from `/var/www/erve/shared/api.env`:
+3. Runtime Environment Resolution:
+   - The CLIs automatically discover and load environment configuration from `.env` located next to the CLI executable (`/var/www/erve/current/api/.env`, symlinked to `/var/www/erve/shared/api.env`), regardless of the operator's current working directory.
+   - Alternatively, operators may supply an explicit configuration path via `--env-file /var/www/erve/shared/api.env`.
+4. Confirm target database parameters from `/var/www/erve/shared/api.env`:
    - Connected DB Name: `erve_prod`
    - Active FY: `2026-27`
+   - Active Schema: `public`
 
 #### A.3 Current Sequence Inspection
 Run read-only preflight diagnostic to inspect current sequence state:
@@ -188,7 +192,7 @@ Verify that `sequenceState.exists` is reported as uninitialized (or at approved 
 - **Offset test sequence:** If Accounts requires test invoices to occupy a distinct test partition (e.g. starting at 1001), choose baseline `1000`.
 
 #### A.5 Execution with Packaged CLI
-1. **Dry-Run Simulation:** Validate connectivity, targets, and transaction rollback without committing changes:
+1. **Dry-Run Simulation:** Validate connectivity, targets, expected schema, and transaction rollback without committing changes:
    ```bash
    node /var/www/erve/current/api/document-sequence-baseline.js \
      --target production \
@@ -196,6 +200,7 @@ Verify that `sequenceState.exists` is reported as uninitialized (or at approved 
      --financial-year 2026-27 \
      --serial 0 \
      --expect-database erve_prod \
+     --expect-schema public \
      --confirm-production \
      --dry-run
    ```
@@ -209,6 +214,7 @@ Verify that `sequenceState.exists` is reported as uninitialized (or at approved 
      --financial-year 2026-27 \
      --serial 0 \
      --expect-database erve_prod \
+     --expect-schema public \
      --confirm-production
    ```
    Expected output:
@@ -216,15 +222,16 @@ Verify that `sequenceState.exists` is reported as uninitialized (or at approved 
    ======================================================================
    ERVE India — Document Sequence Baseline Operation Summary
    ======================================================================
-   Target Environment:  PRODUCTION
-   Database Host:       localhost:5432
-   Database Name:       erve_prod
-   Database Schema:     public
-   Document Type:       TAX_INVOICE
-   Financial Year:      2026-27
-   Requested Serial:    0
-   Current Baseline:    Uninitialized (row does not exist)
-   Action:              INITIALIZE sequence at 0 (next allocated serial will be 1)
+   Target Environment:      PRODUCTION
+   Configured Endpoint:     localhost:5432
+   Server-Reported Address: 127.0.0.1:5432
+   Database Name:           erve_prod
+   Database Schema:         public
+   Document Type:           TAX_INVOICE
+   Financial Year:          2026-27
+   Requested Serial:        0
+   Current Baseline:        Uninitialized (row does not exist)
+   Action:                  INITIALIZE sequence at 0 (next allocated serial will be 1)
    ======================================================================
    initialized: TAX_INVOICE sequence for FY 2026-27 at 0 (next allocated serial will be 1)
    ```
@@ -236,6 +243,7 @@ Verify that `sequenceState.exists` is reported as uninitialized (or at approved 
 
 #### A.7 Error Inspection & Recovery
 - **Missing `--confirm-production`:** The CLI exits immediately with code 1: `ERROR: Production execution requires explicit confirmation via --confirm-production`.
+- **Missing `--expect-schema`:** In production mutation mode, omitting `--expect-schema` fails closed with: `ERROR: Production mutation requires --expect-schema <schema> (e.g. "public")`.
 - **Database Mismatch:** If `--expect-database` does not match `SELECT current_database()`, the CLI exits with code 1 without executing SQL transactions.
 - **Repeat Execution:** Executing the identical command again is idempotent and reports `no-op: TAX_INVOICE sequence for FY 2026-27 is already at 0`.
 - **Accidental Decrement:** Attempting to specify a serial lower than the current database state is rejected and leaves the sequence unchanged.
@@ -276,6 +284,7 @@ node /var/www/erve/current/api/document-sequence-baseline.js \
   --financial-year 2026-27 \
   --serial <VERIFIED_COMMERCIAL_HWM> \
   --expect-database erve_prod \
+  --expect-schema public \
   --confirm-production
 ```
 

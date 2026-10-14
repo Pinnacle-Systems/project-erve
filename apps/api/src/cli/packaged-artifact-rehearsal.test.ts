@@ -14,8 +14,20 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const monorepoRoot = path.resolve(__dirname, '../../../../');
-const bundledBaselineCli = path.resolve(monorepoRoot, 'apps/api/dist-bundle/document-sequence-baseline.js');
-const bundledPreflightCli = path.resolve(monorepoRoot, 'apps/api/dist-bundle/ei-numbering-preflight.js');
+
+// Dynamically resolve executable paths: prefer extracted release artifact if available,
+// falling back to dist-bundle.
+const extractedApiDir = process.env.EXTRACTED_ARTIFACT_DIR ||
+  path.resolve(monorepoRoot, '.deploy-build/verify-extract/api');
+const hasExtractedArtifact = fs.existsSync(path.resolve(extractedApiDir, 'document-sequence-baseline.js'));
+
+const bundledBaselineCli = hasExtractedArtifact
+  ? path.resolve(extractedApiDir, 'document-sequence-baseline.js')
+  : path.resolve(monorepoRoot, 'apps/api/dist-bundle/document-sequence-baseline.js');
+
+const bundledPreflightCli = hasExtractedArtifact
+  ? path.resolve(extractedApiDir, 'ei-numbering-preflight.js')
+  : path.resolve(monorepoRoot, 'apps/api/dist-bundle/ei-numbering-preflight.js');
 
 const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public';
@@ -24,6 +36,34 @@ interface ExecError extends Error {
   code?: number;
   stdout?: string;
   stderr?: string;
+}
+
+/**
+ * Reviewer Finding 4: Strict test database isolation guard.
+ * Validates that database URLs point to an approved disposable test database
+ * and refuses execution against any production, staging, or non-test databases.
+ */
+function assertDisposableTestDatabase(url: string, label: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`[DB Guard] ${label} is not a valid URL: ${url}`);
+  }
+  const dbName = decodeURIComponent(parsed.pathname.replace(/^\//, '')).toLowerCase();
+  const FORBIDDEN_DATABASES = ['erve_prod', 'erve_production', 'erve_staging', 'erve_docs', 'erve_dev'];
+  if (FORBIDDEN_DATABASES.includes(dbName)) {
+    throw new Error(
+      `[DB Guard] Refusing rehearsal writes: ${label} points to protected database "${dbName}". ` +
+        'Rehearsal tests must only run against an approved disposable test database.',
+    );
+  }
+  if (!dbName.endsWith('_test') && dbName !== 'erve_test') {
+    throw new Error(
+      `[DB Guard] Refusing rehearsal writes: ${label} database "${dbName}" must end with "_test" or be "erve_test".`,
+    );
+  }
+  return `${parsed.hostname}:${parsed.port || '5432'}/${dbName}`;
 }
 
 afterAll(async () => {
@@ -35,6 +75,32 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
   let rehearsalFyId: string;
 
   beforeAll(async () => {
+    // Reviewer Finding 4: Assert both TEST_DATABASE_URL and process.env.DATABASE_URL
+    // resolve to the same approved disposable test database BEFORE any writes.
+    const testEndpoint = assertDisposableTestDatabase(TEST_DATABASE_URL, 'TEST_DATABASE_URL');
+    const parentEndpoint = assertDisposableTestDatabase(
+      process.env.DATABASE_URL || TEST_DATABASE_URL,
+      'DATABASE_URL',
+    );
+
+    if (testEndpoint !== parentEndpoint) {
+      throw new Error(
+        `[DB Guard] Endpoint mismatch: TEST_DATABASE_URL points to "${testEndpoint}" ` +
+          `while DATABASE_URL points to "${parentEndpoint}". Both must resolve to the identical disposable test database.`,
+      );
+    }
+
+    // Force synchronization to guarantee Prisma connects to the verified test DB
+    process.env.DATABASE_URL = TEST_DATABASE_URL;
+
+    // Verify live connected database directly over Prisma connection
+    const [liveRow] = await prisma.$queryRaw<Array<{ db: string }>>`SELECT current_database() as db`;
+    if (!liveRow?.db || (!liveRow.db.toLowerCase().endsWith('_test') && liveRow.db.toLowerCase() !== 'erve_test')) {
+      throw new Error(
+        `[DB Guard] Live current_database() "${liveRow?.db}" is not an approved test database. Aborting rehearsal.`,
+      );
+    }
+
     // 3. Financial-year availability: Ensure dedicated test FY exists for rehearsal
     const fy = await ensureFinancialYear(prisma, new Date('2036-06-01'));
     rehearsalFyId = fy.id;
@@ -112,6 +178,8 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
           '0',
           '--expect-database',
           'erve_test',
+          '--expect-schema',
+          'public',
         ],
         { env: { ...process.env, NODE_ENV: 'production', DATABASE_URL: TEST_DATABASE_URL } },
       );
@@ -177,7 +245,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
       { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL } },
     );
 
-    expect(stdout).toContain('Action:              INITIALIZE sequence at 0');
+    expect(stdout).toContain('Action:                  INITIALIZE sequence at 0');
     expect(stdout).toContain('initialized: TAX_INVOICE sequence for FY 2036-37 at 0 (next allocated serial will be 1)');
 
     // Verify row was created in database with serial 0
@@ -218,7 +286,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
       { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL } },
     );
 
-    expect(stdout).toContain('Action:              NO-OP (sequence is already at baseline 1)');
+    expect(stdout).toContain('Action:                  NO-OP (sequence is already at baseline 1)');
     expect(stdout).toContain('no-op: TAX_INVOICE sequence for FY 2036-37 is already at 1');
 
     const seq = await prisma.documentSequence.findUniqueOrThrow({
