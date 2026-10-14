@@ -605,6 +605,7 @@ async function seedGstRuleSets(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (process.env.NODE_ENV === 'production') throw new Error('Generic development seed refuses production; use the dedicated system bootstraps');
   await seedRoles();
   await seedDefaultAdminUser();
   await seedFinancialYears();
