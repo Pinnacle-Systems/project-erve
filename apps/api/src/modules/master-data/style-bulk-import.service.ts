@@ -172,6 +172,7 @@ export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): B
 // ---------------------------------------------------------------------------
 
 export type BulkStyleImportRejectionReason =
+  | 'EXISTING_STYLE_CONFLICT'
   | 'DUPLICATE_STYLE_NUMBER_IN_FILE'
   | 'MISSING_REQUIRED_FIELD'
   | 'INVALID_FINAL_MRP'
@@ -405,6 +406,8 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
       });
       const priorPending = pending.find((prior) => matchesImageProvenance(prior.expectedImageChecksum, create));
       if (priorPending) {
+        const conflict = await existingStyleConflict(existingStyleId, sheetRow.styleNumber, create, false);
+        if (conflict) { reject('EXISTING_STYLE_CONFLICT', conflict); continue; }
         rows.push({ rowNumber: sheetRow.rowNumber, styleNumber: sheetRow.styleNumber,
           status: 'RESUME_IMAGE_PENDING', imageCount, existingStyleId, create,
           detail: 'Exact expected images match a prior interrupted import; safe to recover' });
@@ -414,13 +417,19 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
         reject('IMAGE_PROVENANCE_MISMATCH', 'Expected images or Style fields differ from the interrupted import; review the source');
         continue;
       }
+      const conflict = await existingStyleConflict(existingStyleId, sheetRow.styleNumber, create);
+      if (conflict) {
+        reject('EXISTING_STYLE_CONFLICT', conflict);
+        continue;
+      }
       rows.push({
         rowNumber: sheetRow.rowNumber,
         styleNumber: sheetRow.styleNumber,
         status: 'SKIP_EXISTING',
         imageCount,
         existingStyleId,
-        detail: 'A Style with this Style Number already exists and is left untouched (create-only)',
+        create,
+        detail: 'Exact supplied Style values already exist; no update performed',
       });
       continue;
     }
@@ -461,6 +470,20 @@ export interface BulkStyleImportRowExecutionResult {
 export interface BulkStyleImportExecutionSummary {
   runId: string;
   results: BulkStyleImportRowExecutionResult[];
+}
+async function existingStyleConflict(styleId: string, styleNumber: string, input: BulkStyleImportCreateFields, checkImages = true): Promise<string | null> {
+  const existing = await prisma.style.findUnique({ where: { id: styleId }, include: { styleSizes: true, styleFactoryMappings: true } });
+  if (!existing) return 'Existing Style changed; preview again';
+  const changed: string[] = [];
+  if (existing.styleNumber !== styleNumber || existing.styleName !== input.styleName) changed.push('Style identity/name');
+  if (existing.status !== 'ACTIVE') changed.push('inactive Style');
+  if (Number(existing.finalMrp) !== input.finalMrp) changed.push('MRP');
+  if (existing.seasonId !== input.seasonId || (existing.lmixNumber ?? null) !== input.lmixNumber) changed.push('Season/LMIX');
+  if (input.hsnId && existing.hsnId !== input.hsnId) changed.push('HSN');
+  if (existing.styleSizes.length !== input.sizes.length || new Set(input.sizes.map(size => size.sizeId)).size !== input.sizes.length || input.sizes.some(size => !existing.styleSizes.some(current => current.sizeId === size.sizeId && current.status === 'ACTIVE' && (!size.barcode || current.barcode === size.barcode)))) changed.push('Sizes/barcodes');
+  if (existing.styleFactoryMappings.length !== input.factoryMappings.length || new Set(input.factoryMappings.map(mapping => mapping.factoryId)).size !== input.factoryMappings.length || input.factoryMappings.some(mapping => !existing.styleFactoryMappings.some(current => current.factoryId === mapping.factoryId && current.status === 'ACTIVE' && Number(current.exFactoryPrice) === mapping.exFactoryPrice))) changed.push('Factory mappings/rates');
+  if (checkImages && input.images.length && !await expectedImagesPresent(styleId, input.images)) changed.push('Images');
+  return changed.length ? `Existing Style differs in ${changed.join(', ')}; review the source (no update performed)` : null;
 }
 
 // v2 is compatible with the existing TEXT column; legacy hex is read only for
@@ -513,6 +536,10 @@ export async function executeBulkStyleImport(
     let styleId = row.existingStyleId;
     try {
       actor = await requireBulkStyleImportActor(actor);
+      if (row.status === 'SKIP_EXISTING' && row.create && row.existingStyleId) {
+        const conflict = await existingStyleConflict(row.existingStyleId, row.styleNumber, row.create);
+        if (conflict) throw HttpError.conflict(conflict);
+      }
       if (row.status === 'REJECTED' || row.status === 'SKIP_EXISTING') {
         const outcome = row.status === 'REJECTED' ? 'FAILED' : 'SKIPPED_EXISTING';
         await prisma.styleBulkImportRowResult.create({ data: { id: createId(), runId, ...base,

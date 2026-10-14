@@ -27,6 +27,7 @@
     "historical-import:dev-migrate": "tsx src/cli/historical-import-dev-migrate.cli.ts",
     "historical-import:prepare": "tsx src/cli/historical-import-prepare.cli.ts",
     "master-data:normalize-sources": "tsx src/cli/master-source-normalize.cli.ts",
+    "master-data:rebuild-disposable": "tsx src/cli/disposable-rebuild.cli.ts",
     "historical-import:dry-run": "tsx src/cli/historical-import.cli.ts",
     "historical-import:master-prep": "tsx src/cli/historical-import-master-prep.cli.ts",
     "historical-import:mrp-audit": "tsx src/cli/historical-import-mrp-audit.cli.ts",
