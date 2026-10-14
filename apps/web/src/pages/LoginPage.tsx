@@ -51,7 +51,7 @@ export function LoginPage() {
         <div className="w-full min-w-0 max-w-md">
           <div className="mb-8 text-center">
             <img src="/erve-logo.png" alt="Erve" className="mx-auto h-10 w-auto" />
-            <p className="mt-3 text-sm text-muted-foreground">Sign in to your distributor account</p>
+            <p className="mt-3 text-sm text-muted-foreground">Sign in to your Erve account</p>
           </div>
           <Card>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
