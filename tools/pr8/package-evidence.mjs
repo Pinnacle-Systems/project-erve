@@ -182,8 +182,8 @@ const matrix = [
 ];
 const gates = await json('final-gates.json').catch(() => ({
   pr7: {
-    status: 'BLOCKED',
-    reason: 'PR90 is open; PR7 current head is integrated locally but not merged to main',
+    status: 'NOT RUN',
+    reason: 'PR7 integration has not yet been recorded in final-gates.json',
   },
   ci: { status: 'NOT RUN', reason: 'Final PR8 commit CI has not completed' },
 }));
