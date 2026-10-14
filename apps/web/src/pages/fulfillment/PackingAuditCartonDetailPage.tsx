@@ -138,7 +138,7 @@ export function PackingAuditCartonDetailPage() {
         />
       </Panel>
 
-      {canConfirm && !carton.retired && !isCurrent && (
+      {canConfirm && !carton.retired && !carton.destinationMismatch && !isCurrent && (
         <Panel title="Confirm Inspected">
           <div className="space-y-3" onKeyDown={createEnterToNextHandler()}>
             <TextField label="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
