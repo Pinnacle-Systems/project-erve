@@ -14,6 +14,20 @@ async function renders(image: PdfImageSource | null | undefined): Promise<void> 
 }
 
 describe('PdfThumbnail', () => {
+  it('preserves the source aspect ratio inside a fixed image box', () => {
+    const image = { dataUri: 'data:image/png;base64,iVBORw0KGgo=' };
+    const rendered = PdfThumbnail({ image, width: 120, height: 120 });
+
+    // Explicit contain fitting is essential: fixed width and height alone
+    // stretch the portrait product photograph into a square in exported PDFs.
+    expect(rendered.props.src).toBe(image.dataUri);
+    expect(rendered.props.style).toEqual({
+      width: 120,
+      height: 120,
+      objectFit: 'contain',
+    });
+  });
+
   it('renders without throwing for every image state', async () => {
     await renders({ dataUri: 'data:image/png;base64,iVBORw0KGgo=' });
     await renders({ placeholder: true });
