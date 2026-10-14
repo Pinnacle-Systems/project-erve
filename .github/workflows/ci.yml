@@ -216,7 +216,7 @@ jobs:
           fi
 
           echo "--- baseline CLI: reject missing explicit NODE_ENV=production ---"
-          if NODE_ENV=test node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database "$EXPECTED_DB" --expect-schema public --confirm-production; then
+          if NODE_ENV="test" node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database "$EXPECTED_DB" --expect-schema public --confirm-production; then
             echo "Expected document-sequence-baseline.js to fail without NODE_ENV=production"; exit 1
           fi
 
