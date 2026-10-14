@@ -2542,7 +2542,7 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
     const inv2Id = draft2.body.data.id;
     const inv2Lines = await prisma.taxInvoiceLine.findMany({ where: { taxInvoiceId: inv2Id } });
     expect(inv2Lines).toHaveLength(1);
-    expect(inv2Lines[0].ervePackingListCommercialLineId).toBe(
+    expect(inv2Lines[0]!.ervePackingListCommercialLineId).toBe(
       origLine.ervePackingListCommercialLineId,
     );
 
@@ -2730,7 +2730,7 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
       where: { ervePackingListId, status: { not: 'CANCELLED' } },
     });
     expect(activeInvoices).toHaveLength(1);
-    expect(activeInvoices[0].id).toBe(d1.body.data.id);
+    expect(activeInvoices[0]!.id).toBe(d1.body.data.id);
   }, 30000);
 
   it('validates replacement provenance references and rejects invalid or cross-EIPL replacement links', async () => {
@@ -2739,7 +2739,7 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
       ervePackingListId: eipl1Id,
       accountantToken,
     } = await createReadyDraftInvoice(10);
-    const { taxInvoiceId: inv2Id, ervePackingListId: eipl2Id } = await createReadyDraftInvoice(10);
+    const { taxInvoiceId: inv2Id } = await createReadyDraftInvoice(10);
 
     // Finalize inv 1 and cancel inv 1 so that eipl1Id has no active invoice
     await request(app)
