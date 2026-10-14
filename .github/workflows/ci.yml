@@ -181,8 +181,89 @@ jobs:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
         run: pnpm --filter @erve/api prisma:seed
 
+      - name: Bundle production CLIs
+        run: pnpm --filter @erve/api run bundle
+
       - name: Run API tests
         run: pnpm --filter @erve/api test
+
+      # Independent CI verification of the extracted release artifact:
+      # Builds the production tarball via package-production.sh, extracts it,
+      # and runs both CLIs in standalone Node.js against the ephemeral test database,
+      # proving that the packaged bundle runs without tsx/dev dependencies.
+      - name: Package production release artifact for verification
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: bash scripts/deployment/package-production.sh
+
+      - name: Smoke-test extracted release-artifact CLIs against disposable database
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/verify-extract/api
+
+          export NODE_ENV=production
+          export DATABASE_URL="${{ env.TEST_DATABASE_URL }}"
+          export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
+          export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          export FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads"
+
+          EXPECTED_DB="$(node -e 'const u=new URL(process.env.DATABASE_URL); console.log(u.pathname.replace(/^\//, "").split("?")[0])')"
+          echo "Derived disposable database name: $EXPECTED_DB"
+
+          echo "--- baseline CLI: --help runs without database connection ---"
+          node document-sequence-baseline.js --help | grep -q "ERVE India — Document Sequence Baseline CLI"
+
+          echo "--- baseline CLI: reject missing --confirm-production ---"
+          if node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database "$EXPECTED_DB" --expect-schema public; then
+            echo "Expected document-sequence-baseline.js to fail without --confirm-production"; exit 1
+          fi
+
+          echo "--- baseline CLI: reject missing explicit NODE_ENV=production ---"
+          if NODE_ENV="test" node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database "$EXPECTED_DB" --expect-schema public --confirm-production; then
+            echo "Expected document-sequence-baseline.js to fail without NODE_ENV=production"; exit 1
+          fi
+
+          echo "--- baseline CLI: reject missing --expect-schema ---"
+          if node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database "$EXPECTED_DB" --confirm-production; then
+            echo "Expected document-sequence-baseline.js to fail without --expect-schema"; exit 1
+          fi
+
+          echo "--- baseline CLI: reject wrong database ---"
+          if node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database wrong_db_name --expect-schema public --confirm-production; then
+            echo "Expected document-sequence-baseline.js to refuse wrong database"; exit 1
+          fi
+
+          echo "--- baseline CLI: dry-run simulation ---"
+          DRY_OUTPUT="$(node document-sequence-baseline.js --target production --document-type TAX_INVOICE --financial-year 2026-27 --serial 0 --expect-database "$EXPECTED_DB" --expect-schema public --confirm-production --dry-run)"
+          echo "$DRY_OUTPUT"
+          echo "$DRY_OUTPUT" | grep -q '\[DRY RUN\] Verification passed'
+
+          echo "--- preflight CLI: --help runs without database connection ---"
+          node ei-numbering-preflight.js --help | grep -q "ERVE India — EI Numbering Cutover Preflight Diagnostic CLI"
+
+          echo "--- preflight CLI: reject missing --expect-database ---"
+          if node ei-numbering-preflight.js --target production --financial-year 2026-27; then
+            echo "Expected ei-numbering-preflight.js to fail without --expect-database"; exit 1
+          fi
+
+          echo "--- preflight CLI: read-only diagnostic execution (verdict BLOCKED) ---"
+          set +e
+          PREFLIGHT_OUTPUT="$(node ei-numbering-preflight.js --target production --financial-year 2026-27 --expect-database "$EXPECTED_DB" 2>&1)"
+          PREFLIGHT_EXIT=$?
+          set -e
+
+          echo "$PREFLIGHT_OUTPUT"
+          if [ "$PREFLIGHT_EXIT" -ne 1 ]; then
+            echo "Expected ei-numbering-preflight.js to exit with code 1 (BLOCKED verdict), got exit code $PREFLIGHT_EXIT"
+            exit 1
+          fi
+
+          echo "$PREFLIGHT_OUTPUT" | grep -q "ERVE India — EI Numbering Cutover Preflight Diagnostic Report"
+          echo "$PREFLIGHT_OUTPUT" | grep -q "VERDICT: BLOCKED"
+          echo "$PREFLIGHT_OUTPUT" | grep -q "CHK_SOURCE_COMPLETENESS"
+          echo "$PREFLIGHT_OUTPUT" | grep -q "CHK_PERMISSIONS: Read-Only Database Access Guarantee"
+
+          echo "Extracted release-artifact smoke tests passed: standalone executables verified in isolated CI environment"
 
   validate-deployment:
     name: Validate deployment scripts and workflows

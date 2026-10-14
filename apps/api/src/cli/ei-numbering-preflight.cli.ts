@@ -6,21 +6,22 @@
  * Runs diagnostic checks to determine readiness for continuing the EI Tax Invoice series.
  * GUARANTEE: Never modifies database state, never allocates numbers, never seeds sequences.
  *
- * Usage (from apps/api):
- *   tsx src/cli/ei-numbering-preflight.cli.ts \
- *     --financial-year 2026-27 \
- *     [--external-high-water-mark 250] \
- *     [--external-records-file ./ledger.json] \
- *     [--manifest-file ./manifest.json] \
- *     [--target local|dev|staging|production] \
+ * Usage (standalone Node.js 24 from api/ or apps/api):
+ *   node ei-numbering-preflight.js \
+ *     --target <local|dev|staging|production|test> \
+ *     --financial-year <YYYY-YY> \
+ *     [--external-high-water-mark <N>] \
+ *     [--external-records-file <path>] \
+ *     [--manifest-file <path>] \
+ *     [--expect-database <name>] \
+ *     [--expect-host <host>] \
+ *     [--expect-schema <schema>] \
+ *     [--env-file <path>] \
  *     [--json]
  */
 
-import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
-import { prisma } from '../db/prisma.js';
-import { runEiNumberingPreflight } from '../modules/fulfillment/ei-numbering-preflight.service.js';
 import type {
   PreflightOptions,
   PreflightReport,
@@ -28,14 +29,97 @@ import type {
   AuthoritativeExternalRecord,
   ExternalSourceManifest,
 } from '../modules/fulfillment/ei-numbering-preflight.types.js';
+import {
+  loadRuntimeEnvironment,
+  parseTargetEnvironment,
+  inspectLiveDatabase,
+  verifyDatabaseTarget,
+} from './sequence-target-guard.js';
 
-function parseArgs(argv: string[]): {
+export function printHelp(): void {
+  console.log(`
+ERVE India — EI Numbering Cutover Preflight Diagnostic CLI
+Read-only diagnostics to evaluate readiness for the EI Tax Invoice series cutover.
+
+Usage:
+  node ei-numbering-preflight.js \\
+    --target <local|dev|staging|production|test> \\
+    --financial-year <YYYY-YY> \\
+    [--external-high-water-mark <N>] \\
+    [--external-records-file <path>] \\
+    [--manifest-file <path>] \\
+    [--expect-database <name>] \\
+    [--expect-host <host>] \\
+    [--expect-schema <schema>] \\
+    [--env-file <path>] \\
+    [--json]
+
+Required arguments:
+  --target                 Target environment: local, dev, staging, production, or test.
+  --financial-year         Indian Financial Year code in YYYY-YY format (e.g. 2026-27).
+
+Authoritative Source Options:
+  --external-records-file  Path to JSON file containing authoritative historical invoice records.
+  --manifest-file          Path to JSON file containing accountant-signed source manifest.
+  --external-high-water-mark Explicitly asserted external high-water mark serial.
+
+Safety & Verification Options:
+  --expect-database        Expected database name to verify against live connected database.
+                           Required when target is production.
+  --expect-host            Expected database host to verify against live connected host.
+  --expect-schema          Expected database schema to verify against live connected schema.
+  --env-file               Explicit path to environment file (e.g. /var/www/erve/shared/api.env).
+  --json                   Output diagnostic report in machine-readable JSON format.
+  --help, -h               Show this help message.
+
+Examples:
+  # Inspect production sequence state and readiness (read-only):
+  node ei-numbering-preflight.js \\
+    --target production \\
+    --financial-year 2026-27 \\
+    --expect-database erve_prod
+
+  # Full commercial cutover preflight with external ledger and manifest:
+  node ei-numbering-preflight.js \\
+    --target production \\
+    --financial-year 2026-27 \\
+    --external-records-file /secure/path/ledger.json \\
+    --manifest-file /secure/path/manifest.json \\
+    --expect-database erve_prod
+`);
+}
+
+// 1. Help check runs first — zero dependencies, zero environment required!
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  printHelp();
+  process.exit(0);
+}
+
+// 2. Predictable runtime environment configuration loading
+function getEarlyArg(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+loadRuntimeEnvironment({
+  explicitEnvFile: getEarlyArg('--env-file'),
+  scriptPath: process.argv[1],
+});
+
+// 3. Dynamically import Prisma Client and preflight service only after environment is loaded
+const { prisma } = await import('../db/prisma.js');
+const { runEiNumberingPreflight } = await import('../modules/fulfillment/ei-numbering-preflight.service.js');
+
+export function parseArgs(argv: string[]): {
   financialYearCode: string;
   externalHighWaterMark?: number;
   externalRecordsFile?: string;
   manifestFile?: string;
   target: TargetEnvironment;
   jsonOutput: boolean;
+  expectDatabase?: string;
+  expectHost?: string;
+  expectSchema?: string;
+  envFile?: string;
 } {
   const get = (flag: string): string | undefined => {
     const index = argv.indexOf(flag);
@@ -53,20 +137,21 @@ function parseArgs(argv: string[]): {
   if (hwmRaw !== undefined) {
     externalHighWaterMark = Number.parseInt(hwmRaw, 10);
     if (Number.isNaN(externalHighWaterMark) || externalHighWaterMark < 0) {
-      throw new Error('--external-high-water-mark must be a non-negative integer');
+      throw new Error(
+        `--external-high-water-mark must be a non-negative integer, got: ${hwmRaw}`,
+      );
     }
   }
 
   const externalRecordsFile = get('--external-records-file');
   const manifestFile = get('--manifest-file');
-
-  const targetRaw = (get('--target') ?? 'local').toUpperCase() as TargetEnvironment;
-  const validTargets: TargetEnvironment[] = ['LOCAL', 'DEV', 'STAGING', 'PRODUCTION', 'TEST'];
-  if (!validTargets.includes(targetRaw)) {
-    throw new Error(`--target must be one of: ${validTargets.join(', ')}`);
-  }
+  const targetRaw = parseTargetEnvironment(get('--target'));
 
   const jsonOutput = has('--json');
+  const expectDatabase = get('--expect-database');
+  const expectHost = get('--expect-host');
+  const expectSchema = get('--expect-schema');
+  const envFile = get('--env-file');
 
   return {
     financialYearCode,
@@ -75,12 +160,16 @@ function parseArgs(argv: string[]): {
     manifestFile,
     target: targetRaw,
     jsonOutput,
+    expectDatabase,
+    expectHost,
+    expectSchema,
+    envFile,
   };
 }
 
 function printFormattedReport(report: PreflightReport): void {
   console.log('======================================================================');
-  console.log(`ERVE India — EI Numbering Cutover Preflight Diagnostic Report`);
+  console.log('ERVE India — EI Numbering Cutover Preflight Diagnostic Report');
   console.log('======================================================================');
   console.log(`Timestamp:            ${report.timestamp}`);
   console.log(`Target Environment:   ${report.environment}`);
@@ -145,6 +234,21 @@ function printFormattedReport(report: PreflightReport): void {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
+  // Consistent target and live database verification (without mutation authorization)
+  const liveTarget = await inspectLiveDatabase(prisma, process.env.DATABASE_URL);
+  verifyDatabaseTarget(
+    {
+      target: args.target,
+      nodeEnv: process.env.NODE_ENV,
+      configuredDatabaseUrl: process.env.DATABASE_URL,
+      expectedDatabase: args.expectDatabase,
+      expectedHost: args.expectHost,
+      expectedSchema: args.expectSchema,
+      isMutation: false,
+    },
+    liveTarget,
+  );
+
   let externalRecords: AuthoritativeExternalRecord[] | undefined;
   if (args.externalRecordsFile) {
     const resolvedPath = path.resolve(process.cwd(), args.externalRecordsFile);
@@ -188,16 +292,18 @@ async function main(): Promise<void> {
   }
 }
 
-main()
-  .catch((err: unknown) => {
-    console.error('Preflight diagnostic execution failed:');
-    if (err instanceof Error) {
-      console.error(err.message);
-    } else {
-      console.error(err);
-    }
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+if (process.argv[1] && (process.argv[1].endsWith('ei-numbering-preflight.cli.ts') || process.argv[1].endsWith('ei-numbering-preflight.js') || process.argv[1].endsWith('ei-numbering-preflight.ts') || process.argv[1].endsWith('ei-numbering-preflight'))) {
+  main()
+    .catch((err: unknown) => {
+      console.error('Preflight diagnostic execution failed:');
+      if (err instanceof Error) {
+        console.error(err.message);
+      } else {
+        console.error(err);
+      }
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+}

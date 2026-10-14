@@ -94,22 +94,27 @@ Prepare manifest file (`manifest.json`):
 
 ### 4.2 Step 2: Run Read-Only Preflight Diagnostic
 
-From `apps/api`:
+From the release directory on the host (e.g., `/var/www/erve/current/` or within `apps/api` during local development):
 
-````bash
-# Example for local/dev validation
-pnpm run ei-numbering:preflight \
+```bash
+# Standalone packaged CLI on server (Node.js 24 runtime, zero tsx/dev dependency):
+node api/ei-numbering-preflight.js \
+  --target dev \
   --financial-year 2026-27 \
   --external-records-file ./path/to/external-ledger.json \
   --manifest-file ./path/to/manifest.json \
-  --target dev
+  --expect-database erve_dev
 
-# Example for production validation (strictly read-only)
-pnpm run ei-numbering:preflight \
+# Production diagnostic execution (strictly read-only):
+node api/ei-numbering-preflight.js \
+  --target production \
   --financial-year 2026-27 \
   --external-records-file /secure/path/external-ledger.json \
   --manifest-file /secure/path/manifest.json \
-  ### 4.3 Step 3: Interpret Diagnostic Results
+  --expect-database erve_prod
+```
+
+### 4.3 Step 3: Interpret Diagnostic Results
 
 The diagnostic evaluates four distinct readiness dimensions:
 
@@ -142,50 +147,167 @@ Review check status codes in the output:
 
 ---
 
-## 5. Phase 3: Controlled Activation (Post-Approval)
+## 5. Operational Sequence Procedures
 
-> **CRITICAL SAFEGUARD:** Baseline adjustment (Step 1) must ONLY be performed after:
->
-> 1. Preflight diagnostic reports `isBaselineReconciliationReady: true` (all prerequisite data evidence verified). Note: Prior to baseline adjustment, `isProductionCutoverReady` will remain `false` (and sequence checks will report that the sequence is pending baseline adjustment); this expected pre-cutover shortfall authorizes baseline reconciliation.
-> 2. Documented operator authorization and Accountant Gate 2 sign-off are recorded.
-> 3. Actual legacy system billing freeze has been independently verified (ERP write access revoked, automated billing jobs halted).
+Two distinct operational procedures govern sequence initialization. Follow the appropriate procedure based on operational phase.
 
-### 5.1 Step 1: Execute Sequence Baseline Adjustment
+### Procedure A — Internal UAT Sequence Initialization
 
-Once INV-006 is deployed and Gate 2 is approved, the operator sets the sequence high-water mark to the verified external serial:
+> [!WARNING]
+> **CRITICAL ENVIRONMENT NOTICE:**
+> Customer UAT is conducted directly on the production-hosted Hostinger VPS environment (`DATABASE_URL` pointing to `erve_prod`). While UAT documents are internal test invoices preceding commercial sign-off, **the database must be treated as a live production environment for all safety controls and authorization**. Do NOT bypass production safeguards.
 
+#### A.1 Objective & Context
+To unblock customer testing and Tax Invoice finalization during internal UAT. In this phase, the database has been bootstrapped for UAT. A baseline of `0` is initialized on the fresh sequence so that the first finalized test invoice receives serial `1` (`EI/26-27/0001`).
+
+After UAT concludes and prior to commercial go-live, the database will undergo a formal approved reset and bootstrap, followed by Procedure B.
+
+#### A.2 Preconditions & Target Verification
+1. Confirm the release artifact has been extracted to `/var/www/erve/current/` (or staging path). Note: Prisma Client is generated during release artifact construction on the build runner by `package-production.sh` (as part of `pnpm deploy`), not on the VPS during extraction.
+2. Verify executable availability without needing database connectivity:
+   ```bash
+   node /var/www/erve/current/api/document-sequence-baseline.js --help
+   node /var/www/erve/current/api/ei-numbering-preflight.js --help
+   ```
+3. Runtime Environment Resolution:
+   - The CLIs automatically discover and load environment configuration from `.env` located next to the CLI executable (`/var/www/erve/current/api/.env`, symlinked to `/var/www/erve/shared/api.env`), regardless of the operator's current working directory.
+   - Alternatively, operators may supply an explicit configuration path via `--env-file /var/www/erve/shared/api.env`.
+4. Confirm target database parameters from `/var/www/erve/shared/api.env`:
+   - Connected DB Name: `erve_prod`
+   - Active FY: `2026-27`
+   - Active Schema: `public`
+
+#### A.3 Current Sequence Inspection
+Run read-only preflight diagnostic to inspect current sequence state:
 ```bash
-# Example syntax:
-tsx src/cli/document-sequence-baseline.cli.ts \
-  --document-type TAX_INVOICE \
+node /var/www/erve/current/api/ei-numbering-preflight.js \
+  --target production \
   --financial-year 2026-27 \
-  --serial <VERIFIED_LIVE_HWM>
-````
+  --expect-database erve_prod
+```
+Verify that `sequenceState.exists` is reported as uninitialized (or at approved baseline) and no data collisions exist.
 
-### 5.2 Idempotency & Invariant Verification:
+#### A.4 Selecting a Safe Test Baseline
+- **Fresh UAT sequence:** Choose baseline `0`. Setting baseline `0` records that `lastAllocatedSerial = 0`. The first invoice will atomically allocate serial `1` (`EI/26-27/0001`).
+- **Offset test sequence:** If Accounts requires test invoices to occupy a distinct test partition (e.g. starting at 1001), choose baseline `1000`.
 
-- **First Run:** Sets `lastAllocatedSerial = <VERIFIED_LIVE_HWM>`. CLI reports `raised: TAX_INVOICE sequence for FY 2026-27 from 0 to <VERIFIED_LIVE_HWM>`.
-- **Repeat Run:** If run again with the same serial, the CLI detects identical value and reports: `no-op: TAX_INVOICE sequence for FY 2026-27 is already at <VERIFIED_LIVE_HWM>`.
-- **Attempted Decrease:** If accidentally run with a lower serial, the CLI rejects the command with an error: `Refusing to lower TAX_INVOICE sequence... sequences are never decreased`.
+#### A.5 Execution with Packaged CLI
+1. **Dry-Run Simulation:** Validate connectivity, targets, expected schema, and transaction rollback without committing changes:
+   ```bash
+   node /var/www/erve/current/api/document-sequence-baseline.js \
+     --target production \
+     --document-type TAX_INVOICE \
+     --financial-year 2026-27 \
+     --serial 0 \
+     --expect-database erve_prod \
+     --expect-schema public \
+     --confirm-production \
+     --dry-run
+   ```
+   Verify the dry-run summary: `[DRY RUN] Would initialize TAX_INVOICE sequence for FY 2026-27 at 0`.
 
-### 5.3 Step 2: Post-Baseline Preflight Re-Verification
+2. **Authorized Live Execution:**
+   ```bash
+   node /var/www/erve/current/api/document-sequence-baseline.js \
+     --target production \
+     --document-type TAX_INVOICE \
+     --financial-year 2026-27 \
+     --serial 0 \
+     --expect-database erve_prod \
+     --expect-schema public \
+     --confirm-production
+   ```
+   Expected output:
+   ```text
+   ======================================================================
+   ERVE India — Document Sequence Baseline Operation Summary
+   ======================================================================
+   Target Environment:      PRODUCTION
+   Configured Endpoint:     localhost:5432
+   Server-Reported Address: 127.0.0.1:5432
+   Database Name:           erve_prod
+   Database Schema:         public
+   Document Type:           TAX_INVOICE
+   Financial Year:          2026-27
+   Requested Serial:        0
+   Current Baseline:        Uninitialized (row does not exist)
+   Action:                  INITIALIZE sequence at 0 (next allocated serial will be 1)
+   ======================================================================
+   initialized: TAX_INVOICE sequence for FY 2026-27 at 0 (next allocated serial will be 1)
+   ```
 
-Immediately following baseline adjustment, the operator reruns the preflight diagnostic to verify live cutover readiness:
+#### A.6 Next Invoice Verification
+1. Create and finalize the first test Tax Invoice in ERVE UI.
+2. Confirm the assigned invoice number is strictly `EI/26-27/0001`.
+3. Create and finalize a second invoice; confirm serial is `EI/26-27/0002`.
 
+#### A.7 Error Inspection & Recovery
+- **Missing `NODE_ENV=production`:** In production mutation mode, omitting `NODE_ENV=production` fails closed with: `ERROR: Production mutation requires explicit NODE_ENV="production", but found "<env>".`
+- **Missing `--confirm-production`:** The CLI exits immediately with code 1: `ERROR: Production execution requires explicit confirmation via --confirm-production`.
+- **Missing `--expect-schema`:** In production mutation mode, omitting `--expect-schema` fails closed with: `ERROR: Production mutation requires --expect-schema <schema> (e.g. "public")`.
+- **Database Mismatch:** If `--expect-database` does not match `SELECT current_database()`, the CLI exits with code 1 without executing SQL transactions.
+- **Repeat Execution:** Executing the identical command again is idempotent and reports `no-op: TAX_INVOICE sequence for FY 2026-27 is already at 0`.
+- **Accidental Decrement:** Attempting to specify a serial lower than the current database state is rejected and leaves the sequence unchanged.
+
+---
+
+### Procedure B — Commercial Go-Live Sequence Initialization
+
+> [!IMPORTANT]
+> **COMMERCIAL SIGN-OFF PREREQUISITE:**
+> Procedure B is strictly reserved for the final production commercial cutover. Execution of this procedure is OUT OF SCOPE for RST-002 and requires separate formal Change Advisory Board (CAB) and Finance Lead sign-off.
+
+#### B.1 Prerequisite Requirements
+1. **Database Reset and Bootstrap:** Complete the approved production database reset and bootstrap procedure.
+2. **Official Invoice Register:** Obtain verified `external-ledger.json` from Accounts containing every issued, cancelled, and voided Tax Invoice up to the freeze cutoff.
+3. **Legacy Billing Freeze:** Verify that legacy system billing permissions are revoked and automated batch runs are halted.
+4. **Reconciled High-Water Mark:** Confirm that the last-issued commercial serial number is reconciled across all physical and electronic registers.
+5. **Signed Manifest:** Obtain `manifest.json` signed with Accountant email/name and extraction timestamp.
+
+#### B.2 Cutover Preflight Execution
+Run read-only preflight to verify all 11 commercial gates:
 ```bash
-pnpm run ei-numbering:preflight \
+node /var/www/erve/current/api/ei-numbering-preflight.js \
+  --target production \
   --financial-year 2026-27 \
   --external-records-file /secure/path/external-ledger.json \
   --manifest-file /secure/path/manifest.json \
-  --target production
+  --expect-database erve_prod
+```
+Preflight must report `isBaselineReconciliationReady: true` with 0 BLOCKED checks.
+
+#### B.3 Authorized Commercial Baseline Execution
+Execute sequence baseline advancement using the verified external high-water mark serial ($N$):
+```bash
+node /var/www/erve/current/api/document-sequence-baseline.js \
+  --target production \
+  --document-type TAX_INVOICE \
+  --financial-year 2026-27 \
+  --serial <VERIFIED_COMMERCIAL_HWM> \
+  --expect-database erve_prod \
+  --expect-schema public \
+  --confirm-production
 ```
 
-**Verification Gate:** Preflight must now report:
+#### B.4 Post-Baseline Cutover Verification
+Immediately rerun preflight:
+```bash
+node /var/www/erve/current/api/ei-numbering-preflight.js \
+  --target production \
+  --financial-year 2026-27 \
+  --external-records-file /secure/path/external-ledger.json \
+  --manifest-file /secure/path/manifest.json \
+  --expect-database erve_prod
+```
+Confirm:
+- `isProductionCutoverReady: true`
+- `CHK_SEQUENCE_STATE: PASS`
+- `CHK_HIGH_WATER_RECON: PASS`
 
-- `CHK_SEQUENCE_STATE`: **PASS**
-- `CHK_HIGH_WATER_RECON`: **PASS**
-- `isProductionCutoverReady`: **true**
-- Summary: **0 BLOCKED** checks.
+#### B.5 First Commercial Invoice Guarantee
+- The first live commercial Tax Invoice generated in ERVE will receive serial `VERIFIED_COMMERCIAL_HWM + 1`.
+- Under Indian GST Rule 46, **no previously issued commercial invoice number may ever be reused**.
+- If a live commercial invoice is later cancelled, its serial is permanently consumed; the sequence never decreases.
 
 Only when `isProductionCutoverReady: true` is confirmed may live Tax Invoice generation and finalization be activated in ERVE.
 

@@ -38,6 +38,12 @@ export const DOCUMENT_PREFIXES = {
 // if the business later confirms that explicitly.
 export const DOCUMENT_SERIAL_MIN_WIDTH = 4;
 
+/**
+ * Canonical EI invoice pattern: "EI/<2-digit start FY>-<2-digit end FY>/<at least 4 digits>".
+ * Matches the shared formatter behavior (minimum 4 digits with zero-padding, expands beyond 9999).
+ */
+export const CANONICAL_EI_INVOICE_REGEX = /^EI\/(\d{2}-\d{2})\/(\d{4,})$/;
+
 /** `formatDocumentNumber('EIOS', '2026-27', 1) === 'EIOS/26-27/0001'` */
 export function formatDocumentNumber(prefix: string, financialYearCode: string, serial: number): string {
   return `${prefix}/${toCompactFinancialYearCode(financialYearCode)}/${String(serial).padStart(
@@ -45,3 +51,4 @@ export function formatDocumentNumber(prefix: string, financialYearCode: string, 
     '0',
   )}`;
 }
+
