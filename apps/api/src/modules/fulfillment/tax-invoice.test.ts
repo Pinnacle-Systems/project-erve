@@ -2493,5 +2493,360 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
     expect(eiplAfter.commercialLines).toEqual(eiplBefore.commercialLines);
     expect(allocationsAfter).toEqual(allocationsBefore);
   });
+
+  it('enforces line-level composite uniqueness within an invoice and permits commercial line reuse across replacement invoices', async () => {
+    const {
+      taxInvoiceId: inv1Id,
+      lineId,
+      ervePackingListId,
+      accountantToken,
+    } = await createReadyDraftInvoice(10);
+
+    const origLine = await prisma.taxInvoiceLine.findUniqueOrThrow({ where: { id: lineId } });
+
+    // Inserting duplicate line with the same (taxInvoiceId, ervePackingListCommercialLineId) violates composite unique constraint
+    await expect(
+      prisma.taxInvoiceLine.create({
+        data: {
+          id: createId(),
+          taxInvoiceId: inv1Id,
+          ervePackingListCommercialLineId: origLine.ervePackingListCommercialLineId,
+          saleOrderLineId: origLine.saleOrderLineId,
+          styleId: origLine.styleId,
+          quantity: 5,
+          styleMrp: origLine.styleMrp,
+          distributorPricingPercentage: origLine.distributorPricingPercentage,
+          priceListId: origLine.priceListId,
+        },
+      }),
+    ).rejects.toThrow();
+
+    // Finalize Inv 1 and Cancel Inv 1
+    await request(app)
+      .post(`/tax-invoices/${inv1Id}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    await request(app)
+      .post(`/tax-invoices/${inv1Id}/actions/cancel`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ reason: 'Testing line reuse in replacement' })
+      .expect(200);
+
+    // Create replacement draft (Inv 2)
+    const draft2 = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId, replacesInvoiceId: inv1Id })
+      .expect(201);
+
+    const inv2Id = draft2.body.data.id;
+    const inv2Lines = await prisma.taxInvoiceLine.findMany({ where: { taxInvoiceId: inv2Id } });
+    expect(inv2Lines).toHaveLength(1);
+    expect(inv2Lines[0].ervePackingListCommercialLineId).toBe(
+      origLine.ervePackingListCommercialLineId,
+    );
+
+    // Both lines coexist in DB pointing to the same commercial line across separate invoices
+    const allMatchingLines = await prisma.taxInvoiceLine.findMany({
+      where: { ervePackingListCommercialLineId: origLine.ervePackingListCommercialLineId },
+    });
+    expect(allMatchingLines).toHaveLength(2);
+  }, 30000);
+
+  it('deterministically resolves the active invoice in by-EIPL and by-Dispatch endpoints through cancellation and replacement', async () => {
+    await ensureTestSellerRegistration();
+    const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
+    const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
+    const dispatch = await packAndFinalize(
+      app,
+      factoryToken,
+      fixture.saleOrder.id,
+      fixture.saleOrderLineId,
+      fixture.saleOrder.destinations[0].id,
+      10,
+    );
+    const packingList = await request(app)
+      .post('/erve-packing-lists')
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
+      .send({ cartonIds: [dispatch.cartonId] })
+      .expect(201);
+    const ervePackingListId = packingList.body.data.id;
+    await ensureActiveDistributorPricing(packingList.body.data.distributor.id);
+    await request(app)
+      .post(`/erve-packing-lists/${ervePackingListId}/finalize`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
+      .send({})
+      .expect(200);
+    const erveDispatch = await request(app)
+      .post('/erve-dispatches')
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
+      .send({ ervePackingListId, dispatchDate: '2026-07-01' })
+      .expect(201);
+    const erveDispatchId = erveDispatch.body.data.id;
+
+    await activateGarmentGstRuleAndAssignHsn(fixture.stock.styleId);
+    await setDistributorAddress(fixture.stock.distributorId, {
+      state: 'Maharashtra',
+      gstin: '27AAAAA0000A1Z5',
+    });
+
+    const accountantToken = await createAccountantToken();
+
+    // 1. Create and finalize original invoice
+    const draft1 = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
+    const inv1Id = draft1.body.data.id;
+    await request(app)
+      .post(`/tax-invoices/${inv1Id}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+
+    const lookupEipl1 = await request(app)
+      .get(`/tax-invoices/by-erve-packing-list/${ervePackingListId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(lookupEipl1.body.data.id).toBe(inv1Id);
+    expect(lookupEipl1.body.data.status).toBe('FINALIZED');
+
+    const lookupDispatch1 = await request(app)
+      .get(`/tax-invoices/by-erve-dispatch/${erveDispatchId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(lookupDispatch1.body.data.id).toBe(inv1Id);
+    expect(lookupDispatch1.body.data.status).toBe('FINALIZED');
+
+    // 2. Cancel invoice 1 (no replacement exists yet)
+    await request(app)
+      .post(`/tax-invoices/${inv1Id}/actions/cancel`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ reason: 'Commercial dispute' })
+      .expect(200);
+
+    const lookupEiplCancelled = await request(app)
+      .get(`/tax-invoices/by-erve-packing-list/${ervePackingListId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(lookupEiplCancelled.body.data.id).toBe(inv1Id);
+    expect(lookupEiplCancelled.body.data.status).toBe('CANCELLED');
+
+    const lookupDispatchCancelled = await request(app)
+      .get(`/tax-invoices/by-erve-dispatch/${erveDispatchId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(lookupDispatchCancelled.body.data.id).toBe(inv1Id);
+    expect(lookupDispatchCancelled.body.data.status).toBe('CANCELLED');
+
+    // 3. Draft replacement invoice 2 -> lookup returns the active DRAFT
+    const draft2 = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
+    const inv2Id = draft2.body.data.id;
+
+    const lookupEiplDraft2 = await request(app)
+      .get(`/tax-invoices/by-erve-packing-list/${ervePackingListId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(lookupEiplDraft2.body.data.id).toBe(inv2Id);
+    expect(lookupEiplDraft2.body.data.status).toBe('DRAFT');
+
+    const lookupDispatchDraft2 = await request(app)
+      .get(`/tax-invoices/by-erve-dispatch/${erveDispatchId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(lookupDispatchDraft2.body.data.id).toBe(inv2Id);
+    expect(lookupDispatchDraft2.body.data.status).toBe('DRAFT');
+
+    // 4. Finalize replacement invoice 2 -> lookup returns the active FINALIZED
+    await request(app)
+      .post(`/tax-invoices/${inv2Id}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+
+    const lookupEiplFinal2 = await request(app)
+      .get(`/tax-invoices/by-erve-packing-list/${ervePackingListId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(lookupEiplFinal2.body.data.id).toBe(inv2Id);
+    expect(lookupEiplFinal2.body.data.status).toBe('FINALIZED');
+
+    const lookupDispatchFinal2 = await request(app)
+      .get(`/tax-invoices/by-erve-dispatch/${erveDispatchId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(lookupDispatchFinal2.body.data.id).toBe(inv2Id);
+    expect(lookupDispatchFinal2.body.data.status).toBe('FINALIZED');
+  }, 45000);
+
+  it('guarantees concurrency safety for simultaneous cancellation and replacement draft creation', async () => {
+    const { taxInvoiceId, ervePackingListId, accountantToken } =
+      await createReadyDraftInvoice(10);
+    await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+
+    // Two concurrent cancellation calls on the same invoice
+    const [c1, c2] = await Promise.all([
+      request(app)
+        .post(`/tax-invoices/${taxInvoiceId}/actions/cancel`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ reason: 'Concurrent cancel attempt 1' }),
+      request(app)
+        .post(`/tax-invoices/${taxInvoiceId}/actions/cancel`)
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ reason: 'Concurrent cancel attempt 2' }),
+    ]);
+    expect(c1.status).toBe(200);
+    expect(c2.status).toBe(200);
+    expect(c1.body.data.status).toBe('CANCELLED');
+    expect(c2.body.data.status).toBe('CANCELLED');
+
+    const cancelAudits = await prisma.auditLog.count({
+      where: { entityType: 'TaxInvoice', entityId: taxInvoiceId, action: 'TAX_INVOICE_CANCELLED' },
+    });
+    expect(cancelAudits).toBe(1);
+
+    // Two concurrent replacement draft requests for the EIPL
+    const [d1, d2] = await Promise.all([
+      request(app)
+        .post('/tax-invoices')
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ ervePackingListId }),
+      request(app)
+        .post('/tax-invoices')
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ ervePackingListId }),
+    ]);
+    expect([200, 201]).toContain(d1.status);
+    expect([200, 201]).toContain(d2.status);
+    expect(d1.body.data.id).toBe(d2.body.data.id);
+
+    const activeInvoices = await prisma.taxInvoice.findMany({
+      where: { ervePackingListId, status: { not: 'CANCELLED' } },
+    });
+    expect(activeInvoices).toHaveLength(1);
+    expect(activeInvoices[0].id).toBe(d1.body.data.id);
+  }, 30000);
+
+  it('validates replacement provenance references and rejects invalid or cross-EIPL replacement links', async () => {
+    const {
+      taxInvoiceId: inv1Id,
+      ervePackingListId: eipl1Id,
+      accountantToken,
+    } = await createReadyDraftInvoice(10);
+    const { taxInvoiceId: inv2Id, ervePackingListId: eipl2Id } = await createReadyDraftInvoice(10);
+
+    // Finalize inv 1 and cancel inv 1 so that eipl1Id has no active invoice
+    await request(app)
+      .post(`/tax-invoices/${inv1Id}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    await request(app)
+      .post(`/tax-invoices/${inv1Id}/actions/cancel`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ reason: 'Setup for provenance testing' })
+      .expect(200);
+
+    // Non-existent replacesInvoiceId -> 404
+    await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId: eipl1Id, replacesInvoiceId: 'non-existent-id' })
+      .expect(404);
+
+    // Finalize inv 2 (belongs to different EIPL) and try to reference it from eipl 1 -> 400
+    await request(app)
+      .post(`/tax-invoices/${inv2Id}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+
+    await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId: eipl1Id, replacesInvoiceId: inv2Id })
+      .expect(400);
+
+    // Cancel inv 2, but it still belongs to different EIPL -> 400
+    await request(app)
+      .post(`/tax-invoices/${inv2Id}/actions/cancel`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ reason: 'Cancelling inv2' })
+      .expect(200);
+
+    await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId: eipl1Id, replacesInvoiceId: inv2Id })
+      .expect(400);
+
+    // Valid replacesInvoiceId pointing to cancelled inv 1 on same EIPL -> 201
+    const replacementDraft = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId: eipl1Id, replacesInvoiceId: inv1Id })
+      .expect(201);
+
+    expect(replacementDraft.body.data.replacesInvoiceId).toBe(inv1Id);
+  }, 45000);
+
+  it('preserves archived image access and frozen details on a cancelled invoice', async () => {
+    const { taxInvoiceId, fixture, accountantToken } = await createReadyDraftInvoice(2);
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4X8AAAAASUVORK5CYII=',
+      'base64',
+    );
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    await request(app)
+      .post(`/styles/${fixture.stock.styleId}/images`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('image', png, { filename: 'test.png', contentType: 'image/png' })
+      .expect(201);
+
+    const finalized = await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+
+    const imageFileId = finalized.body.data.documentSnapshot.lines[0].image.id;
+    expect(imageFileId).toBeDefined();
+
+    // Image content readable on finalized invoice
+    const imagePath = `/tax-invoices/${taxInvoiceId}/images/${imageFileId}/content`;
+    const readFinalized = await request(app)
+      .get(imagePath)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(Buffer.from(readFinalized.body)).toEqual(png);
+
+    // Cancel invoice
+    await request(app)
+      .post(`/tax-invoices/${taxInvoiceId}/actions/cancel`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ reason: 'Image archival preservation test' })
+      .expect(200);
+
+    // Image content MUST remain readable on cancelled invoice
+    const readCancelled = await request(app)
+      .get(imagePath)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(Buffer.from(readCancelled.body)).toEqual(png);
+
+    // Detail view retains snapshot, totals, and lines
+    const detail = await request(app)
+      .get(`/tax-invoices/${taxInvoiceId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(detail.body.data.status).toBe('CANCELLED');
+    expect(detail.body.data.documentSnapshot).toEqual(finalized.body.data.documentSnapshot);
+    expect(detail.body.data.grandTotal).toBe(finalized.body.data.grandTotal);
+  }, 45000);
 });
+
+
 

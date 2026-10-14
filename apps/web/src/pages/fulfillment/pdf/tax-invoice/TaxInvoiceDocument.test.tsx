@@ -113,4 +113,34 @@ describe('issued Tax Invoice PDF document', () => {
       expect(result.text.replace(/\s/g, '')).toContain(`FROZEN-${index}`);
     expect(result.text.match(/INR Forty Four Thousand Fifty Only\./g)).toHaveLength(1);
   });
+
+  it('renders CANCELLED watermark, cancellation banner and replacement references visually on PDF', async () => {
+    // 1. Verify CANCELLED invoice PDF
+    const cancelledInvoice = issuedTaxInvoiceFixture();
+    cancelledInvoice.status = 'CANCELLED';
+    cancelledInvoice.cancelledAt = '2026-10-14T08:00:00.000Z';
+    cancelledInvoice.cancellationReason = 'Wrong customer state registered';
+    cancelledInvoice.cancelledBy = { id: 'user-acct', name: 'Lead Accountant' };
+
+    const cancelledResult = await render(cancelledInvoice);
+    expect(cancelledResult.blob.type).toBe('application/pdf');
+    expect(cancelledResult.text).toContain('CANCELLED');
+    expect(cancelledResult.text).toContain('THIS TAX INVOICE HAS BEEN CANCELLED');
+    expect(cancelledResult.text).toContain('Reason: Wrong customer state registered');
+
+    // 2. Verify Replacement invoice PDF with provenance
+    const replacementInvoice = issuedTaxInvoiceFixture();
+    replacementInvoice.invoiceNumber = 'EI/26-27/0002';
+    replacementInvoice.replacesInvoiceId = 'inv-orig-1';
+    replacementInvoice.replacesInvoiceNumber = 'EI/26-27/0001';
+
+    const replacementResult = await render(replacementInvoice);
+    expect(replacementResult.blob.type).toBe('application/pdf');
+    expect(replacementResult.text.replace(/\s+/g, ' ')).toContain(
+      'Replaces Cancelled Invoice: EI/26-27/0001',
+    );
+    expect(replacementResult.text).not.toContain('THIS TAX INVOICE HAS BEEN CANCELLED');
+  });
 });
+
+
