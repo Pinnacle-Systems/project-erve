@@ -4,6 +4,7 @@ import {
   type DispatchOrderDetailPdfRelated,
 } from './buildDispatchOrderDetailViewModel.js';
 import { DispatchOrderDetailDocument } from './DispatchOrderDetailDocument.js';
+import { prepareDispatchOrderDetailPdfData } from './prepareDispatchOrderDetailPdfData.js';
 import { renderPdfBlob } from '../../../../lib/pdf/generate.js';
 import type { SaleOrder } from '../../../sale-orders/types.js';
 
@@ -12,7 +13,7 @@ import type { SaleOrder } from '../../../sale-orders/types.js';
  * `@react-pdf/renderer` for the Dispatch Order detail). Callers reach this module via a dynamic
  * `import()` so the PDF engine and document code load only when a user actually clicks
  * Download/Print. The detail page already loads the full record (plus its own permission-gated
- * linked-record queries), so no extra fetching is needed here.
+ * linked-record queries); only primary image bytes are fetched during preparation.
  */
 export async function generateDispatchOrderDetailPdfBlob(
   saleOrder: SaleOrder,
@@ -20,5 +21,6 @@ export async function generateDispatchOrderDetailPdfBlob(
   meta: DispatchOrderDetailPdfMeta,
 ): Promise<Blob> {
   const viewModel = buildDispatchOrderDetailViewModel(saleOrder, related, meta);
-  return renderPdfBlob(<DispatchOrderDetailDocument viewModel={viewModel} />);
+  const images = await prepareDispatchOrderDetailPdfData(viewModel);
+  return renderPdfBlob(<DispatchOrderDetailDocument viewModel={viewModel} images={images} />);
 }

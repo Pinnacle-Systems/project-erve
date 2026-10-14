@@ -56,5 +56,5 @@ export function PdfThumbnail({ image, width, height }: PdfThumbnailProps) {
   if (!image || 'placeholder' in image) {
     return <View style={[styles.placeholder, box]} />;
   }
-  return <Image src={image.dataUri} style={box} />;
+  return <Image src={image.dataUri} style={{ ...box, objectFit: 'contain' }} />;
 }

@@ -1,8 +1,9 @@
 import { formatPdfDate, formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import { toCompactFinancialYearCode } from '../../../../lib/financial-years.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
+import type { PdfImageRef } from '../../../../lib/pdf/images.js';
 import type { PurchaseMode } from '@erve/types';
-import type { DispatchOrderFulfillmentStage, SaleOrder, SaleOrderAuditEntry } from '../../../sale-orders/types.js';
+import type { DispatchOrderFulfillmentStage, SaleOrder, SaleOrderAuditEntry, SaleOrderLine } from '../../../sale-orders/types.js';
 import type { ErveDispatchView, FactoryDispatchSummary } from '../../types.js';
 import { FACTORY_DISPATCH_STATUS_LABELS } from '../shared/fulfillmentPdfLabels.js';
 
@@ -33,6 +34,7 @@ export interface DispatchOrderDetailPdfRelated {
 
 export interface DispatchOrderDetailLineRow {
   id: string;
+  primaryImage: PdfImageRef | null;
   styleDisplay: string;
   sizeLabel: string;
   quantity: number;
@@ -58,6 +60,7 @@ export interface DispatchOrderDetailDistributorSection {
 
 export interface DispatchOrderDetailStyleSizeTotalRow {
   key: string;
+  primaryImage: PdfImageRef | null;
   styleDisplay: string;
   sizeLabel: string;
   quantity: number;
@@ -96,6 +99,12 @@ export interface DispatchOrderDetailPdfViewModel {
   factoryDispatches: DispatchOrderDetailFactoryDispatchRow[] | null;
   erveDispatches: DispatchOrderDetailErveDispatchRow[] | null;
   auditTrail: DispatchOrderDetailAuditRow[] | null;
+}
+
+function primaryImageRef(line: SaleOrderLine): PdfImageRef | null {
+  return line.primaryImage
+    ? { id: line.primaryImage.fileId, path: `/styles/${line.styleId}/images/${line.primaryImage.id}/content` }
+    : null;
 }
 
 /**
@@ -152,6 +161,7 @@ export function buildDispatchOrderDetailViewModel(
         totalQuantity: destLines.reduce((sum, line) => sum + line.quantity, 0),
         lines: destLines.map((line) => ({
           id: line.id,
+          primaryImage: primaryImageRef(line),
           styleDisplay: `${line.styleNumber} — ${line.styleName}`,
           sizeLabel: line.sizeLabel,
           quantity: line.quantity,
@@ -169,6 +179,7 @@ export function buildDispatchOrderDetailViewModel(
     } else {
       styleSizeTotalsByKey.set(key, {
         key,
+        primaryImage: primaryImageRef(line),
         styleDisplay: `${line.styleNumber} — ${line.styleName}`,
         sizeLabel: line.sizeLabel,
         quantity: line.quantity,

@@ -14,6 +14,14 @@ async function renders(image: PdfImageSource | null | undefined): Promise<void> 
 }
 
 describe('PdfThumbnail', () => {
+  it('contains the image within the thumbnail box without stretching or cropping', () => {
+    const element = PdfThumbnail({
+      image: { dataUri: 'data:image/png;base64,test' },
+      width: 32,
+      height: 32,
+    });
+    expect(element.props.style).toMatchObject({ width: 32, height: 32, objectFit: 'contain' });
+  });
   it('renders without throwing for every image state', async () => {
     await renders({ dataUri: 'data:image/png;base64,iVBORw0KGgo=' });
     await renders({ placeholder: true });
