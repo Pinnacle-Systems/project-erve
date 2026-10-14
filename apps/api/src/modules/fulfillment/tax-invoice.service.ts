@@ -486,9 +486,62 @@ export async function createOrGetTaxInvoiceDraft(
 
     const existing = await tx.taxInvoice.findFirst({
       where: { ervePackingListId, status: { not: 'CANCELLED' } },
+      select: { id: true, replacesInvoiceId: true },
+    });
+
+    const latestCancelled = await tx.taxInvoice.findFirst({
+      where: { ervePackingListId, status: 'CANCELLED' },
+      orderBy: [{ cancelledAt: 'desc' }, { createdAt: 'desc' }],
       select: { id: true },
     });
-    if (existing) return existing.id;
+
+    let targetReplacesInvoiceId: string | null = null;
+    if (replacesInvoiceId) {
+      const prior = await tx.taxInvoice.findUnique({
+        where: { id: replacesInvoiceId },
+        select: { id: true, ervePackingListId: true, status: true },
+      });
+      if (!prior) {
+        throw HttpError.notFound('Prior tax invoice to replace not found');
+      }
+      if (prior.ervePackingListId !== ervePackingListId) {
+        throw HttpError.badRequest(
+          'The invoice to be replaced does not belong to this Erve Packing List',
+        );
+      }
+      if (prior.status !== 'CANCELLED') {
+        throw HttpError.conflict('Only a CANCELLED Tax Invoice can be replaced');
+      }
+      if (!latestCancelled || prior.id !== latestCancelled.id) {
+        throw HttpError.conflict(
+          'A replacement invoice must reference the most recently cancelled Tax Invoice for this Erve Packing List',
+          {
+            reason: 'STALE_REPLACEMENT_REFERENCE',
+            latestCancelledInvoiceId: latestCancelled?.id ?? null,
+            requestedReplacesInvoiceId: prior.id,
+          },
+        );
+      }
+      targetReplacesInvoiceId = prior.id;
+    } else {
+      if (latestCancelled) {
+        targetReplacesInvoiceId = latestCancelled.id;
+      }
+    }
+
+    if (existing) {
+      if (replacesInvoiceId && existing.replacesInvoiceId !== targetReplacesInvoiceId) {
+        throw HttpError.conflict(
+          'An active Tax Invoice already exists for this Erve Packing List with a different replacement reference',
+          {
+            existingTaxInvoiceId: existing.id,
+            existingReplacesInvoiceId: existing.replacesInvoiceId,
+            requestedReplacesInvoiceId: targetReplacesInvoiceId,
+          },
+        );
+      }
+      return existing.id;
+    }
 
     const packingList = await tx.ervePackingList.findUnique({
       where: { id: ervePackingListId },
@@ -510,34 +563,6 @@ export async function createOrGetTaxInvoiceDraft(
       throw HttpError.conflict('This Erve Packing List has no established Distributor');
     }
     const distributor = packingList.distributor;
-
-    let targetReplacesInvoiceId = replacesInvoiceId ?? null;
-    if (targetReplacesInvoiceId) {
-      const prior = await tx.taxInvoice.findUnique({
-        where: { id: targetReplacesInvoiceId },
-        select: { id: true, ervePackingListId: true, status: true },
-      });
-      if (!prior) {
-        throw HttpError.notFound('Prior tax invoice to replace not found');
-      }
-      if (prior.ervePackingListId !== ervePackingListId) {
-        throw HttpError.badRequest(
-          'The invoice to be replaced does not belong to this Erve Packing List',
-        );
-      }
-      if (prior.status !== 'CANCELLED') {
-        throw HttpError.conflict('Only a CANCELLED Tax Invoice can be replaced');
-      }
-    } else {
-      const latestCancelled = await tx.taxInvoice.findFirst({
-        where: { ervePackingListId, status: 'CANCELLED' },
-        orderBy: [{ cancelledAt: 'desc' }, { createdAt: 'desc' }],
-        select: { id: true },
-      });
-      if (latestCancelled) {
-        targetReplacesInvoiceId = latestCancelled.id;
-      }
-    }
 
     const commercialLines = await loadAndValidateCommercialLines(tx, ervePackingListId);
 

@@ -2798,6 +2798,192 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
     expect(replacementDraft.body.data.replacesInvoiceId).toBe(inv1Id);
   }, 45000);
 
+  it('enforces linear provenance A -> B -> C, rejects stale references A -> C after B cancellation, validates concurrent creation, and verifies provenance relations', async () => {
+    const {
+      taxInvoiceId: invAId,
+      ervePackingListId,
+      accountantToken,
+    } = await createReadyDraftInvoice(10);
+    const { taxInvoiceId: otherEiplInvoiceId } = await createReadyDraftInvoice(10);
+
+    // Initial draft A has no replacement parent
+    const draftAView = await request(app)
+      .get(`/tax-invoices/${invAId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(draftAView.body.data.replacesInvoiceId).toBeNull();
+    expect(draftAView.body.data.replacesInvoiceNumber).toBeNull();
+    expect(draftAView.body.data.replacedByInvoiceId).toBeNull();
+
+    // 1. Finalize and cancel Invoice A
+    const finalA = await request(app)
+      .post(`/tax-invoices/${invAId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    const invoiceNumberA = finalA.body.data.invoiceNumber;
+    expect(invoiceNumberA).toMatch(/^EI\//);
+
+    await request(app)
+      .post(`/tax-invoices/${invAId}/actions/cancel`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ reason: 'Initial pricing error on invoice A' })
+      .expect(200);
+
+    // 2. Draft replacement Invoice B without replacesInvoiceId (auto-resolves latest cancelled A)
+    const draftBRes = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId })
+      .expect(201);
+    const invBId = draftBRes.body.data.id;
+    expect(draftBRes.body.data.replacesInvoiceId).toBe(invAId);
+    expect(draftBRes.body.data.replacesInvoiceNumber).toBe(invoiceNumberA);
+    expect(draftBRes.body.data.replacedByInvoiceId).toBeNull();
+
+    // Check invoice A now points to B as replacedBy
+    const viewAAfterBDraft = await request(app)
+      .get(`/tax-invoices/${invAId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(viewAAfterBDraft.body.data.replacedByInvoiceId).toBe(invBId);
+
+    // 3. While Draft B is active:
+    // 3a. Idempotent retry with matching replacesInvoiceId -> 200
+    const retryB = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId, replacesInvoiceId: invAId })
+      .expect(200);
+    expect(retryB.body.data.id).toBe(invBId);
+
+    // 3b. Conflicting replacesInvoiceId (non-existent) while active draft exists -> 404
+    await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId, replacesInvoiceId: 'non-existent-id' })
+      .expect(404);
+
+    // 3c. Conflicting replacesInvoiceId (from other EIPL) while active draft exists -> 400
+    await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId, replacesInvoiceId: otherEiplInvoiceId })
+      .expect(400);
+
+    // 4. Finalize and cancel Invoice B
+    const finalB = await request(app)
+      .post(`/tax-invoices/${invBId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    const invoiceNumberB = finalB.body.data.invoiceNumber;
+    expect(invoiceNumberB).toMatch(/^EI\//);
+    expect(invoiceNumberB).not.toBe(invoiceNumberA);
+
+    await request(app)
+      .post(`/tax-invoices/${invBId}/actions/cancel`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ reason: 'Commercial dispute on invoice B' })
+      .expect(200);
+
+    // 5. Stale Reference Rejection: Attempting A -> C when B is the latest cancelled invoice -> 409
+    const staleAttempt = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId, replacesInvoiceId: invAId })
+      .expect(409);
+    expect(staleAttempt.body.error.details.reason).toBe('STALE_REPLACEMENT_REFERENCE');
+    expect(staleAttempt.body.error.details.latestCancelledInvoiceId).toBe(invBId);
+    expect(staleAttempt.body.error.details.requestedReplacesInvoiceId).toBe(invAId);
+
+    // 6. Concurrent replacement creation for C with replacesInvoiceId: invBId
+    const [c1, c2] = await Promise.all([
+      request(app)
+        .post('/tax-invoices')
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ ervePackingListId, replacesInvoiceId: invBId }),
+      request(app)
+        .post('/tax-invoices')
+        .set('Authorization', `Bearer ${accountantToken}`)
+        .send({ ervePackingListId, replacesInvoiceId: invBId }),
+    ]);
+    expect([200, 201]).toContain(c1.status);
+    expect([200, 201]).toContain(c2.status);
+    expect(c1.body.data.id).toBe(c2.body.data.id);
+    const invCId = c1.body.data.id;
+
+    // 7. Verify Draft C provenance
+    const draftCRes = await request(app)
+      .get(`/tax-invoices/${invCId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(draftCRes.body.data.replacesInvoiceId).toBe(invBId);
+    expect(draftCRes.body.data.replacesInvoiceNumber).toBe(invoiceNumberB);
+    expect(draftCRes.body.data.replacedByInvoiceId).toBeNull();
+
+    // 8. While Draft C is active, attempting stale replacesInvoiceId: invAId -> 409
+    const staleWhileActive = await request(app)
+      .post('/tax-invoices')
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ ervePackingListId, replacesInvoiceId: invAId })
+      .expect(409);
+    expect(staleWhileActive.body.error.details.reason).toBe('STALE_REPLACEMENT_REFERENCE');
+
+    // 9. Finalize Invoice C
+    const finalC = await request(app)
+      .post(`/tax-invoices/${invCId}/actions/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    const invoiceNumberC = finalC.body.data.invoiceNumber;
+    expect(invoiceNumberC).toMatch(/^EI\//);
+    expect(invoiceNumberC).not.toBe(invoiceNumberA);
+    expect(invoiceNumberC).not.toBe(invoiceNumberB);
+
+    // 10. Verify full relationship chain & preservation of records: A -> B -> C
+    const finalAView = await request(app)
+      .get(`/tax-invoices/${invAId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(finalAView.body.data.status).toBe('CANCELLED');
+    expect(finalAView.body.data.invoiceNumber).toBe(invoiceNumberA);
+    expect(finalAView.body.data.replacesInvoiceId).toBeNull();
+    expect(finalAView.body.data.replacedByInvoiceId).toBe(invBId);
+    expect(finalAView.body.data.replacedByInvoiceNumber).toBe(invoiceNumberB);
+
+    const finalBView = await request(app)
+      .get(`/tax-invoices/${invBId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(finalBView.body.data.status).toBe('CANCELLED');
+    expect(finalBView.body.data.invoiceNumber).toBe(invoiceNumberB);
+    expect(finalBView.body.data.replacesInvoiceId).toBe(invAId);
+    expect(finalBView.body.data.replacesInvoiceNumber).toBe(invoiceNumberA);
+    expect(finalBView.body.data.replacedByInvoiceId).toBe(invCId);
+    expect(finalBView.body.data.replacedByInvoiceNumber).toBe(invoiceNumberC);
+
+    const finalCView = await request(app)
+      .get(`/tax-invoices/${invCId}`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .expect(200);
+    expect(finalCView.body.data.status).toBe('FINALIZED');
+    expect(finalCView.body.data.invoiceNumber).toBe(invoiceNumberC);
+    expect(finalCView.body.data.replacesInvoiceId).toBe(invBId);
+    expect(finalCView.body.data.replacesInvoiceNumber).toBe(invoiceNumberB);
+    expect(finalCView.body.data.replacedByInvoiceId).toBeNull();
+
+    // Verify all 3 invoices exist in database with their distinct numbers
+    const allInvoices = await prisma.taxInvoice.findMany({
+      where: { ervePackingListId },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(allInvoices).toHaveLength(3);
+    expect(allInvoices.map((inv) => inv.id)).toEqual([invAId, invBId, invCId]);
+    expect(allInvoices.map((inv) => inv.invoiceNumber)).toEqual([
+      invoiceNumberA,
+      invoiceNumberB,
+      invoiceNumberC,
+    ]);
+  }, 60000);
+
   it('preserves archived image access and frozen details on a cancelled invoice', async () => {
     const { taxInvoiceId, fixture, accountantToken } = await createReadyDraftInvoice(2);
     const png = Buffer.from(
