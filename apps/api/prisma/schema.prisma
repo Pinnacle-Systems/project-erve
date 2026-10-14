@@ -3471,3 +3471,53 @@ model File {
   @@index([uploadedById])
   @@map("files")
 }
+
+model MasterImportRun {
+  id             String                  @id
+  kind           String
+  sourceFileName String                  @map("source_file_name")
+  fileChecksum   String                  @map("file_checksum")
+  worksheet      String
+  importVersion  String                  @map("import_version")
+  actorUserId    String                  @map("actor_user_id")
+  status         String
+  summary        Json?
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+  rows           MasterImportRowResult[]
+  sources        MasterImportSource[]
+
+  @@index([kind, createdAt])
+  @@map("master_import_runs")
+}
+
+model MasterImportRowResult {
+  id        String          @id
+  runId     String          @map("run_id")
+  rowNumber Int             @map("row_number")
+  outcome   String
+  masterId  String?         @map("master_id")
+  code      String?
+  detail    String?
+  payload   Json
+  run       MasterImportRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, rowNumber])
+  @@map("master_import_row_results")
+}
+
+model MasterImportSource {
+  id               String          @id
+  kind             String
+  sourceKey        String          @map("source_key")
+  businessIdentity String          @map("business_identity")
+  masterId         String          @map("master_id")
+  originalInput    Json            @map("original_input")
+  runId            String          @map("run_id")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  run              MasterImportRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+
+  @@unique([kind, sourceKey])
+  @@unique([kind, businessIdentity])
+  @@map("master_import_sources")
+}

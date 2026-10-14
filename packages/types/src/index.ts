@@ -7,3 +7,4 @@ export * from './operations.js';
 export * from './reporting.js';
 export * from './retail-store.js';
 export * from './tax-invoices.js';
+export * from './master-import.js';
