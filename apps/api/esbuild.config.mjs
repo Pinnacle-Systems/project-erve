@@ -44,6 +44,16 @@ await build({
       in: path.join(__dirname, 'src/cli/job-order-completion-reconciliation.cli.ts'),
       out: 'job-order-completion-reconciliation',
     },
+    // RST-002: Standalone document sequence baseline CLI
+    {
+      in: path.join(__dirname, 'src/cli/document-sequence-baseline.cli.ts'),
+      out: 'document-sequence-baseline',
+    },
+    // RST-002: Standalone EI numbering cutover preflight diagnostic CLI
+    {
+      in: path.join(__dirname, 'src/cli/ei-numbering-preflight.cli.ts'),
+      out: 'ei-numbering-preflight',
+    },
   ],
   outdir: path.join(__dirname, 'dist-bundle'),
   bundle: true,

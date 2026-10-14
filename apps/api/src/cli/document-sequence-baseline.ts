@@ -1,13 +1,18 @@
 import { prisma } from '../db/prisma.js';
-import type { DocumentType } from '../db/prisma.js';
+import type { Prisma, DocumentType } from '../db/prisma.js';
 import { setDocumentSequenceBaseline } from '../modules/master-data/document-sequence.service.js';
 
 export class DocumentSequenceBaselineError extends Error {}
+
+class DryRunRollbackSignal {
+  constructor(public readonly result: { previous: number; current: number; created: boolean }) {}
+}
 
 export interface DocumentSequenceBaselineOptions {
   documentType: DocumentType;
   financialYearCode: string;
   approvedLastAllocatedSerial: number;
+  dryRun?: boolean;
 }
 
 export interface DocumentSequenceBaselineResult {
@@ -16,6 +21,7 @@ export interface DocumentSequenceBaselineResult {
   previous: number;
   current: number;
   changed: boolean;
+  created: boolean;
 }
 
 /**
@@ -29,20 +35,50 @@ export interface DocumentSequenceBaselineResult {
  */
 export async function runDocumentSequenceBaseline(
   options: DocumentSequenceBaselineOptions,
+  deps?: { prisma?: { $transaction: Prisma.TransactionClient['$transaction'] } },
 ): Promise<DocumentSequenceBaselineResult> {
-  const { previous, current } = await prisma.$transaction((tx) =>
-    setDocumentSequenceBaseline(
-      tx,
-      options.documentType,
-      options.financialYearCode,
-      options.approvedLastAllocatedSerial,
-    ),
-  );
+  const client = (deps?.prisma ?? prisma) as typeof prisma;
+
+  let outcome: { previous: number; current: number; created: boolean };
+
+  if (options.dryRun) {
+    try {
+      await client.$transaction(async (tx) => {
+        const result = await setDocumentSequenceBaseline(
+          tx,
+          options.documentType,
+          options.financialYearCode,
+          options.approvedLastAllocatedSerial,
+        );
+        throw new DryRunRollbackSignal(result);
+      });
+      throw new Error('Unreachable: dry-run did not roll back');
+    } catch (err: unknown) {
+      if (err instanceof DryRunRollbackSignal) {
+        outcome = err.result;
+      } else {
+        throw err;
+      }
+    }
+  } else {
+    outcome = await client.$transaction((tx) =>
+      setDocumentSequenceBaseline(
+        tx,
+        options.documentType,
+        options.financialYearCode,
+        options.approvedLastAllocatedSerial,
+      ),
+    );
+  }
+
+  const { previous, current, created } = outcome;
   return {
     documentType: options.documentType,
     financialYearCode: options.financialYearCode,
     previous,
     current,
-    changed: current !== previous,
+    changed: created || current !== previous,
+    created,
   };
 }
+
