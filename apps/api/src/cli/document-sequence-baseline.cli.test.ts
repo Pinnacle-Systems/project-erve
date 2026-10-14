@@ -1,10 +1,10 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { prisma } from '../db/prisma.js';
 import { ensureFinancialYear } from '../modules/master-data/financial-year.service.js';
 
@@ -13,8 +13,18 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const monorepoRoot = path.resolve(__dirname, '../../../../');
-const bundledBaselineCli = path.resolve(monorepoRoot, 'apps/api/dist-bundle/document-sequence-baseline.js');
-const bundledPreflightCli = path.resolve(monorepoRoot, 'apps/api/dist-bundle/ei-numbering-preflight.js');
+const apiRoot = path.resolve(monorepoRoot, 'apps/api');
+const bundledBaselineCli = path.resolve(apiRoot, 'dist-bundle/document-sequence-baseline.js');
+const bundledPreflightCli = path.resolve(apiRoot, 'dist-bundle/ei-numbering-preflight.js');
+
+function ensureBundlesExist(): void {
+  if (!fs.existsSync(bundledBaselineCli) || !fs.existsSync(bundledPreflightCli)) {
+    execFileSync(process.execPath, [path.resolve(apiRoot, 'esbuild.config.mjs')], {
+      cwd: apiRoot,
+      stdio: 'pipe',
+    });
+  }
+}
 
 const testDatabaseUrl =
   process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public';
@@ -25,6 +35,10 @@ const testDatabaseName = (() => {
     return 'erve_test';
   }
 })();
+
+beforeAll(() => {
+  ensureBundlesExist();
+});
 
 afterAll(() => prisma.$disconnect());
 

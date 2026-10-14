@@ -178,6 +178,9 @@ jobs:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
         run: pnpm --filter @erve/api prisma:seed
 
+      - name: Bundle production CLIs
+        run: pnpm --filter @erve/api run bundle
+
       - name: Run API tests
         run: pnpm --filter @erve/api test
 

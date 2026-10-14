@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const monorepoRoot = path.resolve(__dirname, '../../../../');
+const apiRoot = path.resolve(monorepoRoot, 'apps/api');
 
 // Dynamically resolve executable paths: prefer extracted release artifact if available,
 // falling back to dist-bundle.
@@ -23,11 +24,21 @@ const hasExtractedArtifact = fs.existsSync(path.resolve(extractedApiDir, 'docume
 
 const bundledBaselineCli = hasExtractedArtifact
   ? path.resolve(extractedApiDir, 'document-sequence-baseline.js')
-  : path.resolve(monorepoRoot, 'apps/api/dist-bundle/document-sequence-baseline.js');
+  : path.resolve(apiRoot, 'dist-bundle/document-sequence-baseline.js');
 
 const bundledPreflightCli = hasExtractedArtifact
   ? path.resolve(extractedApiDir, 'ei-numbering-preflight.js')
-  : path.resolve(monorepoRoot, 'apps/api/dist-bundle/ei-numbering-preflight.js');
+  : path.resolve(apiRoot, 'dist-bundle/ei-numbering-preflight.js');
+
+function ensureBundlesExist(): void {
+  if (hasExtractedArtifact) return;
+  if (!fs.existsSync(bundledBaselineCli) || !fs.existsSync(bundledPreflightCli)) {
+    execFileSync(process.execPath, [path.resolve(apiRoot, 'esbuild.config.mjs')], {
+      cwd: apiRoot,
+      stdio: 'pipe',
+    });
+  }
+}
 
 const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public';
@@ -83,6 +94,8 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
   let rehearsalFyId: string;
 
   beforeAll(async () => {
+    ensureBundlesExist();
+
     // Reviewer Finding 4: Assert both TEST_DATABASE_URL and process.env.DATABASE_URL
     // resolve to the same approved disposable test database BEFORE any writes.
     const testEndpoint = assertDisposableTestDatabase(TEST_DATABASE_URL, 'TEST_DATABASE_URL');
