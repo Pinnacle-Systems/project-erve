@@ -16,6 +16,16 @@ const monorepoRoot = path.resolve(__dirname, '../../../../');
 const bundledBaselineCli = path.resolve(monorepoRoot, 'apps/api/dist-bundle/document-sequence-baseline.js');
 const bundledPreflightCli = path.resolve(monorepoRoot, 'apps/api/dist-bundle/ei-numbering-preflight.js');
 
+const testDatabaseUrl =
+  process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public';
+const testDatabaseName = (() => {
+  try {
+    return new URL(testDatabaseUrl).pathname.replace(/^\//, '').split('?')[0] || 'erve_test';
+  } catch {
+    return 'erve_test';
+  }
+})();
+
 afterAll(() => prisma.$disconnect());
 
 interface ExecError extends Error {
@@ -91,7 +101,7 @@ describe('Packaged CLI Process Invariants', () => {
           '--serial',
           '100',
           '--expect-database',
-          'erve_test',
+          testDatabaseName,
           '--expect-schema',
           'public',
         ],
@@ -99,7 +109,7 @@ describe('Packaged CLI Process Invariants', () => {
           env: {
             ...process.env,
             NODE_ENV: 'production',
-            DATABASE_URL: process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public',
+            DATABASE_URL: testDatabaseUrl,
           },
         },
       );
@@ -128,14 +138,14 @@ describe('Packaged CLI Process Invariants', () => {
           '--serial',
           '100',
           '--expect-database',
-          'erve_test',
+          testDatabaseName,
           '--confirm-production',
         ],
         {
           env: {
             ...process.env,
             NODE_ENV: 'production',
-            DATABASE_URL: process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public',
+            DATABASE_URL: testDatabaseUrl,
           },
         },
       );
@@ -168,7 +178,7 @@ describe('Packaged CLI Process Invariants', () => {
           env: {
             ...process.env,
             NODE_ENV: 'production',
-            DATABASE_URL: process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public',
+            DATABASE_URL: testDatabaseUrl,
           },
         },
       );
@@ -202,7 +212,7 @@ describe('Packaged CLI Process Invariants', () => {
         {
           env: {
             ...process.env,
-            DATABASE_URL: process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public',
+            DATABASE_URL: testDatabaseUrl,
           },
         },
       );
@@ -212,7 +222,9 @@ describe('Packaged CLI Process Invariants', () => {
 
     expect(err).toBeDefined();
     expect(err?.code).not.toBe(0);
-    expect(err?.stderr || err?.stdout).toMatch(/Database identity mismatch: live current_database\(\) is "erve_test", but --expect-database specified "wrong_database_name"/);
+    expect(err?.stderr || err?.stdout).toMatch(
+      new RegExp(`Database identity mismatch: live current_database\\(\\) is "${testDatabaseName}", but --expect-database specified "wrong_database_name"`),
+    );
   });
 
   it('preflight CLI rejects production target without --expect-database', async () => {
@@ -231,7 +243,7 @@ describe('Packaged CLI Process Invariants', () => {
           env: {
             ...process.env,
             NODE_ENV: 'production',
-            DATABASE_URL: process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public',
+            DATABASE_URL: testDatabaseUrl,
           },
         },
       );
@@ -248,7 +260,7 @@ describe('Packaged CLI Process Invariants', () => {
     // Ensure isolated FY exists in the test database
     await ensureFinancialYear(prisma, new Date('2038-06-01'));
 
-    const testDb = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public';
+    const testDb = testDatabaseUrl;
     const { stdout } = await execFileAsync(
       process.execPath,
       [
@@ -262,7 +274,7 @@ describe('Packaged CLI Process Invariants', () => {
         '--serial',
         '0',
         '--expect-database',
-        'erve_test',
+        testDatabaseName,
         '--expect-schema',
         'public',
         '--confirm-production',
@@ -279,13 +291,13 @@ describe('Packaged CLI Process Invariants', () => {
 
     expect(stdout).toContain('[DRY RUN] Verification passed. Transaction rolled back; zero persistent mutations performed.');
     expect(stdout).toContain('Target Environment:      PRODUCTION');
-    expect(stdout).toContain('Database Name:           erve_test');
+    expect(stdout).toContain(`Database Name:           ${testDatabaseName}`);
     expect(stdout).toContain('Database Schema:         public');
     expect(stdout).toContain('Would initialize TAX_INVOICE sequence for FY 2038-39 at 0 (next allocated serial will be 1)');
   });
 
   it('baseline CLI loads runtime environment when invoked from outside the API directory via adjacent .env', async () => {
-    const testDb = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public';
+    const testDb = testDatabaseUrl;
     const adjacentEnv = path.resolve(path.dirname(bundledBaselineCli), '.env');
 
     // Create .env adjacent to the bundled CLI script
@@ -311,7 +323,7 @@ describe('Packaged CLI Process Invariants', () => {
           '--serial',
           '0',
           '--expect-database',
-          'erve_test',
+          testDatabaseName,
           '--dry-run',
         ],
         {
@@ -325,7 +337,7 @@ describe('Packaged CLI Process Invariants', () => {
       );
 
       expect(stdout).toContain('[DRY RUN] Verification passed.');
-      expect(stdout).toContain('Database Name:           erve_test');
+      expect(stdout).toContain(`Database Name:           ${testDatabaseName}`);
     } finally {
       if (fs.existsSync(adjacentEnv)) {
         fs.unlinkSync(adjacentEnv);
@@ -335,7 +347,7 @@ describe('Packaged CLI Process Invariants', () => {
 
   it('baseline CLI loads runtime environment from explicit --env-file flag', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'erve-explicit-env-'));
-    const testDb = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public';
+    const testDb = testDatabaseUrl;
     const explicitEnvPath = path.join(tempDir, 'custom.env');
     fs.writeFileSync(
       explicitEnvPath,
@@ -356,7 +368,7 @@ describe('Packaged CLI Process Invariants', () => {
           '--serial',
           '0',
           '--expect-database',
-          'erve_test',
+          testDatabaseName,
           '--env-file',
           explicitEnvPath,
           '--dry-run',
@@ -371,7 +383,7 @@ describe('Packaged CLI Process Invariants', () => {
       );
 
       expect(stdout).toContain('[DRY RUN] Verification passed.');
-      expect(stdout).toContain('Database Name:           erve_test');
+      expect(stdout).toContain(`Database Name:           ${testDatabaseName}`);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

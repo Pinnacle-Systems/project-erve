@@ -32,6 +32,14 @@ const bundledPreflightCli = hasExtractedArtifact
 const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erve_test?schema=public';
 
+const testDatabaseName = (() => {
+  try {
+    return new URL(TEST_DATABASE_URL).pathname.replace(/^\//, '').split('?')[0] || 'erve_test';
+  } catch {
+    return 'erve_test';
+  }
+})();
+
 interface ExecError extends Error {
   code?: number;
   stdout?: string;
@@ -158,7 +166,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
     }
     expect(errDbMismatch?.code).not.toBe(0);
     expect(errDbMismatch?.stderr || errDbMismatch?.stdout).toContain(
-      'Database identity mismatch: live current_database() is "erve_test", but --expect-database specified "wrong_db_name"',
+      `Database identity mismatch: live current_database() is "${testDatabaseName}", but --expect-database specified "wrong_db_name"`,
     );
 
     // Rejects production target without explicit confirmation
@@ -177,7 +185,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
           '--serial',
           '0',
           '--expect-database',
-          'erve_test',
+          testDatabaseName,
           '--expect-schema',
           'public',
         ],
@@ -208,7 +216,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
           '--serial',
           '0',
           '--expect-database',
-          'erve_test',
+          testDatabaseName,
         ],
         { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL } },
       );
@@ -240,7 +248,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
         '--serial',
         '0',
         '--expect-database',
-        'erve_test',
+        testDatabaseName,
       ],
       { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL } },
     );
@@ -281,7 +289,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
         '--serial',
         '1',
         '--expect-database',
-        'erve_test',
+        testDatabaseName,
       ],
       { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL } },
     );
@@ -310,7 +318,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
         '--serial',
         '100',
         '--expect-database',
-        'erve_test',
+        testDatabaseName,
       ],
       { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL } },
     );
@@ -331,7 +339,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
           '--serial',
           '50',
           '--expect-database',
-          'erve_test',
+          testDatabaseName,
         ],
         { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL } },
       );
@@ -362,7 +370,7 @@ describe('Packaged Artifact Rehearsal (RST-002 Section 4)', () => {
         '--external-high-water-mark',
         '100',
         '--expect-database',
-        'erve_test',
+        testDatabaseName,
         '--json',
       ],
       { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, DOTENV_CONFIG_QUIET: 'true' } },
