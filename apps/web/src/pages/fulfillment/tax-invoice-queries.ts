@@ -56,5 +56,29 @@ export function useTaxInvoiceActions(id: string) {
       ).data.data,
     onSuccess: refresh,
   });
-  return { override, finalize };
+  const cancel = useMutation({
+    mutationFn: async (input: { reason: string }) =>
+      (
+        await apiClient.post<ApiSuccessResponse<TaxInvoiceView>>(
+          `/tax-invoices/${id}/actions/cancel`,
+          input,
+        )
+      ).data.data,
+    onSuccess: refresh,
+  });
+  return { override, finalize, cancel };
+}
+
+export function useCreateTaxInvoiceDraft() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { ervePackingListId: string; replacesInvoiceId?: string }) =>
+      (await apiClient.post<ApiSuccessResponse<TaxInvoiceView>>('/tax-invoices', input)).data.data,
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['tax-invoices'] }),
+        client.invalidateQueries({ queryKey: ['tax-invoice-sources'] }),
+      ]);
+    },
+  });
 }

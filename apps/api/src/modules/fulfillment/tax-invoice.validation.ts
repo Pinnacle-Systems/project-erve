@@ -2,6 +2,15 @@ import { z } from 'zod';
 
 export const createTaxInvoiceDraftSchema = z.object({
   ervePackingListId: z.string().trim().min(1, 'ervePackingListId is required'),
+  replacesInvoiceId: z.string().trim().min(1).optional(),
+});
+
+export const cancelTaxInvoiceSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'A cancellation reason is required')
+    .max(1000, 'Cancellation reason must be at most 1000 characters'),
 });
 
 // INV-006 override rate: follows this repo's existing Decimal-input
@@ -45,7 +54,7 @@ export const TAX_INVOICE_LIST_MAX_LIMIT = 100;
 export const listTaxInvoicesQuerySchema = z.object({
   search: z.string().trim().max(200).optional(),
   distributorId: z.string().trim().min(1).optional(),
-  status: z.enum(['DRAFT', 'FINALIZED']).optional(),
+  status: z.enum(['DRAFT', 'FINALIZED', 'CANCELLED']).optional(),
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce
     .number()

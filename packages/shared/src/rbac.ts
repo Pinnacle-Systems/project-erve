@@ -513,6 +513,16 @@ export function canMutateTaxInvoice(user: RoleHolder): boolean {
 }
 
 /**
+ * INV-009A: Only users with the ACCOUNTANT role may cancel finalized Tax Invoices (BR-02).
+ * ADMIN is deliberately excluded without an explicit business decision.
+ */
+export const TAX_INVOICE_CANCEL_ROLES = ['ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canCancelTaxInvoice(user: RoleHolder): boolean {
+  return hasAnyRole(user, TAX_INVOICE_CANCEL_ROLES);
+}
+
+/**
  * Roles that may view a Tax Invoice draft. Deliberately narrow for INV-005
  * (ADMIN keeps its usual oversight standing even where it loses mutate, same
  * split as Factory Invoice) — DISTRIBUTOR/MERCHANDISER/FACTORY_USER/

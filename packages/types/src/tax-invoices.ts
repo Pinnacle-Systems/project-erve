@@ -49,7 +49,7 @@ export interface TaxInvoiceHsnSummary {
 }
 export interface TaxInvoiceView {
   id: string;
-  status: 'DRAFT' | 'FINALIZED';
+  status: 'DRAFT' | 'FINALIZED' | 'CANCELLED';
   invoiceNumber: string | null;
   ervePackingList: { id: string; ervePackingListNumber: string; status: string };
   erveDispatch: { id: string; erveDispatchNumber: string; status: string } | null;
@@ -86,6 +86,13 @@ export interface TaxInvoiceView {
   roundingPolicy: string | null;
   documentSnapshot: TaxInvoiceDocumentSnapshot | null;
   hsnSummary: TaxInvoiceHsnSummary[] | null;
+  cancelledAt: string | null;
+  cancelledBy: TaxInvoiceActor | null;
+  cancellationReason: string | null;
+  replacesInvoiceId: string | null;
+  replacesInvoiceNumber: string | null;
+  replacedByInvoiceId: string | null;
+  replacedByInvoiceNumber: string | null;
   createdBy: TaxInvoiceActor;
   createdAt: string;
   updatedAt: string;
@@ -95,11 +102,18 @@ export interface TaxInvoiceView {
 }
 export interface TaxInvoiceReviewView extends TaxInvoiceView {
   review: {
-    state: 'READY' | 'BLOCKED' | 'FINALIZED';
+    state: 'READY' | 'BLOCKED' | 'FINALIZED' | 'CANCELLED';
     isPreview: boolean;
     calculatedAt: string | null;
     blockers: Array<{ code: string; message: string }>;
   };
+}
+export interface CancelTaxInvoiceInput {
+  reason: string;
+}
+export interface CreateTaxInvoiceDraftInput {
+  ervePackingListId: string;
+  replacesInvoiceId?: string;
 }
 export interface TaxInvoiceAuditEvent {
   id: string;
