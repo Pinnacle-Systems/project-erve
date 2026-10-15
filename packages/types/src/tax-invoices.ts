@@ -172,3 +172,28 @@ export interface TaxInvoiceDocumentSnapshot {
   // Current operational relationships never create a historical EISO mapping.
   historicalBuyerOrderReference: { kind: 'HISTORICAL_EISO'; value: string } | null;
 }
+
+export interface TaxInvoiceBillToSnapshot extends TaxInvoiceAddress {
+  name: string;
+  gstin: string;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+}
+export interface TaxInvoiceBillToRefreshPreview {
+  invoiceId: string;
+  distributor: { id: string; code: string; name: string };
+  expectedVersion: number;
+  expectedMasterUpdatedAt: string;
+  proposedFingerprint: string;
+  changed: boolean;
+  current: TaxInvoiceBillToSnapshot;
+  proposed: TaxInvoiceBillToSnapshot;
+  validation: { stateCode: string | null; blockers: { code: string; message: string }[] };
+}
+export interface TaxInvoiceBillToRefreshInput {
+  expectedVersion: number;
+  expectedMasterUpdatedAt: string;
+  proposedFingerprint: string;
+  reason: string;
+}

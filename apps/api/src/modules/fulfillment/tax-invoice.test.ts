@@ -5,6 +5,8 @@ import { getFileStorage } from '../../storage/index.js';
 import { createApp } from '../../app.js';
 import { prisma, Prisma } from '../../db/prisma.js';
 import { env } from '../../config/env.js';
+import * as auditService from '../../audit/audit.service.js';
+import * as invoiceDocuments from './tax-invoice-document.service.js';
 import { reconcileInvoiceImageArchives } from './tax-invoice-document.service.js';
 import { createTestSellerRegistration, resetDatabase } from '../../test/helpers.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
@@ -762,12 +764,12 @@ async function ensureTestSellerRegistration() {
 }
 
 /** Full happy-path setup: finalized EIPL, Maharashtra seller + Maharashtra distributor (intrastate), active GST rule, DRAFT Tax Invoice. */
-async function createReadyDraftInvoice(quantity = 20) {
+async function createReadyDraftInvoice(quantity = 20, state: string | null = 'Maharashtra') {
   await ensureTestSellerRegistration();
   const { fixture, ervePackingListId } = await createFinalizedEipl(quantity);
   await activateGarmentGstRuleAndAssignHsn(fixture.stock.styleId);
   await setDistributorAddress(fixture.stock.distributorId, {
-    state: 'Maharashtra',
+    state,
     gstin: '27AAAAA0000A1Z5',
   });
 
@@ -2463,12 +2465,8 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
   }, 45000);
 
   it('ensures invoice cancellation causes no mutations to EIPL, Erve Dispatch, cartons, or stock', async () => {
-    const {
-      taxInvoiceId,
-      ervePackingListId,
-      accountantToken,
-      fixture,
-    } = await createReadyDraftInvoice(10);
+    const { taxInvoiceId, ervePackingListId, accountantToken, fixture } =
+      await createReadyDraftInvoice(10);
     await request(app)
       .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
       .set('Authorization', `Bearer ${accountantToken}`)
@@ -2687,8 +2685,7 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
   }, 45000);
 
   it('guarantees concurrency safety for simultaneous cancellation and replacement draft creation', async () => {
-    const { taxInvoiceId, ervePackingListId, accountantToken } =
-      await createReadyDraftInvoice(10);
+    const { taxInvoiceId, ervePackingListId, accountantToken } = await createReadyDraftInvoice(10);
     await request(app)
       .post(`/tax-invoices/${taxInvoiceId}/actions/finalize`)
       .set('Authorization', `Bearer ${accountantToken}`)
@@ -3038,5 +3035,314 @@ describe('INV-009A Tax Invoice Cancellation and Replacement', () => {
   }, 45000);
 });
 
+describe('PR1 Bill-To recovery', () => {
+  const preview = (token: string, id: string) =>
+    request(app)
+      .get(`/tax-invoices/${id}/bill-to-refresh-preview`)
+      .set('Authorization', `Bearer ${token}`);
+  const apply = (token: string, id: string, proposal: Record<string, unknown>, key = createId()) =>
+    request(app)
+      .post(`/tax-invoices/${id}/actions/refresh-bill-to`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', key)
+      .send({
+        expectedVersion: proposal.expectedVersion,
+        expectedMasterUpdatedAt: proposal.expectedMasterUpdatedAt,
+        proposedFingerprint: proposal.proposedFingerprint,
+        reason: 'Corrected Distributor State after drafting',
+      });
+  const review = (token: string, id: string) =>
+    request(app).get(`/tax-invoices/${id}/review`).set('Authorization', `Bearer ${token}`);
 
+  it('recovers the same invalid-State draft after its Distributor is corrected, preserving commercial facts and audit', async () => {
+    const {
+      taxInvoiceId: id,
+      fixture,
+      accountantToken: token,
+      lineId,
+    } = await createReadyDraftInvoice(20, null);
+    await request(app)
+      .patch(`/tax-invoices/${id}/lines/${lineId}/override`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ overrideUnitRate: 451.07, reason: 'Agreed price' })
+      .expect(200);
+    const before = await prisma.taxInvoice.findUniqueOrThrow({
+      where: { id },
+      include: { lines: true },
+    });
+    const oldAudit = await prisma.auditLog.findMany({ where: { entityId: { in: [id, lineId] } } });
+    const sequences = await prisma.documentSequence.findMany();
+    expect((await review(token, id)).body.data.review.blockers[0].code).toBe(
+      'BILL_TO_STATE_UNRESOLVED',
+    );
+    await request(app)
+      .patch(`/distributors/${fixture.stock.distributorId}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
+      .send({ state: '  maharashtra  ' })
+      .expect(200);
+    const reopened = await review(token, id);
+    expect(reopened.body.data.billTo.state).toBeNull();
+    const proposal = (await preview(token, id).expect(200)).body.data;
+    expect(proposal).toMatchObject({
+      changed: true,
+      current: { state: null },
+      proposed: { state: 'maharashtra' },
+      validation: { stateCode: '27', blockers: [] },
+      distributor: { id: fixture.stock.distributorId },
+    });
+    await apply(token, id, proposal).expect(200);
+    const after = await prisma.taxInvoice.findUniqueOrThrow({
+      where: { id },
+      include: { lines: true },
+    });
+    expect(after).toMatchObject({
+      id,
+      billToState: 'maharashtra',
+      invoiceNumber: null,
+      status: 'DRAFT',
+      version: before.version + 1,
+    });
+    expect(after.lines).toEqual(before.lines);
+    for (const key of [
+      'ervePackingListId',
+      'distributorId',
+      'purchaseMode',
+      'sellerState',
+      'shipToState',
+      'replacesInvoiceId',
+    ] as const)
+      expect(after[key]).toEqual(before[key]);
+    expect(await prisma.documentSequence.findMany()).toEqual(sequences);
+    expect(
+      await prisma.auditLog.count({ where: { id: { in: oldAudit.map((row) => row.id) } } }),
+    ).toBe(oldAudit.length);
+    expect(
+      await prisma.auditLog.findFirst({
+        where: { entityId: id, action: 'TAX_INVOICE_BILL_TO_REFRESHED' },
+      }),
+    ).toMatchObject({
+      metadata: {
+        old: { state: null },
+        new: { state: 'maharashtra' },
+        reason: 'Corrected Distributor State after drafting',
+      },
+    });
+    const result = (await review(token, id).expect(200)).body.data;
+    expect(result.review.state).toBe('READY');
+    expect(result.lines[0]).toMatchObject({ finalUnitRate: '451.07', gstPercent: '5' });
+    expect(result.totalGst).toBe('451.07');
+  });
 
+  it('preserves GST preview with production numbering blocked after recovery', async () => {
+    const {
+      taxInvoiceId: id,
+      fixture,
+      accountantToken: token,
+    } = await createReadyDraftInvoice(2, null);
+    await setDistributorAddress(fixture.stock.distributorId, { state: 'Maharashtra' });
+    await apply(token, id, (await preview(token, id)).body.data).expect(200);
+    const previousEnv = env.NODE_ENV;
+    env.NODE_ENV = 'production';
+    const result = (await review(token, id).expect(200)).body.data;
+    env.NODE_ENV = previousEnv;
+    expect(result.review.blockers[0].code).toBe('TAX_INVOICE_SEQUENCE_NOT_BASELINED');
+    expect(result.totalGst).not.toBeNull();
+    expect(await prisma.documentSequence.count({ where: { documentType: 'TAX_INVOICE' } })).toBe(0);
+  });
+
+  it.each(['ADMIN', 'MERCHANDISER', 'FACTORY_USER', 'DISTRIBUTOR'] as const)(
+    'denies %s preview and mutation',
+    async (role) => {
+      const { taxInvoiceId: id, accountantToken } = await createReadyDraftInvoice(1);
+      const { token } = await createRoleToken(role);
+      const proposal = (await preview(accountantToken, id)).body.data;
+      await preview(token, id).expect(403);
+      await apply(token, id, proposal).expect(403);
+    },
+  );
+
+  it('rejects unrecognized/mismatching State, stale master, stale invoice and a blank reason', async () => {
+    const {
+      taxInvoiceId: id,
+      fixture,
+      accountantToken: token,
+    } = await createReadyDraftInvoice(1, null);
+    await setDistributorAddress(fixture.stock.distributorId, { state: 'Karnataka' });
+    let proposal = (await preview(token, id)).body.data;
+    expect(proposal.validation.blockers[0].code).toBe('BILL_TO_STATE_GSTIN_MISMATCH');
+    await apply(token, id, proposal).expect(400);
+    await setDistributorAddress(fixture.stock.distributorId, { state: 'unknown' });
+    await apply(token, id, (await preview(token, id)).body.data).expect(400);
+    await setDistributorAddress(fixture.stock.distributorId, { state: 'Maharashtra' });
+    proposal = (await preview(token, id)).body.data;
+    await prisma.distributor.update({
+      where: { id: fixture.stock.distributorId },
+      data: { city: 'Changed since preview' },
+    });
+    await apply(token, id, proposal).expect(409);
+    proposal = (await preview(token, id)).body.data;
+    await apply(token, id, { ...proposal, expectedVersion: proposal.expectedVersion + 1 }).expect(
+      409,
+    );
+    await request(app)
+      .post(`/tax-invoices/${id}/actions/refresh-bill-to`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', createId())
+      .send({ ...proposal, reason: ' ' })
+      .expect(400);
+    expect(
+      await prisma.auditLog.count({
+        where: { entityId: id, action: 'TAX_INVOICE_BILL_TO_REFRESHED' },
+      }),
+    ).toBe(0);
+  });
+
+  it('rolls back snapshot and revision when audit persistence fails', async () => {
+    const {
+      taxInvoiceId: id,
+      fixture,
+      accountantToken: token,
+    } = await createReadyDraftInvoice(1, null);
+    await setDistributorAddress(fixture.stock.distributorId, { state: 'Maharashtra' });
+    const proposal = (await preview(token, id)).body.data;
+    const before = await prisma.taxInvoice.findUniqueOrThrow({ where: { id } });
+    vi.spyOn(auditService, 'recordAuditLog').mockRejectedValueOnce(
+      new Error('Synthetic audit persistence failure'),
+    );
+    await apply(token, id, proposal).expect(500);
+    expect(await prisma.taxInvoice.findUniqueOrThrow({ where: { id } })).toEqual(before);
+    expect(
+      await prisma.auditLog.count({
+        where: { entityId: id, action: 'TAX_INVOICE_BILL_TO_REFRESHED' },
+      }),
+    ).toBe(0);
+  });
+
+  it('ignores Ship-To and unrelated Distributor edits and serializes two competing corrections', async () => {
+    const {
+      taxInvoiceId: id,
+      fixture,
+      accountantToken: token,
+    } = await createReadyDraftInvoice(1, null);
+    await prisma.taxInvoice.update({ where: { id }, data: { shipToState: 'Maharashtra' } });
+    const unrelated = await prisma.distributor.create({
+      data: {
+        id: createId(),
+        code: createId(),
+        name: 'Unrelated buyer',
+        gstin: '27AAAAA0000A1Z5',
+        purchaseMode: 'OUTRIGHT',
+        state: 'Maharashtra',
+      },
+    });
+    expect(unrelated.id).not.toBe(fixture.stock.distributorId);
+    const wrongSource = (await preview(token, id)).body.data;
+    expect(wrongSource.proposed.state).toBeNull();
+    expect(wrongSource.validation.blockers[0].code).toBe('BILL_TO_STATE_UNRESOLVED');
+    await setDistributorAddress(fixture.stock.distributorId, { state: 'Maharashtra' });
+    const proposal = (await preview(token, id)).body.data;
+    const results = await Promise.all([apply(token, id, proposal), apply(token, id, proposal)]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(
+      await prisma.auditLog.count({
+        where: { entityId: id, action: 'TAX_INVOICE_BILL_TO_REFRESHED' },
+      }),
+    ).toBe(1);
+  });
+
+  it('serializes concurrent retries, audits once and rejects conflicting key reuse', async () => {
+    const {
+      taxInvoiceId: id,
+      fixture,
+      accountantToken: token,
+    } = await createReadyDraftInvoice(1, null);
+    await setDistributorAddress(fixture.stock.distributorId, { state: 'Maharashtra' });
+    const proposal = (await preview(token, id)).body.data;
+    const key = createId();
+    const results = await Promise.all([
+      apply(token, id, proposal, key),
+      apply(token, id, proposal, key),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+    await apply(token, id, { ...proposal, expectedVersion: 999 }, key).expect(409);
+    expect(
+      await prisma.auditLog.count({
+        where: { entityId: id, action: 'TAX_INVOICE_BILL_TO_REFRESHED' },
+      }),
+    ).toBe(1);
+    expect((await prisma.taxInvoice.findUniqueOrThrow({ where: { id } })).version).toBe(2);
+  });
+
+  it('rejects FINALIZED and CANCELLED snapshots, preserving issued data', async () => {
+    const { taxInvoiceId: id, fixture, accountantToken: token } = await createReadyDraftInvoice(1);
+    const proposal = (await preview(token, id)).body.data;
+    await request(app)
+      .post(`/tax-invoices/${id}/actions/finalize`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+      .expect(200);
+    await setDistributorAddress(fixture.stock.distributorId, { state: 'Karnataka' });
+    const frozen = await prisma.taxInvoice.findUniqueOrThrow({ where: { id } });
+    await preview(token, id).expect(409);
+    await apply(token, id, proposal).expect(409);
+    expect(await prisma.taxInvoice.findUniqueOrThrow({ where: { id } })).toEqual(frozen);
+    await request(app)
+      .post(`/tax-invoices/${id}/actions/cancel`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ reason: 'Test cancellation' })
+      .expect(200);
+    const cancelled = await prisma.taxInvoice.findUniqueOrThrow({ where: { id } });
+    await apply(token, id, proposal).expect(409);
+    expect(await prisma.taxInvoice.findUniqueOrThrow({ where: { id } })).toEqual(cancelled);
+  });
+
+  it('aborts financial commit if Bill-To refresh occurs between media upload and commit; retry issues corrected snapshot', async () => {
+    const { taxInvoiceId: id, fixture, accountantToken: token } = await createReadyDraftInvoice(1);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    await request(app)
+      .post(`/styles/${fixture.stock.styleId}/images`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach(
+        'image',
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4X8AAAAASUVORK5CYII=',
+          'base64',
+        ),
+        { filename: 'style.png', contentType: 'image/png' },
+      )
+      .expect(201);
+    await prisma.distributor.update({
+      where: { id: fixture.stock.distributorId },
+      data: { city: 'Corrected city' },
+    });
+    const proposal = (await preview(token, id)).body.data;
+    const originalUpload = invoiceDocuments.uploadInvoiceDocument;
+    vi.spyOn(invoiceDocuments, 'uploadInvoiceDocument').mockImplementationOnce(
+      async (invoiceId, prepared) => {
+        await originalUpload(invoiceId, prepared);
+        await apply(token, id, proposal).expect(200);
+      },
+    );
+    const result = await request(app)
+      .post(`/tax-invoices/${id}/actions/finalize`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+      .expect(409);
+    expect(result.body.error.details.reason).toBe('INVOICE_DRAFT_CHANGED_RETRY');
+    expect(await prisma.documentSequence.count({ where: { documentType: 'TAX_INVOICE' } })).toBe(0);
+    expect(await prisma.taxInvoice.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      status: 'DRAFT',
+      invoiceNumber: null,
+      documentSnapshot: null,
+    });
+    await request(app)
+      .post(`/tax-invoices/${id}/actions/finalize`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+      .expect(200);
+    expect(await prisma.taxInvoice.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      status: 'FINALIZED',
+      billToCity: 'Corrected city',
+    });
+  });
+});

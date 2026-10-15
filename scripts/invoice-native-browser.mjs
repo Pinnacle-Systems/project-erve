@@ -160,6 +160,76 @@ async function screenshotInvoiceTable(page, name) {
   });
 }
 
+async function verifyBillToRecovery(page, browser, width, index) {
+  const record = fixture.recovery[index];
+  const before = (await api(page, `/tax-invoices/${record.id}/review`)).data;
+  assert.equal(before.billTo.state, null);
+  assert.equal(before.review.blockers[0].code, 'BILL_TO_STATE_UNRESOLVED');
+  await go(
+    page,
+    `http://localhost:5177/fulfillment/tax-invoices/${record.id}`,
+    'Review Bill-To changes',
+  );
+  await screenshot(page, `bill-to-blocked-${width}`);
+  await click(page, 'Review Bill-To changes');
+  assert.ok((await body(page)).includes('Saved on this draft'));
+  assert.ok((await body(page)).includes('Recovered Bill-To City'));
+  assert.equal(
+    await page.evaluate(
+      `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Apply Bill-To correction').disabled`,
+    ),
+    true,
+  );
+  assert.ok(await page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'));
+  await screenshot(page, `bill-to-comparison-${width}`);
+  await type(
+    page,
+    '[aria-label="Reason for Bill-To correction"]',
+    'Corrected master after draft creation',
+  );
+  await click(page, 'Apply Bill-To correction');
+  await until(
+    async () =>
+      !(await page.evaluate('Boolean(document.querySelector("[role=dialog]"))')) &&
+      !(await body(page)).includes('Review Bill-To changes'),
+    'same-draft recovery',
+  );
+  const after = (await api(page, `/tax-invoices/${record.id}/review`)).data;
+  assert.equal(after.id, before.id);
+  assert.equal(after.billTo.state, 'Maharashtra');
+  assert.equal(after.review.state, 'READY');
+  assert.equal(after.totalGst, '451.07');
+  assert.equal(after.invoiceNumber, null);
+  for (const line of before.lines) {
+    const updated = after.lines.find((item) => item.id === line.id);
+    for (const key of [
+      'quantity',
+      'styleMrp',
+      'distributorPricingPercentage',
+      'priceListId',
+      'overrideUnitRate',
+      'overrideReason',
+      'saleOrderLineId',
+      'ervePackingListCommercialLineId',
+    ])
+      assert.deepEqual(updated[key], line[key]);
+  }
+  await screenshot(page, `bill-to-recovered-${width}`);
+  if (index === 0) {
+    assert.equal(
+      (await api(page, `/tax-invoices/${record.id}/actions/finalize`, 'POST', {})).status,
+      200,
+    );
+    await downloadPdf(page, browser, record, 'recovered-bill-to');
+    const frozen = (await api(page, `/tax-invoices/${record.id}`)).data;
+    assert.equal(frozen.billTo.city, 'Recovered Bill-To City');
+    assert.ok(!(await body(page)).includes('Review Bill-To changes'));
+  }
+  proof.assertions.push(
+    `Bill-To ${width}px: invalid-State draft recovered after source correction; same ID, 5% GST, commercial provenance and override preserved`,
+  );
+}
+
 async function verifyStyleGrouping(page, width) {
   await go(
     page,
@@ -419,6 +489,8 @@ async function main() {
       });
       await screenshot(page, `queue-${width}`);
       if (process.env.NATIVE_VERIFY_GROUPING === 'true') await verifyStyleGrouping(page, width);
+      if (process.env.NATIVE_VERIFY_BILL_TO === 'true')
+        await verifyBillToRecovery(page, browser, width, index);
       const draft = fixture.drafts[index];
       await go(
         page,

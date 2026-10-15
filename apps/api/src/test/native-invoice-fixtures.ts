@@ -128,7 +128,7 @@ async function main() {
     await prisma.distributor.update({
       where: { id: fixture.stock.distributorId },
       data: {
-        name: 'Native acceptance buyer — long recipient and distribution department',
+        name: `Native acceptance buyer ${fixture.stock.distributorId} - long recipient and distribution department`,
         addressLine1: '123 Verification Road, Building 8, Distribution and Accounts Department',
         addressLine2: 'Long address wrapping fixture, not a real recipient',
         city: 'Mumbai',
@@ -268,6 +268,25 @@ async function main() {
     multiSources.push(item);
   }
   const multi = await invoice(multiSources, true);
+  const recovery = [];
+  if (process.env.NATIVE_VERIFY_BILL_TO === 'true') {
+    for (let i = 0; i < 3; i++) {
+      const item = await source(20);
+      await prisma.distributor.update({
+        where: { id: item.fixture.stock.distributorId },
+        data: { state: null },
+      });
+      const record = await invoice([item], false, 451.07);
+      // Correct the actual Bill-To Distributor only after this draft exists.
+      await request(app)
+        .patch(`/distributors/${item.fixture.stock.distributorId}`)
+        .set('Authorization', `Bearer ${item.fixture.merchToken}`)
+        .send({ state: 'Maharashtra', city: 'Recovered Bill-To City' })
+        .expect(200);
+      recovery.push(record);
+    }
+  }
+
   let grouped: Awaited<ReturnType<typeof invoice>> | undefined;
   let groupedIssued: Awaited<ReturnType<typeof invoice>> | undefined;
   if (process.env.NATIVE_VERIFY_GROUPING === 'true') {
@@ -352,7 +371,7 @@ async function main() {
   await fs.writeFile(
     fixturePath,
     JSON.stringify(
-      { actors, issued, drafts, blocked, legacy, multi, grouped, groupedIssued },
+      { actors, issued, drafts, blocked, legacy, multi, grouped, groupedIssued, recovery },
       null,
       2,
     ),

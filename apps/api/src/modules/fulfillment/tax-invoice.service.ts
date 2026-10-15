@@ -1,3 +1,9 @@
+import { createHash } from 'node:crypto';
+import type {
+  TaxInvoiceBillToSnapshot,
+  TaxInvoiceBillToRefreshInput,
+  TaxInvoiceBillToRefreshPreview,
+} from '@erve/types';
 import { createId, resolveGstStateCode } from '@erve/shared';
 import { canCancelTaxInvoice, canMutateTaxInvoice, canViewTaxInvoice } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
@@ -251,32 +257,32 @@ type TaxInvoiceRecord = Prisma.TaxInvoiceGetPayload<{ include: typeof taxInvoice
 
 function toTaxInvoiceView(record: TaxInvoiceRecord) {
   const isHistoricalIssued = record.status === 'FINALIZED' || record.status === 'CANCELLED';
-  const documentSnapshot =
-    isHistoricalIssued ? readInvoiceDocumentSnapshot(record.documentSnapshot) : null;
+  const documentSnapshot = isHistoricalIssued
+    ? readInvoiceDocumentSnapshot(record.documentSnapshot)
+    : null;
   // Derived at read time from the already-persisted, immutable line
   // snapshots — never a separately stored/duplicated table. Null for a
   // DRAFT (nothing to summarize yet); every finalized or cancelled line always has
   // hsnCode/gstPercent/amounts set together, so this is safe once FINALIZED or CANCELLED.
-  const hsnSummary =
-    isHistoricalIssued
-      ? aggregateHsnSummary(
-          record.lines.map((line) => ({
-            hsnCode: line.hsnCode!,
-            gstPercent: line.gstPercent!,
-            taxableValue: line.taxableValue!,
-            cgstAmount: line.cgstAmount!,
-            sgstAmount: line.sgstAmount!,
-            igstAmount: line.igstAmount!,
-          })),
-        ).map((row) => ({
-          hsnCode: row.hsnCode,
-          gstPercent: row.gstPercent.toString(),
-          taxableValue: row.taxableValue.toString(),
-          cgstAmount: row.cgstAmount.toString(),
-          sgstAmount: row.sgstAmount.toString(),
-          igstAmount: row.igstAmount.toString(),
-        }))
-      : null;
+  const hsnSummary = isHistoricalIssued
+    ? aggregateHsnSummary(
+        record.lines.map((line) => ({
+          hsnCode: line.hsnCode!,
+          gstPercent: line.gstPercent!,
+          taxableValue: line.taxableValue!,
+          cgstAmount: line.cgstAmount!,
+          sgstAmount: line.sgstAmount!,
+          igstAmount: line.igstAmount!,
+        })),
+      ).map((row) => ({
+        hsnCode: row.hsnCode,
+        gstPercent: row.gstPercent.toString(),
+        taxableValue: row.taxableValue.toString(),
+        cgstAmount: row.cgstAmount.toString(),
+        sgstAmount: row.sgstAmount.toString(),
+        igstAmount: row.igstAmount.toString(),
+      }))
+    : null;
 
   return {
     id: record.id,
@@ -990,7 +996,9 @@ export async function getTaxInvoiceAudit(actor: CurrentUser, id: string) {
 function toReviewBlocker(error: unknown): { code: string; message: string } {
   if (!(error instanceof HttpError) || ![400, 409].includes(error.statusCode)) throw error;
   const details =
-    error.details && typeof error.details === 'object' ? (error.details as Record<string, unknown>) : {};
+    error.details && typeof error.details === 'object'
+      ? (error.details as Record<string, unknown>)
+      : {};
   return { code: String(details.reason ?? error.code), message: error.message };
 }
 
@@ -1085,7 +1093,12 @@ export async function getTaxInvoiceReview(actor: CurrentUser, id: string) {
             ).toString(),
           };
         }),
-        review: { state: 'BLOCKED' as const, isPreview: true, calculatedAt: null, blockers: [blocker] },
+        review: {
+          state: 'BLOCKED' as const,
+          isPreview: true,
+          calculatedAt: null,
+          blockers: [blocker],
+        },
       };
     }
 
@@ -1099,7 +1112,15 @@ export async function getTaxInvoiceReview(actor: CurrentUser, id: string) {
       await assertDraftNumberingReady(tx, calculation.businessDate);
     } catch (error) {
       const blocker = toReviewBlocker(error);
-      return { ...preview, review: { state: 'BLOCKED' as const, isPreview: true, calculatedAt: null, blockers: [blocker] } };
+      return {
+        ...preview,
+        review: {
+          state: 'BLOCKED' as const,
+          isPreview: true,
+          calculatedAt: null,
+          blockers: [blocker],
+        },
+      };
     }
 
     return {
@@ -1268,7 +1289,10 @@ export async function finalizeTaxInvoice(
       await loadAndValidateCommercialLines(tx, invoice.ervePackingListId);
       const calculation = await prepareInvoiceCalculation(tx, invoice);
       await assertDraftNumberingReady(tx, calculation.businessDate);
-      return prepareInvoiceDocument(tx, invoice, actor.id);
+      return {
+        ...(await prepareInvoiceDocument(tx, invoice, actor.id)),
+        invoiceVersion: invoice.version,
+      };
     },
     { timeout: 30000 },
   );
@@ -1297,6 +1321,15 @@ export async function finalizeTaxInvoice(
     // this module.
     if (invoice.lines.length === 0) {
       throw HttpError.conflict('A Tax Invoice with no lines cannot be finalized');
+    }
+
+    // A Bill-To correction may commit while media uploads run outside the lock.
+    // Never issue against a different draft revision from the one prepared.
+    if (invoice.version !== prepared.invoiceVersion) {
+      throw HttpError.conflict(
+        'The draft changed during document preparation. Review it and retry finalization.',
+        { reason: 'INVOICE_DRAFT_CHANGED_RETRY' },
+      );
     }
 
     // Revalidate the EIPL's frozen commercial snapshot is still internally
@@ -1410,4 +1443,193 @@ export async function finalizeTaxInvoice(
   });
 
   return toTaxInvoiceView(await loadTaxInvoiceById(taxInvoiceId));
+}
+
+// Explicit recovery of an unissued Bill-To snapshot; never used for issued history.
+const billToKeys = [
+  'name',
+  'gstin',
+  'contactName',
+  'contactEmail',
+  'contactPhone',
+  'addressLine1',
+  'addressLine2',
+  'city',
+  'state',
+  'country',
+  'postalCode',
+] as const;
+const fingerprint = (value: unknown) =>
+  createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function savedBillTo(invoice: TaxInvoiceRecord): TaxInvoiceBillToSnapshot {
+  return {
+    name: invoice.billToName,
+    gstin: invoice.billToGstin,
+    contactName: invoice.billToContactName,
+    contactEmail: invoice.billToContactEmail,
+    contactPhone: invoice.billToContactPhone,
+    addressLine1: invoice.billToAddressLine1,
+    addressLine2: invoice.billToAddressLine2,
+    city: invoice.billToCity,
+    state: invoice.billToState,
+    country: invoice.billToCountry,
+    postalCode: invoice.billToPostalCode,
+  };
+}
+function assertUnissuedDraft(invoice: { status: string; invoiceNumber: string | null }) {
+  if (invoice.status !== 'DRAFT' || invoice.invoiceNumber !== null)
+    throw HttpError.conflict('Only an unissued DRAFT Tax Invoice can refresh Bill-To details');
+}
+async function billToProposal(
+  tx: Tx,
+  invoice: TaxInvoiceRecord,
+): Promise<TaxInvoiceBillToRefreshPreview> {
+  const source = await tx.distributor.findUniqueOrThrow({ where: { id: invoice.distributorId } });
+  const proposed: TaxInvoiceBillToSnapshot = {
+    name: source.name,
+    gstin: source.gstin,
+    contactName: source.contactName,
+    contactEmail: source.contactEmail,
+    contactPhone: source.contactPhone,
+    addressLine1: source.addressLine1,
+    addressLine2: source.addressLine2,
+    city: source.city,
+    state: source.state,
+    country: source.country,
+    postalCode: source.postalCode,
+  };
+  const current = savedBillTo(invoice);
+  const stateCode = resolveGstStateCode(proposed.state);
+  const blockers = !stateCode
+    ? [
+        {
+          code: 'BILL_TO_STATE_UNRESOLVED',
+          message: 'Correct the Distributor State before applying this address.',
+        },
+      ]
+    : stateCode !== proposed.gstin.slice(0, 2)
+      ? [
+          {
+            code: 'BILL_TO_STATE_GSTIN_MISMATCH',
+            message: 'The Distributor State must match its GSTIN State prefix.',
+          },
+        ]
+      : [];
+  return {
+    invoiceId: invoice.id,
+    distributor: { id: source.id, code: source.code, name: source.name },
+    expectedVersion: invoice.version,
+    expectedMasterUpdatedAt: source.updatedAt.toISOString(),
+    proposedFingerprint: fingerprint(proposed),
+    changed: billToKeys.some((key) => current[key] !== proposed[key]),
+    current,
+    proposed,
+    validation: { stateCode, blockers },
+  };
+}
+export async function getBillToRefreshPreview(actor: CurrentUser, id: string) {
+  assertMutationAccess(actor);
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(id)}))`;
+    const invoice = await tx.taxInvoice.findUnique({ where: { id }, include: taxInvoiceInclude });
+    if (!invoice) throw HttpError.notFound('Tax invoice not found');
+    assertUnissuedDraft(invoice);
+    return billToProposal(tx, invoice);
+  });
+}
+export async function refreshTaxInvoiceBillTo(
+  actor: CurrentUser,
+  id: string,
+  input: TaxInvoiceBillToRefreshInput,
+  requestKey: string,
+) {
+  assertMutationAccess(actor);
+  if (!input.reason.trim() || input.reason.length > 1000 || !requestKey.trim())
+    throw HttpError.badRequest('A correction reason and idempotency key are required');
+  const requestFingerprint = fingerprint(input);
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taxInvoiceLifecycleLockKey(id)}))`;
+    const invoice = await tx.taxInvoice.findUnique({ where: { id }, include: taxInvoiceInclude });
+    if (!invoice) throw HttpError.notFound('Tax invoice not found');
+    assertUnissuedDraft(invoice);
+    // The audit row and snapshot commit atomically. Under the same lifecycle
+    // lock this also provides a durable retry receipt without a new table.
+    const receipt = await tx.auditLog.findFirst({
+      where: {
+        entityType: 'TaxInvoice',
+        entityId: id,
+        actorId: actor.id,
+        action: 'TAX_INVOICE_BILL_TO_REFRESHED',
+        metadata: { path: ['requestKey'], equals: requestKey },
+      },
+    });
+    if (receipt) {
+      const metadata = receipt.metadata as { requestFingerprint?: string };
+      if (metadata.requestFingerprint !== requestFingerprint)
+        throw HttpError.conflict(
+          'This recovery request key was already used for a different correction',
+        );
+      return;
+    }
+    if (invoice.version !== input.expectedVersion)
+      throw HttpError.conflict(
+        'The invoice changed. Reopen the Bill-To comparison before applying.',
+        { reason: 'BILL_TO_VERSION_CONFLICT' },
+      );
+    // Hold the authoritative source stable through the snapshot/audit commit.
+    await tx.$queryRaw`SELECT id FROM distributors WHERE id = ${invoice.distributorId} FOR SHARE`;
+    const proposal = await billToProposal(tx, invoice);
+    if (
+      proposal.expectedMasterUpdatedAt !== input.expectedMasterUpdatedAt ||
+      proposal.proposedFingerprint !== input.proposedFingerprint
+    )
+      throw HttpError.conflict(
+        'Distributor details changed. Reopen the comparison before applying.',
+        { reason: 'BILL_TO_MASTER_CHANGED' },
+      );
+    if (proposal.validation.blockers.length)
+      throw HttpError.badRequest(proposal.validation.blockers[0]!.message, {
+        reason: proposal.validation.blockers[0]!.code,
+      });
+    const next = proposal.proposed;
+    if (proposal.changed) {
+      await tx.taxInvoice.update({
+        where: { id },
+        data: {
+          billToName: next.name,
+          billToGstin: next.gstin,
+          billToContactName: next.contactName,
+          billToContactEmail: next.contactEmail,
+          billToContactPhone: next.contactPhone,
+          billToAddressLine1: next.addressLine1,
+          billToAddressLine2: next.addressLine2,
+          billToCity: next.city,
+          billToState: next.state,
+          billToCountry: next.country,
+          billToPostalCode: next.postalCode,
+          version: { increment: 1 },
+        },
+      });
+    }
+    await recordAuditLog(
+      {
+        actorId: actor.id,
+        action: 'TAX_INVOICE_BILL_TO_REFRESHED',
+        entityType: 'TaxInvoice',
+        entityId: id,
+        metadata: {
+          old: proposal.current as unknown as Prisma.InputJsonValue,
+          new: next as unknown as Prisma.InputJsonValue,
+          reason: input.reason.trim(),
+          distributorId: invoice.distributorId,
+          sourceUpdatedAt: proposal.expectedMasterUpdatedAt,
+          changed: proposal.changed,
+          requestKey,
+          requestFingerprint,
+        },
+      },
+      tx,
+    );
+  });
+  return toTaxInvoiceView(await loadTaxInvoiceById(id));
 }

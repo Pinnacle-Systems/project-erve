@@ -4,6 +4,8 @@ import type {
   TaxInvoiceReviewView,
   TaxInvoiceView,
   TaxInvoiceAuditEvent,
+  TaxInvoiceBillToRefreshPreview,
+  TaxInvoiceBillToRefreshInput,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 
@@ -78,6 +80,39 @@ export function useCreateTaxInvoiceDraft() {
       await Promise.all([
         client.invalidateQueries({ queryKey: ['tax-invoices'] }),
         client.invalidateQueries({ queryKey: ['tax-invoice-sources'] }),
+      ]);
+    },
+  });
+}
+
+export function useBillToRefreshPreview(id: string, version: number) {
+  return useQuery({
+    queryKey: ['tax-invoice-bill-to', id, version],
+    queryFn: async () =>
+      (
+        await apiClient.get<ApiSuccessResponse<TaxInvoiceBillToRefreshPreview>>(
+          `/tax-invoices/${id}/bill-to-refresh-preview`,
+        )
+      ).data.data,
+  });
+}
+export function useRefreshBillTo(id: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ input, key }: { input: TaxInvoiceBillToRefreshInput; key: string }) =>
+      (
+        await apiClient.post<ApiSuccessResponse<TaxInvoiceView>>(
+          `/tax-invoices/${id}/actions/refresh-bill-to`,
+          input,
+          { headers: { 'Idempotency-Key': key } },
+        )
+      ).data.data,
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['tax-invoice-review', id] }),
+        client.invalidateQueries({ queryKey: ['tax-invoice-audit', id] }),
+        client.invalidateQueries({ queryKey: ['tax-invoice-bill-to', id] }),
+        client.invalidateQueries({ queryKey: ['tax-invoices'] }),
       ]);
     },
   });

@@ -5,6 +5,8 @@ import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
 import {
+  refreshBillToSchema,
+  refreshBillToKeySchema,
   cancelTaxInvoiceSchema,
   createTaxInvoiceDraftSchema,
   listTaxInvoicesQuerySchema,
@@ -230,5 +232,36 @@ taxInvoicesRouter.post(
       input,
     );
     res.status(200).json(successResponse(invoice));
+  }),
+);
+
+// Unissued draft recovery is separate from statutory cancellation.
+taxInvoicesRouter.get(
+  '/:id/bill-to-refresh-preview',
+  canMutateTaxInvoice,
+  asyncHandler(async (req, res) => {
+    res.json(
+      successResponse(
+        await taxInvoiceService.getBillToRefreshPreview(req.user!, req.params.id as string),
+      ),
+    );
+  }),
+);
+taxInvoicesRouter.post(
+  '/:id/actions/refresh-bill-to',
+  canMutateTaxInvoice,
+  asyncHandler(async (req, res) => {
+    const input = refreshBillToSchema.parse(req.body);
+    const key = refreshBillToKeySchema.parse(req.get('Idempotency-Key'));
+    res.json(
+      successResponse(
+        await taxInvoiceService.refreshTaxInvoiceBillTo(
+          req.user!,
+          req.params.id as string,
+          input,
+          key,
+        ),
+      ),
+    );
   }),
 );
