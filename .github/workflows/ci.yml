@@ -98,12 +98,10 @@ jobs:
   api-tests:
     name: API integration tests (Postgres)
     runs-on: ubuntu-latest
-    # Serializes the full API regression across concurrent branches/runs
-    # (H1 plan §11/§25) — scoped to this job only, so build/web jobs aren't
-    # unnecessarily serialized.
-    concurrency:
-      group: erve-full-api-regression
-      cancel-in-progress: false
+    # Every workflow run provisions its own ephemeral Postgres service below.
+    # Do not apply a shared concurrency group across PRs: GitHub Actions keeps
+    # only one pending job per group, silently cancelling earlier PR checks
+    # even with cancel-in-progress: false.
     services:
       postgres:
         image: postgres:18
