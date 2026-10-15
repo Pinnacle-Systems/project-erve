@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { ImageViewerDialog, type ImageViewerImage } from '@erve/app-components';
 import { apiClient } from '../../lib/api-client.js';
-import type { Style, StyleImage } from '../../pages/master-data/types.js';
+import type { StyleImage } from '../../pages/master-data/types.js';
 
 export interface StyleImageViewerProps {
   styleId: string;
@@ -25,14 +25,16 @@ export function StyleImageViewer({ styleId, initialImageId, open, onOpenChange, 
   const styleQuery = useQuery({
     queryKey: ['style-images-for-viewer', styleId],
     queryFn: async () => {
-      const response = await apiClient.get<ApiSuccessResponse<Style>>(`/styles/${styleId}`);
+      // The image-only endpoint is also available to Job Order Factory/QA
+      // readers who cannot browse the full Style master record.
+      const response = await apiClient.get<ApiSuccessResponse<StyleImage[]>>(`/styles/${styleId}/images`);
       return response.data.data;
     },
     enabled: open,
   });
 
   const images = useMemo(
-    () => [...(styleQuery.data?.images ?? [])].sort((a, b) => a.sortOrder - b.sortOrder),
+    () => [...(styleQuery.data ?? [])].sort((a, b) => a.sortOrder - b.sortOrder),
     [styleQuery.data],
   );
 
