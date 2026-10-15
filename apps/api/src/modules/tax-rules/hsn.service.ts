@@ -5,6 +5,7 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { listAllOrPage, type OptionalPageQuery } from '../../utils/pagination.js';
+import type { MasterCreateOptions } from '../master-data/master-code.service.js';
 
 // RBAC finalization review: the HSN -> GST Rule Set assignment is statutory
 // tax configuration, not operational master data — MERCHANDISER keeps full
@@ -110,7 +111,13 @@ export async function listGstRuleSetOptionsForHsn() {
 
 export async function createHsn(
   actor: CurrentUser,
-  input: { code: string; description?: string | null; status?: HsnStatus; gstRuleSetId?: string | null },
+  input: {
+    code: string;
+    description?: string | null;
+    status?: HsnStatus;
+    gstRuleSetId?: string | null;
+  },
+  options: MasterCreateOptions = {},
 ) {
   if (input.gstRuleSetId) {
     assertCanAssignGstRuleSet(actor);
@@ -119,14 +126,32 @@ export async function createHsn(
 
   const id = createId();
   try {
-    await prisma.hsn.create({
-      data: {
-        id,
-        code: input.code,
-        description: input.description ?? null,
-        status: input.status ?? 'ACTIVE',
-        gstRuleSetId: input.gstRuleSetId ?? null,
-      },
+    return await prisma.$transaction(async (tx) => {
+      const hsn = await tx.hsn.create({
+        include: hsnInclude,
+        data: {
+          id,
+          code: input.code,
+          description: input.description ?? null,
+          status: input.status ?? 'ACTIVE',
+          gstRuleSetId: input.gstRuleSetId ?? null,
+        },
+      });
+      await recordAuditLog(
+        {
+          actorId: actor.id,
+          action: 'HSN_CREATED',
+          entityType: 'Hsn',
+          entityId: id,
+          metadata: {
+            code: input.code,
+            gstRuleSetId: input.gstRuleSetId ?? null,
+          },
+        },
+        tx,
+      );
+      await options.onCreatedInTransaction?.(tx, hsn);
+      return toHsnView(hsn);
     });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
@@ -134,16 +159,6 @@ export async function createHsn(
     }
     throw error;
   }
-
-  await recordAuditLog({
-    actorId: actor.id,
-    action: 'HSN_CREATED',
-    entityType: 'Hsn',
-    entityId: id,
-    metadata: { code: input.code, gstRuleSetId: input.gstRuleSetId ?? null },
-  });
-
-  return getHsnDetail(id);
 }
 
 export async function updateHsn(

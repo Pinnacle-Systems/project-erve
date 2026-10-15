@@ -1,4 +1,5 @@
-export type MasterImportKind = 'factories' | 'distributors' | 'retail-stores';
+export type MasterImportKind =
+  'factories' | 'distributors' | 'retail-stores' | 'seasons' | 'sizes' | 'hsns';
 export type MasterImportOutcome =
   'CREATE' | 'SKIP_EXISTING' | 'NEEDS_REVIEW' | 'REJECTED' | 'FAILED';
 export interface MasterImportRow {
@@ -10,6 +11,7 @@ export interface MasterImportRow {
   identity?: string;
   outcome: MasterImportOutcome;
   detail?: string;
+  warnings?: string[];
   masterId?: string;
   code?: string;
 }

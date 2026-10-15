@@ -38,7 +38,7 @@ import { currentUserSelect, toCurrentUser, type CurrentUser } from '../../auth/c
 import { HttpError } from '../../errors/http-error.js';
 import { getFileStorage } from '../../storage/index.js';
 import {
-  extractEmbeddedImagesByRow,
+  extractNormalizedEmbeddedImagesByRow,
   type EmbeddedImage,
   type EmbeddedImageAmbiguity,
 } from '../../cli/xlsx-embedded-images.js';
@@ -255,7 +255,9 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
   const sourceFileChecksum = sha256Hex(buffer);
   const selectedWorksheet = worksheet ?? listBulkStyleImportWorksheets(buffer)[0];
   const sheetRows = parseBulkStyleImportSheet(buffer, selectedWorksheet);
-  const { imagesByRow, ambiguous } = extractEmbeddedImagesByRow(buffer, selectedWorksheet);
+  const { imagesByRow, ambiguous, imageMetadataPresent } = await extractNormalizedEmbeddedImagesByRow(buffer, selectedWorksheet);
+  if (imageMetadataPresent && imagesByRow.size === 0)
+    throw HttpError.badRequest(`Workbook image metadata was detected but no valid images could be extracted. ${ambiguous.map(a => a.detail).join('; ')}`);
   const ambiguousByRow = new Map(ambiguous.filter((a) => a.rowNumber !== undefined).map((a) => [a.rowNumber!, a]));
   const fileLevelImageWarnings = ambiguous.filter((a) => a.rowNumber === undefined);
   const physicalRows = new Set(sheetRows.map((row) => row.rowNumber));
@@ -440,9 +442,13 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
         reject('IMAGE_PROVENANCE_MISMATCH', 'Expected images or Style fields differ from the interrupted import; review the source');
         continue;
       }
-      const conflict = await existingStyleConflict(existingStyleId, sheetRow.styleNumber, create);
+      const conflict = await existingStyleConflict(existingStyleId, sheetRow.styleNumber, create, false);
       if (conflict) {
         reject('EXISTING_STYLE_CONFLICT', conflict);
+        continue;
+      }
+      if (rowImages.length > 0 && !await expectedImagesPresent(existingStyleId, rowImages)) {
+        reject('IMAGE_PROVENANCE_MISMATCH', 'Existing Style gallery has different or missing image content; review it. Create-only import will not overwrite or add pictures.');
         continue;
       }
       rows.push({
@@ -514,7 +520,8 @@ async function existingStyleConflict(styleId: string, styleNumber: string, input
 // a single expected image, because it never established a multi-image manifest.
 function imageProvenance(create: BulkStyleImportCreateFields): string {
   const { images, ...fields } = create;
-  return JSON.stringify({ version: 2, fields, images: images.map((image) => ({ checksum: sha256Hex(image.buffer), sizeBytes: image.buffer.length })) });
+  return JSON.stringify({ version: 2, fields, images: images.map((image) => ({ checksum: sha256Hex(image.buffer), sizeBytes: image.buffer.length,
+    ...(image.representation === 'modern' || image.sourceFormat === 'jpg' ? { originalChecksum: image.originalChecksum, cellReference: image.cellReference, mediaPath: image.mediaPath, sourceFormat: image.sourceFormat } : {}) })) });
 }
 function matchesImageProvenance(recorded: string | null, create: BulkStyleImportCreateFields): boolean {
   if (!recorded || create.images.length === 0) return false;
@@ -533,10 +540,12 @@ export async function requireBulkStyleImportActor(actor: CurrentUser, db: typeof
 
 async function expectedImagesPresent(styleId: string, images: EmbeddedImage[], db: typeof prisma | Prisma.TransactionClient = prisma): Promise<boolean> {
   const attached = await db.styleImage.findMany({ where: { styleId }, include: { file: true } });
+  const consumed = new Set<string>();
   for (const expected of images) {
     const checksum = sha256Hex(expected.buffer);
-    const actual = attached.find((image) => image.file.checksumSha256 === checksum && image.file.sizeBytes === expected.buffer.length);
+    const actual = attached.find((image) => !consumed.has(image.id) && image.file.checksumSha256 === checksum && image.file.sizeBytes === expected.buffer.length);
     if (!actual) return false;
+    consumed.add(actual.id);
     try {
       const bytes = await getFileStorage().read(actual.file.storageKey);
       if (bytes.length !== expected.buffer.length || sha256Hex(bytes) !== checksum) return false;
@@ -611,6 +620,7 @@ export async function executeBulkStyleImport(
         if (alreadyPresent && !await expectedImagesPresent(created.id, create.images, tx)) {
           throw HttpError.conflict('Expected images changed during recovery; retry this import');
         }
+        const occurrences = new Map<string, number>();
         for (const image of staged) {
           if (image.storageKey.startsWith('style-images/staged/')) {
             const relocatedKey = image.storageKey.replace('style-images/staged/', `style-images/${created.id}/`);
@@ -618,7 +628,9 @@ export async function executeBulkStyleImport(
             await getFileStorage().delete(image.storageKey);
             image.storageKey = relocatedKey;
           }
-          const attached = await attachStagedStyleImage(actor, tx, created.id, image);
+          const occurrence = occurrences.get(image.checksum) ?? 0;
+          occurrences.set(image.checksum, occurrence + 1);
+          const attached = await attachStagedStyleImage(actor, tx, created.id, image, { occurrence });
           if (attached.created) retained.add(image.storageKey);
         }
         await tx.styleBulkImportRowResult.create({ data: { id: createId(), runId, ...base,
@@ -695,6 +707,14 @@ export function buildBulkStyleImportTemplate(): Buffer {
     'LMIX Number', 'HSN Code', 'Barcodes', 'Factory Name Mappings', 'Factory Mappings',
     'Description', 'Category', 'IP Name', 'Licensor', 'Colour',
   ]]), 'Styles');
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
+    ['Style import instructions'],
+    ['Select the Styles worksheet. Required: Style Number, Style Name, Final MRP, Season Code and Size Codes.'],
+    ['Pictures: embed PNG or JPEG pictures anchored to their Style row, or use Excel Picture in Cell on that row.'],
+    ['Pictures may be in any column; multiple pictures on one Style row are supported. JPEG sources are converted to PNG.'],
+    ['No filename, base64 or URL column is required. Only image bytes packaged in the workbook are used.'],
+    ['Financial Year disambiguates Season Codes used in more than one year. Supply existing master codes; do not infer missing business fields.'],
+  ]), 'Instructions');
   return XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }
 

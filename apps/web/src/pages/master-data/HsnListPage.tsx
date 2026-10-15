@@ -33,9 +33,9 @@ export function HsnListPage() {
         subtitle="Canonical HSN identity and its reusable GST Rule Set assignment"
         primaryAction={
           canManage ? (
-            <Button asChild variant="default">
+            <div className="flex gap-2"><Button asChild variant="secondary"><Link to="/hsns/import">Import</Link></Button><Button asChild variant="default">
               <Link to="/hsns/new">Create HSN</Link>
-            </Button>
+            </Button></div>
           ) : undefined
         }
       />

@@ -1,6 +1,21 @@
-import { describe, expect, it } from 'vitest';
-import type { SaleOrder, SaleOrderDestination, SaleOrderDistributorGroup, SaleOrderLine } from '../../../sale-orders/types.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { apiClient } from '../../../../lib/api-client.js';
+import { generateDispatchOrderDetailPdfBlob } from './generateDispatchOrderDetailPdf.js';
+import type {
+  SaleOrder,
+  SaleOrderDestination,
+  SaleOrderDistributorGroup,
+  SaleOrderLine,
+} from '../../../sale-orders/types.js';
 import { buildDispatchOrderDetailViewModel } from './buildDispatchOrderDetailViewModel.js';
+
+vi.mock('../../../../lib/pdf/resizeImage.js', () => ({
+  resizeImageBlobToDataUri: vi.fn(
+    async () =>
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=',
+  ),
+}));
+afterEach(() => vi.restoreAllMocks());
 
 function makeDestination(overrides: Partial<SaleOrderDestination> = {}): SaleOrderDestination {
   return {
@@ -38,7 +53,9 @@ function makeLine(overrides: Partial<SaleOrderLine> = {}): SaleOrderLine {
   };
 }
 
-function makeDistributorGroup(overrides: Partial<SaleOrderDistributorGroup> = {}): SaleOrderDistributorGroup {
+function makeDistributorGroup(
+  overrides: Partial<SaleOrderDistributorGroup> = {},
+): SaleOrderDistributorGroup {
   return {
     id: 'dg-1',
     distributor: { id: 'd1', code: 'D1', name: 'Acme Distributors' },
@@ -54,13 +71,19 @@ function makeSaleOrder(overrides: Partial<SaleOrder> = {}): SaleOrder {
   return {
     id: 'so-1',
     saleOrderNumber: 'EISO/26-27/0001',
-    distributors: distributorGroups.map((g) => ({ ...g.distributor, purchaseMode: g.purchaseMode })),
+    distributors: distributorGroups.map((g) => ({
+      ...g.distributor,
+      purchaseMode: g.purchaseMode,
+    })),
     factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
     financialYear: { id: 'fy1', code: '2026-27' },
     soDate: '2026-06-30T00:00:00.000Z',
     status: 'ACTIVE',
     destinationCount: distributorGroups.reduce((sum, g) => sum + g.destinations.length, 0),
-    totalQuantity: distributorGroups.reduce((sum, g) => sum + g.lines.reduce((s, l) => s + l.quantity, 0), 0),
+    totalQuantity: distributorGroups.reduce(
+      (sum, g) => sum + g.lines.reduce((s, l) => s + l.quantity, 0),
+      0,
+    ),
     createdAt: '2026-06-30T00:00:00.000Z',
     isLocked: false,
     version: 1,
@@ -77,9 +100,86 @@ function makeSaleOrder(overrides: Partial<SaleOrder> = {}): SaleOrder {
 const nullRelated = { factoryDispatches: null, erveDispatches: null, auditTrail: null };
 
 describe('buildDispatchOrderDetailViewModel', () => {
+  it.each([false, true])(
+    'generates the PDF after primary-image preparation (fetch fails: %s)',
+    async (fails) => {
+      const primaryImage = {
+        id: 'primary',
+        styleId: 'style-1',
+        fileId: 'file-primary',
+        fileName: 'primary.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 100,
+        isPrimary: true,
+        sortOrder: 1,
+        createdAt: '',
+        updatedAt: '',
+      };
+      const paths: string[] = [];
+      vi.spyOn(apiClient, 'get').mockImplementation(async (path: string) => {
+        paths.push(path);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        if (fails) throw new Error('image unavailable');
+        return { data: new Blob(['image']) };
+      });
+      const so = makeSaleOrder({
+        distributorGroups: [
+          makeDistributorGroup({
+            lines: [
+              makeLine({ primaryImage }),
+              makeLine({ id: 'large', sizeId: 'large', primaryImage }),
+            ],
+          }),
+        ],
+      });
+      const blob = await generateDispatchOrderDetailPdfBlob(so, nullRelated, {
+        generatedAt: '2026-10-14T10:00:00Z',
+      });
+      expect(blob.type).toBe('application/pdf');
+      expect(blob.size).toBeGreaterThan(0);
+      expect(paths).toEqual(['/styles/style-1/images/primary/content']);
+      const bytes = new TextDecoder().decode(await blob.arrayBuffer());
+      expect(bytes.includes('/Subtype /Image')).toBe(!fails);
+    },
+  );
+  it('carries only the API primary image into destination rows and Style/Size totals', () => {
+    const primaryImage = {
+      id: 'primary',
+      styleId: 'style-1',
+      fileId: 'file-primary',
+      fileName: 'primary.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 100,
+      isPrimary: true,
+      sortOrder: 1,
+      createdAt: '',
+      updatedAt: '',
+    };
+    const so = makeSaleOrder({
+      distributorGroups: [
+        makeDistributorGroup({
+          lines: [
+            makeLine({ primaryImage }),
+            makeLine({ id: 'line-2', sizeId: 'size-2', sizeLabel: 'Large', primaryImage }),
+            makeLine({ id: 'line-3', styleId: 'style-2' }),
+          ],
+        }),
+      ],
+    });
+    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, { generatedAt: '' });
+    const ref = { id: 'file-primary', path: '/styles/style-1/images/primary/content' };
+    expect(
+      vm.distributorGroups[0]?.destinations[0]?.lines.map((line) => line.primaryImage),
+    ).toEqual([ref, ref, null]);
+    expect(vm.styleSizeTotals.map((line) => line.primaryImage)).toEqual([ref, ref, null]);
+    expect(vm.styleSizeTotals.map((line) => line.quantity)).toEqual([10, 10, 10]);
+    expect(so.lines[0]?.primaryImage).toBe(primaryImage);
+  });
   it('maps identity fields, state and fulfillment stage for a single-Distributor/single-Destination order', () => {
     const so = makeSaleOrder();
-    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     expect(vm.title).toBe('DISPATCH ORDER');
     expect(vm.subtitle).toBe('EISO/26-27/0001 — Acme Factory');
     expect(vm.identityItems).toEqual(
@@ -94,8 +194,13 @@ describe('buildDispatchOrderDetailViewModel', () => {
 
   it('shows the locked state label once the Dispatch Order is locked', () => {
     const so = makeSaleOrder({ isLocked: true });
-    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, { generatedAt: '2026-09-15T10:00:00Z' });
-    expect(vm.identityItems).toContainEqual({ label: 'State', value: 'Factory Dispatched (locked)' });
+    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
+    expect(vm.identityItems).toContainEqual({
+      label: 'State',
+      value: 'Factory Dispatched (locked)',
+    });
   });
 
   it('never flattens the Distributor -> Destination hierarchy for a mixed-mode, multi-Distributor Dispatch Order', () => {
@@ -103,7 +208,10 @@ describe('buildDispatchOrderDetailViewModel', () => {
       id: 'dg-a',
       distributor: { id: 'da', code: 'DA', name: 'Distributor A' },
       purchaseMode: 'OUTRIGHT',
-      destinations: [makeDestination({ id: 'a1', label: 'A1' }), makeDestination({ id: 'a2', label: 'A2' })],
+      destinations: [
+        makeDestination({ id: 'a1', label: 'A1' }),
+        makeDestination({ id: 'a2', label: 'A2' }),
+      ],
       lines: [
         makeLine({ id: 'line-a1', destinationId: 'a1', quantity: 5 }),
         makeLine({ id: 'line-a2', destinationId: 'a2', quantity: 7 }),
@@ -125,7 +233,9 @@ describe('buildDispatchOrderDetailViewModel', () => {
     });
     const so = makeSaleOrder({ distributorGroups: [groupA, groupB, groupC] });
 
-    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
 
     expect(vm.distributorGroups).toHaveLength(3);
     const byName = Object.fromEntries(vm.distributorGroups.map((g) => [g.distributorName, g]));
@@ -158,29 +268,53 @@ describe('buildDispatchOrderDetailViewModel', () => {
       id: 'dg-2',
       distributor: { id: 'd2', code: 'D2', name: 'Beta' },
       destinations: [makeDestination({ id: 'dest-2' })],
-      lines: [makeLine({ id: 'l2', destinationId: 'dest-2', styleId: 'style-1', sizeId: 'size-1', quantity: 3 })],
+      lines: [
+        makeLine({
+          id: 'l2',
+          destinationId: 'dest-2',
+          styleId: 'style-1',
+          sizeId: 'size-1',
+          quantity: 3,
+        }),
+      ],
     });
     const so = makeSaleOrder({ distributorGroups: [groupA, groupB] });
-    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, { generatedAt: '2026-09-15T10:00:00Z' });
-    expect(vm.styleSizeTotals).toEqual([{ key: 'style-1:size-1', styleDisplay: 'STY-0001 — Basic Tee', sizeLabel: 'Medium', quantity: 8 }]);
+    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
+    expect(vm.styleSizeTotals).toEqual([
+      {
+        primaryImage: null,
+        key: 'style-1:size-1',
+        styleDisplay: 'STY-0001 — Basic Tee',
+        sizeLabel: 'Medium',
+        quantity: 8,
+      },
+    ]);
     expect(vm.grandTotalQuantity).toBe(so.totalQuantity);
   });
 
   it('never invents a cancellation field or a partial-fulfilment percentage', () => {
-    const vm = buildDispatchOrderDetailViewModel(makeSaleOrder(), nullRelated, { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildDispatchOrderDetailViewModel(makeSaleOrder(), nullRelated, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     const serialized = JSON.stringify(vm);
     expect(serialized.toLowerCase()).not.toContain('cancel');
     expect(serialized).not.toMatch(/%/);
   });
 
   it('never exposes a Job-Order-level allocation field on a line', () => {
-    const vm = buildDispatchOrderDetailViewModel(makeSaleOrder(), nullRelated, { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildDispatchOrderDetailViewModel(makeSaleOrder(), nullRelated, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     const serialized = JSON.stringify(vm);
     expect(serialized.toLowerCase()).not.toContain('joborder');
   });
 
   it('prints null (not an empty array) for a linked-record section the viewer cannot see', () => {
-    const vm = buildDispatchOrderDetailViewModel(makeSaleOrder(), nullRelated, { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildDispatchOrderDetailViewModel(makeSaleOrder(), nullRelated, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     expect(vm.factoryDispatches).toBeNull();
     expect(vm.erveDispatches).toBeNull();
     expect(vm.auditTrail).toBeNull();
@@ -191,21 +325,51 @@ describe('buildDispatchOrderDetailViewModel', () => {
       makeSaleOrder(),
       {
         factoryDispatches: [
-          { id: 'fd1', factoryDispatchNumber: 'EIFD/26-27/0001', factory: { id: 'f1', code: 'F1', name: 'Acme Factory' }, saleOrder: { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001', distributors: [] }, status: 'DRAFT', version: 1, preparedAt: '2026-07-01T00:00:00.000Z', finalizedAt: null, consolidated: false },
+          {
+            id: 'fd1',
+            factoryDispatchNumber: 'EIFD/26-27/0001',
+            factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
+            saleOrder: { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001', distributors: [] },
+            status: 'DRAFT',
+            version: 1,
+            preparedAt: '2026-07-01T00:00:00.000Z',
+            finalizedAt: null,
+            consolidated: false,
+          },
         ],
         erveDispatches: [],
-        auditTrail: [{ id: 'a1', action: 'CREATED', title: 'Dispatch Order created', detail: null, actor: { id: 'u1', name: 'Test Merchandiser', email: 'merch@erve.local' }, createdAt: '2026-06-30T00:00:00.000Z' }],
+        auditTrail: [
+          {
+            id: 'a1',
+            action: 'CREATED',
+            title: 'Dispatch Order created',
+            detail: null,
+            actor: { id: 'u1', name: 'Test Merchandiser', email: 'merch@erve.local' },
+            createdAt: '2026-06-30T00:00:00.000Z',
+          },
+        ],
       },
       { generatedAt: '2026-09-15T10:00:00Z' },
     );
-    expect(vm.factoryDispatches).toEqual([{ id: 'fd1', factoryDispatchNumber: 'EIFD/26-27/0001', statusLabel: 'Draft' }]);
+    expect(vm.factoryDispatches).toEqual([
+      { id: 'fd1', factoryDispatchNumber: 'EIFD/26-27/0001', statusLabel: 'Draft' },
+    ]);
     expect(vm.erveDispatches).toEqual([]);
-    expect(vm.auditTrail?.[0]).toMatchObject({ title: 'Dispatch Order created', actorName: 'Test Merchandiser' });
+    expect(vm.auditTrail?.[0]).toMatchObject({
+      title: 'Dispatch Order created',
+      actorName: 'Test Merchandiser',
+    });
   });
 
   it('does not leak unrelated/internal properties into the printable view model', () => {
-    const so = { ...makeSaleOrder(), __internalDebugFlag: true, someAuditInternal: 'secret' } as SaleOrder;
-    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, { generatedAt: '2026-09-15T10:00:00Z' });
+    const so = {
+      ...makeSaleOrder(),
+      __internalDebugFlag: true,
+      someAuditInternal: 'secret',
+    } as SaleOrder;
+    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     const serialized = JSON.stringify(vm);
     expect(serialized).not.toContain('__internalDebugFlag');
     expect(serialized).not.toContain('someAuditInternal');

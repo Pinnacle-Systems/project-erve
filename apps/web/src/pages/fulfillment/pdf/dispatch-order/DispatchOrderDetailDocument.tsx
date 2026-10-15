@@ -6,6 +6,7 @@ import { PdfMetaSection } from '../../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import { PdfTable, type PdfTableColumn } from '../../../../lib/pdf/core/PdfTable.js';
+import { PdfThumbnail, type PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 import type {
   DispatchOrderDetailAuditRow,
   DispatchOrderDetailErveDispatchRow,
@@ -24,16 +25,29 @@ const styles = StyleSheet.create({
   totalsLine: { fontSize: 9, fontWeight: 700, color: '#111111', marginTop: 4, textAlign: 'right' },
 });
 
+function imageColumn<T extends { primaryImage: { id: string } | null }>(
+  images: Map<string, PdfImageSource>,
+): PdfTableColumn<T> {
+  return {
+    key: 'image',
+    header: 'Image',
+    width: '8%',
+    render: (row) => (
+      <PdfThumbnail image={row.primaryImage ? images.get(row.primaryImage.id) : null} width={32} height={32} />
+    ),
+  };
+}
+
 const lineColumns: PdfTableColumn<DispatchOrderDetailLineRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '55%', value: (row) => row.styleDisplay },
+  { key: 'styleDisplay', header: 'Style', width: '52%', value: (row) => row.styleDisplay },
   { key: 'sizeLabel', header: 'Size', width: '20%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Quantity', width: '25%', align: 'right', value: (row) => row.quantity },
+  { key: 'quantity', header: 'Quantity', width: '20%', align: 'right', value: (row) => row.quantity },
 ];
 
 const styleSizeTotalColumns: PdfTableColumn<DispatchOrderDetailStyleSizeTotalRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '55%', value: (row) => row.styleDisplay },
+  { key: 'styleDisplay', header: 'Style', width: '52%', value: (row) => row.styleDisplay },
   { key: 'sizeLabel', header: 'Size', width: '20%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Total Quantity', width: '25%', align: 'right', value: (row) => row.quantity },
+  { key: 'quantity', header: 'Total Quantity', width: '20%', align: 'right', value: (row) => row.quantity },
 ];
 
 const factoryDispatchColumns: PdfTableColumn<DispatchOrderDetailFactoryDispatchRow>[] = [
@@ -56,10 +70,11 @@ const auditColumns: PdfTableColumn<DispatchOrderDetailAuditRow>[] = [
 
 export interface DispatchOrderDetailDocumentProps {
   viewModel: DispatchOrderDetailPdfViewModel;
+  images?: Map<string, PdfImageSource>;
 }
 
 /** Landscape — the nested Distributor/Destination hierarchy and Style/Size totals tables read far better wide. */
-export function DispatchOrderDetailDocument({ viewModel }: DispatchOrderDetailDocumentProps) {
+export function DispatchOrderDetailDocument({ viewModel, images = new Map() }: DispatchOrderDetailDocumentProps) {
   return (
     <PdfDocument orientation="landscape">
       <PdfHeader title={viewModel.title} subtitle={viewModel.subtitle} />
@@ -83,7 +98,7 @@ export function DispatchOrderDetailDocument({ viewModel }: DispatchOrderDetailDo
                 <Text style={styles.note}>{dest.addressLine}</Text>
                 {dest.contactLine ? <Text style={styles.note}>{dest.contactLine}</Text> : null}
                 {dest.gstin ? <Text style={styles.note}>GSTIN: {dest.gstin}</Text> : null}
-                <PdfTable columns={lineColumns} rows={dest.lines} rowKey={(row) => row.id} />
+                <PdfTable columns={[imageColumn<DispatchOrderDetailLineRow>(images), ...lineColumns]} rows={dest.lines} rowKey={(row) => row.id} />
               </View>
             ))}
           </View>
@@ -91,7 +106,7 @@ export function DispatchOrderDetailDocument({ viewModel }: DispatchOrderDetailDo
       </PdfSection>
 
       <PdfSection title="Style / Size Totals" wrap>
-        <PdfTable columns={styleSizeTotalColumns} rows={viewModel.styleSizeTotals} rowKey={(row) => row.key} />
+        <PdfTable columns={[imageColumn<DispatchOrderDetailStyleSizeTotalRow>(images), ...styleSizeTotalColumns]} rows={viewModel.styleSizeTotals} rowKey={(row) => row.key} />
         <Text style={styles.totalsLine}>Total: {viewModel.grandTotalQuantity}</Text>
       </PdfSection>
 

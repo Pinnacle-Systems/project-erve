@@ -44,6 +44,7 @@ beforeEach(() => {
     }
     if (url === '/hsns/hsn-1') return { data: { data: hsn } };
     if (url === '/hsns/gst-rule-set-options') return { data: { data: [] } };
+    if (url.endsWith('/history')) return { data: { data: [] } };
     throw new Error(`Unexpected request: ${url}`);
   });
 });
@@ -101,6 +102,13 @@ function expectLocation(path: string) {
 }
 
 describe.each(manageRoles)('HSN registered navigation for %s', (role) => {
+  it('opens the shared HSN import workflow from the listing', async () => {
+    await renderRoutes(role, '/hsns', () => Boolean(findAction('Import')));
+    await clickAction('Import');
+    await waitFor(() => container.textContent?.includes('Import HSNs') ?? false);
+    expectLocation('/hsns/import');
+    expect(container.textContent).toContain('GST Rule Set assignment is outside');
+  });
   it('opens the create form from the list', async () => {
     await renderRoutes(role, '/hsns', () => Boolean(findAction('Create HSN')));
     await clickAction('Create HSN');

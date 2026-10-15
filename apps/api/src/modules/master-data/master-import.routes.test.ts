@@ -4,9 +4,10 @@ import * as XLSX from 'xlsx';
 import { createApp } from '../../app.js';
 import { createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 import { prisma } from '../../db/prisma.js';
+import { createId } from '@erve/shared';
 
 const app = createApp();
-async function token(roles: ('ADMIN' | 'QA_USER')[] = ['ADMIN']) {
+async function token(roles: ('ADMIN' | 'QA_USER' | 'ACCOUNTANT' | 'MERCHANDISER')[] = ['ADMIN']) {
   return (
     await createTestUserAndToken({
       email: 'imports@test.local',
@@ -17,6 +18,31 @@ async function token(roles: ('ADMIN' | 'QA_USER')[] = ['ADMIN']) {
 }
 describe('authorized business import HTTP workflows', () => {
   beforeEach(resetDatabase);
+  it('enforces HSN-only ACCOUNTANT authorization on every shared endpoint', async () => {
+    const auth = await token(['ACCOUNTANT']);
+    for (const kind of ['factories', 'distributors', 'retail-stores', 'seasons', 'sizes']) {
+      for (const endpoint of ['template', 'history', 'history/missing', 'history/missing/exceptions'])
+        expect((await request(app).get(`/master-imports/${kind}/${endpoint}`).set('Authorization', `Bearer ${auth}`)).status).toBe(403);
+      for (const endpoint of ['worksheets', 'preflight', 'exceptions', 'execute'])
+        expect((await request(app).post(`/master-imports/${kind}/${endpoint}`).set('Authorization', `Bearer ${auth}`)).status).toBe(403);
+    }
+    expect((await request(app).get('/master-imports/hsns/template').set('Authorization', `Bearer ${auth}`)).status).toBe(200);
+    expect((await request(app).get('/master-imports/hsns/history').set('Authorization', `Bearer ${auth}`)).status).toBe(200);
+  });
+  it.each(['seasons', 'sizes', 'hsns'] as const)('uploads, confirms and displays persisted history for %s', async kind => {
+    const auth = await token(kind === 'hsns' ? ['ACCOUNTANT'] : ['MERCHANDISER']);
+    await prisma.financialYear.create({ data: { id: createId(), code: '2026-27', startDate: new Date('2026-04-01'), endDate: new Date('2027-03-31') } });
+    const files = { seasons: 'Season Code,Season Name,Financial Year\nAW,Winter,2026-27\n', sizes: 'Size Code,Size Label,Size Type,Sort Order\nxxs,Small,ALPHA,0\n', hsns: 'HSN Code,Description\n01234567,Text\n' };
+    const file = Buffer.from(files[kind]);
+    const preview = await request(app).post(`/master-imports/${kind}/preflight`).set('Authorization', `Bearer ${auth}`).attach('file', file, 'm.csv');
+    expect(preview.status).toBe(200); expect(preview.body.data.summary.CREATE).toBe(1);
+    const done = await request(app).post(`/master-imports/${kind}/execute`).set('Authorization', `Bearer ${auth}`).field('confirmationToken', preview.body.data.confirmationToken).attach('file', file, 'm.csv');
+    expect(done.status).toBe(200); expect(done.body.data.summary.CREATE).toBe(1);
+    const history = await request(app).get(`/master-imports/${kind}/history`).set('Authorization', `Bearer ${auth}`);
+    expect(history.body.data[0].id).toBe(done.body.data.runId);
+    const detail = await request(app).get(`/master-imports/${kind}/history/${done.body.data.runId}`).set('Authorization', `Bearer ${auth}`);
+    expect(detail.body.data.rows[0].payload.code).toBe(kind === 'seasons' ? 'AW' : kind === 'sizes' ? 'xxs' : '01234567');
+  });
   it('requires authentication and matching master-management roles for templates, preview and history', async () => {
     expect((await request(app).get('/master-imports/factories/template')).status).toBe(401);
     const auth = await token(['QA_USER']);

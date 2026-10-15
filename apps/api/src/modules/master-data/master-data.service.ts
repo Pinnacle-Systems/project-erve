@@ -633,26 +633,41 @@ export async function createSeason(
     barcodeSerial?: number | null;
     status?: 'ACTIVE' | 'INACTIVE';
   },
+  options: MasterCreateOptions = {},
 ) {
   await assertFinancialYearExists(input.financialYearId);
-  if (input.barcodeSerial != null) await assertBarcodeSerialAvailable(input.barcodeSerial);
+  if (input.barcodeSerial != null)
+    await assertBarcodeSerialAvailable(input.barcodeSerial);
   try {
-    const season = await prisma.season.create({
-      data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' },
-      include: seasonInclude,
+    return await prisma.$transaction(async (tx) => {
+      const season = await tx.season.create({
+        data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' },
+        include: seasonInclude,
+      });
+      await recordAuditLog(
+        {
+          actorId: actor.id,
+          action: 'SEASON_CREATED',
+          entityType: 'Season',
+          entityId: season.id,
+          metadata: {
+            code: season.code,
+            name: season.name,
+            financialYearId: season.financialYearId,
+          },
+        },
+        tx,
+      );
+      await options.onCreatedInTransaction?.(tx, season);
+      return toSeasonView(season);
     });
-    await recordAuditLog({
-      actorId: actor.id,
-      action: 'SEASON_CREATED',
-      entityType: 'Season',
-      entityId: season.id,
-      metadata: { code: season.code, name: season.name, financialYearId: season.financialYearId },
-    });
-    return toSeasonView(season);
   } catch (error) {
-    if (input.barcodeSerial != null) await assertBarcodeSerialAvailable(input.barcodeSerial);
+    if (input.barcodeSerial != null)
+      await assertBarcodeSerialAvailable(input.barcodeSerial);
     if (isUniqueConstraintError(error))
-      throw HttpError.conflict('A Season with this code already exists in that Financial Year');
+      throw HttpError.conflict(
+        'A Season with this code already exists in that Financial Year',
+      );
     throw error;
   }
 }
@@ -1247,18 +1262,25 @@ export async function createSize(
     sortOrder: number;
     status?: SizeStatus;
   },
+  options: MasterCreateOptions = {},
 ) {
   try {
-    const size = await prisma.size.create({
-      data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' },
+    return await prisma.$transaction(async (tx) => {
+      const size = await tx.size.create({
+        data: { id: createId(), ...input, status: input.status ?? 'ACTIVE' },
+      });
+      await recordAuditLog(
+        {
+          actorId: actor.id,
+          action: 'SIZE_CREATED',
+          entityType: 'Size',
+          entityId: size.id,
+        },
+        tx,
+      );
+      await options.onCreatedInTransaction?.(tx, size);
+      return size;
     });
-    await recordAuditLog({
-      actorId: actor.id,
-      action: 'SIZE_CREATED',
-      entityType: 'Size',
-      entityId: size.id,
-    });
-    return size;
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw HttpError.conflict('A size with this code already exists');
