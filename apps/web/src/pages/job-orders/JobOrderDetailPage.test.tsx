@@ -158,6 +158,37 @@ describe('JobOrderDetailPage ?tab= deep linking', () => {
 });
 
 describe('JobOrderDetailPage sticky context', () => {
+  it('stacks the Send confirmation overlay and dialog above the sticky summary', async () => {
+    await renderJobOrderDetail(container, root, {
+      status: 'DRAFT',
+      overrides: { disclaimerText: 'Approved factory commercial terms.' },
+    });
+
+    const sticky = container.querySelector('.sticky') as HTMLElement;
+    const send = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Send to Factory',
+    );
+    expect(send).toBeDefined();
+    act(() => send!.click());
+
+    // The dialog is portaled to document.body. React/jsdom does not perform
+    // paint-order layout, so enforce the actual Tailwind stacking contract
+    // shared by the overlay, dialog content and sticky context.
+    const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement;
+    const overlay = document.body.querySelector('.fixed.inset-0') as HTMLElement;
+    expect(dialog).not.toBeNull();
+    expect(overlay).not.toBeNull();
+    expect(dialog.textContent).toContain('Send job order to factory?');
+
+    const layer = (element: HTMLElement) => {
+      const token = Array.from(element.classList).find((name) => /^z-\d+$/.test(name));
+      return token ? Number(token.slice(2)) : NaN;
+    };
+    expect(Number.isFinite(layer(sticky))).toBe(true);
+    expect(layer(sticky)).toBeLessThan(layer(overlay));
+    expect(layer(sticky)).toBeLessThan(layer(dialog));
+  });
+
   it('shows Job Order number, factory, and status regardless of which tab is active', async () => {
     await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
     const sticky = container.querySelector('.sticky') as HTMLElement;
