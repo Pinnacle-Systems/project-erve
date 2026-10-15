@@ -138,6 +138,9 @@ export function StyleBulkImportPage() {
   });
 
   const handleFileChange = (selected: File | null) => {
+    // New selections must never reuse a prior workbook's worksheet readiness or errors.
+    sheetsMutation.reset();
+    preflightMutation.reset();
     setFile(selected);
     currentSelection.current = { file: selected, worksheet: '' };
     setWorksheet(''); setWorksheets([]);
@@ -145,6 +148,12 @@ export function StyleBulkImportPage() {
     setResults(null);
     if (selected) sheetsMutation.mutate(selected);
   };
+
+  // Workbook inspection uploads the chosen file to discover worksheets.
+  // Only that same file's successful response makes the Preview action safe.
+  const workbookReady = Boolean(
+    file && sheetsMutation.isSuccess && sheetsMutation.variables === file,
+  );
 
   return (
     <div className="space-y-5">
@@ -164,16 +173,24 @@ export function StyleBulkImportPage() {
           />
           <Button
             type="button"
-            disabled={!file || preflightMutation.isPending}
+            disabled={!workbookReady || preflightMutation.isPending || executeMutation.isPending}
             loading={preflightMutation.isPending}
-            onClick={() => file && preflightMutation.mutate({ selected: file, sheet: worksheet })}
+            onClick={() => {
+              if (file && workbookReady && !preflightMutation.isPending && !executeMutation.isPending) {
+                preflightMutation.mutate({ selected: file, sheet: worksheet });
+              }
+            }}
           >
             Preview
           </Button>
         </div>
         <label className="mt-3 block text-sm">
           Worksheet
-          <select aria-label="Worksheet" value={worksheet} onChange={(event) => {
+          <select
+            aria-label="Worksheet"
+            value={worksheet}
+            disabled={!workbookReady || preflightMutation.isPending || executeMutation.isPending}
+            onChange={(event) => {
             setWorksheet(event.target.value); currentSelection.current.worksheet = event.target.value; setPreflight(null); setResults(null);
           }}>
             {worksheets.length === 0 && <option value="">First worksheet</option>}
@@ -188,6 +205,11 @@ export function StyleBulkImportPage() {
             (&quot;NAME:PRICE;NAME:PRICE&quot;) or legacy Factory Mappings (&quot;CODE:PRICE;CODE:PRICE&quot;). Embed PNG or JPEG pictures anchored to their Style&apos;s row,
             or use Excel Picture in Cell on that row, in any column. No filename, base64 or URL column is needed. Cached web pictures must be packaged in the workbook.
         </p>
+        {file && sheetsMutation.isPending && (
+          <p className="mt-2 text-sm text-muted-foreground" role="status">
+            Reading workbook worksheets… Preview will be available when this completes.
+          </p>
+        )}
         {preflightMutation.isError && (
           <ErrorState title="Could not preview this file" description={(preflightMutation.error as Error).message} />
         )}
