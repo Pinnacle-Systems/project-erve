@@ -43,7 +43,7 @@ export function JobOrderStickyContext({
 }: JobOrderStickyContextProps) {
   return (
     <div
-      className="sticky z-20 flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle bg-surface px-4 py-2 shadow-[var(--erp-shadow-xs)] md:px-8"
+      className="sticky z-20 grid grid-cols-1 gap-3 border-b border-border-subtle bg-surface px-4 py-2 shadow-[var(--erp-shadow-xs)] md:px-8 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center"
       style={{ top: 'var(--app-shell-header-height, 4rem)' }}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
@@ -85,7 +85,7 @@ export function JobOrderStickyContext({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2 justify-self-end xl:flex-nowrap">
         {actions.canSend && (
           <div className="flex flex-col items-end gap-1">
             <Button variant="default" onClick={actions.onSend}>
