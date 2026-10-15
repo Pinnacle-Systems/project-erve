@@ -38,6 +38,7 @@ async function render(
   invoice: TaxInvoiceReviewView,
   role: Role = 'ACCOUNTANT',
   auditError = false,
+  billToChanged = false,
 ) {
   const user: AuthUser = {
     id: 'user-1',
@@ -56,6 +57,23 @@ async function render(
   } as unknown as ReturnType<typeof Auth.useAuth>);
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url.endsWith('/review')) return { data: { data: invoice } };
+    if (url.endsWith('/bill-to-refresh-preview'))
+      return {
+        data: {
+          data: {
+            invoiceId: invoice.id,
+            distributor: invoice.distributor,
+            expectedVersion: invoice.version,
+            expectedMasterUpdatedAt: '2026-10-15T01:00:00.000Z',
+            proposedFingerprint: 'a'.repeat(64),
+            changed: billToChanged,
+            current: { ...invoice.billTo, state: null },
+            proposed: { ...invoice.billTo, state: 'Maharashtra' },
+            validation: { stateCode: '27', blockers: [] },
+          },
+        },
+      };
+
     if (url.endsWith('/audit')) {
       if (auditError) throw new Error('Audit service unavailable');
       return {
@@ -319,10 +337,9 @@ describe('Tax Invoice Accountant review and immutable presentation', () => {
     await act(async () => (button('Confirm cancellation') as HTMLButtonElement).click());
 
     await vi.waitFor(() =>
-      expect(post).toHaveBeenCalledWith(
-        '/tax-invoices/inv-1/actions/cancel',
-        { reason: 'Distributor GSTIN changed' },
-      ),
+      expect(post).toHaveBeenCalledWith('/tax-invoices/inv-1/actions/cancel', {
+        reason: 'Distributor GSTIN changed',
+      }),
     );
   });
 
@@ -365,4 +382,100 @@ describe('Tax Invoice Accountant review and immutable presentation', () => {
       }),
     );
   });
+});
+
+describe('PR1 same-draft Bill-To recovery UI', () => {
+  it('detects changed source despite blocked GST, compares values and requires a reason', async () => {
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValue({ data: { data: taxInvoiceFixture() } });
+    await render(
+      taxInvoiceFixture({
+        review: {
+          state: 'BLOCKED',
+          isPreview: true,
+          calculatedAt: null,
+          blockers: [{ code: 'BILL_TO_STATE_UNRESOLVED', message: 'Invalid State' }],
+        },
+      }),
+      'ACCOUNTANT',
+      false,
+      true,
+    );
+    await vi.waitFor(() => expect(text()).toContain('Bill-To details have changed'));
+    await act(async () => button('Review Bill-To changes')!.click());
+    expect(text()).toContain('Saved on this draft');
+    expect(text()).toContain('Current Distributor details');
+    expect(text()).toContain('Maharashtra');
+    expect(button('Apply Bill-To correction')?.disabled).toBe(true);
+    const input = document.querySelector(
+      '[aria-label="Reason for Bill-To correction"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+        input,
+        'Master State corrected',
+      );
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => button('Apply Bill-To correction')!.click());
+    await vi.waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/tax-invoices/inv-1/actions/refresh-bill-to',
+        expect.objectContaining({
+          reason: 'Master State corrected',
+          proposedFingerprint: 'a'.repeat(64),
+        }),
+        expect.objectContaining({ headers: { 'Idempotency-Key': expect.any(String) } }),
+      ),
+    );
+  });
+  it.each(['ADMIN', 'MERCHANDISER'] as const)('does not expose recovery to %s', async (role) => {
+    await render(taxInvoiceFixture(), role, false, true);
+    expect(button('Review Bill-To changes')).toBeUndefined();
+  });
+});
+
+describe('PR1 recovery failure and issued-state safety', () => {
+  it('retains the reason and comparison after a failed correction', async () => {
+    vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('Synthetic version conflict'));
+    await render(taxInvoiceFixture(), 'ACCOUNTANT', false, true);
+    await vi.waitFor(() => expect(button('Review Bill-To changes')).toBeDefined());
+    await act(async () => button('Review Bill-To changes')!.click());
+    const input = document.querySelector(
+      '[aria-label="Reason for Bill-To correction"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+        input,
+        'Keep my reason',
+      );
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => button('Apply Bill-To correction')!.click());
+    await vi.waitFor(() => expect(text()).toContain('Synthetic version conflict'));
+    expect(input.value).toBe('Keep my reason');
+    expect(text()).toContain('Saved on this draft');
+    expect(button('Reload comparison')).toBeDefined();
+  });
+  it.each(['FINALIZED', 'CANCELLED'] as const)(
+    'never checks or offers Bill-To refresh on %s',
+    async (status) => {
+      await render(
+        taxInvoiceFixture({
+          status,
+          review: { state: status, isPreview: false, calculatedAt: null, blockers: [] },
+        }),
+        'ACCOUNTANT',
+        false,
+        true,
+      );
+      expect(button('Review Bill-To changes')).toBeUndefined();
+      expect(
+        vi
+          .mocked(apiClient.get)
+          .mock.calls.some(([url]) => String(url).endsWith('/bill-to-refresh-preview')),
+      ).toBe(false);
+    },
+  );
 });

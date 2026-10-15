@@ -43,6 +43,7 @@ import {
   formatInvoiceTimestamp,
   invoiceAuditTitle,
 } from './tax-invoice-ui.js';
+import { TaxInvoiceBillToRefreshDialog } from './TaxInvoiceBillToRefreshDialog.js';
 import { TaxInvoiceLines } from './TaxInvoiceLines.js';
 import { TaxInvoiceTotals } from './TaxInvoiceTotals.js';
 import { TaxInvoiceOverrideDialog } from './TaxInvoiceOverrideDialog.js';
@@ -60,6 +61,8 @@ const addressText = (address: TaxInvoiceAddress) =>
     .join(', ') || 'Address not snapshotted';
 const financialReviewKey = (invoice: TaxInvoiceReviewView) =>
   JSON.stringify([
+    invoice.billTo,
+    invoice.version,
     invoice.lines.map((line) => [
       line.id,
       line.quantity,
@@ -123,6 +126,7 @@ function TaxInvoiceDetail({
   const navigate = useNavigate();
   const { user } = useAuth();
   const [tab, setTab] = useState('review');
+  const [billToOpen, setBillToOpen] = useState(false);
   const [editing, setEditing] = useState<TaxInvoiceLineView | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -245,6 +249,7 @@ function TaxInvoiceDetail({
               onClick={() => setConfirm(true)}
               disabled={
                 invoice.review.state !== 'READY' ||
+                billToOpen ||
                 busy ||
                 refreshing ||
                 refreshError ||
@@ -267,7 +272,8 @@ function TaxInvoiceDetail({
               variant="secondary"
               onClick={() => navigate(`/fulfillment/tax-invoices/${invoice.replacedByInvoiceId}`)}
             >
-              View replacement {invoice.replacedByInvoiceNumber ? `(${invoice.replacedByInvoiceNumber})` : 'draft'}
+              View replacement{' '}
+              {invoice.replacedByInvoiceNumber ? `(${invoice.replacedByInvoiceNumber})` : 'draft'}
             </Button>
           ) : undefined
         }
@@ -339,6 +345,14 @@ function TaxInvoiceDetail({
               Retry
             </Button>
           }
+        />
+      )}
+      {mutable && (
+        <TaxInvoiceBillToRefreshDialog
+          id={invoice.id}
+          version={invoice.version}
+          disabled={busy || refreshing || refreshError}
+          onOpenChange={setBillToOpen}
         />
       )}
       {error && <ValidationMessage tone="error">{error}</ValidationMessage>}
@@ -436,10 +450,7 @@ function TaxInvoiceDetail({
             />
           )}
           {invoice.cancellationReason && (
-            <DescriptionList.Item
-              label="Cancellation reason"
-              value={invoice.cancellationReason}
-            />
+            <DescriptionList.Item label="Cancellation reason" value={invoice.cancellationReason} />
           )}
           <DescriptionList.Item
             label="Erve Dispatch"
@@ -594,9 +605,9 @@ function TaxInvoiceDetail({
           <DialogHeader>
             <DialogTitle>Cancel Tax Invoice</DialogTitle>
             <DialogDescription>
-              Cancelling invoice {invoice.invoiceNumber} is permanent. The issued document and number
-              are preserved for audit and cannot be reused. A replacement invoice may then be drafted
-              against the same EIPL.
+              Cancelling invoice {invoice.invoiceNumber} is permanent. The issued document and
+              number are preserved for audit and cannot be reused. A replacement invoice may then be
+              drafted against the same EIPL.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">

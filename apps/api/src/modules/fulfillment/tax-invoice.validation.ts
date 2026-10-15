@@ -63,3 +63,18 @@ export const listTaxInvoicesQuerySchema = z.object({
     .max(TAX_INVOICE_LIST_MAX_LIMIT)
     .default(TAX_INVOICE_LIST_DEFAULT_LIMIT),
 });
+
+export const refreshBillToSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    expectedMasterUpdatedAt: z.iso.datetime(),
+    proposedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    reason: z.string().trim().min(1, 'A correction reason is required').max(1000),
+  })
+  .strict();
+
+export const refreshBillToKeySchema = z
+  .string()
+  .trim()
+  .min(1, 'Idempotency-Key is required')
+  .max(200);

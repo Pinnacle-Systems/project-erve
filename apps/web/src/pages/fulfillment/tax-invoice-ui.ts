@@ -63,6 +63,7 @@ export function invoiceAuditTitle(action: string): string {
     (
       {
         TAX_INVOICE_DRAFT_CREATED: 'Draft created',
+        TAX_INVOICE_BILL_TO_REFRESHED: 'Draft Bill-To corrected',
         TAX_INVOICE_LINE_RATE_OVERRIDDEN: 'Unit rate overridden',
         TAX_INVOICE_FINALIZED: 'Invoice finalized and EI number allocated',
         TAX_INVOICE_CANCELLED: 'Invoice cancelled',

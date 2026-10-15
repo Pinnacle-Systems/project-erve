@@ -37,6 +37,8 @@ def photo_fingerprints(document):
 names = ['rounded', 'rounded-admin', 'multi', 'legacy']
 if (root / 'grouped.pdf').exists():
     names.append('grouped')
+if (root / 'recovered-bill-to.pdf').exists():
+    names.append('recovered-bill-to')
 for name in names:
     expected = json.loads((root / f'{name}-expected.json').read_text())
     document = pymupdf.open(root / f'{name}.pdf')
@@ -44,6 +46,9 @@ for name in names:
     flat = re.sub(r'\s+', ' ', text)
     compact = re.sub(r'\s+', '', text)
     assert expected['invoiceNumber'] in flat, (name, 'issued identity')
+    if name == 'recovered-bill-to':
+        assert 'Recovered Bill-To City' in flat
+        assert expected['billTo']['state'] in flat
     for key in ['subtotal', 'totalCgst', 'totalSgst', 'totalIgst', 'totalGst', 'grandTotal']:
         assert money(expected[key]) in flat, (name, key, expected[key])
     assert money(expected['payableTotal'] or expected['grandTotal']) in flat
