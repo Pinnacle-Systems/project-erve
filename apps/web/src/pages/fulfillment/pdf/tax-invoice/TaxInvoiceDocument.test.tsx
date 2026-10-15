@@ -1,10 +1,17 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { cloneElement } from 'react';
 import { pdf } from '@react-pdf/renderer';
+import { PdfDocument } from '../../../../lib/pdf/core/PdfDocument.js';
 import { describe, expect, it } from 'vitest';
-import { TaxInvoiceDocument, taxInvoiceDisplayRows } from './TaxInvoiceDocument.js';
+import { TaxInvoiceDocument } from './TaxInvoiceDocument.js';
 import { buildTaxInvoiceViewModel } from './buildTaxInvoiceViewModel.js';
-import { issuedTaxInvoiceFixture, nineStyleTaxInvoiceFixture } from './taxInvoicePdfFixture.js';
+import {
+  issuedTaxInvoiceFixture,
+  nineStyleTaxInvoiceFixture,
+  iss032TaxInvoiceFixture,
+  iss032VisualFixtures,
+} from './taxInvoicePdfFixture.js';
 
 interface PdfNode {
   type?: string;
@@ -15,9 +22,17 @@ interface PdfNode {
 function nodes(root: PdfNode): PdfNode[] {
   return [root, ...(root.children ?? []).flatMap(nodes)];
 }
-async function render(invoice = issuedTaxInvoiceFixture()) {
+async function render(invoice = issuedTaxInvoiceFixture(), imageDataUri?: string) {
+  const model = buildTaxInvoiceViewModel(invoice);
+  if (imageDataUri) for (const group of model.groups) group.image = { dataUri: imageDataUri };
+  let layout: PdfNode | undefined;
+  const shell = TaxInvoiceDocument({ viewModel: model, logoSrc: null });
   const instance = pdf(
-    <TaxInvoiceDocument viewModel={buildTaxInvoiceViewModel(invoice)} logoSrc={null} />,
+    cloneElement(PdfDocument(shell.props), {
+      onRender: (data: unknown) => {
+        layout = (data as { _INTERNAL__LAYOUT__DATA_: PdfNode })._INTERNAL__LAYOUT__DATA_;
+      },
+    }),
   );
   const blob = await instance.toBlob();
   const all = nodes((instance.container as { document: PdfNode }).document);
@@ -26,27 +41,106 @@ async function render(invoice = issuedTaxInvoiceFixture()) {
     text: all.map((node) => node.value ?? '').join('\n'),
     all,
     bytes: new TextDecoder().decode(await blob.arrayBuffer()),
+    layout,
   };
 }
 describe('issued Tax Invoice PDF document', () => {
-  it('fits the reference-shaped nine-Style/six-size case on one A4 page', async () => {
+  it('keeps each financial header with opening descriptive content on the laid-out page', async () => {
+    const image = await fs.readFile(new URL('../../../../../public/erve-logo.png', import.meta.url));
+    const result = await render(
+      iss032TaxInvoiceFixture(14),
+      `data:image/png;base64,${image.toString('base64')}`,
+    );
+    let headers = 0;
+    for (const page of result.layout!.children!) {
+      for (const [index, child] of page.children!.entries()) {
+        if (!nodes(child).some((node) => /^(SS26-|SYNTHETIC-STYLE-)/.test(node.value ?? '')))
+          continue;
+        headers++;
+        const next = page.children![index + 1];
+        expect(
+          next && nodes(next).some((node) => node.value === 'Synthetic cotton printed T-shirt'),
+        ).toBe(true);
+      }
+    }
+    expect(headers).toBe(14);
+  });
+  it('keeps the six age sizes and complete Style code in one logical financial entry', async () => {
+    const invoice = iss032TaxInvoiceFixture();
+    const original = structuredClone(invoice);
+    const result = await render(invoice);
+    expect(result.text).toContain('SS26-14026001');
+    for (const age of [9, 10, 11, 12, 13, 14]) expect(result.text).toContain(`${age} Years: 10`);
+    expect(result.text).not.toContain('continued');
+    expect(result.text).toContain('60 pcs');
+    expect(result.text).toContain('INR 27,064.20');
+    expect(result.text).toContain('INR 1,353.21');
+    expect(result.text).toContain('INR 28,417.00');
+    expect(result.bytes.match(/\/Type \/Page\b/g)).toHaveLength(1);
+    expect(invoice).toEqual(original);
+  });
+
+  it('writes deterministic synthetic PDFs for actual visual inspection', async () => {
+    const directory = process.env.ISS032_PDF_EVIDENCE_DIR ?? '.artifacts/iss032-pdf';
+    await fs.mkdir(directory, { recursive: true });
+    const imagePath = process.env.ISS032_IMAGE_PATH;
+    const image = imagePath
+      ? `data:image/png;base64,${(await fs.readFile(imagePath)).toString('base64')}`
+      : undefined;
+    for (const { name, invoice } of iss032VisualFixtures()) {
+      const result = await render(invoice, name === 'missing-image' ? undefined : image);
+      await fs.writeFile(
+        path.join(directory, `${name}.pdf`),
+        Buffer.from(await result.blob.arrayBuffer()),
+      );
+      await fs.writeFile(path.join(directory, `${name}.json`), JSON.stringify(invoice, null, 2));
+    }
+  }, 30000);
+  it('preserves every group in the nine-Style/six-size A4 case', async () => {
     const invoice = nineStyleTaxInvoiceFixture();
     const model = buildTaxInvoiceViewModel(invoice);
     expect(model.groups).toHaveLength(9);
     expect(model.totalQuantity).toBe(96);
     const result = await render(invoice);
-    expect(result.bytes.match(/\/Type \/Page\b/g)).toHaveLength(1);
+    for (let index = 1; index <= 9; index++) expect(result.text).toContain(`TEST-${index}`);
   });
-  it('preserves long description content and source IDs without repeating group amounts', () => {
-    const model = buildTaxInvoiceViewModel(issuedTaxInvoiceFixture());
-    model.groups[0]!.description = 'Long issued description. '.repeat(30);
-    const rows = taxInvoiceDisplayRows(model.groups);
-    expect(rows.length).toBeGreaterThan(1);
-    expect(rows.map((row) => row.descriptionPart).join('')).toBe(
-      `${model.groups[0]!.styleName}\n${model.groups[0]!.description}`,
-    );
-    expect(rows.filter((row) => !row.continuation)).toHaveLength(1);
-    expect(rows.every((row) => row.sourceLineIds.includes('line-1'))).toBe(true);
+  it('flows a description taller than a printable page without artificial financial entries', async () => {
+    const invoice = iss032VisualFixtures().find(
+      (fixture) => fixture.name === 'long-description',
+    )!.invoice;
+    const result = await render(invoice);
+    expect(result.bytes.match(/\/Type \/Page\b/g)!.length).toBeGreaterThan(1);
+    expect(result.text).toContain('DESCRIPTION END MARKER');
+    expect(result.text).not.toContain('continued');
+    expect(result.text.match(/SS26-14026001/g)).toHaveLength(1);
+    expect(
+      result.text.match(/INR Twenty Eight Thousand Four Hundred Seventeen Only\./g),
+    ).toHaveLength(1);
+  });
+
+  it('preserves every label and quantity in an eighty-size list', async () => {
+    const invoice = iss032TaxInvoiceFixture(1, 80);
+    const result = await render(invoice);
+    for (let index = 1; index <= 80; index++)
+      expect(result.text).toContain(`Synthetic size ${index} Years: 10`);
+    expect(result.text).toContain('800 pcs');
+    expect(result.text).not.toContain('continued');
+  });
+
+  it('keeps punctuation in a complete Size label with its quantity', async () => {
+    const invoice = iss032TaxInvoiceFixture();
+    invoice.documentSnapshot!.lines[0]!.size.label = '9 Years (Tall, relaxed)';
+    const result = await render(invoice);
+    expect(result.text).toContain('9 Years (Tall, relaxed): 10');
+  });
+
+  it('allows hundreds of complete size tokens to flow across pages', async () => {
+    const invoice = iss032TaxInvoiceFixture(1, 360);
+    const result = await render(invoice);
+    expect(result.bytes.match(/\/Type \/Page\b/g)!.length).toBeGreaterThan(1);
+    expect(result.text).toContain('Synthetic size 360 Years: 10');
+    expect(result.text.match(/SS26-14026001/g)).toHaveLength(1);
+    expect(result.text).not.toContain('continued');
   });
   it('renders A4 portrait and frozen financial amounts with bold RCM No', async () => {
     const result = await render();
@@ -200,5 +294,3 @@ describe('issued Tax Invoice PDF document', () => {
     );
   });
 });
-
-

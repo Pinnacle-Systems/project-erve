@@ -1,8 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { buildTaxInvoiceViewModel, invoiceAmountInWords } from './buildTaxInvoiceViewModel.js';
-import { issuedTaxInvoiceFixture } from './taxInvoicePdfFixture.js';
+import { issuedTaxInvoiceFixture, iss032TaxInvoiceFixture } from './taxInvoicePdfFixture.js';
 
 describe('issued Tax Invoice PDF data', () => {
+  it('preserves all six ISS-032 source lines, size quantities and frozen amounts without mutation', () => {
+    const invoice = iss032TaxInvoiceFixture();
+    const original = structuredClone(invoice);
+    const model = buildTaxInvoiceViewModel(invoice);
+    expect(model.groups).toHaveLength(1);
+    expect(model.groups[0]).toMatchObject({
+      styleNumber: 'SS26-14026001',
+      quantity: 60,
+      rate: '451.07',
+      taxable: '27,064.20',
+      hsnCode: '61091000',
+      gstPercent: '5',
+      sizes: '9 Years: 10, 10 Years: 10, 11 Years: 10, 12 Years: 10, 13 Years: 10, 14 Years: 10',
+      sourceLineIds: Array.from({ length: 6 }, (_, index) => `iss032-line-0-${index}`),
+    });
+    expect(model.totals).toMatchObject({
+      taxable: 'INR 27,064.20',
+      igst: 'INR 1,353.21',
+      payable: 'INR 28,417.00',
+      grandTotal: 'INR 28,417.41',
+      roundOffAdjustment: '-INR 0.41',
+    });
+    expect(invoice).toEqual(original);
+  });
   it('uses frozen configured size order and printed numeric formatting', () => {
     const invoice = issuedTaxInvoiceFixture();
     invoice.documentSnapshot!.lines[0]!.size = {
