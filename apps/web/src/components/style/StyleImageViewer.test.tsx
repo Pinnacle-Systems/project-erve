@@ -37,19 +37,17 @@ async function flush() {
 
 const styleResponse = {
   data: {
-    data: {
-      images: [
-        { id: 'img-1', styleId: 'style-1', fileName: 'a.jpg', isPrimary: true, sortOrder: 0 },
-        { id: 'img-2', styleId: 'style-1', fileName: 'b.jpg', isPrimary: false, sortOrder: 1 },
-      ],
-    },
+    data: [
+      { id: 'img-1', styleId: 'style-1', fileName: 'a.jpg', isPrimary: true, sortOrder: 0 },
+      { id: 'img-2', styleId: 'style-1', fileName: 'b.jpg', isPrimary: false, sortOrder: 1 },
+    ],
   },
 };
 
 describe('StyleImageViewer — on-demand resolution of a Style\'s image set', () => {
-  it('fetches the Style only while open, resolves each image, and opens on the requested image', async () => {
+  it('fetches only image metadata while open, resolves each image, and opens on the requested image', async () => {
     const getSpy = vi.spyOn(apiClient, 'get').mockImplementation((path: string) => {
-      if (path === '/styles/style-1') return Promise.resolve(styleResponse);
+      if (path === '/styles/style-1/images') return Promise.resolve(styleResponse);
       return Promise.resolve({ data: new Blob(['bytes']) });
     });
 
@@ -63,7 +61,8 @@ describe('StyleImageViewer — on-demand resolution of a Style\'s image set', ()
     await flush();
     await flush();
 
-    expect(getSpy).toHaveBeenCalledWith('/styles/style-1');
+    expect(getSpy).toHaveBeenCalledWith('/styles/style-1/images');
+    expect(getSpy).not.toHaveBeenCalledWith('/styles/style-1');
     expect(getSpy).toHaveBeenCalledWith(
       '/styles/style-1/images/img-2/content',
       expect.objectContaining({ responseType: 'blob' }),
