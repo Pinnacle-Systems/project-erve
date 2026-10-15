@@ -72,6 +72,23 @@ const executeResponse = {
 };
 
 describe('StyleBulkImportPage', () => {
+  it('uses a visible file-picker button and displays the selected workbook', () => {
+    render();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input.hidden).toBe(true);
+    expect(input.accept).toBe('.xlsx');
+    expect(container.textContent).toContain('No file selected');
+
+    const openPicker = vi.spyOn(input, 'click').mockImplementation(() => {});
+    act(() => Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Choose file')!.click());
+    expect(openPicker).toHaveBeenCalledTimes(1);
+
+    act(() => selectFile());
+    expect(container.textContent).toContain('styles.xlsx');
+  });
+
+
   it('offers template, worksheet selection and history in the existing Style workflow', () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
     render();
