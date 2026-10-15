@@ -46,6 +46,26 @@ async function render(role: Role = 'ACCOUNTANT') {
   );
 }
 describe('Tax Invoice queue', () => {
+  it.each(['ACCOUNTANT', 'ADMIN'] as const)(
+    'shows a draft without a provisional EI number for %s',
+    async (role) => {
+      vi.spyOn(apiClient, 'get').mockResolvedValue({
+        data: {
+          data: {
+            items: [taxInvoiceFixture()],
+            pageInfo: { limit: 25, hasMore: false, nextCursor: null },
+          },
+        },
+      });
+      await render(role);
+      await vi.waitFor(() => expect(container.textContent).toContain('Tax Invoice — Draft'));
+      expect(container.textContent).toContain('Invoice number: Not allocated until finalization');
+      expect(container.textContent).toContain('Source Erve Packing List: EIPL/26-27/0001');
+      expect(container.textContent).toContain('Erve Dispatch: EIED/26-27/0001');
+      expect(container.textContent).not.toContain('Draft · EIPL/');
+      expect(container.textContent).not.toContain('EI/26-27/');
+    },
+  );
   it('loads only server pages and follows the supplied cursor', async () => {
     const get = vi.spyOn(apiClient, 'get').mockImplementation(async (_url, config) => ({
       data: {

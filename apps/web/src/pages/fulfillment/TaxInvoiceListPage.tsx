@@ -98,8 +98,15 @@ export function TaxInvoiceListPage() {
                 render: (row) => (
                   <div>
                     <div className="font-medium">
-                      {row.invoiceNumber ?? `Draft · ${row.ervePackingList.ervePackingListNumber}`}
+                      {row.status === 'DRAFT'
+                        ? 'Tax Invoice — Draft'
+                        : (row.invoiceNumber ?? 'Tax Invoice number unavailable')}
                     </div>
+                    {row.status === 'DRAFT' && (
+                      <div className="text-xs text-muted-foreground">
+                        Invoice number: Not allocated until finalization
+                      </div>
+                    )}
                     {row.replacesInvoiceNumber && (
                       <div className="text-xs text-muted-foreground">
                         Replaces {row.replacesInvoiceNumber}
@@ -164,9 +171,9 @@ export function TaxInvoiceListPage() {
                 header: 'Source documents',
                 render: (row) => (
                   <div className="text-sm">
-                    {row.ervePackingList.ervePackingListNumber}
+                    Source Erve Packing List: {row.ervePackingList.ervePackingListNumber}
                     <div className="text-xs text-muted-foreground">
-                      {row.erveDispatch?.erveDispatchNumber ?? 'Dispatch not recorded'}
+                      Erve Dispatch: {row.erveDispatch?.erveDispatchNumber ?? 'Not recorded'}
                     </div>
                   </div>
                 ),
