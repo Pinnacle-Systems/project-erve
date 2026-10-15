@@ -161,6 +161,38 @@ describe('business import workflow', () => {
       expect(button('Confirm import').disabled).toBe(true);
     },
   );
+  it('blocks XLSX Preview until the worksheet upload finishes and a sheet is selected', async () => {
+    const workbook = { data: { data: { worksheets: ['Seasons'] } } };
+    let complete!: (response: typeof workbook) => void;
+    const pending = new Promise<typeof workbook>((resolve) => { complete = resolve; });
+    const post = vi.spyOn(apiClient, 'post').mockImplementation((url: string) =>
+      url.endsWith('/worksheets') ? pending : Promise.resolve({ data: { data: plan } }),
+    );
+    render('seasons');
+    select('seasons.xlsx');
+    await flush();
+
+    expect(button('Preview').disabled).toBe(true);
+    expect(container.textContent).toContain('Reading worksheets');
+    act(() => button('Preview').click());
+    expect(post.mock.calls.some(([url]) => String(url).endsWith('/preflight'))).toBe(false);
+
+    await act(async () => {
+      complete(workbook);
+      await pending;
+    });
+    await flush();
+
+    // Unlike Style import, business masters require an explicit worksheet choice.
+    expect(button('Preview').disabled).toBe(true);
+    const sheet = container.querySelector('select[aria-label="Worksheet"]') as HTMLSelectElement;
+    act(() => {
+      sheet.value = 'Seasons';
+      sheet.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(button('Preview').disabled).toBe(false);
+  });
+
   it('requires explicit worksheet selection and removes confirmation on a new upload', async () => {
     const post = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string) => ({
       data: { data: url.endsWith('/worksheets') ? { worksheets: ['Cover', 'Factories'] } : plan },
