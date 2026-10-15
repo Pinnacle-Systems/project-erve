@@ -161,7 +161,7 @@ describe('StyleThumbnailCell click-to-view', () => {
   });
 
   it('opens the viewer dialog on click without propagating the click to a parent row handler', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: { images: [] } } });
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
 
     const parentClick = vi.fn();
     act(() => {
@@ -179,7 +179,15 @@ describe('StyleThumbnailCell click-to-view', () => {
     expect(overlay).not.toBeNull();
 
     act(() => overlay.click());
-    await flush();
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(queryClient.getQueryState(['style-images-for-viewer', 'style-1'])).toMatchObject({
+          status: 'success',
+          fetchStatus: 'idle',
+          data: [],
+        });
+      });
+    });
 
     expect(parentClick).not.toHaveBeenCalled();
     expect(document.body.querySelector('[role="dialog"]')).toBeTruthy();
