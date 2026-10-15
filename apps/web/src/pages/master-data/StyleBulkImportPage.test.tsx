@@ -71,7 +71,27 @@ const executeResponse = {
   },
 };
 
+const worksheetsResponse = { data: { data: ['Sheet1'] } };
+
 describe('StyleBulkImportPage', () => {
+  it('uses a visible file-picker button and displays the selected workbook', () => {
+    vi.spyOn(apiClient, 'post').mockResolvedValue(worksheetsResponse);
+    render();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input.hidden).toBe(true);
+    expect(input.accept).toBe('.xlsx');
+    expect(container.textContent).toContain('No file selected');
+
+    const openPicker = vi.spyOn(input, 'click').mockImplementation(() => {});
+    act(() => Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Choose file')!.click());
+    expect(openPicker).toHaveBeenCalledTimes(1);
+
+    act(() => selectFile());
+    expect(container.textContent).toContain('styles.xlsx');
+  });
+
+
   it('offers template, worksheet selection and history in the existing Style workflow', () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });
     render();
@@ -80,13 +100,17 @@ describe('StyleBulkImportPage', () => {
     expect(container.textContent).toContain('Execution history');
   });
   it('enables Preview only once a file is chosen, then shows the preflight summary and per-row table', async () => {
-    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue(preflightResponse);
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation((url: string) =>
+      url.endsWith('/worksheets') ? Promise.resolve(worksheetsResponse) : Promise.resolve(preflightResponse),
+    );
     render();
 
     const previewButton = () => Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Preview') as HTMLButtonElement;
     expect(previewButton().disabled).toBe(true);
 
     act(() => selectFile());
+    expect(previewButton().disabled).toBe(true);
+    await flush();
     expect(previewButton().disabled).toBe(false);
 
     act(() => previewButton().click());
@@ -98,13 +122,71 @@ describe('StyleBulkImportPage', () => {
     expect(container.textContent).toContain('already exists');
   });
 
+  it('blocks Preview during worksheet upload and enables it only after success', async () => {
+    let complete!: (value: typeof worksheetsResponse) => void;
+    const pending = new Promise<typeof worksheetsResponse>((resolve) => { complete = resolve; });
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation((url: string) =>
+      url.endsWith('/worksheets') ? pending : Promise.resolve(preflightResponse),
+    );
+    render();
+
+    const previewButton = () => Array.from(container.querySelectorAll('button'))
+      .find((b) => b.textContent === 'Preview') as HTMLButtonElement;
+    act(() => selectFile());
+    expect(previewButton().disabled).toBe(true);
+    expect(container.textContent).toContain('Reading workbook worksheets');
+    await flush();
+    expect(previewButton().disabled).toBe(true);
+    act(() => previewButton().click());
+    expect(postSpy.mock.calls.some(([url]) => String(url).endsWith('/preflight'))).toBe(false);
+
+    await act(async () => {
+      complete(worksheetsResponse);
+      await pending;
+    });
+    await flush();
+    expect(previewButton().disabled).toBe(false);
+    expect((container.querySelector('select[aria-label="Worksheet"]') as HTMLSelectElement).value).toBe('Sheet1');
+    act(() => previewButton().click());
+    await flush();
+    expect(postSpy).toHaveBeenCalledWith('/styles/bulk-import/preflight', expect.any(FormData));
+  });
+
+  it('keeps Preview blocked after worksheet upload failure and allows retry by reselection', async () => {
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation((url: string) =>
+      url.endsWith('/worksheets') ? Promise.reject(new Error('Unable to inspect workbook')) : Promise.resolve(preflightResponse),
+    );
+    render();
+
+    const previewButton = () => Array.from(container.querySelectorAll('button'))
+      .find((b) => b.textContent === 'Preview') as HTMLButtonElement;
+    act(() => selectFile());
+    await flush();
+    expect(previewButton().disabled).toBe(true);
+    expect(container.textContent).toContain('Unable to inspect workbook');
+    expect(postSpy.mock.calls.some(([url]) => String(url).endsWith('/preflight'))).toBe(false);
+
+    postSpy.mockImplementation((url: string) =>
+      url.endsWith('/worksheets') ? Promise.resolve(worksheetsResponse) : Promise.resolve(preflightResponse),
+    );
+    act(() => selectFile());
+    await flush();
+    expect(previewButton().disabled).toBe(false);
+    expect(container.textContent).not.toContain('Unable to inspect workbook');
+  });
+
   it('confirming import calls execute with the same file and renders outcomes', async () => {
     vi.spyOn(apiClient, 'post').mockImplementation((url: string) =>
-      url.endsWith('/preflight') ? Promise.resolve(preflightResponse) : Promise.resolve(executeResponse),
+      url.endsWith('/worksheets')
+        ? Promise.resolve(worksheetsResponse)
+        : url.endsWith('/preflight')
+          ? Promise.resolve(preflightResponse)
+          : Promise.resolve(executeResponse),
     );
     render();
 
     act(() => selectFile());
+    await flush();
     const previewButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Preview') as HTMLButtonElement;
     act(() => previewButton.click());
     await flush();
@@ -119,7 +201,7 @@ describe('StyleBulkImportPage', () => {
   });
 
   it('disables Confirm & Import when nothing in the file is actionable', async () => {
-    vi.spyOn(apiClient, 'post').mockResolvedValue({
+    const rejectedPlan = {
       data: {
         data: {
           sourceFileChecksum: 'abc',
@@ -128,9 +210,13 @@ describe('StyleBulkImportPage', () => {
           fileLevelImageWarnings: [],
         },
       },
-    });
+    };
+    vi.spyOn(apiClient, 'post').mockImplementation((url: string) =>
+      url.endsWith('/worksheets') ? Promise.resolve(worksheetsResponse) : Promise.resolve(rejectedPlan),
+    );
     render();
     act(() => selectFile());
+    await flush();
     const previewButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Preview') as HTMLButtonElement;
     act(() => previewButton.click());
     await flush();
