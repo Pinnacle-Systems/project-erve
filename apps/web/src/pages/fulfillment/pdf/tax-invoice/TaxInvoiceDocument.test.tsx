@@ -46,7 +46,9 @@ async function render(invoice = issuedTaxInvoiceFixture(), imageDataUri?: string
 }
 describe('issued Tax Invoice PDF document', () => {
   it('keeps each financial header with opening descriptive content on the laid-out page', async () => {
-    const image = await fs.readFile(new URL('../../../../../public/erve-logo.png', import.meta.url));
+    const image = await fs.readFile(
+      new URL('../../../../../public/erve-logo.png', import.meta.url),
+    );
     const result = await render(
       iss032TaxInvoiceFixture(14),
       `data:image/png;base64,${image.toString('base64')}`,
