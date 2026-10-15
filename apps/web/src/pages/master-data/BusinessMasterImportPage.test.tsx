@@ -72,6 +72,24 @@ const rows = [
 ];
 const plan = { confirmationToken: 'signed-review', worksheet: '', summary, rows };
 describe('business import workflow', () => {
+  it('uses a visible Choose file button and displays the selected filename', () => {
+    render('seasons');
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input.hidden).toBe(true);
+    expect(input.accept).toBe('.csv,.xlsx');
+    expect(container.textContent).toContain('No file selected');
+
+    const openPicker = vi.spyOn(input, 'click').mockImplementation(() => {});
+    act(() => button('Choose file').click());
+    expect(openPicker).toHaveBeenCalledTimes(1);
+
+    select('seasons.csv');
+    expect(container.textContent).toContain('seasons.csv');
+    expect(button('Preview').disabled).toBe(false);
+  });
+
+
   it('allows ACCOUNTANT to import HSN identity but not other masters', async () => {
     auth.role = 'ACCOUNTANT';
     render('hsns');
