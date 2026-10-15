@@ -181,7 +181,7 @@ describe('JobOrderDetailPage sticky context', () => {
     expect(dialog.textContent).toContain('Send job order to factory?');
 
     const layer = (element: HTMLElement) => {
-      const token = Array.from(element.classList).find((name) => /^z-\\d+$/.test(name));
+      const token = Array.from(element.classList).find((name) => /^z-\d+$/.test(name));
       return token ? Number(token.slice(2)) : NaN;
     };
     expect(Number.isFinite(layer(sticky))).toBe(true);
