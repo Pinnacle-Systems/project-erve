@@ -43,7 +43,7 @@ export function JobOrderStickyContext({
 }: JobOrderStickyContextProps) {
   return (
     <div
-      className="sticky z-[100] flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle bg-surface px-4 py-2 shadow-[var(--erp-shadow-xs)] md:px-8"
+      className="sticky z-20 flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle bg-surface px-4 py-2 shadow-[var(--erp-shadow-xs)] md:px-8"
       style={{ top: 'var(--app-shell-header-height, 4rem)' }}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
