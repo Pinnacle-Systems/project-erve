@@ -3,6 +3,7 @@ import { createId } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
+import { getSoleFactoryId } from '../../auth/access.js';
 import { env } from '../../config/env.js';
 import { HttpError } from '../../errors/http-error.js';
 import { FileNotFoundInStorageError, getFileStorage } from '../../storage/index.js';
@@ -11,6 +12,28 @@ import {
   sniffImage,
   type SniffedImage,
 } from '../../storage/image-sniff.js';
+
+/**
+ * Factory and QA readers see Style images only when the Style belongs to
+ * Job Orders they are authorized to view. A Job Order may include image
+ * metadata without granting broad access to the Style master.
+ * The master-data editing and full Style detail endpoints remain restricted.
+ */
+export async function assertStyleImageReadAccess(user: CurrentUser, styleId: string): Promise<void> {
+  if (user.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT')) {
+    return;
+  }
+  const isQa = user.roles.includes('QA_USER');
+  const isFactory = user.roles.includes('FACTORY_USER');
+  if (!isQa && !isFactory) throw HttpError.forbidden('You cannot view Style images');
+
+  const where: Prisma.JobOrderWhereInput = {
+    lines: { some: { styleId } },
+    ...(isQa ? {} : { factoryId: getSoleFactoryId(user), status: { not: 'DRAFT' } }),
+  };
+  const visible = await prisma.jobOrder.findFirst({ where, select: { id: true } });
+  if (!visible) throw HttpError.forbidden('You do not have access to this Style image');
+}
 
 const styleImageInclude = { file: true } satisfies Prisma.StyleImageInclude;
 type StyleImageRecord = Prisma.StyleImageGetPayload<{ include: typeof styleImageInclude }>;
