@@ -158,6 +158,32 @@ describe('JobOrderDetailPage ?tab= deep linking', () => {
 });
 
 describe('JobOrderDetailPage sticky context', () => {
+  it('keeps the Factory Confirm action beside the identity on desktop, without wrapping below it', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderJobOrderDetail(container, root, { status: 'SENT_TO_FACTORY' });
+
+    // The header uses a two-column grid at desktop width, with a
+    // minmax(0,1fr) identity column that can shrink/wrap its long
+    // Style description. The action column remains on the right.
+    // jsdom does not calculate responsive element positions; the
+    // classes guard the responsive layout contract.
+    const sticky = container.querySelector('.sticky') as HTMLElement;
+    expect(sticky.classList.contains('grid')).toBe(true);
+    expect(sticky.classList.contains('grid-cols-1')).toBe(true);
+    expect(sticky.classList.contains('xl:grid-cols-[minmax(0,1fr)_auto]')).toBe(true);
+
+    const identity = sticky.children[0] as HTMLElement;
+    const actions = sticky.children[1] as HTMLElement;
+    expect(identity.classList.contains('min-w-0')).toBe(true);
+    expect(actions.classList.contains('justify-self-end')).toBe(true);
+    expect(actions.classList.contains('xl:flex-nowrap')).toBe(true);
+
+    const confirm = Array.from(actions.querySelectorAll('button')).find((button) => button.textContent === 'Confirm');
+    expect(confirm).toBeDefined();
+    expect(confirm!.disabled).toBe(true);
+    expect(actions.textContent).toContain('Complete the acknowledgement below before confirming the Job Order.');
+  });
+
   it('stacks the Send confirmation overlay and dialog above the sticky summary', async () => {
     await renderJobOrderDetail(container, root, {
       status: 'DRAFT',
