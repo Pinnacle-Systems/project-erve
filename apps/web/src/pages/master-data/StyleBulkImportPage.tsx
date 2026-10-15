@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { ImportFilePicker } from '../../components/import/ImportFilePicker.js';
 import { useMutation } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge, type StatusBadgeTone } from '@erve/app-components';
@@ -155,11 +156,11 @@ export function StyleBulkImportPage() {
       <Panel title="1. Choose workbook">
         <Button type="button" onClick={() => downloadMutation.mutate({ path: '/styles/bulk-import/template', name: 'styles.xlsx' })}>Download template</Button>
         <div className="flex items-center gap-3">
-          <input
-            type="file"
+          <ImportFilePicker
             accept=".xlsx"
-            aria-label="Workbook file"
-            onChange={(event) => handleFileChange(event.target.files?.[0] ?? null)}
+            ariaLabel="Workbook file"
+            file={file}
+            onSelect={handleFileChange}
           />
           <Button
             type="button"
