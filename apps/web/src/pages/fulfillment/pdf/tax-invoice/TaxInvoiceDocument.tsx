@@ -28,7 +28,17 @@ const styles = StyleSheet.create({
   party: { width: '50%', padding: 6, fontSize: 8, lineHeight: 1.2 },
   partyTitle: { fontWeight: 700, fontSize: 9, marginBottom: 3 },
   image: { width: 28, height: 28, objectFit: 'contain' },
-  continuation: { fontSize: 7, color: '#666666' },
+  imageCaption: { fontSize: 7, color: '#666666' },
+  group: { borderBottom: '0.5 solid #999999', marginBottom: 5 },
+  financialSummary: { flexDirection: 'row', backgroundColor: '#eeeeee', paddingVertical: 4 },
+  financialLabel: { fontSize: 7, color: '#555555', marginBottom: 2, textAlign: 'right' },
+  financialValue: { fontSize: 8, textAlign: 'right' },
+  styleCode: { fontSize: 9, fontWeight: 700, paddingHorizontal: 4, paddingVertical: 3 },
+  groupDetails: { paddingHorizontal: 4, paddingTop: 3, paddingBottom: 4 },
+  groupName: { fontSize: 8, fontWeight: 700, lineHeight: 1.2 },
+  detailText: { fontSize: 8, lineHeight: 1.2 },
+  sizeList: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 2 },
+  sizeToken: { maxWidth: '100%', marginRight: 6 },
   totals: { flexDirection: 'row', marginTop: 6, borderTop: '0.5 solid #999999', paddingTop: 4 },
   totalColumn: { width: '50%', paddingRight: 8 },
   totalRow: {
@@ -85,104 +95,88 @@ const styles = StyleSheet.create({
   },
 });
 
-interface DisplayRow extends TaxInvoicePdfGroup {
-  descriptionPart: string;
-  sizesPart: string;
-  continuation: boolean;
+/** Recover complete display tokens, retaining the original string if a label is ambiguous. */
+function sizeTokens(sizes: string): string[] {
+  const tokens = sizes
+    .match(/(?:^|, )[\s\S]*?(?:: \d+|-\d+)(?=, |$)/g)
+    ?.map((token) => token.replace(/^, /, ''));
+  return tokens?.join(', ') === sizes ? tokens : [sizes];
 }
-function textParts(text: string, limit: number): string[] {
-  const characters = Array.from(text);
-  return characters.length === 0
-    ? ['']
-    : Array.from({ length: Math.ceil(characters.length / limit) }, (_, index) =>
-        characters.slice(index * limit, (index + 1) * limit).join(''),
-      );
+
+function FinancialCell({
+  label,
+  value,
+  width,
+}: {
+  label: string;
+  value: string | number;
+  width: string;
+}) {
+  return (
+    <View style={{ width, paddingHorizontal: 4 }}>
+      <Text style={styles.financialLabel}>{label}</Text>
+      <Text style={styles.financialValue}>{value}</Text>
+    </View>
+  );
 }
-/** Bound row height without losing issued descriptions/sizes or duplicating financial amounts. */
-export function taxInvoiceDisplayRows(groups: TaxInvoicePdfGroup[]): DisplayRow[] {
-  return groups.flatMap((group) => {
-    const description = [
-      group.styleName,
-      group.description === group.styleName ? null : group.description,
-    ]
-      .filter(Boolean)
-      .join('\n');
-    const descriptions = textParts(description, 160);
-    const sizes = textParts(group.sizes, 80);
-    return Array.from({ length: Math.max(descriptions.length, sizes.length) }, (_, index) => ({
-      ...group,
-      id: `${group.id}:${index}`,
-      descriptionPart: descriptions[index] ?? '',
-      sizesPart: sizes[index] ?? '',
-      continuation: index > 0,
-    }));
-  });
-}
-const lineColumns: PdfTableColumn<DisplayRow>[] = [
-  {
-    key: 'style',
-    header: 'Style',
-    width: '9%',
-    render: (row) => (
-      <View>
-        <Text style={{ fontSize: 7 }}>{textParts(row.styleNumber, 6).join('\n')}</Text>
-        {row.continuation && <Text style={styles.continuation}>continued</Text>}
-      </View>
-    ),
-  },
-  { key: 'description', header: 'Description', width: '21%', value: (row) => row.descriptionPart },
-  { key: 'colour', header: 'Colour', width: '7%', value: (row) => row.colour },
-  {
-    key: 'image',
-    header: 'Image',
-    width: '7%',
-    render: (row) =>
-      row.continuation ? null : 'dataUri' in row.image ? (
-        <Image src={row.image.dataUri} style={styles.image} />
-      ) : (
-        <View>
-          <PdfThumbnail image={{ placeholder: true }} width={28} height={18} />
-          <Text style={styles.continuation}>Missing</Text>
+
+/** A group can span pages; only its compact financial summary and each size token stay together. */
+function InvoiceGroup({ group }: { group: TaxInvoicePdfGroup }) {
+  const tokens = sizeTokens(group.sizes);
+  return (
+    <>
+      <View wrap={false} minPresenceAhead={72}>
+        <Text style={styles.styleCode}>{group.styleNumber}</Text>
+        <View style={styles.financialSummary}>
+          <View style={{ width: '8%', paddingHorizontal: 4 }}>
+            {'dataUri' in group.image ? (
+              <Image src={group.image.dataUri} style={styles.image} />
+            ) : (
+              <View>
+                <PdfThumbnail image={{ placeholder: true }} width={28} height={18} />
+                <Text style={styles.imageCaption}>Missing</Text>
+              </View>
+            )}
+          </View>
+          <FinancialCell
+            label="HSN / GST"
+            value={`${group.hsnCode} / ${group.gstPercent}${group.gstPercent === 'Unavailable' ? '' : '%'}`}
+            width="24%"
+          />
+          <FinancialCell label="MRP (INR)" value={group.mrp} width="16%" />
+          <FinancialCell label="Qty" value={group.quantity} width="8%" />
+          <FinancialCell label="Rate (INR)" value={group.rate} width="20%" />
+          <FinancialCell label="Taxable (INR)" value={group.taxable} width="24%" />
         </View>
-      ),
-  },
-  { key: 'sizes', header: 'Size : Qty', width: '12%', value: (row) => row.sizesPart },
-  {
-    key: 'hsn',
-    header: 'HSN / GST',
-    width: '9%',
-    value: (row) =>
-      `${row.hsnCode}\n${row.gstPercent === 'Unavailable' ? 'Unavailable' : `${row.gstPercent}%`}`,
-  },
-  {
-    key: 'mrp',
-    header: 'MRP (INR)',
-    width: '8%',
-    align: 'right',
-    value: (row) => (row.continuation ? '' : row.mrp),
-  },
-  {
-    key: 'qty',
-    header: 'Qty',
-    width: '5%',
-    align: 'right',
-    value: (row) => (row.continuation ? '' : row.quantity),
-  },
-  {
-    key: 'rate',
-    header: 'Rate (INR)',
-    width: '10%',
-    align: 'right',
-    value: (row) => (row.continuation ? '' : row.rate),
-  },
-  {
-    key: 'amount',
-    header: 'Taxable (INR)',
-    width: '12%',
-    align: 'right',
-    value: (row) => (row.continuation ? '' : row.taxable),
-  },
-];
+      </View>
+      <View style={[styles.groupDetails, styles.group]}>
+        {group.styleName && (
+          <Text style={styles.groupName} minPresenceAhead={12}>
+            {group.styleName}
+          </Text>
+        )}
+        {group.description && group.description !== group.styleName && (
+          <Text style={styles.detailText} orphans={2} widows={2}>
+            {group.description}
+          </Text>
+        )}
+        <Text style={styles.detailText} orphans={2} widows={2}>
+          Colour: {group.colour}
+        </Text>
+        <View style={styles.sizeList}>
+          {tokens.map((token, index) => (
+            <View key={index} style={styles.sizeToken} wrap={false}>
+              <Text style={styles.detailText}>
+                {token}
+                {index < tokens.length - 1 ? ' |' : ''}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </>
+  );
+}
 const hsnColumns: PdfTableColumn<NonNullable<TaxInvoicePdfViewModel['hsnSummary']>[number]>[] = [
   { key: 'hsn', header: 'HSN / SAC', width: '16%', value: (row) => row.hsnCode },
   { key: 'gst', header: 'GST', width: '8%', align: 'right', value: (row) => row.gstPercent },
@@ -300,12 +294,10 @@ export function TaxInvoiceDocument({
           Issued Style, image and order details are unavailable for this legacy invoice.
         </Text>
       )}
-      <PdfTable
-        columns={lineColumns}
-        rows={taxInvoiceDisplayRows(model.groups)}
-        rowKey={(row) => row.id}
-      />
-      <View style={styles.totals} wrap={false}>
+      {model.groups.map((group) => (
+        <InvoiceGroup key={group.id} group={group} />
+      ))}
+      <View style={styles.totals} wrap={false} minPresenceAhead={90}>
         <View style={styles.totalColumn}>
           <TotalRow label="Taxable value" value={model.totals.taxable} />
           <TotalRow label="CGST" value={model.totals.cgst} />
@@ -331,7 +323,9 @@ export function TaxInvoiceDocument({
         </View>
       </View>
       <Text style={styles.words}>Amount chargeable (in words): {model.totals.amountWords}</Text>
-      <Text style={styles.sectionTitle}>HSN-wise tax summary (INR)</Text>
+      <Text style={styles.sectionTitle} minPresenceAhead={26}>
+        HSN-wise tax summary (INR)
+      </Text>
       {model.hsnSummary ? (
         <PdfTable columns={hsnColumns} rows={model.hsnSummary} rowKey={(row) => row.id} />
       ) : (

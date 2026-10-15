@@ -130,3 +130,127 @@ export function nineStyleTaxInvoiceFixture(): TaxInvoiceView {
   ];
   return invoice;
 }
+
+/** Synthetic ISS-032 data only: no production identity, records or finalization. */
+export function iss032TaxInvoiceFixture(styleCount = 1, sizeCount = 6): TaxInvoiceView {
+  const invoice = issuedTaxInvoiceFixture();
+  const line = invoice.lines[0]!;
+  const issued = invoice.documentSnapshot!.lines[0]!;
+  invoice.invoiceNumber = 'SYNTHETIC/ISS032/0001';
+  invoice.finalizedAt = '2026-10-16T06:00:00.000Z';
+  invoice.financialYear = { id: 'synthetic-fy', code: '2026-27' };
+  invoice.ervePackingList.ervePackingListNumber = 'SYNTHETIC/EIPL/0001';
+  invoice.gstTreatment = 'INTER';
+  invoice.lines = [];
+  invoice.documentSnapshot!.lines = [];
+  for (let styleIndex = 0; styleIndex < styleCount; styleIndex++) {
+    const style = {
+      id: `iss032-style-${styleIndex}`,
+      styleNumber: styleIndex === 0 ? 'SS26-14026001' : `SYNTHETIC-STYLE-${styleIndex}`,
+      styleName: 'Synthetic cotton printed T-shirt',
+      description:
+        'Soft cotton jersey with a colourful printed design and comfortable regular fit.',
+      colour: 'Deep ocean blue with coral print',
+    };
+    for (let sizeIndex = 0; sizeIndex < sizeCount; sizeIndex++) {
+      const id = `iss032-line-${styleIndex}-${sizeIndex}`;
+      const size = {
+        id: `iss032-size-${sizeIndex}`,
+        code: `AGE_${sizeIndex + 9}`,
+        label: sizeCount === 6 ? `${sizeIndex + 9} Years` : `Synthetic size ${sizeIndex + 1} Years`,
+        sortOrder: sizeIndex,
+      };
+      invoice.lines.push({
+        ...line,
+        id,
+        style,
+        size,
+        quantity: 10,
+        styleMrp: '999.00',
+        calculatedUnitRate: '451.07',
+        finalUnitRate: '451.07',
+        taxableValue: '4510.70',
+        gstPercent: '5',
+        cgstAmount: '0',
+        sgstAmount: '0',
+        igstAmount: '225.535',
+        hsn: { code: '61091000', description: null },
+      });
+      invoice.documentSnapshot!.lines.push({ ...issued, lineId: id, quantity: 10, style, size });
+    }
+  }
+  // Exact synthetic totals; these calculations construct test data, never issued data.
+  const count = BigInt(styleCount * sizeCount);
+  const fixed = (value: bigint, scale: number) => {
+    const digits = (value < 0n ? -value : value).toString().padStart(scale + 1, '0');
+    return `${value < 0n ? '-' : ''}${digits.slice(0, -scale)}.${digits.slice(-scale)}`;
+  };
+  const taxableMills = 4510700n * count;
+  const igstMills = 225535n * count;
+  const grandMills = taxableMills + igstMills;
+  const payableMills = ((grandMills + 500n) / 1000n) * 1000n;
+  invoice.subtotal = fixed(taxableMills / 10n, 2);
+  invoice.totalCgst = '0.00';
+  invoice.totalSgst = '0.00';
+  invoice.totalIgst = fixed(igstMills / 10n, 2);
+  invoice.totalGst = invoice.totalIgst;
+  invoice.grandTotal = fixed(grandMills / 10n, 2);
+  invoice.payableTotal = fixed(payableMills / 10n, 2);
+  invoice.roundOffAdjustment = fixed((payableMills - grandMills) / 10n, 2);
+  invoice.hsnSummary = [
+    {
+      hsnCode: '61091000',
+      gstPercent: '5',
+      taxableValue: invoice.subtotal,
+      cgstAmount: '0.00',
+      sgstAmount: '0.00',
+      igstAmount: invoice.totalIgst,
+    },
+  ];
+  return invoice;
+}
+
+export function iss032VisualFixtures(): Array<{ name: string; invoice: TaxInvoiceView }> {
+  const reference = iss032TaxInvoiceFixture();
+  const longDescription = iss032TaxInvoiceFixture();
+  for (const line of longDescription.documentSnapshot!.lines) {
+    line.style = {
+      ...line.style,
+      description:
+        'Long synthetic description with complete words and readable detail. '.repeat(150) +
+        'DESCRIPTION END MARKER',
+    };
+  }
+  const longSizes = iss032TaxInvoiceFixture(1, 360);
+  const cancelled = iss032TaxInvoiceFixture(14);
+  cancelled.status = 'CANCELLED';
+  cancelled.cancelledAt = '2026-10-16T07:00:00.000Z';
+  cancelled.cancellationReason = 'Synthetic visual verification only';
+  const longCode = iss032TaxInvoiceFixture();
+  for (const line of longCode.documentSnapshot!.lines) {
+    line.style = {
+      ...line.style,
+      styleNumber: 'SYNTHETIC-SS26-14026001-LONG-IDENTIFIER-032',
+      styleName: 'Long synthetic Style name with complete readable words. '.repeat(8),
+      colour: 'Deep ocean blue with coral and silver printed accents. '.repeat(8),
+    };
+  }
+  const boundary = iss032TaxInvoiceFixture(2);
+  for (const line of boundary.documentSnapshot!.lines) {
+    if (line.style.id === 'iss032-style-0')
+      line.style = {
+        ...line.style,
+        description: 'Synthetic boundary description with preserved details. '.repeat(100),
+      };
+  }
+  return [
+    { name: 'reference', invoice: reference },
+    { name: 'missing-image', invoice: structuredClone(reference) },
+    { name: 'long-description', invoice: longDescription },
+    { name: 'long-size-list', invoice: longSizes },
+    { name: 'multi-page', invoice: iss032TaxInvoiceFixture(14) },
+    { name: 'cancelled', invoice: cancelled },
+    { name: 'long-code', invoice: longCode },
+    { name: 'boundary', invoice: boundary },
+  ];
+}
