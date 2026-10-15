@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ImportFilePicker } from '../../components/import/ImportFilePicker.js';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   ApiSuccessResponse,
@@ -274,12 +275,12 @@ function ImportWorkflow({ kind }: { kind: MasterImportKind }) {
           <Button variant="secondary" disabled={busy} onClick={() => download.mutate('template')}>
             Download template
           </Button>
-          <input
-            type="file"
+          <ImportFilePicker
             accept=".csv,.xlsx"
-            aria-label="Import file"
+            ariaLabel="Import file"
+            file={file}
             disabled={busy}
-            onChange={(event) => choose(event.target.files?.[0] ?? null)}
+            onSelect={choose}
           />
           {file && /\.xlsx$/i.test(file.name) && (
             <label className="text-sm">
