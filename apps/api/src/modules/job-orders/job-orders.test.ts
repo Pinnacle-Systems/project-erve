@@ -241,6 +241,62 @@ async function createJobOrder(
 }
 
 describe('job orders API', () => {
+  it('allows the assigned Factory to read Job Order Style photos without Style master access', async () => {
+    const graph = await createSeedGraph();
+    const factory = await createTestUserAndToken({
+      email: 'factory-image@test.local', password: 'pass', roles: ['FACTORY_USER'],
+    });
+    const foreignFactory = await createTestUserAndToken({
+      email: 'other-factory-image@test.local', password: 'pass', roles: ['FACTORY_USER'],
+    });
+    const qa = await createTestUserAndToken({
+      email: 'qa-image@test.local', password: 'pass', roles: ['QA_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factory.userId, factoryId: graph.factory.id },
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: foreignFactory.userId, factoryId: graph.otherFactory.id },
+    });
+    const image = await request(app).post(`/styles/${graph.style.id}/images`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .attach('image', Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32, 0x11)]), {
+        filename: 'job-style.jpg', contentType: 'image/jpeg',
+      })
+      .expect(201);
+    const contentPath = `/styles/${graph.style.id}/images/${image.body.data.id}/content`;
+    const listPath = `/styles/${graph.style.id}/images`;
+
+    // A draft exists, but Factory users must not learn its photo before dispatch.
+    const draft = await createJobOrder(graph.admin.token, graph);
+    expect(draft.status).toBe(201);
+    await request(app).get(contentPath).set('Authorization', `Bearer ${factory.token}`).expect(403);
+
+    await request(app).post(`/job-orders/${draft.body.data.id}/actions/send-to-factory`)
+      .set('Authorization', `Bearer ${graph.admin.token}`)
+      .set('Idempotency-Key', 'image-read-sent')
+      .send({ expectedVersion: draft.body.data.version })
+      .expect(200);
+
+    const [metadata, content] = await Promise.all([
+      request(app).get(listPath).set('Authorization', `Bearer ${factory.token}`),
+      request(app).get(contentPath).set('Authorization', `Bearer ${factory.token}`),
+    ]);
+    expect(metadata.status).toBe(200);
+    expect(metadata.body.data[0].id).toBe(image.body.data.id);
+    expect(content.status).toBe(200);
+    expect(content.headers['content-type']).toBe('image/jpeg');
+
+    // Gallery works for QA, but no unauthorised Factory or Distributor gains access.
+    await request(app).get(contentPath).set('Authorization', `Bearer ${qa.token}`).expect(200);
+    await request(app).get(contentPath).set('Authorization', `Bearer ${foreignFactory.token}`).expect(403);
+    await request(app).get(listPath).set('Authorization', `Bearer ${foreignFactory.token}`).expect(403);
+    await request(app).get(`/styles/${graph.style.id}`)
+      .set('Authorization', `Bearer ${factory.token}`).expect(403);
+    await request(app).post(listPath)
+      .set('Authorization', `Bearer ${factory.token}`).expect(403);
+  });
+
   it('runs Production stages as state-only, ordered activities', async () => {
     const graph = await createSeedGraph();
     const factoryUser = await createTestUserAndToken({
