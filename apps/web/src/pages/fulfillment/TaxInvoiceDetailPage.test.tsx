@@ -114,6 +114,36 @@ async function render(
   await vi.waitFor(() => expect(text()).toContain('physical quantities are read-only'));
 }
 describe('Tax Invoice Accountant review and immutable presentation', () => {
+  it.each(['ACCOUNTANT', 'ADMIN'] as const)(
+    'identifies an unnumbered draft for %s without implying its EIPL is an EI invoice number',
+    async (role) => {
+      await render(taxInvoiceFixture(), role);
+      expect(document.querySelector('h1')?.textContent).toBe('Tax Invoice — Draft');
+      expect(text()).toContain('Invoice number: Not allocated until finalization');
+      expect(text()).toContain('Source Erve Packing List');
+      expect(text()).toContain('EIPL/26-27/0001');
+      expect(text()).not.toContain('Draft · EIPL/');
+      expect(text()).not.toContain('EI/26-27/');
+    },
+  );
+
+  it.each(['FINALIZED', 'CANCELLED'] as const)(
+    'uses the persisted EI number as the %s invoice heading and labels its packing-list source',
+    async (status) => {
+      await render(
+        taxInvoiceFixture({
+          status,
+          invoiceNumber: 'EI/26-27/0271',
+          finalizedAt: '2026-10-11T05:00:00Z',
+          review: { state: 'FINALIZED', isPreview: false, calculatedAt: null, blockers: [] },
+        }),
+      );
+      expect(document.querySelector('h1')?.textContent).toBe('EI/26-27/0271');
+      expect(text()).toContain('Source Erve Packing List');
+      expect(text()).toContain('EIPL/26-27/0001');
+      expect(text()).not.toContain('Not allocated until finalization');
+    },
+  );
   it.each(['ADMIN', 'ACCOUNTANT'] as const)(
     'allows %s to download the finalized frozen invoice',
     async (role) => {

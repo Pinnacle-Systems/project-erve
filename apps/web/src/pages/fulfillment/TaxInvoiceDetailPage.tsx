@@ -223,8 +223,23 @@ function TaxInvoiceDetail({
     <div className="space-y-4">
       <PageHeader
         className="[&>div]:flex-col [&>div]:items-stretch sm:[&>div]:flex-row sm:[&>div]:items-start [&_h1]:break-words max-sm:[&>div>div:last-child]:flex-wrap"
-        title={invoice.invoiceNumber ?? `Draft · ${invoice.ervePackingList.ervePackingListNumber}`}
+        title={
+          invoice.status === 'DRAFT'
+            ? 'Tax Invoice — Draft'
+            : (invoice.invoiceNumber ?? 'Tax Invoice number unavailable')
+        }
         subtitle={`${invoice.billTo.name} · ${invoice.shipTo.label ?? 'Destination not snapshotted'}`}
+        meta={
+          invoice.status === 'DRAFT'
+            ? [
+                { label: 'Invoice number', value: 'Not allocated until finalization' },
+                {
+                  label: 'Source Erve Packing List',
+                  value: invoice.ervePackingList.ervePackingListNumber,
+                },
+              ]
+            : undefined
+        }
         status={
           <StatusBadge
             label={
@@ -378,7 +393,7 @@ function TaxInvoiceDetail({
             value={invoice.purchaseMode === 'SALE_RETURN' ? 'Sale or return' : 'Outright'}
           />
           <DescriptionList.Item
-            label="EIPL"
+            label="Source Erve Packing List"
             value={
               canViewErvePackingLists(user) ? (
                 <Link to={`/fulfillment/erve-packing-lists/${invoice.ervePackingList.id}`}>
