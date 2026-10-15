@@ -252,6 +252,9 @@ describe('job orders API', () => {
     const qa = await createTestUserAndToken({
       email: 'qa-image@test.local', password: 'pass', roles: ['QA_USER'],
     });
+    const distributor = await createTestUserAndToken({
+      email: 'distributor-image@test.local', password: 'pass', roles: ['DISTRIBUTOR'],
+    });
     await prisma.userFactory.create({
       data: { id: createId(), userId: factory.userId, factoryId: graph.factory.id },
     });
@@ -291,6 +294,8 @@ describe('job orders API', () => {
     await request(app).get(contentPath).set('Authorization', `Bearer ${qa.token}`).expect(200);
     await request(app).get(contentPath).set('Authorization', `Bearer ${foreignFactory.token}`).expect(403);
     await request(app).get(listPath).set('Authorization', `Bearer ${foreignFactory.token}`).expect(403);
+    await request(app).get(contentPath).set('Authorization', `Bearer ${distributor.token}`).expect(403);
+    await request(app).get(listPath).set('Authorization', `Bearer ${distributor.token}`).expect(403);
     await request(app).get(`/styles/${graph.style.id}`)
       .set('Authorization', `Bearer ${factory.token}`).expect(403);
     await request(app).post(listPath)
