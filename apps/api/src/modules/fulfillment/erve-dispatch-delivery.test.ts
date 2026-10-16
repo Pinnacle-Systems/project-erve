@@ -46,6 +46,40 @@ describe('Erve Dispatch delivery confirmation', () => {
     expect(res.body.data.deliveredAt).toBeTruthy();
   });
 
+
+  it('filters status before cursor pagination, validates status, and preserves distributor scoping', async () => {
+    const { fixture: first, dispatch: dispatched } = await dispatchedFixture(20);
+    const { fixture: second, dispatch: delivered } = await dispatchedFixture(20);
+    await confirmErveDispatchDelivery(app, second.merchToken, delivered.id, delivered.version, [
+      { saleOrderLineId: second.saleOrderLineId, receivedQuantity: 20 },
+    ]);
+
+    const all = await request(app).get('/erve-dispatches?limit=1')
+      .set('Authorization', `Bearer ${first.merchToken}`).expect(200);
+    expect(all.body.data.items).toHaveLength(1);
+    expect(all.body.data.pageInfo.hasMore).toBe(true);
+    const next = await request(app)
+      .get('/erve-dispatches')
+      .query({ limit: 1, cursor: all.body.data.pageInfo.nextCursor })
+      .set('Authorization', `Bearer ${first.merchToken}`).expect(200);
+    expect(next.body.data.items).toHaveLength(1);
+    expect(new Set([...all.body.data.items, ...next.body.data.items].map((item: { id: string }) => item.id)))
+      .toEqual(new Set([dispatched.id, delivered.id]));
+
+    for (const [status, targetId] of [['DISPATCHED', dispatched.id], ['DELIVERED', delivered.id]] as const) {
+      const response = await request(app).get('/erve-dispatches')
+        .query({ status, limit: 1 })
+        .set('Authorization', `Bearer ${first.merchToken}`).expect(200);
+      expect(response.body.data.items.map((item: { id: string }) => item.id)).toEqual([targetId]);
+      expect(response.body.data.pageInfo.hasMore).toBe(false);
+    }
+    await request(app).get('/erve-dispatches?status=UNKNOWN')
+      .set('Authorization', `Bearer ${first.merchToken}`).expect(400);
+    const distributorVisible = await request(app).get('/erve-dispatches?status=DELIVERED')
+      .set('Authorization', `Bearer ${first.distributorToken}`).expect(200);
+    expect(distributorVisible.body.data.items).toEqual([]);
+  });
+
   it('accepts a partial (short) receipt with remarks and leaves the shortage derivable (dispatched 100, received 95)', async () => {
     const { fixture, dispatch } = await dispatchedFixture(100);
     const res = await confirmErveDispatchDelivery(

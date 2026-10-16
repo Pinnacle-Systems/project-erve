@@ -56,6 +56,7 @@ export const confirmErveDispatchDeliverySchema = z.object({
 export const listErveDispatchesQuerySchema = z.object({
   saleOrderId: z.string().trim().optional(),
   distributorId: z.string().trim().optional(),
+  status: z.enum(['DISPATCHED', 'DELIVERED']).optional(),
   cursor: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
