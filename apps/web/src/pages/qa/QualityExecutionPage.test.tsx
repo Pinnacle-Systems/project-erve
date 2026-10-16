@@ -20,6 +20,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 const view: QualityExecutionView = {
   id: 'e1',
@@ -288,6 +289,9 @@ describe('web Quality execution workflow', () => {
 
 describe('ISS-012 finalized QA evidence retrieval', () => {
   it('opens an authenticated, read-only preview and reports denied access without exposing edits', async () => {
+    // React's portal mounts through effects. Mark the environment as act-capable
+    // and flush the click/portal commit together before asserting the dialog.
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const finalized: QualityExecutionView = {
       ...view,
       status: 'FINALIZED',
@@ -325,7 +329,10 @@ describe('ISS-012 finalized QA evidence retrieval', () => {
       return button!;
     });
     expect(container.querySelector('button[aria-label="Remove proof.png"]')).toBeNull();
-    act(() => action.click());
+    await act(async () => {
+      action.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).not.toBeNull());
     await vi.waitFor(() => expect(document.body.textContent).toContain('Unable to load evidence.'));
     expect(get).toHaveBeenCalledWith('/quality-executions/attachments/attachment-1/content', { responseType: 'blob' });
