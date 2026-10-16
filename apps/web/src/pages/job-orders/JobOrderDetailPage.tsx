@@ -4,7 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiErrorResponse, ApiSuccessResponse, JobOrderAuditEntry } from '@erve/types';
 import { ConfirmDialog, getJobOrderOperationalPresentation } from '@erve/app-components';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@erve/primitives';
+import {
+  Button, Checkbox, Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle, Tabs, TabsContent, TabsList, TabsTrigger, ValidationMessage,
+} from '@erve/primitives';
 import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
@@ -37,6 +40,8 @@ export function JobOrderDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  // Dismissal is scoped to this mounted visit and Job Order, not to tab changes or query refreshes.
+  const [confirmationPromptDismissedFor, setConfirmationPromptDismissedFor] = useState<string | null>(null);
   const [disclaimerDrafts, setDisclaimerDrafts] = useState<Record<string, string>>({});
   const [disclaimerError, setDisclaimerError] = useState('');
   const [sendError, setSendError] = useState('');
@@ -136,6 +141,7 @@ export function JobOrderDetailPage() {
     onSuccess: () => {
       setDisclaimerError('');
       setSendError('');
+      setConfirmationPromptDismissedFor(jobOrderQuery.data!.id);
       invalidate();
     },
   });
@@ -204,6 +210,10 @@ export function JobOrderDetailPage() {
   const disclaimerText = disclaimerDrafts[jobOrder.id] ?? jobOrder.disclaimerText ?? '';
   const canEditDisclaimer = !jobOrder.historicalImport && jobOrder.status === 'DRAFT' && canManageJobOrders;
   const canConfirm = jobOrder.status === 'SENT_TO_FACTORY' && Boolean(user?.roles.includes('FACTORY_USER'));
+  const factoryPromptOpen = canConfirm && confirmationPromptDismissedFor !== jobOrder.id;
+  const acknowledgeAndConfirm = () => {
+    if (canConfirm && acknowledgeDisclaimer && !confirmMutation.isPending) confirmMutation.mutate();
+  };
   // Mirrors the server's cancellation boundary in cancelJobOrder — a Job
   // Order may be cancelled only until production actually starts.
   const canCancelJobOrder =
@@ -260,7 +270,7 @@ export function JobOrderDetailPage() {
           onSend: openSendDialog,
           sendError,
           canConfirm,
-          onConfirm: () => confirmMutation.mutate(),
+          onConfirm: acknowledgeAndConfirm,
           confirmPending: confirmMutation.isPending,
           confirmDisabled: !acknowledgeDisclaimer,
           confirmError: confirmMutation.isError
@@ -332,6 +342,79 @@ export function JobOrderDetailPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <Dialog
+        open={factoryPromptOpen}
+        onOpenChange={(open) => {
+          if (!open) setConfirmationPromptDismissedFor(jobOrder.id);
+        }}
+      >
+        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Factory confirmation required</DialogTitle>
+            <DialogDescription>
+              Review this Job Order's quantities, production details and commercial disclaimer before acknowledging it.
+            </DialogDescription>
+          </DialogHeader>
+          <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+            <div><dt className="text-muted-foreground">Job Order</dt><dd className="font-medium">{jobOrder.jobOrderNumber}</dd></div>
+            <div><dt className="text-muted-foreground">Factory</dt><dd className="font-medium">{jobOrder.factory.name}</dd></div>
+            <div><dt className="text-muted-foreground">Style</dt><dd className="font-medium">{styleSummary.label}</dd></div>
+            <div><dt className="text-muted-foreground">Ordered quantity</dt><dd className="font-medium">{jobOrder.orderedQuantityTotal.toLocaleString()}</dd></div>
+            <div><dt className="text-muted-foreground">Unit price</dt><dd className="font-medium">{jobOrder.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd></div>
+            <div><dt className="text-muted-foreground">Process flow</dt><dd className="font-medium">{jobOrder.processFlowVersion?.processFlow?.name ?? 'Not available'}</dd></div>
+          </dl>
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Size quantities</p>
+            <ul className="max-h-32 overflow-y-auto rounded-control border border-border-subtle p-2 text-sm">
+              {flatSizes.map((size) => (
+                <li key={size.id} className="flex justify-between gap-3 py-0.5">
+                  <span>{size.style} · {size.sizeLabel}</span>
+                  <span className="shrink-0 tabular-nums">{size.orderedQuantity.toLocaleString()}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Commercial terms / disclaimer</p>
+            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-control border border-border-subtle bg-surface-muted p-3 text-sm font-sans">
+              {jobOrder.disclaimerText || 'No disclaimer recorded'}
+            </pre>
+          </div>
+          <Checkbox
+            id="factory-confirmation-acknowledge"
+            checked={acknowledgeDisclaimer}
+            onCheckedChange={(checked) => setAcknowledgedRevision(checked === true ? acknowledgementKey : '')}
+            label="I have read and acknowledge the Job Order commercial terms and disclaimer."
+          />
+          {confirmMutation.isError && (
+            <ValidationMessage tone="error">
+              {mutationErrorMessage(confirmMutation.error, 'Unable to confirm this Job Order.')}
+            </ValidationMessage>
+          )}
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={confirmMutation.isPending}
+              onClick={() => {
+                setConfirmationPromptDismissedFor(jobOrder.id);
+                navigateToTab('production');
+              }}
+            >
+              Review in Production
+            </Button>
+            <Button
+              type="button"
+              disabled={!acknowledgeDisclaimer || confirmMutation.isPending}
+              loading={confirmMutation.isPending}
+              onClick={acknowledgeAndConfirm}
+            >
+              Confirm Job Order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={sendDialogOpen}

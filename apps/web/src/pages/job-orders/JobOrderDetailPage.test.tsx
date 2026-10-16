@@ -126,6 +126,64 @@ describe('JobOrderDetailPage tab navigation', () => {
   });
 });
 
+describe('ISS-003 Factory confirmation on each unconfirmed Job Order visit', () => {
+  it('opens an actionable review dialog with source terms and requires acknowledgement before confirm', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderJobOrderDetail(container, root, {
+      status: 'SENT_TO_FACTORY',
+      overrides: { ...draftOverrides, disclaimerText: 'Production terms require acknowledgement.' },
+    });
+    const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null;
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain('Factory confirmation required');
+    expect(dialog?.textContent).toContain('Production terms require acknowledgement.');
+    expect(dialog?.textContent).toContain('ST-1 Style One');
+    expect(dialog?.textContent).toContain('10');
+    const confirm = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent === 'Confirm Job Order');
+    expect(confirm?.disabled).toBe(true);
+    const checkbox = dialog!.querySelector('[role="checkbox"]') as HTMLElement;
+    expect(checkbox).not.toBeNull();
+    act(() => checkbox.click());
+    expect(confirm?.disabled).toBe(false);
+
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: mockJobOrder('CONFIRMED_BY_FACTORY') },
+    } as never);
+    act(() => confirm!.click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0]?.[0]).toBe('/job-orders/jo-1/actions/confirm');
+    expect(post.mock.calls[0]?.[1]).toMatchObject({
+      expectedVersion: 1, expectedDisclaimerRevision: 0, acknowledgeDisclaimer: true,
+    });
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).toBeNull());
+  });
+
+  it('offers Production review and does not reopen during tab changes or a refetch', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderJobOrderDetail(container, root, { status: 'SENT_TO_FACTORY' });
+    const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement;
+    const review = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Review in Production');
+    act(() => review!.click());
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).toBeNull());
+    await vi.waitFor(() => expect(getLocationSearch(container)).toContain('tab=production'));
+    act(() => switchJobOrderTab(container, 'Overview'));
+    act(() => switchJobOrderTab(container, 'Production'));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(getActiveTabPanel(container).textContent).toContain('Factory acknowledgement review');
+  });
+
+  it.each([
+    ['MERCHANDISER', 'SENT_TO_FACTORY'],
+    ['QA_USER', 'SENT_TO_FACTORY'],
+    ['FACTORY_USER', 'CONFIRMED_BY_FACTORY'],
+    ['FACTORY_USER', 'DRAFT'],
+  ])('never prompts role %s with Job Order status %s', async (role, status) => {
+    authState.roles = [role];
+    await renderJobOrderDetail(container, root, { status });
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
 describe('JobOrderDetailPage ?tab= deep linking', () => {
   it('opens the requested tab directly from the URL', async () => {
     await renderJobOrderDetail(container, root, {
