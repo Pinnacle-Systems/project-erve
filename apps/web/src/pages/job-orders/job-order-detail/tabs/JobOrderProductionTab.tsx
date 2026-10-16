@@ -11,6 +11,7 @@ import {
 } from '@erve/app-components';
 import {
   Button,
+  NumericField,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -84,7 +85,9 @@ export function JobOrderProductionTab({
   };
 
   const [markCompleteDialogOpen, setMarkCompleteDialogOpen] = useState(false);
-  const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number>>({});
+  // NumericField commits on blur; null is an intentionally cleared row, never zero.
+  const [preparedQuantities, setPreparedQuantities] = useState<Record<string, number | null>>({});
+  const [invalidPreparedRows, setInvalidPreparedRows] = useState<Record<string, boolean>>({});
   const [planDrafts, setPlanDrafts] = useState<Record<string, number>>({});
   const [undoStage, setUndoStage] = useState<JobOrderStage | null>(null);
   const [undoReason, setUndoReason] = useState('');
@@ -160,7 +163,11 @@ export function JobOrderProductionTab({
         { sizes, expectedVersion: jobOrder.version },
         { headers: { 'Idempotency-Key': `${jobOrder.id}:prepared:${jobOrder.version}` } },
       ),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setPreparedQuantities({});
+      setInvalidPreparedRows({});
+      invalidate();
+    },
   });
 
   const updatePlanMutation = useMutation({
@@ -276,8 +283,12 @@ export function JobOrderProductionTab({
     return flatSizes.find((size) => size.sizeId === sizeId)?.orderedQuantity ?? 0;
   }
 
+  const hasInvalidPrepared = flatSizes.some(
+    (size) => preparedQuantities[size.id] === null || invalidPreparedRows[size.id],
+  );
   const preparedPayload = flatSizes.map((size) => ({
     jobOrderLineSizeId: size.id,
+    // Saving is blocked if any entry is null or invalid. A legitimate 0 stays 0.
     preparedQuantity: preparedQuantities[size.id] ?? size.preparedQuantity,
   }));
 
@@ -514,8 +525,12 @@ export function JobOrderProductionTab({
             canUpdatePrepared && (
               <div className="flex justify-end">
                 <Button
-                  onClick={() => preparedMutation.mutate(preparedPayload)}
-                  disabled={!canUpdatePrepared}
+                  onClick={() => {
+                    if (!hasInvalidPrepared && !preparedMutation.isPending) {
+                      preparedMutation.mutate(preparedPayload);
+                    }
+                  }}
+                  disabled={!canUpdatePrepared || hasInvalidPrepared || preparedMutation.isPending}
                   loading={preparedMutation.isPending}
                 >
                   Save Prepared Quantity
@@ -529,7 +544,17 @@ export function JobOrderProductionTab({
               {NOT_RECORDED_LABEL} — this is a historical imported Job Order; no prepared quantity was recorded.
             </div>
           ) : canUpdatePrepared ? (
-            <div onKeyDown={createEnterToNextHandler()}>
+            <div className="space-y-2" onKeyDown={createEnterToNextHandler()}>
+              {hasInvalidPrepared && (
+                <ValidationMessage tone="error">
+                  Enter a prepared quantity for every size (0 is allowed), within its ordered quantity.
+                </ValidationMessage>
+              )}
+              {preparedMutation.isError && (
+                <ValidationMessage tone="error">
+                  {mutationErrorMessage(preparedMutation.error, 'Unable to save prepared quantities.')}
+                </ValidationMessage>
+              )}
               <DataTable
                 columns={[
                   { key: 'style', header: 'Style', accessor: 'style' },
@@ -545,18 +570,27 @@ export function JobOrderProductionTab({
                     header: 'Prepared',
                     align: 'right',
                     render: (size) => (
-                      <TextField
+                      <NumericField
                         aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
-                        type="number"
+                        mode="integer"
                         min={0}
                         max={size.orderedQuantity}
-                        value={preparedQuantities[size.id] ?? size.preparedQuantity}
-                        onChange={(event) =>
-                          setPreparedQuantities((current) => ({
-                            ...current,
-                            [size.id]: Number(event.target.value || 0),
-                          }))
+                        value={size.id in preparedQuantities
+                          ? preparedQuantities[size.id] ?? null
+                          : size.preparedQuantity}
+                        onChange={(value) =>
+                          setPreparedQuantities((current) => ({ ...current, [size.id]: value }))
                         }
+                        onValidationChange={(isValid) =>
+                          setInvalidPreparedRows((current) => ({ ...current, [size.id]: !isValid }))
+                        }
+                        onFocus={(event) => {
+                          // Replace the initial 0 by typing, rather than producing "010".
+                          if (event.currentTarget.value === '0') event.currentTarget.select();
+                        }}
+                        errorMessage={preparedQuantities[size.id] === null
+                          ? 'Enter a quantity (0 is allowed).'
+                          : undefined}
                         disabled={!canUpdatePrepared}
                         density="compact"
                         width="xs"

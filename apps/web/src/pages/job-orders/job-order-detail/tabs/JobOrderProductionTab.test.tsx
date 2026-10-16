@@ -102,6 +102,119 @@ describe('JobOrderProductionTab workflow rendering', () => {
   });
 });
 
+describe('ISS-020 Prepared Quantity editing and saving', () => {
+  function preparedInput(): HTMLInputElement {
+    const input = getActiveTabPanel(container).querySelector(
+      'input[aria-label="Prepared quantity for ST-1 Style One S"]',
+    ) as HTMLInputElement | null;
+    if (!input) throw new Error('Prepared Quantity field missing');
+    return input;
+  }
+  function saveButton(): HTMLButtonElement {
+    const button = Array.from(getActiveTabPanel(container).querySelectorAll('button')).find(
+      (node) => node.textContent === 'Save Prepared Quantity',
+    );
+    if (!button) throw new Error('Save Prepared Quantity button missing');
+    return button;
+  }
+  async function openPrepared(preparedQuantity = 0) {
+    await renderProduction('PRODUCTION_COMPLETE', standardStages, {
+      ...draftOverrides,
+      lines: draftOverrides.lines.map((line) => ({
+        ...line,
+        status: 'PRODUCTION_COMPLETE',
+        sizes: line.sizes.map((size) => ({ ...size, preparedQuantity })),
+      })),
+    });
+  }
+
+  it('renders a spinner-free integer field and selects the initial 0 for replacement', async () => {
+    await openPrepared();
+    const input = preparedInput();
+    expect(input.type).toBe('text');
+    expect(input.inputMode).toBe('numeric');
+    expect(input.value).toBe('0');
+    expect(saveButton().disabled).toBe(false);
+    act(() => input.focus());
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(1);
+  });
+
+  it('preserves a blank draft while editing and prevents saving empty quantities', async () => {
+    await openPrepared();
+    const input = preparedInput();
+    act(() => {
+      input.focus();
+      changeInput(input, '');
+    });
+    expect(input.value).toBe('');
+    act(() => input.blur());
+    expect(input.value).toBe('');
+    expect(saveButton().disabled).toBe(true);
+    expect(getActiveTabPanel(container).textContent).toContain('Enter a quantity (0 is allowed).');
+    const post = vi.spyOn(apiClient, 'post');
+    act(() => saveButton().click());
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('commits 010 as 10 and submits the numeric quantity, not a leading-zero string', async () => {
+    await openPrepared();
+    const input = preparedInput();
+    act(() => {
+      input.focus();
+      changeInput(input, '010');
+    });
+    expect(input.value).toBe('010');
+    act(() => input.blur());
+    expect(input.value).toBe('10');
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: mockJobOrder('PRODUCTION_COMPLETE') },
+    } as never);
+    act(() => saveButton().click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalled());
+    const [url, body] = post.mock.calls[0]!;
+    expect(url).toBe('/job-orders/jo-1/actions/update-prepared-quantity');
+    expect(body).toMatchObject({
+      expectedVersion: 1,
+      sizes: [{ jobOrderLineSizeId: 'size-1', preparedQuantity: 10 }],
+    });
+  });
+
+  it('retains an out-of-range draft and blocks Save without silently clamping it', async () => {
+    await openPrepared();
+    const input = preparedInput();
+    act(() => {
+      input.focus();
+      changeInput(input, '11');
+    });
+    act(() => input.blur());
+    expect(input.value).toBe('11');
+    expect(saveButton().disabled).toBe(true);
+    expect(getActiveTabPanel(container).textContent).toContain('Must be at most 10.');
+    const post = vi.spyOn(apiClient, 'post');
+    act(() => saveButton().click());
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('allows a legitimate zero after clearing and re-entering it', async () => {
+    await openPrepared(5);
+    const input = preparedInput();
+    act(() => {
+      input.focus();
+      changeInput(input, '');
+    });
+    act(() => input.blur());
+    expect(saveButton().disabled).toBe(true);
+    act(() => {
+      input.focus();
+      changeInput(input, '0');
+    });
+    act(() => input.blur());
+    expect(input.value).toBe('0');
+    expect(saveButton().disabled).toBe(false);
+  });
+});
+
 describe('JobOrderProductionTab disclaimer error feedback', () => {
   it('shows the API business message instead of a raw 409 on disclaimer save', async () => {
     await renderProduction('DRAFT', standardStages, { disclaimerText: 'Existing factory terms' });
