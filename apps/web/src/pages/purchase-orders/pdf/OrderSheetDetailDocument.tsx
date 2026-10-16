@@ -44,8 +44,13 @@ function LineBlock({ line, image }: { line: OrderSheetDetailLineSection; image: 
     values: Object.fromEntries(line.sizes.map((size) => [size.sizeId, size.orderedQuantity])),
   };
   return (
-    <View style={styles.lineBlock} wrap={false}>
-      <View style={styles.lineHeaderRow}>
+    // No outer `wrap={false}` here — an Order Sheet line is always exactly one Style/one row
+    // today, so this never truly needs to paginate, but forcing the whole block together would
+    // silently defeat PdfStyleSizeMatrix's own pagination support for any future reuse of this
+    // pattern with more rows. The header row itself stays atomic (wrap={false}) so it never
+    // orphans from the matrix that follows it.
+    <View style={styles.lineBlock}>
+      <View style={styles.lineHeaderRow} wrap={false}>
         <View>
           <Text style={styles.lineTitle}>
             {line.styleNumber} {line.styleName}
