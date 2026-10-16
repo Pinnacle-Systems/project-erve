@@ -9,14 +9,15 @@ import type {
 function makeLine(overrides: Partial<OrderSheetDetailLineSection> = {}): OrderSheetDetailLineSection {
   return {
     id: 'line-1',
+    styleId: 'style-1',
     styleNumber: 'STY-0001',
     styleName: 'Basic Tee',
     seasonDisplay: 'SS27',
     totalOrderedQuantity: 500,
     sizes: [
-      { id: 'sz-1', sizeCode: 'S', orderedQuantity: 200 },
-      { id: 'sz-2', sizeCode: 'M', orderedQuantity: 0 },
-      { id: 'sz-3', sizeCode: 'L', orderedQuantity: 300 },
+      { id: 'sz-1', sizeId: 'size-s', sizeCode: 'S', orderedQuantity: 200 },
+      { id: 'sz-2', sizeId: 'size-m', sizeCode: 'M', orderedQuantity: 0 },
+      { id: 'sz-3', sizeId: 'size-l', sizeCode: 'L', orderedQuantity: 300 },
     ],
     ...overrides,
   };
@@ -59,7 +60,7 @@ describe('OrderSheetDetailDocument', () => {
   });
 
   it('renders a line with many sizes (wide matrix) without throwing', async () => {
-    const sizes = Array.from({ length: 20 }, (_, i) => ({ id: `sz-${i}`, sizeCode: `SZ${i}`, orderedQuantity: i * 10 }));
+    const sizes = Array.from({ length: 20 }, (_, i) => ({ id: `sz-${i}`, sizeId: `size-${i}`, sizeCode: `SZ${i}`, orderedQuantity: i * 10 }));
     const line = makeLine({ sizes });
     const blob = await pdf(<OrderSheetDetailDocument viewModel={makeViewModel([line])} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);

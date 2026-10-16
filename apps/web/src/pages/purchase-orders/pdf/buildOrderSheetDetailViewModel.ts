@@ -24,12 +24,14 @@ export interface OrderSheetDetailPdfMeta {
 
 export interface OrderSheetDetailSizeRow {
   id: string;
+  sizeId: string;
   sizeCode: string;
   orderedQuantity: number;
 }
 
 export interface OrderSheetDetailLineSection {
   id: string;
+  styleId: string;
   styleNumber: string;
   styleName: string;
   seasonDisplay: string;
@@ -87,12 +89,14 @@ export function buildOrderSheetDetailViewModel(
 
   const lines: OrderSheetDetailLineSection[] = po.lines.map((line) => ({
     id: line.id,
+    styleId: line.styleId,
     styleNumber: line.styleNumber,
     styleName: line.styleName,
     seasonDisplay: line.seasonSnapshots.map((season) => season.displayName).join(', '),
     totalOrderedQuantity: line.totalOrderedQuantity,
     sizes: line.sizes.map((size) => ({
       id: size.id,
+      sizeId: size.sizeId,
       sizeCode: size.sizeCode,
       orderedQuantity: size.orderedQuantity,
     })),

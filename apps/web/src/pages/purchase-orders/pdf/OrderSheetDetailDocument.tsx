@@ -5,12 +5,15 @@ import { PdfFooter } from '../../../lib/pdf/core/PdfFooter.js';
 import { PdfMetaSection } from '../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../lib/pdf/core/PdfKeyValueSection.js';
-import { PdfThumbnail } from '../../../lib/pdf/core/PdfThumbnail.js';
-import { PdfTable, type PdfTableColumn } from '../../../lib/pdf/core/PdfTable.js';
+import { PdfThumbnail, type PdfImageSource } from '../../../lib/pdf/core/PdfThumbnail.js';
+import {
+  PdfStyleSizeMatrix,
+  type PdfStyleSizeMatrixColumn,
+  type PdfStyleSizeMatrixRow,
+} from '../../../lib/pdf/core/PdfStyleSizeMatrix.js';
 import type {
   OrderSheetDetailLineSection,
   OrderSheetDetailPdfViewModel,
-  OrderSheetDetailSizeRow,
 } from './buildOrderSheetDetailViewModel.js';
 
 const styles = StyleSheet.create({
@@ -25,12 +28,21 @@ const styles = StyleSheet.create({
   remarksText: { fontSize: 8, color: '#333333', lineHeight: 1.4 },
 });
 
-const sizeColumns: PdfTableColumn<OrderSheetDetailSizeRow>[] = [
-  { key: 'sizeCode', header: 'Size', width: '60%', value: (row) => row.sizeCode },
-  { key: 'orderedQuantity', header: 'Forecast Qty', width: '40%', align: 'right', value: (row) => row.orderedQuantity },
-];
-
-function LineBlock({ line }: { line: OrderSheetDetailLineSection }) {
+function LineBlock({ line, image }: { line: OrderSheetDetailLineSection; image: PdfImageSource }) {
+  // An Order Sheet line is exactly one Style (server-enforced) — the matrix always receives a
+  // single row here, but is built the same way a multi-Style document would, so a future relaxation
+  // of that business rule would only need more rows pushed in, not a different rendering path.
+  const columns: PdfStyleSizeMatrixColumn[] = line.sizes.map((size) => ({
+    sizeId: size.sizeId,
+    sizeCode: size.sizeCode,
+  }));
+  const row: PdfStyleSizeMatrixRow = {
+    styleId: line.styleId,
+    styleNumber: line.styleNumber,
+    styleName: line.styleName,
+    image,
+    values: Object.fromEntries(line.sizes.map((size) => [size.sizeId, size.orderedQuantity])),
+  };
   return (
     <View style={styles.lineBlock} wrap={false}>
       <View style={styles.lineHeaderRow}>
@@ -42,7 +54,7 @@ function LineBlock({ line }: { line: OrderSheetDetailLineSection }) {
         </View>
         <Text style={styles.lineTotal}>Total: {line.totalOrderedQuantity}</Text>
       </View>
-      <PdfTable columns={sizeColumns} rows={line.sizes} rowKey={(row) => row.id} />
+      <PdfStyleSizeMatrix columns={columns} rows={[row]} showColumnTotals={false} />
     </View>
   );
 }
@@ -71,7 +83,7 @@ export function OrderSheetDetailDocument({ viewModel }: OrderSheetDetailDocument
 
       <PdfSection title="Style and Size-wise Quantities" wrap>
         {viewModel.lines.map((line) => (
-          <LineBlock key={line.id} line={line} />
+          <LineBlock key={line.id} line={line} image={viewModel.image} />
         ))}
       </PdfSection>
 
