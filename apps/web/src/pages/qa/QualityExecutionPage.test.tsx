@@ -333,9 +333,15 @@ describe('ISS-012 finalized QA evidence retrieval', () => {
       action.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    // Establish whether the View callback reached the page/attachment endpoint
+    // before checking the portal DOM. This prevents a missing portal from hiding
+    // an upstream click-state regression.
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith(
+      '/quality-executions/attachments/attachment-1/content', { responseType: 'blob' },
+    ));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Inspection evidence: proof.png'));
     await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).not.toBeNull());
     await vi.waitFor(() => expect(document.body.textContent).toContain('Unable to load evidence.'));
-    expect(get).toHaveBeenCalledWith('/quality-executions/attachments/attachment-1/content', { responseType: 'blob' });
   });
 });
 
