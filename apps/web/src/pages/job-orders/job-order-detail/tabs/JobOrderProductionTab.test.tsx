@@ -105,7 +105,7 @@ describe('JobOrderProductionTab workflow rendering', () => {
 describe('ISS-020 Prepared Quantity editing and saving', () => {
   function preparedInput(): HTMLInputElement {
     const input = getActiveTabPanel(container).querySelector(
-      'input[aria-label="Prepared quantity for ST-1 S"]',
+      'input[aria-label="Prepared quantity for ST-1 Style One S"]',
     ) as HTMLInputElement | null;
     if (!input) throw new Error('Prepared Quantity field missing');
     return input;
