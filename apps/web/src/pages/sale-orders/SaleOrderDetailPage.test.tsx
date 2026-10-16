@@ -132,9 +132,10 @@ function buildSaleOrder(): SaleOrder {
 async function renderPage(
   role: Role,
   factoryDispatchesImpl: (config?: { params?: Record<string, unknown> }) => Promise<{ data: { data: unknown } }>,
+  overrides: Partial<SaleOrder> = {},
 ) {
   mockAuth(role);
-  const saleOrder = buildSaleOrder();
+  const saleOrder = { ...buildSaleOrder(), ...overrides };
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string, config?: { params?: Record<string, unknown> }) => {
     if (url === '/sale-orders/so-1') return { data: { data: saleOrder } };
     if (url === '/sale-orders/so-1/audit') return { data: { data: [] } };
@@ -252,5 +253,81 @@ describe('SaleOrderDetailPage — related dispatch lists fetch every page', () =
       { saleOrderId: 'so-1', cursor: undefined, limit: 100 },
       { saleOrderId: 'so-1', cursor: 'c1', limit: 100 },
     ]);
+  });
+});
+
+// ISS-021: three columns only when the Header panel has enough *content*
+// width; an expanded sidebar must not force cramped columns at 1024px.
+describe('ISS-021 Dispatch Order header layout', () => {
+  it('uses a compact container-responsive three-column grid without losing header facts or actions', async () => {
+    await renderPage(
+      'ADMIN',
+      async () => ({ data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } }),
+      {
+        distributors: [
+          {
+            id: 'dist-1',
+            code: 'D1',
+            name: 'A Distributor With a Very Long Name To Verify Wrapping',
+            purchaseMode: 'OUTRIGHT',
+          },
+        ],
+        remarks: 'An extended operational remark that should span the available content columns.',
+      },
+    );
+
+    const title = Array.from(container.querySelectorAll('h3')).find(
+      (node) => node.textContent === 'Header',
+    );
+    expect(title).toBeDefined();
+    const headerPanel = title!.closest('.rounded-panel');
+    expect(headerPanel).not.toBeNull();
+    const containerWrapper = headerPanel!.querySelector('.\\@container');
+    expect(containerWrapper).not.toBeNull();
+
+    const grid = Array.from(headerPanel!.querySelectorAll('div')).find(
+      (node) => node.className.includes('@min-[50rem]:grid-cols-3'),
+    );
+    expect(grid).toBeDefined();
+    expect(grid!.className).toContain('@min-[30rem]:grid-cols-2');
+    expect(grid!.className).toContain('min-w-0');
+
+    for (const label of [
+      'Distributor',
+      'Factory',
+      'Dispatch Order Date',
+      'Financial Year',
+      'Created By',
+      'Created At',
+      'State',
+      'Fulfillment',
+      'Remarks',
+    ]) {
+      expect(grid!.textContent).toContain(label);
+    }
+    expect(grid!.textContent).toContain('A Distributor With a Very Long Name');
+    expect(grid!.textContent).toContain('An extended operational remark');
+    const remark = Array.from(grid!.querySelectorAll('div')).find(
+      (node) => node.className.includes('@min-[50rem]:col-span-3'),
+    );
+    expect(remark).toBeDefined();
+    expect(content()).toContain('EISO/26-27/0001');
+    expect(content()).toContain('Ready for Factory (editable)');
+    expect(content()).toContain('Awaiting Packing');
+    expect(content()).toContain('Download PDF');
+    expect(content()).toContain('Edit / Correct');
+  });
+
+  it('keeps empty remarks compact without spanning the entire responsive grid', async () => {
+    await renderPage(
+      'ADMIN',
+      async () => ({ data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } }),
+    );
+    const title = Array.from(container.querySelectorAll('h3')).find(
+      (node) => node.textContent === 'Header',
+    );
+    const headerPanel = title!.closest('.rounded-panel')!;
+    expect(headerPanel.textContent).toContain('Remarks');
+    expect(headerPanel.querySelector('[class*="col-span-3"]')).toBeNull();
   });
 });
