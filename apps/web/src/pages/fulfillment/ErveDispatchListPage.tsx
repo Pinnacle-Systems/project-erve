@@ -1,6 +1,7 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, StatusBadge } from '@erve/app-components';
+import { Button } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
@@ -11,16 +12,26 @@ import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { ErveDispatchView } from './types.js';
 
+type DispatchStatusFilter = ErveDispatchView['status'] | 'ALL';
+
+const STATUS_TABS: Array<{ value: DispatchStatusFilter; label: string }> = [
+  { value: 'ALL', label: 'All' },
+  { value: 'DISPATCHED', label: 'Dispatched' },
+  { value: 'DELIVERED', label: 'Delivered' },
+];
+
 export function ErveDispatchListPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [status, setStatus] = useState<DispatchStatusFilter>('ALL');
 
   // Cursor-paginated: Load more appends every further page (the page size
   // is only the batch size, never a cap on what the list can reach).
   const { query, items } = useCursorList<ErveDispatchView>({
     queryKey: ['erve-dispatches'],
     path: '/erve-dispatches',
-    params: { limit: 50 },
+    // Filter is applied by the API before cursor paging; changing status resets to page one.
+    params: { limit: 50, status: status === 'ALL' ? undefined : status },
   });
 
   const generateErveDispatchListPdf = useCallback(async () => {
@@ -50,6 +61,21 @@ export function ErveDispatchListPage() {
         }
       />
 
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter Dispatch History by status">
+        {STATUS_TABS.map((tab) => (
+          <Button
+            key={tab.value}
+            type="button"
+            density="compact"
+            variant={status === tab.value ? 'default' : 'ghost'}
+            aria-pressed={status === tab.value}
+            onClick={() => setStatus(tab.value)}
+          >
+            {tab.label}
+          </Button>
+        ))}
+      </div>
+
       {query.isLoading ? (
         <LoadingState label="Loading dispatch history" />
       ) : (
@@ -58,7 +84,7 @@ export function ErveDispatchListPage() {
             rowKey="id"
             data={items}
             onRowClick={(row) => navigate(`/fulfillment/erve-dispatches/${row.id}`)}
-            emptyState={<EmptyState title="No dispatches yet" />}
+            emptyState={<EmptyState title={status === 'ALL' ? 'No dispatches yet' : 'No dispatches match this status.'} />}
             error={
               query.isError ? (
                 <ErrorState title="Unable to load dispatch history" description={query.error.message} />

@@ -85,6 +85,47 @@ describe('ErveDispatchListPage status (BUG-008)', () => {
   });
 });
 
+
+describe('BUG-008 Dispatch History server-side status filters', () => {
+  it('requests each status separately and starts again at the first cursor on filter changes', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (_url, options) => {
+      const status = (options as { params?: { status?: string } })?.params?.status;
+      return {
+        data: { data: {
+          items: [{
+            id: status ?? 'all',
+            erveDispatchNumber: status === 'DELIVERED' ? 'EIED/26-27/0003' :
+              status === 'DISPATCHED' ? 'EIED/26-27/0002' : 'EIED/26-27/0001',
+            status: status ?? 'DISPATCHED',
+            saleOrder: null, distributor: { name: 'Distributor One' },
+            dispatchDate: '2026-10-01T00:00:00Z', transporter: null, lrNumber: null, totalQuantity: 12,
+          }],
+          pageInfo: { limit: 50, hasMore: false, nextCursor: null },
+        } },
+      } as never;
+    });
+    renderPage();
+    await vi.waitFor(() => expect(content()).toContain('EIED/26-27/0001'));
+    const buttons = Array.from(container.querySelectorAll('[role="group"] button'));
+    expect(buttons.map((b) => b.textContent)).toEqual(['All', 'Dispatched', 'Delivered']);
+    expect(buttons[0]?.getAttribute('aria-pressed')).toBe('true');
+
+    act(() => (buttons[2] as HTMLButtonElement).click());
+    await vi.waitFor(() => expect(content()).toContain('EIED/26-27/0003'));
+    expect(content()).not.toContain('EIED/26-27/0001');
+    expect(get).toHaveBeenCalledWith('/erve-dispatches', { params: { limit: 50, status: 'DELIVERED', cursor: undefined } });
+    expect(buttons[2]?.getAttribute('aria-pressed')).toBe('true');
+
+    act(() => (buttons[1] as HTMLButtonElement).click());
+    await vi.waitFor(() => expect(content()).toContain('EIED/26-27/0002'));
+    expect(content()).not.toContain('EIED/26-27/0003');
+    expect(get).toHaveBeenCalledWith('/erve-dispatches', { params: { limit: 50, status: 'DISPATCHED', cursor: undefined } });
+    act(() => (buttons[0] as HTMLButtonElement).click());
+    await vi.waitFor(() => expect(content()).toContain('EIED/26-27/0001'));
+    expect(get).toHaveBeenCalledWith('/erve-dispatches', { params: { limit: 50, status: undefined, cursor: undefined } });
+  });
+});
+
 describe('ErveDispatchListPage — request failure handling (UXAUTH-018)', () => {
   it('shows a visible error, not a silent empty list, when the request fails', async () => {
     vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('Network Error'));

@@ -1064,7 +1064,7 @@ export async function getErveDispatchDetail(actor: CurrentUser, id: string) {
 
 export async function getErveDispatchList(
   actor: CurrentUser,
-  filters: { saleOrderId?: string; distributorId?: string; cursor?: string; limit: number },
+  filters: { saleOrderId?: string; distributorId?: string; status?: 'DISPATCHED' | 'DELIVERED'; cursor?: string; limit: number },
 ) {
   if (!canViewErveDispatch(actor)) {
     throw HttpError.forbidden('You do not have permission to view Erve Dispatches');
@@ -1072,7 +1072,7 @@ export async function getErveDispatchList(
   const distributorId = isBroadErveDispatchViewer(actor) ? filters.distributorId : getSoleDistributorId(actor);
 
   const records = await prisma.erveDispatch.findMany({
-    where: { saleOrderId: filters.saleOrderId, distributorId },
+    where: { saleOrderId: filters.saleOrderId, distributorId, status: filters.status },
     include: erveDispatchInclude,
     orderBy: { id: 'desc' },
     take: filters.limit + 1,
