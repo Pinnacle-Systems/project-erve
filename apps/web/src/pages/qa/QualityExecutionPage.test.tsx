@@ -286,6 +286,52 @@ describe('web Quality execution workflow', () => {
   });
 });
 
+describe('ISS-012 finalized QA evidence retrieval', () => {
+  it('opens an authenticated, read-only preview and reports denied access without exposing edits', async () => {
+    const finalized: QualityExecutionView = {
+      ...view,
+      status: 'FINALIZED',
+      sections: [{
+        id: 's1', sequence: 1, title: 'Evidence',
+        components: [{
+          id: 'files', sequence: 1, type: 'ATTACHMENTS', title: 'Evidence',
+          config: { requirements: [{ key: 'photo', label: 'Photo' }] },
+        }],
+      }],
+      attachments: [{
+        id: 'attachment-1', componentId: 'files', requirementKey: 'photo',
+        fileName: 'proof.png', contentType: 'image/png', sizeBytes: 2048,
+        createdAt: '2026-08-20T10:00:00Z',
+      }],
+    };
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/quality-executions/attachments/attachment-1/content') {
+        throw new Error('Forbidden');
+      }
+      return { data: { data: finalized } };
+    });
+    await act(async () => root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/quality-executions/e1']}>
+          <Routes>
+            <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ));
+    const action = await vi.waitFor(() => {
+      const button = container.querySelector('button[aria-label="View proof.png"]') as HTMLButtonElement | null;
+      expect(button).not.toBeNull();
+      return button!;
+    });
+    expect(container.querySelector('button[aria-label="Remove proof.png"]')).toBeNull();
+    act(() => action.click());
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).not.toBeNull());
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Unable to load evidence.'));
+    expect(get).toHaveBeenCalledWith('/quality-executions/attachments/attachment-1/content', { responseType: 'blob' });
+  });
+});
+
 // UXAUTH-006: MERCHANDISER/SENIOR_MANAGEMENT can read a generic
 // QualityExecution (GET is allowed for both — see
 // apps/api/src/modules/quality-executions/quality-executions.routes.ts) but
