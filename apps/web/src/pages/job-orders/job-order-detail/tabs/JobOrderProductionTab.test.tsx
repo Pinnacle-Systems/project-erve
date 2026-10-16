@@ -186,8 +186,8 @@ describe('ISS-020 Prepared Quantity editing and saving', () => {
     act(() => {
       input.focus();
       changeInput(input, '11');
-      input.blur();
     });
+    act(() => input.blur());
     expect(input.value).toBe('11');
     expect(saveButton().disabled).toBe(true);
     expect(getActiveTabPanel(container).textContent).toContain('Must be at most 10.');
@@ -202,14 +202,14 @@ describe('ISS-020 Prepared Quantity editing and saving', () => {
     act(() => {
       input.focus();
       changeInput(input, '');
-      input.blur();
     });
+    act(() => input.blur());
     expect(saveButton().disabled).toBe(true);
     act(() => {
       input.focus();
       changeInput(input, '0');
-      input.blur();
     });
+    act(() => input.blur());
     expect(input.value).toBe('0');
     expect(saveButton().disabled).toBe(false);
   });
