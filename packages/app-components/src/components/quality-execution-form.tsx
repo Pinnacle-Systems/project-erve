@@ -73,6 +73,7 @@ export interface QualityExecutionFormProps {
   onFinalize(payload: QualityExecutionPayload): Promise<void>;
   onUpload?(componentId: string, requirementKey: string, file: File): Promise<void>;
   onRemoveAttachment?(attachmentId: string): Promise<void>;
+  onViewAttachment?(attachmentId: string, fileName: string): void;
   onCancelBatch?(reason: string): Promise<void>;
   onStartReinspection?(): Promise<void>;
   onPermanentlyReject?(reason: string): Promise<void>;
@@ -1732,7 +1733,19 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                           Uploaded · {formatFileSize(item.sizeBytes)}
                                         </p>
                                       </div>
-                                      {execution.status === 'DRAFT' && canMutate && props.onRemoveAttachment ? (
+                                      <div className="flex shrink-0 flex-wrap gap-1">
+                                        {props.onViewAttachment ? (
+                                          <Button
+                                            type="button"
+                                            variant="secondary"
+                                            density="compact"
+                                            aria-label={`View ${item.fileName}`}
+                                            onClick={() => props.onViewAttachment?.(item.id, item.fileName)}
+                                          >
+                                            View
+                                          </Button>
+                                        ) : null}
+                                        {execution.status === 'DRAFT' && canMutate && props.onRemoveAttachment ? (
                                         <Button
                                           type="button"
                                           variant="ghost"
@@ -1742,7 +1755,8 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                         >
                                           Remove
                                         </Button>
-                                      ) : null}
+                                        ) : null}
+                                      </div>
                                     </li>
                                   ))}
                                 </ul>
