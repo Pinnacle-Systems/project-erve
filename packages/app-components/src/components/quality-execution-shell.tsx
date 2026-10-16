@@ -22,11 +22,11 @@ export function QualityExecutionPageShell({
 }: QualityExecutionPageShellProps) {
   return (
     <main
-      className={cn('min-h-full bg-background px-4 py-6 sm:px-6 lg:px-8', className)}
+      className={cn('min-h-full min-w-0 bg-background', className)}
       data-quality-execution-shell="true"
       {...props}
     >
-      <div className="mx-auto max-w-[90rem] space-y-5">
+      <div className="w-full min-w-0 space-y-4">
         <nav
           aria-label="Quality execution navigation"
           className="flex flex-wrap items-center justify-between gap-3"
@@ -108,7 +108,7 @@ export function QualityExecutionSection({
   return (
     <section
       className={cn(
-        'space-y-5 rounded-card border border-border bg-surface p-4 shadow-card sm:p-5',
+        'space-y-4 rounded-card border border-border bg-surface p-3 shadow-card sm:p-4',
         className,
       )}
       data-quality-execution-section="true"

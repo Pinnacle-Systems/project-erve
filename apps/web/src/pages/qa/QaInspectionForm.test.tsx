@@ -287,6 +287,21 @@ function responseControl(label: string) {
 }
 
 describe('QaInspectionForm', () => {
+  it('uses compact spacing between PP Sample inspection sections without changing form controls', async () => {
+    await renderForm();
+    const section = Array.from(container.querySelectorAll('[data-quality-execution-section="true"]')).find(
+      (element) => element.textContent?.includes('Inspection Checklist'),
+    ) as HTMLElement | undefined;
+    expect(section).toBeDefined();
+    expect(section?.classList.contains('space-y-4')).toBe(true);
+    expect(section?.classList.contains('p-3')).toBe(true);
+    expect(section?.classList.contains('sm:p-4')).toBe(true);
+    // A draft inspection retains its selection, checkpoints and actions after density changes.
+    expect(container.textContent).toContain('Inspection Checklist');
+    expect(container.textContent).toContain('Inspection Details');
+    expect(container.querySelector('input[aria-label="Quantity of samples"]')).not.toBeNull();
+  });
+
   it('renders PP Sample in the shared shell and links back to its Job Order detail', async () => {
     const data = detail();
     data.sessions[0]!.forms = [data.sessions[0]!.forms[0]!];

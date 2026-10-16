@@ -40,6 +40,23 @@ describe('QualityExecutionPageShell parent navigation', () => {
     expect(link.querySelector('.truncate')).not.toBeNull();
   });
 
+  it('uses the parent AppShell gutters without adding QA-only padding or a max-width cap', () => {
+    act(() =>
+      root.render(
+        <QualityExecutionPageShell jobOrderId="job-1" jobOrderNumber="JO-2026-000001">
+          <h1>PP Sample</h1>
+        </QualityExecutionPageShell>,
+      ),
+    );
+    const shell = container.querySelector('[data-quality-execution-shell="true"]') as HTMLElement;
+    expect(shell.classList.contains('min-w-0')).toBe(true);
+    expect(shell.className).not.toMatch(/(?:^|\\s)(?:px-|sm:px-|lg:px-|py-)/);
+    const content = shell.firstElementChild as HTMLElement;
+    expect(content.classList.contains('w-full')).toBe(true);
+    expect(content.classList.contains('min-w-0')).toBe(true);
+    expect(content.className).not.toContain('max-w-');
+  });
+
   it('renders optional page-level actions alongside the back link when provided', () => {
     act(() =>
       root.render(
