@@ -32,13 +32,16 @@ function flushMicrotasks(): Promise<void> {
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 40; i++) {
+  // A fixed 40-tick loop can exhaust in under 150 ms while a PDF module
+  // dynamically imports on a busy CI runner. Allow a real async deadline.
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
     if (predicate()) return;
     await act(async () => {
       await flushMicrotasks();
     });
   }
-  throw new Error('Timed out waiting for condition');
+  if (!predicate()) throw new Error('Timed out waiting for condition');
 }
 
 function makeUser(overrides: Partial<AdminUserSummary> = {}): AdminUserSummary {
