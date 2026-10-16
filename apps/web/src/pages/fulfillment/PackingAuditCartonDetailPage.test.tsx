@@ -148,7 +148,7 @@ describe('BUG-005 Packing Audit carton destination context', () => {
         if (url === '/packing-audit/cartons/carton-1') return { data: { data: carton } };
         throw new Error(`Unexpected GET: ${url}`);
       }, role);
-      const fields = Array.from(container.querySelectorAll('dt')).map((e) => e.textContent?.trim());
+      const fields = Array.from(container.querySelectorAll('.text-label')).map((e) => e.textContent?.trim());
       expect(fields).toContain('Distributor');
       expect(fields).toContain('Destination');
       expect(content()).toContain('Distributor One');
