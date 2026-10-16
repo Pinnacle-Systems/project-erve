@@ -283,12 +283,14 @@ export function JobOrderDetailPage() {
         }}
       />
 
-      <JobOrderActionRequired
-        jobOrder={jobOrder}
-        user={user}
-        onOpenTab={navigateToTab}
-        onOpenForm={(url) => navigate(url)}
-      />
+      {activeTab === 'overview' && (
+        <JobOrderActionRequired
+          jobOrder={jobOrder}
+          user={user}
+          onOpenTab={navigateToTab}
+          onOpenForm={(url) => navigate(url)}
+        />
+      )}
 
       {cancelJobOrderMutation.isError && (
         <div className="px-6">
