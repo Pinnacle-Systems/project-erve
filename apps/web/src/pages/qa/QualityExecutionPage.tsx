@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { QualityExecutionForm, QualityExecutionPageShell } from '@erve/app-components';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, ValidationMessage } from '@erve/primitives';
+import { useAuthedImage } from '../../lib/use-authed-image.js';
 import type {
   ApiErrorResponse,
   ApiSuccessResponse,
@@ -29,6 +31,7 @@ export function QualityExecutionPage() {
   const user = useOptionalAuth()?.user;
   const [message, setMessage] = useState('');
   const [validationErrors, setValidationErrors] = useState<QualityExecutionValidationError[]>([]);
+  const [viewingAttachment, setViewingAttachment] = useState<{ id: string; name: string } | null>(null);
   const query = useQuery({
     queryKey: ['quality-execution', executionId],
     queryFn: async () =>
@@ -172,6 +175,7 @@ export function QualityExecutionPage() {
       </main>
     );
   return (
+    <>
     <QualityExecutionPageShell
       jobOrderId={query.data.jobOrderId}
       jobOrderNumber={query.data.jobOrderNumber}
@@ -223,6 +227,7 @@ export function QualityExecutionPage() {
         }
         onUpload={upload}
         onRemoveAttachment={removeAttachment}
+        onViewAttachment={(id, name) => setViewingAttachment({ id, name })}
         onStartReinspection={() =>
           batchMutation.mutateAsync({ action: 'reinspect' }).then(() => undefined)
         }
@@ -234,5 +239,37 @@ export function QualityExecutionPage() {
         }
       />
     </QualityExecutionPageShell>
+    {viewingAttachment && (
+      <QualityEvidencePreview
+        attachmentId={viewingAttachment.id}
+        fileName={viewingAttachment.name}
+        onClose={() => setViewingAttachment(null)}
+      />
+    )}
+    </>
+  );
+}
+
+function QualityEvidencePreview({
+  attachmentId,
+  fileName,
+  onClose,
+}: {
+  attachmentId: string;
+  fileName: string;
+  onClose: () => void;
+}) {
+  const image = useAuthedImage(`/quality-executions/attachments/${attachmentId}/content`);
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Inspection evidence: {fileName}</DialogTitle></DialogHeader>
+        {image.loading && <p role="status">Loading evidence…</p>}
+        {image.error && (
+          <ValidationMessage tone="error">Unable to load evidence. Check your access and try again.</ValidationMessage>
+        )}
+        {image.url && <img className="mx-auto max-h-[65vh] max-w-full object-contain" src={image.url} alt={fileName} />}
+      </DialogContent>
+    </Dialog>
   );
 }
