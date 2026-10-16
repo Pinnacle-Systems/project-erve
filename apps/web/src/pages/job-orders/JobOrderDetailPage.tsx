@@ -353,7 +353,7 @@ export function JobOrderDetailPage() {
           <DialogHeader>
             <DialogTitle>Factory confirmation required</DialogTitle>
             <DialogDescription>
-              Review this Job Order's quantities, production details and commercial disclaimer before acknowledging it.
+              Review the Job Order quantities, production details and commercial disclaimer before acknowledging it.
             </DialogDescription>
           </DialogHeader>
           <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
