@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiErrorResponse, ApiSuccessResponse, JobOrderAuditEntry } from '@erve/types';
@@ -16,6 +16,7 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import type { JobOrder } from './types.js';
 import { JobOrderPageHeader } from './job-order-detail/JobOrderPageHeader.js';
 import { JobOrderStickyContext } from './job-order-detail/JobOrderStickyContext.js';
+import { JobOrderActionRequired } from './job-order-detail/JobOrderActionRequired.js';
 import { JobOrderOverviewTab } from './job-order-detail/tabs/JobOrderOverviewTab.js';
 import { JobOrderProductionTab } from './job-order-detail/tabs/JobOrderProductionTab.js';
 import { JobOrderQualityTab } from './job-order-detail/tabs/JobOrderQualityTab.js';
@@ -35,6 +36,7 @@ function isJobOrderTab(value: string | null): value is JobOrderTab {
 }
 
 export function JobOrderDetailPage() {
+  const navigate = useNavigate();
   const { id } = useParams();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -279,6 +281,13 @@ export function JobOrderDetailPage() {
           canCancelJobOrder,
           onCancel: () => setCancelDialogOpen(true),
         }}
+      />
+
+      <JobOrderActionRequired
+        jobOrder={jobOrder}
+        user={user}
+        onOpenTab={navigateToTab}
+        onOpenForm={(url) => navigate(url)}
       />
 
       {cancelJobOrderMutation.isError && (
