@@ -157,6 +157,31 @@ describe('JobOrderDetailPage ?tab= deep linking', () => {
   });
 });
 
+describe('ISS-019 Job Order page gutter alignment', () => {
+  it('aligns tabs and operational summary to the PageHeader inner gutters across breakpoints', async () => {
+    await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
+
+    // PageHeader uses px-6; avoid adding a wider nested desktop inset
+    // for either the sticky summary or the tabbed content.
+    const header = container.querySelector('h1')?.closest('[class*="px-6"]');
+    expect(header).not.toBeNull();
+
+    const sticky = container.querySelector('.sticky') as HTMLElement;
+    expect(sticky.classList.contains('px-6')).toBe(true);
+    expect(sticky.classList.contains('md:px-8')).toBe(false);
+    expect(sticky.classList.contains('px-4')).toBe(false);
+
+    const tabs = container.querySelector('[role="tablist"]');
+    expect(tabs).not.toBeNull();
+    const tabInset = tabs!.closest('.px-6') as HTMLElement | null;
+    expect(tabInset).not.toBeNull();
+    expect(tabInset!.classList.contains('md:px-8')).toBe(false);
+    expect(getActiveTabPanel(container).textContent).toContain('Lifecycle');
+    act(() => switchJobOrderTab(container, 'Production'));
+    expect(getActiveTabPanel(container).textContent).toContain('Current Stage:');
+  });
+});
+
 describe('JobOrderDetailPage sticky context', () => {
   it('keeps the Factory Confirm action beside the identity on desktop, without wrapping below it', async () => {
     authState.roles = ['FACTORY_USER'];
