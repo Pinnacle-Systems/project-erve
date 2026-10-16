@@ -1,5 +1,6 @@
 import type { PackingAuditQueueItem } from '../../types.js';
 import { PACKING_AUDIT_STATE_LABELS } from '../shared/fulfillmentPdfLabels.js';
+import { packingAuditDestinationLabel } from '../../packingAuditDestinationLabel.js';
 
 export interface PackingAuditListPdfMeta {
   generatedAt: string;
@@ -10,6 +11,8 @@ export interface PackingAuditListPdfRow {
   id: string;
   saleOrderNumber: string;
   factoryName: string;
+  distributorName: string;
+  destinationLabel: string;
   cartonNumber: string;
   totalQuantity: number;
   auditStateLabel: string;
@@ -42,6 +45,8 @@ export function buildPackingAuditListViewModel(
     id: item.id,
     saleOrderNumber: item.saleOrder.saleOrderNumber,
     factoryName: item.factory.name,
+    distributorName: item.destination.distributor.name,
+    destinationLabel: packingAuditDestinationLabel(item.destination),
     cartonNumber: item.cartonNumber,
     totalQuantity: item.totalQuantity,
     auditStateLabel: PACKING_AUDIT_STATE_LABELS[item.auditState],

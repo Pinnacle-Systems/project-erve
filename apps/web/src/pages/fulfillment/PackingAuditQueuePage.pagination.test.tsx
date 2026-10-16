@@ -17,6 +17,7 @@ describe('PackingAuditQueuePage pagination', () => {
         id: `c-${n}`,
         saleOrder: { id: `so-${n}`, saleOrderNumber: `EISO/26-27/${String(n).padStart(4, '0')}` },
         factory: { id: 'f1', name: 'Clifton' },
+        destination: { id: 'dest-1', label: 'Store 1', city: 'Chennai', state: 'TN', distributor: { id: 'd1', code: 'D1', name: 'Distributor One' } },
         cartonNumber: n,
         totalQuantity: 5,
         auditState: 'NOT_INSPECTED',

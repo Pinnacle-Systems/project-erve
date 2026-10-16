@@ -44,10 +44,24 @@ describe('buildPackingAuditListViewModel', () => {
       id: 'carton-1',
       saleOrderNumber: 'EISO/26-27/0001',
       factoryName: 'Factory One',
+      distributorName: 'Distributor One',
+      destinationLabel: 'Store 1 · Chennai, TN',
       cartonNumber: 'C1',
       totalQuantity: 10,
       auditStateLabel: 'Not Inspected',
     });
+  });
+
+  it('keeps distributor ownership per destination even across mixed outlets and unlabeled destinations', () => {
+    const second = makeItem({
+      id: 'carton-2',
+      destination: { id: 'dest-2', label: null, city: 'Madurai', state: 'TN', distributor: { id: 'd2', code: 'D2', name: 'Distributor Two' } },
+    });
+    const vm = buildPackingAuditListViewModel([makeItem(), second], { generatedAt: '2026-09-15T10:00:00Z' });
+    expect(vm.rows.map((row) => [row.distributorName, row.destinationLabel])).toEqual([
+      ['Distributor One', 'Store 1 · Chennai, TN'],
+      ['Distributor Two', 'Madurai, TN'],
+    ]);
   });
 
   it('labels every derived audit state correctly and never invents PASS/FAIL', () => {
