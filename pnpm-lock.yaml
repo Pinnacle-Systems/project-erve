@@ -305,6 +305,9 @@ importers:
       jsdom:
         specifier: ^29.1.1
         version: 29.1.1(@noble/hashes@1.8.0)
+      pdfjs-dist:
+        specifier: ^6.3.289
+        version: 6.3.289
       tailwindcss:
         specifier: ^4.3.2
         version: 4.3.2

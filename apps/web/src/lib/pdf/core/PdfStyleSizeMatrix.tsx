@@ -61,6 +61,16 @@ export interface PdfStyleSizeMatrixProps {
    * width via real visual verification, not a value assumed here.
    */
   maxColumnsPerGroup?: number;
+  /**
+   * Max Style rows rendered between header repeats. Unlike `@react-pdf/renderer`'s `fixed` (a
+   * document-wide running header, wrong here since a wide Size range can produce several
+   * independent column-group blocks, each of which would otherwise fix its own header at a
+   * position that then bleeds onto later, unrelated pages), the header is re-rendered inline in
+   * the row flow every N rows — content and headers flow and paginate together, scoped to this
+   * block only. Callers pick this for their own row height/page geometry via real visual
+   * verification, same as `maxColumnsPerGroup`.
+   */
+  rowsPerHeaderRepeat?: number;
   emptyMessage?: string;
   /** Width reserved for the Style identity column, as a percentage string. */
   styleColumnWidth?: string;
@@ -113,6 +123,7 @@ export function PdfStyleSizeMatrix({
   showRowTotals = true,
   showColumnTotals = true,
   maxColumnsPerGroup = 8,
+  rowsPerHeaderRepeat = 25,
   emptyMessage = 'No styles to display.',
   styleColumnWidth = '28%',
 }: PdfStyleSizeMatrixProps) {
@@ -133,47 +144,61 @@ export function PdfStyleSizeMatrix({
           groups.length > 1
             ? `Sizes ${groupColumns[0]!.sizeCode} – ${groupColumns[groupColumns.length - 1]!.sizeCode}${groupIndex > 0 ? ' (continued)' : ''}`
             : null;
+
+        const renderHeaderRow = (key: string) => (
+          <View key={key} style={styles.headerRow} wrap={false}>
+            <Text style={[styles.styleHeaderCell, { width: styleColumnWidth }]}>Style</Text>
+            {groupColumns.map((column) => (
+              <Text key={column.sizeId} style={[styles.headerCell, { width: sizeColWidth }]}>
+                {column.sizeCode}
+              </Text>
+            ))}
+            {groupShowsTotals ? (
+              <Text style={[styles.headerCell, { width: totalsColumnWidth }]}>Total</Text>
+            ) : null}
+          </View>
+        );
+
+        // Rows are chunked purely to decide how often the header repeats in the content flow —
+        // NOT to gate pagination. Neither this View nor the chunk Views below set `wrap={false}`,
+        // so `@react-pdf/renderer` paginates the whole group normally across as many pages as the
+        // data needs; only each individual row (and each header instance) is kept atomic. This
+        // deliberately avoids `fixed` — a `fixed` header is pinned at a document-wide position and
+        // repeats on every later page regardless of which group is still rendering, which breaks
+        // down the moment a document has more than one column-group block.
         return (
-          <View key={groupIndex} wrap={false}>
+          <View key={groupIndex}>
             {groupLabel ? <Text style={styles.groupLabel}>{groupLabel}</Text> : null}
-            <View style={styles.headerRow} fixed>
-              <Text style={[styles.styleHeaderCell, { width: styleColumnWidth }]}>Style</Text>
-              {groupColumns.map((column) => (
-                <Text key={column.sizeId} style={[styles.headerCell, { width: sizeColWidth }]}>
-                  {column.sizeCode}
-                </Text>
-              ))}
-              {groupShowsTotals ? (
-                <Text style={[styles.headerCell, { width: totalsColumnWidth }]}>Total</Text>
-              ) : null}
-            </View>
-            {rows.map((row) => (
-              <View key={row.styleId} style={styles.row} wrap={false}>
-                <View style={[styles.styleCell, { width: styleColumnWidth }]}>
-                  {row.image !== undefined && row.image !== null ? (
-                    <View style={styles.styleThumbnailWrapper}>
-                      <PdfThumbnail image={row.image} width={20} height={20} />
+            {chunk(rows, rowsPerHeaderRepeat).flatMap((rowChunk, chunkIndex) => [
+              renderHeaderRow(`header-${chunkIndex}`),
+              ...rowChunk.map((row) => (
+                <View key={row.styleId} style={styles.row} wrap={false}>
+                  <View style={[styles.styleCell, { width: styleColumnWidth }]}>
+                    {row.image !== undefined && row.image !== null ? (
+                      <View style={styles.styleThumbnailWrapper}>
+                        <PdfThumbnail image={row.image} width={20} height={20} />
+                      </View>
+                    ) : null}
+                    <View>
+                      <Text style={styles.styleNumberText}>{row.styleNumber}</Text>
+                      {row.styleName ? <Text style={styles.styleNameText}>{row.styleName}</Text> : null}
+                    </View>
+                  </View>
+                  {groupColumns.map((column) => (
+                    <View key={column.sizeId} style={[styles.cellWrapper, { width: sizeColWidth }]}>
+                      <Text style={styles.cellText}>{cellDisplay(row, column.sizeId)}</Text>
+                    </View>
+                  ))}
+                  {groupShowsTotals ? (
+                    <View style={[styles.cellWrapper, { width: totalsColumnWidth }]}>
+                      <Text style={styles.cellText}>{rowTotal(row, columns)}</Text>
                     </View>
                   ) : null}
-                  <View>
-                    <Text style={styles.styleNumberText}>{row.styleNumber}</Text>
-                    {row.styleName ? <Text style={styles.styleNameText}>{row.styleName}</Text> : null}
-                  </View>
                 </View>
-                {groupColumns.map((column) => (
-                  <View key={column.sizeId} style={[styles.cellWrapper, { width: sizeColWidth }]}>
-                    <Text style={styles.cellText}>{cellDisplay(row, column.sizeId)}</Text>
-                  </View>
-                ))}
-                {groupShowsTotals ? (
-                  <View style={[styles.cellWrapper, { width: totalsColumnWidth }]}>
-                    <Text style={styles.cellText}>{rowTotal(row, columns)}</Text>
-                  </View>
-                ) : null}
-              </View>
-            ))}
+              )),
+            ])}
             {showColumnTotals ? (
-              <View style={styles.footerRow}>
+              <View style={styles.footerRow} wrap={false}>
                 <Text style={[styles.footerLabelCell, { width: styleColumnWidth }]}>Total</Text>
                 {groupColumns.map((column) => (
                   <Text key={column.sizeId} style={[styles.footerValueCell, { width: sizeColWidth }]}>
