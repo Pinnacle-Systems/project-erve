@@ -164,7 +164,12 @@ export function SaleOrderDetailPage() {
       />
 
       <Panel title="Header">
-        <DescriptionList>
+        <div className="@container">
+          <DescriptionList
+            columns={1}
+            density="compact"
+            className="min-w-0 @min-[30rem]:grid-cols-2 @min-[50rem]:grid-cols-3"
+          >
           <DescriptionList.Item
             label={so.distributors.length === 1 ? 'Distributor' : `Distributors (${so.distributors.length})`}
             value={so.distributors.map((d) => d.name).join(', ') || '—'}
@@ -174,7 +179,6 @@ export function SaleOrderDetailPage() {
           <DescriptionList.Item label="Financial Year" value={so.financialYear.code} />
           <DescriptionList.Item label="Created By" value={so.creator.name} />
           <DescriptionList.Item label="Created At" value={formatDate(so.createdAt)} />
-          <DescriptionList.Item label="Remarks" value={so.remarks ?? '—'} />
           <DescriptionList.Item
             label="State"
             value={
@@ -189,7 +193,13 @@ export function SaleOrderDetailPage() {
             label="Fulfillment"
             value={<StatusBadge label={FULFILLMENT_STAGE_LABELS[so.fulfillment.stage]} tone="approved" />}
           />
-        </DescriptionList>
+          <DescriptionList.Item
+            label="Remarks"
+            value={so.remarks ?? '—'}
+            className={so.remarks ? '@min-[30rem]:col-span-2 @min-[50rem]:col-span-3' : undefined}
+          />
+          </DescriptionList>
+        </div>
       </Panel>
 
       <Panel title="Distributors">
