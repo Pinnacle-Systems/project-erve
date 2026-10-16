@@ -1,7 +1,7 @@
 import { TotalsPanel } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
-import type { TaxInvoiceReviewView } from '@erve/types';
+import type { TaxInvoiceHsnSummary, TaxInvoiceReviewView } from '@erve/types';
 import {
   formatInvoiceMoney,
   formatInvoiceAdjustment,
@@ -10,10 +10,20 @@ import {
 
 export function TaxInvoiceTotals({ invoice }: { invoice: TaxInvoiceReviewView }) {
   const issued = invoiceIssuedAmount(invoice);
+  const isIntra = invoice.gstTreatment === 'INTRA';
+  const isInter = invoice.gstTreatment === 'INTER';
+  const taxTotals = isIntra
+    ? [
+        { label: 'CGST', value: formatInvoiceMoney(invoice.totalCgst) },
+        { label: 'SGST', value: formatInvoiceMoney(invoice.totalSgst) },
+      ]
+    : isInter
+      ? [{ label: 'IGST', value: formatInvoiceMoney(invoice.totalIgst) }]
+      : [{ label: 'Tax components', value: 'Unavailable until GST treatment is resolved' }];
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
       <Panel title="HSN tax summary" padding="none" className="min-w-0">
-        {invoice.hsnSummary ? (
+        {invoice.hsnSummary && (isIntra || isInter) ? (
           <DataTable
             rowKey={(row) => `${row.hsnCode}-${row.gstPercent}`}
             data={invoice.hsnSummary}
@@ -26,29 +36,39 @@ export function TaxInvoiceTotals({ invoice }: { invoice: TaxInvoiceReviewView })
                 align: 'right',
                 render: (row) => formatInvoiceMoney(row.taxableValue),
               },
-              {
-                key: 'cgst',
-                header: 'CGST',
-                align: 'right',
-                render: (row) => formatInvoiceMoney(row.cgstAmount),
-              },
-              {
-                key: 'sgst',
-                header: 'SGST',
-                align: 'right',
-                render: (row) => formatInvoiceMoney(row.sgstAmount),
-              },
-              {
-                key: 'igst',
-                header: 'IGST',
-                align: 'right',
-                render: (row) => formatInvoiceMoney(row.igstAmount),
-              },
+              ...(isIntra
+                ? [
+                    {
+                      key: 'cgst',
+                      header: 'CGST',
+                      align: 'right' as const,
+                      render: (row: TaxInvoiceHsnSummary) => formatInvoiceMoney(row.cgstAmount),
+                    },
+                    {
+                      key: 'sgst',
+                      header: 'SGST',
+                      align: 'right' as const,
+                      render: (row: TaxInvoiceHsnSummary) => formatInvoiceMoney(row.sgstAmount),
+                    },
+                  ]
+                : []),
+              ...(isInter
+                ? [
+                    {
+                      key: 'igst',
+                      header: 'IGST',
+                      align: 'right' as const,
+                      render: (row: TaxInvoiceHsnSummary) => formatInvoiceMoney(row.igstAmount),
+                    },
+                  ]
+                : []),
             ]}
           />
         ) : (
           <p className="p-4 text-sm text-muted-foreground">
-            Tax summary unavailable until prerequisites are complete.
+            {invoice.gstTreatment
+              ? 'Tax summary unavailable until prerequisites are complete.'
+              : 'Tax summary unavailable until GST treatment is resolved.'}
           </p>
         )}
       </Panel>
@@ -56,9 +76,7 @@ export function TaxInvoiceTotals({ invoice }: { invoice: TaxInvoiceReviewView })
         title={invoice.review.isPreview ? 'Preview totals' : 'Issued totals'}
         items={[
           { label: 'Taxable value', value: formatInvoiceMoney(invoice.subtotal) },
-          { label: 'CGST', value: formatInvoiceMoney(invoice.totalCgst) },
-          { label: 'SGST', value: formatInvoiceMoney(invoice.totalSgst) },
-          { label: 'IGST', value: formatInvoiceMoney(invoice.totalIgst) },
+          ...taxTotals,
           {
             label: 'Grand total (before round-off)',
             value: formatInvoiceMoney(invoice.grandTotal),
