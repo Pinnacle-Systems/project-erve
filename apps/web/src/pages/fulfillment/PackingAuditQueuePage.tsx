@@ -1,7 +1,6 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, StatusBadge } from '@erve/app-components';
-import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { getLocalDateString } from '../../lib/dates.js';
@@ -47,7 +46,7 @@ export function PackingAuditQueuePage() {
   if (query.isLoading) return <LoadingState label="Loading Packing Audit queue" />;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title="Packing Audit"
         subtitle="Confirm cartons as inspected before Factory Dispatch"
@@ -61,7 +60,10 @@ export function PackingAuditQueuePage() {
         }
       />
 
-      <Panel title="Cartons" padding="none">
+      <section aria-labelledby="packing-audit-cartons-heading" className="space-y-2">
+        <h2 id="packing-audit-cartons-heading" className="text-sm font-semibold text-foreground">
+          Cartons
+        </h2>
         <DataTable
           rowKey="id"
           data={items}
@@ -80,7 +82,7 @@ export function PackingAuditQueuePage() {
             { key: 'state', header: 'Audit State', render: (r) => auditStateBadge(r.auditState) },
           ]}
         />
-      </Panel>
+      </section>
       <LoadMoreFooter {...loadMoreProps(query, items.length, ['carton', 'cartons'])} />
     </div>
   );
