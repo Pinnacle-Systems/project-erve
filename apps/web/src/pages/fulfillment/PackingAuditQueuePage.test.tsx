@@ -76,6 +76,7 @@ describe('ISS-024 Packing Audit cartons list density', () => {
     expect(section).not.toBeNull();
     expect(section?.classList.contains('space-y-2')).toBe(true);
     expect(section?.querySelector('h2')?.textContent?.trim()).toBe('Cartons');
+    expect(section?.querySelector('h2')?.classList.contains('px-4')).toBe(true);
     expect(section?.querySelectorAll('table')).toHaveLength(1);
     // DataTable owns the border; no nested Panel wrapper adds another.
     expect(section?.querySelectorAll('.rounded-panel')).toHaveLength(1);

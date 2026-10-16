@@ -61,7 +61,7 @@ export function PackingAuditQueuePage() {
       />
 
       <section aria-labelledby="packing-audit-cartons-heading" className="space-y-2">
-        <h2 id="packing-audit-cartons-heading" className="text-sm font-semibold text-foreground">
+        <h2 id="packing-audit-cartons-heading" className="px-4 text-sm font-semibold text-foreground">
           Cartons
         </h2>
         <DataTable
