@@ -131,6 +131,45 @@ describe('PackingAuditCartonDetailPage load error handling (UXAUTH-018)', () => 
   });
 });
 
+describe('BUG-005 Packing Audit carton destination context', () => {
+  it.each(['ADMIN', 'QA_USER'] as const)(
+    'shows the owning Distributor and destination to a %s reviewer without changing audit permission',
+    async (role) => {
+      const carton = buildCarton({
+        destination: {
+          id: 'dest-1',
+          label: 'A Long Outlet Name That Must Remain Readable',
+          city: 'Chennai',
+          state: 'TN',
+          distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
+        },
+      });
+      await renderPage(async (url) => {
+        if (url === '/packing-audit/cartons/carton-1') return { data: { data: carton } };
+        throw new Error(`Unexpected GET: ${url}`);
+      }, role);
+      const fields = Array.from(container.querySelectorAll('.text-label')).map((e) => e.textContent?.trim());
+      expect(fields).toContain('Distributor');
+      expect(fields).toContain('Destination');
+      expect(content()).toContain('Distributor One');
+      expect(content()).toContain('A Long Outlet Name That Must Remain Readable · Chennai, TN');
+      expect(content()).toContain('10');
+      expect(content()).toContain('ST-001');
+      expect(content().includes('Confirm Inspected')).toBe(role === 'QA_USER');
+    },
+  );
+
+  it('uses actual city/state when destination label is not supplied', async () => {
+    await renderPage(async (url) => {
+      if (url === '/packing-audit/cartons/carton-1') return { data: { data: buildCarton() } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+    expect(content()).toContain('Distributor One');
+    expect(content()).toContain('Chennai, TN');
+    expect(content()).not.toContain('null');
+  });
+});
+
 // NEW-AUTH: role-parametrized coverage for the Confirm Inspected mutation
 // CTA (canConfirmPackingAudits — PACKING_AUDIT_MUTATION_ROLES, QA_USER
 // only). Only ADMIN and QA_USER can even reach this page (route-level
