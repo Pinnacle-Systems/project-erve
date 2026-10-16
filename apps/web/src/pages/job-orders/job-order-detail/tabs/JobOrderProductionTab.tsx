@@ -575,8 +575,8 @@ export function JobOrderProductionTab({
                         mode="integer"
                         min={0}
                         max={size.orderedQuantity}
-                        value={preparedQuantities[size.id] !== undefined
-                          ? preparedQuantities[size.id]
+                        value={size.id in preparedQuantities
+                          ? preparedQuantities[size.id] ?? null
                           : size.preparedQuantity}
                         onChange={(value) =>
                           setPreparedQuantities((current) => ({ ...current, [size.id]: value }))
