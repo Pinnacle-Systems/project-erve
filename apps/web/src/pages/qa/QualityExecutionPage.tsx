@@ -239,37 +239,46 @@ export function QualityExecutionPage() {
         }
       />
     </QualityExecutionPageShell>
-    {viewingAttachment && (
-      <QualityEvidencePreview
-        attachmentId={viewingAttachment.id}
-        fileName={viewingAttachment.name}
-        onClose={() => setViewingAttachment(null)}
-      />
-    )}
+    {/* Keep the dialog mounted so Radix observes a controlled closed-to-open
+        transition, rather than mounting a brand-new controlled-open portal
+        in the same click that selected the evidence. */}
+    <Dialog
+      open={viewingAttachment !== null}
+      onOpenChange={(open) => { if (!open) setViewingAttachment(null); }}
+    >
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Inspection evidence: {viewingAttachment?.name ?? ''}</DialogTitle>
+        </DialogHeader>
+        {viewingAttachment && (
+          <QualityEvidencePreviewImage
+            attachmentId={viewingAttachment.id}
+            fileName={viewingAttachment.name}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
     </>
   );
 }
 
-function QualityEvidencePreview({
+function QualityEvidencePreviewImage({
   attachmentId,
   fileName,
-  onClose,
 }: {
   attachmentId: string;
   fileName: string;
-  onClose: () => void;
 }) {
   const image = useAuthedImage(`/quality-executions/attachments/${attachmentId}/content`);
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Inspection evidence: {fileName}</DialogTitle></DialogHeader>
-        {image.loading && <p role="status">Loading evidence…</p>}
-        {image.error && (
-          <ValidationMessage tone="error">Unable to load evidence. Check your access and try again.</ValidationMessage>
-        )}
-        {image.url && <img className="mx-auto max-h-[65vh] max-w-full object-contain" src={image.url} alt={fileName} />}
-      </DialogContent>
-    </Dialog>
+    <>
+      {image.loading && <p role="status">Loading evidence…</p>}
+      {image.error && (
+        <ValidationMessage tone="error">Unable to load evidence. Check your access and try again.</ValidationMessage>
+      )}
+      {image.url && (
+        <img className="mx-auto max-h-[65vh] max-w-full object-contain" src={image.url} alt={fileName} />
+      )}
+    </>
   );
 }
