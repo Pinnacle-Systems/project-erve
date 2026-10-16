@@ -272,14 +272,14 @@ export function JobOrderDetailPage() {
       />
 
       {cancelJobOrderMutation.isError && (
-        <div className="px-4 md:px-8">
+        <div className="px-6">
           <p className="text-sm text-[var(--erp-form-field-error-text-color)]" role="alert">
             {mutationErrorMessage(cancelJobOrderMutation.error, 'Unable to cancel this Job Order.')}
           </p>
         </div>
       )}
 
-      <div className="px-4 md:px-8">
+      <div className="px-6">
         <Tabs value={activeTab} onValueChange={(value) => navigateToTab(value as JobOrderTab)}>
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
