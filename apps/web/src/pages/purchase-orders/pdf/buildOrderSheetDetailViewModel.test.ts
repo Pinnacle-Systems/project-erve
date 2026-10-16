@@ -87,6 +87,12 @@ describe('buildOrderSheetDetailViewModel', () => {
     expect(vm.lines[0]?.sizes.map((s) => s.sizeCode)).toEqual(['S', 'M', 'L']);
   });
 
+  it('carries styleId and each size\'s sizeId through — required for the Style×Size PDF matrix to key rows/columns on Style/Size identity, not the line-size join-row id', () => {
+    const vm = buildOrderSheetDetailViewModel(makeOrder(), { generatedAt: '2026-09-12T10:00:00Z' });
+    expect(vm.lines[0]?.styleId).toBe('style-1');
+    expect(vm.lines[0]?.sizes.map((s) => s.sizeId)).toEqual(['size-s', 'size-m', 'size-l']);
+  });
+
   it('does not leak unrelated/internal properties into the printable view model', () => {
     const order = { ...makeOrder(), __internalDebugFlag: true, someAuditInternal: 'secret' } as PurchaseOrder;
     const vm = buildOrderSheetDetailViewModel(order, { generatedAt: '2026-09-12T10:00:00Z' });

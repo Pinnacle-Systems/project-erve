@@ -5,9 +5,11 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
+import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import { IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
+import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
+import type { StyleSizeGridColumn, StyleSizeGridRow } from '../../components/style-size-grid/types.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -189,32 +191,40 @@ export function PurchaseOrderDetailPage() {
       </Panel>
 
       <Panel title="Style and Size-wise Quantities">
-        {po.lines.map((line) => (
-          <Panel key={line.id} variant="bordered" padding="none" className="mb-4 last:mb-0">
-            <div className="border-b border-border-subtle bg-surface-muted px-4 py-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <StyleThumbnailCell styleId={line.styleId} image={line.primaryImage} size={40} viewerTitle={line.styleNumber} />
-                <div>
-                  <span className="font-medium text-foreground">{line.styleNumber}</span>
-                  <span className="ml-2 text-sm text-muted-foreground">{line.styleName}</span>
-                  <span className="ml-2 text-xs text-muted-foreground">{line.seasonSnapshots.map((season) => season.displayName).join(', ')}</span>
+        {po.lines.map((line) => {
+          // An Order Sheet line is exactly one Style (server-enforced) — the grid always
+          // receives a single row here, built the same way a multi-Style grid would be, so a
+          // future relaxation of that business rule would only need more rows pushed in.
+          const columns: StyleSizeGridColumn[] = line.sizes.map((size) => ({
+            sizeId: size.sizeId,
+            sizeCode: size.sizeCode,
+          }));
+          const row: StyleSizeGridRow = {
+            styleId: line.styleId,
+            styleNumber: line.styleNumber,
+            styleName: line.styleName,
+            primaryImage: line.primaryImage,
+            values: Object.fromEntries(line.sizes.map((size) => [size.sizeId, size.orderedQuantity])),
+          };
+          return (
+            <Panel key={line.id} variant="bordered" padding="none" className="mb-4 last:mb-0">
+              <div className="border-b border-border-subtle bg-surface-muted px-4 py-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <StyleThumbnailCell styleId={line.styleId} image={line.primaryImage} size={40} viewerTitle={line.styleNumber} />
+                  <div>
+                    <span className="font-medium text-foreground">{line.styleNumber}</span>
+                    <span className="ml-2 text-sm text-muted-foreground">{line.styleName}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{line.seasonSnapshots.map((season) => season.displayName).join(', ')}</span>
+                  </div>
                 </div>
+                <span className="text-sm font-medium text-foreground">
+                  Total: {line.totalOrderedQuantity.toLocaleString()}
+                </span>
               </div>
-              <span className="text-sm font-medium text-foreground">
-                Total: {line.totalOrderedQuantity.toLocaleString()}
-              </span>
-            </div>
-            <DataTable
-              columns={[
-                { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-                { key: 'orderedQuantity', header: 'Forecast Qty', accessor: 'orderedQuantity', align: 'right' },
-              ]}
-              data={line.sizes}
-              rowKey="id"
-              containerClassName="rounded-none border-0 shadow-none"
-            />
-          </Panel>
-        ))}
+              <StyleSizeGrid columns={columns} rows={[row]} variant="readOnly" showColumnTotals={false} />
+            </Panel>
+          );
+        })}
       </Panel>
 
       <Panel title="Audit Log">

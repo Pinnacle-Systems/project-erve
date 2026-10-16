@@ -177,16 +177,43 @@ describe('PurchaseOrderDetailPage Style and Size-wise Quantities', () => {
     expect(headers).not.toContain('Delivered');
   });
 
-  it('renders size rows with the forecast quantity', async () => {
+  // Style×Size matrix migration (PR1): the old "Size | Forecast Qty" rows-per-size table
+  // became one Style row with each Size as its own column (StyleSizeGrid, readOnly).
+  it('renders the Style×Size matrix with one Style row and each Size as its own column', async () => {
     await renderPage();
-    const headers = Array.from(container.querySelectorAll('th')).map((th) => th.textContent);
-    expect(headers).toContain('Size');
-    expect(headers).toContain('Forecast Qty');
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+    const headers = Array.from(table!.querySelectorAll('th')).map((th) => th.textContent);
+    expect(headers).toEqual(['Style', 'S', 'M', 'L', 'Total']);
     expect(content()).toContain('ST-101');
     expect(content()).toContain('Oxford Shirt');
-    expect(content()).toContain('S');
-    expect(content()).toContain('M');
-    expect(content()).toContain('L');
+    expect(table!.querySelectorAll('tbody tr')).toHaveLength(1);
+  });
+
+  it('shows the correct ordered quantity under each Size column (read-only, not editable) and the row total', async () => {
+    await renderPage();
+    const table = container.querySelector('table');
+    const inputs = Array.from(table!.querySelectorAll('input')) as HTMLInputElement[];
+    // One read-only input per Size column (S, M, L) — never editable on a Detail page.
+    expect(inputs.map((input) => input.value)).toEqual(['100', '150', '100']);
+    inputs.forEach((input) => expect(input.readOnly).toBe(true));
+    // Row total (100+150+100=350) is plain text in the last column, not an input.
+    const lastCell = table!.querySelector('tbody td:last-child');
+    expect(lastCell?.textContent?.trim()).toBe('350');
+  });
+
+  it('renders a committed zero quantity as "0", not blank, distinct from an unrecorded value', async () => {
+    const po = buildPO();
+    po.lines[0]!.sizes = [
+      po.lines[0]!.sizes[0]!, // S: 100
+      { ...po.lines[0]!.sizes[1]!, orderedQuantity: 0 }, // M: committed zero
+    ];
+    await renderPage(po);
+    const table = container.querySelector('table');
+    const headers = Array.from(table!.querySelectorAll('th')).map((th) => th.textContent);
+    expect(headers).toEqual(['Style', 'S', 'M', 'Total']);
+    const inputs = Array.from(table!.querySelectorAll('input')) as HTMLInputElement[];
+    expect(inputs.map((input) => input.value)).toEqual(['100', '0']);
   });
 });
 
