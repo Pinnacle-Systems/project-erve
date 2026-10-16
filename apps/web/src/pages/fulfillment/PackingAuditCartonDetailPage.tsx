@@ -116,6 +116,17 @@ export function PackingAuditCartonDetailPage() {
 
       <Panel title="Carton Contents">
         <DescriptionList columns={2}>
+          <DescriptionList.Item
+            label="Distributor"
+            value={carton.destination.distributor.name}
+          />
+          <DescriptionList.Item
+            label="Destination"
+            value={[
+              carton.destination.label,
+              [carton.destination.city, carton.destination.state].filter(Boolean).join(', '),
+            ].filter(Boolean).join(' · ')}
+          />
           <DescriptionList.Item label="Total Quantity" value={carton.totalQuantity.toLocaleString()} />
         </DescriptionList>
         <DataTable
