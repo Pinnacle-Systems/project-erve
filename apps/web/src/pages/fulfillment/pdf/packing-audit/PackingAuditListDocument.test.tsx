@@ -8,6 +8,8 @@ function makeRow(overrides: Partial<PackingAuditListPdfRow> = {}): PackingAuditL
     id: 'carton-1',
     saleOrderNumber: 'EISO/26-27/0001',
     factoryName: 'Factory One',
+    distributorName: 'Distributor One',
+    destinationLabel: 'Store 1 · Chennai, TN',
     cartonNumber: 'C1',
     totalQuantity: 10,
     auditStateLabel: 'Not Inspected',
@@ -31,6 +33,15 @@ describe('PackingAuditListDocument', () => {
     const blob = await pdf(<PackingAuditListDocument viewModel={makeViewModel([])} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
     expect(blob.type).toBe('application/pdf');
+  });
+
+  it('renders long distributor and outlet names in landscape without throwing', async () => {
+    const row = makeRow({
+      distributorName: 'The Very Long Distributor Name With Several Words That Should Wrap',
+      destinationLabel: 'The Extended Retail Outlet Name With Locality · Chennai, Tamil Nadu',
+    });
+    const blob = await pdf(<PackingAuditListDocument viewModel={makeViewModel([row])} />).toBlob();
+    expect(blob.size).toBeGreaterThan(0);
   });
 
   it('renders a single row without throwing', async () => {

@@ -51,6 +51,7 @@ describe('ISS-024 Packing Audit cartons list density', () => {
               id: 'carton-1',
               saleOrder: { saleOrderNumber: 'EISO/26-27/0001' },
               factory: { name: 'Test Factory' },
+              destination: { id: 'dest-1', label: 'Outlet North', city: 'Chennai', state: 'TN', distributor: { id: 'd-1', code: 'D1', name: 'Distributor North' } },
               cartonNumber: 'C-001',
               totalQuantity: 60,
               auditState: 'NOT_INSPECTED',
@@ -59,6 +60,7 @@ describe('ISS-024 Packing Audit cartons list density', () => {
               id: 'carton-2',
               saleOrder: { saleOrderNumber: 'EISO/26-27/0002' },
               factory: { name: 'Test Factory' },
+              destination: { id: 'dest-2', label: null, city: 'Madurai', state: 'TN', distributor: { id: 'd-2', code: 'D2', name: 'Distributor South' } },
               cartonNumber: 'C-002',
               totalQuantity: 120,
               auditState: 'NEEDS_REINSPECTION',
@@ -83,6 +85,13 @@ describe('ISS-024 Packing Audit cartons list density', () => {
     expect(section?.querySelectorAll('tbody tr')).toHaveLength(2);
     expect(section?.textContent).toContain('Not Inspected');
     expect(section?.textContent).toContain('Needs Reinspection');
+    expect(Array.from(section!.querySelectorAll('th')).map((e) => e.textContent)).toEqual([
+      'Dispatch Order', 'Factory', 'Distributor', 'Destination', 'Carton #', 'Total Qty', 'Audit State',
+    ]);
+    expect(section?.textContent).toContain('Distributor North');
+    expect(section?.textContent).toContain('Outlet North · Chennai, TN');
+    expect(section?.textContent).toContain('Distributor South');
+    expect(section?.textContent).toContain('Madurai, TN');
     expect(section?.textContent).toContain('60');
     expect(section?.textContent).toContain('120');
     const quantityHeader = Array.from(section!.querySelectorAll('th')).find(

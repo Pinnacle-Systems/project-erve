@@ -9,6 +9,7 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { PackingAuditQueueItem } from './types.js';
+import { packingAuditDestinationLabel } from './packingAuditDestinationLabel.js';
 
 function auditStateBadge(state: PackingAuditQueueItem['auditState']) {
   if (state === 'INSPECTED') return <StatusBadge label="Inspected" tone="approved" />;
@@ -77,6 +78,8 @@ export function PackingAuditQueuePage() {
           columns={[
             { key: 'saleOrder', header: 'Dispatch Order', render: (r) => r.saleOrder.saleOrderNumber },
             { key: 'factory', header: 'Factory', render: (r) => r.factory.name },
+            { key: 'distributor', header: 'Distributor', render: (r) => r.destination.distributor.name },
+            { key: 'destination', header: 'Destination', render: (r) => packingAuditDestinationLabel(r.destination) },
             { key: 'carton', header: 'Carton #', accessor: 'cartonNumber' },
             { key: 'qty', header: 'Total Qty', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },
             { key: 'state', header: 'Audit State', render: (r) => auditStateBadge(r.auditState) },
