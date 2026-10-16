@@ -177,7 +177,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
 
   return (
     <form
-      className="space-y-5"
+      className="space-y-4"
       onKeyDown={createEnterToNextHandler()}
       onSubmit={(event) => event.preventDefault()}
     >
