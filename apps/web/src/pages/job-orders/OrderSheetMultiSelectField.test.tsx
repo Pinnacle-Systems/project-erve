@@ -57,6 +57,9 @@ it('associates each Style image and fallback with its Order Sheet, keeping viewe
   await vi.waitFor(() => expect(container.textContent).toContain('OS-C'));
   const selectors = orders.map((order) => Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes(order.poNumber))!);
   const rows = selectors.map((button) => button.parentElement!);
+  expect(selectors.map((button) => button.children[1]?.firstElementChild?.textContent?.trim())).toEqual([
+    'ST-A Style A', 'ST-B Style B', 'ST-C Style C',
+  ]);
   expect(rows.map((row) => row.querySelectorAll('button[aria-label="View style image"]').length)).toEqual([1, 1, 0]);
   expect(container.querySelector('button button')).toBeNull();
   expect(rows[2]!.querySelector('svg')).not.toBeNull();

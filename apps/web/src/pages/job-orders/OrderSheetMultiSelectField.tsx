@@ -107,6 +107,14 @@ export function OrderSheetMultiSelectField({
                 >
                   <span className="text-sm font-medium text-foreground">{po.poNumber}</span>
                   <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    {po.lines[0] && (
+                      <>
+                        <span>
+                          {po.lines[0].styleNumber} {po.lines[0].styleName}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                      </>
+                    )}
                     <span>{po.distributor.name}</span>
                     <span aria-hidden="true">·</span>
                     <StatusBadge
@@ -115,14 +123,6 @@ export function OrderSheetMultiSelectField({
                     />
                     <span aria-hidden="true">·</span>
                     <span>Required: {formatDate(po.requiredDeliveryDate)}</span>
-                    {po.lines[0] && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span>
-                          {po.lines[0].styleNumber} {po.lines[0].styleName}
-                        </span>
-                      </>
-                    )}
                   </span>
                 </button>
               </div>
