@@ -821,6 +821,10 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
     ));
     const view = container.querySelector('button[aria-label="View final-evidence.png"]') as HTMLButtonElement;
     expect(view).not.toBeNull();
+    // A native disabled <fieldset> disables descendant buttons even when the
+    // button itself has no disabled attribute. Guard actual clickability.
+    expect(view.closest('fieldset')?.disabled).toBe(false);
+    expect(view.matches(':disabled')).toBe(false);
     act(() => view.click());
     expect(viewAttachment).toHaveBeenCalledWith('attachment-1', 'final-evidence.png');
     expect(container.querySelector('input[type="file"]')).toBeNull();

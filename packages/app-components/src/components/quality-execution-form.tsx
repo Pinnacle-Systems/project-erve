@@ -270,12 +270,17 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                 .sort((a, b) => a.sequence - b.sequence)
                 .map((component) => {
                   const config = component.config;
+                  // The View action must remain clickable in FINALIZED/read-only evidence.
+                  // Disabling its parent fieldset would disable every descendant button;
+                  // upload/remove remain independently gated by DRAFT and canMutate.
+                  const allowAttachmentView =
+                    component.type === 'ATTACHMENTS' && Boolean(props.onViewAttachment);
                   return (
                     <QualityDefinitionComponent
                       key={component.id}
                       data-component-id={component.id}
                       data-component-type={component.type}
-                      disabled={disabled}
+                      disabled={disabled && !allowAttachmentView}
                       readOnly={readOnlyView}
                       title={
                         component.type === 'PRODUCTION_PROGRESS'

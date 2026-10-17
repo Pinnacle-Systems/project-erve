@@ -329,6 +329,8 @@ describe('ISS-012 finalized QA evidence retrieval', () => {
       return button!;
     });
     expect(container.querySelector('button[aria-label="Remove proof.png"]')).toBeNull();
+    expect(action.closest('fieldset')?.disabled).toBe(false);
+    expect(action.matches(':disabled')).toBe(false);
     await act(async () => {
       action.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
