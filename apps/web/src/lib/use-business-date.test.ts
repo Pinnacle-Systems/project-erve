@@ -101,6 +101,42 @@ describe('useBusinessDate', () => {
     expect(seen.at(-1)).toBe('2026-08-28');
   });
 
+  it('reschedules its midnight timer on every recheck, not just the displayed date', async () => {
+    // Guards against a laptop sleep/wake or clock change leaving a stale
+    // timeout scheduled against the old "now": after a focus/visibility
+    // recheck, a timer computed from the OLD time must no longer be the one
+    // pending — only a freshly scheduled one (from the new time) should fire.
+    vi.setSystemTime(new Date('2026-08-27T18:00:00.000Z')); // 23:30 IST Aug 27
+    const seen: string[] = [];
+    renderProbe((v) => seen.push(v));
+    expect(seen.at(-1)).toBe('2026-08-27');
+
+    // Jump far forward (as if the laptop slept) and recheck via focus.
+    vi.setSystemTime(new Date('2026-08-27T19:00:00.000Z')); // 00:30 IST Aug 28
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(seen.at(-1)).toBe('2026-08-28');
+    const callsAfterFirstRecheck = seen.length;
+
+    // If the original (stale) midnight timer were still the one pending, it
+    // was scheduled for ~23h30m after the FIRST system time (i.e. close to
+    // now) and would already have fired, or fire very soon with no real
+    // relation to the new day. Advancing by just under a full day from the
+    // rechecked time must fire nothing extra until the newly scheduled
+    // boundary — proving the schedule was rebased off the latest "now".
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000); // 23h — short of the next boundary
+    });
+    expect(seen.length).toBe(callsAfterFirstRecheck);
+    expect(seen.at(-1)).toBe('2026-08-28');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(31 * 60 * 1000); // cross into Aug 29 IST midnight
+    });
+    expect(seen.at(-1)).toBe('2026-08-29');
+  });
+
   it('removes its timer and listeners on unmount', () => {
     const clearSpy = vi.spyOn(global, 'clearTimeout');
     const removeWindowSpy = vi.spyOn(window, 'removeEventListener');

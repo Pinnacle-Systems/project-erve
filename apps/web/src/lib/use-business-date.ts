@@ -34,27 +34,32 @@ export function useBusinessDate(): string {
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout>;
 
-    function recheck() {
+    // Re-reads the business date AND reschedules the midnight timer against
+    // the current clock. Rescheduling (not just re-reading) matters here: a
+    // laptop sleep/wake or a system clock change leaves the previously
+    // scheduled timeout computed against stale "now", so every recheck path
+    // — the timer firing, a focus event, or a visibility change — goes
+    // through this one resync so the schedule never drifts from reality.
+    function resync() {
       setBusinessDate(getBusinessDateString());
+      scheduleNext();
     }
 
     function scheduleNext() {
-      timeoutId = setTimeout(() => {
-        recheck();
-        scheduleNext();
-      }, msUntilNextBusinessMidnight(new Date()));
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(resync, msUntilNextBusinessMidnight(new Date()));
     }
     scheduleNext();
 
     function handleVisibility() {
-      if (document.visibilityState === 'visible') recheck();
+      if (document.visibilityState === 'visible') resync();
     }
-    window.addEventListener('focus', recheck);
+    window.addEventListener('focus', resync);
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       clearTimeout(timeoutId);
-      window.removeEventListener('focus', recheck);
+      window.removeEventListener('focus', resync);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, []);
