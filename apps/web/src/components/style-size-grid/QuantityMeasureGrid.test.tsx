@@ -164,7 +164,7 @@ describe('QuantityMeasureGrid — measure rows x Size columns', () => {
     expect(selectSpy).not.toHaveBeenCalled();
   });
 
-  it('surfaces a specific, actionable message for an out-of-range cell beyond the red border — via title and aria-describedby', () => {
+  it('surfaces a specific, actionable message for an out-of-range cell beyond the red border — a visible on-focus element wired to aria-describedby', () => {
     const onCellValidationChange = vi.fn();
     const rows: QuantityMeasureGridRow[] = [
       { key: 'prepared', label: 'Prepared', values: { 'size-s': 5 }, maxValues: { 'size-s': 10 } },
@@ -185,14 +185,15 @@ describe('QuantityMeasureGrid — measure rows x Size columns', () => {
     expect(onCellValidationChange).toHaveBeenCalledWith('prepared', 'size-s', false);
 
     // The red border alone doesn't say what's wrong — a specific message
-    // must be reachable from the cell for both sighted (title tooltip) and
-    // assistive-tech (aria-describedby) users.
+    // must be reachable from the cell for both sighted keyboard users (a
+    // visible on-focus element) and assistive-tech (aria-describedby,
+    // wired to that same element).
     expect(input.getAttribute('aria-invalid')).toBe('true');
     const describedById = input.getAttribute('aria-describedby');
     expect(describedById).toBeTruthy();
     const description = document.getElementById(describedById!);
     expect(description?.textContent).toBe('Must be at most 10.');
-    expect(input.closest('span')?.getAttribute('title')).toBe('Must be at most 10.');
+    expect(description?.getAttribute('role')).toBe('alert');
   });
 
   it('applies a per-row, per-size max override ahead of the grid-level max', () => {

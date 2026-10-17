@@ -116,6 +116,11 @@ export function QuantityMeasureGrid({
                       ) : rowEditable && columnEditable ? (
                         <NumericField
                           variant="cell"
+                          // Opt-in for this grid only (Job Order Combined
+                          // Forecast/Production Plan/Prepared Quantity) —
+                          // see NumericField's selectZeroOnFocus doc
+                          // comment; StyleSizeGrid does not set this.
+                          selectZeroOnFocus
                           mode="integer"
                           min={min}
                           max={cellMax}
