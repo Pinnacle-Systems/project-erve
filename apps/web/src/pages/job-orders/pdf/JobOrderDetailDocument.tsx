@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from '@react-pdf/renderer';
+import { JobOrderQuantityMatrix } from './JobOrderQuantityMatrix.js';
 import { PdfDocument } from '../../../lib/pdf/core/PdfDocument.js';
 import { PdfHeader } from '../../../lib/pdf/core/PdfHeader.js';
 import { PdfFooter } from '../../../lib/pdf/core/PdfFooter.js';
@@ -8,10 +9,8 @@ import { PdfKeyValueSection } from '../../../lib/pdf/core/PdfKeyValueSection.js'
 import { PdfThumbnail } from '../../../lib/pdf/core/PdfThumbnail.js';
 import { PdfTable, type PdfTableColumn } from '../../../lib/pdf/core/PdfTable.js';
 import type {
-  JobOrderDetailCombinedForecastRow,
   JobOrderDetailPdfViewModel,
   JobOrderDetailQualityActivityRow,
-  JobOrderDetailSizeRow,
   JobOrderDetailSourceOrderSheetRow,
   JobOrderDetailStageRow,
 } from './buildJobOrderDetailViewModel.js';
@@ -27,31 +26,38 @@ const styles = StyleSheet.create({
 
 const sourceOrderSheetColumns: PdfTableColumn<JobOrderDetailSourceOrderSheetRow>[] = [
   { key: 'poNumber', header: 'Order Sheet No.', width: '20%', value: (row) => row.poNumber },
-  { key: 'distributorName', header: 'Distributor', width: '35%', value: (row) => row.distributorName },
+  {
+    key: 'distributorName',
+    header: 'Distributor',
+    width: '35%',
+    value: (row) => row.distributorName,
+  },
   { key: 'purchaseMode', header: 'Mode', width: '15%', value: (row) => row.purchaseMode },
-  { key: 'requiredDeliveryDate', header: 'Required Date', width: '15%', value: (row) => row.requiredDeliveryDate },
-  { key: 'forecastTotal', header: 'Forecast Qty', width: '15%', align: 'right', value: (row) => row.forecastTotal },
-];
-
-const combinedForecastColumns: PdfTableColumn<JobOrderDetailCombinedForecastRow>[] = [
-  { key: 'sizeLabel', header: 'Size', width: '25%', value: (row) => row.sizeLabel },
-  { key: 'forecastQuantity', header: 'Combined Forecast', width: '25%', align: 'right', value: (row) => row.forecastQuantity },
-  { key: 'jobOrderQuantity', header: 'Job Order Qty', width: '25%', align: 'right', value: (row) => row.jobOrderQuantity },
-  { key: 'varianceQuantity', header: 'Variance', width: '25%', align: 'right', value: (row) => row.varianceQuantity },
-];
-
-const sizeColumns: PdfTableColumn<JobOrderDetailSizeRow>[] = [
-  { key: 'sizeCode', header: 'Size', width: '25%', value: (row) => row.sizeCode },
-  { key: 'orderedQuantity', header: 'Ordered', width: '25%', align: 'right', value: (row) => row.orderedQuantity },
-  { key: 'preparedQuantity', header: 'Prepared', width: '25%', align: 'right', value: (row) => row.preparedQuantity },
-  { key: 'varianceQuantity', header: 'Variance', width: '25%', align: 'right', value: (row) => row.varianceQuantity },
+  {
+    key: 'requiredDeliveryDate',
+    header: 'Required Date',
+    width: '15%',
+    value: (row) => row.requiredDeliveryDate,
+  },
+  {
+    key: 'forecastTotal',
+    header: 'Forecast Qty',
+    width: '15%',
+    align: 'right',
+    value: (row) => row.forecastTotal,
+  },
 ];
 
 const stageColumns: PdfTableColumn<JobOrderDetailStageRow>[] = [
   { key: 'sequence', header: 'Seq', width: '8%', align: 'right', value: (row) => row.sequence },
   { key: 'stageName', header: 'Stage', width: '32%', value: (row) => row.stageName },
   { key: 'status', header: 'Status', width: '20%', value: (row) => row.status },
-  { key: 'completedByName', header: 'Completed By', width: '25%', value: (row) => row.completedByName },
+  {
+    key: 'completedByName',
+    header: 'Completed By',
+    width: '25%',
+    value: (row) => row.completedByName,
+  },
   { key: 'completedAt', header: 'Completed At', width: '15%', value: (row) => row.completedAt },
 ];
 
@@ -61,7 +67,12 @@ const qualityActivityColumns: PdfTableColumn<JobOrderDetailQualityActivityRow>[]
   { key: 'formDisplay', header: 'Form', width: '13%', value: (row) => row.formDisplay },
   { key: 'mode', header: 'Mode', width: '11%', value: (row) => row.mode },
   { key: 'status', header: 'Status', width: '11%', value: (row) => row.status },
-  { key: 'gateRequirement', header: 'Gate Requirement', width: '15%', value: (row) => row.gateRequirement },
+  {
+    key: 'gateRequirement',
+    header: 'Gate Requirement',
+    width: '15%',
+    value: (row) => row.gateRequirement,
+  },
   { key: 'outcome', header: 'Outcome', width: '8%', value: (row) => row.outcome },
   { key: 'coverageSummary', header: 'Coverage', width: '22%', value: (row) => row.coverageSummary },
 ];
@@ -102,10 +113,21 @@ export function JobOrderDetailDocument({ viewModel }: JobOrderDetailDocumentProp
           {viewModel.combinedForecast.length > 0 ? (
             <>
               <Text style={styles.subheading}>Combined Forecast vs Job Order</Text>
-              <PdfTable
-                columns={combinedForecastColumns}
-                rows={viewModel.combinedForecast}
-                rowKey={(row) => row.sizeId}
+              <JobOrderQuantityMatrix
+                sizes={viewModel.combinedForecast.map((row) => ({
+                  id: row.sizeId,
+                  label: row.sizeLabel,
+                }))}
+                measures={[
+                  {
+                    label: 'Combined Forecast',
+                    values: viewModel.combinedForecast.map((row) => row.forecastQuantity),
+                  },
+                  {
+                    label: 'Production Plan',
+                    values: viewModel.combinedForecast.map((row) => row.jobOrderQuantity),
+                  },
+                ]}
               />
             </>
           ) : null}
@@ -117,7 +139,13 @@ export function JobOrderDetailDocument({ viewModel }: JobOrderDetailDocumentProp
           {viewModel.styleNumber} {viewModel.styleName}
         </Text>
         <Text style={[styles.note, { marginBottom: 4 }]}>{viewModel.quantityTotalsLine}</Text>
-        <PdfTable columns={sizeColumns} rows={viewModel.sizes} rowKey={(row) => row.id} />
+        <JobOrderQuantityMatrix
+          sizes={viewModel.sizes.map((row) => ({ id: row.id, label: row.sizeCode }))}
+          measures={[
+            { label: 'Production Plan', values: viewModel.sizes.map((row) => row.orderedQuantity) },
+            { label: 'Prepared', values: viewModel.sizes.map((row) => row.preparedQuantity) },
+          ]}
+        />
       </PdfSection>
 
       {viewModel.stages.length > 0 ? (
@@ -130,8 +158,8 @@ export function JobOrderDetailDocument({ viewModel }: JobOrderDetailDocumentProp
         <PdfSection title="Quality Activities" wrap>
           <Text style={styles.note}>
             Operational summary only — PP Sample and PPM are independent gates (no sequential
-            dependency implied by row order), and Inline/Final QA outcomes shown here do not
-            replace the full inspection record.
+            dependency implied by row order), and Inline/Final QA outcomes shown here do not replace
+            the full inspection record.
           </Text>
           <PdfTable
             columns={qualityActivityColumns}

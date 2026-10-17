@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JobOrder } from '../types.js';
-import { prepareJobOrderListPdfData } from './prepareJobOrderListPdfData.js';
+import {
+  prepareJobOrderListPdfData,
+  prepareJobOrderListPdfImages,
+} from './prepareJobOrderListPdfData.js';
 
 const getMock = vi.fn();
 vi.mock('../../../lib/api-client.js', () => ({
@@ -15,16 +18,31 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
   return {
     id: 'jo-1',
     jobOrderNumber: 'EIJO/26-27/0001',
-    primaryStyle: { consistent: true, style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null } },
+    primaryStyle: {
+      consistent: true,
+      style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null },
+    },
     financialYear: { id: 'fy1', code: '2026-27' },
     factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
     unitPrice: 100,
     status: 'DRAFT',
     operationalState: {
-      lifecycleContext: { code: 'DRAFT', label: 'Draft', tone: 'muted', activityId: null, activityName: null },
+      lifecycleContext: {
+        code: 'DRAFT',
+        label: 'Draft',
+        tone: 'muted',
+        activityId: null,
+        activityName: null,
+      },
       productionState: null,
       qualityState: null,
-      primaryDisplayState: { code: 'DRAFT', label: 'Draft', tone: 'muted', activityId: null, activityName: null },
+      primaryDisplayState: {
+        code: 'DRAFT',
+        label: 'Draft',
+        tone: 'muted',
+        activityId: null,
+        activityName: null,
+      },
     },
     factoryConfirmationStatus: 'PENDING',
     requiredDeliveryDate: null,
@@ -37,7 +55,12 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
     version: 1,
     updatedAt: '2026-04-01T00:00:00.000Z',
     seasonSnapshots: [],
-    processFlowVersion: { id: 'pfv1', versionNumber: 1, status: 'ACTIVE', processFlow: { id: 'pf1', code: 'PF1', name: 'Standard Flow' } },
+    processFlowVersion: {
+      id: 'pfv1',
+      versionNumber: 1,
+      status: 'ACTIVE',
+      processFlow: { id: 'pf1', code: 'PF1', name: 'Standard Flow' },
+    },
     confirmedBy: null,
     confirmedAt: null,
     disclaimerText: null,
@@ -55,13 +78,18 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
   };
 }
 
-function apiResponse(items: JobOrder[], pageInfo: { limit: number; hasMore: boolean; nextCursor: string | null }) {
+function apiResponse(
+  items: JobOrder[],
+  pageInfo: { limit: number; hasMore: boolean; nextCursor: string | null },
+) {
   return { data: { data: { items, pageInfo } } };
 }
 
 describe('prepareJobOrderListPdfData', () => {
   it('CASE 9 - JOB ORDER PDF FETCH PATH: calls the standard secured paginated /job-orders API instead of an unscoped source', async () => {
-    getMock.mockResolvedValue(apiResponse([makeJobOrder()], { limit: 100, hasMore: false, nextCursor: null }));
+    getMock.mockResolvedValue(
+      apiResponse([makeJobOrder()], { limit: 100, hasMore: false, nextCursor: null }),
+    );
 
     const result = await prepareJobOrderListPdfData({ search: 'EIJO', factoryId: 'f1' });
 
@@ -75,8 +103,12 @@ describe('prepareJobOrderListPdfData', () => {
     const jobOrderA = makeJobOrder({ id: 'jo-1', jobOrderNumber: 'EIJO/26-27/0001' });
     const jobOrderB = makeJobOrder({ id: 'jo-2', jobOrderNumber: 'EIJO/26-27/0002' });
     getMock
-      .mockResolvedValueOnce(apiResponse([jobOrderA], { limit: 100, hasMore: true, nextCursor: 'jo-1' }))
-      .mockResolvedValueOnce(apiResponse([jobOrderB], { limit: 100, hasMore: false, nextCursor: null }));
+      .mockResolvedValueOnce(
+        apiResponse([jobOrderA], { limit: 100, hasMore: true, nextCursor: 'jo-1' }),
+      )
+      .mockResolvedValueOnce(
+        apiResponse([jobOrderB], { limit: 100, hasMore: false, nextCursor: null }),
+      );
 
     const result = await prepareJobOrderListPdfData({ status: 'IN_PRODUCTION' });
 
@@ -99,9 +131,37 @@ describe('prepareJobOrderListPdfData', () => {
 
   it('fails the whole export when a later page request rejects', async () => {
     getMock
-      .mockResolvedValueOnce(apiResponse([makeJobOrder()], { limit: 100, hasMore: true, nextCursor: 'jo-1' }))
+      .mockResolvedValueOnce(
+        apiResponse([makeJobOrder()], { limit: 100, hasMore: true, nextCursor: 'jo-1' }),
+      )
       .mockRejectedValueOnce(new Error('network error'));
 
     await expect(prepareJobOrderListPdfData({})).rejects.toThrow('network error');
   });
+});
+
+it('resolves only consistent primary Style images using authenticated bounded image resolution', async () => {
+  const primary = { id: 'img-1', fileId: 'file-1' };
+  const first = makeJobOrder({
+    lines: [
+      {
+        styleId: 'style-1',
+        styleNumber: 'STY-1',
+        styleName: 'Tee',
+        primaryImage: primary,
+      } as JobOrder['lines'][number],
+    ],
+  });
+  const other = makeJobOrder({ id: 'other', lines: [] });
+  const originals = structuredClone([first, other]);
+  getMock.mockRejectedValue(new Error('unavailable'));
+  const result = await prepareJobOrderListPdfImages([first, first, other]);
+  expect(result.get(first.id)).toEqual({ placeholder: true });
+  expect(result.get(other.id)).toEqual({ inconsistent: true });
+  expect(getMock).toHaveBeenCalledTimes(1);
+  expect(getMock).toHaveBeenCalledWith(
+    '/styles/style-1/images/img-1/content',
+    expect.objectContaining({ responseType: 'blob' }),
+  );
+  expect([first, other]).toEqual(originals);
 });
