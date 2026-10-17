@@ -1,3 +1,4 @@
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pdf } from '@react-pdf/renderer';
@@ -124,3 +125,24 @@ it('writes synthetic multi-Style list evidence', async () => {
     );
   }
 }, 30000);
+
+it('prints the complete inconsistent-image label without ellipsis in the actual PDF', async () => {
+  const blob = await pdf(
+    <JobOrderListDocument
+      viewModel={makeViewModel([makeRow({ image: { inconsistent: true } })])}
+    />,
+  ).toBlob();
+  const task = getDocument({
+    data: new Uint8Array(await blob.arrayBuffer()),
+    useSystemFonts: true,
+  });
+  try {
+    const doc = await task.promise;
+    const content = await (await doc.getPage(1)).getTextContent();
+    const text = content.items.map((item) => ('str' in item ? item.str : '')).join('');
+    expect(text.replace(/[\s-]/g, '')).toContain('Imageunavailable');
+    expect(text).not.toContain('\u2026');
+  } finally {
+    await task.destroy();
+  }
+});

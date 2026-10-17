@@ -21,7 +21,7 @@ const columns: PdfTableColumn<JobOrderListPdfRow>[] = [
     width: '20%',
     render: (row) => (
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <PdfThumbnail image={row.image} width={32} height={32} />
+        <PdfThumbnail image={row.image} width={40} height={40} />
         <Text style={{ fontSize: 8, marginLeft: 6, flex: 1 }}>{row.styleDisplay}</Text>
       </View>
     ),
