@@ -13,6 +13,7 @@ import { apiClient } from '../../lib/api-client.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
+import { QuantityMeasureGrid } from '../../components/style-size-grid/QuantityMeasureGrid.js';
 import type { JobOrder } from './types.js';
 import { JobOrderPageHeader } from './job-order-detail/JobOrderPageHeader.js';
 import { JobOrderStickyContext } from './job-order-detail/JobOrderStickyContext.js';
@@ -175,6 +176,19 @@ export function JobOrderDetailPage() {
       ),
     [jobOrder],
   );
+
+  const confirmationSizes = useMemo(() => {
+    const sizes = new Map<string, { sizeId: string; sizeCode: string; quantity: number }>();
+    for (const size of flatSizes) {
+      const existing = sizes.get(size.sizeId);
+      sizes.set(size.sizeId, {
+        sizeId: size.sizeId,
+        sizeCode: size.sizeCode,
+        quantity: (existing?.quantity ?? 0) + size.orderedQuantity,
+      });
+    }
+    return [...sizes.values()];
+  }, [flatSizes]);
 
   const generateJobOrderDetailPdf = useCallback(async () => {
     if (!jobOrder) throw new Error('Job order not loaded');
@@ -377,14 +391,15 @@ export function JobOrderDetailPage() {
           </dl>
           <div className="space-y-2">
             <p className="text-sm font-medium">Size quantities</p>
-            <ul className="max-h-32 overflow-y-auto rounded-control border border-border-subtle p-2 text-sm">
-              {flatSizes.map((size) => (
-                <li key={size.id} className="flex justify-between gap-3 py-0.5">
-                  <span>{size.style} · {size.sizeLabel}</span>
-                  <span className="shrink-0 tabular-nums">{size.orderedQuantity.toLocaleString()}</span>
-                </li>
-              ))}
-            </ul>
+            <QuantityMeasureGrid
+              columns={confirmationSizes}
+              rows={[{
+                key: 'production-plan',
+                label: 'Production Plan',
+                editable: false,
+                values: Object.fromEntries(confirmationSizes.map((size) => [size.sizeId, size.quantity])),
+              }]}
+            />
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium">Commercial terms / disclaimer</p>
