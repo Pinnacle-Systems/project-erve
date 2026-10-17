@@ -73,6 +73,7 @@ export interface QualityExecutionFormProps {
   onFinalize(payload: QualityExecutionPayload): Promise<void>;
   onUpload?(componentId: string, requirementKey: string, file: File): Promise<void>;
   onRemoveAttachment?(attachmentId: string): Promise<void>;
+  onViewAttachment?(attachmentId: string, fileName: string): void;
   onCancelBatch?(reason: string): Promise<void>;
   onStartReinspection?(): Promise<void>;
   onPermanentlyReject?(reason: string): Promise<void>;
@@ -269,12 +270,17 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                 .sort((a, b) => a.sequence - b.sequence)
                 .map((component) => {
                   const config = component.config;
+                  // The View action must remain clickable in FINALIZED/read-only evidence.
+                  // Disabling its parent fieldset would disable every descendant button;
+                  // upload/remove remain independently gated by DRAFT and canMutate.
+                  const allowAttachmentView =
+                    component.type === 'ATTACHMENTS' && Boolean(props.onViewAttachment);
                   return (
                     <QualityDefinitionComponent
                       key={component.id}
                       data-component-id={component.id}
                       data-component-type={component.type}
-                      disabled={disabled}
+                      disabled={disabled && !allowAttachmentView}
                       readOnly={readOnlyView}
                       title={
                         component.type === 'PRODUCTION_PROGRESS'
@@ -1732,7 +1738,19 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                           Uploaded · {formatFileSize(item.sizeBytes)}
                                         </p>
                                       </div>
-                                      {execution.status === 'DRAFT' && canMutate && props.onRemoveAttachment ? (
+                                      <div className="flex shrink-0 flex-wrap gap-1">
+                                        {props.onViewAttachment ? (
+                                          <Button
+                                            type="button"
+                                            variant="secondary"
+                                            density="compact"
+                                            aria-label={`View ${item.fileName}`}
+                                            onClick={() => props.onViewAttachment?.(item.id, item.fileName)}
+                                          >
+                                            View
+                                          </Button>
+                                        ) : null}
+                                        {execution.status === 'DRAFT' && canMutate && props.onRemoveAttachment ? (
                                         <Button
                                           type="button"
                                           variant="ghost"
@@ -1742,7 +1760,8 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                         >
                                           Remove
                                         </Button>
-                                      ) : null}
+                                        ) : null}
+                                      </div>
                                     </li>
                                   ))}
                                 </ul>

@@ -20,6 +20,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 const view: QualityExecutionView = {
   id: 'e1',
@@ -283,6 +284,66 @@ describe('web Quality execution workflow', () => {
       '/quality-executions/final-batches/batch-3/reinspect',
       undefined,
     );
+  });
+});
+
+describe('ISS-012 finalized QA evidence retrieval', () => {
+  it('opens an authenticated, read-only preview and reports denied access without exposing edits', async () => {
+    // React's portal mounts through effects. Mark the environment as act-capable
+    // and flush the click/portal commit together before asserting the dialog.
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const finalized: QualityExecutionView = {
+      ...view,
+      status: 'FINALIZED',
+      sections: [{
+        id: 's1', sequence: 1, title: 'Evidence',
+        components: [{
+          id: 'files', sequence: 1, type: 'ATTACHMENTS', title: 'Evidence',
+          config: { requirements: [{ key: 'photo', label: 'Photo' }] },
+        }],
+      }],
+      attachments: [{
+        id: 'attachment-1', componentId: 'files', requirementKey: 'photo',
+        fileName: 'proof.png', contentType: 'image/png', sizeBytes: 2048,
+        createdAt: '2026-08-20T10:00:00Z',
+      }],
+    };
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/quality-executions/attachments/attachment-1/content') {
+        throw new Error('Forbidden');
+      }
+      return { data: { data: finalized } };
+    });
+    await act(async () => root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/quality-executions/e1']}>
+          <Routes>
+            <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ));
+    const action = await vi.waitFor(() => {
+      const button = container.querySelector('button[aria-label="View proof.png"]') as HTMLButtonElement | null;
+      expect(button).not.toBeNull();
+      return button!;
+    });
+    expect(container.querySelector('button[aria-label="Remove proof.png"]')).toBeNull();
+    expect(action.closest('fieldset')?.disabled).toBe(false);
+    expect(action.matches(':disabled')).toBe(false);
+    await act(async () => {
+      action.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // Establish whether the View callback reached the page/attachment endpoint
+    // before checking the portal DOM. This prevents a missing portal from hiding
+    // an upstream click-state regression.
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith(
+      '/quality-executions/attachments/attachment-1/content', { responseType: 'blob' },
+    ));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Inspection evidence: proof.png'));
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).not.toBeNull());
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Unable to load evidence.'));
   });
 });
 

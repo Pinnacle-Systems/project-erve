@@ -797,6 +797,40 @@ describe('QualityExecutionForm shared web/mobile renderer', () => {
     expect(container.textContent).toContain('No corrective actions added.');
   });
 
+  it('allows authorized read-only viewing of finalized evidence without exposing removal (ISS-012)', () => {
+    const viewAttachment = vi.fn();
+    const item = execution('FINALIZED');
+    item.attachments = [{
+      id: 'attachment-1',
+      componentId: 'files',
+      requirementKey: 'photo',
+      fileName: 'final-evidence.png',
+      contentType: 'image/png',
+      sizeBytes: 2048,
+      createdAt: '2026-08-20T10:00:00Z',
+    }];
+    act(() => root.render(
+      <QualityExecutionForm
+        execution={item}
+        canMutate={false}
+        onSave={vi.fn()}
+        onFinalize={vi.fn()}
+        onViewAttachment={viewAttachment}
+        onRemoveAttachment={vi.fn()}
+      />,
+    ));
+    const view = container.querySelector('button[aria-label="View final-evidence.png"]') as HTMLButtonElement;
+    expect(view).not.toBeNull();
+    // A native disabled <fieldset> disables descendant buttons even when the
+    // button itself has no disabled attribute. Guard actual clickability.
+    expect(view.closest('fieldset')?.disabled).toBe(false);
+    expect(view.matches(':disabled')).toBe(false);
+    act(() => view.click());
+    expect(viewAttachment).toHaveBeenCalledWith('attachment-1', 'final-evidence.png');
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Remove final-evidence.png"]')).toBeNull();
+  });
+
   it('presents evidence through the shared upload surface and preserves upload/remove callbacks', async () => {
     const upload = vi.fn().mockResolvedValue(undefined);
     const remove = vi.fn().mockResolvedValue(undefined);
