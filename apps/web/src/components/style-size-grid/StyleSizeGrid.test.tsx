@@ -64,6 +64,26 @@ describe('StyleSizeGrid — editable/computed/readOnly variants, totals, keyboar
     expect(onCellChange).toHaveBeenCalledWith('style-1', 'size-m', 25);
   });
 
+  // QuantityMeasureGrid opted a Job Order-specific NumericField prop
+  // (selectZeroOnFocus) in for its own cells; StyleSizeGrid — and
+  // everything built on it (JobOrderPlanningGrid, OrderSheetSizeGrid,
+  // DispatchOrderQuantityGrid) — never asked for that and must keep its
+  // prior behavior: focusing a zero-valued editable cell here does NOT
+  // select its text.
+  it('does not select a zero-valued editable cell\'s text on focus (selectZeroOnFocus is QuantityMeasureGrid-only, not a side effect of variant="editable"/NumericField\'s cell variant)', () => {
+    const zeroRows: StyleSizeGridRow[] = [
+      { ...rows[0]!, values: { 'size-s': 0, 'size-m': 20, 'size-l': 5 } },
+    ];
+    renderGrid(<StyleSizeGrid columns={columns} rows={zeroRows} variant="editable" />);
+
+    const input = container.querySelector('input') as HTMLInputElement;
+    expect(input.value).toBe('0');
+    const selectSpy = vi.spyOn(input, 'select');
+
+    act(() => input.focus());
+    expect(selectSpy).not.toHaveBeenCalled();
+  });
+
   it('renders read-only (non-editable) cells for the computed variant and never calls onCellChange', () => {
     const onCellChange = vi.fn();
     renderGrid(<StyleSizeGrid columns={columns} rows={rows} variant="computed" onCellChange={onCellChange} />);

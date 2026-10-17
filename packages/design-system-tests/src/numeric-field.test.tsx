@@ -194,6 +194,143 @@ describe('NumericField — draft editing, commit validation, no silent clamping'
     expect(input.getAttribute('data-form-control')).toBe('');
   });
 
+  it('cell variant + selectZeroOnFocus: selects a lone "0" on focus so typing replaces it instead of producing "010"', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(0);
+      return (
+        <ThemeProvider>
+          <NumericField
+            variant="cell"
+            selectZeroOnFocus
+            mode="integer"
+            value={value}
+            onChange={setValue}
+            aria-label="Size S"
+          />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+    const selectSpy = vi.spyOn(input, 'select');
+
+    act(() => input.focus());
+    expect(selectSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('cell variant + selectZeroOnFocus: does not select-on-focus a non-zero value', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(7);
+      return (
+        <ThemeProvider>
+          <NumericField
+            variant="cell"
+            selectZeroOnFocus
+            mode="integer"
+            value={value}
+            onChange={setValue}
+            aria-label="Size S"
+          />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+    const selectSpy = vi.spyOn(input, 'select');
+
+    act(() => input.focus());
+    expect(selectSpy).not.toHaveBeenCalled();
+  });
+
+  // The behavior change a GitHub review flagged: selectZeroOnFocus must be
+  // an explicit opt-in, never an implicit side effect of variant="cell" —
+  // every other variant="cell" consumer (StyleSizeGrid and everything
+  // built on it: JobOrderPlanningGrid, OrderSheetSizeGrid,
+  // DispatchOrderQuantityGrid) must keep its prior behavior unchanged.
+  it('cell variant WITHOUT selectZeroOnFocus (the default): does not select a lone "0" on focus — opt-in only, never implicit from variant="cell" alone', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(0);
+      return (
+        <ThemeProvider>
+          <NumericField variant="cell" mode="integer" value={value} onChange={setValue} aria-label="Size S" />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+    const selectSpy = vi.spyOn(input, 'select');
+
+    act(() => input.focus());
+    expect(selectSpy).not.toHaveBeenCalled();
+  });
+
+  it('field variant: never auto-selects on focus even with selectZeroOnFocus set (the behavior is cell-only)', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(0);
+      return (
+        <ThemeProvider>
+          <NumericField label="Quantity" selectZeroOnFocus mode="integer" value={value} onChange={setValue} />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+    const selectSpy = vi.spyOn(input, 'select');
+
+    act(() => input.focus());
+    expect(selectSpy).not.toHaveBeenCalled();
+  });
+
+  it('cell variant: an out-of-range commit exposes its specific message as a visible on-focus element wired to aria-describedby, not just a red border', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(5);
+      return (
+        <ThemeProvider>
+          <NumericField variant="cell" mode="integer" max={10} value={value} onChange={setValue} aria-label="Size S" />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+
+    act(() => changeInput(input, '99'));
+    act(() => input.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    const describedById = input.getAttribute('aria-describedby');
+    expect(describedById).toBeTruthy();
+    // The SAME element is both the aria-describedby target and the
+    // visible-on-focus message — no separate sr-only-only description.
+    const description = document.getElementById(describedById!);
+    expect(description?.textContent).toBe('Must be at most 10.');
+    expect(description?.getAttribute('role')).toBe('alert');
+    // Mounted at all times (not display:none) so aria-describedby always
+    // resolves; group-focus-within only toggles visibility/opacity, which
+    // this jsdom check approximates via the expected utility classes —
+    // real visible-on-focus behavior is exercised in a real browser
+    // (Chrome, via the PR2A live-verification pass) since jsdom doesn't
+    // compute :focus-within-driven CSS.
+    expect(description?.className).toContain('group-focus-within:visible');
+    expect(description?.className).toContain('group-focus-within:opacity-100');
+    expect(description?.className).not.toContain('sr-only');
+  });
+
+  it('cell variant: a valid value carries no aria-describedby and renders no message element', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(5);
+      return (
+        <ThemeProvider>
+          <NumericField variant="cell" mode="integer" max={10} value={value} onChange={setValue} aria-label="Size S" />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+
+    expect(input.getAttribute('aria-describedby')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('never rewrites an invalid draft to a clamped number — the field keeps showing exactly what the user typed', () => {
     function Harness() {
       const [value, setValue] = useState<number | null>(0);

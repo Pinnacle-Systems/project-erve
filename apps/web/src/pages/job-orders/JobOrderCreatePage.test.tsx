@@ -680,7 +680,7 @@ describe('Order Sheet multi-select', () => {
     await flush();
 
     const quantityInput = container.querySelector<HTMLInputElement>(
-      '[aria-label="Production quantity for Small"]',
+      '[aria-label="Production Plan S quantity"]',
     )!;
     // Pre-filled from the Combined Forecast (10), not empty.
     expect(quantityInput.value).toBe('10');
@@ -824,7 +824,7 @@ describe('Order Sheet multi-select', () => {
 
     // Combined forecast totals both sources' default quantities (10 + 6).
     const combinedRow = Array.from(container.querySelectorAll('tr')).find((row) =>
-      row.textContent?.includes('Small'),
+      row.textContent?.includes('Combined Forecast'),
     )!;
     expect(combinedRow.textContent).toContain('16');
 
@@ -868,7 +868,7 @@ describe('Order Sheet multi-select', () => {
     await searchAndSelect('EIOS/26-27/0020');
 
     const quantityInput = () =>
-      container.querySelector<HTMLInputElement>('[aria-label="Production quantity for Small"]')!;
+      container.querySelector<HTMLInputElement>('[aria-label="Production Plan S quantity"]')!;
     expect(quantityInput().value).toBe('10');
     // Realistic user behavior: type, then blur away (e.g. to search for
     // the next Order Sheet) — the quantity only counts as "touched" once
@@ -882,7 +882,7 @@ describe('Order Sheet multi-select', () => {
 
     // Combined Forecast now reflects both sources (10 + 15 = 25)...
     const forecastRow = Array.from(container.querySelectorAll('tr')).find((row) =>
-      row.textContent?.includes('Small'),
+      row.textContent?.includes('Combined Forecast'),
     )!;
     expect(forecastRow.textContent).toContain('25');
     // ...but the manually-touched Production Plan quantity is untouched.
@@ -919,19 +919,20 @@ describe('Order Sheet multi-select', () => {
     await renderJobOrderCreatePage();
     await searchAndSelect('EIOS/26-27/0030');
 
-    // The historical forecast (7) for the inactive size is still shown...
-    const largeRow = Array.from(container.querySelectorAll('tr')).find((row) =>
-      row.textContent?.includes('Large'),
+    // The historical forecast (7) for the inactive size's own column is still shown...
+    const forecastLInput = container.querySelector<HTMLInputElement>(
+      '[aria-label="Combined Forecast L quantity"]',
     )!;
-    expect(largeRow.textContent).toContain('7');
-    expect(largeRow.textContent).toContain('Size inactive — cannot be produced');
-    // ...but it is never rendered as an editable Production Plan input.
+    expect(forecastLInput.value).toBe('7');
+    expect(container.textContent).toContain('Size inactive — cannot be produced');
+    // ...but it is never rendered as an editable Production Plan input —
+    // that column renders the inactive message instead of a cell at all.
     expect(
-      container.querySelector('[aria-label="Production quantity for Large"]'),
+      container.querySelector('[aria-label="Production Plan L quantity"]'),
     ).toBeNull();
     // The still-active size is unaffected and remains editable.
     expect(
-      container.querySelector('[aria-label="Production quantity for Small"]'),
+      container.querySelector('[aria-label="Production Plan S quantity"]'),
     ).not.toBeNull();
   });
 });

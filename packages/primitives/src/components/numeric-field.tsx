@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useId,
   useRef,
   useState,
   type ClipboardEvent,
@@ -9,6 +10,8 @@ import {
 } from 'react';
 import { GridCellInput } from './grid-cell-input';
 import { TextField, type TextFieldDensity, type TextFieldWidth } from './text-field';
+import { ValidationMessage } from './validation-message';
+import { cn } from '../lib/utils';
 import {
   commitNumericDraft,
   extractNumericSubstring,
@@ -34,6 +37,19 @@ export interface NumericFieldProps
   errorMessage?: ReactNode;
   /** 'field' (default) renders as a labeled TextField; 'cell' renders via GridCellInput for grid contexts. */
   variant?: 'field' | 'cell';
+  /**
+   * 'cell' variant only. When true, focusing a cell whose current value is
+   * exactly "0" selects its text, so typing replaces it instead of
+   * producing "010". Opt-in per consumer (default false) — this is a
+   * deliberate UX choice for a specific grid's quantity-entry flow (e.g.
+   * Job Order's Prepared Quantity/Combined Forecast/Production Plan via
+   * QuantityMeasureGrid), never an implicit side effect of using the cell
+   * variant, so every other `variant="cell"` consumer (StyleSizeGrid and
+   * everything built on it — JobOrderPlanningGrid, OrderSheetSizeGrid,
+   * DispatchOrderQuantityGrid) keeps its prior behavior unless it opts in
+   * too.
+   */
+  selectZeroOnFocus?: boolean;
 }
 
 /**
@@ -63,6 +79,7 @@ export const NumericField = forwardRef<HTMLInputElement, NumericFieldProps>((pro
     precision,
     allowNegative = false,
     variant = 'field',
+    selectZeroOnFocus = false,
     density,
     width = 'md',
     label,
@@ -125,6 +142,15 @@ export const NumericField = forwardRef<HTMLInputElement, NumericFieldProps>((pro
 
   const handleFocus = (event: FocusEvent<HTMLInputElement>) => {
     isFocusedRef.current = true;
+    // Opt-in only (selectZeroOnFocus): a lone "0" is the common starting
+    // value for a not-yet-entered quantity — select it on focus so typing
+    // replaces it instead of producing "010". Mirrors the field this
+    // replaced (JobOrderProductionTab's pre-PR2A Prepared Quantity input,
+    // ISS-020), restored for QuantityMeasureGrid specifically — never a
+    // blanket behavior of variant="cell" (see the prop's doc comment).
+    if (variant === 'cell' && selectZeroOnFocus && event.currentTarget.value === '0') {
+      event.currentTarget.select();
+    }
     onFocus?.(event);
   };
 
@@ -136,25 +162,59 @@ export const NumericField = forwardRef<HTMLInputElement, NumericFieldProps>((pro
 
   const inputMode = mode === 'integer' ? ('numeric' as const) : ('decimal' as const);
   const hasError = Boolean(rangeError || errorMessage);
+  // `errorMessage` is typed ReactNode for the labeled-field variant, but a
+  // cell's title/aria-describedby need a plain string — `rangeError` always
+  // is one; fall back to `errorMessage` only when it already is too.
+  const cellMessage = rangeError ?? (typeof errorMessage === 'string' ? errorMessage : undefined);
+  const cellErrorId = useId();
 
   if (variant === 'cell') {
+    // A grid cell has no room for TextField's own inline error row, but a
+    // red border alone ("error={hasError}") doesn't say WHAT is wrong — a
+    // keyboard-only user tabbing to the cell would see only the border,
+    // with no way to reveal a hover-only title tooltip. The message (e.g.
+    // "Must be at most 10.") is instead rendered as a single element that
+    // is BOTH the visible on-focus popover (absolutely positioned so it
+    // never reflows the row/corrupts grid density) AND the
+    // aria-describedby target — one element serves both audiences, so
+    // there is never a separate screen-reader-only description once a
+    // visible one exists. It stays mounted (not display:none) at all
+    // times so aria-describedby always resolves; group-focus-within only
+    // toggles its opacity/visibility.
     return (
-      <GridCellInput
-        ref={ref}
-        type="text"
-        inputMode={inputMode}
-        numeric
-        error={hasError}
-        disabled={disabled}
-        readOnly={readOnly}
-        value={draft}
-        onChange={(event) => handleRawChange(event.target.value)}
-        onPaste={handlePaste}
-        onFocus={handleFocus}
-        onBlur={handleBlur}
-        aria-invalid={hasError || undefined}
-        {...rest}
-      />
+      <span className="group relative block w-full">
+        <GridCellInput
+          ref={ref}
+          type="text"
+          inputMode={inputMode}
+          numeric
+          error={hasError}
+          disabled={disabled}
+          readOnly={readOnly}
+          value={draft}
+          onChange={(event) => handleRawChange(event.target.value)}
+          onPaste={handlePaste}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          aria-invalid={hasError || undefined}
+          aria-describedby={cellMessage ? cellErrorId : undefined}
+          {...rest}
+        />
+        {cellMessage && (
+          <ValidationMessage
+            tone="error"
+            id={cellErrorId}
+            className={cn(
+              'pointer-events-none absolute left-0 top-full z-20 mt-1 w-max max-w-56 text-left',
+              'rounded-control border border-border bg-surface px-2 py-1 text-xs leading-snug shadow-control',
+              'invisible opacity-0 transition-opacity',
+              'group-focus-within:visible group-focus-within:opacity-100',
+            )}
+          >
+            {cellMessage}
+          </ValidationMessage>
+        )}
+      </span>
     );
   }
 
