@@ -1,6 +1,6 @@
 import { resolveImagesForPdf } from '../../../lib/pdf/images.js';
 import type { PdfImageSource } from '../../../lib/pdf/core/PdfThumbnail.js';
-import { resolveJobOrderPrimaryStyle } from '../resolveJobOrderPrimaryStyle.js';
+import { resolveJobOrderListPdfStyle } from './resolveJobOrderListPdfStyle.js';
 import type { ApiSuccessResponse, PaginatedResponse } from '@erve/types';
 import { apiClient } from '../../../lib/api-client.js';
 import { fetchAllPaginatedRecords } from '../../../lib/pdf/fetchAllPaginatedRecords.js';
@@ -46,14 +46,14 @@ export async function prepareJobOrderListPdfImages(
 ): Promise<Map<string, PdfImageSource>> {
   const styles = jobOrders.map((jobOrder) => ({
     jobOrder,
-    resolved: resolveJobOrderPrimaryStyle(jobOrder.lines),
+    resolved: resolveJobOrderListPdfStyle(jobOrder),
   }));
   const refs = styles.flatMap(({ resolved }) =>
     resolved.consistent && resolved.style.primaryImage
       ? [
           {
             id: resolved.style.primaryImage.fileId,
-            path: `/styles/${resolved.style.styleId}/images/${resolved.style.primaryImage.id}/content`,
+            path: `/styles/${resolved.style.id}/images/${resolved.style.primaryImage.id}/content`,
           },
         ]
       : [],

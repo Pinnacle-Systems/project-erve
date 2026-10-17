@@ -88,6 +88,8 @@ it('embeds a thumbnail beside each list Style and keeps missing and inconsistent
   );
   await instance.toBlob();
   interface Node {
+    props?: { src?: string };
+    style?: { width?: number };
     type?: string;
     value?: string;
     children?: Node[];
@@ -96,7 +98,12 @@ it('embeds a thumbnail beside each list Style and keeps missing and inconsistent
     return [node, ...(node.children ?? []).flatMap(nodes)];
   }
   const all = nodes((instance.container as { document: Node }).document);
-  expect(all.filter((node) => node.type === 'IMAGE')).toHaveLength(1);
+  expect(
+    all.filter(
+      (node) =>
+        node.type === 'IMAGE' && node.props?.src === image.dataUri && node.style?.width === 40,
+    ),
+  ).toHaveLength(1);
   expect(all.some((node) => node.value === 'Image unavailable')).toBe(true);
   expect(all.filter((node) => node.value === 'STY-0001 Basic Tee')).toHaveLength(3);
 });

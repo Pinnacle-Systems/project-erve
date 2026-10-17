@@ -257,9 +257,16 @@ it('writes synthetic Job Order PDF visual fixtures', async () => {
     ['historical', 6, true],
     ['zero', 1, false],
     ['long-label', 8, false],
+    ['long-style', 6, false],
   ] as const) {
     const vm = makeViewModel({
       image: name === 'historical' ? { placeholder: true } : image,
+      ...(name === 'long-style'
+        ? {
+            styleName:
+              'Long synthetic Style name with extended fabric construction colour and garment description for wrapping verification across the printable document',
+          }
+        : {}),
       quantityTotalsLine: `Ordered: ${name === 'zero' ? 0 : count * 10}  Prepared: ${historical ? 'Not recorded' : name === 'zero' ? 0 : count * 8}`,
       sizes: Array.from({ length: count }, (_, i) =>
         makeSize({

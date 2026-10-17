@@ -141,8 +141,23 @@ describe('prepareJobOrderListPdfData', () => {
 });
 
 it('resolves only consistent primary Style images using authenticated bounded image resolution', async () => {
-  const primary = { id: 'img-1', fileId: 'file-1' };
+  const primary = {
+    id: 'img-1',
+    styleId: 'style-1',
+    fileId: 'file-1',
+    fileName: 'synthetic.png',
+    mimeType: 'image/png',
+    sizeBytes: 100,
+    isPrimary: true,
+    sortOrder: 0,
+    createdAt: '2026-09-12T00:00:00Z',
+    updatedAt: '2026-09-12T00:00:00Z',
+  };
   const first = makeJobOrder({
+    primaryStyle: {
+      consistent: true,
+      style: { id: 'style-1', styleNumber: 'STY-1', styleName: 'Tee', primaryImage: primary },
+    },
     lines: [
       {
         styleId: 'style-1',
@@ -164,4 +179,21 @@ it('resolves only consistent primary Style images using authenticated bounded im
     expect.objectContaining({ responseType: 'blob' }),
   );
   expect([first, other]).toEqual(originals);
+});
+
+it('never fetches or associates an image for inconsistent or empty identity', async () => {
+  const records = [
+    makeJobOrder({ id: 'empty', lines: [], primaryStyle: { consistent: false } }),
+    makeJobOrder({
+      id: 'bad',
+      primaryStyle: { consistent: false },
+      lines: [
+        { styleId: 'a' } as JobOrder['lines'][number],
+        { styleId: 'b' } as JobOrder['lines'][number],
+      ],
+    }),
+  ];
+  const result = await prepareJobOrderListPdfImages(records);
+  expect([...result.values()]).toEqual([{ inconsistent: true }, { inconsistent: true }]);
+  expect(getMock).not.toHaveBeenCalled();
 });
