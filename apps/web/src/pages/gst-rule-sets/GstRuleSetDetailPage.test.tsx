@@ -176,7 +176,7 @@ describe('GstRuleSetDetailPage', () => {
     const dateForm = Array.from(container.querySelectorAll('form')).find((form) =>
       form.textContent?.includes('Save Dates'));
     expect(dateForm).toBeDefined();
-    const dates = Array.from(dateForm!.querySelectorAll('input')) as HTMLInputElement[];
+    const dates = Array.from(dateForm!.querySelectorAll('input[type="text"]')) as HTMLInputElement[];
     expect(dates).toHaveLength(2);
     expect(dates[0]?.value).toBe('01/11/2026');
     expect(dates[1]?.value).toBe('30/11/2026');
