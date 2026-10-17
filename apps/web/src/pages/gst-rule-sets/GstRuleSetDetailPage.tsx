@@ -8,7 +8,7 @@ import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitiv
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
-import { getLocalDateString } from '../../lib/dates.js';
+import { useBusinessDate } from '../../lib/use-business-date.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageGstRuleSets } from '../../auth/permissions.js';
 import type { GstRuleSet, GstRuleSetVersion, GstValueBand } from '../master-data/types.js';
@@ -56,6 +56,7 @@ export function GstRuleSetDetailPage() {
   const [newGstPercent, setNewGstPercent] = useState('');
   const [activateDialogVersionId, setActivateDialogVersionId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const today = useBusinessDate();
 
   const ruleSetQuery = useQuery({
     queryKey: ['gst-rule-set', id],
@@ -75,6 +76,9 @@ export function GstRuleSetDetailPage() {
   const createVersionMutation = useMutation({
     mutationFn: async () => {
       setError('');
+      if (newEffectiveTo && !newEffectiveFrom) {
+        throw new Error('Effective To requires Effective From.');
+      }
       const res = await apiClient.post<ApiSuccessResponse<GstRuleSet>>(`/gst-rule-sets/${id}/versions`, {
         effectiveFrom: newEffectiveFrom || null,
         effectiveTo: newEffectiveTo || null,
@@ -97,6 +101,9 @@ export function GstRuleSetDetailPage() {
       effectiveTo: string;
     }) => {
       setError('');
+      if (effectiveTo && !effectiveFrom) {
+        throw new Error('Effective To requires Effective From.');
+      }
       if (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom) {
         throw new Error('Effective To must be on or after Effective From.');
       }
@@ -180,15 +187,16 @@ export function GstRuleSetDetailPage() {
   }
 
   const isDraftSelected = selectedVersion?.status === 'DRAFT';
-  // Master ACTIVE means enabled, not that a version is applicable on the local business date.
-  const today = getLocalDateString();
-  const effectiveVersionToday = ruleSet.status === 'ACTIVE'
-    ? ruleSet.versions.find((version) =>
-        version.status === 'ACTIVE' &&
-        version.effectiveFrom !== null &&
-        version.effectiveFrom <= today &&
-        (version.effectiveTo === null || version.effectiveTo >= today))
-    : undefined;
+  // The backend resolver (resolveGstRuleForHsn) selects an ACTIVE version by
+  // its own effective window alone — it never filters on the GST Rule Set
+  // master's status. So the master's status is reported here as a separate,
+  // neutral fact, and the effective version is evaluated independently of
+  // it, consistent with that resolver.
+  const effectiveVersionToday = ruleSet.versions.find((version) =>
+    version.status === 'ACTIVE' &&
+    version.effectiveFrom !== null &&
+    version.effectiveFrom <= today &&
+    (version.effectiveTo === null || version.effectiveTo >= today));
 
   const editDraftVersion = (version: GstRuleSetVersion) => {
     if (!canManage || version.status !== 'DRAFT') return;
@@ -222,12 +230,19 @@ export function GstRuleSetDetailPage() {
       {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
 
       <p className="text-sm text-muted-foreground" role="status">
-        Rule Set master: {ruleSet.status}. Effective version today ({today}):{' '}
-        {ruleSet.status !== 'ACTIVE'
-          ? 'Not applicable — master inactive'
-          : effectiveVersionToday
-            ? `v${effectiveVersionToday.versionNumber}`
-            : 'None — set dates and activate an eligible version'}
+        GST Rule Set master: {ruleSet.status}. ERVE business date: {today}.{' '}
+        {effectiveVersionToday ? (
+          ruleSet.status === 'ACTIVE' ? (
+            `Effective version today: v${effectiveVersionToday.versionNumber}.`
+          ) : (
+            `Configuration note: v${effectiveVersionToday.versionNumber} is ACTIVE and its effective window covers today, though the master is INACTIVE.`
+          )
+        ) : (
+          <>
+            No ACTIVE version&apos;s effective window covers today.
+            {canManage ? ' Set dates and activate an eligible version.' : ''}
+          </>
+        )}
       </p>
 
       {canManage && (

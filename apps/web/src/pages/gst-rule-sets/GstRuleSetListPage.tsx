@@ -30,7 +30,7 @@ export function GstRuleSetListPage() {
     <div className="space-y-5">
       <PageHeader
         title="GST Rule Sets"
-        subtitle="Master ACTIVE means enabled; check each rule set for an effective ACTIVE version"
+        subtitle="Master status and an effective ACTIVE version are evaluated independently — open a rule set to see which version is effective today"
         primaryAction={
           canManage ? (
             <Button asChild variant="default">
