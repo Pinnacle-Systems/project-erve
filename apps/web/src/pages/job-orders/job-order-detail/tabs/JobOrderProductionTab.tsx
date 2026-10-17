@@ -6,12 +6,10 @@ import {
   NOT_RECORDED_LABEL,
   StatusBadge,
   createEnterToNextHandler,
-  formatPreparedQuantity,
-  formatPreparedVariance,
+  getRecordedPreparedQuantity,
 } from '@erve/app-components';
 import {
   Button,
-  NumericField,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -23,7 +21,6 @@ import {
   ValidationMessage,
 } from '@erve/primitives';
 import { Panel } from '@erve/layout';
-import { DataTable } from '@erve/data-display';
 import { apiClient } from '../../../../lib/api-client.js';
 import { canManageJobOrderProduction, canUndoProductionStage } from '../../../../auth/permissions.js';
 import type { Style } from '../../../master-data/types.js';
@@ -32,6 +29,11 @@ import { ProductionStageStepper } from '../../ProductionStageStepper.js';
 import { STAGE_LABELS, formatDateTime } from '../../job-order-ui.js';
 import { mutationErrorMessage, type FlatSize } from '../job-order-detail-utils.js';
 import { JobOrderPlanningGrid } from '../../JobOrderPlanningGrid.js';
+import { QuantityMeasureGrid } from '../../../../components/style-size-grid/QuantityMeasureGrid.js';
+import type {
+  QuantityMeasureGridColumn,
+  QuantityMeasureGridRow,
+} from '../../../../components/style-size-grid/QuantityMeasureGrid.js';
 
 export interface JobOrderProductionTabDisclaimer {
   text: string;
@@ -291,6 +293,93 @@ export function JobOrderProductionTab({
     // Saving is blocked if any entry is null or invalid. A legitimate 0 stays 0.
     preparedQuantity: preparedQuantities[size.id] ?? size.preparedQuantity,
   }));
+
+  // PR2A: the Prepared Quantity grid's COLUMN key must be `sizeId` (one Size
+  // = one column), but the mutation above requires `jobOrderLineSizeId`
+  // (`size.id`, the FlatSize/line-size row id) — this lookup is the one
+  // place that bridges the two so a cell edit never accidentally sends
+  // `sizeId` where the API expects `jobOrderLineSizeId`.
+  const flatSizeBySizeId = useMemo(() => new Map(flatSizes.map((size) => [size.sizeId, size])), [flatSizes]);
+
+  const preparedColumns: QuantityMeasureGridColumn[] = flatSizes.map((size) => ({
+    sizeId: size.sizeId,
+    sizeCode: size.sizeCode,
+  }));
+
+  function setPreparedCell(rowKey: string, sizeId: string, value: number | null) {
+    if (rowKey !== 'prepared') return;
+    const flatSize = flatSizeBySizeId.get(sizeId);
+    if (!flatSize) return;
+    setPreparedQuantities((current) => ({ ...current, [flatSize.id]: value }));
+  }
+
+  function setPreparedCellValidation(rowKey: string, sizeId: string, isValid: boolean) {
+    if (rowKey !== 'prepared') return;
+    const flatSize = flatSizeBySizeId.get(sizeId);
+    if (!flatSize) return;
+    setInvalidPreparedRows((current) => ({ ...current, [flatSize.id]: !isValid }));
+  }
+
+  const preparedEditableRows: QuantityMeasureGridRow[] = [
+    {
+      key: 'ordered',
+      label: 'Ordered',
+      editable: false,
+      values: Object.fromEntries(flatSizes.map((size) => [size.sizeId, size.orderedQuantity])),
+    },
+    {
+      key: 'prepared',
+      label: 'Prepared',
+      values: Object.fromEntries(
+        flatSizes.map((size) => [
+          size.sizeId,
+          size.id in preparedQuantities ? preparedQuantities[size.id] ?? null : size.preparedQuantity,
+        ]),
+      ),
+      maxValues: Object.fromEntries(flatSizes.map((size) => [size.sizeId, size.orderedQuantity])),
+    },
+  ];
+
+  const preparedReadOnlyRows: QuantityMeasureGridRow[] = [
+    {
+      key: 'ordered',
+      label: 'Ordered',
+      editable: false,
+      values: Object.fromEntries(flatSizes.map((size) => [size.sizeId, size.orderedQuantity])),
+    },
+    {
+      key: 'prepared',
+      label: 'Prepared',
+      editable: false,
+      values: Object.fromEntries(flatSizes.map((size) => [size.sizeId, size.preparedQuantity])),
+    },
+  ];
+
+  const planColumns: QuantityMeasureGridColumn[] = flatSizes.map((size) => ({
+    sizeId: size.sizeId,
+    sizeCode: size.sizeCode,
+  }));
+  const planReadOnlyRows: QuantityMeasureGridRow[] = [
+    {
+      key: 'productionPlan',
+      label: 'Production Plan',
+      editable: false,
+      values: Object.fromEntries(flatSizes.map((size) => [size.sizeId, size.orderedQuantity])),
+    },
+    {
+      key: 'prepared',
+      label: 'Prepared Quantity',
+      editable: false,
+      values: Object.fromEntries(
+        flatSizes.map((size) => [size.sizeId, getRecordedPreparedQuantity(jobOrder, size.preparedQuantity) ?? 0]),
+      ),
+      notRecorded: Object.fromEntries(
+        flatSizes
+          .filter((size) => getRecordedPreparedQuantity(jobOrder, size.preparedQuantity) === null)
+          .map((size) => [size.sizeId, NOT_RECORDED_LABEL]),
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-4">
@@ -555,74 +644,16 @@ export function JobOrderProductionTab({
                   {mutationErrorMessage(preparedMutation.error, 'Unable to save prepared quantities.')}
                 </ValidationMessage>
               )}
-              <DataTable
-                columns={[
-                  { key: 'style', header: 'Style', accessor: 'style' },
-                  { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-                  {
-                    key: 'orderedQuantity',
-                    header: 'Ordered',
-                    align: 'right',
-                    render: (size) => size.orderedQuantity.toLocaleString(),
-                  },
-                  {
-                    key: 'preparedInput',
-                    header: 'Prepared',
-                    align: 'right',
-                    render: (size) => (
-                      <NumericField
-                        aria-label={`Prepared quantity for ${size.style} ${size.sizeCode}`}
-                        mode="integer"
-                        min={0}
-                        max={size.orderedQuantity}
-                        value={size.id in preparedQuantities
-                          ? preparedQuantities[size.id] ?? null
-                          : size.preparedQuantity}
-                        onChange={(value) =>
-                          setPreparedQuantities((current) => ({ ...current, [size.id]: value }))
-                        }
-                        onValidationChange={(isValid) =>
-                          setInvalidPreparedRows((current) => ({ ...current, [size.id]: !isValid }))
-                        }
-                        onFocus={(event) => {
-                          // Replace the initial 0 by typing, rather than producing "010".
-                          if (event.currentTarget.value === '0') event.currentTarget.select();
-                        }}
-                        errorMessage={preparedQuantities[size.id] === null
-                          ? 'Enter a quantity (0 is allowed).'
-                          : undefined}
-                        disabled={!canUpdatePrepared}
-                        density="compact"
-                        width="xs"
-                      />
-                    ),
-                  },
-                ]}
-                data={flatSizes}
-                rowKey="id"
+              <QuantityMeasureGrid
+                columns={preparedColumns}
+                rows={preparedEditableRows}
+                min={0}
+                onCellChange={setPreparedCell}
+                onCellValidationChange={setPreparedCellValidation}
               />
             </div>
           ) : isPreparedQuantitiesUnlocked ? (
-            <DataTable
-              columns={[
-                { key: 'style', header: 'Style', accessor: 'style' },
-                { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-                {
-                  key: 'orderedQuantity',
-                  header: 'Ordered',
-                  align: 'right',
-                  render: (size) => size.orderedQuantity.toLocaleString(),
-                },
-                {
-                  key: 'preparedQuantity',
-                  header: 'Prepared',
-                  align: 'right',
-                  render: (size) => size.preparedQuantity.toLocaleString(),
-                },
-              ]}
-              data={flatSizes}
-              rowKey="id"
-            />
+            <QuantityMeasureGrid columns={preparedColumns} rows={preparedReadOnlyRows} />
           ) : (
             <div className="p-4 bg-muted/30 rounded-md border text-sm text-muted-foreground">
               Prepared quantities become available after{' '}
@@ -693,32 +724,7 @@ export function JobOrderProductionTab({
             }
           />
         ) : (
-          <DataTable
-            columns={[
-              { key: 'style', header: 'Style', accessor: 'style' },
-              { key: 'sizeCode', header: 'Size', accessor: 'sizeCode' },
-              {
-                key: 'orderedQuantity',
-                header: 'Ordered',
-                align: 'right',
-                render: (size) => size.orderedQuantity.toLocaleString(),
-              },
-              {
-                key: 'preparedQuantity',
-                header: 'Prepared',
-                align: 'right',
-                render: (size) => formatPreparedQuantity(jobOrder, size.preparedQuantity),
-              },
-              {
-                key: 'varianceQuantity',
-                header: 'Variance',
-                align: 'right',
-                render: (size) => formatPreparedVariance(jobOrder, size.preparedQuantity, size.orderedQuantity),
-              },
-            ]}
-            data={flatSizes}
-            rowKey="id"
-          />
+          <QuantityMeasureGrid columns={planColumns} rows={planReadOnlyRows} />
         )}
       </Panel>
 

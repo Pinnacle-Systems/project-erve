@@ -6,6 +6,11 @@ import { Button, DatePicker, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
 import { apiClient } from '../../../../lib/api-client.js';
+import { QuantityMeasureGrid } from '../../../../components/style-size-grid/QuantityMeasureGrid.js';
+import type {
+  QuantityMeasureGridColumn,
+  QuantityMeasureGridRow,
+} from '../../../../components/style-size-grid/QuantityMeasureGrid.js';
 import type { PurchaseOrder } from '../../../purchase-orders/types.js';
 import type { JobOrder } from '../../types.js';
 import { OrderSheetMultiSelectField } from '../../OrderSheetMultiSelectField.js';
@@ -24,8 +29,9 @@ export interface JobOrderOverviewTabProps {
 
 function JobOrderOverviewSummary({ jobOrder }: { jobOrder: JobOrder }) {
   // Historical imports carry ordered quantities and source evidence only —
-  // never live confirmation or prepared/variance tracking, so those items
-  // are stated as not applicable rather than shown as pending/shortfall.
+  // never a live confirmation or a recorded prepared quantity, so those
+  // items read "Not recorded (historical)" rather than a pending/shortfall
+  // state built on a placeholder value.
   const historical = jobOrder.historicalImport ?? null;
   return (
     <Panel title="Job Order Header">
@@ -94,14 +100,6 @@ function JobOrderOverviewSummary({ jobOrder }: { jobOrder: JobOrder }) {
         <DescriptionList.Item
           label="Prepared Qty"
           value={historical ? 'Not recorded (historical)' : jobOrder.preparedQuantityTotal.toLocaleString()}
-        />
-        <DescriptionList.Item
-          label="Variance"
-          value={
-            historical
-              ? 'Not applicable'
-              : (jobOrder.preparedQuantityTotal - jobOrder.orderedQuantityTotal).toLocaleString()
-          }
         />
         <DescriptionList.Item label="Created" value={formatDateTime(jobOrder.createdAt)} />
         <DescriptionList.Item label="Confirmed By" value={jobOrder.confirmedBy?.name} />
@@ -217,43 +215,36 @@ export function JobOrderOverviewTab({ jobOrder, canManageJobOrders }: JobOrderOv
             />
 
             {jobOrder.combinedForecast && jobOrder.combinedForecast.length > 0 && (
-              <DataTable
-                density="compact"
-                columns={[
-                  { key: 'size', header: 'Size', render: (row) => row.sizeLabel },
-                  {
-                    key: 'forecast',
-                    header: 'Combined Forecast',
-                    align: 'right',
-                    render: (row) => row.forecastQuantity.toLocaleString(),
-                  },
-                  {
-                    key: 'jobOrder',
-                    header: 'Job Order',
-                    align: 'right',
-                    render: (row) => {
-                      const jobOrderQuantity = jobOrder.lines
-                        .flatMap((line) => line.sizes)
-                        .filter((size) => size.sizeId === row.sizeId)
-                        .reduce((sum, size) => sum + size.orderedQuantity, 0);
-                      return jobOrderQuantity.toLocaleString();
+              <QuantityMeasureGrid
+                columns={jobOrder.combinedForecast.map(
+                  (row): QuantityMeasureGridColumn => ({ sizeId: row.sizeId, sizeCode: row.sizeCode }),
+                )}
+                rows={
+                  [
+                    {
+                      key: 'combinedForecast',
+                      label: 'Combined Forecast',
+                      editable: false,
+                      values: Object.fromEntries(
+                        jobOrder.combinedForecast.map((row) => [row.sizeId, row.forecastQuantity]),
+                      ),
                     },
-                  },
-                  {
-                    key: 'variance',
-                    header: 'Variance',
-                    align: 'right',
-                    render: (row) => {
-                      const jobOrderQuantity = jobOrder.lines
-                        .flatMap((line) => line.sizes)
-                        .filter((size) => size.sizeId === row.sizeId)
-                        .reduce((sum, size) => sum + size.orderedQuantity, 0);
-                      return (jobOrderQuantity - row.forecastQuantity).toLocaleString();
+                    {
+                      key: 'productionPlan',
+                      label: 'Production Plan',
+                      editable: false,
+                      values: Object.fromEntries(
+                        jobOrder.combinedForecast.map((row) => {
+                          const jobOrderQuantity = jobOrder.lines
+                            .flatMap((line) => line.sizes)
+                            .filter((size) => size.sizeId === row.sizeId)
+                            .reduce((sum, size) => sum + size.orderedQuantity, 0);
+                          return [row.sizeId, jobOrderQuantity];
+                        }),
+                      ),
                     },
-                  },
-                ]}
-                data={jobOrder.combinedForecast}
-                rowKey="sizeId"
+                  ] satisfies QuantityMeasureGridRow[]
+                }
               />
             )}
 
