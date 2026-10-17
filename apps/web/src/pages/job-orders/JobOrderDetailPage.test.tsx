@@ -160,6 +160,49 @@ describe('JobOrderDetailPage tab navigation', () => {
 });
 
 describe('ISS-003 Factory confirmation on each unconfirmed Job Order visit', () => {
+  it('combines repeated Size records into one confirmation column without losing quantities', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderJobOrderDetail(container, root, {
+      status: 'SENT_TO_FACTORY',
+      overrides: {
+        ...draftOverrides,
+        orderedQuantityTotal: 17,
+        lines: [draftOverrides.lines[0], {
+          ...draftOverrides.lines[0], id: 'line-2', orderedQuantityTotal: 7,
+          sizes: [{ ...draftOverrides.lines[0]!.sizes[0], id: 'line-size-2', orderedQuantity: 7 }],
+        }],
+      },
+    });
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(Array.from(dialog.querySelectorAll('thead th')).map((cell) => cell.textContent)).toEqual(['Measure', 'S', 'Total']);
+    expect(Array.from(dialog.querySelectorAll('tbody input')).map((input) => (input as HTMLInputElement).value)).toEqual(['17']);
+    expect(dialog.querySelector('tbody tr')?.lastElementChild?.textContent).toBe('17');
+  });
+
+  it('reviews Production Plan with ordered Size columns and one measure total', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderJobOrderDetail(container, root, {
+      status: 'SENT_TO_FACTORY',
+      overrides: {
+        ...draftOverrides,
+        orderedQuantityTotal: 17,
+        lines: [{ ...draftOverrides.lines[0], orderedQuantityTotal: 17, sizes: [
+          { ...draftOverrides.lines[0]!.sizes[0], orderedQuantity: 10 },
+          { ...draftOverrides.lines[0]!.sizes[0], id: 'line-size-2', sizeId: 'sz-2', sizeCode: 'M', sizeLabel: 'Medium', orderedQuantity: 7 },
+        ] }],
+      },
+    });
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(Array.from(dialog.querySelectorAll('thead th')).map((cell) => cell.textContent)).toEqual(['Measure', 'S', 'M', 'Total']);
+    const rows = dialog.querySelectorAll('tbody tr');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.textContent).toContain('Production Plan');
+    expect(Array.from(rows[0]!.querySelectorAll('input')).map((input) => [input.value, input.readOnly])).toEqual([['10', true], ['7', true]]);
+    expect(rows[0]!.lastElementChild?.textContent).toBe('17');
+    expect(dialog.textContent?.match(/ST-1 Style One/g)).toHaveLength(1);
+    expect(dialog.querySelector('ul')).toBeNull();
+  });
+
   it('opens an actionable review dialog with source terms and requires acknowledgement before confirm', async () => {
     authState.roles = ['FACTORY_USER'];
     await renderJobOrderDetail(container, root, {

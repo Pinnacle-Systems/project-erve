@@ -6,6 +6,7 @@ import { TextField } from '@erve/primitives';
 import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
+import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import type { PurchaseOrder } from '../purchase-orders/types.js';
 
 function formatDate(iso: string | null) {
@@ -82,35 +83,49 @@ export function OrderSheetMultiSelectField({
         {results.length > 0 && (
           <div className="max-h-72 overflow-y-auto py-1">
             {results.map((po) => (
-              <button
+              <div
                 key={po.id}
-                type="button"
-                onClick={() => {
-                  onSelect(po);
-                  setSearchText('');
-                }}
-                className="flex w-full flex-col items-start gap-1 px-3 py-2 text-left hover:bg-[var(--erp-surface-hover)] focus:bg-[var(--erp-surface-hover)] focus:outline-hidden"
+                className="flex items-center gap-2 px-3 py-2 hover:bg-[var(--erp-surface-hover)]"
               >
-                <span className="text-sm font-medium text-foreground">{po.poNumber}</span>
-                <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                  <span>{po.distributor.name}</span>
-                  <span aria-hidden="true">·</span>
-                  <StatusBadge
-                    label={po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale Return'}
-                    tone={po.purchaseMode === 'OUTRIGHT' ? 'info' : 'pending'}
-                  />
-                  <span aria-hidden="true">·</span>
-                  <span>Required: {formatDate(po.requiredDeliveryDate)}</span>
-                  {po.lines[0] && (
-                    <>
-                      <span aria-hidden="true">·</span>
-                      <span>
-                        {po.lines[0].styleNumber} {po.lines[0].styleName}
-                      </span>
-                    </>
-                  )}
-                </span>
-              </button>
+                {po.lines[0] && (
+                  <div className="shrink-0">
+                    <StyleThumbnailCell
+                      styleId={po.lines[0].styleId}
+                      image={po.lines[0].primaryImage ?? null}
+                      viewerTitle={po.lines[0].styleNumber}
+                      size={32}
+                    />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelect(po);
+                    setSearchText('');
+                  }}
+                  className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left focus:bg-[var(--erp-surface-hover)] focus:outline-hidden focus-visible:ring-1 focus-visible:ring-primary"
+                >
+                  <span className="text-sm font-medium text-foreground">{po.poNumber}</span>
+                  <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    {po.lines[0] && (
+                      <>
+                        <span>
+                          {po.lines[0].styleNumber} {po.lines[0].styleName}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                      </>
+                    )}
+                    <span>{po.distributor.name}</span>
+                    <span aria-hidden="true">·</span>
+                    <StatusBadge
+                      label={po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale Return'}
+                      tone={po.purchaseMode === 'OUTRIGHT' ? 'info' : 'pending'}
+                    />
+                    <span aria-hidden="true">·</span>
+                    <span>Required: {formatDate(po.requiredDeliveryDate)}</span>
+                  </span>
+                </button>
+              </div>
             ))}
           </div>
         )}
