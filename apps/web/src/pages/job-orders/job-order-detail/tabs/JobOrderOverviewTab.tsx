@@ -29,8 +29,9 @@ export interface JobOrderOverviewTabProps {
 
 function JobOrderOverviewSummary({ jobOrder }: { jobOrder: JobOrder }) {
   // Historical imports carry ordered quantities and source evidence only —
-  // never live confirmation or prepared/variance tracking, so those items
-  // are stated as not applicable rather than shown as pending/shortfall.
+  // never a live confirmation or a recorded prepared quantity, so those
+  // items read "Not recorded (historical)" rather than a pending/shortfall
+  // state built on a placeholder value.
   const historical = jobOrder.historicalImport ?? null;
   return (
     <Panel title="Job Order Header">

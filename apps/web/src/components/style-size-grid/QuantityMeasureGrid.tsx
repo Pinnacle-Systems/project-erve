@@ -67,6 +67,20 @@ export function QuantityMeasureGrid({
   const rowTotal = (row: QuantityMeasureGridRow) =>
     columns.reduce((sum, column) => sum + toFiniteNumber(row.values[column.sizeId]), 0);
 
+  // A row whose every applicable cell is `notRecorded` (e.g. Prepared on a
+  // historical import) has no real quantities to sum — summing its
+  // placeholder 0s would render a numeric Total that looks like a recorded
+  // fact. Fall back to that row's own notRecorded node for the Total cell
+  // too, so the honesty signal isn't lost at the one cell a reader is most
+  // likely to glance at.
+  const rowFullyNotRecorded = (row: QuantityMeasureGridRow): boolean => {
+    const applicableColumns = columns.filter((column) => column.sizeId in row.values);
+    return (
+      applicableColumns.length > 0 &&
+      applicableColumns.every((column) => row.notRecorded?.[column.sizeId] !== undefined)
+    );
+  };
+
   return (
     <div className={cn('overflow-x-auto', className)} onKeyDown={createEnterToNextHandler()}>
       <table className="w-full border-collapse text-sm">
@@ -127,7 +141,11 @@ export function QuantityMeasureGrid({
                   );
                 })}
                 {showRowTotals && (
-                  <td className="px-2 py-1.5 text-right font-medium tabular-nums">{rowTotal(row)}</td>
+                  <td className="px-2 py-1.5 text-right font-medium tabular-nums">
+                    {rowFullyNotRecorded(row)
+                      ? row.notRecorded![columns.find((column) => column.sizeId in row.values)!.sizeId]
+                      : rowTotal(row)}
+                  </td>
                 )}
               </tr>
             );
