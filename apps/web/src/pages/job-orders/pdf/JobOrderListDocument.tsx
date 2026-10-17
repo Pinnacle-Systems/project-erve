@@ -1,3 +1,5 @@
+import { View, Text } from '@react-pdf/renderer';
+import { PdfThumbnail } from '../../../lib/pdf/core/PdfThumbnail.js';
 import { PdfDocument } from '../../../lib/pdf/core/PdfDocument.js';
 import { PdfHeader } from '../../../lib/pdf/core/PdfHeader.js';
 import { PdfFooter } from '../../../lib/pdf/core/PdfFooter.js';
@@ -7,8 +9,23 @@ import { PdfTable, type PdfTableColumn } from '../../../lib/pdf/core/PdfTable.js
 import type { JobOrderListPdfRow, JobOrderListPdfViewModel } from './buildJobOrderListViewModel.js';
 
 const columns: PdfTableColumn<JobOrderListPdfRow>[] = [
-  { key: 'jobOrderNumber', header: 'Job Order No.', width: '13%', value: (row) => row.jobOrderNumber },
-  { key: 'styleDisplay', header: 'Style', width: '20%', value: (row) => row.styleDisplay },
+  {
+    key: 'jobOrderNumber',
+    header: 'Job Order No.',
+    width: '13%',
+    value: (row) => row.jobOrderNumber,
+  },
+  {
+    key: 'styleDisplay',
+    header: 'Style',
+    width: '20%',
+    render: (row) => (
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <PdfThumbnail image={row.image} width={40} height={40} />
+        <Text style={{ fontSize: 8, marginLeft: 6, flex: 1 }}>{row.styleDisplay}</Text>
+      </View>
+    ),
+  },
   { key: 'factoryName', header: 'Factory', width: '14%', value: (row) => row.factoryName },
   {
     key: 'sourceOrderSheetCount',
@@ -17,7 +34,12 @@ const columns: PdfTableColumn<JobOrderListPdfRow>[] = [
     align: 'right',
     value: (row) => row.sourceOrderSheetCount,
   },
-  { key: 'requiredDeliveryDate', header: 'Delivery Date', width: '10%', value: (row) => row.requiredDeliveryDate },
+  {
+    key: 'requiredDeliveryDate',
+    header: 'Delivery Date',
+    width: '10%',
+    value: (row) => row.requiredDeliveryDate,
+  },
   {
     key: 'orderedQuantityTotal',
     header: 'Ordered',

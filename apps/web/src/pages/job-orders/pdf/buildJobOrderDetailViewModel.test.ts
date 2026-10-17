@@ -1,3 +1,7 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { pdf } from '@react-pdf/renderer';
+import { JobOrderDetailDocument } from './JobOrderDetailDocument.js';
 import { describe, expect, it } from 'vitest';
 import type { JobOrder } from '../types.js';
 import type { JobOrderQualityActivity, JobOrderSourceOrderSheet, JobOrderStage } from '@erve/types';
@@ -7,16 +11,31 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
   return {
     id: 'jo-1',
     jobOrderNumber: 'EIJO/26-27/0001',
-    primaryStyle: { consistent: true, style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null } },
+    primaryStyle: {
+      consistent: true,
+      style: { id: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null },
+    },
     financialYear: { id: 'fy1', code: '2026-27' },
     factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
     unitPrice: 125.5,
     status: 'IN_PRODUCTION',
     operationalState: {
-      lifecycleContext: { code: 'IN_PRODUCTION', label: 'In Production', tone: 'info', activityId: null, activityName: null },
+      lifecycleContext: {
+        code: 'IN_PRODUCTION',
+        label: 'In Production',
+        tone: 'info',
+        activityId: null,
+        activityName: null,
+      },
       productionState: null,
       qualityState: null,
-      primaryDisplayState: { code: 'IN_PRODUCTION', label: 'In Production', tone: 'info', activityId: null, activityName: null },
+      primaryDisplayState: {
+        code: 'IN_PRODUCTION',
+        label: 'In Production',
+        tone: 'info',
+        activityId: null,
+        activityName: null,
+      },
     },
     factoryConfirmationStatus: 'CONFIRMED',
     requiredDeliveryDate: '2026-06-01T00:00:00.000Z',
@@ -29,7 +48,12 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
     version: 1,
     updatedAt: '2026-04-01T00:00:00.000Z',
     seasonSnapshots: [],
-    processFlowVersion: { id: 'pfv1', versionNumber: 2, status: 'ACTIVE', processFlow: { id: 'pf1', code: 'PF1', name: 'Standard Flow' } },
+    processFlowVersion: {
+      id: 'pfv1',
+      versionNumber: 2,
+      status: 'ACTIVE',
+      processFlow: { id: 'pf1', code: 'PF1', name: 'Standard Flow' },
+    },
     confirmedBy: { id: 'u2', name: 'Factory Rep', email: 'factory@erve.local' },
     confirmedAt: '2026-04-05T00:00:00.000Z',
     disclaimerText: null,
@@ -50,9 +74,33 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
         preparedQuantityTotal: 200,
         status: 'IN_PRODUCTION',
         sizes: [
-          { id: 'sz-1', sizeId: 'size-s', sizeCode: 'S', sizeLabel: 'Small', orderedQuantity: 200, preparedQuantity: 100, varianceQuantity: -100 },
-          { id: 'sz-2', sizeId: 'size-m', sizeCode: 'M', sizeLabel: 'Medium', orderedQuantity: 0, preparedQuantity: 0, varianceQuantity: 0 },
-          { id: 'sz-3', sizeId: 'size-l', sizeCode: 'L', sizeLabel: 'Large', orderedQuantity: 300, preparedQuantity: 100, varianceQuantity: -200 },
+          {
+            id: 'sz-1',
+            sizeId: 'size-s',
+            sizeCode: 'S',
+            sizeLabel: 'Small',
+            orderedQuantity: 200,
+            preparedQuantity: 100,
+            varianceQuantity: -100,
+          },
+          {
+            id: 'sz-2',
+            sizeId: 'size-m',
+            sizeCode: 'M',
+            sizeLabel: 'Medium',
+            orderedQuantity: 0,
+            preparedQuantity: 0,
+            varianceQuantity: 0,
+          },
+          {
+            id: 'sz-3',
+            sizeId: 'size-l',
+            sizeCode: 'L',
+            sizeLabel: 'Large',
+            orderedQuantity: 300,
+            preparedQuantity: 100,
+            varianceQuantity: -200,
+          },
         ],
       },
     ],
@@ -63,14 +111,21 @@ function makeJobOrder(overrides: Partial<JobOrder> = {}): JobOrder {
   };
 }
 
-function ppSampleActivity(overrides: Partial<JobOrderQualityActivity> = {}): JobOrderQualityActivity {
+function ppSampleActivity(
+  overrides: Partial<JobOrderQualityActivity> = {},
+): JobOrderQualityActivity {
   return {
     processFlowVersionStageId: 'stage-pp-sample',
     sequence: 1,
     name: 'PP Sample',
     status: 'COMPLETED',
     eligible: true,
-    qualityForm: { id: 'form-1', code: 'PP_SAMPLE', name: 'PP Sample Form', executionScope: 'SIZE' },
+    qualityForm: {
+      id: 'form-1',
+      code: 'PP_SAMPLE',
+      name: 'PP Sample Form',
+      executionScope: 'SIZE',
+    },
     qualityFormVersion: { id: 'fv-1', versionNumber: 1 },
     executionMode: 'SEQUENTIAL_GATE',
     associatedProductionActivity: null,
@@ -129,7 +184,9 @@ function ppmActivity(overrides: Partial<JobOrderQualityActivity> = {}): JobOrder
   };
 }
 
-function makeSourceOrderSheet(overrides: Partial<JobOrderSourceOrderSheet> = {}): JobOrderSourceOrderSheet {
+function makeSourceOrderSheet(
+  overrides: Partial<JobOrderSourceOrderSheet> = {},
+): JobOrderSourceOrderSheet {
   return {
     id: 'os-1',
     poNumber: 'EIOS/26-27/0001',
@@ -164,23 +221,31 @@ describe('buildJobOrderDetailViewModel', () => {
     const vm = buildJobOrderDetailViewModel(makeJobOrder({ status: 'PRODUCTION_COMPLETE' }), {
       generatedAt: '2026-09-12T10:00:00Z',
     });
-    expect(vm.identityItems).toContainEqual({ label: 'Lifecycle Status', value: 'Production Complete' });
+    expect(vm.identityItems).toContainEqual({
+      label: 'Lifecycle Status',
+      value: 'Production Complete',
+    });
   });
 
   it('never invents a Closed lifecycle label for a Job Order that has not reached it', () => {
-    const vm = buildJobOrderDetailViewModel(makeJobOrder(), { generatedAt: '2026-09-12T10:00:00Z' });
+    const vm = buildJobOrderDetailViewModel(makeJobOrder(), {
+      generatedAt: '2026-09-12T10:00:00Z',
+    });
     const serialized = JSON.stringify(vm).toLowerCase();
     expect(serialized).not.toContain('closed');
   });
 
   it('maps Style, Factory and size-wise quantities, keeping zero distinct from missing', () => {
-    const vm = buildJobOrderDetailViewModel(makeJobOrder(), { generatedAt: '2026-09-12T10:00:00Z' });
+    const vm = buildJobOrderDetailViewModel(makeJobOrder(), {
+      generatedAt: '2026-09-12T10:00:00Z',
+    });
+    expect(JSON.stringify(vm)).not.toMatch(/variance/i);
     expect(vm.styleNumber).toBe('STY-0001');
     expect(vm.styleName).toBe('Basic Tee');
     const mediumSize = vm.sizes.find((s) => s.sizeCode === 'M');
     expect(mediumSize?.orderedQuantity).toBe(0);
     expect(mediumSize?.preparedQuantity).toBe(0);
-    expect(vm.quantityTotalsLine).toBe('Ordered: 500  Prepared: 200  Variance: -300');
+    expect(vm.quantityTotalsLine).toBe('Ordered: 500  Prepared: 200');
   });
 
   it('omits the Source Order Sheets section (null) when the viewer record has no provenance', () => {
@@ -193,24 +258,41 @@ describe('buildJobOrderDetailViewModel', () => {
   it('maps multiple source Order Sheets across different distributors and mixed Purchase Modes without implying strict allocation', () => {
     const jobOrder = makeJobOrder({
       sourceOrderSheets: [
-        makeSourceOrderSheet({ id: 'os-1', distributor: { id: 'd1', code: 'D1', name: 'Distributor A' }, purchaseMode: 'OUTRIGHT' }),
-        makeSourceOrderSheet({ id: 'os-2', poNumber: 'EIOS/26-27/0002', distributor: { id: 'd2', code: 'D2', name: 'Distributor B' }, purchaseMode: 'SALE_RETURN' }),
+        makeSourceOrderSheet({
+          id: 'os-1',
+          distributor: { id: 'd1', code: 'D1', name: 'Distributor A' },
+          purchaseMode: 'OUTRIGHT',
+        }),
+        makeSourceOrderSheet({
+          id: 'os-2',
+          poNumber: 'EIOS/26-27/0002',
+          distributor: { id: 'd2', code: 'D2', name: 'Distributor B' },
+          purchaseMode: 'SALE_RETURN',
+        }),
       ],
     });
     const vm = buildJobOrderDetailViewModel(jobOrder, { generatedAt: '2026-09-12T10:00:00Z' });
     expect(vm.sourceOrderSheets).toHaveLength(2);
-    expect(vm.sourceOrderSheets?.map((r) => r.distributorName)).toEqual(['Distributor A', 'Distributor B']);
-    expect(vm.sourceOrderSheets?.map((r) => r.purchaseMode)).toEqual(['Outright', 'Sale or Return']);
+    expect(vm.sourceOrderSheets?.map((r) => r.distributorName)).toEqual([
+      'Distributor A',
+      'Distributor B',
+    ]);
+    expect(vm.sourceOrderSheets?.map((r) => r.purchaseMode)).toEqual([
+      'Outright',
+      'Sale or Return',
+    ]);
   });
 
-  it('computes the combined forecast comparison using the Job Order\'s own quantities', () => {
+  it("computes the combined forecast comparison using the Job Order's own quantities", () => {
     const jobOrder = makeJobOrder({
       sourceOrderSheets: [makeSourceOrderSheet()],
-      combinedForecast: [{ sizeId: 'size-s', sizeCode: 'S', sizeLabel: 'Small', forecastQuantity: 250 }],
+      combinedForecast: [
+        { sizeId: 'size-s', sizeCode: 'S', sizeLabel: 'Small', forecastQuantity: 250 },
+      ],
     });
     const vm = buildJobOrderDetailViewModel(jobOrder, { generatedAt: '2026-09-12T10:00:00Z' });
     expect(vm.combinedForecast).toEqual([
-      { sizeId: 'size-s', sizeLabel: 'Small', forecastQuantity: 250, jobOrderQuantity: 200, varianceQuantity: -50 },
+      { sizeId: 'size-s', sizeLabel: 'Small', forecastQuantity: 250, jobOrderQuantity: 200 },
     ]);
   });
 
@@ -250,7 +332,14 @@ describe('buildJobOrderDetailViewModel', () => {
   it('orders production stages by sequence and preserves completion attribution', () => {
     const jobOrder = makeJobOrder({
       stages: [
-        makeStage({ id: 's2', stageSequence: 2, stageNameSnapshot: 'Sewing', status: 'IN_PROGRESS', completedBy: null, completedAt: null }),
+        makeStage({
+          id: 's2',
+          stageSequence: 2,
+          stageNameSnapshot: 'Sewing',
+          status: 'IN_PROGRESS',
+          completedBy: null,
+          completedAt: null,
+        }),
         makeStage({ id: 's1', stageSequence: 1, stageNameSnapshot: 'Cutting' }),
       ],
     });
@@ -260,7 +349,11 @@ describe('buildJobOrderDetailViewModel', () => {
   });
 
   it('does not leak unrelated/internal properties into the printable view model', () => {
-    const jobOrder = { ...makeJobOrder(), __internalDebugFlag: true, someAuditInternal: 'secret' } as JobOrder;
+    const jobOrder = {
+      ...makeJobOrder(),
+      __internalDebugFlag: true,
+      someAuditInternal: 'secret',
+    } as JobOrder;
     const vm = buildJobOrderDetailViewModel(jobOrder, { generatedAt: '2026-09-12T10:00:00Z' });
     const serialized = JSON.stringify(vm);
     expect(serialized).not.toContain('__internalDebugFlag');
@@ -268,17 +361,31 @@ describe('buildJobOrderDetailViewModel', () => {
   });
 
   // recordOrigin=HISTORICAL_IMPORT: raw PENDING/0 are placeholders, never facts.
-  it('prints Not recorded confirmation/prepared and Not applicable variance for a historical import', () => {
+  it('preserves Not recorded historical quantities and omits variance', () => {
     const vm = buildJobOrderDetailViewModel(
       makeJobOrder({
         status: 'PRODUCTION_COMPLETE',
         factoryConfirmationStatus: 'PENDING',
         preparedQuantityTotal: 0,
-        historicalImport: { legacyReferenceNumber: 'EI25018', historicalBusinessDate: '2025-08-15', importedAt: '2026-09-24T00:00:00Z' },
+        historicalImport: {
+          legacyReferenceNumber: 'EI25018',
+          historicalBusinessDate: '2025-08-15',
+          importedAt: '2026-09-24T00:00:00Z',
+        },
         lines: [
           {
             ...makeJobOrder().lines[0]!,
-            sizes: [{ id: 'sz-1', sizeId: 'size-s', sizeCode: 'S', sizeLabel: 'Small', orderedQuantity: 168, preparedQuantity: 0, varianceQuantity: -168 }],
+            sizes: [
+              {
+                id: 'sz-1',
+                sizeId: 'size-s',
+                sizeCode: 'S',
+                sizeLabel: 'Small',
+                orderedQuantity: 168,
+                preparedQuantity: 0,
+                varianceQuantity: -168,
+              },
+            ],
           },
         ],
       }),
@@ -287,21 +394,61 @@ describe('buildJobOrderDetailViewModel', () => {
     const item = (label: string) => vm.identityItems.find((i) => i.label === label)?.value;
     expect(item('Factory Confirmation')).toBe('Not recorded');
     expect(item('Prepared Quantity')).toBe('Not recorded');
-    expect(item('Variance')).toBe('Not applicable');
+    expect(item('Variance')).toBeUndefined();
     expect(item('Lifecycle Status')).toBe('Production Complete');
-    expect(vm.quantityTotalsLine).toBe('Ordered: 500  Prepared: Not recorded  Variance: Not applicable');
-    expect(vm.sizes[0]).toMatchObject({ orderedQuantity: 168, preparedQuantity: 'Not recorded', varianceQuantity: 'Not applicable' });
+    expect(vm.quantityTotalsLine).toBe('Ordered: 500  Prepared: Not recorded');
+    expect(vm.sizes[0]).toMatchObject({ orderedQuantity: 168, preparedQuantity: 'Not recorded' });
   });
 
   it('keeps live confirmation labels and a recorded prepared 0 unchanged', () => {
     const unconfirmed = buildJobOrderDetailViewModel(
-      makeJobOrder({ status: 'SENT_TO_FACTORY', factoryConfirmationStatus: 'PENDING', preparedQuantityTotal: 0, historicalImport: null }),
+      makeJobOrder({
+        status: 'SENT_TO_FACTORY',
+        factoryConfirmationStatus: 'PENDING',
+        preparedQuantityTotal: 0,
+        historicalImport: null,
+      }),
       { generatedAt: '2026-09-12T10:00:00Z' },
     );
     const item = (label: string) => unconfirmed.identityItems.find((i) => i.label === label)?.value;
     expect(item('Factory Confirmation')).toBe('Pending');
     expect(item('Prepared Quantity')).toBe(0);
-    expect(item('Variance')).toBe(-500);
-    expect(unconfirmed.sizes[1]).toMatchObject({ preparedQuantity: 0, varianceQuantity: 0 });
+    expect(item('Variance')).toBeUndefined();
+    expect(unconfirmed.sizes[1]).toMatchObject({ preparedQuantity: 0 });
   });
+});
+
+it('writes complete builder-to-document synthetic evidence', async () => {
+  const directory = process.env.PR2B_PDF_EVIDENCE_DIR;
+  if (!directory) return;
+  const image = {
+    dataUri: `data:image/png;base64,${(await fs.readFile(new URL('../../../../public/erve-logo.png', import.meta.url))).toString('base64')}`,
+  };
+  for (const historical of [false, true]) {
+    const jobOrder = makeJobOrder(
+      historical
+        ? {
+            historicalImport: {
+              legacyReferenceNumber: 'SYNTHETIC-LEGACY',
+              historicalBusinessDate: '2025-08-15',
+              importedAt: '2026-09-24T00:00:00Z',
+            },
+            preparedQuantityTotal: 0,
+          }
+        : {},
+    );
+    const original = structuredClone(jobOrder);
+    const vm = buildJobOrderDetailViewModel(
+      jobOrder,
+      { generatedAt: '2026-09-12T10:00:00Z' },
+      historical ? { placeholder: true } : image,
+    );
+    const blob = await pdf(JobOrderDetailDocument({ viewModel: vm })).toBlob();
+    expect(jobOrder).toEqual(original);
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(
+      path.join(directory, `complete-${historical ? 'historical' : 'live'}.pdf`),
+      Buffer.from(await blob.arrayBuffer()),
+    );
+  }
 });

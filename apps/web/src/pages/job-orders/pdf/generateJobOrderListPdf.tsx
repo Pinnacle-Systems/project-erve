@@ -1,4 +1,8 @@
-import { prepareJobOrderListPdfData, type JobOrderListPdfQueryParams } from './prepareJobOrderListPdfData.js';
+import {
+  prepareJobOrderListPdfData,
+  prepareJobOrderListPdfImages,
+  type JobOrderListPdfQueryParams,
+} from './prepareJobOrderListPdfData.js';
 import {
   buildJobOrderListViewModel,
   type JobOrderListPdfFilters,
@@ -23,6 +27,7 @@ export async function generateJobOrderListPdfBlob(
   meta: JobOrderListPdfMeta,
 ): Promise<Blob> {
   const jobOrders = await prepareJobOrderListPdfData(queryParams);
-  const viewModel = buildJobOrderListViewModel(jobOrders, filters, meta);
+  const images = await prepareJobOrderListPdfImages(jobOrders);
+  const viewModel = buildJobOrderListViewModel(jobOrders, filters, meta, images);
   return renderPdfBlob(<JobOrderListDocument viewModel={viewModel} />);
 }

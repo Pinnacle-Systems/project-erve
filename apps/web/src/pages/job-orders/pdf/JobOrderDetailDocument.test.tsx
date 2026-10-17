@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { pdf } from '@react-pdf/renderer';
 import { describe, expect, it } from 'vitest';
 import { JobOrderDetailDocument } from './JobOrderDetailDocument.js';
@@ -11,7 +13,7 @@ import type {
 } from './buildJobOrderDetailViewModel.js';
 
 function makeSize(overrides: Partial<JobOrderDetailSizeRow> = {}): JobOrderDetailSizeRow {
-  return { id: 'sz-1', sizeCode: 'S', orderedQuantity: 200, preparedQuantity: 100, varianceQuantity: -100, ...overrides };
+  return { id: 'sz-1', sizeCode: 'S', orderedQuantity: 200, preparedQuantity: 100, ...overrides };
 }
 
 function makeSourceOrderSheet(
@@ -60,10 +62,18 @@ function makeQualityActivity(
 function makeCombinedForecast(
   overrides: Partial<JobOrderDetailCombinedForecastRow> = {},
 ): JobOrderDetailCombinedForecastRow {
-  return { sizeId: 'size-s', sizeLabel: 'Small', forecastQuantity: 250, jobOrderQuantity: 200, varianceQuantity: -50, ...overrides };
+  return {
+    sizeId: 'size-s',
+    sizeLabel: 'Small',
+    forecastQuantity: 250,
+    jobOrderQuantity: 200,
+    ...overrides,
+  };
 }
 
-function makeViewModel(overrides: Partial<JobOrderDetailPdfViewModel> = {}): JobOrderDetailPdfViewModel {
+function makeViewModel(
+  overrides: Partial<JobOrderDetailPdfViewModel> = {},
+): JobOrderDetailPdfViewModel {
   return {
     title: 'JOB ORDER',
     subtitle: 'EIJO/26-27/0001 — Acme Factory',
@@ -75,7 +85,7 @@ function makeViewModel(overrides: Partial<JobOrderDetailPdfViewModel> = {}): Job
     ],
     styleNumber: 'STY-0001',
     styleName: 'Basic Tee',
-    quantityTotalsLine: 'Ordered: 500  Prepared: 200  Variance: -300',
+    quantityTotalsLine: 'Ordered: 500  Prepared: 200',
     sizes: [makeSize()],
     sourceOrderSheets: null,
     combinedForecast: [],
@@ -94,7 +104,9 @@ describe('JobOrderDetailDocument', () => {
   });
 
   it('omits the Source Order Sheets section entirely when null (Factory/QA viewer)', async () => {
-    const blob = await pdf(<JobOrderDetailDocument viewModel={makeViewModel({ sourceOrderSheets: null })} />).toBlob();
+    const blob = await pdf(
+      <JobOrderDetailDocument viewModel={makeViewModel({ sourceOrderSheets: null })} />,
+    ).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 
@@ -102,7 +114,12 @@ describe('JobOrderDetailDocument', () => {
     const vm = makeViewModel({
       sourceOrderSheets: [
         makeSourceOrderSheet({ id: 'os-1', distributorName: 'Distributor A' }),
-        makeSourceOrderSheet({ id: 'os-2', poNumber: 'EIOS/26-27/0002', distributorName: 'Distributor B', purchaseMode: 'Sale or Return' }),
+        makeSourceOrderSheet({
+          id: 'os-2',
+          poNumber: 'EIOS/26-27/0002',
+          distributorName: 'Distributor B',
+          purchaseMode: 'Sale or Return',
+        }),
       ],
       combinedForecast: [makeCombinedForecast()],
     });
@@ -113,7 +130,10 @@ describe('JobOrderDetailDocument', () => {
   it('renders production stages and a PRODUCTION_COMPLETE-style Job Order without throwing', async () => {
     const vm = makeViewModel({
       identityItems: [{ label: 'Lifecycle Status', value: 'Production Complete' }],
-      stages: [makeStage({ id: 's1', sequence: 1, stageName: 'Cutting' }), makeStage({ id: 's2', sequence: 2, stageName: 'Sewing' })],
+      stages: [
+        makeStage({ id: 's1', sequence: 1, stageName: 'Cutting' }),
+        makeStage({ id: 's2', sequence: 2, stageName: 'Sewing' }),
+      ],
     });
     const blob = await pdf(<JobOrderDetailDocument viewModel={vm} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
@@ -137,21 +157,32 @@ describe('JobOrderDetailDocument', () => {
   });
 
   it('renders zero and null quantities distinctly without throwing', async () => {
-    const vm = makeViewModel({ sizes: [makeSize({ orderedQuantity: 0, preparedQuantity: 0, varianceQuantity: 0 })] });
+    const vm = makeViewModel({ sizes: [makeSize({ orderedQuantity: 0, preparedQuantity: 0 })] });
     const blob = await pdf(<JobOrderDetailDocument viewModel={vm} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 
   it('renders enough content to force multiple pages without silent truncation of any section', async () => {
     const manySourceOrderSheets = Array.from({ length: 30 }, (_, i) =>
-      makeSourceOrderSheet({ id: `os-${i}`, poNumber: `EIOS/26-27/${String(i).padStart(4, '0')}`, distributorName: `Distributor ${i}` }),
+      makeSourceOrderSheet({
+        id: `os-${i}`,
+        poNumber: `EIOS/26-27/${String(i).padStart(4, '0')}`,
+        distributorName: `Distributor ${i}`,
+      }),
     );
-    const manySizes = Array.from({ length: 25 }, (_, i) => makeSize({ id: `sz-${i}`, sizeCode: `SZ${i}` }));
+    const manySizes = Array.from({ length: 25 }, (_, i) =>
+      makeSize({ id: `sz-${i}`, sizeCode: `SZ${i}` }),
+    );
     const manyStages = Array.from({ length: 20 }, (_, i) =>
       makeStage({ id: `stage-${i}`, sequence: i, stageName: `Stage ${i}` }),
     );
     const manyQualityActivities = Array.from({ length: 15 }, (_, i) =>
-      makeQualityActivity({ id: `qa-${i}`, sequence: i, name: `Quality Activity ${i}`, coverageSummary: `Prepared 500 · Inspected 500 · Passed ${i} · Failed 0` }),
+      makeQualityActivity({
+        id: `qa-${i}`,
+        sequence: i,
+        name: `Quality Activity ${i}`,
+        coverageSummary: `Prepared 500 · Inspected 500 · Passed ${i} · Failed 0`,
+      }),
     );
 
     const vm = makeViewModel({
@@ -161,7 +192,6 @@ describe('JobOrderDetailDocument', () => {
         sizeLabel: size.sizeCode,
         forecastQuantity: 100,
         jobOrderQuantity: 90,
-        varianceQuantity: -10,
       })),
       sizes: manySizes,
       stages: manyStages,
@@ -171,7 +201,10 @@ describe('JobOrderDetailDocument', () => {
     const blob = await Promise.race([
       pdf(<JobOrderDetailDocument viewModel={vm} />).toBlob(),
       new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('PDF generation hung on a large Job Order detail')), 10000),
+        setTimeout(
+          () => reject(new Error('PDF generation hung on a large Job Order detail')),
+          10000,
+        ),
       ),
     ]);
     expect(blob.size).toBeGreaterThan(0);
@@ -186,3 +219,70 @@ describe('JobOrderDetailDocument', () => {
     expect(blob.size).toBeGreaterThan(0);
   });
 });
+
+interface PdfNode {
+  value?: string;
+  children?: PdfNode[];
+}
+function pdfNodes(node: PdfNode): PdfNode[] {
+  return [node, ...(node.children ?? []).flatMap(pdfNodes)];
+}
+it('uses Size columns and measure rows without displayed variance', async () => {
+  const vm = makeViewModel({
+    quantityTotalsLine: 'Ordered: 500  Prepared: 200',
+    sizes: [makeSize(), makeSize({ id: 's2', sizeCode: 'M' })],
+    sourceOrderSheets: [],
+    combinedForecast: [makeCombinedForecast()],
+  });
+  const instance = pdf(<JobOrderDetailDocument viewModel={vm} />);
+  await instance.toBlob();
+  const text = pdfNodes((instance.container as { document: PdfNode }).document)
+    .map((n) => n.value)
+    .filter(Boolean)
+    .join('|');
+  expect(text).not.toMatch(/variance/i);
+  expect(text).toContain('Measure|S|M|Total');
+  expect(text).toContain('Combined Forecast');
+});
+it('writes synthetic Job Order PDF visual fixtures', async () => {
+  const directory = process.env.PR2B_PDF_EVIDENCE_DIR;
+  if (!directory) return;
+  await fs.mkdir(directory, { recursive: true });
+  const image = {
+    dataUri: `data:image/png;base64,${(await fs.readFile(new URL('../../../../public/erve-logo.png', import.meta.url))).toString('base64')}`,
+  };
+  for (const [name, count, historical] of [
+    ['normal', 6, false],
+    ['many-sizes', 25, false],
+    ['historical', 6, true],
+    ['zero', 1, false],
+    ['long-label', 8, false],
+    ['long-style', 6, false],
+  ] as const) {
+    const vm = makeViewModel({
+      image: name === 'historical' ? { placeholder: true } : image,
+      ...(name === 'long-style'
+        ? {
+            styleName:
+              'Long synthetic Style name with extended fabric construction colour and garment description for wrapping verification across the printable document',
+          }
+        : {}),
+      quantityTotalsLine: `Ordered: ${name === 'zero' ? 0 : count * 10}  Prepared: ${historical ? 'Not recorded' : name === 'zero' ? 0 : count * 8}`,
+      sizes: Array.from({ length: count }, (_, i) =>
+        makeSize({
+          id: `size-${i}`,
+          sizeCode:
+            name === 'long-label' ? `Size ${i + 1} extra long operational label` : `SZ${i + 1}`,
+          orderedQuantity: name === 'zero' ? 0 : 10,
+          preparedQuantity: historical ? 'Not recorded' : name === 'zero' ? 0 : 8,
+        }),
+      ),
+      sourceOrderSheets: [makeSourceOrderSheet()],
+      combinedForecast: Array.from({ length: count }, (_, i) =>
+        makeCombinedForecast({ sizeId: `size-${i}`, sizeLabel: `SZ${i + 1}` }),
+      ),
+    });
+    const blob = await pdf(<JobOrderDetailDocument viewModel={vm} />).toBlob();
+    await fs.writeFile(path.join(directory, `${name}.pdf`), Buffer.from(await blob.arrayBuffer()));
+  }
+}, 30000);

@@ -1,3 +1,5 @@
+import { resolveJobOrderListPdfStyle } from './resolveJobOrderListPdfStyle.js';
+import type { PdfImageSource } from '../../../lib/pdf/core/PdfThumbnail.js';
 import { NOT_RECORDED_LABEL, getRecordedPreparedQuantity } from '@erve/app-components';
 import { formatPdfDate } from '../../../lib/pdf/format.js';
 import { JOB_ORDER_STATUS_LABELS } from '../job-order-ui.js';
@@ -21,6 +23,7 @@ export interface JobOrderListPdfRow {
   id: string;
   jobOrderNumber: string;
   styleDisplay: string;
+  image?: PdfImageSource;
   factoryName: string;
   sourceOrderSheetCount: number;
   requiredDeliveryDate: string;
@@ -54,17 +57,25 @@ export function buildJobOrderListViewModel(
   jobOrders: JobOrder[],
   filters: JobOrderListPdfFilters,
   meta: JobOrderListPdfMeta,
+  images: ReadonlyMap<string, PdfImageSource> = new Map(),
 ): JobOrderListPdfViewModel {
   const rows: JobOrderListPdfRow[] = jobOrders.map((jobOrder) => {
-    const line = jobOrder.lines[0];
+    const primary = resolveJobOrderListPdfStyle(jobOrder);
     const statusLabel = jobOrder.operationalState.primaryDisplayState.label;
     return {
       id: jobOrder.id,
       jobOrderNumber: jobOrder.jobOrderNumber,
-      styleDisplay: line ? `${line.styleNumber} ${line.styleName}` : '',
+      styleDisplay: primary.consistent
+        ? `${primary.style.styleNumber} ${primary.style.styleName}`
+        : 'Unavailable',
+      image: primary.consistent
+        ? (images.get(jobOrder.id) ?? { placeholder: true })
+        : { inconsistent: true },
       factoryName: jobOrder.factory.name,
       sourceOrderSheetCount: jobOrder.sourceOrderSheetCount,
-      requiredDeliveryDate: jobOrder.requiredDeliveryDate ? formatPdfDate(jobOrder.requiredDeliveryDate) : '',
+      requiredDeliveryDate: jobOrder.requiredDeliveryDate
+        ? formatPdfDate(jobOrder.requiredDeliveryDate)
+        : '',
       orderedQuantityTotal: jobOrder.orderedQuantityTotal,
       preparedQuantityTotal:
         getRecordedPreparedQuantity(jobOrder, jobOrder.preparedQuantityTotal) ?? NOT_RECORDED_LABEL,
