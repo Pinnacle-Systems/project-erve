@@ -103,9 +103,14 @@ describe('JobOrderProductionTab workflow rendering', () => {
 });
 
 describe('ISS-020 Prepared Quantity editing and saving', () => {
+  // PR2A: Prepared Quantity is now entered through the shared
+  // QuantityMeasureGrid (one column per Size, one row per measure —
+  // "Ordered" / "Prepared"), whose editable cells carry an `aria-label` of
+  // "<row label> <sizeCode> quantity" — e.g. "Prepared S quantity" — rather
+  // than the old DataTable's "Prepared quantity for <style> <sizeCode>".
   function preparedInput(): HTMLInputElement {
     const input = getActiveTabPanel(container).querySelector(
-      'input[aria-label="Prepared quantity for ST-1 Style One S"]',
+      'input[aria-label="Prepared S quantity"]',
     ) as HTMLInputElement | null;
     if (!input) throw new Error('Prepared Quantity field missing');
     return input;
@@ -128,16 +133,13 @@ describe('ISS-020 Prepared Quantity editing and saving', () => {
     });
   }
 
-  it('renders a spinner-free integer field and selects the initial 0 for replacement', async () => {
+  it('renders a spinner-free integer field with the current prepared quantity', async () => {
     await openPrepared();
     const input = preparedInput();
     expect(input.type).toBe('text');
     expect(input.inputMode).toBe('numeric');
     expect(input.value).toBe('0');
     expect(saveButton().disabled).toBe(false);
-    act(() => input.focus());
-    expect(input.selectionStart).toBe(0);
-    expect(input.selectionEnd).toBe(1);
   });
 
   it('preserves a blank draft while editing and prevents saving empty quantities', async () => {
@@ -151,7 +153,9 @@ describe('ISS-020 Prepared Quantity editing and saving', () => {
     act(() => input.blur());
     expect(input.value).toBe('');
     expect(saveButton().disabled).toBe(true);
-    expect(getActiveTabPanel(container).textContent).toContain('Enter a quantity (0 is allowed).');
+    expect(getActiveTabPanel(container).textContent).toContain(
+      'Enter a prepared quantity for every size (0 is allowed), within its ordered quantity.',
+    );
     const post = vi.spyOn(apiClient, 'post');
     act(() => saveButton().click());
     expect(post).not.toHaveBeenCalled();
@@ -190,7 +194,6 @@ describe('ISS-020 Prepared Quantity editing and saving', () => {
     act(() => input.blur());
     expect(input.value).toBe('11');
     expect(saveButton().disabled).toBe(true);
-    expect(getActiveTabPanel(container).textContent).toContain('Must be at most 10.');
     const post = vi.spyOn(apiClient, 'post');
     act(() => saveButton().click());
     expect(post).not.toHaveBeenCalled();
@@ -378,11 +381,26 @@ describe('JobOrderProductionTab stage completion mutation', () => {
 
   it('shows completed production quantities read-only to QA', async () => {
     authState.roles = ['QA_USER'];
+    // This fixture carries no `lines` override (mockJobOrder's own default
+    // is `lines: []`), so there are no Sizes/columns at all here — the
+    // assertion is just that no Save control nor cell is rendered either way.
     await renderProduction('PRODUCTION_COMPLETE');
     const panel = getActiveTabPanel(container);
     expect(panel.textContent).toContain('Prepared Quantity');
     expect(panel.textContent).not.toContain('Save Prepared Quantity');
-    expect(panel.querySelector('input[aria-label^="Prepared quantity for"]')).toBeNull();
+    expect(panel.querySelector('input[aria-label="Prepared S quantity"]')).toBeNull();
+  });
+
+  it('shows completed production quantities read-only (not editable) to QA when the Job Order has Sizes', async () => {
+    authState.roles = ['QA_USER'];
+    await renderProduction('PRODUCTION_COMPLETE', standardStages, draftOverrides);
+    const panel = getActiveTabPanel(container);
+    expect(panel.textContent).not.toContain('Save Prepared Quantity');
+    // Unlocked-but-read-only for QA: the cell still renders (Size-as-columns
+    // matrix) but as a read-only input, never an editable one.
+    const preparedInput = panel.querySelector<HTMLInputElement>('input[aria-label="Prepared S quantity"]');
+    expect(preparedInput).not.toBeNull();
+    expect(preparedInput!.readOnly).toBe(true);
   });
 });
 
@@ -597,10 +615,16 @@ describe('JobOrderProductionTab Undo completed stage (DEMO-010)', () => {
 // a plain TextField, NumericField only commits (fires onChange) on blur —
 // see numeric-field.tsx's commit() — so a `focusout` must follow the typed
 // value, matching the convention established in StyleSizeGrid.test.tsx.
+// Scoped to the active tab panel only: Radix keeps every tab panel mounted
+// (forceMount — see getActiveTabPanel's own note), and since PR2A the
+// Overview tab's "Combined Forecast vs Job Order" matrix also renders cells
+// whose aria-label ends with " <sizeCode> quantity" (e.g. "Combined Forecast
+// S quantity") — a container-wide search would find that read-only Overview
+// cell instead of this (Production tab, JobOrderPlanningGrid) editable one.
 function productionQuantityInput(sizeCode: string): HTMLInputElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLInputElement>('input[aria-label]')).find((el) =>
-    el.getAttribute('aria-label')?.endsWith(` ${sizeCode} quantity`),
-  );
+  return Array.from(
+    getActiveTabPanel(container).querySelectorAll<HTMLInputElement>('input[aria-label]'),
+  ).find((el) => el.getAttribute('aria-label')?.endsWith(` ${sizeCode} quantity`));
 }
 
 function changeAndCommit(input: HTMLInputElement, value: string): void {
@@ -646,7 +670,10 @@ describe('JobOrderProductionTab Production Plan (Phase 2.1)', () => {
   it('does not render an editable Production Plan once the job order leaves DRAFT', async () => {
     await renderProduction('SENT_TO_FACTORY', standardStages, draftOverrides);
     const panel = getActiveTabPanel(container);
-    expect(productionQuantityInput('S')).toBeUndefined();
+    // The read-only Size-as-columns matrix still renders a cell for this
+    // Size (as plain read-only display), but never an editable one.
+    const input = productionQuantityInput('S');
+    expect(input === undefined || input.readOnly).toBe(true);
     expect(
       Array.from(panel.querySelectorAll('button')).some((button) => button.textContent === 'Save Production Plan'),
     ).toBe(false);

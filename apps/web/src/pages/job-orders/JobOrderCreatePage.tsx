@@ -3,13 +3,18 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, DatePicker, NumericField, SelectField, SelectItem, Textarea, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, DatePicker, SelectField, SelectItem, Textarea, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
+import { QuantityMeasureGrid } from '../../components/style-size-grid/QuantityMeasureGrid.js';
+import type {
+  QuantityMeasureGridColumn,
+  QuantityMeasureGridRow,
+} from '../../components/style-size-grid/QuantityMeasureGrid.js';
 import type { ProcessFlowOption, Style } from '../master-data/types.js';
 import type { PurchaseOrder } from '../purchase-orders/types.js';
 import { OrderSheetMultiSelectField } from './OrderSheetMultiSelectField.js';
@@ -274,6 +279,31 @@ export function JobOrderCreatePage() {
   });
   useUnsavedChangesWarning(dirty && !createMutation.isSuccess);
 
+  // Size-as-columns matrix (PR2A): one column per Size, one row per
+  // quantity measure (Combined Forecast / Production Plan). Variance is
+  // deliberately not shown on application screens — see PR2A plan.
+  const quantityColumns: QuantityMeasureGridColumn[] = sizeRows.map((row) => ({
+    sizeId: row.sizeId,
+    sizeCode: row.sizeCode,
+    editable: row.active,
+  }));
+  const quantityRows: QuantityMeasureGridRow[] = [
+    {
+      key: 'combinedForecast',
+      label: 'Combined Forecast',
+      editable: false,
+      values: Object.fromEntries(sizeRows.map((row) => [row.sizeId, combinedForecastBySize.get(row.sizeId) ?? 0])),
+    },
+    {
+      key: 'productionPlan',
+      label: 'Production Plan',
+      values: Object.fromEntries(sizeRows.map((row) => [row.sizeId, row.active ? quantities[row.sizeId] ?? 0 : 0])),
+      notRecorded: Object.fromEntries(
+        sizeRows.filter((row) => !row.active).map((row) => [row.sizeId, 'Size inactive — cannot be produced']),
+      ),
+    },
+  ];
+
   const canSubmit = Boolean(
     selectedOrderSheets.length > 0 &&
       factoryId &&
@@ -489,48 +519,11 @@ export function JobOrderCreatePage() {
             </div>
           }
         >
-          <DataTable
-            density="compact"
-            columns={[
-              { key: 'size', header: 'Size', render: (row) => row.sizeLabel },
-              {
-                key: 'forecast',
-                header: 'Combined Forecast',
-                align: 'right',
-                render: (row) => (combinedForecastBySize.get(row.sizeId) ?? 0).toLocaleString(),
-              },
-              {
-                key: 'productionPlan',
-                header: 'Production Plan',
-                align: 'right',
-                render: (row) =>
-                  row.active ? (
-                    <NumericField
-                      aria-label={`Production quantity for ${row.sizeLabel}`}
-                      mode="integer"
-                      min={0}
-                      value={quantities[row.sizeId] ?? null}
-                      onChange={(next) => setSizeQuantity(row.sizeId, next ?? 0)}
-                      density="compact"
-                      width="xs"
-                    />
-                  ) : (
-                    <span className="text-xs text-muted-foreground">Size inactive — cannot be produced</span>
-                  ),
-              },
-              {
-                key: 'variance',
-                header: 'Variance',
-                align: 'right',
-                render: (row) =>
-                  (
-                    (row.active ? (quantities[row.sizeId] ?? 0) : 0) -
-                    (combinedForecastBySize.get(row.sizeId) ?? 0)
-                  ).toLocaleString(),
-              },
-            ]}
-            data={sizeRows}
-            rowKey="sizeId"
+          <QuantityMeasureGrid
+            columns={quantityColumns}
+            rows={quantityRows}
+            min={0}
+            onCellChange={(_rowKey, sizeId, value) => setSizeQuantity(sizeId, value ?? 0)}
           />
         </Panel>
       )}
