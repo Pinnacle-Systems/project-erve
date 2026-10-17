@@ -153,4 +153,51 @@ describe('GstRuleSetDetailPage', () => {
     buttons = Array.from(container.querySelectorAll('button')).map((el) => el.textContent);
     expect(buttons).not.toContain('Activate');
   });
+
+  it('warns when the master is ACTIVE but no ACTIVE version is effective today', async () => {
+    const draftOnly = buildRuleSet();
+    draftOnly.versions = draftOnly.versions.filter((version) => version.status === 'DRAFT');
+    await renderPage(draftOnly, 'ACCOUNTANT');
+    expect(container.textContent).toContain('Rule Set master: ACTIVE');
+    expect(container.textContent).toContain('None — set dates and activate an eligible version');
+    expect(Array.from(container.querySelectorAll('button')).map((button) => button.textContent))
+      .toContain('Edit Dates');
+  });
+
+  it('preloads a draft window, submits the existing PATCH endpoint with unchanged identity, and keeps ACTIVE versions locked', async () => {
+    const ruleSet = buildRuleSet();
+    ruleSet.versions[0]!.effectiveFrom = '2026-11-01';
+    ruleSet.versions[0]!.effectiveTo = '2026-11-30';
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: ruleSet } });
+    await renderPage(ruleSet, 'ACCOUNTANT');
+    const editButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Edit Dates');
+    expect(editButton).toBeDefined();
+    act(() => editButton!.click());
+    const dateForm = Array.from(container.querySelectorAll('form')).find((form) =>
+      form.textContent?.includes('Save Dates'));
+    expect(dateForm).toBeDefined();
+    const dates = Array.from(dateForm!.querySelectorAll('input')) as HTMLInputElement[];
+    expect(dates).toHaveLength(2);
+    expect(dates[0]?.value).toBe('01/11/2026');
+    expect(dates[1]?.value).toBe('30/11/2026');
+    const save = Array.from(dateForm!.querySelectorAll('button')).find((b) => b.textContent === 'Save Dates');
+    await act(async () => { save!.click(); await flushMicrotasks(); });
+    await waitFor(() => patch.mock.calls.length === 1, 'date update PATCH was not sent');
+    expect(patch).toHaveBeenCalledWith('/gst-rule-sets/rs-1/versions/v2', {
+      effectiveFrom: '2026-11-01',
+      effectiveTo: '2026-11-30',
+    });
+    const v1Link = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'v1');
+    act(() => v1Link!.click());
+    expect(container.textContent).toContain('Value Bands — v1');
+    expect(container.textContent).not.toContain('Edit Effective Dates — v1');
+  });
+
+  it('never offers the date mutation controls to read-only roles', async () => {
+    await renderPage(buildRuleSet(), 'SENIOR_MANAGEMENT');
+    const buttons = Array.from(container.querySelectorAll('button')).map((el) => el.textContent);
+    expect(buttons).not.toContain('Edit Dates');
+    expect(buttons).not.toContain('Save Dates');
+  });
+
 });

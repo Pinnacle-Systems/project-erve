@@ -30,7 +30,7 @@ export function GstRuleSetListPage() {
     <div className="space-y-5">
       <PageHeader
         title="GST Rule Sets"
-        subtitle="Reusable, effective-dated GST value-band rules referenced by HSN codes"
+        subtitle="Master ACTIVE means enabled; check each rule set for an effective ACTIVE version"
         primaryAction={
           canManage ? (
             <Button asChild variant="default">
@@ -73,7 +73,7 @@ export function GstRuleSetListPage() {
           { key: 'versionCount', header: 'Versions', align: 'right' as const, render: (ruleSet) => String(ruleSet.versionCount) },
           {
             key: 'status',
-            header: 'Status',
+            header: 'Master Status',
             render: (ruleSet) => (
               <StatusBadge label={ruleSet.status} tone={ruleSet.status === 'ACTIVE' ? 'success' : 'muted'} />
             ),
