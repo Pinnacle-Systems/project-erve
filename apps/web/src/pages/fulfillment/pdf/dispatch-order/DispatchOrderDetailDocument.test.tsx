@@ -118,7 +118,11 @@ describe('DispatchOrderDetailDocument', () => {
     const bytes = new TextDecoder().decode(await blob.arrayBuffer());
     expect(bytes).toContain('/Subtype /Image');
     const all = nodes((instance.container as { document: PdfNode }).document);
-    const images = all.filter((node) => node.type === 'IMAGE');
+    // The shared PDF header now embeds ERVE branding. Count only the Style
+    // thumbnails under test, not the independent company-logo image.
+    const images = all.filter(
+      (node) => node.type === 'IMAGE' && node.props?.src === thumbnail.dataUri,
+    );
     expect(images).toHaveLength(2);
     for (const image of images) {
       expect(image.props?.src).toBe(thumbnail.dataUri);
@@ -211,7 +215,9 @@ describe('DispatchOrderDetailDocument', () => {
     const bytes = new TextDecoder().decode(await blob.arrayBuffer());
     expect(bytes.match(/\/Type \/Page\b/g)!.length).toBeGreaterThan(1);
     const all = nodes((instance.container as { document: PdfNode }).document);
-    expect(all.filter((node) => node.type === 'IMAGE')).toHaveLength(60);
+    expect(all.filter(
+      (node) => node.type === 'IMAGE' && node.props?.src === thumbnail.dataUri,
+    )).toHaveLength(60);
     const text = all.map((node) => node.value ?? '').join('\n');
     for (const label of ['Distributor A', 'Distributor B', 'Distributor C', 'A1', 'A2', 'B1', 'C1'])
       expect(text).toContain(label);

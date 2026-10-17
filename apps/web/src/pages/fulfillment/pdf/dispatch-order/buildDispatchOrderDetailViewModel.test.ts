@@ -139,7 +139,11 @@ describe('buildDispatchOrderDetailViewModel', () => {
       expect(blob.size).toBeGreaterThan(0);
       expect(paths).toEqual(['/styles/style-1/images/primary/content']);
       const bytes = new TextDecoder().decode(await blob.arrayBuffer());
-      expect(bytes.includes('/Subtype /Image')).toBe(!fails);
+      // One embedded image is always present: the shared ERVE logo. A successful
+      // Style-image fetch must add its own distinct image resource; failed
+      // fetches must not silently substitute a fabricated Style thumbnail.
+      const imageResources = bytes.match(/\/Subtype \/Image\b/g) ?? [];
+      expect(imageResources).toHaveLength(fails ? 1 : 2);
     },
   );
   it('carries only the API primary image into destination rows and Style/Size totals', () => {
