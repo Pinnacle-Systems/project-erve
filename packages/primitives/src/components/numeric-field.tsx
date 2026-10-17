@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useId,
   useRef,
   useState,
   type ClipboardEvent,
@@ -125,6 +126,13 @@ export const NumericField = forwardRef<HTMLInputElement, NumericFieldProps>((pro
 
   const handleFocus = (event: FocusEvent<HTMLInputElement>) => {
     isFocusedRef.current = true;
+    // Grid cells only: a lone "0" is the common starting value for a
+    // not-yet-entered quantity — select it on focus so typing replaces it
+    // instead of producing "010". Mirrors the field this replaced
+    // (JobOrderProductionTab's pre-PR2A Prepared Quantity input, ISS-020).
+    if (variant === 'cell' && event.currentTarget.value === '0') {
+      event.currentTarget.select();
+    }
     onFocus?.(event);
   };
 
@@ -136,25 +144,44 @@ export const NumericField = forwardRef<HTMLInputElement, NumericFieldProps>((pro
 
   const inputMode = mode === 'integer' ? ('numeric' as const) : ('decimal' as const);
   const hasError = Boolean(rangeError || errorMessage);
+  // `errorMessage` is typed ReactNode for the labeled-field variant, but a
+  // cell's title/aria-describedby need a plain string — `rangeError` always
+  // is one; fall back to `errorMessage` only when it already is too.
+  const cellMessage = rangeError ?? (typeof errorMessage === 'string' ? errorMessage : undefined);
+  const cellErrorId = useId();
 
   if (variant === 'cell') {
+    // A grid cell has no room for TextField's own inline error row, but a
+    // red border alone ("error={hasError}") doesn't say WHAT is wrong — so
+    // the specific message (e.g. "Must be at most 10.") still needs a home:
+    // a hover/focus title tooltip for sighted users, and aria-describedby
+    // for assistive tech. Mirrors the specificity the pre-PR2A
+    // Prepared Quantity field had via TextField's errorMessage.
     return (
-      <GridCellInput
-        ref={ref}
-        type="text"
-        inputMode={inputMode}
-        numeric
-        error={hasError}
-        disabled={disabled}
-        readOnly={readOnly}
-        value={draft}
-        onChange={(event) => handleRawChange(event.target.value)}
-        onPaste={handlePaste}
-        onFocus={handleFocus}
-        onBlur={handleBlur}
-        aria-invalid={hasError || undefined}
-        {...rest}
-      />
+      <span className="relative block w-full" title={cellMessage || undefined}>
+        <GridCellInput
+          ref={ref}
+          type="text"
+          inputMode={inputMode}
+          numeric
+          error={hasError}
+          disabled={disabled}
+          readOnly={readOnly}
+          value={draft}
+          onChange={(event) => handleRawChange(event.target.value)}
+          onPaste={handlePaste}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          aria-invalid={hasError || undefined}
+          aria-describedby={cellMessage ? cellErrorId : undefined}
+          {...rest}
+        />
+        {cellMessage && (
+          <span id={cellErrorId} className="sr-only">
+            {cellMessage}
+          </span>
+        )}
+      </span>
     );
   }
 

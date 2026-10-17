@@ -194,6 +194,95 @@ describe('NumericField — draft editing, commit validation, no silent clamping'
     expect(input.getAttribute('data-form-control')).toBe('');
   });
 
+  it('cell variant: selects a lone "0" on focus so typing replaces it instead of producing "010"', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(0);
+      return (
+        <ThemeProvider>
+          <NumericField variant="cell" mode="integer" value={value} onChange={setValue} aria-label="Size S" />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+    const selectSpy = vi.spyOn(input, 'select');
+
+    act(() => input.focus());
+    expect(selectSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('cell variant: does not select-on-focus a non-zero value', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(7);
+      return (
+        <ThemeProvider>
+          <NumericField variant="cell" mode="integer" value={value} onChange={setValue} aria-label="Size S" />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+    const selectSpy = vi.spyOn(input, 'select');
+
+    act(() => input.focus());
+    expect(selectSpy).not.toHaveBeenCalled();
+  });
+
+  it('field variant: never auto-selects on focus (the select-on-zero behavior is cell-only)', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(0);
+      return (
+        <ThemeProvider>
+          <NumericField label="Quantity" mode="integer" value={value} onChange={setValue} />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+    const selectSpy = vi.spyOn(input, 'select');
+
+    act(() => input.focus());
+    expect(selectSpy).not.toHaveBeenCalled();
+  });
+
+  it('cell variant: an out-of-range commit exposes its specific message via aria-describedby and a title tooltip, not just a red border', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(5);
+      return (
+        <ThemeProvider>
+          <NumericField variant="cell" mode="integer" max={10} value={value} onChange={setValue} aria-label="Size S" />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+
+    act(() => changeInput(input, '99'));
+    act(() => input.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    const describedById = input.getAttribute('aria-describedby');
+    expect(describedById).toBeTruthy();
+    expect(document.getElementById(describedById!)?.textContent).toBe('Must be at most 10.');
+    expect(input.closest('span')?.getAttribute('title')).toBe('Must be at most 10.');
+  });
+
+  it('cell variant: a valid value carries no aria-describedby/title', () => {
+    function Harness() {
+      const [value, setValue] = useState<number | null>(5);
+      return (
+        <ThemeProvider>
+          <NumericField variant="cell" mode="integer" max={10} value={value} onChange={setValue} aria-label="Size S" />
+        </ThemeProvider>
+      );
+    }
+    act(() => root.render(<Harness />));
+    const input = container.querySelector('input') as HTMLInputElement;
+
+    expect(input.getAttribute('aria-describedby')).toBeNull();
+    expect(input.closest('span')?.getAttribute('title')).toBeFalsy();
+  });
+
   it('never rewrites an invalid draft to a clamped number — the field keeps showing exactly what the user typed', () => {
     function Harness() {
       const [value, setValue] = useState<number | null>(0);

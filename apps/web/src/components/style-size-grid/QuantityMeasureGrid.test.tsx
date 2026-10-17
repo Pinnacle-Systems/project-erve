@@ -140,6 +140,61 @@ describe('QuantityMeasureGrid — measure rows x Size columns', () => {
     expect(container.querySelectorAll('input')).toHaveLength(0);
   });
 
+  it('selects a lone "0" on focus so typing replaces it instead of producing "010"', () => {
+    const rows: QuantityMeasureGridRow[] = [
+      { key: 'prepared', label: 'Prepared', values: { 'size-s': 0 } },
+    ];
+    renderGrid(<QuantityMeasureGrid columns={[columns[0]!]} rows={rows} />);
+
+    const input = container.querySelector('input') as HTMLInputElement;
+    const selectSpy = vi.spyOn(input, 'select');
+    act(() => input.focus());
+    expect(selectSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not select-on-focus a non-zero value', () => {
+    const rows: QuantityMeasureGridRow[] = [
+      { key: 'prepared', label: 'Prepared', values: { 'size-s': 5 } },
+    ];
+    renderGrid(<QuantityMeasureGrid columns={[columns[0]!]} rows={rows} />);
+
+    const input = container.querySelector('input') as HTMLInputElement;
+    const selectSpy = vi.spyOn(input, 'select');
+    act(() => input.focus());
+    expect(selectSpy).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a specific, actionable message for an out-of-range cell beyond the red border — via title and aria-describedby', () => {
+    const onCellValidationChange = vi.fn();
+    const rows: QuantityMeasureGridRow[] = [
+      { key: 'prepared', label: 'Prepared', values: { 'size-s': 5 }, maxValues: { 'size-s': 10 } },
+    ];
+    renderGrid(
+      <QuantityMeasureGrid
+        columns={[columns[0]!]}
+        rows={rows}
+        onCellValidationChange={onCellValidationChange}
+      />,
+    );
+
+    const input = container.querySelector('input') as HTMLInputElement;
+    act(() => {
+      changeInput(input, '99');
+      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    });
+    expect(onCellValidationChange).toHaveBeenCalledWith('prepared', 'size-s', false);
+
+    // The red border alone doesn't say what's wrong — a specific message
+    // must be reachable from the cell for both sighted (title tooltip) and
+    // assistive-tech (aria-describedby) users.
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    const describedById = input.getAttribute('aria-describedby');
+    expect(describedById).toBeTruthy();
+    const description = document.getElementById(describedById!);
+    expect(description?.textContent).toBe('Must be at most 10.');
+    expect(input.closest('span')?.getAttribute('title')).toBe('Must be at most 10.');
+  });
+
   it('applies a per-row, per-size max override ahead of the grid-level max', () => {
     const onCellValidationChange = vi.fn();
     const onCellChange = vi.fn();
@@ -179,6 +234,41 @@ describe('QuantityMeasureGrid — measure rows x Size columns', () => {
     expect(totalCells).toEqual(['30', '30']);
     // No <tfoot> / grand total row combining the two measures.
     expect(container.querySelector('tfoot')).toBeNull();
+  });
+
+  it('shows the notRecorded node (never a numeric 0) in the Total cell when every applicable cell in a row is notRecorded', () => {
+    const rows: QuantityMeasureGridRow[] = [
+      {
+        key: 'prepared',
+        label: 'Prepared Quantity',
+        editable: false,
+        values: { 'size-s': 0, 'size-m': 0 },
+        notRecorded: { 'size-s': 'Not recorded', 'size-m': 'Not recorded' },
+      },
+    ];
+    renderGrid(<QuantityMeasureGrid columns={[columns[0]!, columns[1]!]} rows={rows} />);
+
+    const totalCell = container.querySelector('tbody tr td:last-child');
+    expect(totalCell?.textContent).toBe('Not recorded');
+  });
+
+  it('also shows the notRecorded node in the Total cell for a row only PARTLY notRecorded — a partial sum would understate it, and a 0-filled sum would look like a recorded fact', () => {
+    const rows: QuantityMeasureGridRow[] = [
+      {
+        key: 'prepared',
+        label: 'Prepared Quantity',
+        editable: false,
+        // size-s has a real recorded 7; size-m's own quantity is unknown.
+        values: { 'size-s': 7, 'size-m': 0 },
+        notRecorded: { 'size-m': 'Not recorded' },
+      },
+    ];
+    renderGrid(<QuantityMeasureGrid columns={[columns[0]!, columns[1]!]} rows={rows} />);
+
+    const totalCell = container.querySelector('tbody tr td:last-child');
+    // Not "7" (ignores the unknown cell) and not "7" via a 0 placeholder for
+    // size-m either — both would misrepresent an incomplete row as a firm total.
+    expect(totalCell?.textContent).toBe('Not recorded');
   });
 
   it('keeps row identity stable by key, not by array position, across data changes', () => {
