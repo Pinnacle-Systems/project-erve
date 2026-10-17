@@ -145,7 +145,7 @@ describe('buildDispatchOrderDetailViewModel', () => {
       // React PDF may emit several /Image resources per artwork (for example,
       // a separate alpha mask). Compare the same document with/without its
       // Style image instead of assuming one resource per picture.
-      return (bytes.match(/\\/Subtype \\/Image\\b/g) ?? []).length;
+      return (bytes.match(/\/Subtype \/Image\b/g) ?? []).length;
     };
 
     const withStyleImage = await embeddedImageCount(false);
