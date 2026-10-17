@@ -8,6 +8,7 @@ import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitiv
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { useBusinessDate } from '../../lib/use-business-date.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageGstRuleSets } from '../../auth/permissions.js';
 import type { GstRuleSet, GstRuleSetVersion, GstValueBand } from '../master-data/types.js';
@@ -47,11 +48,15 @@ export function GstRuleSetDetailPage() {
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [newEffectiveFrom, setNewEffectiveFrom] = useState('');
   const [newEffectiveTo, setNewEffectiveTo] = useState('');
+  const [editingVersionId, setEditingVersionId] = useState<string | null>(null);
+  const [editEffectiveFrom, setEditEffectiveFrom] = useState('');
+  const [editEffectiveTo, setEditEffectiveTo] = useState('');
   const [newMinValue, setNewMinValue] = useState('');
   const [newMaxValue, setNewMaxValue] = useState('');
   const [newGstPercent, setNewGstPercent] = useState('');
   const [activateDialogVersionId, setActivateDialogVersionId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const today = useBusinessDate();
 
   const ruleSetQuery = useQuery({
     queryKey: ['gst-rule-set', id],
@@ -71,6 +76,9 @@ export function GstRuleSetDetailPage() {
   const createVersionMutation = useMutation({
     mutationFn: async () => {
       setError('');
+      if (newEffectiveTo && !newEffectiveFrom) {
+        throw new Error('Effective To requires Effective From.');
+      }
       const res = await apiClient.post<ApiSuccessResponse<GstRuleSet>>(`/gst-rule-sets/${id}/versions`, {
         effectiveFrom: newEffectiveFrom || null,
         effectiveTo: newEffectiveTo || null,
@@ -84,6 +92,32 @@ export function GstRuleSetDetailPage() {
       await refresh();
     },
     onError: (caught) => setError(toErrorMessage(caught, 'Unable to create version')),
+  });
+
+  const updateWindowMutation = useMutation({
+    mutationFn: async ({ versionId, effectiveFrom, effectiveTo }: {
+      versionId: string;
+      effectiveFrom: string;
+      effectiveTo: string;
+    }) => {
+      setError('');
+      if (effectiveTo && !effectiveFrom) {
+        throw new Error('Effective To requires Effective From.');
+      }
+      if (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom) {
+        throw new Error('Effective To must be on or after Effective From.');
+      }
+      const res = await apiClient.patch<ApiSuccessResponse<GstRuleSet>>(
+        `/gst-rule-sets/${id}/versions/${versionId}`,
+        { effectiveFrom: effectiveFrom || null, effectiveTo: effectiveTo || null },
+      );
+      return res.data.data;
+    },
+    onSuccess: async () => {
+      setEditingVersionId(null);
+      await refresh();
+    },
+    onError: (caught) => setError(toErrorMessage(caught, 'Unable to save effective dates')),
   });
 
   const deleteVersionMutation = useMutation({
@@ -153,6 +187,25 @@ export function GstRuleSetDetailPage() {
   }
 
   const isDraftSelected = selectedVersion?.status === 'DRAFT';
+  // The backend resolver (resolveGstRuleForHsn) selects an ACTIVE version by
+  // its own effective window alone — it never filters on the GST Rule Set
+  // master's status. So the master's status is reported here as a separate,
+  // neutral fact, and the effective version is evaluated independently of
+  // it, consistent with that resolver.
+  const effectiveVersionToday = ruleSet.versions.find((version) =>
+    version.status === 'ACTIVE' &&
+    version.effectiveFrom !== null &&
+    version.effectiveFrom <= today &&
+    (version.effectiveTo === null || version.effectiveTo >= today));
+
+  const editDraftVersion = (version: GstRuleSetVersion) => {
+    if (!canManage || version.status !== 'DRAFT') return;
+    setSelectedVersionId(version.id);
+    setEditingVersionId(version.id);
+    setEditEffectiveFrom(version.effectiveFrom ?? '');
+    setEditEffectiveTo(version.effectiveTo ?? '');
+    setError('');
+  };
 
   return (
     <div className="space-y-6">
@@ -175,6 +228,22 @@ export function GstRuleSetDetailPage() {
       />
 
       {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
+
+      <p className="text-sm text-muted-foreground" role="status">
+        GST Rule Set master: {ruleSet.status}. ERVE business date: {today}.{' '}
+        {effectiveVersionToday ? (
+          ruleSet.status === 'ACTIVE' ? (
+            `Effective version today: v${effectiveVersionToday.versionNumber}.`
+          ) : (
+            `Configuration note: v${effectiveVersionToday.versionNumber} is ACTIVE and its effective window covers today, though the master is INACTIVE.`
+          )
+        ) : (
+          <>
+            No ACTIVE version&apos;s effective window covers today.
+            {canManage ? ' Set dates and activate an eligible version.' : ''}
+          </>
+        )}
+      </p>
 
       {canManage && (
         <Panel title="Add Version">
@@ -218,7 +287,7 @@ export function GstRuleSetDetailPage() {
                 <button
                   type="button"
                   className="font-medium text-[var(--erp-text-link)]"
-                  onClick={() => setSelectedVersionId(version.id)}
+                  onClick={() => { setSelectedVersionId(version.id); setEditingVersionId(null); }}
                 >
                   v{version.versionNumber}
                 </button>
@@ -241,6 +310,14 @@ export function GstRuleSetDetailPage() {
               render: (version: GstRuleSetVersion) =>
                 canManage && version.status === 'DRAFT' ? (
                   <div className="flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      density="compact"
+                      variant="secondary"
+                      onClick={() => editDraftVersion(version)}
+                    >
+                      Edit Dates
+                    </Button>
                     <Button
                       type="button"
                       density="compact"
@@ -267,6 +344,48 @@ export function GstRuleSetDetailPage() {
           emptyState={<EmptyState title="No versions yet" description="Add a version above to define its value bands." />}
         />
       </Panel>
+
+      {canManage && isDraftSelected && selectedVersion && editingVersionId === selectedVersion.id && (
+        <Panel title={`Edit Effective Dates — v${selectedVersion.versionNumber}`}>
+          <form
+            className="flex flex-wrap items-end gap-3"
+            onKeyDown={createEnterToNextHandler()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              updateWindowMutation.mutate({
+                versionId: selectedVersion.id,
+                effectiveFrom: editEffectiveFrom,
+                effectiveTo: editEffectiveTo,
+              });
+            }}
+          >
+            <DatePicker
+              label="Effective From (required to activate)"
+              value={editEffectiveFrom}
+              onValueChange={(value) => setEditEffectiveFrom(value ?? '')}
+              displayFormat="dd/mm/yyyy"
+              width="sm"
+            />
+            <DatePicker
+              label="Effective To (optional)"
+              value={editEffectiveTo}
+              onValueChange={(value) => setEditEffectiveTo(value ?? '')}
+              displayFormat="dd/mm/yyyy"
+              min={editEffectiveFrom || undefined}
+              width="sm"
+            />
+            <Button type="submit" loading={updateWindowMutation.isPending}>Save Dates</Button>
+            <Button type="button" variant="secondary" onClick={() => {
+              setEditingVersionId(null);
+              setError('');
+            }}>Cancel</Button>
+          </form>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Dates can be edited only while the version is DRAFT. Activation still requires a valid effective
+            window and complete value bands; the server validates both.
+          </p>
+        </Panel>
+      )}
 
       {selectedVersion && (
         <Panel title={`Value Bands — v${selectedVersion.versionNumber}`}>
