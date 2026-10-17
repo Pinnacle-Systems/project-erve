@@ -16,7 +16,7 @@ import {
   renderJobOrderDetail,
   switchJobOrderTab,
 } from './job-order-detail/test-utils.js';
-import { draftOverrides, mockJobOrder, stage, standardStages } from './job-order-detail/fixtures.js';
+import { draftOverrides, finalQualityActivity, mockJobOrder, stage, standardStages } from './job-order-detail/fixtures.js';
 
 const authState = vi.hoisted(() => ({ roles: ['MERCHANDISER', 'FACTORY_USER'] }));
 
@@ -46,6 +46,39 @@ afterEach(() => {
   container.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe('ISS-005 landing-page Action Required navigation', () => {
+  it('shows a factory stage action without leaving Overview until selected', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
+    const area = container.querySelector('section[aria-label="Action Required"]') as HTMLElement | null;
+    expect(area).not.toBeNull();
+    const start = Array.from(area!.querySelectorAll('button')).find((button) => button.textContent === 'Start Cutting');
+    expect(start).toBeDefined();
+    expect(getActiveTabPanel(container).textContent).toContain('Lifecycle');
+    expect(getLocationSearch(container)).not.toContain('tab=production');
+    act(() => (start as HTMLButtonElement).click());
+    expect(getLocationSearch(container)).toContain('tab=production');
+    expect(getActiveTabPanel(container).textContent).toContain('Current Stage: Cutting');
+  });
+
+  it('shows QA activity discovery only for an eligible QA_USER, navigating on click', async () => {
+    authState.roles = ['QA_USER'];
+    await renderJobOrderDetail(container, root, {
+      status: 'IN_PRODUCTION',
+      overrides: {
+        qualityActivities: [finalQualityActivity({ status: 'AVAILABLE', eligible: true })],
+      },
+    });
+    const area = container.querySelector('section[aria-label="Action Required"]') as HTMLElement;
+    expect(area).not.toBeNull();
+    const buttons = Array.from(area.querySelectorAll('button'));
+    expect(buttons.map((b) => b.textContent)).toEqual(['Start Final Inspection']);
+    expect(getActiveTabPanel(container).textContent).toContain('Lifecycle');
+    act(() => buttons[0]!.click());
+    expect(getLocationSearch(container)).toContain('tab=quality');
+  });
 });
 
 describe('ProductionStageStepper', () => {

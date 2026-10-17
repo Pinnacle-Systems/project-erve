@@ -100,38 +100,41 @@ function makeSaleOrder(overrides: Partial<SaleOrder> = {}): SaleOrder {
 const nullRelated = { factoryDispatches: null, erveDispatches: null, auditTrail: null };
 
 describe('buildDispatchOrderDetailViewModel', () => {
-  it.each([false, true])(
-    'generates the PDF after primary-image preparation (fetch fails: %s)',
-    async (fails) => {
-      const primaryImage = {
-        id: 'primary',
-        styleId: 'style-1',
-        fileId: 'file-primary',
-        fileName: 'primary.jpg',
-        mimeType: 'image/jpeg',
-        sizeBytes: 100,
-        isPrimary: true,
-        sortOrder: 1,
-        createdAt: '',
-        updatedAt: '',
-      };
-      const paths: string[] = [];
-      vi.spyOn(apiClient, 'get').mockImplementation(async (path: string) => {
-        paths.push(path);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        if (fails) throw new Error('image unavailable');
-        return { data: new Blob(['image']) };
-      });
-      const so = makeSaleOrder({
-        distributorGroups: [
-          makeDistributorGroup({
-            lines: [
-              makeLine({ primaryImage }),
-              makeLine({ id: 'large', sizeId: 'large', primaryImage }),
-            ],
-          }),
-        ],
-      });
+  it('embeds the Style primary image only when image preparation succeeds, independent of shared PDF branding', async () => {
+    const primaryImage = {
+      id: 'primary',
+      styleId: 'style-1',
+      fileId: 'file-primary',
+      fileName: 'primary.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 100,
+      isPrimary: true,
+      sortOrder: 1,
+      createdAt: '',
+      updatedAt: '',
+    };
+    const so = makeSaleOrder({
+      distributorGroups: [
+        makeDistributorGroup({
+          lines: [
+            makeLine({ primaryImage }),
+            makeLine({ id: 'large', sizeId: 'large', primaryImage }),
+          ],
+        }),
+      ],
+    });
+    let fetchFails = false;
+    const paths: string[] = [];
+    vi.spyOn(apiClient, 'get').mockImplementation(async (path: string) => {
+      paths.push(path);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (fetchFails) throw new Error('image unavailable');
+      return { data: new Blob(['image']) };
+    });
+
+    const embeddedImageCount = async (fails: boolean) => {
+      fetchFails = fails;
+      paths.length = 0;
       const blob = await generateDispatchOrderDetailPdfBlob(so, nullRelated, {
         generatedAt: '2026-10-14T10:00:00Z',
       });
@@ -139,9 +142,17 @@ describe('buildDispatchOrderDetailViewModel', () => {
       expect(blob.size).toBeGreaterThan(0);
       expect(paths).toEqual(['/styles/style-1/images/primary/content']);
       const bytes = new TextDecoder().decode(await blob.arrayBuffer());
-      expect(bytes.includes('/Subtype /Image')).toBe(!fails);
-    },
-  );
+      // React PDF may emit several /Image resources per artwork (for example,
+      // a separate alpha mask). Compare the same document with/without its
+      // Style image instead of assuming one resource per picture.
+      return (bytes.match(/\/Subtype \/Image\b/g) ?? []).length;
+    };
+
+    const withStyleImage = await embeddedImageCount(false);
+    const withoutStyleImage = await embeddedImageCount(true);
+    expect(withoutStyleImage).toBeGreaterThan(0); // shared ERVE logo remains
+    expect(withStyleImage).toBeGreaterThan(withoutStyleImage);
+  });
   it('carries only the API primary image into destination rows and Style/Size totals', () => {
     const primaryImage = {
       id: 'primary',
