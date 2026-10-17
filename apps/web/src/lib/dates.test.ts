@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getLocalDateString } from './dates.js';
+import { getBusinessDateString, getLocalDateString } from './dates.js';
 
 const originalTZ = process.env.TZ;
 
@@ -42,5 +42,38 @@ describe('getLocalDateString', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-27T23:00:00.000Z'));
     expect(getLocalDateString()).toBe('2026-08-28');
+  });
+});
+
+describe('getBusinessDateString', () => {
+  it('reports the Asia/Kolkata calendar date when the browser timezone is UTC', () => {
+    process.env.TZ = 'UTC';
+    // 19:00 UTC is 00:30 IST the next day.
+    const date = new Date('2026-08-27T19:00:00.000Z');
+    expect(getBusinessDateString(date)).toBe('2026-08-28');
+  });
+
+  it('reports the Asia/Kolkata calendar date when the browser timezone is far from IST', () => {
+    // America/Los_Angeles is UTC-7 in August — nowhere near Asia/Kolkata — so
+    // this proves the result comes from the explicit IANA timeZone option,
+    // not from the browser/process timezone.
+    process.env.TZ = 'America/Los_Angeles';
+    const date = new Date('2026-08-27T19:00:00.000Z');
+    expect(getBusinessDateString(date)).toBe('2026-08-28');
+  });
+
+  it('flips the business date exactly at the Asia/Kolkata midnight boundary (18:30 UTC)', () => {
+    process.env.TZ = 'UTC';
+    const justBefore = new Date('2026-08-27T18:29:59.000Z');
+    const atBoundary = new Date('2026-08-27T18:30:00.000Z');
+    expect(getBusinessDateString(justBefore)).toBe('2026-08-27');
+    expect(getBusinessDateString(atBoundary)).toBe('2026-08-28');
+  });
+
+  it('defaults to the current instant\'s business date when no argument is given', () => {
+    process.env.TZ = 'UTC';
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-27T19:00:00.000Z'));
+    expect(getBusinessDateString()).toBe('2026-08-28');
   });
 });
