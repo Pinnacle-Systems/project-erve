@@ -1,4 +1,15 @@
 import type { Role } from '@erve/types';
+// Configuration oversight does not imply financial modification authority.
+export const GST_COMPLIANCE_SETTINGS_VIEW_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
+export const GST_COMPLIANCE_SETTINGS_MANAGE_ROLES = ['ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canViewGstComplianceSettings(user: RoleHolder): boolean {
+  return hasAnyRole(user, GST_COMPLIANCE_SETTINGS_VIEW_ROLES);
+}
+
+export function canManageGstComplianceSettings(user: RoleHolder): boolean {
+  return hasAnyRole(user, GST_COMPLIANCE_SETTINGS_MANAGE_ROLES);
+}
 
 export interface RoleHolder {
   roles: readonly Role[];

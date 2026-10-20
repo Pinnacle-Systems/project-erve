@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GSTIN_REGEX } from './master-data.validation.js';
+import { GSTIN_REGEX, normalizeGstin } from '@erve/shared';
 import { optionalPageQueryFields } from '../../utils/pagination.js';
 
 const text = z.string().trim().min(1);
@@ -24,8 +24,7 @@ export const createRetailStoreSchema = z
       (v) => (typeof v === 'string' && !v.trim() ? null : v),
       z
         .string()
-        .trim()
-        .toUpperCase()
+        .overwrite(normalizeGstin)
         .regex(GSTIN_REGEX, 'Enter a valid 15-character GSTIN')
         .nullable()
         .optional(),

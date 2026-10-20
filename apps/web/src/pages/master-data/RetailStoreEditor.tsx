@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse, RetailStore } from '@erve/types';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
@@ -82,8 +83,10 @@ export function RetailStoreEditor({
         throw new Error(
           'Store Name, address, City, State, Country and PIN are required',
         );
+      const gstin = normalizeGstin(form.gstin);
+      if (gstin && !isValidGstinFormat(gstin)) throw new Error('Enter a valid 15-character GSTIN');
       const payload = Object.fromEntries(
-        Object.entries(form).filter(([key]) => key !== 'code').map(([k, v]) => [k, v.trim() || null]),
+        Object.entries(form).filter(([key]) => key !== 'code').map(([k, v]) => [k, k === 'gstin' ? gstin || null : v.trim() || null]),
       );
       const response = store
         ? await apiClient.patch<ApiSuccessResponse<RetailStore>>(

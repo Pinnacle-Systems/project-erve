@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { optionalPageQueryFields } from '../../utils/pagination.js';
-import { GSTIN_REGEX } from './master-data.validation.js';
+import { GSTIN_REGEX, normalizeGstin } from '@erve/shared';
 
 const optionalText = z.string().trim().optional().nullable();
 
@@ -8,8 +8,7 @@ export const sellerRegistrationStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 
 const gstinSchema = z
   .string()
-  .trim()
-  .toUpperCase()
+  .overwrite(normalizeGstin)
   .regex(GSTIN_REGEX, 'Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
 
 // Indian PIN code: 6 digits, first digit 1-9.

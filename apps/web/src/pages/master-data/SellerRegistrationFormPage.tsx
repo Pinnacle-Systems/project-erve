@@ -10,7 +10,7 @@ import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import type { SellerRegistration, Status } from './types.js';
 
-const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 const STATE_CODE_PATTERN = /^[0-9]{2}$/;
 const PIN_CODE_PATTERN = /^[1-9][0-9]{5}$/;
 const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
@@ -170,8 +170,8 @@ export function SellerRegistrationFormPage() {
           throw new Error(`${fieldLabels[key]} is required`);
         }
       }
-      const gstin = form.gstin.trim().toUpperCase();
-      if (!GSTIN_PATTERN.test(gstin)) {
+      const gstin = normalizeGstin(form.gstin);
+      if (!isValidGstinFormat(gstin)) {
         throw new Error('Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
       }
       const stateCode = form.stateCode.trim();
