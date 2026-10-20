@@ -9,10 +9,13 @@ import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-disp
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
+import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
+import type { StyleSizeGridRow } from '../../components/style-size-grid/types.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { CartonLabelButton } from './CartonLabelButton.js';
+import { distinctSizeColumns, groupLinesByStyle } from './style-size-grouping.js';
 import { canMutateFactoryDispatches, canViewFactoryInvoices } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { FactoryPackingCartonView, FinalizeBlockers, PackingListDestinationView, PackingListView } from './types.js';
@@ -30,6 +33,17 @@ const PACKING_METADATA_FIELD_LABELS: Record<'netWeight' | 'grossWeight' | 'dimen
   grossWeight: 'Gross Weight',
   dimensions: 'Dimensions',
 };
+
+// ISS-007/ISS-010: a carton's contents as one Style row per Style, with
+// Sizes as columns, instead of one list item per Style+Size combination.
+function cartonStyleSizeRows(carton: FactoryPackingCartonView): StyleSizeGridRow[] {
+  return groupLinesByStyle(carton.lines).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
+}
 
 function finalizeIssueSummary(blockers: FinalizeBlockers): string[] {
   const lines: string[] = [];
@@ -487,13 +501,13 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                         </div>
                       </div>
                       {carton.packageDetails && <div className="text-sm text-muted-foreground">{carton.packageDetails}</div>}
-                      <ul className="mt-2 text-sm">
-                        {carton.lines.map((line) => (
-                          <li key={line.saleOrderLineId}>
-                            {line.styleNumber} — {line.styleName} / {line.sizeLabel}: {line.quantity}
-                          </li>
-                        ))}
-                      </ul>
+                      <div className="mt-2">
+                        <StyleSizeGrid
+                          columns={distinctSizeColumns(carton.lines)}
+                          rows={cartonStyleSizeRows(carton)}
+                          variant="readOnly"
+                        />
+                      </div>
                     </div>
                   ),
                 )}

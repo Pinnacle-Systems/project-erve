@@ -20,7 +20,7 @@ function makeViewModel(overrides: Partial<CartonLabelPdfViewModel> = {}): Carton
       { label: 'Address', value: '123 Test Street, Chennai, TN, India' },
     ],
     totalQuantity: 10,
-    lines: [{ id: 'line-1', styleDisplay: 'ST-001 — Classic Tee', sizeLabel: 'Medium', quantity: 10 }],
+    styleRows: [{ id: 'style-1', styleDisplay: 'ST-001 — Classic Tee', sizeBreakdown: 'Medium: 10', quantity: 10 }],
     ...overrides,
   };
 }
@@ -53,10 +53,10 @@ describe('CartonLabelDocument', () => {
     expect(blob.size).toBeGreaterThan(0);
   });
 
-  it('renders a carton with many size/content lines without hanging', async () => {
-    const lines = Array.from({ length: 25 }, (_, i) => ({ id: `line-${i}`, styleDisplay: `ST-${i}`, sizeLabel: 'M', quantity: 5 }));
+  it('renders a carton with many Style rows without hanging', async () => {
+    const styleRows = Array.from({ length: 25 }, (_, i) => ({ id: `style-${i}`, styleDisplay: `ST-${i}`, sizeBreakdown: 'M: 5', quantity: 5 }));
     const blob = await Promise.race([
-      pdf(<CartonLabelDocument viewModel={makeViewModel({ lines, totalQuantity: 125 })} />).toBlob(),
+      pdf(<CartonLabelDocument viewModel={makeViewModel({ styleRows, totalQuantity: 125 })} />).toBlob(),
       new Promise<never>((_resolve, reject) =>
         setTimeout(() => reject(new Error('PDF generation hung on a multi-line carton')), 8000),
       ),
@@ -66,6 +66,34 @@ describe('CartonLabelDocument', () => {
 
   it('renders when optional weight/dimensions are absent from identityItems', async () => {
     const blob = await pdf(<CartonLabelDocument viewModel={makeViewModel()} />).toBlob();
+    expect(blob.size).toBeGreaterThan(0);
+  });
+
+  it('renders a Style row with a long Size Breakdown (many Sizes grouped under one Style) without hanging', async () => {
+    const sizeBreakdown = Array.from({ length: 12 }, (_, i) => `SZ${i}: ${i + 1}`).join(' · ');
+    const blob = await pdf(
+      <CartonLabelDocument
+        viewModel={makeViewModel({
+          styleRows: [{ id: 'style-1', styleDisplay: 'ST-001 — A Very Long Style Name That Could Wrap Across Lines', sizeBreakdown, quantity: 78 }],
+          totalQuantity: 78,
+        })}
+      />,
+    ).toBlob();
+    expect(blob.size).toBeGreaterThan(0);
+  });
+
+  it('renders multiple Styles each grouped into a single row (not repeated per Size)', async () => {
+    const blob = await pdf(
+      <CartonLabelDocument
+        viewModel={makeViewModel({
+          styleRows: [
+            { id: 'style-1', styleDisplay: 'ST-001 — Classic Tee', sizeBreakdown: 'S: 3 · M: 4 · L: 2', quantity: 9 },
+            { id: 'style-2', styleDisplay: 'ST-002 — Polo', sizeBreakdown: 'M: 2 · L: 2', quantity: 4 },
+          ],
+          totalQuantity: 13,
+        })}
+      />,
+    ).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 

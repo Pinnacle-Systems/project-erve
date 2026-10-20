@@ -6,7 +6,7 @@ import { PdfMetaSection } from '../../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import { PdfTable, type PdfTableColumn } from '../../../../lib/pdf/core/PdfTable.js';
-import type { CartonLabelLineRow, CartonLabelPdfViewModel } from './buildCartonLabelViewModel.js';
+import type { CartonLabelStyleRow, CartonLabelPdfViewModel } from './buildCartonLabelViewModel.js';
 
 const styles = StyleSheet.create({
   identityBlock: { marginBottom: 14, paddingBottom: 10, borderBottom: '1 solid #999999' },
@@ -15,10 +15,10 @@ const styles = StyleSheet.create({
   totalsLine: { fontSize: 9, fontWeight: 700, color: '#111111', marginTop: 4, textAlign: 'right' },
 });
 
-const lineColumns: PdfTableColumn<CartonLabelLineRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '50%', value: (row) => row.styleDisplay },
-  { key: 'sizeLabel', header: 'Size', width: '20%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Quantity', width: '30%', align: 'right', value: (row) => row.quantity },
+const styleRowColumns: PdfTableColumn<CartonLabelStyleRow>[] = [
+  { key: 'styleDisplay', header: 'Style', width: '45%', value: (row) => row.styleDisplay },
+  { key: 'sizeBreakdown', header: 'Size Breakdown', width: '35%', value: (row) => row.sizeBreakdown },
+  { key: 'quantity', header: 'Total', width: '20%', align: 'right', value: (row) => row.quantity },
 ];
 
 export interface CartonLabelDocumentProps {
@@ -46,7 +46,7 @@ export function CartonLabelDocument({ viewModel }: CartonLabelDocumentProps) {
       </PdfSection>
 
       <PdfSection title="Carton Contents" wrap>
-        <PdfTable columns={lineColumns} rows={viewModel.lines} rowKey={(row) => row.id} />
+        <PdfTable columns={styleRowColumns} rows={viewModel.styleRows} rowKey={(row) => row.id} />
         <Text style={styles.totalsLine}>Total: {viewModel.totalQuantity}</Text>
       </PdfSection>
 

@@ -16,7 +16,10 @@ function makeCarton(overrides: Partial<FactoryPackingListCartonRow> = {}): Facto
     packageDetails: '1 poly bag per unit',
     auditStateLabel: 'Not Inspected',
     destinationMismatch: false,
+    totalQuantity: 10,
     lines: [{ id: 'line-1', styleDisplay: 'ST-001 — Classic Tee', sizeLabel: 'Medium', quantity: 10 }],
+    sizeColumns: [{ sizeId: 'size-1', sizeCode: 'M' }],
+    styleRows: [{ styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 10 } }],
     ...overrides,
   };
 }
@@ -85,6 +88,24 @@ describe('FactoryPackingListDetailDocument', () => {
     expect(blob.size).toBeGreaterThan(0);
   });
 
+  it('renders a carton with multiple Styles, each on its own Style x Size row, and a wide Size range without throwing (ISS-010)', async () => {
+    const sizeColumns = Array.from({ length: 10 }, (_, i) => ({ sizeId: `size-${i}`, sizeCode: `SZ${i}` }));
+    const styleRows = Array.from({ length: 3 }, (_, si) => ({
+      styleId: `style-${si}`,
+      styleNumber: `ST-00${si}`,
+      styleName: `Style ${si}`,
+      values: Object.fromEntries(sizeColumns.map((c, i) => [c.sizeId, i % 2 === 0 ? si + i : null])),
+    }));
+    const blob = await pdf(
+      <FactoryPackingListDetailDocument
+        viewModel={makeViewModel({
+          destinations: [makeDestination({ cartons: [makeCarton({ sizeColumns, styleRows, totalQuantity: 999 })] })],
+        })}
+      />,
+    ).toBlob();
+    expect(blob.size).toBeGreaterThan(0);
+  });
+
   it('renders many destinations with many multi-line cartons spanning multiple pages without throwing or duplicating/truncating', async () => {
     const destinations = Array.from({ length: 8 }, (_, di) =>
       makeDestination({
@@ -94,7 +115,15 @@ describe('FactoryPackingListDetailDocument', () => {
           makeCarton({
             id: `dest-${di}-carton-${ci}`,
             cartonNumber: `C${di}-${ci}`,
+            totalQuantity: 20,
             lines: Array.from({ length: 4 }, (_, li) => ({ id: `l-${di}-${ci}-${li}`, styleDisplay: `ST-${li}`, sizeLabel: 'M', quantity: 5 })),
+            sizeColumns: [{ sizeId: 'size-1', sizeCode: 'M' }],
+            styleRows: Array.from({ length: 4 }, (_, li) => ({
+              styleId: `style-${li}`,
+              styleNumber: `ST-${li}`,
+              styleName: null,
+              values: { 'size-1': 5 },
+            })),
           }),
         ),
       }),

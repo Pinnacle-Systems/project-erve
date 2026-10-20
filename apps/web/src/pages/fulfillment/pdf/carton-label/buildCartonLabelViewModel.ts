@@ -1,5 +1,6 @@
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import type { FactoryPackingCartonView, PackingListDestinationView } from '../../types.js';
+import { groupLinesByStyle } from '../../style-size-grouping.js';
 
 export interface CartonLabelSource {
   carton: FactoryPackingCartonView;
@@ -14,10 +15,11 @@ export interface CartonLabelPdfMeta {
   generatedBy?: string | null;
 }
 
-export interface CartonLabelLineRow {
+/** ISS-009: one row per Style within the carton — `sizeBreakdown` compresses every Size quantity for that Style into a single compact, space-saving column rather than a full Size-columns grid, since a carton label's print area is small. */
+export interface CartonLabelStyleRow {
   id: string;
   styleDisplay: string;
-  sizeLabel: string;
+  sizeBreakdown: string;
   quantity: number;
 }
 
@@ -30,7 +32,7 @@ export interface CartonLabelPdfViewModel {
   destinationName: string;
   identityItems: PdfKeyValueItem[];
   totalQuantity: number;
-  lines: CartonLabelLineRow[];
+  styleRows: CartonLabelStyleRow[];
 }
 
 function formatAddress(destination: PackingListDestinationView): string {
@@ -56,6 +58,11 @@ function formatAddress(destination: PackingListDestinationView): string {
  * could change after the label was printed. Net/Gross Weight and Dimensions are all optional and
  * simply omitted from `identityItems` when absent, rather than printed as an empty placeholder —
  * their absence must never block label generation.
+ *
+ * Carton contents are grouped by stable Style identity (`styleId`, never
+ * display name) into one row per Style — ISS-009, so a Style with several
+ * Sizes in the same carton prints once with a compact Size Breakdown
+ * ("S: 3 · M: 4 · L: 2") rather than repeating the Style on separate rows.
  */
 export function buildCartonLabelViewModel(source: CartonLabelSource, meta: CartonLabelPdfMeta): CartonLabelPdfViewModel {
   const { carton, destination, saleOrderNumber, factoryName, factoryDispatchNumber } = source;
@@ -87,11 +94,11 @@ export function buildCartonLabelViewModel(source: CartonLabelSource, meta: Carto
     destinationName,
     identityItems,
     totalQuantity: carton.totalQuantity,
-    lines: carton.lines.map((line) => ({
-      id: line.saleOrderLineId,
-      styleDisplay: `${line.styleNumber} — ${line.styleName}`,
-      sizeLabel: line.sizeLabel,
-      quantity: line.quantity,
+    styleRows: groupLinesByStyle(carton.lines).map((group) => ({
+      id: group.styleId,
+      styleDisplay: `${group.styleNumber} — ${group.styleName}`,
+      sizeBreakdown: group.sizeEntries.map((entry) => `${entry.sizeLabel}: ${entry.quantity}`).join(' · '),
+      quantity: group.totalQuantity,
     })),
   };
 }

@@ -600,6 +600,71 @@ describe('PackingListPage carton label print/download (DEMO-019)', () => {
   });
 });
 
+// ISS-007/ISS-010: a carton's contents render as one Style row with Sizes as
+// columns, rather than one list item per Style+Size combination.
+describe('PackingListPage carton Style x Size presentation (ISS-007/ISS-010)', () => {
+  it('groups multiple Sizes of the same Style into a single row instead of repeating the Style', async () => {
+    const carton = buildCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 3, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-3', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-3', sizeCode: 'L', sizeLabel: 'Large', quantity: 2, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 9,
+    });
+    await renderPage(buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [carton] }] }));
+
+    // "ST-001" appears once in the (unrelated, out-of-scope) Required/Packed
+    // summary table and once in the carton's own Style x Size grid — it
+    // never repeats across separate rows within the carton grid itself the
+    // way the old per-Size <ul> did.
+    const styleCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
+    expect(styleCells).toHaveLength(2);
+    // Size codes appear as column headers.
+    expect(content()).toContain('S');
+    expect(content()).toContain('M');
+    expect(content()).toContain('L');
+    // The row total (3+4+2) and column totals reconcile to source records.
+    expect(content()).toContain('9');
+  });
+
+  it('keeps two cartons visually and numerically distinct (no cross-carton merging)', async () => {
+    const cartonA = buildCarton({
+      id: 'carton-a',
+      cartonNumber: 'CTN-A',
+      lines: [{ saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 5, currentDestinationId: 'dest-1' }],
+      totalQuantity: 5,
+    });
+    const cartonB = buildCarton({
+      id: 'carton-b',
+      cartonNumber: 'CTN-B',
+      lines: [{ saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 7, currentDestinationId: 'dest-1' }],
+      totalQuantity: 7,
+    });
+    await renderPage(buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [cartonA, cartonB] }] }));
+
+    expect(content()).toContain('Carton CTN-A');
+    expect(content()).toContain('Carton CTN-B');
+    // Each carton's own row total is distinct and visible — 5 is not merged into 7 or vice versa.
+    expect(content()).toContain('5');
+    expect(content()).toContain('7');
+  });
+
+  it('renders a dash for a Size that does not apply to a given Style when the carton holds multiple Styles with different Size ranges', async () => {
+    const carton = buildCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 3, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', primaryImage: null, sizeId: 'size-2', sizeCode: 'XL', sizeLabel: 'Extra Large', quantity: 2, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 5,
+    });
+    await renderPage(buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [carton] }] }));
+    // Two Style rows, each missing a cell for the Size that doesn't apply to it.
+    const dashCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.trim() === '—');
+    expect(dashCells.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 // UXAUTH-018: a failed fetch (403/500/network error) must render the real
 // ErrorState, not fall through to the "Dispatch Order not found" EmptyState
 // — that EmptyState is reserved for a genuine no-such-record response.

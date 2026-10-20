@@ -97,11 +97,11 @@ describe('buildCartonLabelViewModel', () => {
 
   it('maps carton contents and total quantity', () => {
     const vm = buildCartonLabelViewModel(makeSource(), { generatedAt: '2026-09-15T10:00:00Z' });
-    expect(vm.lines).toEqual([{ id: 'line-1', styleDisplay: 'ST-001 — Classic Tee', sizeLabel: 'Medium', quantity: 10 }]);
+    expect(vm.styleRows).toEqual([{ id: 'style-1', styleDisplay: 'ST-001 — Classic Tee', sizeBreakdown: 'Medium: 10', quantity: 10 }]);
     expect(vm.totalQuantity).toBe(10);
   });
 
-  it('maps multiple size/content lines without dropping any', () => {
+  it('groups multiple Sizes of the same Style into one row with a compact Size Breakdown, without dropping any', () => {
     const carton = makeCarton({
       lines: [
         { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 4, currentDestinationId: 'dest-1' },
@@ -111,8 +111,24 @@ describe('buildCartonLabelViewModel', () => {
       totalQuantity: 18,
     });
     const vm = buildCartonLabelViewModel(makeSource({ carton }), { generatedAt: '2026-09-15T10:00:00Z' });
-    expect(vm.lines).toHaveLength(3);
+    // One Style (ST-001) appears once despite having two Size lines.
+    expect(vm.styleRows).toEqual([
+      { id: 'style-1', styleDisplay: 'ST-001 — Classic Tee', sizeBreakdown: 'Small: 4 · Medium: 6', quantity: 10 },
+      { id: 'style-2', styleDisplay: 'ST-002 — Polo', sizeBreakdown: 'Large: 8', quantity: 8 },
+    ]);
     expect(vm.totalQuantity).toBe(18);
+  });
+
+  it('sums duplicate Style+Size lines within the same carton into one Size Breakdown entry rather than printing it twice', () => {
+    const carton = makeCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 6, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 10,
+    });
+    const vm = buildCartonLabelViewModel(makeSource({ carton }), { generatedAt: '2026-09-15T10:00:00Z' });
+    expect(vm.styleRows).toEqual([{ id: 'style-1', styleDisplay: 'ST-001 — Classic Tee', sizeBreakdown: 'Medium: 10', quantity: 10 }]);
   });
 
   it('omits Net Weight/Gross Weight/Dimensions entirely when absent, rather than printing a placeholder', () => {
