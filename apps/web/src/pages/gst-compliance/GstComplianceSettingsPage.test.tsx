@@ -95,6 +95,50 @@ describe('GST Compliance Settings page', () => {
     await act(async () => button('Activate Live Mode').click()); await settle();
     expect(vi.mocked(apiClient.patch).mock.calls[0]?.[1]).toMatchObject({ integrationMode: 'LIVE', confirmLiveActivation: true });
   });
+  it.each(['Escape', 'Cancel'])('returns focus to Save changes after %s without saving', async (dismissal) => {
+    persisted.capabilities.liveActivationAvailable = true; await mount();
+    await act(async () => control('radio', 'Live Mode').click());
+    const save = button('Save changes');
+    await act(async () => { save.focus(); save.click(); });
+    expect(document.querySelector('[role="dialog"]')?.contains(document.activeElement)).toBe(true);
+    await act(async () => {
+      if (dismissal === 'Escape') document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      else button('Cancel').click();
+    });
+    await settle();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(save);
+    expect(save.disabled).toBe(false);
+    expect(control('radio', 'Live Mode').getAttribute('aria-checked')).toBe('true');
+    expect(apiClient.patch).not.toHaveBeenCalled();
+    expect(persisted.integrationMode).toBe('DEMO');
+    expect(persisted.version).toBe(0);
+  });
+  it('keeps Live confirmation busy and does not focus the remounted Save button after success', async () => {
+    persisted.capabilities.liveActivationAvailable = true; await mount();
+    const originalPatch = vi.mocked(apiClient.patch).getMockImplementation()!;
+    let finishSave!: () => void;
+    vi.mocked(apiClient.patch).mockImplementation((url, body, config) => new Promise((resolve) => {
+      finishSave = () => { resolve(originalPatch(url, body, config)); };
+    }) as ReturnType<typeof apiClient.patch>);
+    await act(async () => control('radio', 'Live Mode').click());
+    const invokingSave = button('Save changes');
+    await act(async () => { invokingSave.focus(); invokingSave.click(); });
+    await act(async () => button('Activate Live Mode').click()); await settle();
+    expect(button('Cancel').disabled).toBe(true);
+    expect(button('Activate Live Mode').disabled).toBe(true);
+    expect(invokingSave.disabled).toBe(true);
+    await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(async () => finishSave()); await settle();
+    expect(apiClient.patch).toHaveBeenCalledTimes(1);
+    expect(persisted.integrationMode).toBe('LIVE');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(invokingSave.isConnected).toBe(false);
+    expect(button('Save changes').disabled).toBe(true);
+    expect(document.activeElement).not.toBe(button('Save changes'));
+    expect(container.textContent).toContain('Settings saved.');
+  });
   it('retains the draft after a conflict and provides an explicit reload', async () => {
     vi.mocked(apiClient.patch).mockRejectedValue(new Error('Settings changed. Reload before saving.'));
     await mount();

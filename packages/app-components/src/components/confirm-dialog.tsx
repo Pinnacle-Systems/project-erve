@@ -1,6 +1,7 @@
 import {
   Dialog,
   DialogContent,
+  type DialogContentProps,
   DialogHeader,
   DialogTitle,
   DialogDescription,
@@ -19,6 +20,7 @@ export interface ConfirmDialogProps {
   loading?: boolean;
   onConfirm: () => void;
   onCancel?: () => void;
+  onCloseAutoFocus?: DialogContentProps["onCloseAutoFocus"];
 }
 
 export const ConfirmDialog = ({
@@ -32,6 +34,7 @@ export const ConfirmDialog = ({
   loading = false,
   onConfirm,
   onCancel,
+  onCloseAutoFocus,
 }: ConfirmDialogProps) => {
   const handleCancel = () => {
     onCancel?.();
@@ -40,7 +43,7 @@ export const ConfirmDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description && (
