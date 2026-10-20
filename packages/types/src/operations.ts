@@ -486,8 +486,12 @@ export type FactoryInvoiceStatus = 'GENERATED' | 'FACTORY_CONFIRMED' | 'FINALIZE
 export interface FactoryInvoiceLineView {
   id: string;
   saleOrderLineId: string;
+  /** Stable Style identity for presentation grouping (ISS-010) — never derive grouping from styleNumber/styleName display text. */
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  /** Stable Size identity for presentation grouping (ISS-010) — never derive grouping from sizeCode/sizeLabel display text. */
+  sizeId: string;
   sizeCode: string;
   sizeLabel: string;
   /** Finalized physical packed quantity — read-only, never editable through this API. */

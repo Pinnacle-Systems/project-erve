@@ -61,6 +61,8 @@ const factoryInvoiceInclude = {
       saleOrderLine: {
         select: {
           id: true,
+          styleId: true,
+          sizeId: true,
           style: { select: { styleNumber: true, styleName: true } },
           size: { select: { code: true, label: true } },
         },
@@ -92,8 +94,10 @@ function toFactoryInvoiceView(record: FactoryInvoiceRecord) {
     lines: record.lines.map((line) => ({
       id: line.id,
       saleOrderLineId: line.saleOrderLineId,
+      styleId: line.saleOrderLine.styleId,
       styleNumber: line.saleOrderLine.style.styleNumber,
       styleName: line.saleOrderLine.style.styleName,
+      sizeId: line.saleOrderLine.sizeId,
       sizeCode: line.saleOrderLine.size.code,
       sizeLabel: line.saleOrderLine.size.label,
       quantity: line.quantity,

@@ -76,3 +76,95 @@ export function distinctSizeColumns<T extends { sizeId: string; sizeCode: string
   }
   return [...seen.entries()].map(([sizeId, sizeCode]) => ({ sizeId, sizeCode }));
 }
+
+export interface FinancialStyleSizeLine {
+  id: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  quantity: number;
+  unitRate: number;
+  defaultRate: number;
+  lineAmount: number;
+}
+
+export interface FinancialSizeEntry {
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  quantity: number;
+}
+
+export interface FinancialStyleGroup {
+  /** Stable React/table row key — styleId alone is not unique once a Style splits across incompatible rates. */
+  groupKey: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  unitRate: number;
+  defaultRate: number;
+  rateOverridden: boolean;
+  sizeEntries: FinancialSizeEntry[];
+  totalQuantity: number;
+  /** Sum of each source line's own persisted lineAmount — never totalQuantity × rate, so historical per-line rounding survives aggregation exactly. */
+  amount: number;
+  sourceLineIds: string[];
+}
+
+/**
+ * Groups financial lines (e.g. Factory Invoice lines) into one row per
+ * Style — ISS-010's financial-document presentation standard, distinct from
+ * `groupLinesByStyle`'s operational Size-columns standard above.
+ *
+ * A Style only collapses into one row when every one of its lines also
+ * shares the same `unitRate`: an ACCOUNTANT may override unitRate per source
+ * line (see factory-invoice.service.ts's updateFactoryInvoiceFinancials), so
+ * two lines of the same Style can end up financially incompatible after an
+ * edit — those stay separate rows (distinguished by their different Rate
+ * column value) rather than being averaged or silently merged.
+ *
+ * `defaultRate` never varies for a given styleId (it's an immutable
+ * Style<->Factory snapshot taken once at invoice generation), so it is not
+ * part of the compatibility key, only carried through for the "overridden"
+ * presentation note.
+ */
+export function groupFinancialLinesByStyle<T extends FinancialStyleSizeLine>(lines: T[]): FinancialStyleGroup[] {
+  const order: string[] = [];
+  const groups = new Map<string, FinancialStyleGroup>();
+
+  for (const line of lines) {
+    const key = `${line.styleId}::${line.unitRate}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        groupKey: key,
+        styleId: line.styleId,
+        styleNumber: line.styleNumber,
+        styleName: line.styleName,
+        unitRate: line.unitRate,
+        defaultRate: line.defaultRate,
+        rateOverridden: line.unitRate !== line.defaultRate,
+        sizeEntries: [],
+        totalQuantity: 0,
+        amount: 0,
+        sourceLineIds: [],
+      };
+      groups.set(key, group);
+      order.push(key);
+    }
+    const existingEntry = group.sizeEntries.find((entry) => entry.sizeId === line.sizeId);
+    if (existingEntry) {
+      existingEntry.quantity += line.quantity;
+    } else {
+      group.sizeEntries.push({ sizeId: line.sizeId, sizeCode: line.sizeCode, sizeLabel: line.sizeLabel, quantity: line.quantity });
+    }
+    group.totalQuantity += line.quantity;
+    group.amount += line.lineAmount;
+    group.sourceLineIds.push(line.id);
+  }
+
+  return order.map((key) => groups.get(key)!);
+}
