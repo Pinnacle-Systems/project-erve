@@ -90,6 +90,7 @@ function SettingsEditor({ settings, canEdit, onSaved, onReload, onEditing }: {
     gstinVerificationLevel: settings.gstinVerificationLevel, ewayBillGenerationEnabled: settings.ewayBillGenerationEnabled,
   });
   const [confirmLive, setConfirmLive] = useState(false);
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
   function updateForm(values: Partial<GstComplianceValues>) {
     setForm((current) => ({ ...current, ...values }));
     onEditing();
@@ -150,11 +151,19 @@ function SettingsEditor({ settings, canEdit, onSaved, onReload, onEditing }: {
         </FormGrid>
         <p className="text-sm text-muted-foreground">{settings.updatedAt ? `Last updated by ${settings.updatedBy?.name ?? 'Former user'} on ${new Date(settings.updatedAt).toLocaleString()}` : 'Default settings. No changes saved yet.'}</p>
         <div className="flex flex-wrap gap-2">
-          {canEdit && <Button type="submit" loading={mutation.isPending} disabled={disabled || !changed}>Save changes</Button>}
+          {canEdit && <Button ref={saveButtonRef} type="submit" loading={mutation.isPending} disabled={disabled || !changed}>Save changes</Button>}
           <Button type="button" variant="secondary" disabled={busy} loading={reloading} onClick={() => { setReloading(true); void onReload().finally(() => setReloading(false)); }}>Reload settings</Button>
         </div>
       </form>
-      <ConfirmDialog open={confirmLive} onOpenChange={(open) => { if (!busy) setConfirmLive(open); }} title="Activate Live Mode?" description="Future enabled workflows may use actual GST details and consume paid credits. This change performs no lookup or government filing." confirmLabel="Activate Live Mode" loading={mutation.isPending} onConfirm={() => void save(true)} />
+      <ConfirmDialog open={confirmLive} onOpenChange={(open) => { if (!busy) setConfirmLive(open); }} onCloseAutoFocus={(event) => {
+        // The controlled dialog has no Radix trigger. Return to the invoker only
+        // while this editor remains mounted and its Save action is available.
+        const button = saveButtonRef.current;
+        if (button?.isConnected && !button.disabled) {
+          event.preventDefault();
+          button.focus();
+        }
+      }} title="Activate Live Mode?" description="Future enabled workflows may use actual GST details and consume paid credits. This change performs no lookup or government filing." confirmLabel="Activate Live Mode" loading={mutation.isPending} onConfirm={() => void save(true)} />
     </Panel>
   );
 }
