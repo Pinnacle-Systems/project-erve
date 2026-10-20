@@ -115,6 +115,38 @@ describe('buildFactoryPackingListViewModel', () => {
     expect(printedLine?.packedQuantity).not.toBe(FACTORY_DISPATCH_LINE_QUANTITY);
   });
 
+  it('groups a carton with multiple Sizes of the same Style into one Style x Size row (ISS-010), reconciling to the carton total', () => {
+    const carton = makeCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 3, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-3', styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', primaryImage: null, sizeId: 'size-3', sizeCode: 'L', sizeLabel: 'Large', quantity: 5, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 12,
+    });
+    const vm = buildFactoryPackingListViewModel(
+      makePackingList({ destinations: [{ ...makePackingList().destinations[0]!, cartons: [carton] }] }),
+      { generatedAt: '2026-09-15T10:00:00Z' },
+    );
+    const cartonRow = vm.destinations[0]!.cartons[0]!;
+    expect(cartonRow.styleRows).toHaveLength(2);
+    expect(cartonRow.styleRows).toEqual([
+      { styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 3, 'size-2': 4 } },
+      { styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', values: { 'size-3': 5 } },
+    ]);
+    expect(cartonRow.sizeColumns).toEqual([
+      { sizeId: 'size-1', sizeCode: 'S' },
+      { sizeId: 'size-2', sizeCode: 'M' },
+      { sizeId: 'size-3', sizeCode: 'L' },
+    ]);
+    const reconciled = cartonRow.styleRows.reduce(
+      (sum, row) => sum + Object.values(row.values).reduce((s: number, v) => s + (v ?? 0), 0),
+      0,
+    );
+    expect(reconciled).toBe(cartonRow.totalQuantity);
+    expect(cartonRow.totalQuantity).toBe(12);
+  });
+
   it('maps carton net weight, package details, audit state label and destination-mismatch flag', () => {
     const vm = buildFactoryPackingListViewModel(
       makePackingList({

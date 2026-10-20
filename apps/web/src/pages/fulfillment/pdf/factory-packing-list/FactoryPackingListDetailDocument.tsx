@@ -6,9 +6,9 @@ import { PdfMetaSection } from '../../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import { PdfTable, type PdfTableColumn } from '../../../../lib/pdf/core/PdfTable.js';
+import { PdfStyleSizeMatrix } from '../../../../lib/pdf/core/PdfStyleSizeMatrix.js';
 import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type {
-  FactoryPackingListCartonLineRow,
   FactoryPackingListCartonRow,
   FactoryPackingListLineRow,
   FactoryPackingListPdfViewModel,
@@ -32,12 +32,6 @@ const lineColumns: PdfTableColumn<FactoryPackingListLineRow>[] = [
   { key: 'packedQuantity', header: 'Packed', width: '17.5%', align: 'right', value: (row) => row.packedQuantity },
 ];
 
-const cartonLineColumns: PdfTableColumn<FactoryPackingListCartonLineRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '55%', value: (row) => row.styleDisplay },
-  { key: 'sizeLabel', header: 'Size', width: '20%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Quantity', width: '25%', align: 'right', value: (row) => row.quantity },
-];
-
 function CartonBlock({ carton }: { carton: FactoryPackingListCartonRow }) {
   return (
     <View style={styles.cartonBlock}>
@@ -47,7 +41,7 @@ function CartonBlock({ carton }: { carton: FactoryPackingListCartonRow }) {
         {carton.destinationMismatch ? ' — Destination mismatch (repack required)' : ''}
       </Text>
       {carton.packageDetails ? <Text style={styles.cartonMeta}>{carton.packageDetails}</Text> : null}
-      <PdfTable columns={cartonLineColumns} rows={carton.lines} rowKey={(row) => row.id} />
+      <PdfStyleSizeMatrix columns={carton.sizeColumns} rows={carton.styleRows} />
     </View>
   );
 }
