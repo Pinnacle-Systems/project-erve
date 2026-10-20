@@ -18,26 +18,27 @@ const styles = StyleSheet.create({
   grandTotalLabel: { fontSize: 10, fontWeight: 700, color: '#111111' },
   grandTotalValue: { fontSize: 10, fontWeight: 700, color: '#111111', textAlign: 'right' },
   divider: { borderTop: '1 solid #333333', width: '45%', marginTop: 2, marginBottom: 2 },
+  provisionalBanner: { borderWidth: 1, borderColor: '#B45309', backgroundColor: '#FFFBEB', padding: 6, marginBottom: 6 },
+  provisionalText: { fontSize: 8, fontWeight: 700, color: '#B45309', textAlign: 'center' },
 });
 
 const lineColumns: PdfTableColumn<FactoryInvoiceDetailLineRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '32%', value: (row) => row.styleDisplay },
-  { key: 'sizeLabel', header: 'Size', width: '12%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Quantity', width: '12%', align: 'right', value: (row) => row.quantity },
-  { key: 'defaultRate', header: 'Default Rate', width: '16%', align: 'right', value: (row) => row.defaultRate },
+  { key: 'styleDisplay', header: 'Style', width: '28%', value: (row) => row.styleDisplay },
+  { key: 'sizeBreakdown', header: 'Size Breakdown', width: '32%', value: (row) => row.sizeBreakdown },
+  { key: 'totalQuantity', header: 'Total Qty', width: '12%', align: 'right', value: (row) => row.totalQuantity },
   {
-    key: 'unitRate',
-    header: 'Unit Rate',
+    key: 'rate',
+    header: 'Rate',
     width: '14%',
     align: 'right',
     render: (row) => (
       <View>
-        <Text style={[styles.cellText, { textAlign: 'right' }]}>{row.unitRate}</Text>
-        {row.rateOverridden ? <Text style={[styles.overriddenNote, { textAlign: 'right' }]}>overridden</Text> : null}
+        <Text style={[styles.cellText, { textAlign: 'right' }]}>{row.rate}</Text>
+        {row.rateOverridden ? <Text style={[styles.overriddenNote, { textAlign: 'right' }]}>default {row.defaultRate}</Text> : null}
       </View>
     ),
   },
-  { key: 'lineAmount', header: 'Line Amount', width: '14%', align: 'right', value: (row) => row.lineAmount },
+  { key: 'amount', header: 'Amount', width: '14%', align: 'right', value: (row) => row.amount },
 ];
 
 export interface FactoryInvoiceDetailDocumentProps {
@@ -60,6 +61,13 @@ export function FactoryInvoiceDetailDocument({ viewModel }: FactoryInvoiceDetail
       </PdfSection>
 
       <PdfSection title="Totals">
+        {!viewModel.isFinalized ? (
+          <View style={styles.provisionalBanner}>
+            <Text style={styles.provisionalText}>
+              PROVISIONAL — Not yet finalized. GST and Total are subject to change until the invoice is finalized.
+            </Text>
+          </View>
+        ) : null}
         <View style={styles.totalsBlock}>
           <View style={styles.totalsRow}>
             <Text style={styles.totalsLabel}>Subtotal</Text>

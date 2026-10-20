@@ -14,6 +14,7 @@ import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canConfirmFactoryInvoices, canEditFactoryInvoiceFinancials } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { FACTORY_INVOICE_STATUS_LABELS, factoryInvoiceStatusTone, formatMoney } from './factory-invoice-ui.js';
+import { groupFinancialLinesByStyle } from './style-size-grouping.js';
 import type { FactoryInvoiceView } from './types.js';
 
 export function FactoryInvoiceDetailPage() {
@@ -114,6 +115,22 @@ export function FactoryInvoiceDetailPage() {
     Object.entries(rateInputs).some(([lineId, v]) => Number(v) !== invoice.lines.find((l) => l.id === lineId)?.unitRate) ||
     (gstInput != null && Number(gstInput) !== invoice.gstAmount) ||
     (remarksInput != null && remarksInput !== (invoice.remarks ?? ''));
+  // ISS-010: outside active per-line Accountant editing, show one financially-compatible row per
+  // Style (Style × Size duplication collapsed into a compact Size Breakdown) instead of one row
+  // per source line. Accountant editing keeps the ungrouped per-line table below so every source
+  // line's unit rate remains individually editable by its own id.
+  const groupedLines = editingFinancials ? null : groupFinancialLinesByStyle(invoice.lines);
+  const isFinalized = invoice.status === 'FINALIZED';
+  // ISS-025: GST is invoice-level, ACCOUNTANT-only, editable any time between FACTORY_CONFIRMED and
+  // FINALIZED (see factory-invoice.service.ts's updateFactoryInvoiceFinancials) — so right up until
+  // FINALIZED it is never a settled, authoritative figure: it may still be the generation-time default
+  // 0, or a value ACCOUNTANT has started entering but could still revise. A non-Accountant viewer
+  // (FACTORY_USER, or ADMIN's read-only view) has no way to tell "not yet entered" apart from
+  // "deliberately zero" and no authority to act on either, so for as long as the invoice is not
+  // FINALIZED they see only the authoritative pre-tax production amount, never the GST figure itself.
+  // ACCOUNTANT keeps the full, editable Subtotal/GST/Total breakdown at every status (clearly marked
+  // provisional pre-finalization below) — a zero they entered stays visible and editable, never hidden.
+  const showPreTaxConfirmation = !isFinalized && !canEditFinancials;
 
   return (
     <div className="space-y-6">
@@ -187,20 +204,54 @@ export function FactoryInvoiceDetailPage() {
         </Panel>
 
         <Panel title="Lines" padding="none">
-          <DataTable
-            rowKey="id"
-            data={invoice.lines}
-            columns={[
-              { key: 'style', header: 'Style', render: (r) => `${r.styleNumber} — ${r.styleName}` },
-              { key: 'size', header: 'Size', accessor: 'sizeLabel' },
-              { key: 'qty', header: 'Quantity', align: 'right', render: (r) => r.quantity.toLocaleString() },
-              { key: 'default', header: 'Default Rate', align: 'right', render: (r) => formatMoney(r.defaultRate) },
-              {
-                key: 'unitRate',
-                header: 'Unit Rate',
-                align: 'right',
-                render: (r) =>
-                  editingFinancials ? (
+          {groupedLines ? (
+            <DataTable
+              rowKey="groupKey"
+              data={groupedLines}
+              columns={[
+                {
+                  key: 'style',
+                  header: 'Style',
+                  className: 'whitespace-normal max-w-xs break-words',
+                  render: (g) => `${g.styleNumber} — ${g.styleName}`,
+                },
+                {
+                  key: 'sizeBreakdown',
+                  header: 'Size Breakdown',
+                  className: 'whitespace-normal max-w-none break-words',
+                  render: (g) => g.sizeEntries.map((entry) => `${entry.sizeLabel}: ${entry.quantity}`).join(' · '),
+                },
+                { key: 'totalQuantity', header: 'Total Qty', align: 'right', render: (g) => g.totalQuantity.toLocaleString() },
+                {
+                  key: 'rate',
+                  header: 'Rate',
+                  align: 'right',
+                  render: (g) => (
+                    <span>
+                      {formatMoney(g.unitRate)}
+                      {g.rateOverridden && (
+                        <span className="ml-1 text-xs text-muted-foreground">(default {formatMoney(g.defaultRate)})</span>
+                      )}
+                    </span>
+                  ),
+                },
+                { key: 'amount', header: 'Amount', align: 'right', render: (g) => formatMoney(g.amount) },
+              ]}
+            />
+          ) : (
+            <DataTable
+              rowKey="id"
+              data={invoice.lines}
+              columns={[
+                { key: 'style', header: 'Style', render: (r) => `${r.styleNumber} — ${r.styleName}` },
+                { key: 'size', header: 'Size', accessor: 'sizeLabel' },
+                { key: 'qty', header: 'Quantity', align: 'right', render: (r) => r.quantity.toLocaleString() },
+                { key: 'default', header: 'Default Rate', align: 'right', render: (r) => formatMoney(r.defaultRate) },
+                {
+                  key: 'unitRate',
+                  header: 'Unit Rate',
+                  align: 'right',
+                  render: (r) => (
                     <TextField
                       aria-label={`Unit rate for ${r.styleNumber} ${r.sizeLabel}`}
                       type="number"
@@ -211,45 +262,48 @@ export function FactoryInvoiceDetailPage() {
                       value={rateInputs[r.id] ?? String(r.unitRate)}
                       onChange={(e) => setRateInputs((current) => ({ ...current, [r.id]: e.target.value }))}
                     />
-                  ) : (
-                    <span>
-                      {formatMoney(r.unitRate)}
-                      {r.unitRate !== r.defaultRate && (
-                        <span className="ml-1 text-xs text-muted-foreground">(default {formatMoney(r.defaultRate)})</span>
-                      )}
-                    </span>
                   ),
-              },
-              { key: 'amount', header: 'Line Amount', align: 'right', render: (r) => formatMoney(r.lineAmount) },
-            ]}
-          />
+                },
+                { key: 'amount', header: 'Line Amount', align: 'right', render: (r) => formatMoney(r.lineAmount) },
+              ]}
+            />
+          )}
         </Panel>
 
         <div className="grid gap-4 md:grid-cols-2">
-          <TotalsPanel
-            title="Totals"
-            items={[
-              { label: 'Subtotal', value: formatMoney(invoice.subtotal) },
-              {
-                label: 'GST',
-                value: editingFinancials ? (
-                  <TextField
-                    aria-label="GST amount"
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    density="compact"
-                    width="xs"
-                    value={gstInput ?? String(invoice.gstAmount)}
-                    onChange={(e) => setGstInput(e.target.value)}
-                  />
-                ) : (
-                  formatMoney(invoice.gstAmount)
-                ),
-              },
-              { label: 'Total', value: formatMoney(invoice.total), emphasis: 'strong', dividerBefore: true },
-            ]}
-          />
+          {showPreTaxConfirmation ? (
+            <TotalsPanel
+              title={invoice.status === 'GENERATED' ? 'Factory Amount Confirmation' : 'Production Amount'}
+              description="GST and the final payable total are not final until the invoice is finalized."
+              items={[{ label: 'Production Amount (Before GST)', value: formatMoney(invoice.subtotal), emphasis: 'strong' }]}
+            />
+          ) : (
+            <TotalsPanel
+              title="Totals"
+              description={!isFinalized ? 'Provisional — GST and Total are not final until the invoice is finalized.' : undefined}
+              items={[
+                { label: 'Subtotal', value: formatMoney(invoice.subtotal) },
+                {
+                  label: 'GST',
+                  value: editingFinancials ? (
+                    <TextField
+                      aria-label="GST amount"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      density="compact"
+                      width="xs"
+                      value={gstInput ?? String(invoice.gstAmount)}
+                      onChange={(e) => setGstInput(e.target.value)}
+                    />
+                  ) : (
+                    formatMoney(invoice.gstAmount)
+                  ),
+                },
+                { label: 'Total', value: formatMoney(invoice.total), emphasis: 'strong', dividerBefore: true },
+              ]}
+            />
+          )}
           <Panel title="Remarks">
             {editingFinancials ? (
               <TextField

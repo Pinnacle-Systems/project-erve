@@ -19,7 +19,7 @@ function makeInvoice(overrides: Partial<FactoryInvoiceView> = {}): FactoryInvoic
     total: 1050,
     remarks: null,
     lines: [
-      { id: 'l1', saleOrderLineId: 'sol1', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, defaultRate: 100, unitRate: 100, lineAmount: 1000 },
+      { id: 'l1', saleOrderLineId: 'sol1', styleId: 'style-1', styleNumber: 'ST-1', styleName: 'Shirt', sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, defaultRate: 100, unitRate: 100, lineAmount: 1000 },
     ],
     createdAt: '2026-06-30T00:00:00.000Z',
     version: 1,

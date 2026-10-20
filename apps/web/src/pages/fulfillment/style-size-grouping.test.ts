@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { distinctSizeColumns, groupLinesByStyle, type StyleSizeQuantityLine } from './style-size-grouping.js';
+import {
+  distinctSizeColumns,
+  groupFinancialLinesByStyle,
+  groupLinesByStyle,
+  type FinancialStyleSizeLine,
+  type StyleSizeQuantityLine,
+} from './style-size-grouping.js';
 
 function makeLine(overrides: Partial<StyleSizeQuantityLine> = {}): StyleSizeQuantityLine {
   return {
@@ -121,5 +127,114 @@ describe('distinctSizeColumns', () => {
   it('does not merge two different sizeIds that happen to share a sizeCode text', () => {
     const lines = [makeLine({ sizeId: 'size-a', sizeCode: 'M' }), makeLine({ sizeId: 'size-b', sizeCode: 'M' })];
     expect(distinctSizeColumns(lines)).toHaveLength(2);
+  });
+});
+
+function makeFinancialLine(overrides: Partial<FinancialStyleSizeLine> = {}): FinancialStyleSizeLine {
+  return {
+    id: 'line-1',
+    styleId: 'style-1',
+    styleNumber: 'ST-001',
+    styleName: 'Classic Tee',
+    sizeId: 'size-1',
+    sizeCode: 'M',
+    sizeLabel: 'Medium',
+    quantity: 10,
+    unitRate: 100,
+    defaultRate: 100,
+    lineAmount: 1000,
+    ...overrides,
+  };
+}
+
+describe('groupFinancialLinesByStyle (ISS-010 Factory Invoice financial grouping)', () => {
+  it('single Style, single Size — one row', () => {
+    const groups = groupFinancialLinesByStyle([makeFinancialLine()]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ styleId: 'style-1', totalQuantity: 10, amount: 1000, unitRate: 100, rateOverridden: false });
+  });
+
+  it('single Style, multiple Sizes — collapses into one row with a Size breakdown and summed amount', () => {
+    const lines = [
+      makeFinancialLine({ id: 'l1', sizeId: 'size-a', sizeCode: 'S', sizeLabel: 'Small', quantity: 10, lineAmount: 1000 }),
+      makeFinancialLine({ id: 'l2', sizeId: 'size-b', sizeCode: 'M', sizeLabel: 'Medium', quantity: 20, lineAmount: 2000 }),
+    ];
+    const groups = groupFinancialLinesByStyle(lines);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.sizeEntries).toEqual([
+      { sizeId: 'size-a', sizeCode: 'S', sizeLabel: 'Small', quantity: 10 },
+      { sizeId: 'size-b', sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 },
+    ]);
+    expect(groups[0]?.totalQuantity).toBe(30);
+    expect(groups[0]?.amount).toBe(3000);
+    expect(groups[0]?.sourceLineIds).toEqual(['l1', 'l2']);
+  });
+
+  it('multiple Styles — one row each, in first-appearance order', () => {
+    const lines = [
+      makeFinancialLine({ id: 'l1', styleId: 'style-a', styleNumber: 'ST-A' }),
+      makeFinancialLine({ id: 'l2', styleId: 'style-b', styleNumber: 'ST-B' }),
+    ];
+    const groups = groupFinancialLinesByStyle(lines);
+    expect(groups.map((g) => g.styleId)).toEqual(['style-a', 'style-b']);
+  });
+
+  it('repeated Style+Size from different source allocations (e.g. two destinations) sums into one Size entry, not a second row', () => {
+    const lines = [
+      makeFinancialLine({ id: 'l1', sizeId: 'size-1', quantity: 10, lineAmount: 1000 }),
+      makeFinancialLine({ id: 'l2', sizeId: 'size-1', quantity: 5, lineAmount: 500 }),
+    ];
+    const groups = groupFinancialLinesByStyle(lines);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.sizeEntries).toEqual([{ sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 15 }]);
+    expect(groups[0]?.amount).toBe(1500);
+  });
+
+  it('same Style with different persisted (ACCOUNTANT-overridden) rates stays as separate, distinguishable rows', () => {
+    const lines = [
+      makeFinancialLine({ id: 'l1', sizeId: 'size-a', unitRate: 100, defaultRate: 100, quantity: 10, lineAmount: 1000 }),
+      makeFinancialLine({ id: 'l2', sizeId: 'size-b', unitRate: 120, defaultRate: 100, quantity: 5, lineAmount: 600 }),
+    ];
+    const groups = groupFinancialLinesByStyle(lines);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.unitRate)).toEqual([100, 120]);
+    expect(groups[1]?.rateOverridden).toBe(true);
+    // Never averaged or merged into a single blended rate/amount.
+    expect(groups[0]?.amount).toBe(1000);
+    expect(groups[1]?.amount).toBe(600);
+  });
+
+  it('does not invent tax-treatment incompatibility that does not exist on this line shape — grouping key is styleId+unitRate only', () => {
+    const lines = [
+      makeFinancialLine({ id: 'l1', sizeId: 'size-a', unitRate: 100, quantity: 10 }),
+      makeFinancialLine({ id: 'l2', sizeId: 'size-b', unitRate: 100, quantity: 5 }),
+    ];
+    expect(groupFinancialLinesByStyle(lines)).toHaveLength(1);
+  });
+
+  it('multiple Styles sharing identical display names remain separate rows (grouped by styleId, not styleName)', () => {
+    const lines = [
+      makeFinancialLine({ id: 'l1', styleId: 'style-a', styleNumber: 'ST-A', styleName: 'Classic Tee' }),
+      makeFinancialLine({ id: 'l2', styleId: 'style-b', styleNumber: 'ST-B', styleName: 'Classic Tee' }),
+    ];
+    const groups = groupFinancialLinesByStyle(lines);
+    expect(groups).toHaveLength(2);
+  });
+
+  it('grouped quantities and amounts reconcile exactly to the original source lines', () => {
+    const lines = [
+      makeFinancialLine({ id: 'l1', styleId: 'style-a', sizeId: 'size-a', quantity: 10, lineAmount: 1000 }),
+      makeFinancialLine({ id: 'l2', styleId: 'style-a', sizeId: 'size-b', quantity: 20, lineAmount: 2000 }),
+      makeFinancialLine({ id: 'l3', styleId: 'style-b', sizeId: 'size-a', quantity: 7, lineAmount: 700 }),
+    ];
+    const groups = groupFinancialLinesByStyle(lines);
+    const totalQuantity = groups.reduce((sum, g) => sum + g.totalQuantity, 0);
+    const totalAmount = groups.reduce((sum, g) => sum + g.amount, 0);
+    expect(totalQuantity).toBe(lines.reduce((sum, l) => sum + l.quantity, 0));
+    expect(totalAmount).toBe(lines.reduce((sum, l) => sum + l.lineAmount, 0));
+  });
+
+  it('returns an empty array for no lines', () => {
+    expect(groupFinancialLinesByStyle([])).toEqual([]);
   });
 });

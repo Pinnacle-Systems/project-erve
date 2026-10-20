@@ -103,6 +103,11 @@ describe('Factory Invoice — generation from finalized Factory Packing List', (
     expect(res.body.data.saleOrder.saleOrderNumber).toBe(fixture.saleOrder.saleOrderNumber);
     expect(res.body.data.lines).toHaveLength(1);
     expect(res.body.data.lines[0].saleOrderLineId).toBe(fixture.saleOrderLineId);
+    // ISS-010: stable Style/Size identity must be exposed so the web client can group by it
+    // rather than by display text (styleNumber/sizeCode), which is never a safe grouping key.
+    expect(res.body.data.lines[0].styleId).toBe(fixture.stock.styleId);
+    expect(typeof res.body.data.lines[0].sizeId).toBe('string');
+    expect(res.body.data.lines[0].sizeId.length).toBeGreaterThan(0);
     expect(res.body.data.lines[0].quantity).toBe(10);
     expect(res.body.data.lines[0].defaultRate).toBe(150);
     expect(res.body.data.lines[0].unitRate).toBe(150);
@@ -454,6 +459,9 @@ describe('Factory Invoice — ACCOUNTANT finalization', () => {
     expect(res.body.data.finalizedBy).toBeTruthy();
     expect(res.body.data.finalizedAt).toBeTruthy();
     expect(res.body.data.subtotal).toBe(500);
+    // ISS-025: ACCOUNTANT never touched GST here, so it finalizes at its generation-time default —
+    // a legitimate zero, persisted and returned as-is, never coerced/omitted because it's zero.
+    expect(res.body.data.gstAmount).toBe(0);
     expect(res.body.data.total).toBe(500);
 
     await patchFinancials(accountantToken, invoiceId, { expectedVersion: res.body.data.version, gstAmount: 1 }).expect(400);
@@ -510,7 +518,12 @@ describe('Factory Invoice — RBAC/IDOR', () => {
     const { invoiceId } = await setupFinalizedInvoice(10);
     const other = await createSingleFactoryApprovedSaleOrder(app, 5);
     const otherFactoryToken = await createFactoryUserToken(other.stock.factoryId);
-    await getInvoice(otherFactoryToken, invoiceId).expect(403);
+    // ISS-010's additive styleId/sizeId fields are mapped from the same already-authorized
+    // `record.lines` the rest of the view is built from (toFactoryInvoiceView in
+    // factory-invoice.service.ts) — assertFactoryInvoiceRowAccess still runs first and rejects
+    // the whole read, so there is no separate, unguarded path that could leak them.
+    const res = await getInvoice(otherFactoryToken, invoiceId).expect(403);
+    expect(res.body.data).toBeUndefined();
   });
 
   it('rejects FACTORY_USER from financial edits and finalize', async () => {

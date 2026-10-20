@@ -76,8 +76,10 @@ function buildInvoice(overrides: Partial<FactoryInvoiceView> = {}): FactoryInvoi
       {
         id: 'line-1',
         saleOrderLineId: 'sol-1',
+        styleId: 'style-1',
         styleNumber: 'ST-001',
         styleName: 'Classic Tee',
+        sizeId: 'size-1',
         sizeCode: 'M',
         sizeLabel: 'Medium',
         quantity: 10,
@@ -170,7 +172,7 @@ describe('FactoryInvoiceDetailPage — ACCOUNTANT', () => {
         finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
         finalizedAt: '2026-09-03T00:00:00.000Z',
         lines: [
-          { id: 'line-1', saleOrderLineId: 'sol-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, defaultRate: 150, unitRate: 200, lineAmount: 2000 },
+          { id: 'line-1', saleOrderLineId: 'sol-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, defaultRate: 150, unitRate: 200, lineAmount: 2000 },
         ],
       }),
       'ACCOUNTANT',
@@ -242,6 +244,182 @@ describe('FactoryInvoiceDetailPage — ACCOUNTANT', () => {
   it('rejects finalizing a not-yet-confirmed invoice at the UI level by never showing Finalize', async () => {
     await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
     expect(buttonByText('Finalize')).toBeNull();
+  });
+});
+
+describe('FactoryInvoiceDetailPage — ISS-025 pre-tax Factory confirmation', () => {
+  // --- FACTORY_USER: pre-tax only while not FINALIZED, real GST once FINALIZED ---
+
+  it('shows a plain pre-tax Production Amount to FACTORY_USER on a GENERATED invoice, never a misleading GST ₹0.00 row', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED', subtotal: 1500, gstAmount: 0, total: 1500 }), 'FACTORY_USER');
+    expect(content()).toContain('Factory Amount Confirmation');
+    expect(content()).toContain('Production Amount (Before GST)');
+    expect(content()).toContain('₹1500.00');
+    expect(content()).not.toContain('₹0.00');
+    expect(buttonByText('Confirm Factory Invoice')).not.toBeNull();
+  });
+
+  it('keeps FACTORY_USER on the plain pre-tax amount at FACTORY_CONFIRMED too — GST is still not settled until FINALIZED', async () => {
+    await renderPage(
+      buildInvoice({
+        status: 'FACTORY_CONFIRMED',
+        subtotal: 1500,
+        gstAmount: 75, // Accountant has started entering a value, but it's still not final
+        total: 1575,
+        factoryConfirmedBy: { id: 'u1', name: 'Fac User', email: 'f@test.local' },
+        factoryConfirmedAt: '2026-09-02T00:00:00.000Z',
+      }),
+      'FACTORY_USER',
+    );
+    // No longer "Factory Amount Confirmation" (nothing left to confirm), but still the plain pre-tax framing.
+    expect(content()).toContain('Production Amount (Before GST)');
+    expect(content()).toContain('₹1500.00');
+    expect(content()).not.toContain('₹75.00'); // the in-progress GST figure is not shown to this viewer yet
+    expect(buttonByText('Confirm Factory Invoice')).toBeNull();
+  });
+
+  it('shows the real, finalized GST/Total breakdown to FACTORY_USER once the invoice is FINALIZED', async () => {
+    await renderPage(
+      buildInvoice({
+        status: 'FINALIZED',
+        subtotal: 1500,
+        gstAmount: 75,
+        total: 1575,
+        factoryConfirmedBy: { id: 'u1', name: 'Fac User', email: 'f@test.local' },
+        factoryConfirmedAt: '2026-09-02T00:00:00.000Z',
+        finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
+        finalizedAt: '2026-09-03T00:00:00.000Z',
+      }),
+      'FACTORY_USER',
+    );
+    expect(content()).not.toContain('Factory Amount Confirmation');
+    expect(content()).not.toContain('Production Amount (Before GST)');
+    expect(content()).toContain('₹75.00');
+    expect(content()).toContain('₹1575.00');
+    expect(content()).not.toContain('Provisional');
+  });
+
+  it('shows a legitimate finalized GST of zero to FACTORY_USER as an actual ₹0.00 figure, not hidden or pre-tax-only', async () => {
+    await renderPage(
+      buildInvoice({
+        status: 'FINALIZED',
+        subtotal: 1500,
+        gstAmount: 0,
+        total: 1500,
+        finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
+        finalizedAt: '2026-09-03T00:00:00.000Z',
+      }),
+      'FACTORY_USER',
+    );
+    expect(content()).not.toContain('Production Amount (Before GST)');
+    expect(content()).toContain('Subtotal');
+    expect(content()).toContain('₹0.00');
+  });
+
+  // --- ADMIN: same non-Accountant treatment as FACTORY_USER ---
+
+  it('shows the same plain pre-tax confirmation to ADMIN (a read-only, non-Accountant viewer) on a GENERATED invoice', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ADMIN');
+    expect(content()).toContain('Production Amount (Before GST)');
+    expect(content()).not.toContain('₹0.00');
+  });
+
+  it('keeps ADMIN on the plain pre-tax amount at FACTORY_CONFIRMED too', async () => {
+    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', gstAmount: 40, total: 1540 }), 'ADMIN');
+    expect(content()).toContain('Production Amount (Before GST)');
+    expect(content()).not.toContain('₹40.00');
+  });
+
+  it('shows ADMIN the real breakdown once FINALIZED', async () => {
+    await renderPage(buildInvoice({ status: 'FINALIZED', gstAmount: 40, total: 1540 }), 'ADMIN');
+    expect(content()).not.toContain('Production Amount (Before GST)');
+    expect(content()).toContain('₹40.00');
+  });
+
+  // --- ACCOUNTANT: always the full, editable breakdown; marked provisional pre-finalization ---
+
+  it('still shows the full Subtotal/GST/Total breakdown to ACCOUNTANT on a GENERATED invoice, marked Provisional', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
+    expect(content()).toContain('Subtotal');
+    expect(content()).toContain('₹0.00'); // the real (not-yet-set) GST value, visible to the role authorized to set it
+    expect(content()).not.toContain('Factory Amount Confirmation');
+    expect(content()).toContain('Provisional');
+  });
+
+  it('shows the full breakdown to ACCOUNTANT at FACTORY_CONFIRMED, editable and marked Provisional', async () => {
+    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', gstAmount: 75, total: 1575 }), 'ACCOUNTANT');
+    expect(content()).toContain('Provisional');
+    expect(content()).toContain('₹1575.00');
+  });
+
+  it('a recorded GST of exactly zero at FACTORY_CONFIRMED remains in the editable input, never treated as missing', async () => {
+    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', gstAmount: 0, total: 1500 }), 'ACCOUNTANT');
+    // The GST TextField (type="number") is prefilled with the real stored value, including zero —
+    // never blank/disabled/replaced by a "not set" placeholder.
+    expect(inputs().some((i) => i.type === 'number' && i.value === '0')).toBe(true);
+  });
+
+  it('drops the Provisional label once FINALIZED — the stored GST is now the actual, settled figure', async () => {
+    await renderPage(
+      buildInvoice({
+        status: 'FINALIZED',
+        gstAmount: 75,
+        total: 1575,
+        finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
+        finalizedAt: '2026-09-03T00:00:00.000Z',
+      }),
+      'ACCOUNTANT',
+    );
+    expect(content()).not.toContain('Provisional');
+    expect(content()).toContain('₹75.00');
+  });
+
+  it('shows a legitimate finalized GST of zero to ACCOUNTANT as an actual ₹0.00 figure, not hidden', async () => {
+    await renderPage(
+      buildInvoice({
+        status: 'FINALIZED',
+        gstAmount: 0,
+        total: 1500,
+        finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
+        finalizedAt: '2026-09-03T00:00:00.000Z',
+      }),
+      'ACCOUNTANT',
+    );
+    expect(content()).not.toContain('Provisional');
+    expect(content()).toContain('Subtotal');
+    expect(content()).toContain('₹0.00');
+  });
+});
+
+describe('FactoryInvoiceDetailPage — ISS-010 Style-level financial grouping', () => {
+  function multiSizeInvoice(): FactoryInvoiceView {
+    return buildInvoice({
+      status: 'FINALIZED',
+      finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
+      finalizedAt: '2026-09-03T00:00:00.000Z',
+      subtotal: 3000,
+      total: 3000,
+      lines: [
+        { id: 'line-1', saleOrderLineId: 'sol-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-s', sizeCode: 'S', sizeLabel: 'Small', quantity: 10, defaultRate: 100, unitRate: 100, lineAmount: 1000 },
+        { id: 'line-2', saleOrderLineId: 'sol-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-m', sizeCode: 'M', sizeLabel: 'Medium', quantity: 20, defaultRate: 100, unitRate: 100, lineAmount: 2000 },
+      ],
+    });
+  }
+
+  it('collapses a Style packed in multiple Sizes into a single financial row with a Size Breakdown and summed Amount', async () => {
+    await renderPage(multiSizeInvoice(), 'ACCOUNTANT');
+    // Style text appears exactly once as a row label (not once per Size).
+    expect(content().match(/ST-001/g)?.length).toBe(1);
+    expect(content()).toContain('Small: 10');
+    expect(content()).toContain('Medium: 20');
+    expect(content()).toContain('₹3000.00'); // summed line amount for the group
+  });
+
+  it('keeps the ungrouped, per-line editable table for ACCOUNTANT while actively editing (FACTORY_CONFIRMED)', async () => {
+    const invoice = { ...multiSizeInvoice(), status: 'FACTORY_CONFIRMED' as const, finalizedBy: null, finalizedAt: null };
+    await renderPage(invoice, 'ACCOUNTANT');
+    // Two separate editable Unit Rate inputs — one per source line — proving grouping is bypassed here.
+    expect(inputs().filter((i) => i.value === '100')).toHaveLength(2);
   });
 });
 

@@ -1,6 +1,7 @@
 import { formatPdfDateTime, formatPdfMoney } from '../../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import { FACTORY_INVOICE_STATUS_LABELS } from '../../factory-invoice-ui.js';
+import { groupFinancialLinesByStyle } from '../../style-size-grouping.js';
 import type { FactoryInvoiceView } from '../../types.js';
 
 export interface FactoryInvoiceDetailPdfMeta {
@@ -8,15 +9,16 @@ export interface FactoryInvoiceDetailPdfMeta {
   generatedBy?: string | null;
 }
 
+/** ISS-010: one row per financially-compatible Style (Style × Size duplication collapsed into a Size Breakdown), not one row per source line — see groupFinancialLinesByStyle. */
 export interface FactoryInvoiceDetailLineRow {
   id: string;
   styleDisplay: string;
-  sizeLabel: string;
-  quantity: number;
+  sizeBreakdown: string;
+  totalQuantity: number;
+  rate: string;
   defaultRate: string;
-  unitRate: string;
   rateOverridden: boolean;
-  lineAmount: string;
+  amount: string;
 }
 
 export interface FactoryInvoiceDetailPdfViewModel {
@@ -30,6 +32,8 @@ export interface FactoryInvoiceDetailPdfViewModel {
   gstAmount: string;
   total: string;
   remarks: string | null;
+  /** ISS-025: GST/Total are only settled once the invoice is FINALIZED — pre-finalization they may still be the generation-time default or an in-progress Accountant entry, so the document qualifies them rather than presenting them as a verified statutory calculation. */
+  isFinalized: boolean;
 }
 
 /**
@@ -44,6 +48,11 @@ export interface FactoryInvoiceDetailPdfViewModel {
  * time, unitRate the current — possibly Accountant-overridden — invoice rate) — never re-resolved
  * from today's StyleFactoryMapping master, so a historical invoice always prints its own saved
  * values. Money uses the app's INR convention (formatPdfMoney — base Helvetica has no ₹ glyph).
+ *
+ * ISS-010: lines are grouped by financially-compatible Style (groupFinancialLinesByStyle) before
+ * formatting — a Style packed across several Sizes prints once with a compact Size Breakdown
+ * column, and `amount` is the sum of each source line's own persisted lineAmount, never
+ * totalQuantity × rate, so per-line rounding is never silently re-derived.
  */
 export function buildFactoryInvoiceDetailViewModel(
   invoice: FactoryInvoiceView,
@@ -65,15 +74,15 @@ export function buildFactoryInvoiceDetailViewModel(
     },
   ];
 
-  const lines: FactoryInvoiceDetailLineRow[] = invoice.lines.map((line) => ({
-    id: line.id,
-    styleDisplay: `${line.styleNumber} — ${line.styleName}`,
-    sizeLabel: line.sizeLabel,
-    quantity: line.quantity,
-    defaultRate: formatPdfMoney(line.defaultRate, 'INR'),
-    unitRate: formatPdfMoney(line.unitRate, 'INR'),
-    rateOverridden: line.unitRate !== line.defaultRate,
-    lineAmount: formatPdfMoney(line.lineAmount, 'INR'),
+  const lines: FactoryInvoiceDetailLineRow[] = groupFinancialLinesByStyle(invoice.lines).map((group) => ({
+    id: group.groupKey,
+    styleDisplay: `${group.styleNumber} — ${group.styleName}`,
+    sizeBreakdown: group.sizeEntries.map((entry) => `${entry.sizeLabel}: ${entry.quantity}`).join(' · '),
+    totalQuantity: group.totalQuantity,
+    rate: formatPdfMoney(group.unitRate, 'INR'),
+    defaultRate: formatPdfMoney(group.defaultRate, 'INR'),
+    rateOverridden: group.rateOverridden,
+    amount: formatPdfMoney(group.amount, 'INR'),
   }));
 
   return {
@@ -87,5 +96,6 @@ export function buildFactoryInvoiceDetailViewModel(
     gstAmount: formatPdfMoney(invoice.gstAmount, 'INR'),
     total: formatPdfMoney(invoice.total, 'INR'),
     remarks: invoice.remarks,
+    isFinalized: invoice.status === 'FINALIZED',
   };
 }
