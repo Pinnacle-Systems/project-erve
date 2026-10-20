@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GSTIN_REGEX, normalizeGstin } from '@erve/shared';
 import { optionalPageQueryFields } from '../../utils/pagination.js';
 import { SUPPLIED_BARCODE_MESSAGE, SUPPLIED_BARCODE_PATTERN } from './barcode.util.js';
 
@@ -153,11 +154,10 @@ export const distributorStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 
 // Standard 15-character Indian GSTIN: 2-digit state code, 10-character PAN,
 // 1-digit entity number, literal 'Z', 1 alphanumeric checksum.
-export const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+export { GSTIN_REGEX } from '@erve/shared';
 const gstinSchema = z
   .string()
-  .trim()
-  .toUpperCase()
+  .overwrite(normalizeGstin)
   .regex(GSTIN_REGEX, 'Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
 
 // Order Sheet Purchase Mode: authoritative on the Distributor, required at

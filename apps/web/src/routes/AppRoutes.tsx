@@ -1,4 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { GST_COMPLIANCE_SETTINGS_VIEW_ROLES } from '@erve/shared';
+import { GstComplianceSettingsPage } from '../pages/gst-compliance/GstComplianceSettingsPage.js';
 import { ROLES } from '@erve/types';
 import { DashboardPage } from '../pages/DashboardPage.js';
 import { ForbiddenPage } from '../pages/ForbiddenPage.js';
@@ -144,6 +146,9 @@ export function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forbidden" element={<ForbiddenPage />} />
+      <Route path="/gst-compliance/settings" element={<RoleRoute allowed={GST_COMPLIANCE_SETTINGS_VIEW_ROLES}><AppLayout /></RoleRoute>}>
+        <Route index element={<GstComplianceSettingsPage />} />
+      </Route>
       <Route
         path="/dashboard"
         element={

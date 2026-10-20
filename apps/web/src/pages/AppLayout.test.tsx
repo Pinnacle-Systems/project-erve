@@ -106,6 +106,12 @@ function sidebarTextContent(): string {
 }
 
 describe('AppLayout — role-gated navigation', () => {
+  it.each(['ADMIN', 'ACCOUNTANT', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER', 'DISTRIBUTOR'] as Role[])(
+    'shows GST Compliance Settings only to authorized %s', async (role) => {
+      await renderAppLayout([role]);
+      expect(sidebarLinkLabels().includes('GST Compliance Settings')).toBe(role === 'ADMIN' || role === 'ACCOUNTANT');
+    },
+  );
   it.each([
     'ADMIN',
     'ACCOUNTANT',

@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { distributorStatusSchema, factoryStatusSchema, GSTIN_REGEX } from '../master-data/master-data.validation.js';
+import { distributorStatusSchema, factoryStatusSchema } from '../master-data/master-data.validation.js';
+import { GSTIN_REGEX, normalizeGstin } from '@erve/shared';
 
 // Blank/whitespace-only input is treated as absent before format-checking —
 // forms commonly submit a blank optional field as "" rather than
@@ -10,8 +11,7 @@ const optionalGstinSchema = z.preprocess(
   (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
   z
     .string()
-    .trim()
-    .toUpperCase()
+    .overwrite(normalizeGstin)
     .regex(GSTIN_REGEX, 'Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)')
     .nullable()
     .optional(),

@@ -156,6 +156,12 @@ function getPageContent(): string {
 }
 
 describe('AppRoutes Permissions', () => {
+  it.each(['ADMIN', 'ACCOUNTANT', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER', 'DISTRIBUTOR'] as Role[])(
+    'guards GST Compliance Settings for %s', async (role) => {
+      await renderRoutes(role, '/gst-compliance/settings');
+      expect(getPageContent()).toContain(role === 'ADMIN' || role === 'ACCOUNTANT' ? 'GST Compliance Settings' : 'ForbiddenPage');
+    },
+  );
   it.each([
     'ADMIN',
     'MERCHANDISER',

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -442,6 +443,11 @@ export function SaleOrderFormPage() {
       for (const group of distributorGroups) {
         if (!group.distributorId) throw new Error('Every Distributor group must have a Distributor selected');
         if (group.destinations.length === 0) throw new Error('Every Distributor group needs at least one destination');
+        for (const destination of group.destinations) {
+          if (normalizeGstin(destination.gstin) && !isValidGstinFormat(destination.gstin)) {
+            throw new Error('Enter a valid 15-character GSTIN for the destination');
+          }
+        }
       }
       const distributorIds = distributorGroups.map((g) => g.distributorId);
       if (new Set(distributorIds).size !== distributorIds.length) {
@@ -469,7 +475,7 @@ export function SaleOrderFormPage() {
           state: d.state,
           country: d.country,
           postalCode: d.postalCode || null,
-          gstin: d.gstin || null,
+          gstin: normalizeGstin(d.gstin) || null,
         })),
       }));
       // DEMO-016: one total per Style per destination — no sizeId, no line

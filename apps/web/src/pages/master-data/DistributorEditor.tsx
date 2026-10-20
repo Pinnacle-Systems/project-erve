@@ -7,7 +7,7 @@ import { FormGrid, FormSection } from '@erve/layout';
 import { createEnterToNextHandler } from '@erve/app-components';
 import { apiClient } from '../../lib/api-client.js';
 
-const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 
 const emptyForm = {
   code: '',
@@ -69,8 +69,8 @@ export function DistributorEditor({
       if (!form.name.trim() || !form.gstin.trim()) {
         throw new Error('Name and GSTIN are required');
       }
-      const gstin = form.gstin.trim().toUpperCase();
-      if (!GSTIN_PATTERN.test(gstin)) {
+      const gstin = normalizeGstin(form.gstin);
+      if (!isValidGstinFormat(gstin)) {
         throw new Error('Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
       }
       const payload = Object.fromEntries(

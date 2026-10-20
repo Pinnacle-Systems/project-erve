@@ -292,6 +292,7 @@ enum HistoricalDocumentRelationshipType {
 // ---------------------------------------------------------------------------
 
 model User {
+  gstComplianceSettingsUpdates GstComplianceSettings[] @relation("GstComplianceSettingsUpdater")
   id           String     @id
   email        String     @unique
   mobile       String?    @unique
@@ -3441,6 +3442,32 @@ model JobOrderStageStatus {
 // ---------------------------------------------------------------------------
 // Audit
 // ---------------------------------------------------------------------------
+
+enum GstIntegrationMode {
+  DEMO
+  LIVE
+}
+
+enum GstinVerificationLevel {
+  BASIC
+  COMPLETE
+}
+
+// Application settings only. Provider credentials and verification history do
+// not belong here. Scope resolution is owned by the settings repository.
+model GstComplianceSettings {
+  scope                           String                 @id @default("APPLICATION")
+  integrationMode                 GstIntegrationMode     @default(DEMO) @map("integration_mode")
+  onlineGstinVerificationEnabled   Boolean                @default(false) @map("online_gstin_verification_enabled")
+  gstinVerificationLevel           GstinVerificationLevel @default(BASIC) @map("gstin_verification_level")
+  ewayBillGenerationEnabled        Boolean                @default(false) @map("eway_bill_generation_enabled")
+  version                         Int                    @default(1)
+  updatedAt                       DateTime               @updatedAt @map("updated_at")
+  updatedById                     String                 @map("updated_by_id")
+  updatedBy                       User                   @relation("GstComplianceSettingsUpdater", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@map("gst_compliance_settings")
+}
 
 model AuditLog {
   id         String   @id

@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom';
+import { canViewGstComplianceSettings } from '@erve/shared';
 import { canViewRetailStores } from '../auth/permissions.js';
 import {
   ClipboardList,
@@ -102,6 +103,9 @@ export function AppLayout() {
         ...(canViewHsns(user) ? [{ to: '/hsns', label: 'HSN Codes', icon: Hash }] : []),
         ...(canViewGstRuleSets(user)
           ? [{ to: '/gst-rule-sets', label: 'GST Rule Sets', icon: Percent }]
+          : []),
+        ...(user && canViewGstComplianceSettings(user)
+          ? [{ to: '/gst-compliance/settings', label: 'GST Compliance Settings', icon: Percent }]
           : []),
         ...(canManageUsers(user)
           ? [{ to: '/master-data/users', label: 'Users', icon: Users }]

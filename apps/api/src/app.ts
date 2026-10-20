@@ -8,6 +8,10 @@ import { requestLogger } from './middleware/request-logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { successResponse, errorResponse } from './utils/response.js';
 import { prisma } from './db/prisma.js';
+import { env } from './config/env.js';
+import { createGstComplianceSettingsRouter } from './modules/gst-compliance/gst-compliance-settings.routes.js';
+import { createGstComplianceSettingsService } from './modules/gst-compliance/gst-compliance-settings.service.js';
+import { gstComplianceSettingsRepository } from './modules/gst-compliance/gst-compliance-settings.repository.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
 import {
@@ -129,6 +133,9 @@ export function createApp() {
   app.use('/price-lists', priceListsRouter);
   app.use('/hsns', hsnsRouter);
   app.use('/gst-rule-sets', gstRuleSetsRouter);
+  app.use('/gst-compliance/settings', createGstComplianceSettingsRouter(
+    createGstComplianceSettingsService(gstComplianceSettingsRepository, () => env.GST_COMPLIANCE_LIVE_AUTHORIZED),
+  ));
   app.use('/purchase-orders', purchaseOrdersRouter);
   app.use('/job-orders', jobOrdersRouter);
   app.use('/sale-orders', saleOrdersRouter);
