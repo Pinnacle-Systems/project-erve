@@ -603,6 +603,43 @@ describe('PackingListPage carton label print/download (DEMO-019)', () => {
 // ISS-007/ISS-010: a carton's contents render as one Style row with Sizes as
 // columns, rather than one list item per Style+Size combination.
 describe('PackingListPage carton Style x Size presentation (ISS-007/ISS-010)', () => {
+  it('shows the destination-authorized Style image for every carton row and does not leak images between destinations (ISS-035)', async () => {
+    // A carton projection can have null primaryImage even when the destination
+    // summary already includes the same Style's real primary image.
+    vi.stubGlobal('IntersectionObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const image = {
+      id: 'img-1', styleId: 'style-1', fileId: 'file-1', fileName: 'style.jpg',
+      mimeType: 'image/jpeg', sizeBytes: 100, isPrimary: true, sortOrder: 0,
+      createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z',
+    };
+    const first = buildPackingList().destinations[0]!;
+    const firstCartons = [
+      buildCarton(),
+      buildCarton({ id: 'carton-2', cartonNumber: 'C2' }),
+    ];
+    const secondCarton = buildCarton({
+      id: 'carton-3', cartonNumber: 'C3', destinationId: 'dest-2',
+      lines: buildCarton().lines.map((line) => ({ ...line, currentDestinationId: 'dest-2' })),
+    });
+    await renderPage(buildPackingList({
+      destinations: [
+        { ...first, lines: first.lines.map((line) => ({ ...line, primaryImage: image })), cartons: firstCartons },
+        { ...first, id: 'dest-2', lines: first.lines, cartons: [secondCarton] },
+      ],
+    }));
+
+    const cells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
+    expect(cells).toHaveLength(7); // destination 1: Required, Packed, two cartons; destination 2: three rows
+    expect(cells.slice(0, 4).every((cell) => cell.querySelector('button[aria-label="View style image"]'))).toBe(true);
+    expect(cells.slice(4).every((cell) => !cell.querySelector('button[aria-label="View style image"]'))).toBe(true);
+    // The thumbnail must be resolved only from the already-authorized Packing List payload.
+    expect(vi.mocked(apiClient.get)).toHaveBeenCalledTimes(1);
+  });
+
   it('groups multiple Sizes of the same Style into a single row instead of repeating the Style', async () => {
     const carton = buildCarton({
       lines: [
