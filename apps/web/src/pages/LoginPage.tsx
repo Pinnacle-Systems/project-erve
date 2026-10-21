@@ -34,11 +34,11 @@ export function LoginPage() {
     },
   });
 
-  const errorMessage =
-    mutation.isError && isAxiosError(mutation.error)
-      ? (mutation.error.response?.data?.error?.message as string | undefined) ??
-        'Unable to sign in. Please try again.'
-      : undefined;
+  const errorMessage = mutation.isError
+    ? (isAxiosError(mutation.error)
+        ? (mutation.error.response?.data?.error?.message as string | undefined)
+        : undefined) ?? 'Unable to sign in. Please try again.'
+    : undefined;
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
