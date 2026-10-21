@@ -254,7 +254,7 @@ describe('FactoryInvoiceDetailPage — ISS-025 pre-tax Factory confirmation', ()
     await renderPage(buildInvoice({ status: 'GENERATED', subtotal: 1500, gstAmount: 0, total: 1500 }), 'FACTORY_USER');
     expect(content()).toContain('Factory Amount Confirmation');
     expect(content()).toContain('Production Amount (Before GST)');
-    expect(content()).toContain('₹1500.00');
+    expect(content()).toContain('₹1,500.00');
     expect(content()).not.toContain('₹0.00');
     expect(buttonByText('Confirm Factory Invoice')).not.toBeNull();
   });
@@ -273,7 +273,7 @@ describe('FactoryInvoiceDetailPage — ISS-025 pre-tax Factory confirmation', ()
     );
     // No longer "Factory Amount Confirmation" (nothing left to confirm), but still the plain pre-tax framing.
     expect(content()).toContain('Production Amount (Before GST)');
-    expect(content()).toContain('₹1500.00');
+    expect(content()).toContain('₹1,500.00');
     expect(content()).not.toContain('₹75.00'); // the in-progress GST figure is not shown to this viewer yet
     expect(buttonByText('Confirm Factory Invoice')).toBeNull();
   });
@@ -295,7 +295,7 @@ describe('FactoryInvoiceDetailPage — ISS-025 pre-tax Factory confirmation', ()
     expect(content()).not.toContain('Factory Amount Confirmation');
     expect(content()).not.toContain('Production Amount (Before GST)');
     expect(content()).toContain('₹75.00');
-    expect(content()).toContain('₹1575.00');
+    expect(content()).toContain('₹1,575.00');
     expect(content()).not.toContain('Provisional');
   });
 
@@ -349,7 +349,7 @@ describe('FactoryInvoiceDetailPage — ISS-025 pre-tax Factory confirmation', ()
   it('shows the full breakdown to ACCOUNTANT at FACTORY_CONFIRMED, editable and marked Provisional', async () => {
     await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', gstAmount: 75, total: 1575 }), 'ACCOUNTANT');
     expect(content()).toContain('Provisional');
-    expect(content()).toContain('₹1575.00');
+    expect(content()).toContain('₹1,575.00');
   });
 
   it('a recorded GST of exactly zero at FACTORY_CONFIRMED remains in the editable input, never treated as missing', async () => {
@@ -412,7 +412,7 @@ describe('FactoryInvoiceDetailPage — ISS-010 Style-level financial grouping', 
     expect(content().match(/ST-001/g)?.length).toBe(1);
     expect(content()).toContain('Small: 10');
     expect(content()).toContain('Medium: 20');
-    expect(content()).toContain('₹3000.00'); // summed line amount for the group
+    expect(content()).toContain('₹3,000.00'); // summed line amount for the group
   });
 
   it('keeps the ungrouped, per-line editable table for ACCOUNTANT while actively editing (FACTORY_CONFIRMED)', async () => {
