@@ -153,7 +153,7 @@ describe('buildDispatchOrderDetailViewModel', () => {
     expect(withoutStyleImage).toBeGreaterThan(0); // shared ERVE logo remains
     expect(withStyleImage).toBeGreaterThan(withoutStyleImage);
   });
-  it('carries only the API primary image into destination rows and Style/Size totals', () => {
+  it('carries only the API primary image into destination Style rows and overall Style/Size totals', () => {
     const primaryImage = {
       id: 'primary',
       styleId: 'style-1',
@@ -179,11 +179,15 @@ describe('buildDispatchOrderDetailViewModel', () => {
     });
     const vm = buildDispatchOrderDetailViewModel(so, nullRelated, { generatedAt: '' });
     const ref = { id: 'file-primary', path: '/styles/style-1/images/primary/content' };
+    // One row per Style (style-1, style-2), not one per Style+Size line.
     expect(
-      vm.distributorGroups[0]?.destinations[0]?.lines.map((line) => line.primaryImage),
-    ).toEqual([ref, ref, null]);
-    expect(vm.styleSizeTotals.map((line) => line.primaryImage)).toEqual([ref, ref, null]);
-    expect(vm.styleSizeTotals.map((line) => line.quantity)).toEqual([10, 10, 10]);
+      vm.distributorGroups[0]?.destinations[0]?.styleRows.map((row) => row.primaryImage),
+    ).toEqual([ref, null]);
+    expect(vm.overallStyleRows.map((row) => row.primaryImage)).toEqual([ref, null]);
+    expect(vm.overallStyleRows.map((row) => row.values)).toEqual([
+      { 'size-1': 10, 'size-2': 10 },
+      { 'size-1': 10 },
+    ]);
     expect(so.lines[0]?.primaryImage).toBe(primaryImage);
   });
   it('maps identity fields, state and fulfillment stage for a single-Distributor/single-Destination order', () => {
@@ -271,7 +275,7 @@ describe('buildDispatchOrderDetailViewModel', () => {
     }
   });
 
-  it('aggregates Style/Size totals across every Distributor group', () => {
+  it('aggregates overall Style/Size totals across every Distributor group and destination', () => {
     const groupA = makeDistributorGroup({
       lines: [makeLine({ id: 'l1', styleId: 'style-1', sizeId: 'size-1', quantity: 5 })],
     });
@@ -293,16 +297,72 @@ describe('buildDispatchOrderDetailViewModel', () => {
     const vm = buildDispatchOrderDetailViewModel(so, nullRelated, {
       generatedAt: '2026-09-15T10:00:00Z',
     });
-    expect(vm.styleSizeTotals).toEqual([
+    // One consolidated Style row across both Distributor groups/destinations, not two.
+    expect(vm.overallStyleRows).toEqual([
       {
         primaryImage: null,
-        key: 'style-1:size-1',
-        styleDisplay: 'STY-0001 — Basic Tee',
-        sizeLabel: 'Medium',
-        quantity: 8,
+        styleId: 'style-1',
+        styleNumber: 'STY-0001',
+        styleName: 'Basic Tee',
+        values: { 'size-1': 8 },
       },
     ]);
+    expect(vm.overallSizeColumns).toEqual([{ sizeId: 'size-1', sizeCode: 'M' }]);
     expect(vm.grandTotalQuantity).toBe(so.totalQuantity);
+    // Reconciliation: sum of destination totals === sum of overall Style rows === grandTotalQuantity.
+    const destinationSum = vm.distributorGroups
+      .flatMap((g) => g.destinations)
+      .reduce((sum, d) => sum + d.totalQuantity, 0);
+    const overallRowSum = vm.overallStyleRows.reduce((sum, row) => {
+      const rowTotal = Object.values(row.values).reduce<number>((s, q) => s + (q ?? 0), 0);
+      return sum + rowTotal;
+    }, 0);
+    expect(destinationSum).toBe(vm.grandTotalQuantity);
+    expect(overallRowSum).toBe(vm.grandTotalQuantity);
+  });
+
+  it('keeps the same Style in two different destinations as two separate per-destination Style rows', () => {
+    const groupA = makeDistributorGroup({
+      destinations: [makeDestination({ id: 'dest-1' }), makeDestination({ id: 'dest-2' })],
+      lines: [
+        makeLine({ id: 'l1', destinationId: 'dest-1', styleId: 'style-1', sizeId: 'size-1', quantity: 4 }),
+        makeLine({ id: 'l2', destinationId: 'dest-2', styleId: 'style-1', sizeId: 'size-1', quantity: 6 }),
+      ],
+    });
+    const so = makeSaleOrder({ distributorGroups: [groupA] });
+    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, { generatedAt: '' });
+    const [destA, destB] = vm.distributorGroups[0]!.destinations;
+    expect(destA!.styleRows).toEqual([
+      { primaryImage: null, styleId: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', values: { 'size-1': 4 } },
+    ]);
+    expect(destB!.styleRows).toEqual([
+      { primaryImage: null, styleId: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', values: { 'size-1': 6 } },
+    ]);
+    // The overall matrix still consolidates both into one Style row.
+    expect(vm.overallStyleRows).toEqual([
+      { primaryImage: null, styleId: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', values: { 'size-1': 10 } },
+    ]);
+  });
+
+  it('produces one row per distinct Style within a destination, with dynamic, per-Style Size sets', () => {
+    const groupA = makeDistributorGroup({
+      lines: [
+        makeLine({ id: 'l1', styleId: 'style-1', styleNumber: 'STY-0001', sizeId: 'size-1', sizeCode: 'S', quantity: 10 }),
+        makeLine({ id: 'l2', styleId: 'style-1', styleNumber: 'STY-0001', sizeId: 'size-2', sizeCode: 'M', quantity: 10 }),
+        makeLine({ id: 'l3', styleId: 'style-2', styleNumber: 'STY-0002', sizeId: 'size-2', sizeCode: 'M', quantity: 5 }),
+      ],
+    });
+    const so = makeSaleOrder({ distributorGroups: [groupA] });
+    const vm = buildDispatchOrderDetailViewModel(so, nullRelated, { generatedAt: '' });
+    const dest = vm.distributorGroups[0]!.destinations[0]!;
+    expect(dest.styleRows.map((r) => r.styleId)).toEqual(['style-1', 'style-2']);
+    // style-1 has an S column entry; style-2 (never sold in S) has no key for it at all — not a 0.
+    expect(dest.styleRows[0]!.values).toEqual({ 'size-1': 10, 'size-2': 10 });
+    expect(dest.styleRows[1]!.values).toEqual({ 'size-2': 5 });
+    expect(dest.sizeColumns).toEqual([
+      { sizeId: 'size-1', sizeCode: 'S' },
+      { sizeId: 'size-2', sizeCode: 'M' },
+    ]);
   });
 
   it('never invents a cancellation field or a partial-fulfilment percentage', () => {
