@@ -1,7 +1,10 @@
-# Erve — Distributor Inventory & Dispatch Tracking System
+# ERVE India — Inventory, Production & Dispatch Management
 
-A pnpm monorepo containing the API, web app, and mobile app for tracking distributor
-inventory and dispatch operations.
+A pnpm monorepo with an Express/Prisma API, React web portal, and
+Capacitor mobile app. The system supports Style and Distributor master data,
+Order Sheets, Job Orders, production and QA, Dispatch Orders, carton packing
+and audit, factory invoicing, Erve dispatch, and downstream workflows.
+See the project documentation and implementation for current feature scope.
 
 ## Project structure
 
@@ -12,17 +15,23 @@ apps/
   mobile/   React + Capacitor mobile app (shares UI with web)
 
 packages/
-  shared/         Cross-app utilities (API response helpers, RBAC helpers)
-  ui/             Shared React UI components (Button, Input, Card, LoginForm)
-  config/         Shared TypeScript configs
-  eslint-config/  Shared ESLint flat configs
-  types/          Shared TypeScript types (API response, auth, roles)
+  app-components/ Reusable application-level UI components
+  client/         API client and shared browser utilities
+  data-display/   Tables, loading, empty, and error states
+  layout/         Layout components
+  primitives/     Form fields and foundational UI components
+  theme/          Shared styling and theme
+  tokens/         Design tokens
+  shared/         Cross-app utilities
+  types/          Shared API and domain types
+  config/         Shared TypeScript configuration
+  eslint-config/  Shared ESLint configuration
+  design-system-tests/ Shared UI design-system checks
 ```
 
-This is a foundation scaffold only — no business logic is implemented yet. It is meant
-to run locally as a clean starting point: a health check endpoint, a login placeholder
-page, and the shared plumbing (types, auth/RBAC middleware, linting, build tooling)
-needed to start building features.
+The application contains implemented business modules and role-based authorization,
+not just a starter scaffold. The repository also includes API and web tests,
+database migrations, deployment workflows, and operational documentation.
 
 ## Prerequisites
 
@@ -119,7 +128,7 @@ In a separate terminal:
 pnpm dev:web
 ```
 
-The web app starts on `http://localhost:5173` and shows the login placeholder page at
+The web app starts on `http://localhost:5173`, with an implemented login at
 `/login`. It expects the API at the URL configured in `apps/web/.env` (`VITE_API_URL`).
 
 ## 6. Run the mobile app (browser preview)
@@ -147,10 +156,17 @@ pnpm lint           # lint all packages
 pnpm typecheck       # type-check all packages
 pnpm format          # format the whole repo with Prettier
 pnpm build           # build all apps/packages
-pnpm test            # run @erve/client's test suite
+pnpm test                          # run @erve/client's test suite
+pnpm --filter @erve/web test        # web unit/component tests
+pnpm --filter @erve/mobile test     # mobile tests
+pnpm --filter @erve/api test        # API integration tests (destructive; see below)
 ```
 
-Note: `pnpm test` intentionally only runs `@erve/client`'s tests. `apps/api` has its own
-integration test suite (`pnpm --filter @erve/api test`) that requires a running
-PostgreSQL database and truncates its tables between test cases — don't run it against
-a database you care about.
+`pnpm test` at the repo root runs only `@erve/client` tests. The API suite requires
+a dedicated, disposable PostgreSQL database configured through `TEST_DATABASE_URL`,
+distinct from `DATABASE_URL`, with a `test` marker. It truncates test data between
+cases. Never point the API test suite at a development or production database.
+
+The GitHub CI workflow runs typecheck, lint, build, client, web,
+design-system, and API checks. See `.github/workflows/ci.yml` for the exact gates.
+For release and production procedures, see `DEPLOYMENT.md`.
