@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
-import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, NumericField, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
@@ -24,7 +24,7 @@ function errorMessage(error: unknown) {
 export function SizeListPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const [form, setForm] = useState({ code: '', label: '', sizeType: 'AGE', sortOrder: '' });
+  const [form, setForm] = useState({ code: '', label: '', sizeType: 'AGE', sortOrder: null as number | null });
   const [error, setError] = useState('');
   // Opt-in cursor pagination (limit sent): Load more appends further pages.
   // The PDF fetches every page.
@@ -36,16 +36,16 @@ export function SizeListPage() {
   const createMutation = useMutation({
     mutationFn: () => {
       setError('');
-      if (!form.code.trim() || !form.label.trim() || !form.sortOrder.trim() || Number.isNaN(Number(form.sortOrder))) {
+      if (!form.code.trim() || !form.label.trim() || form.sortOrder === null || !Number.isSafeInteger(form.sortOrder) || form.sortOrder < 0) {
         throw new Error('Code, label, and sort order are required');
       }
-      return apiClient.post('/sizes', { ...form, code: form.code.trim(), label: form.label.trim(), sortOrder: Number(form.sortOrder) });
+      return apiClient.post('/sizes', { ...form, code: form.code.trim(), label: form.label.trim(), sortOrder: form.sortOrder });
     },
     onSuccess: async () => {
       // Only clear the form once the size is actually created — a failed
       // create (validation or duplicate-code conflict) must preserve what
       // the user typed so they can fix and resubmit it.
-      setForm({ code: '', label: '', sizeType: 'AGE', sortOrder: '' });
+      setForm({ code: '', label: '', sizeType: 'AGE', sortOrder: null });
       await queryClient.invalidateQueries({ queryKey: ['sizes'] });
     },
     onError: (caught) => setError(errorMessage(caught)),
@@ -112,13 +112,14 @@ export function SizeListPage() {
               <SelectItem value="WAIST">Waist</SelectItem>
               <SelectItem value="FREE_SIZE">Free Size</SelectItem>
             </SelectField>
-            <TextField
+            <NumericField
               label="Sort Order"
               required
-              type="number"
+              mode="integer"
+              min={0}
               value={form.sortOrder}
-              errorMessage={error && !form.sortOrder.trim() ? 'Required' : undefined}
-              onChange={(event) => setForm({ ...form, sortOrder: event.target.value })}
+              errorMessage={error && form.sortOrder === null ? 'Required' : undefined}
+              onChange={(value) => setForm((current) => ({ ...current, sortOrder: value }))}
               width="xs"
             />
             <div className="flex pt-[1.375rem]">

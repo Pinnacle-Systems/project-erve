@@ -34,7 +34,12 @@ function flushMicrotasks(): Promise<void> {
 function setInputValue(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
   setter.call(input, value);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  act(() => input.dispatchEvent(new Event('input', { bubbles: true })));
+  // NumericField commits its draft on blur rather than on each keystroke.
+  // Simulate leaving the field as a real user does on Tab/submit.
+  if (input.inputMode === 'numeric') {
+    act(() => input.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+  }
 }
 
 // jsdom does not implement CSS.escape, and the ids this app derives from
@@ -163,6 +168,24 @@ describe('SizeListPage PDF actions', () => {
 });
 
 describe('SizeListPage inline Create', () => {
+  it('uses the shared spinner-free integer input for Sort Order and requires a committed value (UX-19)', async () => {
+    await renderPageWithSizes([]);
+    const postSpy = vi.spyOn(apiClient, 'post');
+    const sort = findInput('Sort Order *');
+    expect(sort.type).toBe('text');
+    expect(sort.inputMode).toBe('numeric');
+    setInputValue(findInput('Code *'), 'AGE_6');
+    setInputValue(findInput('Label *'), '6 years');
+    setInputValue(sort, '0');
+    expect(sort.value).toBe('0'); // zero is valid, not interpreted as missing
+    setInputValue(sort, '');
+    const submit = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Add Size');
+    await act(async () => submit!.click());
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Code, label, and sort order are required');
+    expect(sort.getAttribute('aria-invalid')).toBe('true');
+  });
+
   it('successfully creates a Size and clears the form', async () => {
     await renderPageWithSizes([]);
     const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: { id: 'size-2' } } });
