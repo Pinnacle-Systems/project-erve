@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
-import { parseMasterImportFile, buildMasterImportWorkbook } from './master-import.parser.js';
+import { parseMasterImportFile, buildMasterImportWorkbook, buildMasterImportTemplate, masterImportHeaders, masterImportWorksheets } from './master-import.parser.js';
 
 function book(sheets: Record<string, unknown[][]>) {
   const wb = XLSX.utils.book_new();
@@ -8,6 +8,53 @@ function book(sheets: Record<string, unknown[][]>) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }
+describe('downloadable business master templates (ISS-036)', () => {
+  const samples = {
+    seasons: { 'Season Code': 'SS', 'Season Name': 'Summer', 'Financial Year': '2026-27' },
+    sizes: { 'Size Code': 'M', 'Size Label': 'Medium', 'Size Type': 'ALPHA', 'Sort Order': '2' },
+    hsns: { 'HSN Code': '01234567', Description: 'Knitwear' },
+    factories: { Name: 'Factory One' },
+    distributors: { Name: 'Distributor One', GSTIN: '22AAAAA0000A1Z5' },
+    'retail-stores': {
+      Name: 'Retail Store', 'Address Line 1': '123 Example Road', City: 'Chennai',
+      State: 'Tamil Nadu', 'Postal Code': '600001',
+    },
+  };
+
+  it.each(Object.keys(samples) as Array<keyof typeof samples>)(
+    'exports %s with business-only headers and accepts a filled-in copy',
+    (kind) => {
+      const workbook = XLSX.read(buildMasterImportTemplate(kind), { type: 'buffer' });
+      expect(workbook.SheetNames).toEqual([masterImportWorksheets[kind]]);
+      const sheet = workbook.Sheets[masterImportWorksheets[kind]]!;
+      const header = (XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 })[0] ?? []).map(String);
+      expect(header).toEqual(masterImportHeaders[kind].filter((name) => !['Source Key', 'Source Provenance'].includes(name)));
+      expect(header).not.toContain('Source Key');
+      expect(header).not.toContain('Source Provenance');
+      const example = samples[kind] as Record<string, string>;
+      XLSX.utils.sheet_add_aoa(sheet, [header.map((name) => example[name] ?? '')], { origin: 'A2' });
+      const filled = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+      const parsed = parseMasterImportFile(kind, filled, 'filled-template.xlsx', masterImportWorksheets[kind]);
+      expect(parsed.rows).toHaveLength(1);
+      expect(parsed.rows[0]?.sourceKey).toBeUndefined();
+      for (const [headerName, value] of Object.entries(example)) {
+        expect(parsed.rows[0]?.raw[headerName]).toBe(value);
+      }
+    },
+  );
+
+  it('continues to accept legacy source-key columns without changing provenance parsing', () => {
+    const parsed = parseMasterImportFile('factories', book({
+      Factories: [
+        ['Name', 'Source Key', 'Source Provenance'],
+        ['Factory One', 'external-factory-01', 'historical upload'],
+      ],
+    }), 'legacy.xlsx', 'Factories');
+    expect(parsed.rows[0]?.sourceKey).toBe('external-factory-01');
+    expect(parsed.rows[0]?.raw['Source Provenance']).toBe('historical upload');
+  });
+});
+
 describe('business master import parsing', () => {
   it('retains a physical row containing only a cached Excel error', () => {
     const wb = XLSX.utils.book_new();
