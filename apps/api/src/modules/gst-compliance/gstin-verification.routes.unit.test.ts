@@ -34,6 +34,21 @@ function setup() {
   return { app, service };
 }
 describe('verification HTTP validation and separation', () => {
+  it('requires authenticated history with a complete source pair and rejects scope overrides', async () => {
+    const { app, service } = setup();
+    await request(app).get('/verification/history').expect(401);
+    for (const query of [
+      { gstin: '33AAAAA0000A1Z5', sourceType: 'DISTRIBUTOR' },
+      { gstin: '33AAAAA0000A1Z5', sourceId: 'source-a' },
+      { gstin: '33AAAAA0000A1Z5', sourceType: 'DISTRIBUTOR', sourceId: 'source-a', scope: 'ALL' },
+    ])
+      await request(app)
+        .get('/verification/history')
+        .query(query)
+        .set('x-test-role', 'ADMIN')
+        .expect(400);
+    expect(service.history).not.toHaveBeenCalled();
+  });
   it('requires authentication on read, prepare and execute', async () => {
     const { app } = setup();
     await request(app).get('/verification').expect(401);

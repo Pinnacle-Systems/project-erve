@@ -278,7 +278,7 @@ try {
   record('Browser refresh reads persisted cache without another provider call');
   await settings({ gstinVerificationLevel: 'COMPLETE' });
   await nav(`/master-data/distributors/${distributor.id}`);
-  await wait('document.body.innerText.includes("Complete Profile has not yet been retrieved")');
+  await wait('document.body.innerText.includes("Fresh Complete Profile information is unavailable")');
   assert.equal(await calls(), before + 1);
   record('Basic evidence under Complete preference does not auto-upgrade');
   await click('Retrieve Complete Profile');

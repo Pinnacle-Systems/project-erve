@@ -18,6 +18,8 @@ export async function authorizeGstVerificationTarget(
 ) {
   const source = target.source;
   if (!source) {
+    // Source-less reads/history deliberately span sources for this GSTIN/mode.
+    // Only Accountants may use that broader scope; master roles must supply a source.
     if (!hasAnyRole(actor, ['ACCOUNTANT']))
       throw HttpError.forbidden('Standalone verification is available to Accountants only');
     return;

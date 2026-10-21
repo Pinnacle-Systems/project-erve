@@ -66,9 +66,14 @@ export const gstinVerificationRepository: VerificationRepository = {
       .sort((a, b) => b.retrievedAt.getTime() - a.retrievedAt.getTime())
       .map(evidenceDto);
   },
-  async latestFailure(normalizedGstin, mode) {
+  async latestFailure(normalizedGstin, mode, source) {
     const row = await prisma.gstVerificationOperation.findFirst({
-      where: { normalizedGstin, mode, outcome: { in: ['SUCCEEDED', 'FAILED', 'UNCERTAIN'] } },
+      where: {
+        normalizedGstin,
+        mode,
+        ...(source ? { sourceType: source.type, sourceId: source.id } : {}),
+        outcome: { in: ['SUCCEEDED', 'FAILED', 'UNCERTAIN'] },
+      },
       orderBy: [{ completedAt: 'desc' }, { id: 'desc' }],
       select: { failureCode: true },
     });
@@ -76,9 +81,14 @@ export const gstinVerificationRepository: VerificationRepository = {
       ? (row.failureCode as GstVerificationFailure)
       : null;
   },
-  async history(normalizedGstin, mode) {
+  async history(normalizedGstin, mode, source) {
     const rows = await prisma.gstVerificationOperation.findMany({
-      where: { normalizedGstin, mode, outcome: { not: 'PREPARED' } },
+      where: {
+        normalizedGstin,
+        mode,
+        ...(source ? { sourceType: source.type, sourceId: source.id } : {}),
+        outcome: { not: 'PREPARED' },
+      },
       include: { evidence: true },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 50,

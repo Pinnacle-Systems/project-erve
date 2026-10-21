@@ -89,6 +89,24 @@ async function render(component: React.ReactNode) {
   });
 }
 describe('GSTIN verification UI', () => {
+  it('shows fresh Basic registration without a stale warning or expired Complete filing values', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await render(
+      <GstinVerificationResult
+        view={{
+          ...view(),
+          cacheState: 'BASIC_ONLY',
+          evidence: { ...evidence, level: 'BASIC', expiresAt: '2099-01-01T00:00:00Z' },
+        }}
+      />,
+    );
+    expect(container.textContent).toContain('Synthetic Company');
+    expect(container.textContent).not.toContain('Stale');
+    expect(container.textContent).toContain('Fresh Complete Profile information is unavailable');
+    expect(container.textContent).not.toContain('August 2026');
+    expect(container.querySelector('details')).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+  });
   it('marks an open result stale even at the maximum 30-day TTL', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-21T00:00:00Z'));
@@ -166,7 +184,7 @@ describe('GSTIN verification UI', () => {
       />,
     );
     expect(container.textContent).toContain('Stale');
-    expect(container.textContent).toContain('Complete Profile has not yet been retrieved');
+    expect(container.textContent).toContain('Fresh Complete Profile information is unavailable');
     expect(container.querySelector('details')).toBeNull();
   });
   it('confirms Live miss with exact GSTIN and cost; cancel makes no execution request', async () => {
@@ -177,23 +195,21 @@ describe('GSTIN verification UI', () => {
           : { ...view(), mode: 'LIVE', cacheState: 'NONE', evidence: null },
       },
     }));
-    const post = vi
-      .spyOn(apiClient, 'post')
-      .mockResolvedValue({
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: {
         data: {
-          data: {
-            kind: 'CONFIRMATION',
-            intentId: 'intent',
-            gstin: '33AAAAA0000A1Z5',
-            level: 'COMPLETE',
-            mode: 'LIVE',
-            estimatedCredits: 2,
-            freshCacheAvailable: false,
-            refresh: false,
-            expiresAt: '2026-10-21T06:05:00Z',
-          },
+          kind: 'CONFIRMATION',
+          intentId: 'intent',
+          gstin: '33AAAAA0000A1Z5',
+          level: 'COMPLETE',
+          mode: 'LIVE',
+          estimatedCredits: 2,
+          freshCacheAvailable: false,
+          refresh: false,
+          expiresAt: '2026-10-21T06:05:00Z',
         },
-      });
+      },
+    });
     await render(<GstinVerificationPanel gstin="33AAAAA0000A1Z5" standalone />);
     expect(post).not.toHaveBeenCalled();
     await act(async () =>

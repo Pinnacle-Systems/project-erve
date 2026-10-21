@@ -4,6 +4,78 @@ Date: 21 October 2026 (Asia/Calcutta).
 Status: IMPLEMENTED; feature, isolated PostgreSQL and Chromium verification completed,
 with explicit limitations below. Authorized for commit, push and Draft PR preparation.
 
+## PR #130 correction: source-scoped operation history
+
+The follow-up review identified a real authorization defect missed by the original
+audit: authorized master reads used GSTIN/mode-wide operation queries after source
+authorization. This correction keeps successful profile cache sharing but restricts
+both history and latest-failure queries to the exact authorized source type/id,
+normalized GSTIN and integration mode. Other masters and standalone attempts cannot
+appear in a linked history or warning. Source-less queries explicitly remain
+Accountant-only and span all sources/standalone attempts for that GSTIN/mode.
+Accountant-only users still cannot access master-linked history without the existing
+master roles. ADMIN alone cannot request the broader source-less view.
+
+Mixed-coverage display now prefers fresh Basic registration over stale Complete
+evidence when Complete is selected. It returns `BASIC_ONLY`, uses the Basic evidence's
+timestamp/freshness, hides expired filing values and states that fresh Complete
+Profile information is unavailable. No profile fields are merged or rewritten.
+Complete retrieval still needs an explicit action/confirmation and the two-credit
+estimate; Basic never satisfies Complete coverage. Stale Complete evidence remains
+in authorized history. There is no new migration or change to claim/credit logic.
+
+Regression evidence records the two source-isolation cases and mixed-coverage
+API/UI regressions failing before the correction, then passing afterward:
+
+- API database-free unit suite: **111 passed** (including the additional history
+  authentication/paired-source/unknown-scope HTTP contract test).
+- PostgreSQL integration tests: **14 passed**, included in the **115-test GST sweep**
+  before that final HTTP contract test was added. The unit/integration counts overlap
+  that sweep; they are not additional independent totals.
+- Relevant frontend settings/panel/master-form tests: **44 passed**.
+- Root client tests: **56 passed**.
+- Fresh Chromium checks: **21/21 passed**, eight screenshots, 131 sanitized API
+  request records, zero console errors; only isolated API/DB and mocked transport.
+- Workspace typechecks and lint passed (three pre-existing date-picker hook
+  warnings); API/Web builds passed (existing Web chunk-size warning).
+  Browser-runner syntax validation and `git diff --check` passed.
+- Both Distributor and Retail Store fixtures contain two records sharing one
+  GSTIN, separately initiated verification and a standalone Accountant attempt.
+  All seven supported roles are tested for permitted and forbidden linked/broader
+  history. Fixtures also cover same-id/different-source-type collisions, unrelated
+  warning suppression, own-source failures, Demo/Live separation, shared cache reuse,
+  unchanged evidence count and released claims. No real provider request is made.
+- Independent read-only review found no blocking issue. It did not run tests;
+  Seller/Dispatch-specific history matrices were not newly added. Their existing
+  source authorization is preserved and the common exact-source predicate applies.
+
+The exact isolated container/database/volume/loopback target below was reverified.
+Its prior data was saved as ignored `history-review-preserved.dump` before testing,
+then restored before local Chromium checks. No other database was used, no migration
+was applied and no schema changed. Artifacts, private configuration and browser
+profiles remain ignored. Actual provider-backed Demo execution remains unverified.
+After the fresh browser run, the retained database has 93 applied migrations,
+4 successful evidence records, 7 operations and zero claims (`history-final-state.json`).
+The original local whole-backend sweep remains interrupted; GitHub CI is tracked
+separately and must not be confused with that incomplete local run.
+See [PR #130](https://github.com/Pinnacle-Systems/project-erve/pull/130) for CI results
+on the pushed correction commit. No merge or deployment is authorized.
+
+Correction file inventory (12 files):
+
+- `apps/api/src/modules/gst-compliance/gstin-verification.access.ts`
+- `apps/api/src/modules/gst-compliance/gstin-verification.integration.test.ts`
+- `apps/api/src/modules/gst-compliance/gstin-verification.repository.ts`
+- `apps/api/src/modules/gst-compliance/gstin-verification.routes.unit.test.ts`
+- `apps/api/src/modules/gst-compliance/gstin-verification.service.ts`
+- `apps/api/src/modules/gst-compliance/gstin-verification.unit.test.ts`
+- `apps/web/src/pages/gst-compliance/GstinVerificationPanel.test.tsx`
+- `apps/web/src/pages/gst-compliance/GstinVerificationPanel.tsx`
+- `docs/implementation/gst-compliance-phase1b-report.md`
+- `docs/implementation/gst-compliance-phase1b.md`
+- `packages/types/src/gstin-verification.ts`
+- `scripts/gst-phase1b-browser-qa.mjs` (updated assertion for the corrected message)
+
 ## Baseline and preservation
 
 - Original baseline:

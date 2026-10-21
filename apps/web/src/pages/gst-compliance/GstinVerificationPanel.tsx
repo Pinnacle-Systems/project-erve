@@ -109,7 +109,7 @@ export function GstinVerificationResult({ view }: { view: GstVerificationView })
         {stale ? ' — information may be outdated.' : ''}
       </p>
       {view.level === 'COMPLETE' && evidence.level === 'BASIC' && (
-        <p>Complete Profile has not yet been retrieved.</p>
+        <p>Fresh Complete Profile information is unavailable.</p>
       )}
       {view.level === 'COMPLETE' && evidence.level === 'COMPLETE' && (
         <details className="rounded border border-border-subtle p-2">

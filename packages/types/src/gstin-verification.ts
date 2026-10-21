@@ -19,6 +19,9 @@ export interface GstVerificationSource {
 }
 export interface GstVerificationTarget {
   gstin: string;
+  /** History/failure reads use this exact source. Omission is Accountant-only
+   * and spans all sources and standalone operations for this GSTIN/mode.
+   * Successful cache evidence remains shared independently of source. */
   source?: GstVerificationSource;
 }
 export interface GstRegistrationProfile {

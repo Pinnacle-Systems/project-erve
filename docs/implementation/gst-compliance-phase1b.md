@@ -89,6 +89,16 @@ failure code, timing and restricted provider balance. It is the durable intent a
 attempt journal. Source association never changes master data. A late result stays
 historical if the saved GSTIN changed; the return read rechecks identity.
 
+History and latest-failure warnings are separate from the shared profile cache.
+With `sourceType`/`sourceId`, both operation queries require that exact authorized
+pair as well as normalized GSTIN and mode. Matching GSTINs on another master or
+standalone attempts are not included. Omitting source is an explicit Accountant-only
+broader view of all operations for that GSTIN/mode, including source-linked and
+standalone attempts. ADMIN alone does not grant that broader view. ACCOUNTANT alone
+does not grant master access; linked requests still need existing master roles.
+The existing read/history query contract rejects incomplete source pairs and
+unknown scope fields. Operation/evidence rows and credit accounting are unchanged.
+
 `GstVerificationClaim` uniquely owns mode + normalized requested GSTIN + coverage
 across application instances. Claim and global/actor rate accounting use a short
 PostgreSQL advisory-lock transaction. HTTP starts after the transaction commits.
@@ -97,7 +107,14 @@ source check. Partial success, failure and success are separate outcomes.
 
 The latest evidence per coverage is selected, preferring fresh sufficient coverage.
 Fresh COMPLETE can satisfy BASIC. BASIC cannot satisfy COMPLETE. Mode partitions
-never mix. Expired evidence stays visible as Stale; no silent refresh occurs. The
+never mix. When COMPLETE is selected but only Basic registration is fresh, show
+that Basic evidence as `BASIC_ONLY`, with its own timestamp and without a Stale
+badge. State that fresh Complete Profile information is unavailable; do not merge
+expired filing values into current registration. Historical Complete remains in
+authorized history. Complete retrieval still needs an explicit action/confirmation
+and Basic cannot satisfy its cache requirement. If nothing is fresh, prefer stale
+sufficient coverage. No additional provider request is made by this display choice.
+Expired evidence stays visible as Stale; no silent refresh occurs. The
 browser schedules a read-only expiry refresh and labels expired displayed evidence
 Stale even when its previous response said Fresh. Editing a GSTIN remounts the
 interaction and hides evidence/confirmation for the old value. Changing settings

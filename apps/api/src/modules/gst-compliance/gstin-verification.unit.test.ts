@@ -156,6 +156,32 @@ async function prepared(s: ReturnType<typeof setup>, refresh = false) {
   return result;
 }
 describe('GSTIN verification orchestration', () => {
+  it('shows fresh Basic registration instead of stale Complete information without upgrading coverage', async () => {
+    const s = setup();
+    s.setValues({ gstinVerificationLevel: 'COMPLETE' });
+    s.seed('COMPLETE', '2026-10-20T06:00:00Z');
+    s.evidence[0]!.retrievedAt = '2026-10-13T06:00:00Z';
+    s.evidence.unshift({
+      ...s.evidence[0]!,
+      id: 'fresh-basic',
+      level: 'BASIC',
+      legalName: 'Current registration',
+      retrievedAt: now.toISOString(),
+      expiresAt: '2026-10-28T06:00:00Z',
+    });
+    expect(await s.service.read(actor(), target)).toMatchObject({
+      cacheState: 'BASIC_ONLY',
+      evidence: { id: 'fresh-basic', legalName: 'Current registration', level: 'BASIC' },
+    });
+    const confirmation = await s.service.prepare(actor(), target);
+    expect(confirmation).toMatchObject({
+      kind: 'CONFIRMATION',
+      level: 'COMPLETE',
+      estimatedCredits: 2,
+    });
+    expect(s.provider.lookup).not.toHaveBeenCalled();
+    expect(s.evidence).toHaveLength(2);
+  });
   it('does not mistake fallback to older Complete evidence for a newly completed refresh', async () => {
     const s = setup();
     s.seed('COMPLETE');

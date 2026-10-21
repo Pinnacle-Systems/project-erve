@@ -7,6 +7,7 @@ import type {
   GstVerificationFailure,
   GstVerificationPreparation,
   GstVerificationTarget,
+  GstVerificationSource,
   GstVerificationView,
   GstIntegrationMode,
   GstinVerificationLevel,
@@ -32,8 +33,16 @@ export interface VerificationIntent {
 }
 export interface VerificationRepository {
   evidence(gstin: string, mode: GstIntegrationMode): Promise<GstVerificationEvidence[]>;
-  latestFailure(gstin: string, mode: GstIntegrationMode): Promise<GstVerificationFailure | null>;
-  history(gstin: string, mode: GstIntegrationMode): Promise<GstVerificationAttempt[]>;
+  latestFailure(
+    gstin: string,
+    mode: GstIntegrationMode,
+    source: GstVerificationSource | undefined,
+  ): Promise<GstVerificationFailure | null>;
+  history(
+    gstin: string,
+    mode: GstIntegrationMode,
+    source: GstVerificationSource | undefined,
+  ): Promise<GstVerificationAttempt[]>;
   prepare(intent: VerificationIntent): Promise<void>;
   intent(id: string): Promise<VerificationIntent | null>;
   claim(intent: VerificationIntent, key: string): Promise<boolean>;
@@ -131,13 +140,18 @@ export function createGstinVerificationService(deps: Dependencies) {
     const rows = settings.onlineGstinVerificationEnabled
       ? await repo.evidence(target.gstin, settings.integrationMode)
       : [];
-    // Prefer fresh sufficient coverage, then last sufficient coverage, then Basic.
+    // Prefer fresh sufficient coverage, then fresh registration, then stale coverage.
+    // Stale Complete filing information must not hide fresh Basic registration.
     const sufficient = (row: GstVerificationEvidence) =>
       settings.gstinVerificationLevel === 'BASIC' || row.level === 'COMPLETE';
     const fresh = (row: GstVerificationEvidence) =>
       new Date(row.expiresAt).getTime() > clock().getTime();
     const evidence =
-      rows.find((row) => sufficient(row) && fresh(row)) ?? rows.find(sufficient) ?? rows[0] ?? null;
+      rows.find((row) => sufficient(row) && fresh(row)) ??
+      rows.find(fresh) ??
+      rows.find(sufficient) ??
+      rows[0] ??
+      null;
     return {
       enabled: settings.onlineGstinVerificationEnabled,
       mode: settings.integrationMode,
@@ -153,7 +167,7 @@ export function createGstinVerificationService(deps: Dependencies) {
             ? 'BASIC_ONLY'
             : 'FRESH',
       latestFailure: settings.onlineGstinVerificationEnabled
-        ? await repo.latestFailure(target.gstin, settings.integrationMode)
+        ? await repo.latestFailure(target.gstin, settings.integrationMode, target.source)
         : null,
     };
   }
@@ -182,7 +196,7 @@ export function createGstinVerificationService(deps: Dependencies) {
       const target = normalized(input);
       await deps.authorizeTarget(actor, target);
       const settings = await deps.settings();
-      return repo.history(target.gstin, settings.integrationMode);
+      return repo.history(target.gstin, settings.integrationMode, target.source);
     },
     async prepare(
       actor: CurrentUser,

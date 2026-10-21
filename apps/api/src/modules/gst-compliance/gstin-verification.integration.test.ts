@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
+import type { Role } from '@erve/types';
 import { createApp } from '../../app.js';
 import { env } from '../../config/env.js';
 import { prisma } from '../../db/prisma.js';
@@ -122,6 +123,173 @@ afterAll(async () => {
 });
 
 describe('Phase 1B PostgreSQL integration with mocked provider transport', () => {
+  it.each(['DISTRIBUTOR', 'RETAIL_STORE'] as const)(
+    'scopes %s history and warnings by exact source while sharing successful cache',
+    async (sourceType) => {
+      const first = await createTestDistributor({ gstin });
+      const second = await createTestDistributor({ gstin });
+      if (sourceType === 'RETAIL_STORE') {
+        for (const distributor of [first, second])
+          await prisma.retailStore.create({
+            data: {
+              id: distributor.id,
+              distributorId: distributor.id,
+              code: `QA-${distributor.id}`,
+              name: 'Synthetic history store',
+              addressLine1: '1 QA Street',
+              city: 'Chennai',
+              state: 'Tamil Nadu',
+              postalCode: '600001',
+              gstin,
+            },
+          });
+      }
+      const firstTarget = { gstin, source: { type: sourceType, id: first.id } };
+      const secondTarget = { gstin, source: { type: sourceType, id: second.id } };
+      const firstIntent = await prepare(false, firstTarget);
+      await execute(firstIntent.intentId);
+      const secondIntent = await prepare(true, secondTarget);
+      await execute(secondIntent.intentId);
+      const accountant = await createTestUserAndToken({
+        email: 'standalone-history@example.test',
+        password: 'SyntheticTestOnly!',
+        roles: ['ACCOUNTANT'],
+      });
+      const primaryToken = token;
+      token = accountant.token;
+      status = 404;
+      const standalone = await prepare(true);
+      await execute(standalone.intentId, 404);
+      token = primaryToken;
+
+      // Source ids may legitimately collide across different business tables.
+      await prisma.gstVerificationOperation.create({
+        data: {
+          id: 'different-type-same-id',
+          actorId: userId,
+          requestedGstin: gstin,
+          normalizedGstin: gstin,
+          sourceType: sourceType === 'DISTRIBUTOR' ? 'RETAIL_STORE' : 'DISTRIBUTOR',
+          sourceId: first.id,
+          mode: 'LIVE',
+          level: 'BASIC',
+          settingsVersion: 1,
+          estimatedCredits: 1,
+          expiresAt: new Date(),
+          completedAt: new Date(),
+          outcome: 'FAILED',
+          failureCode: 'UNAVAILABLE',
+        },
+      });
+      const get = async (
+        route: string,
+        bearer: string,
+        source?: { type: string; id: string },
+        code = 200,
+      ) =>
+        request(app)
+          .get(`/gst-compliance/verification${route}`)
+          .query({ gstin, ...(source ? { sourceType: source.type, sourceId: source.id } : {}) })
+          .set('Authorization', `Bearer ${bearer}`)
+          .expect(code);
+      const firstView = (await get('', primaryToken, firstTarget.source)).body.data;
+      const secondView = (await get('', primaryToken, secondTarget.source)).body.data;
+      expect(firstView.latestFailure).toBeNull();
+      expect(secondView.latestFailure).toBeNull();
+      expect(firstView.cacheState).toBe('FRESH');
+      expect(secondView.evidence.id).toBe(firstView.evidence.id);
+      status = 402;
+      const ownFailure = await prepare(true, firstTarget);
+      await execute(ownFailure.intentId, 503);
+      expect((await get('', primaryToken, firstTarget.source)).body.data.latestFailure).toBe(
+        'INSUFFICIENT_CREDITS',
+      );
+      expect((await get('', primaryToken, secondTarget.source)).body.data.latestFailure).toBeNull();
+
+      const firstIds = [firstIntent.intentId, ownFailure.intentId].sort();
+      const secondIds = [secondIntent.intentId];
+      const roles: Role[] = [
+        'ACCOUNTANT',
+        'ADMIN',
+        'MERCHANDISER',
+        'SENIOR_MANAGEMENT',
+        'DISTRIBUTOR',
+        'FACTORY_USER',
+        'QA_USER',
+      ];
+      for (const role of roles) {
+        const user =
+          role === 'ACCOUNTANT'
+            ? accountant
+            : await createTestUserAndToken({
+                email: `history-${role}@example.test`,
+                password: 'SyntheticTestOnly!',
+                roles: [role],
+              });
+        if (role === 'DISTRIBUTOR')
+          await prisma.userDistributor.create({
+            data: {
+              id: 'history-distributor-mapping',
+              userId: user.userId,
+              distributorId: first.id,
+            },
+          });
+        const masterReader = ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'].includes(role);
+        const ownDistributor = role === 'DISTRIBUTOR' && sourceType === 'DISTRIBUTOR';
+        const a = await get(
+          '/history',
+          user.token,
+          firstTarget.source,
+          masterReader || ownDistributor ? 200 : 403,
+        );
+        const b = await get('/history', user.token, secondTarget.source, masterReader ? 200 : 403);
+        if (masterReader || ownDistributor)
+          expect(a.body.data.map((op: { id: string }) => op.id).sort()).toEqual(firstIds);
+        if (masterReader) expect(b.body.data.map((op: { id: string }) => op.id)).toEqual(secondIds);
+        const broad = await get(
+          '/history',
+          user.token,
+          undefined,
+          role === 'ACCOUNTANT' ? 200 : 403,
+        );
+        if (role === 'ACCOUNTANT')
+          expect(broad.body.data.map((op: { id: string }) => op.id).sort()).toEqual(
+            [...firstIds, ...secondIds, standalone.intentId, 'different-type-same-id'].sort(),
+          );
+        // Omitting the source must not bypass the same access boundary for warnings.
+        await get('', user.token, undefined, role === 'ACCOUNTANT' ? 200 : 403);
+      }
+      await prisma.gstVerificationOperation.create({
+        data: {
+          id: 'demo-only-history',
+          actorId: userId,
+          requestedGstin: gstin,
+          normalizedGstin: gstin,
+          sourceType,
+          sourceId: first.id,
+          mode: 'DEMO',
+          level: 'BASIC',
+          settingsVersion: 1,
+          estimatedCredits: 0,
+          expiresAt: new Date(),
+          completedAt: new Date(),
+          outcome: 'FAILED',
+          failureCode: 'NOT_FOUND',
+        },
+      });
+      expect(
+        (await get('/history', primaryToken, firstTarget.source)).body.data
+          .map((op: { id: string }) => op.id)
+          .sort(),
+      ).toEqual(firstIds);
+      expect((await get('', primaryToken, firstTarget.source)).body.data.latestFailure).toBe(
+        'INSUFFICIENT_CREDITS',
+      );
+      expect(fetcher).toHaveBeenCalledTimes(4);
+      expect(await prisma.gstVerificationEvidence.count()).toBe(2);
+      expect(await prisma.gstVerificationClaim.count()).toBe(0);
+    },
+  );
   it('enforces the new-account ten-per-minute limit globally across actors and instances', async () => {
     const prepared = await prepare();
     const intent = (await gstinVerificationRepository.intent(prepared.intentId))!;
