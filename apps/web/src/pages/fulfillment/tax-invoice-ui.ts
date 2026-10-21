@@ -27,6 +27,7 @@ export function formatInvoiceMoney(value: string | null | undefined): string {
 export function formatInvoiceAdjustment(value: string | null | undefined): string {
   if (value == null) return 'Not snapshotted';
   const money = formatInvoiceMoney(value);
+  if (money === 'Unavailable') return money;
   return !value.startsWith('-') && /[1-9]/.test(value) ? `+${money}` : money;
 }
 
