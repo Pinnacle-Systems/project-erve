@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { SelectField, SelectItem } from '@erve/primitives';
+import { SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { apiClient } from '../../lib/api-client.js';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { getLocalDateString } from '../../lib/dates.js';
@@ -233,6 +233,18 @@ export function FactoryPackingQueuePage() {
               <EmptyState title="Nothing to pack" description="No approved goods are currently allocated from this Factory." />
             ) : (
               <div className="space-y-5">
+                {queueQuery.hasNextPage && (
+                  // ISS-023 Phase 2 fix: cursor pagination can split a single
+                  // Dispatch Order/Distributor section across pages (its later
+                  // lines may still be unloaded), so the Required/Packed/
+                  // Remaining totals below must never be presented as if they
+                  // were complete while the server still has more pages.
+                  <ValidationMessage tone="warning">
+                    Totals below reflect only the {queueItems.length.toLocaleString()} line
+                    {queueItems.length === 1 ? '' : 's'} loaded so far — more lines may exist on
+                    later pages. Click &quot;Load more&quot; below for complete totals.
+                  </ValidationMessage>
+                )}
                 {groupQueueIntoSections(queueItems).map((section) => (
                   <div key={section.key} className="space-y-2">
                     <button

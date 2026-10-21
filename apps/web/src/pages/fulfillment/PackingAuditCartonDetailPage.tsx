@@ -20,12 +20,16 @@ import type { PackingAuditQueueItem } from './types.js';
 // ISS-023 Phase 2: this carton's own contents as one Style row per Style,
 // with Sizes as columns, instead of one flat row per Style+Size combination
 // — mirrors the already-standardized carton contents on the Factory Packing
-// List / Carton Label (ISS-007/ISS-010).
+// List / Carton Label (ISS-007/ISS-010). Carries each Style's primaryImage
+// through (one per styleId, from its first-seen line) so the DataTable's
+// thumbnail isn't lost in the conversion.
 function cartonStyleSizeRows(carton: PackingAuditQueueItem) {
+  const primaryImageByStyle = new Map(carton.lines.map((line) => [line.styleId, line.primaryImage]));
   return groupLinesByStyle(carton.lines).map((group) => ({
     styleId: group.styleId,
     styleNumber: group.styleNumber,
     styleName: group.styleName,
+    primaryImage: primaryImageByStyle.get(group.styleId) ?? null,
     values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
   }));
 }

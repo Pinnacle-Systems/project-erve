@@ -213,6 +213,52 @@ describe('PackingAuditCartonDetailPage carton Style x Size presentation (ISS-023
     expect(content()).toContain('6');
     expect(content()).toContain('4');
   });
+
+  it('carries the Style primary image through to the matrix row (one Style, multiple Sizes)', async () => {
+    const primaryImage = {
+      id: 'img-1',
+      styleId: 'style-1',
+      fileId: 'file-1',
+      fileName: 'classic-tee.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 1024,
+      isPrimary: true,
+      sortOrder: 0,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    const carton = buildCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 3, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 7,
+    });
+    await renderPage(async (url) => {
+      if (url === '/packing-audit/cartons/carton-1') return { data: { data: carton } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    // StyleThumbnailCell only renders its "View style image" trigger when passed a non-null image —
+    // a single trigger (not one per source line) confirms the one-per-Style row carries it through.
+    const thumbnailTriggers = container.querySelectorAll('button[aria-label="View style image"]');
+    expect(thumbnailTriggers).toHaveLength(1);
+  });
+
+  it('renders no thumbnail trigger when the Style has no primary image', async () => {
+    const carton = buildCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 5, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 5,
+    });
+    await renderPage(async (url) => {
+      if (url === '/packing-audit/cartons/carton-1') return { data: { data: carton } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    expect(container.querySelectorAll('button[aria-label="View style image"]')).toHaveLength(0);
+  });
 });
 
 // NEW-AUTH: role-parametrized coverage for the Confirm Inspected mutation

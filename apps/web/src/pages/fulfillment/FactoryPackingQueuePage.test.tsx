@@ -418,5 +418,64 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
       await flush();
       expect(content()).toContain('Packing List Page for so-9');
     });
+
+    it('warns that totals are loaded-lines-only while more pages remain, and the warning clears once everything is loaded', async () => {
+      const lineA1 = queueLine({ saleOrderLineId: 'line-a1', saleOrderId: 'so-1', saleOrderNumber: 'EISO/26-27/0001', distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' }, styleId: 'style-1', styleNumber: 'ST-001', sizeId: 'size-1', sizeCode: 'S', allocatedQuantity: 10, packedQuantity: 4, remainingQuantity: 6 });
+
+      await renderPage('FACTORY_USER', '/fulfillment/factory-dispatches', async (url, config) => {
+        if (url === '/factory-dispatches/packing-queue') {
+          if (!config?.params?.cursor) return queueApiResponse([lineA1], { limit: 25, hasMore: true, nextCursor: 'cursor-token' });
+          return queueApiResponse([], { limit: 25, hasMore: false, nextCursor: null });
+        }
+        if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
+        throw new Error(`Unexpected GET: ${url}`);
+      });
+
+      expect(content()).toContain('loaded so far');
+      expect(content()).toContain('Load more');
+
+      const loadMoreButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Load more'));
+      act(() => loadMoreButton?.click());
+      await flush();
+      await flush();
+
+      expect(content()).not.toContain('loaded so far');
+    });
+
+    it('updates a section\'s totals correctly when its own lines continue onto the next page', async () => {
+      const lineA1 = queueLine({ saleOrderLineId: 'line-a1', saleOrderId: 'so-1', saleOrderNumber: 'EISO/26-27/0001', distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' }, styleId: 'style-1', styleNumber: 'ST-001', sizeId: 'size-1', sizeCode: 'S', allocatedQuantity: 10, packedQuantity: 4, remainingQuantity: 6 });
+      const lineA2 = queueLine({ saleOrderLineId: 'line-a2', saleOrderId: 'so-1', saleOrderNumber: 'EISO/26-27/0001', distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' }, styleId: 'style-1', styleNumber: 'ST-001', sizeId: 'size-2', sizeCode: 'M', allocatedQuantity: 8, packedQuantity: 8, remainingQuantity: 0 });
+
+      await renderPage('FACTORY_USER', '/fulfillment/factory-dispatches', async (url, config) => {
+        if (url === '/factory-dispatches/packing-queue') {
+          if (!config?.params?.cursor) return queueApiResponse([lineA1], { limit: 25, hasMore: true, nextCursor: 'cursor-token' });
+          return queueApiResponse([lineA2], { limit: 25, hasMore: false, nextCursor: null });
+        }
+        if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
+        throw new Error(`Unexpected GET: ${url}`);
+      });
+
+      // Page 1 alone: only the Small line is loaded, Required total is 10 (not yet 18).
+      expect(content()).toContain('EISO/26-27/0001 — Distributor One');
+      expect(content()).toContain('loaded so far');
+      const styleCellsBeforeLoadMore = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
+      // One row (Small only) per matrix — Required/Packed/Remaining.
+      expect(styleCellsBeforeLoadMore).toHaveLength(3);
+
+      const loadMoreButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Load more'));
+      act(() => loadMoreButton?.click());
+      await flush();
+      await flush();
+
+      // Still one section (same Dispatch Order/Distributor), but its own Style row now carries both
+      // Sizes and the Required total updates from 10 to 18 (10+8) — the page-2 line merged in, not
+      // treated as a second, separate section.
+      const sectionHeadings = Array.from(container.querySelectorAll('button')).filter((b) =>
+        b.textContent?.includes('EISO/26-27/0001 — Distributor One'),
+      );
+      expect(sectionHeadings).toHaveLength(1);
+      expect(content()).toContain('18');
+      expect(content()).not.toContain('loaded so far');
+    });
   });
 });
