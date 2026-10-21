@@ -16,5 +16,8 @@ export function factoryInvoiceStatusTone(status: FactoryInvoiceStatus) {
 // production rate, implicitly INR) — mirrors price-list-ui.ts's INR
 // formatting without needing a currency parameter.
 export function formatMoney(value: number): string {
-  return `₹${value.toFixed(2)}`;
+  const fixed = value.toFixed(2);
+  const decimal = /^(-?)(\d+)(\.\d{2})$/.exec(fixed);
+  if (!decimal) return `₹${fixed}`;
+  return `₹${decimal[1]}${BigInt(decimal[2]!).toLocaleString('en-IN')}${decimal[3]}`;
 }
