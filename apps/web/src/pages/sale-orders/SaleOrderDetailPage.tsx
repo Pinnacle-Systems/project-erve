@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse, StylePrimaryImageView } from '@erve/types';
@@ -245,6 +246,7 @@ export function SaleOrderDetailPage() {
                             {dest.contactEmail}
                           </div>
                         )}
+                        {dest.gstin && <GstinVerificationPanel gstin={dest.gstin} source={{ type: 'DISPATCH_ORDER', id: dest.id }} readOnly />}
                         {dest.gstin && (
                           <div className="text-sm text-[var(--erp-text-muted)]">GSTIN: {dest.gstin}</div>
                         )}

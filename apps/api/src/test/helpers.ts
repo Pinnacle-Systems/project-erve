@@ -30,6 +30,10 @@ export async function allocateTestDocumentSerial(
 // Test users/roles live on top of the seeded reference data (roles), so
 // only the per-test rows need clearing between tests.
 export async function resetDatabase(): Promise<void> {
+  await prisma.gstVerificationClaim.deleteMany();
+  await prisma.gstVerificationEvidence.deleteMany();
+  await prisma.gstVerificationOperation.deleteMany();
+  await prisma.gstComplianceSettings.deleteMany();
   // Integration tests must be self-contained after a fresh migration replay;
   // do not rely on development seeding for authorization reference data.
   for (const name of [

@@ -14,6 +14,7 @@ import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { DistributorLookupField, type DistributorLookupValue } from './DistributorLookupField.js';
 import { RetailStoreEditor } from './RetailStoreEditor.js';
+import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
 
 const base = '/master-data/retail-stores';
 export function RetailStoreListPage() {
@@ -184,6 +185,7 @@ export function RetailStoreDetailPage() {
           <StatusBadge label={s.status} tone={s.status === 'ACTIVE' ? 'success' : 'muted'} />
         </FormGrid>
       </Panel>
+      <GstinVerificationPanel gstin={s.gstin ?? ''} source={{ type: 'RETAIL_STORE', id: s.id }} />
       <Panel title="Address">
         <FormGrid layout="content">
           {(

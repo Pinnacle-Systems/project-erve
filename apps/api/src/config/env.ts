@@ -7,6 +7,11 @@ const envSchema = z.object({
   // Settings activation only. Future paid lookups/filing must recheck their
   // own production authorization at execution; this flag performs no work.
   GST_COMPLIANCE_LIVE_AUTHORIZED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  GST_VERIFICATION_LIVE_LOOKUP_AUTHORIZED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  GST_VERIFICATION_API_KEY: z.string().default(''),
+  GST_VERIFICATION_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30000).default(10000),
+  GST_VERIFICATION_BASIC_TTL_SECONDS: z.coerce.number().int().min(60).max(2592000).default(604800),
+  GST_VERIFICATION_COMPLETE_TTL_SECONDS: z.coerce.number().int().min(60).max(2592000).default(604800),
   HOST: z.string().min(1).default('0.0.0.0'),
   PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
