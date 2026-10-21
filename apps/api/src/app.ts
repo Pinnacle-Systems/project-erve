@@ -12,6 +12,13 @@ import { env } from './config/env.js';
 import { createGstComplianceSettingsRouter } from './modules/gst-compliance/gst-compliance-settings.routes.js';
 import { createGstComplianceSettingsService } from './modules/gst-compliance/gst-compliance-settings.service.js';
 import { gstComplianceSettingsRepository } from './modules/gst-compliance/gst-compliance-settings.repository.js';
+import { createGstinVerificationRouter } from './modules/gst-compliance/gstin-verification.routes.js';
+import { createGstinVerificationService } from './modules/gst-compliance/gstin-verification.service.js';
+import { gstinVerificationRepository } from './modules/gst-compliance/gstin-verification.repository.js';
+import { authorizeGstVerificationTarget } from './modules/gst-compliance/gstin-verification.access.js';
+import { DEFAULT_GST_COMPLIANCE_VALUES } from './modules/gst-compliance/gst-compliance-settings.service.js';
+import { GstinApiProvider } from './integrations/gst/gstin-api.provider.js';
+import type { GstProvider } from './integrations/gst/gst-provider.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
 import {
@@ -68,7 +75,7 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<
   });
 }
 
-export function createApp() {
+export function createApp(options: { gstProvider?: GstProvider } = {}) {
   const app = express();
 
   // Exactly one hop of trust: the local CloudPanel-managed Nginx reverse
@@ -134,8 +141,17 @@ export function createApp() {
   app.use('/hsns', hsnsRouter);
   app.use('/gst-rule-sets', gstRuleSetsRouter);
   app.use('/gst-compliance/settings', createGstComplianceSettingsRouter(
-    createGstComplianceSettingsService(gstComplianceSettingsRepository, () => env.GST_COMPLIANCE_LIVE_AUTHORIZED),
+    createGstComplianceSettingsService(gstComplianceSettingsRepository, () => env.GST_COMPLIANCE_LIVE_AUTHORIZED, () => !!env.GST_VERIFICATION_API_KEY.trim()),
   ));
+  app.use('/gst-compliance/verification', createGstinVerificationRouter(createGstinVerificationService({
+    repository: gstinVerificationRepository,
+    provider: options.gstProvider ?? new GstinApiProvider({ apiKey: env.GST_VERIFICATION_API_KEY, timeoutMs: env.GST_VERIFICATION_TIMEOUT_MS }),
+    settings: async () => await gstComplianceSettingsRepository.read() ?? { ...DEFAULT_GST_COMPLIANCE_VALUES, version: 0 },
+    authorizeTarget: authorizeGstVerificationTarget,
+    liveActivationAuthorized: () => env.GST_COMPLIANCE_LIVE_AUTHORIZED,
+    liveLookupAuthorized: () => env.GST_VERIFICATION_LIVE_LOOKUP_AUTHORIZED,
+    ttlSeconds: { BASIC: env.GST_VERIFICATION_BASIC_TTL_SECONDS, COMPLETE: env.GST_VERIFICATION_COMPLETE_TTL_SECONDS },
+  })));
   app.use('/purchase-orders', purchaseOrdersRouter);
   app.use('/job-orders', jobOrdersRouter);
   app.use('/sale-orders', saleOrdersRouter);

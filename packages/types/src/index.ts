@@ -9,3 +9,4 @@ export * from './retail-store.js';
 export * from './tax-invoices.js';
 export * from './master-import.js';
 export * from './gst-compliance.js';
+export * from './gstin-verification.js';
