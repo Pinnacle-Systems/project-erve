@@ -139,6 +139,11 @@ async function renderPage(
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string, config?: { params?: Record<string, unknown> }) => {
     if (url === '/sale-orders/so-1') return { data: { data: saleOrder } };
     if (url === '/sale-orders/so-1/audit') return { data: { data: [] } };
+    if (url === '/gst-compliance/verification/policy') return { data: { data: { enabled: true } } };
+    if (url === '/gst-compliance/verification') return { data: { data: {
+      enabled: true, mode: 'DEMO', level: 'BASIC', canVerify: true, canRefresh: true,
+      cacheState: 'NONE', evidence: null, latestFailure: null,
+    } } };
     if (url === '/factory-dispatches') return factoryDispatchesImpl(config);
     if (url === '/erve-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected GET: ${url}`);
@@ -158,6 +163,51 @@ async function renderPage(
   await flush();
   await flush();
 }
+
+describe('Phase 1B integration with the main-branch Style / Size grid', () => {
+  it('renders both quantity grids and exact-source GSTIN information without verification actions', async () => {
+    const saleOrder = buildSaleOrder();
+    const lines = [
+      { ...saleOrder.lines[0]!, quantity: 5 },
+      { ...saleOrder.lines[0]!, id: 'line-2', sizeId: 'size-2', sizeCode: 'L', sizeLabel: 'Large', quantity: 10 },
+    ];
+    saleOrder.lines = lines;
+    saleOrder.totalQuantity = 15;
+    saleOrder.distributorGroups[0]!.lines = lines;
+    saleOrder.distributorGroups[0]!.destinations[0]!.gstin = '33AAAAA0000A1Z5';
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage(
+      'ADMIN',
+      async () => ({ data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } }),
+      saleOrder,
+    );
+    await flush();
+    await flush();
+
+    const grids = Array.from(container.querySelectorAll('table')).filter(
+      (table) => table.querySelector('th')?.textContent === 'Style',
+    );
+    expect(grids).toHaveLength(2); // destination quantities and overall totals
+    for (const grid of grids) {
+      expect(Array.from(grid.querySelectorAll('th')).map((cell) => cell.textContent)).toEqual(['Style', 'M', 'L', 'Total']);
+      expect(grid.querySelectorAll('tbody tr')).toHaveLength(1);
+      expect(grid.textContent).toContain('ST-001');
+      expect(grid.textContent).toContain('Classic Tee');
+      expect(grid.querySelector('tbody tr')!.lastElementChild!.textContent).toBe('15');
+      const quantities = Array.from(grid.querySelectorAll('input'));
+      expect(quantities.map((input) => input.value)).toEqual(['5', '10']);
+      expect(quantities.every((input) => input.readOnly)).toBe(true);
+    }
+    const verification = container.querySelector('section[aria-label="GSTIN verification"]');
+    expect(verification).not.toBeNull();
+    expect(verification!.textContent).toContain('Not Verified');
+    expect(verification!.querySelector('button')).toBeNull();
+    expect(apiClient.get).toHaveBeenCalledWith('/gst-compliance/verification', {
+      params: { gstin: '33AAAAA0000A1Z5', sourceType: 'DISPATCH_ORDER', sourceId: 'dest-1' },
+    });
+    expect(post).not.toHaveBeenCalled();
+  });
+});
 
 // UXAUTH-004: this panel calls GET /factory-dispatches?saleOrderId=... through
 // the exact same resolveActorFactoryScope path as the Factory Packing queue

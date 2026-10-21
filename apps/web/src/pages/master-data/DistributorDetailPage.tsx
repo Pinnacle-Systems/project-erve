@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -402,6 +403,7 @@ export function DistributorDetailPage() {
         </p>
       </Panel>
 
+      <GstinVerificationPanel gstin={distributor.gstin} source={{ type: 'DISTRIBUTOR', id: distributor.id }} />
       {canManageUserMappings ? <UserMappingPanel distributor={distributor} /> : null}
 
       <ConfirmDialog

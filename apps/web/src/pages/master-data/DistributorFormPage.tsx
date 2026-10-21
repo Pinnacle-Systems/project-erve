@@ -11,6 +11,7 @@ import { apiClient } from '../../lib/api-client.js';
 import type { Distributor, Status } from './types.js';
 
 import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
+import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
 
 const emptyForm = {
   code: '',
@@ -241,6 +242,7 @@ export function DistributorFormPage() {
         >
           <FormSection title="Identity / Business">
             <FormGrid columns={3}>{identityFieldKeys.filter((key) => isEdit || key !== 'code').map(renderField)}</FormGrid>
+            <GstinVerificationPanel gstin={form.gstin} savedGstin={distributorQuery.data?.gstin} source={id ? { type: 'DISTRIBUTOR', id } : undefined} />
           </FormSection>
 
           <FormSection title="Contact">

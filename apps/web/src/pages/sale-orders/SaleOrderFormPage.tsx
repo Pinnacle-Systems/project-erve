@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
 import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
@@ -722,6 +723,7 @@ export function SaleOrderFormPage() {
                                   />
                                 </FormGrid>
 
+                                <GstinVerificationPanel gstin={dest.gstin} source={dest.retailStoreId ? { type: 'RETAIL_STORE', id: dest.retailStoreId } : undefined} readOnly />
                                 <div className="space-y-3">
                                   {dest.lines.map((line) => {
                                     const resolvedStyle = line.style ? resolveStyleOption(line.style) : null;

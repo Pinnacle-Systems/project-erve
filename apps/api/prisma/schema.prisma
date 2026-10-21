@@ -3512,6 +3512,71 @@ model File {
   @@map("files")
 }
 
+// Append-only successful evidence. Profile is an allowlisted normalized DTO,
+// never a raw provider payload. No business master or invoice is updated.
+model GstVerificationEvidence {
+  id               String   @id
+  operationId      String   @unique @map("operation_id")
+  requestedGstin   String   @map("requested_gstin")
+  normalizedGstin  String   @map("normalized_gstin")
+  lookupGstin      String   @map("lookup_gstin")
+  returnedGstin    String   @map("returned_gstin")
+  mode             GstIntegrationMode
+  level            GstinVerificationLevel
+  profile          Json
+  retrievedAt      DateTime @map("retrieved_at")
+  expiresAt        DateTime @map("expires_at")
+  ttlSeconds       Int      @map("ttl_seconds")
+  estimatedCredits Int      @map("estimated_credits")
+  actualCredits    Float?   @map("actual_credits")
+  billingCategory  String?  @map("billing_category")
+  operation        GstVerificationOperation @relation(fields: [operationId], references: [id], onDelete: Restrict)
+
+  @@index([normalizedGstin, mode, level, expiresAt, retrievedAt])
+  @@map("gst_verification_evidence")
+}
+
+// A durable, actor-bound confirmation is also the journal of the attempt.
+model GstVerificationOperation {
+  id               String   @id
+  actorId          String   @map("actor_id")
+  requestedGstin   String   @map("requested_gstin")
+  normalizedGstin  String   @map("normalized_gstin")
+  sourceType       String?  @map("source_type")
+  sourceId         String?  @map("source_id")
+  mode             GstIntegrationMode
+  level            GstinVerificationLevel
+  settingsVersion  Int      @map("settings_version")
+  cacheEvidenceId  String?  @map("cache_evidence_id")
+  refresh          Boolean  @default(false)
+  estimatedCredits Int      @map("estimated_credits")
+  outcome          String   @default("PREPARED")
+  failureCode      String?  @map("failure_code")
+  providerBalance  Float?   @map("provider_balance")
+  createdAt        DateTime @default(now()) @map("created_at")
+  expiresAt        DateTime @map("expires_at")
+  dispatchedAt     DateTime? @map("dispatched_at")
+  completedAt      DateTime? @map("completed_at")
+  evidence         GstVerificationEvidence?
+  claim            GstVerificationClaim?
+
+  @@index([normalizedGstin, mode, createdAt])
+  @@index([actorId, createdAt])
+  @@index([dispatchedAt])
+  @@map("gst_verification_operations")
+}
+
+// DISPATCHED/UNCERTAIN claims never expire into permission for another call.
+// reviewAfter flags a stalled operation for manual reconciliation only.
+model GstVerificationClaim {
+  key          String   @id
+  operationId  String   @unique @map("operation_id")
+  reviewAfter  DateTime @map("review_after")
+  operation    GstVerificationOperation @relation(fields: [operationId], references: [id], onDelete: Restrict)
+
+  @@map("gst_verification_claims")
+}
+
 model MasterImportRun {
   id             String                  @id
   kind           String

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -155,6 +156,7 @@ export function SellerRegistrationDetailPage() {
         </DescriptionList>
       </Panel>
 
+      <GstinVerificationPanel gstin={registration.gstin} source={{ type: 'SELLER_REGISTRATION', id: registration.id }} />
       <Panel title="Registered Address">
         <DescriptionList columns={3}>
           {addressFields.map(([label, value]) => (

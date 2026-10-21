@@ -35,11 +35,43 @@ const PACKING_METADATA_FIELD_LABELS: Record<'netWeight' | 'grossWeight' | 'dimen
 
 // ISS-007/ISS-010: a carton's contents as one Style row per Style, with
 // Sizes as columns, instead of one list item per Style+Size combination.
-function cartonStyleSizeRows(carton: FactoryPackingCartonView): StyleSizeGridRow[] {
+function cartonStyleSizeRows(
+  carton: FactoryPackingCartonView,
+  destinationLines: PackingListDestinationView['lines'],
+): StyleSizeGridRow[] {
+  // The destination projection already contains the authorized Style image. Carton
+  // lines may omit it even when the same Style has a visible destination thumbnail.
+  const primaryImageByStyle = new Map(
+    destinationLines.filter((line) => line.primaryImage).map((line) => [line.styleId, line.primaryImage] as const),
+  );
+  for (const line of carton.lines) {
+    if (!primaryImageByStyle.has(line.styleId) && line.primaryImage) {
+      primaryImageByStyle.set(line.styleId, line.primaryImage);
+    }
+  }
   return groupLinesByStyle(carton.lines).map((group) => ({
     styleId: group.styleId,
     styleNumber: group.styleNumber,
     styleName: group.styleName,
+    primaryImage: primaryImageByStyle.get(group.styleId) ?? null,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
+}
+
+// ISS-023 Phase 2: the destination's Required/Packed progress as two Style x
+// Size matrices (one metric per matrix, per the operational-summary standard
+// — a single matrix cannot carry two quantity metrics per cell) instead of
+// one flat row per Style+Size combination.
+function destinationStyleSizeRows(
+  lines: PackingListDestinationView['lines'],
+  metric: 'requiredQuantity' | 'packedQuantity',
+): StyleSizeGridRow[] {
+  const primaryImageByStyle = new Map(lines.map((line) => [line.styleId, line.primaryImage]));
+  return groupLinesByStyle(lines.map((line) => ({ ...line, quantity: line[metric] }))).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    primaryImage: primaryImageByStyle.get(group.styleId) ?? null,
     values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
   }));
 }
@@ -520,7 +552,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                       <div className="mt-2">
                         <StyleSizeGrid
                           columns={distinctSizeColumns(carton.lines)}
-                          rows={cartonStyleSizeRows(carton)}
+                          rows={cartonStyleSizeRows(carton, destination.lines)}
                           variant="readOnly"
                         />
                       </div>

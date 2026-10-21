@@ -1,4 +1,9 @@
-# GST Compliance Phase 1B design — not implemented
+# GST Compliance Phase 1B design
+
+Historical Phase 1A design notes below. The authorized Phase 1B implementation is
+documented in [gst-compliance-phase1b.md](gst-compliance-phase1b.md). The consolidated
+Phase 1B request supersedes save-triggered verification: saving never invokes a
+lookup. Current verification and database approval evidence is in the Phase 1B report.
 
 Phase 1A implements configuration only. It contains no provider adapter, lookup
 endpoint, verification evidence, cache, statutory documents or operation journal.

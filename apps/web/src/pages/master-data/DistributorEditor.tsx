@@ -5,6 +5,7 @@ import type { ApiSuccessResponse, DistributorOption } from '@erve/types';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection } from '@erve/layout';
 import { createEnterToNextHandler } from '@erve/app-components';
+import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
 import { apiClient } from '../../lib/api-client.js';
 
 import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
@@ -142,6 +143,7 @@ export function DistributorEditor({
           </SelectField>
         </FormGrid>
       </FormSection>
+      <GstinVerificationPanel gstin={form.gstin} />
       <FormSection title="Contact">
         <FormGrid layout="content">
           {field('contactName')}

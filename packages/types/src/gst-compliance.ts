@@ -14,7 +14,7 @@ export interface GstComplianceSettings extends GstComplianceValues {
   updatedBy: { id: string; name: string } | null;
   capabilities: {
     liveActivationAvailable: boolean;
-    onlineVerificationAvailable: false;
+    onlineVerificationAvailable: boolean;
     ewayBillGenerationAvailable: false;
   };
 }

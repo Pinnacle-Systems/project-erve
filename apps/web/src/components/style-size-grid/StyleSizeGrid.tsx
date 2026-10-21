@@ -90,6 +90,7 @@ export function StyleSizeGrid({
                     ) : variant === 'editable' && columnEditable ? (
                       <NumericField
                         variant="cell"
+                        className="border-[var(--erp-form-field-border)] bg-surface-raised shadow-none hover:border-[var(--erp-form-field-border)]"
                         mode="integer"
                         min={min}
                         max={max}

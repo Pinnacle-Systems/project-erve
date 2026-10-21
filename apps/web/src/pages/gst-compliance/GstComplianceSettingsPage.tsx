@@ -9,6 +9,7 @@ import { ErrorState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { AccountantGstinLookup } from './GstinVerificationPanel.js';
 
 const SETTINGS_KEY = ['gst-compliance-settings'] as const;
 const AUDIT_KEY = ['gst-compliance-settings-audit'] as const;
@@ -44,6 +45,8 @@ export function GstComplianceSettingsPage() {
         onSaved={(settings) => {
           queryClient.setQueryData(SETTINGS_KEY, settings);
           void queryClient.invalidateQueries({ queryKey: AUDIT_KEY });
+          void queryClient.invalidateQueries({ queryKey: ['gst-verification-policy'] });
+          void queryClient.invalidateQueries({ queryKey: ['gst-verification'] });
           setSaved(true);
         }}
         onReload={async () => {
@@ -52,6 +55,7 @@ export function GstComplianceSettingsPage() {
           if (result.isSuccess) setReloadRevision((value) => value + 1);
         }}
       />
+      {user?.roles.includes('ACCOUNTANT') && query.data.onlineGstinVerificationEnabled && <AccountantGstinLookup />}
       <Panel title="Recent settings history">
         {audit.isPending ? <LoadingState label="Loading settings history" /> : audit.isError ? (
           <ValidationMessage tone="error">Settings history is unavailable. <Button variant="secondary" onClick={() => void audit.refetch()}>Retry history</Button></ValidationMessage>
@@ -134,7 +138,7 @@ function SettingsEditor({ settings, canEdit, onSaved, onReload, onEditing }: {
           </FormSection>
           <FormSection title="Online GSTIN Verification">
             <Switch id="gst-verification-enabled" label="Enable Online GSTIN Verification" checked={form.onlineGstinVerificationEnabled} disabled={disabled} onCheckedChange={(checked) => updateForm({ onlineGstinVerificationEnabled: checked })} description="Verify GST registration details through the configured compliance service." />
-            <p className="mt-2 text-sm text-muted-foreground">Local GSTIN format validation and existing required fields continue. Online verification is not yet available; saving these preferences performs no lookup.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Local GSTIN format validation and existing required fields continue. Use an explicit verification action to check a saved GSTIN. Saving these preferences performs no lookup.</p>
           </FormSection>
           <FormSection title="Verification Detail Level">
             <RadioGroup aria-label="Verification Detail Level" value={form.gstinVerificationLevel} disabled={disabled || !form.onlineGstinVerificationEnabled} onValueChange={(value) => updateForm({ gstinVerificationLevel: value as GstComplianceValues['gstinVerificationLevel'] })}>

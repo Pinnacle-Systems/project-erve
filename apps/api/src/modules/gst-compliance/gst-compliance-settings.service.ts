@@ -37,14 +37,14 @@ function valuesOf(record: GstComplianceValues): GstComplianceValues {
   };
 }
 
-export function createGstComplianceSettingsService(repository: SettingsRepository, liveAuthorized: () => boolean) {
+export function createGstComplianceSettingsService(repository: SettingsRepository, liveAuthorized: () => boolean, verificationAvailable: () => boolean = () => false) {
   const effective = (record: SettingsRecord | null): SettingsRecord => record ?? {
     ...DEFAULT_GST_COMPLIANCE_VALUES, version: 0, updatedAt: null, updatedBy: null,
   };
   const view = (record: SettingsRecord): GstComplianceSettings => ({
     ...record,
     capabilities: {
-      liveActivationAvailable: liveAuthorized(), onlineVerificationAvailable: false, ewayBillGenerationAvailable: false,
+      liveActivationAvailable: liveAuthorized(), onlineVerificationAvailable: verificationAvailable(), ewayBillGenerationAvailable: false,
     },
   });
   function assertRead(actor: CurrentUser) {

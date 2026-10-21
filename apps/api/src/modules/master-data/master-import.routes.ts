@@ -8,9 +8,8 @@ import { successResponse } from '../../utils/response.js';
 import { HttpError } from '../../errors/http-error.js';
 import {
   buildMasterImportWorkbook,
+  buildMasterImportTemplate,
   listMasterImportWorksheets,
-  masterImportHeaders,
-  masterImportWorksheets,
 } from './master-import.parser.js';
 import {
   planMasterImport,
@@ -62,7 +61,7 @@ masterImportsRouter.get(
     const kind = masterImportKindSchema.parse(req.params.kind);
     res
       .attachment(`${kind}-template.xlsx`)
-      .send(buildMasterImportWorkbook(masterImportHeaders[kind], [], masterImportWorksheets[kind]));
+      .send(buildMasterImportTemplate(kind));
   }),
 );
 masterImportsRouter.post(

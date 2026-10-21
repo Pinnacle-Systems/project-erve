@@ -54,6 +54,15 @@ export const masterImportWorksheets: Record<MasterImportKind, string> = {
   distributors: 'Distributors',
   'retail-stores': 'Retail stores',
 };
+/** Downloadable templates contain business fields only. Older imports with explicit
+ * source keys/provenance remain accepted so historical data is not disrupted. */
+export function buildMasterImportTemplate(kind: MasterImportKind): Buffer {
+  const userHeaders = masterImportHeaders[kind].filter(
+    (header) => header !== 'Source Key' && header !== 'Source Provenance',
+  );
+  return buildMasterImportWorkbook(userHeaders, [], masterImportWorksheets[kind]);
+}
+
 const fields: Record<string, string> = {
   'season code': 'code',
   'season name': 'name',
