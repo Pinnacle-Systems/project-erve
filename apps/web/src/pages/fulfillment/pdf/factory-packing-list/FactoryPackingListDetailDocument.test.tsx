@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { FactoryPackingListDetailDocument } from './FactoryPackingListDetailDocument.js';
 import type {
   FactoryPackingListCartonRow,
+  FactoryPackingListCartonStyleRow,
   FactoryPackingListDestinationSection,
-  FactoryPackingListLineRow,
   FactoryPackingListPdfViewModel,
 } from './buildFactoryPackingListViewModel.js';
 
@@ -24,8 +24,8 @@ function makeCarton(overrides: Partial<FactoryPackingListCartonRow> = {}): Facto
   };
 }
 
-function makeLine(overrides: Partial<FactoryPackingListLineRow> = {}): FactoryPackingListLineRow {
-  return { id: 'line-1', styleDisplay: 'ST-001 — Classic Tee', sizeLabel: 'Medium', requiredQuantity: 10, packedQuantity: 10, ...overrides };
+function makeStyleRow(overrides: Partial<FactoryPackingListCartonStyleRow> = {}): FactoryPackingListCartonStyleRow {
+  return { styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 10 }, ...overrides };
 }
 
 function makeDestination(overrides: Partial<FactoryPackingListDestinationSection> = {}): FactoryPackingListDestinationSection {
@@ -35,7 +35,9 @@ function makeDestination(overrides: Partial<FactoryPackingListDestinationSection
     distributorName: 'Distributor One',
     addressLine: '123 Test Street, Chennai, TN, India',
     contactName: 'Ravi Kumar',
-    lines: [makeLine()],
+    sizeColumns: [{ sizeId: 'size-1', sizeCode: 'M' }],
+    requiredStyleRows: [makeStyleRow()],
+    packedStyleRows: [makeStyleRow()],
     cartons: [makeCarton()],
     ...overrides,
   };
@@ -129,12 +131,16 @@ describe('FactoryPackingListDetailDocument', () => {
       }),
     );
 
+    // ISS-023 Phase 2 added two destination-level Required/Packed matrices on top of each carton's
+    // own matrix, so this watchdog has more headroom than a bare infinite-hang check needs — this is
+    // a real hang detector, not a performance benchmark, and the full suite's parallel test load can
+    // otherwise make an 8s budget flaky even though a genuine hang would still be caught well under 20s.
     const blob = await Promise.race([
       pdf(<FactoryPackingListDetailDocument viewModel={makeViewModel({ destinations })} />).toBlob(),
       new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('PDF generation hung on a many-carton Factory Packing List')), 8000),
+        setTimeout(() => reject(new Error('PDF generation hung on a many-carton Factory Packing List')), 20000),
       ),
     ]);
     expect(blob.size).toBeGreaterThan(0);
-  }, 10000);
+  }, 22000);
 });

@@ -20,7 +20,8 @@ function makeViewModel(overrides: Partial<PackingAuditCartonDetailPdfViewModel> 
     retired: false,
     destinationMismatch: false,
     totalQuantity: 10,
-    lines: [{ id: 'line-1', styleDisplay: 'ST-001 — Classic Tee', sizeLabel: 'Medium', quantity: 10 }],
+    sizeColumns: [{ sizeId: 'size-1', sizeCode: 'M' }],
+    styleRows: [{ styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 10 } }],
     auditHistory: [],
     ...overrides,
   };
@@ -51,8 +52,14 @@ describe('PackingAuditCartonDetailDocument', () => {
     expect(blob.size).toBeGreaterThan(0);
   });
 
-  it('renders a multi-line carton with a multi-entry audit history without throwing', async () => {
-    const lines = Array.from({ length: 20 }, (_, i) => ({ id: `line-${i}`, styleDisplay: `ST-${i}`, sizeLabel: 'M', quantity: 5 }));
+  it('renders a multi-Style carton with a multi-entry audit history without throwing', async () => {
+    const sizeColumns = [{ sizeId: 'size-1', sizeCode: 'M' }];
+    const styleRows = Array.from({ length: 20 }, (_, i) => ({
+      styleId: `style-${i}`,
+      styleNumber: `ST-${i}`,
+      styleName: null,
+      values: { 'size-1': 5 },
+    }));
     const auditHistory = Array.from({ length: 10 }, (_, i) => ({
       cartonVersion: i + 1,
       inspectedByName: `QA ${i}`,
@@ -60,9 +67,9 @@ describe('PackingAuditCartonDetailDocument', () => {
       remarks: i % 2 === 0 ? `remark ${i}` : null,
     }));
     const blob = await Promise.race([
-      pdf(<PackingAuditCartonDetailDocument viewModel={makeViewModel({ lines, auditHistory })} />).toBlob(),
+      pdf(<PackingAuditCartonDetailDocument viewModel={makeViewModel({ sizeColumns, styleRows, auditHistory })} />).toBlob(),
       new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('PDF generation hung on a multi-line carton')), 8000),
+        setTimeout(() => reject(new Error('PDF generation hung on a multi-Style carton')), 8000),
       ),
     ]);
     expect(blob.size).toBeGreaterThan(0);

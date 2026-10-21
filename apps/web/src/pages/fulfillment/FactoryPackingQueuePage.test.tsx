@@ -327,8 +327,8 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
 
   describe('PAG-P1-05 pagination in Awaiting Packing', () => {
     it('renders Load more button when queue hasMore is true and appends next page', async () => {
-      const line1 = queueLine({ saleOrderLineId: 'line-1', styleNumber: 'ST-001' });
-      const line2 = queueLine({ saleOrderLineId: 'line-2', styleNumber: 'ST-002' });
+      const line1 = queueLine({ saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001' });
+      const line2 = queueLine({ saleOrderLineId: 'line-2', styleId: 'style-2', styleNumber: 'ST-002', sizeId: 'size-2', sizeCode: 'L', sizeLabel: 'Large' });
 
       await renderPage('FACTORY_USER', '/fulfillment/factory-dispatches', async (url, config) => {
         if (url === '/factory-dispatches/packing-queue') {
@@ -359,6 +359,64 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
       expect(content()).toContain('ST-001');
       expect(content()).toContain('ST-002');
       expect(content()).toContain('Showing 2 lines (all loaded)');
+    });
+  });
+
+  // ISS-023 Phase 2: the queue groups into one Style x Size section per
+  // (Dispatch Order, Distributor) instead of one flat row per line.
+  describe('ISS-023 Phase 2 — Style x Size sections in Awaiting Packing', () => {
+    it('groups multiple Sizes of the same Style into one row per section, and keeps two different Dispatch Order/Distributor combinations in separate sections', async () => {
+      const lineA1 = queueLine({ saleOrderLineId: 'line-a1', saleOrderId: 'so-1', saleOrderNumber: 'EISO/26-27/0001', distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' }, styleId: 'style-1', styleNumber: 'ST-001', sizeId: 'size-1', sizeCode: 'S', allocatedQuantity: 10, packedQuantity: 4, remainingQuantity: 6 });
+      const lineA2 = queueLine({ saleOrderLineId: 'line-a2', saleOrderId: 'so-1', saleOrderNumber: 'EISO/26-27/0001', distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' }, styleId: 'style-1', styleNumber: 'ST-001', sizeId: 'size-2', sizeCode: 'M', allocatedQuantity: 8, packedQuantity: 8, remainingQuantity: 0 });
+      const lineB = queueLine({ saleOrderLineId: 'line-b', saleOrderId: 'so-2', saleOrderNumber: 'EISO/26-27/0002', distributor: { id: 'dist-2', code: 'D2', name: 'Distributor Two' }, styleId: 'style-2', styleNumber: 'ST-002', sizeId: 'size-3', sizeCode: 'L', allocatedQuantity: 5, packedQuantity: 5, remainingQuantity: 0 });
+
+      await renderPage('FACTORY_USER', '/fulfillment/factory-dispatches', async (url) => {
+        if (url === '/factory-dispatches/packing-queue') return queueApiResponse([lineA1, lineA2, lineB]);
+        if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
+        throw new Error(`Unexpected GET: ${url}`);
+      });
+
+      // Two section headings, one per (Dispatch Order, Distributor).
+      expect(content()).toContain('EISO/26-27/0001 — Distributor One');
+      expect(content()).toContain('EISO/26-27/0002 — Distributor Two');
+      // ST-001 appears once per matrix within its own section (Required/Packed/Remaining), never once per Size.
+      const styleOneCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
+      expect(styleOneCells).toHaveLength(3);
+      // Required total for section A (10+8=18) and Remaining total (6+0=6) both reconcile to the source lines.
+      expect(content()).toContain('18');
+      expect(content()).toContain('6');
+    });
+
+    it('navigates to the Packing List for a section when its heading is clicked, not per individual row', async () => {
+      mockAuth('FACTORY_USER');
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        if (url === '/factory-dispatches/packing-queue') return queueApiResponse([queueLine({ saleOrderId: 'so-9' })]);
+        if (url === '/factory-dispatches') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
+        throw new Error(`Unexpected GET: ${url}`);
+      });
+
+      act(() => {
+        root.render(
+          <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+            <MemoryRouter initialEntries={['/fulfillment/factory-dispatches']}>
+              <Routes>
+                <Route path="/fulfillment/factory-dispatches" element={<FactoryPackingQueuePage />} />
+                <Route path="/sale-orders/:id/packing-list" element={<div>Packing List Page for so-9</div>} />
+              </Routes>
+            </MemoryRouter>
+          </QueryClientProvider>,
+        );
+      });
+      await flush();
+      await flush();
+
+      const sectionLink = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('EISO/26-27/0001 — Distributor One'),
+      );
+      expect(sectionLink).toBeDefined();
+      act(() => sectionLink?.click());
+      await flush();
+      expect(content()).toContain('Packing List Page for so-9');
     });
   });
 });

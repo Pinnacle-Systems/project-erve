@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
+import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -13,8 +13,22 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canConfirmPackingAudits } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
+import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
+import { distinctSizeColumns, groupLinesByStyle } from './style-size-grouping.js';
 import type { PackingAuditQueueItem } from './types.js';
+
+// ISS-023 Phase 2: this carton's own contents as one Style row per Style,
+// with Sizes as columns, instead of one flat row per Style+Size combination
+// — mirrors the already-standardized carton contents on the Factory Packing
+// List / Carton Label (ISS-007/ISS-010).
+function cartonStyleSizeRows(carton: PackingAuditQueueItem) {
+  return groupLinesByStyle(carton.lines).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
+}
 
 // Lightweight carton inspection view — the inspector sees carton identity,
 // destination, and Style/Size contents, then confirms the current state was
@@ -129,23 +143,10 @@ export function PackingAuditCartonDetailPage() {
           />
           <DescriptionList.Item label="Total Quantity" value={carton.totalQuantity.toLocaleString()} />
         </DescriptionList>
-        <DataTable
-          rowKey="saleOrderLineId"
-          data={carton.lines}
-          columns={[
-            {
-              key: 'style',
-              header: 'Style',
-              render: (r) => (
-                <div className="flex items-center gap-2">
-                  <StyleThumbnailCell styleId={r.styleId} image={r.primaryImage} size={32} viewerTitle={r.styleNumber} />
-                  <span>{`${r.styleNumber} — ${r.styleName}`}</span>
-                </div>
-              ),
-            },
-            { key: 'size', header: 'Size', accessor: 'sizeLabel' },
-            { key: 'quantity', header: 'Quantity', align: 'right', render: (r) => r.quantity.toLocaleString() },
-          ]}
+        <StyleSizeGrid
+          columns={distinctSizeColumns(carton.lines)}
+          rows={cartonStyleSizeRows(carton)}
+          variant="readOnly"
         />
       </Panel>
 

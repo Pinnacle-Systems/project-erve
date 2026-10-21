@@ -6,9 +6,9 @@ import { PdfMetaSection } from '../../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import { PdfTable, type PdfTableColumn } from '../../../../lib/pdf/core/PdfTable.js';
+import { PdfStyleSizeMatrix } from '../../../../lib/pdf/core/PdfStyleSizeMatrix.js';
 import type {
   PackingAuditCartonDetailHistoryRow,
-  PackingAuditCartonDetailLineRow,
   PackingAuditCartonDetailPdfViewModel,
 } from './buildPackingAuditCartonDetailViewModel.js';
 
@@ -16,12 +16,6 @@ const styles = StyleSheet.create({
   warning: { fontSize: 8, color: '#8a4b00', marginBottom: 4 },
   totalsLine: { fontSize: 9, fontWeight: 700, color: '#111111', marginTop: 4, textAlign: 'right' },
 });
-
-const lineColumns: PdfTableColumn<PackingAuditCartonDetailLineRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '50%', value: (row) => row.styleDisplay },
-  { key: 'sizeLabel', header: 'Size', width: '20%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Quantity', width: '30%', align: 'right', value: (row) => row.quantity },
-];
 
 const historyColumns: PdfTableColumn<PackingAuditCartonDetailHistoryRow>[] = [
   { key: 'cartonVersion', header: 'Version', width: '15%', align: 'right', value: (row) => `v${row.cartonVersion}` },
@@ -51,7 +45,7 @@ export function PackingAuditCartonDetailDocument({ viewModel }: PackingAuditCart
       </PdfSection>
 
       <PdfSection title="Carton Contents" wrap>
-        <PdfTable columns={lineColumns} rows={viewModel.lines} rowKey={(row) => row.id} />
+        <PdfStyleSizeMatrix columns={viewModel.sizeColumns} rows={viewModel.styleRows} />
         <Text style={styles.totalsLine}>Total: {viewModel.totalQuantity}</Text>
       </PdfSection>
 

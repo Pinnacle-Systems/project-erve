@@ -614,12 +614,12 @@ describe('PackingListPage carton Style x Size presentation (ISS-007/ISS-010)', (
     });
     await renderPage(buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [carton] }] }));
 
-    // "ST-001" appears once in the (unrelated, out-of-scope) Required/Packed
-    // summary table and once in the carton's own Style x Size grid — it
-    // never repeats across separate rows within the carton grid itself the
-    // way the old per-Size <ul> did.
+    // "ST-001" appears once in the Required matrix, once in the Packed
+    // matrix, and once in the carton's own Style x Size grid — it never
+    // repeats across separate rows within any one grid the way the old
+    // per-Size <ul>/flat table did.
     const styleCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
-    expect(styleCells).toHaveLength(2);
+    expect(styleCells).toHaveLength(3);
     // Size codes appear as column headers.
     expect(content()).toContain('S');
     expect(content()).toContain('M');
@@ -662,6 +662,47 @@ describe('PackingListPage carton Style x Size presentation (ISS-007/ISS-010)', (
     // Two Style rows, each missing a cell for the Size that doesn't apply to it.
     const dashCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.trim() === '—');
     expect(dashCells.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ISS-023 Phase 2: the destination's Required/Packed progress summary as two
+// Style x Size matrices instead of one flat row per Style+Size combination.
+describe('PackingListPage destination Required/Packed Style x Size presentation (ISS-023 Phase 2)', () => {
+  it('shows a "Required" and a "Packed" matrix, grouping multiple Styles each into their own row', async () => {
+    const destination = {
+      ...buildPackingList().destinations[0]!,
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', requiredQuantity: 10, packedQuantity: 6 },
+        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', requiredQuantity: 8, packedQuantity: 8 },
+        { saleOrderLineId: 'line-3', styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', primaryImage: null, sizeId: 'size-3', sizeCode: 'L', sizeLabel: 'Large', requiredQuantity: 5, packedQuantity: 0 },
+      ],
+      cartons: [],
+    };
+    await renderPage(buildPackingList({ destinations: [destination] }));
+
+    expect(content()).toContain('Required');
+    expect(content()).toContain('Packed');
+    // Each Style number appears exactly once per matrix (grouped, not repeated per Size).
+    const styleOneCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
+    expect(styleOneCells).toHaveLength(2);
+    const styleTwoCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-002'));
+    expect(styleTwoCells).toHaveLength(2);
+    // Required total (10+8+5=23) and Packed total (6+8+0=14) both reconcile to the source lines.
+    expect(content()).toContain('23');
+    expect(content()).toContain('14');
+  });
+
+  it('shows a real zero Packed quantity (not blank) when nothing has been packed yet', async () => {
+    const destination = {
+      ...buildPackingList().destinations[0]!,
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', requiredQuantity: 12, packedQuantity: 0 },
+      ],
+      cartons: [],
+    };
+    await renderPage(buildPackingList({ destinations: [destination] }));
+    const packedInputs = Array.from(container.querySelectorAll('input[aria-label="ST-001 M quantity"]'));
+    expect(packedInputs.some((input) => (input as HTMLInputElement).value === '0')).toBe(true);
   });
 });
 
