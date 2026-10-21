@@ -6,14 +6,14 @@ import { PdfMetaSection } from '../../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import { PdfTable, type PdfTableColumn } from '../../../../lib/pdf/core/PdfTable.js';
-import { PdfThumbnail, type PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
+import { PdfStyleSizeMatrix, type PdfStyleSizeMatrixRow } from '../../../../lib/pdf/core/PdfStyleSizeMatrix.js';
 import type {
   DispatchOrderDetailAuditRow,
   DispatchOrderDetailErveDispatchRow,
   DispatchOrderDetailFactoryDispatchRow,
-  DispatchOrderDetailLineRow,
   DispatchOrderDetailPdfViewModel,
-  DispatchOrderDetailStyleSizeTotalRow,
+  DispatchOrderDetailStyleRow,
 } from './buildDispatchOrderDetailViewModel.js';
 
 const styles = StyleSheet.create({
@@ -25,30 +25,16 @@ const styles = StyleSheet.create({
   totalsLine: { fontSize: 9, fontWeight: 700, color: '#111111', marginTop: 4, textAlign: 'right' },
 });
 
-function imageColumn<T extends { primaryImage: { id: string } | null }>(
-  images: Map<string, PdfImageSource>,
-): PdfTableColumn<T> {
-  return {
-    key: 'image',
-    header: 'Image',
-    width: '8%',
-    render: (row) => (
-      <PdfThumbnail image={row.primaryImage ? images.get(row.primaryImage.id) : null} width={32} height={32} />
-    ),
-  };
+/** Resolves each row's own image ref against the shared images Map — never `undefined`, so `PdfStyleSizeMatrix` always renders the thumbnail column (a placeholder box for a Style with no uploaded image), matching the previous flat table's "Image" column. */
+function toMatrixRows(rows: DispatchOrderDetailStyleRow[], images: Map<string, PdfImageSource>): PdfStyleSizeMatrixRow[] {
+  return rows.map((row) => ({
+    styleId: row.styleId,
+    styleNumber: row.styleNumber,
+    styleName: row.styleName,
+    image: row.primaryImage ? images.get(row.primaryImage.id) ?? { placeholder: true } : { placeholder: true },
+    values: row.values,
+  }));
 }
-
-const lineColumns: PdfTableColumn<DispatchOrderDetailLineRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '52%', value: (row) => row.styleDisplay },
-  { key: 'sizeLabel', header: 'Size', width: '20%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Quantity', width: '20%', align: 'right', value: (row) => row.quantity },
-];
-
-const styleSizeTotalColumns: PdfTableColumn<DispatchOrderDetailStyleSizeTotalRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '52%', value: (row) => row.styleDisplay },
-  { key: 'sizeLabel', header: 'Size', width: '20%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Total Quantity', width: '20%', align: 'right', value: (row) => row.quantity },
-];
 
 const factoryDispatchColumns: PdfTableColumn<DispatchOrderDetailFactoryDispatchRow>[] = [
   { key: 'factoryDispatchNumber', header: 'Factory Dispatch No.', width: '60%', value: (row) => row.factoryDispatchNumber },
@@ -98,7 +84,7 @@ export function DispatchOrderDetailDocument({ viewModel, images = new Map() }: D
                 <Text style={styles.note}>{dest.addressLine}</Text>
                 {dest.contactLine ? <Text style={styles.note}>{dest.contactLine}</Text> : null}
                 {dest.gstin ? <Text style={styles.note}>GSTIN: {dest.gstin}</Text> : null}
-                <PdfTable columns={[imageColumn<DispatchOrderDetailLineRow>(images), ...lineColumns]} rows={dest.lines} rowKey={(row) => row.id} />
+                <PdfStyleSizeMatrix columns={dest.sizeColumns} rows={toMatrixRows(dest.styleRows, images)} />
               </View>
             ))}
           </View>
@@ -106,7 +92,7 @@ export function DispatchOrderDetailDocument({ viewModel, images = new Map() }: D
       </PdfSection>
 
       <PdfSection title="Style / Size Totals" wrap>
-        <PdfTable columns={[imageColumn<DispatchOrderDetailStyleSizeTotalRow>(images), ...styleSizeTotalColumns]} rows={viewModel.styleSizeTotals} rowKey={(row) => row.key} />
+        <PdfStyleSizeMatrix columns={viewModel.overallSizeColumns} rows={toMatrixRows(viewModel.overallStyleRows, images)} />
         <Text style={styles.totalsLine}>Total: {viewModel.grandTotalQuantity}</Text>
       </PdfSection>
 

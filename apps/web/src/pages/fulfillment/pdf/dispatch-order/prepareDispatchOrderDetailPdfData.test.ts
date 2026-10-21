@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '../../../../lib/api-client.js';
 import { prepareDispatchOrderDetailPdfData } from './prepareDispatchOrderDetailPdfData.js';
 import type {
-  DispatchOrderDetailLineRow,
   DispatchOrderDetailPdfViewModel,
+  DispatchOrderDetailStyleRow,
 } from './buildDispatchOrderDetailViewModel.js';
 
 vi.mock('../../../../lib/pdf/resizeImage.js', () => ({
@@ -14,29 +14,22 @@ vi.mock('../../../../lib/pdf/resizeImage.js', () => ({
 afterEach(() => vi.restoreAllMocks());
 
 function model(): DispatchOrderDetailPdfViewModel {
-  const lines: DispatchOrderDetailLineRow[] = [
+  const styleRows: DispatchOrderDetailStyleRow[] = [
     {
-      id: 'a',
-      styleDisplay: 'Style A',
-      sizeLabel: 'M',
-      quantity: 5,
+      styleId: 'a',
+      styleNumber: 'Style A',
+      styleName: '',
+      values: { M: 5, L: 7 },
       primaryImage: { id: 'file-a', path: '/styles/a/images/primary-a/content' },
     },
     {
-      id: 'a-large',
-      styleDisplay: 'Style A',
-      sizeLabel: 'L',
-      quantity: 7,
-      primaryImage: { id: 'file-a', path: '/styles/a/images/primary-a/content' },
-    },
-    {
-      id: 'b',
-      styleDisplay: 'Style B',
-      sizeLabel: 'M',
-      quantity: 9,
+      styleId: 'b',
+      styleNumber: 'Style B',
+      styleName: '',
+      values: { M: 9 },
       primaryImage: { id: 'file-b', path: '/styles/b/images/primary-b/content' },
     },
-    { id: 'none', styleDisplay: 'No image', sizeLabel: 'M', quantity: 1, primaryImage: null },
+    { styleId: 'none', styleNumber: 'No image', styleName: '', values: { M: 1 }, primaryImage: null },
   ];
   return {
     title: 'DISPATCH ORDER',
@@ -60,16 +53,21 @@ function model(): DispatchOrderDetailPdfViewModel {
           contactLine: null,
           gstin: null,
           totalQuantity: 22,
-          lines,
+          sizeColumns: [{ sizeId: 'M', sizeCode: 'M' }, { sizeId: 'L', sizeCode: 'L' }],
+          styleRows,
         })),
       },
     ],
-    styleSizeTotals: lines.map((line) => ({ ...line, key: line.id, quantity: line.quantity * 2 })),
+    overallSizeColumns: [{ sizeId: 'M', sizeCode: 'M' }, { sizeId: 'L', sizeCode: 'L' }],
+    overallStyleRows: styleRows.map((row) => ({
+      ...row,
+      values: Object.fromEntries(Object.entries(row.values).map(([k, v]) => [k, (v ?? 0) * 2])),
+    })),
   };
 }
 
 describe('prepareDispatchOrderDetailPdfData', () => {
-  it('fetches each primary file once across sizes, destinations and totals and preserves source data', async () => {
+  it('fetches each primary file once across destinations and the overall totals and preserves source data', async () => {
     const paths: string[] = [];
     vi.spyOn(apiClient, 'get').mockImplementation(async (path: string) => {
       paths.push(path);
@@ -103,8 +101,8 @@ describe('prepareDispatchOrderDetailPdfData', () => {
     const vm = model();
     for (const group of vm.distributorGroups)
       for (const dest of group.destinations)
-        for (const line of dest.lines) line.primaryImage = null;
-    for (const row of vm.styleSizeTotals) row.primaryImage = null;
+        for (const row of dest.styleRows) row.primaryImage = null;
+    for (const row of vm.overallStyleRows) row.primaryImage = null;
     expect((await prepareDispatchOrderDetailPdfData(vm)).size).toBe(0);
     expect(get).not.toHaveBeenCalled();
   });

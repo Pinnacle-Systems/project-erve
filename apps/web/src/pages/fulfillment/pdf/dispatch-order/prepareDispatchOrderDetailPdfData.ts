@@ -10,9 +10,9 @@ export async function prepareDispatchOrderDetailPdfData(
 ): Promise<Map<string, PdfImageSource>> {
   const rows = [
     ...viewModel.distributorGroups.flatMap((group) =>
-      group.destinations.flatMap((dest) => dest.lines),
+      group.destinations.flatMap((dest) => dest.styleRows),
     ),
-    ...viewModel.styleSizeTotals,
+    ...viewModel.overallStyleRows,
   ];
   const refs = rows
     .map((row) => row.primaryImage)

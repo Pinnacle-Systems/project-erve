@@ -1,12 +1,14 @@
 import { useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { ApiSuccessResponse, StylePrimaryImageView } from '@erve/types';
+import type { ApiSuccessResponse } from '@erve/types';
 import { AuditTrail, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
-import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
+import { EmptyState, LoadingState } from '@erve/data-display';
+import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
+import type { StyleSizeGridRow } from '../../components/style-size-grid/types.js';
+import { distinctSizeColumns, groupLinesByStyle } from '../fulfillment/style-size-grouping.js';
 import { apiClient } from '../../lib/api-client.js';
 import { fetchAllPaginatedRecords } from '../../lib/pdf/fetchAllPaginatedRecords.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -29,27 +31,25 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-// DEMO-003: a compact inline thumbnail beside the Style identity, not a
-// dedicated image column — this stays a dense, multi-Style financial table.
-function StyleIdentityCell({
-  styleId,
-  styleNumber,
-  styleName,
-  primaryImage,
-}: {
-  styleId: string;
-  styleNumber: string;
-  styleName: string;
-  primaryImage: StylePrimaryImageView | null;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <StyleThumbnailCell styleId={styleId} image={primaryImage} size={24} viewerTitle={styleNumber} />
-      <span>
-        {styleNumber} — {styleName}
-      </span>
-    </div>
-  );
+// ISS-023 Phase 1: one Style per row, Sizes as dynamic columns, Total as the
+// final column — the same presentation standard already used for the Order
+// Sheet, Job Order and Factory Packing List (see style-size-grouping.ts).
+// groupLinesByStyle() drops the per-line primaryImage (it isn't part of the
+// Style+Size aggregation), so it's re-attached here from the first line seen
+// for each styleId — a Style's image is identical across every one of its
+// own lines.
+function buildStyleSizeRows(lines: SaleOrderLine[]): StyleSizeGridRow[] {
+  const imageByStyleId = new Map<string, SaleOrderLine['primaryImage']>();
+  for (const line of lines) {
+    if (!imageByStyleId.has(line.styleId)) imageByStyleId.set(line.styleId, line.primaryImage);
+  }
+  return groupLinesByStyle(lines).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    primaryImage: imageByStyleId.get(group.styleId) ?? null,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
 }
 
 export function SaleOrderDetailPage() {
@@ -248,25 +248,10 @@ export function SaleOrderDetailPage() {
                         {dest.gstin && (
                           <div className="text-sm text-[var(--erp-text-muted)]">GSTIN: {dest.gstin}</div>
                         )}
-                        <DataTable
-                          rowKey="id"
-                          data={destLines}
-                          columns={[
-                            {
-                              key: 'style',
-                              header: 'Style',
-                              render: (l) => (
-                                <StyleIdentityCell
-                                  styleId={l.styleId}
-                                  styleNumber={l.styleNumber}
-                                  styleName={l.styleName}
-                                  primaryImage={l.primaryImage}
-                                />
-                              ),
-                            },
-                            { key: 'size', header: 'Size', accessor: 'sizeLabel' },
-                            { key: 'quantity', header: 'Quantity', align: 'right', render: (l) => l.quantity.toLocaleString() },
-                          ]}
+                        <StyleSizeGrid
+                          columns={distinctSizeColumns(destLines)}
+                          rows={buildStyleSizeRows(destLines)}
+                          variant="readOnly"
                         />
                       </div>
                     );
@@ -279,47 +264,10 @@ export function SaleOrderDetailPage() {
       </Panel>
 
       <Panel title="Style / Size Totals">
-        <DataTable
-          rowKey="key"
-          data={Object.values(
-            so.lines.reduce<
-              Record<
-                string,
-                { key: string; styleId: string; styleNumber: string; styleName: string; primaryImage: SaleOrderLine['primaryImage']; sizeLabel: string; quantity: number }
-              >
-            >((acc, line) => {
-              const key = `${line.styleId}:${line.sizeId}`;
-              if (!acc[key]) {
-                acc[key] = {
-                  key,
-                  styleId: line.styleId,
-                  styleNumber: line.styleNumber,
-                  styleName: line.styleName,
-                  primaryImage: line.primaryImage,
-                  sizeLabel: line.sizeLabel,
-                  quantity: 0,
-                };
-              }
-              acc[key]!.quantity += line.quantity;
-              return acc;
-            }, {}),
-          )}
-          columns={[
-            {
-              key: 'style',
-              header: 'Style',
-              render: (r) => (
-                <StyleIdentityCell
-                  styleId={r.styleId}
-                  styleNumber={r.styleNumber}
-                  styleName={r.styleName}
-                  primaryImage={r.primaryImage}
-                />
-              ),
-            },
-            { key: 'size', header: 'Size', accessor: 'sizeLabel' },
-            { key: 'quantity', header: 'Total Quantity', align: 'right', render: (r) => r.quantity.toLocaleString() },
-          ]}
+        <StyleSizeGrid
+          columns={distinctSizeColumns(so.lines)}
+          rows={buildStyleSizeRows(so.lines)}
+          variant="readOnly"
         />
         <div className="mt-2 text-right text-sm font-medium">Total: {so.totalQuantity.toLocaleString()}</div>
       </Panel>

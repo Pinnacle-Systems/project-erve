@@ -6,6 +6,7 @@ import type { PurchaseMode } from '@erve/types';
 import type { DispatchOrderFulfillmentStage, SaleOrder, SaleOrderAuditEntry, SaleOrderLine } from '../../../sale-orders/types.js';
 import type { ErveDispatchView, FactoryDispatchSummary } from '../../types.js';
 import { FACTORY_DISPATCH_STATUS_LABELS } from '../shared/fulfillmentPdfLabels.js';
+import { distinctSizeColumns, groupLinesByStyle, type SizeColumn } from '../../style-size-grouping.js';
 
 const PURCHASE_MODE_LABELS: Record<PurchaseMode, string> = {
   OUTRIGHT: 'Outright',
@@ -32,12 +33,13 @@ export interface DispatchOrderDetailPdfRelated {
   auditTrail: SaleOrderAuditEntry[] | null;
 }
 
-export interface DispatchOrderDetailLineRow {
-  id: string;
+/** ISS-023 Phase 1: one Style per row, Sizes as dynamic columns — see `PdfStyleSizeMatrix`/`style-size-grouping.ts`. */
+export interface DispatchOrderDetailStyleRow {
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
   primaryImage: PdfImageRef | null;
-  styleDisplay: string;
-  sizeLabel: string;
-  quantity: number;
+  values: Record<string, number | null>;
 }
 
 export interface DispatchOrderDetailDestinationSection {
@@ -47,7 +49,8 @@ export interface DispatchOrderDetailDestinationSection {
   contactLine: string | null;
   gstin: string | null;
   totalQuantity: number;
-  lines: DispatchOrderDetailLineRow[];
+  sizeColumns: SizeColumn[];
+  styleRows: DispatchOrderDetailStyleRow[];
 }
 
 export interface DispatchOrderDetailDistributorSection {
@@ -56,14 +59,6 @@ export interface DispatchOrderDetailDistributorSection {
   purchaseModeLabel: string;
   totalQuantity: number;
   destinations: DispatchOrderDetailDestinationSection[];
-}
-
-export interface DispatchOrderDetailStyleSizeTotalRow {
-  key: string;
-  primaryImage: PdfImageRef | null;
-  styleDisplay: string;
-  sizeLabel: string;
-  quantity: number;
 }
 
 export interface DispatchOrderDetailFactoryDispatchRow {
@@ -94,7 +89,8 @@ export interface DispatchOrderDetailPdfViewModel {
   generatedBy?: string | null;
   identityItems: PdfKeyValueItem[];
   distributorGroups: DispatchOrderDetailDistributorSection[];
-  styleSizeTotals: DispatchOrderDetailStyleSizeTotalRow[];
+  overallSizeColumns: SizeColumn[];
+  overallStyleRows: DispatchOrderDetailStyleRow[];
   grandTotalQuantity: number;
   factoryDispatches: DispatchOrderDetailFactoryDispatchRow[] | null;
   erveDispatches: DispatchOrderDetailErveDispatchRow[] | null;
@@ -105,6 +101,21 @@ function primaryImageRef(line: SaleOrderLine): PdfImageRef | null {
   return line.primaryImage
     ? { id: line.primaryImage.fileId, path: `/styles/${line.styleId}/images/${line.primaryImage.id}/content` }
     : null;
+}
+
+/** ISS-023 Phase 1: groups lines into one Style x Size matrix row set — see `buildStyleSizeRows` on the DOM side (SaleOrderDetailPage.tsx) for the same pattern. `groupLinesByStyle` drops the per-line image, so it's re-attached from the first line seen per styleId (identical across a Style's own lines). */
+function buildStyleRows(lines: SaleOrderLine[]): DispatchOrderDetailStyleRow[] {
+  const imageByStyleId = new Map<string, PdfImageRef | null>();
+  for (const line of lines) {
+    if (!imageByStyleId.has(line.styleId)) imageByStyleId.set(line.styleId, primaryImageRef(line));
+  }
+  return groupLinesByStyle(lines).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    primaryImage: imageByStyleId.get(group.styleId) ?? null,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
 }
 
 /**
@@ -159,33 +170,11 @@ export function buildDispatchOrderDetailViewModel(
         contactLine: dest.contactName || dest.contactPhone ? [dest.contactName, dest.contactPhone].filter(Boolean).join(' · ') : null,
         gstin: dest.gstin,
         totalQuantity: destLines.reduce((sum, line) => sum + line.quantity, 0),
-        lines: destLines.map((line) => ({
-          id: line.id,
-          primaryImage: primaryImageRef(line),
-          styleDisplay: `${line.styleNumber} — ${line.styleName}`,
-          sizeLabel: line.sizeLabel,
-          quantity: line.quantity,
-        })),
+        sizeColumns: distinctSizeColumns(destLines),
+        styleRows: buildStyleRows(destLines),
       };
     }),
   }));
-
-  const styleSizeTotalsByKey = new Map<string, DispatchOrderDetailStyleSizeTotalRow>();
-  for (const line of so.lines) {
-    const key = `${line.styleId}:${line.sizeId}`;
-    const existing = styleSizeTotalsByKey.get(key);
-    if (existing) {
-      existing.quantity += line.quantity;
-    } else {
-      styleSizeTotalsByKey.set(key, {
-        key,
-        primaryImage: primaryImageRef(line),
-        styleDisplay: `${line.styleNumber} — ${line.styleName}`,
-        sizeLabel: line.sizeLabel,
-        quantity: line.quantity,
-      });
-    }
-  }
 
   return {
     title: 'DISPATCH ORDER',
@@ -194,7 +183,8 @@ export function buildDispatchOrderDetailViewModel(
     generatedBy: meta.generatedBy,
     identityItems,
     distributorGroups,
-    styleSizeTotals: [...styleSizeTotalsByKey.values()],
+    overallSizeColumns: distinctSizeColumns(so.lines),
+    overallStyleRows: buildStyleRows(so.lines),
     grandTotalQuantity: so.totalQuantity,
     factoryDispatches: related.factoryDispatches
       ? related.factoryDispatches.map((fd) => ({

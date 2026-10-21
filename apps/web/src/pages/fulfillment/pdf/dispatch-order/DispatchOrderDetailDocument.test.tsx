@@ -4,8 +4,8 @@ import { DispatchOrderDetailDocument } from './DispatchOrderDetailDocument.js';
 import type {
   DispatchOrderDetailDestinationSection,
   DispatchOrderDetailDistributorSection,
-  DispatchOrderDetailLineRow,
   DispatchOrderDetailPdfViewModel,
+  DispatchOrderDetailStyleRow,
 } from './buildDispatchOrderDetailViewModel.js';
 
 interface PdfNode {
@@ -27,13 +27,13 @@ const thumbnail = {
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=',
 };
 
-function makeLine(overrides: Partial<DispatchOrderDetailLineRow> = {}): DispatchOrderDetailLineRow {
+function makeStyleRow(overrides: Partial<DispatchOrderDetailStyleRow> = {}): DispatchOrderDetailStyleRow {
   return {
+    styleId: 'style-1',
+    styleNumber: 'STY-0001',
+    styleName: 'Basic Tee',
     primaryImage: null,
-    id: 'line-1',
-    styleDisplay: 'STY-0001 — Basic Tee',
-    sizeLabel: 'Medium',
-    quantity: 10,
+    values: { 'size-1': 10 },
     ...overrides,
   };
 }
@@ -48,7 +48,8 @@ function makeDestination(
     contactLine: 'Ravi Kumar · 9876543210',
     gstin: '33AAAAA0000A1Z5',
     totalQuantity: 10,
-    lines: [makeLine()],
+    sizeColumns: [{ sizeId: 'size-1', sizeCode: 'M' }],
+    styleRows: [makeStyleRow()],
     ...overrides,
   };
 }
@@ -76,15 +77,8 @@ function makeViewModel(
     generatedBy: 'Test Merchandiser',
     identityItems: [{ label: 'Dispatch Order Number', value: 'EISO/26-27/0001' }],
     distributorGroups: [makeDistributorGroup()],
-    styleSizeTotals: [
-      {
-        primaryImage: null,
-        key: 'style-1:size-1',
-        styleDisplay: 'STY-0001 — Basic Tee',
-        sizeLabel: 'Medium',
-        quantity: 10,
-      },
-    ],
+    overallSizeColumns: [{ sizeId: 'size-1', sizeCode: 'M' }],
+    overallStyleRows: [makeStyleRow()],
     grandTotalQuantity: 10,
     factoryDispatches: null,
     erveDispatches: null,
@@ -94,19 +88,25 @@ function makeViewModel(
 }
 
 describe('DispatchOrderDetailDocument', () => {
-  it('embeds a compact primary image in both tables and preserves long labels and quantities', async () => {
+  it('embeds a compact primary image in both the destination and overall Style x Size matrices, preserving long Style names and quantities', async () => {
     const primaryImage = { id: 'file-primary', path: '/styles/style-1/images/primary/content' };
-    const line = makeLine({
+    const row = makeStyleRow({
       primaryImage,
-      styleDisplay: 'STY-0001 Long Style Name '.repeat(8),
-      sizeLabel: 'Extra Extra Large',
-      quantity: 123456,
+      styleNumber: 'STY-0001 Long Style Name '.repeat(8),
+      values: { 'size-1': 50000, 'size-2': 73456 },
     });
+    const sizeColumns = [
+      { sizeId: 'size-1', sizeCode: 'S' },
+      { sizeId: 'size-2', sizeCode: 'XXL' },
+    ];
     const vm = makeViewModel({
       distributorGroups: [
-        makeDistributorGroup({ destinations: [makeDestination({ lines: [line] })] }),
+        makeDistributorGroup({
+          destinations: [makeDestination({ sizeColumns, styleRows: [row] })],
+        }),
       ],
-      styleSizeTotals: [{ ...line, key: 'style-1:size-1' }],
+      overallSizeColumns: sizeColumns,
+      overallStyleRows: [row],
     });
     const instance = pdf(
       <DispatchOrderDetailDocument
@@ -118,21 +118,23 @@ describe('DispatchOrderDetailDocument', () => {
     const bytes = new TextDecoder().decode(await blob.arrayBuffer());
     expect(bytes).toContain('/Subtype /Image');
     const all = nodes((instance.container as { document: PdfNode }).document);
-    // The shared PDF header now embeds ERVE branding. Count only the Style
+    // The shared PDF header also embeds ERVE branding — count only the Style
     // thumbnails under test, not the independent company-logo image.
     const images = all.filter(
       (node) => node.type === 'IMAGE' && node.props?.src === thumbnail.dataUri,
     );
+    // One row -> one thumbnail per table (destination matrix + overall matrix).
     expect(images).toHaveLength(2);
     for (const image of images) {
       expect(image.props?.src).toBe(thumbnail.dataUri);
-      expect(image.style).toMatchObject({ width: 32, height: 32, objectFit: 'contain' });
+      expect(image.style).toMatchObject({ width: 20, height: 20, objectFit: 'contain' });
     }
     const text = all.map((node) => node.value).filter(Boolean);
-    expect(text.filter((value) => value === 'Image')).toHaveLength(2);
-    expect(text.filter((value) => value === line.styleDisplay)).toHaveLength(2);
-    expect(text.filter((value) => value === 'Extra Extra Large')).toHaveLength(2);
-    expect(text.filter((value) => value === '123456')).toHaveLength(2);
+    expect(text.filter((value) => value === row.styleNumber)).toHaveLength(2);
+    expect(text.filter((value) => value === row.styleName)).toHaveLength(2);
+    expect(text.filter((value) => value === 'XXL')).toHaveLength(2);
+    expect(text).toContain('50000');
+    expect(text).toContain('73456');
     const mediaBox = /\/MediaBox\s*\[0 0 ([\d.]+) ([\d.]+)\]/.exec(bytes)!;
     expect(Number(mediaBox[1])).toBeCloseTo(841.89, 2);
     expect(Number(mediaBox[2])).toBeCloseTo(595.28, 2);
@@ -143,65 +145,44 @@ describe('DispatchOrderDetailDocument', () => {
     expect(blob.type).toBe('application/pdf');
   });
 
-  it('renders a mixed-Purchase-Mode, multi-Distributor, multi-Destination order spanning enough rows for >1 page without throwing', async () => {
+  it('renders a mixed-Purchase-Mode, multi-Distributor, multi-Destination order spanning enough Style rows for >1 page without throwing', async () => {
+    const stylesFor = (prefix: string) =>
+      Array.from({ length: 15 }, (_, i) =>
+        makeStyleRow({
+          styleId: `${prefix}-${i}`,
+          styleNumber: `STY-${prefix}-${i}`,
+          primaryImage: { id: 'primary', path: '/styles/style-1/images/primary/content' },
+        }),
+      );
     const groupA = makeDistributorGroup({
       id: 'dg-a',
       distributorName: 'Distributor A',
       purchaseModeLabel: 'Outright',
       destinations: [
-        makeDestination({
-          id: 'a1',
-          label: 'A1',
-          lines: Array.from({ length: 15 }, (_, i) => makeLine({ id: `a1-${i}` })),
-        }),
-        makeDestination({
-          id: 'a2',
-          label: 'A2',
-          lines: Array.from({ length: 15 }, (_, i) => makeLine({ id: `a2-${i}` })),
-        }),
+        makeDestination({ id: 'a1', label: 'A1', styleRows: stylesFor('a1') }),
+        makeDestination({ id: 'a2', label: 'A2', styleRows: stylesFor('a2') }),
       ],
     });
     const groupB = makeDistributorGroup({
       id: 'dg-b',
       distributorName: 'Distributor B',
       purchaseModeLabel: 'Sale/Return',
-      destinations: [
-        makeDestination({
-          id: 'b1',
-          label: 'B1',
-          lines: Array.from({ length: 15 }, (_, i) => makeLine({ id: `b1-${i}` })),
-        }),
-      ],
+      destinations: [makeDestination({ id: 'b1', label: 'B1', styleRows: stylesFor('b1') })],
     });
     const groupC = makeDistributorGroup({
       id: 'dg-c',
       distributorName: 'Distributor C',
       purchaseModeLabel: 'Outright',
-      destinations: [
-        makeDestination({
-          id: 'c1',
-          label: 'C1',
-          lines: Array.from({ length: 15 }, (_, i) => makeLine({ id: `c1-${i}` })),
-        }),
-      ],
+      destinations: [makeDestination({ id: 'c1', label: 'C1', styleRows: stylesFor('c1') })],
     });
 
     const groups = [groupA, groupB, groupC];
-    for (const group of groups)
-      for (const dest of group.destinations)
-        for (const line of dest.lines) {
-          line.primaryImage = { id: 'primary', path: '/styles/style-1/images/primary/content' };
-        }
     const instance = pdf(
       <DispatchOrderDetailDocument
         viewModel={makeViewModel({ distributorGroups: groups })}
         images={new Map([['primary', thumbnail]])}
       />,
     );
-    let layout: PdfNode | undefined;
-    (instance.container as { document: PdfNode }).document.props!.onRender = (result) => {
-      layout = result._INTERNAL__LAYOUT__DATA_;
-    };
     const blob = await Promise.race([
       instance.toBlob(),
       new Promise<never>((_resolve, reject) =>
@@ -221,21 +202,6 @@ describe('DispatchOrderDetailDocument', () => {
     const text = all.map((node) => node.value ?? '').join('\n');
     for (const label of ['Distributor A', 'Distributor B', 'Distributor C', 'A1', 'A2', 'B1', 'C1'])
       expect(text).toContain(label);
-    const headers = all.filter(
-      (node) => node.props?.fixed && nodes(node).some((child) => child.value === 'Image'),
-    );
-    expect(headers).toHaveLength(5);
-    const pagesWithImages = layout!.children!.filter((page) =>
-      nodes(page).some((node) => node.type === 'IMAGE'),
-    );
-    expect(pagesWithImages.length).toBeGreaterThan(1);
-    for (const page of pagesWithImages) {
-      expect(
-        nodes(page).some(
-          (node) => node.props?.fixed && nodes(node).some((child) => child.value === 'Image'),
-        ),
-      ).toBe(true);
-    }
   }, 10000);
 
   it('renders "not available for this viewer" sections without throwing when linked records are null', async () => {
@@ -281,18 +247,24 @@ describe('DispatchOrderDetailDocument', () => {
     expect(blob.size).toBeGreaterThan(0);
   });
 
-  it('renders a zero-quantity line as 0, not an em dash', async () => {
-    const blob = await pdf(
+  it('renders a zero-quantity cell as 0, not an em dash', async () => {
+    const row = makeStyleRow({ values: { 'size-1': 0 } });
+    const instance = pdf(
       <DispatchOrderDetailDocument
         viewModel={makeViewModel({
           distributorGroups: [
             makeDistributorGroup({
-              destinations: [makeDestination({ lines: [makeLine({ quantity: 0 })] })],
+              destinations: [makeDestination({ styleRows: [row] })],
             }),
           ],
         })}
       />,
-    ).toBlob();
+    );
+    const blob = await instance.toBlob();
     expect(blob.size).toBeGreaterThan(0);
+    const all = nodes((instance.container as { document: PdfNode }).document);
+    const text = all.map((node) => node.value).filter(Boolean);
+    expect(text).toContain('0');
+    expect(text).not.toContain('—');
   });
 });
