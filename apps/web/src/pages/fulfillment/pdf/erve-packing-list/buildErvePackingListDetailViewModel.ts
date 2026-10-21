@@ -1,6 +1,7 @@
 import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import { ERVE_PACKING_LIST_STATUS_LABELS } from '../shared/fulfillmentPdfLabels.js';
+import { distinctSizeColumns, groupLinesByStyle, withBusinessKeyIdentity, type SizeColumn } from '../../style-size-grouping.js';
 import type { ErvePackingListDetail } from '../../types.js';
 
 export interface ErvePackingListDetailPdfMeta {
@@ -15,6 +16,14 @@ export interface ErvePackingListDetailCartonLineRow {
   quantity: number;
 }
 
+/** ISS-023: one row per Style within the carton/summary, Sizes as columns — see `sizeColumns`/`styleRows` below. */
+export interface ErvePackingListDetailStyleRow {
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  values: Record<string, number | null>;
+}
+
 export interface ErvePackingListDetailCartonRow {
   id: string;
   cartonNumber: string;
@@ -27,13 +36,9 @@ export interface ErvePackingListDetailCartonRow {
   weight: string | null;
   totalQuantity: number;
   lines: ErvePackingListDetailCartonLineRow[];
-}
-
-export interface ErvePackingListDetailStyleSizeRow {
-  key: string;
-  styleDisplay: string;
-  sizeLabel: string;
-  quantity: number;
+  /** ISS-023: Style x Size matrix for this carton's own contents — Sizes in first-appearance order (see style-size-grouping.ts; no Size.sortOrder is available on this view without an API contract change). */
+  sizeColumns: SizeColumn[];
+  styleRows: ErvePackingListDetailStyleRow[];
 }
 
 export interface ErvePackingListDetailPdfViewModel {
@@ -46,8 +51,21 @@ export interface ErvePackingListDetailPdfViewModel {
   cartons: ErvePackingListDetailCartonRow[];
   totalCartonCount: number;
   totalQuantity: number;
-  styleSizeSummary: ErvePackingListDetailStyleSizeRow[];
+  /** ISS-023: the consolidated Style x Size summary across every carton, Sizes as columns. */
+  styleSizeSizeColumns: SizeColumn[];
+  styleSizeSummaryRows: ErvePackingListDetailStyleRow[];
   dispatchReference: string | null;
+}
+
+function toStyleRows(
+  lines: Array<{ styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>,
+): ErvePackingListDetailStyleRow[] {
+  return groupLinesByStyle(lines.map(withBusinessKeyIdentity)).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
 }
 
 /**
@@ -129,13 +147,8 @@ export function buildErvePackingListDetailViewModel(
       sizeLabel: line.sizeLabel,
       quantity: line.quantity,
     })),
-  }));
-
-  const styleSizeSummary: ErvePackingListDetailStyleSizeRow[] = packingList.styleSizeSummary.map((row) => ({
-    key: `${row.styleNumber}-${row.sizeCode}`,
-    styleDisplay: `${row.styleNumber} — ${row.styleName}`,
-    sizeLabel: row.sizeLabel,
-    quantity: row.quantity,
+    sizeColumns: distinctSizeColumns(carton.lines.map(withBusinessKeyIdentity)),
+    styleRows: toStyleRows(carton.lines),
   }));
 
   return {
@@ -148,7 +161,8 @@ export function buildErvePackingListDetailViewModel(
     cartons,
     totalCartonCount: packingList.cartonCount,
     totalQuantity: packingList.totalQuantity,
-    styleSizeSummary,
+    styleSizeSizeColumns: distinctSizeColumns(packingList.styleSizeSummary.map(withBusinessKeyIdentity)),
+    styleSizeSummaryRows: toStyleRows(packingList.styleSizeSummary),
     dispatchReference: packingList.dispatch?.erveDispatchNumber ?? null,
   };
 }

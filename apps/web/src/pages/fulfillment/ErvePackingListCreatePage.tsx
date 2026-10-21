@@ -8,6 +8,8 @@ import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
+import { distinctSizeColumns, groupLinesByStyle, withBusinessKeyIdentity } from './style-size-grouping.js';
 import type { EligibleErveCartonView } from './types.js';
 
 function destinationGroupKeyOf(carton: EligibleErveCartonView): string {
@@ -37,18 +39,23 @@ export function ErvePackingListCreatePage() {
   const totalQuantity = selectedCartons.reduce((sum, c) => sum + c.totalQuantity, 0);
   const sourceFactories = useMemo(() => new Set(selectedCartons.map((c) => c.factory.id)), [selectedCartons]);
   const sourceDispatchOrders = useMemo(() => new Set(selectedCartons.map((c) => c.saleOrder.id)), [selectedCartons]);
-  const styleSizeSummary = useMemo(() => {
-    const byKey = new Map<string, { styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>();
-    for (const carton of selectedCartons) {
-      for (const line of carton.lines) {
-        const key = `${line.styleNumber}:${line.sizeCode}`;
-        const existing = byKey.get(key);
-        if (existing) existing.quantity += line.quantity;
-        else byKey.set(key, { ...line });
-      }
-    }
-    return [...byKey.values()];
-  }, [selectedCartons]);
+  // ISS-023 Phase 3: the selected cartons' combined contents as one Style row per Style, with Sizes
+  // as columns, instead of one flat "Style/Size: qty" string per line.
+  const summaryLines = useMemo(
+    () => selectedCartons.flatMap((c) => c.lines).map(withBusinessKeyIdentity),
+    [selectedCartons],
+  );
+  const summarySizeColumns = useMemo(() => distinctSizeColumns(summaryLines), [summaryLines]);
+  const summaryStyleRows = useMemo(
+    () =>
+      groupLinesByStyle(summaryLines).map((group) => ({
+        styleId: group.styleId,
+        styleNumber: group.styleNumber,
+        styleName: group.styleName,
+        values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+      })),
+    [summaryLines],
+  );
 
   function toggle(carton: EligibleErveCartonView) {
     setSelected((current) => {
@@ -112,9 +119,9 @@ export function ErvePackingListCreatePage() {
               <div className="text-lg font-semibold">{selectedCartons[0]!.distributor.name}</div>
             </div>
           </div>
-          {styleSizeSummary.length > 0 && (
-            <div className="mt-3 text-sm text-muted-foreground">
-              {styleSizeSummary.map((row) => `${row.styleNumber}/${row.sizeCode}: ${row.quantity}`).join(' · ')}
+          {summaryStyleRows.length > 0 && (
+            <div className="mt-3">
+              <StyleSizeGrid columns={summarySizeColumns} rows={summaryStyleRows} variant="readOnly" />
             </div>
           )}
         </Panel>

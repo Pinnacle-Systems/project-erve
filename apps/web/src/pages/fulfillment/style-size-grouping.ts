@@ -68,6 +68,30 @@ export function groupLinesByStyle<T extends StyleSizeQuantityLine>(lines: T[]): 
   return styleOrder.map((styleId) => groups.get(styleId)!);
 }
 
+export interface BusinessKeyedStyleSizeLine {
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  quantity: number;
+}
+
+/**
+ * Adapts a line that carries only the Style/Size *business* identifiers (styleNumber/sizeCode) into
+ * the `groupLinesByStyle`/`distinctSizeColumns` identity shape (`styleId`/`sizeId`). ERVE consolidation
+ * views (`EligibleErveCartonView`, `ErvePackingListCartonView`, `ErvePackingListStyleSizeSummaryRow`)
+ * never carry a Style/Size foreign key — Erve Packing List cartons only ever need the Dispatch Order
+ * line reference — so there is no `styleId`/`sizeId` to read. styleNumber/sizeCode are each entity's
+ * own stable business key (already the display identity everywhere these views are shown), so
+ * reusing them as the grouping key here is safe and avoids widening the API response just for this
+ * presentation summary (ISS-023).
+ */
+export function withBusinessKeyIdentity<T extends BusinessKeyedStyleSizeLine>(
+  line: T,
+): T & { styleId: string; sizeId: string } {
+  return { ...line, styleId: line.styleNumber, sizeId: line.sizeCode };
+}
+
 /** Distinct Size columns across all lines, in first-appearance order — see `groupLinesByStyle`'s doc comment on why not sortOrder/alphabetical. */
 export function distinctSizeColumns<T extends { sizeId: string; sizeCode: string }>(lines: T[]): SizeColumn[] {
   const seen = new Map<string, string>();

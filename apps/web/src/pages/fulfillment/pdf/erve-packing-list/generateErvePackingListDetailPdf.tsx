@@ -1,18 +1,44 @@
-import { buildErvePackingListDetailViewModel, type ErvePackingListDetailPdfMeta } from './buildErvePackingListDetailViewModel.js';
-import { ErvePackingListDetailDocument } from './ErvePackingListDetailDocument.js';
-import { renderPdfBlob } from '../../../../lib/pdf/generate.js';
 import type { ErvePackingListDetail } from '../../types.js';
+import type { ErvePackingListDetailPdfMeta } from './buildErvePackingListDetailViewModel.js';
+import type { ErvePackingListDetailWorkerResponse } from './ervePackingListDetailWorkerTypes.js';
 
-/**
- * The only static importer of `ErvePackingListDetailDocument` (and therefore of
- * `@react-pdf/renderer` for the Erve Packing List detail). Callers reach this module via a
- * dynamic `import()` so the PDF engine and document code load only when a user actually clicks
- * Download/Print. The detail record is already fully loaded by the page — no extra fetch here.
- */
+/** One isolated worker per action. Only the final immutable Blob crosses back to the UI. */
 export async function generateErvePackingListDetailPdfBlob(
   packingList: ErvePackingListDetail,
   meta: ErvePackingListDetailPdfMeta,
 ): Promise<Blob> {
-  const viewModel = buildErvePackingListDetailViewModel(packingList, meta);
-  return renderPdfBlob(<ErvePackingListDetailDocument viewModel={viewModel} />);
+  const worker = new Worker(new URL('./ervePackingListDetail.worker.ts', import.meta.url), {
+    type: 'module',
+  });
+  try {
+    return await new Promise<Blob>((resolve, reject) => {
+      worker.onmessage = (event: MessageEvent<ErvePackingListDetailWorkerResponse | null>) => {
+        const response = event.data;
+        if (
+          response?.type === 'success' &&
+          response.blob instanceof Blob &&
+          response.blob.type === 'application/pdf' &&
+          response.blob.size > 0
+        ) {
+          resolve(response.blob);
+        } else if (response?.type === 'error' && typeof response.message === 'string') {
+          reject(new Error(response.message));
+        } else {
+          reject(new Error('Packing list PDF worker response is invalid.'));
+        }
+      };
+      worker.onerror = (event) => {
+        event.preventDefault();
+        reject(new Error('Packing list PDF worker failed to load or render.'));
+      };
+      worker.onmessageerror = () =>
+        reject(new Error('Packing list PDF worker response could not be read.'));
+      worker.postMessage({ packingList, meta });
+    });
+  } finally {
+    worker.onmessage = null;
+    worker.onerror = null;
+    worker.onmessageerror = null;
+    worker.terminate();
+  }
 }
