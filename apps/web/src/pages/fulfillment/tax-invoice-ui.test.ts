@@ -18,6 +18,11 @@ describe('Tax Invoice presentation preserves backend decimal strings', () => {
     expect(formatInvoiceAdjustment('0.00')).toBe('₹0.00');
     expect(formatInvoiceAdjustment(null)).toBe('Not snapshotted');
   });
+  it('does not present invalid adjustment amounts as signed currency', () => {
+    expect(formatInvoiceAdjustment('invalid1')).toBe('Unavailable');
+    expect(formatInvoiceAdjustment('1e-999')).toBe('Unavailable');
+    expect(formatInvoiceAdjustment('1.25')).toBe('+₹1.25');
+  });
   it('renders backend scientific decimal notation without rounding tiny GST values', () => {
     expect(formatInvoiceMoney('1e-7')).toBe('₹0.0000001');
     expect(formatInvoiceMoney('-1.25e+8')).toBe('−₹12,50,00,000.00');
