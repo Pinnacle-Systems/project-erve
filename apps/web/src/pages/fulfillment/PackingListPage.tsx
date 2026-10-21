@@ -5,10 +5,9 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { ConfirmDialog, createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
+import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
-import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
 import type { StyleSizeGridRow } from '../../components/style-size-grid/types.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -41,6 +40,24 @@ function cartonStyleSizeRows(carton: FactoryPackingCartonView): StyleSizeGridRow
     styleId: group.styleId,
     styleNumber: group.styleNumber,
     styleName: group.styleName,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
+}
+
+// ISS-023 Phase 2: the destination's Required/Packed progress as two Style x
+// Size matrices (one metric per matrix, per the operational-summary standard
+// — a single matrix cannot carry two quantity metrics per cell) instead of
+// one flat row per Style+Size combination.
+function destinationStyleSizeRows(
+  lines: PackingListDestinationView['lines'],
+  metric: 'requiredQuantity' | 'packedQuantity',
+): StyleSizeGridRow[] {
+  const primaryImageByStyle = new Map(lines.map((line) => [line.styleId, line.primaryImage]));
+  return groupLinesByStyle(lines.map((line) => ({ ...line, quantity: line[metric] }))).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    primaryImage: primaryImageByStyle.get(group.styleId) ?? null,
     values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
   }));
 }
@@ -353,25 +370,24 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                 {destination.contactName && <DescriptionList.Item label="Contact" value={destination.contactName} />}
               </DescriptionList>
 
-              <DataTable
-                rowKey="saleOrderLineId"
-                data={destination.lines}
-                columns={[
-                  {
-                    key: 'style',
-                    header: 'Style',
-                    render: (r) => (
-                      <div className="flex items-center gap-2">
-                        <StyleThumbnailCell styleId={r.styleId} image={r.primaryImage} size={32} viewerTitle={r.styleNumber} />
-                        <span>{`${r.styleNumber} — ${r.styleName}`}</span>
-                      </div>
-                    ),
-                  },
-                  { key: 'size', header: 'Size', accessor: 'sizeLabel' },
-                  { key: 'required', header: 'Required', align: 'right', render: (r) => r.requiredQuantity.toLocaleString() },
-                  { key: 'packed', header: 'Packed', align: 'right', render: (r) => r.packedQuantity.toLocaleString() },
-                ]}
-              />
+              <div className="space-y-3">
+                <div>
+                  <div className="mb-1 text-xs font-semibold text-muted-foreground">Required</div>
+                  <StyleSizeGrid
+                    columns={distinctSizeColumns(destination.lines)}
+                    rows={destinationStyleSizeRows(destination.lines, 'requiredQuantity')}
+                    variant="readOnly"
+                  />
+                </div>
+                <div>
+                  <div className="mb-1 text-xs font-semibold text-muted-foreground">Packed</div>
+                  <StyleSizeGrid
+                    columns={distinctSizeColumns(destination.lines)}
+                    rows={destinationStyleSizeRows(destination.lines, 'packedQuantity')}
+                    variant="readOnly"
+                  />
+                </div>
+              </div>
 
               <div className="space-y-3">
                 {destination.cartons.map((carton) =>

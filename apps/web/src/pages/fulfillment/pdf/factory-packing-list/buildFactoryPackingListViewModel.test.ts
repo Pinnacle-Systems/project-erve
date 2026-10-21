@@ -109,10 +109,46 @@ describe('buildFactoryPackingListViewModel', () => {
       ],
     });
     const vm = buildFactoryPackingListViewModel(packingList, { generatedAt: '2026-09-15T10:00:00Z' });
-    const printedLine = vm.destinations[0]?.lines[0];
-    expect(printedLine).toMatchObject({ requiredQuantity: DO_REQUESTED_QUANTITY, packedQuantity: PHYSICAL_PACKED_QUANTITY });
-    expect(printedLine?.packedQuantity).not.toBe(DO_REQUESTED_QUANTITY);
-    expect(printedLine?.packedQuantity).not.toBe(FACTORY_DISPATCH_LINE_QUANTITY);
+    const requiredValue = vm.destinations[0]?.requiredStyleRows[0]?.values['size-1'];
+    const packedValue = vm.destinations[0]?.packedStyleRows[0]?.values['size-1'];
+    expect(requiredValue).toBe(DO_REQUESTED_QUANTITY);
+    expect(packedValue).toBe(PHYSICAL_PACKED_QUANTITY);
+    expect(packedValue).not.toBe(DO_REQUESTED_QUANTITY);
+    expect(packedValue).not.toBe(FACTORY_DISPATCH_LINE_QUANTITY);
+  });
+
+  it('groups the destination Required/Packed summary into one Style x Size matrix per metric (ISS-023 Phase 2), reconciling to the source lines', () => {
+    const packingList = makePackingList({
+      destinations: [
+        {
+          ...makePackingList().destinations[0]!,
+          lines: [
+            { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', requiredQuantity: 10, packedQuantity: 6 },
+            { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', requiredQuantity: 8, packedQuantity: 8 },
+            { saleOrderLineId: 'line-3', styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', primaryImage: null, sizeId: 'size-3', sizeCode: 'L', sizeLabel: 'Large', requiredQuantity: 5, packedQuantity: 0 },
+          ],
+        },
+      ],
+    });
+    const vm = buildFactoryPackingListViewModel(packingList, { generatedAt: '2026-09-15T10:00:00Z' });
+    const destination = vm.destinations[0]!;
+    expect(destination.requiredStyleRows).toEqual([
+      { styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 10, 'size-2': 8 } },
+      { styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', values: { 'size-3': 5 } },
+    ]);
+    expect(destination.packedStyleRows).toEqual([
+      { styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 6, 'size-2': 8 } },
+      { styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', values: { 'size-3': 0 } },
+    ]);
+    expect(destination.sizeColumns).toEqual([
+      { sizeId: 'size-1', sizeCode: 'S' },
+      { sizeId: 'size-2', sizeCode: 'M' },
+      { sizeId: 'size-3', sizeCode: 'L' },
+    ]);
+    const sumValues = (rows: typeof destination.requiredStyleRows) =>
+      rows.reduce((sum, row) => sum + Object.values(row.values).reduce((s: number, v) => s + (v ?? 0), 0), 0);
+    expect(sumValues(destination.requiredStyleRows)).toBe(10 + 8 + 5);
+    expect(sumValues(destination.packedStyleRows)).toBe(6 + 8 + 0);
   });
 
   it('groups a carton with multiple Sizes of the same Style into one Style x Size row (ISS-010), reconciling to the carton total', () => {

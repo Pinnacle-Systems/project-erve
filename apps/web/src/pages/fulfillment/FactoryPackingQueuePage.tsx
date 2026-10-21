@@ -5,7 +5,7 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
-import { SelectField, SelectItem } from '@erve/primitives';
+import { SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { apiClient } from '../../lib/api-client.js';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { getLocalDateString } from '../../lib/dates.js';
@@ -14,7 +14,52 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { needsFactoryDispatchFactorySelector } from '../../auth/permissions.js';
+import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
+import type { StyleSizeGridRow } from '../../components/style-size-grid/types.js';
+import { distinctSizeColumns, groupLinesByStyle } from './style-size-grouping.js';
 import type { FactoryDispatchSummary, FactoryPackingQueueLine } from './types.js';
+
+interface PackingQueueSection {
+  key: string;
+  saleOrderId: string;
+  saleOrderNumber: string;
+  distributorName: string;
+  lines: FactoryPackingQueueLine[];
+}
+
+// ISS-023 Phase 2: the queue already carries each line's own Dispatch
+// Order + Distributor identity — grouping into one section per (Dispatch
+// Order, Distributor) combination preserves that identity exactly (a
+// grouped Style x Size matrix never spans two different Dispatch
+// Orders/Distributors) while still presenting each section's own Style x
+// Size breakdown instead of one row per Style+Size combination.
+function groupQueueIntoSections(items: FactoryPackingQueueLine[]): PackingQueueSection[] {
+  const order: string[] = [];
+  const sections = new Map<string, PackingQueueSection>();
+  for (const item of items) {
+    const key = `${item.saleOrderId}::${item.distributor.id}`;
+    let section = sections.get(key);
+    if (!section) {
+      section = { key, saleOrderId: item.saleOrderId, saleOrderNumber: item.saleOrderNumber, distributorName: item.distributor.name, lines: [] };
+      sections.set(key, section);
+      order.push(key);
+    }
+    section.lines.push(item);
+  }
+  return order.map((key) => sections.get(key)!);
+}
+
+function queueStyleSizeRows(
+  lines: FactoryPackingQueueLine[],
+  metric: 'allocatedQuantity' | 'packedQuantity' | 'remainingQuantity',
+): StyleSizeGridRow[] {
+  return groupLinesByStyle(lines.map((line) => ({ ...line, quantity: line[metric] }))).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
+}
 
 interface FactoryOption {
   id: string;
@@ -179,29 +224,66 @@ export function FactoryPackingQueuePage() {
 
       {hasValidFactoryContext && (
         <>
-          <Panel title="Awaiting Packing" padding="none">
-            <DataTable
-              rowKey="saleOrderLineId"
-              data={queueItems}
-              loading={queueQuery.isLoading}
-              loadingState={<LoadingState label="Loading the packing queue" />}
-              error={
-                queueQuery.isError ? (
-                  <ErrorState title="Unable to load the packing queue" description="Please try again." />
-                ) : undefined
-              }
-              emptyState={<EmptyState title="Nothing to pack" description="No approved goods are currently allocated from this Factory." />}
-              onRowClick={(row) => navigate(`/sale-orders/${row.saleOrderId}/packing-list`)}
-              columns={[
-                { key: 'saleOrderNumber', header: 'Dispatch Order', accessor: 'saleOrderNumber' },
-                { key: 'distributor', header: 'Distributor', render: (r) => r.distributor.name },
-                { key: 'style', header: 'Style', render: (r) => `${r.styleNumber} — ${r.styleName}` },
-                { key: 'size', header: 'Size', accessor: 'sizeLabel' },
-                { key: 'allocated', header: 'Required', align: 'right', render: (r) => r.allocatedQuantity.toLocaleString() },
-                { key: 'packed', header: 'Packed', align: 'right', render: (r) => r.packedQuantity.toLocaleString() },
-                { key: 'remaining', header: 'Remaining', align: 'right', render: (r) => r.remainingQuantity.toLocaleString() },
-              ]}
-            />
+          <Panel title="Awaiting Packing">
+            {queueQuery.isLoading ? (
+              <LoadingState label="Loading the packing queue" />
+            ) : queueQuery.isError ? (
+              <ErrorState title="Unable to load the packing queue" description="Please try again." />
+            ) : queueItems.length === 0 ? (
+              <EmptyState title="Nothing to pack" description="No approved goods are currently allocated from this Factory." />
+            ) : (
+              <div className="space-y-5">
+                {queueQuery.hasNextPage && (
+                  // ISS-023 Phase 2 fix: cursor pagination can split a single
+                  // Dispatch Order/Distributor section across pages (its later
+                  // lines may still be unloaded), so the Required/Packed/
+                  // Remaining totals below must never be presented as if they
+                  // were complete while the server still has more pages.
+                  <ValidationMessage tone="warning">
+                    Totals below reflect only the {queueItems.length.toLocaleString()} line
+                    {queueItems.length === 1 ? '' : 's'} loaded so far — more lines may exist on
+                    later pages. Click &quot;Load more&quot; below for complete totals.
+                  </ValidationMessage>
+                )}
+                {groupQueueIntoSections(queueItems).map((section) => (
+                  <div key={section.key} className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/sale-orders/${section.saleOrderId}/packing-list`)}
+                      className="text-sm font-semibold text-primary hover:underline"
+                    >
+                      {section.saleOrderNumber} — {section.distributorName}
+                    </button>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="mb-1 text-xs font-semibold text-muted-foreground">Required</div>
+                        <StyleSizeGrid
+                          columns={distinctSizeColumns(section.lines)}
+                          rows={queueStyleSizeRows(section.lines, 'allocatedQuantity')}
+                          variant="readOnly"
+                        />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-xs font-semibold text-muted-foreground">Packed</div>
+                        <StyleSizeGrid
+                          columns={distinctSizeColumns(section.lines)}
+                          rows={queueStyleSizeRows(section.lines, 'packedQuantity')}
+                          variant="readOnly"
+                        />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-xs font-semibold text-muted-foreground">Remaining</div>
+                        <StyleSizeGrid
+                          columns={distinctSizeColumns(section.lines)}
+                          rows={queueStyleSizeRows(section.lines, 'remainingQuantity')}
+                          variant="readOnly"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <LoadMoreFooter
               {...loadMoreProps(queueQuery, queueItems.length, ['line', 'lines'])}
             />

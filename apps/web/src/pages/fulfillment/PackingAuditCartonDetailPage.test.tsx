@@ -170,6 +170,97 @@ describe('BUG-005 Packing Audit carton destination context', () => {
   });
 });
 
+// ISS-023 Phase 2: the carton's own contents render as one Style row with
+// Sizes as columns, rather than one flat row per Style+Size combination.
+describe('PackingAuditCartonDetailPage carton Style x Size presentation (ISS-023 Phase 2)', () => {
+  it('groups multiple Sizes of the same Style into a single row instead of repeating the Style', async () => {
+    const carton = buildCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 3, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 7,
+    });
+    await renderPage(async (url) => {
+      if (url === '/packing-audit/cartons/carton-1') return { data: { data: carton } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    const styleCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
+    expect(styleCells).toHaveLength(1);
+    expect(content()).toContain('S');
+    expect(content()).toContain('M');
+    // The row total (3+4) reconciles to the carton's own Total Quantity.
+    expect(content()).toContain('7');
+  });
+
+  it('groups two different Styles into two separate rows, never merged by shared Size', async () => {
+    const carton = buildCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 6, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 10,
+    });
+    await renderPage(async (url) => {
+      if (url === '/packing-audit/cartons/carton-1') return { data: { data: carton } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    expect(content()).toContain('ST-001');
+    expect(content()).toContain('ST-002');
+    // Two distinct rows, each with its own quantity, not summed into one "M" cell.
+    expect(content()).toContain('6');
+    expect(content()).toContain('4');
+  });
+
+  it('carries the Style primary image through to the matrix row (one Style, multiple Sizes)', async () => {
+    const primaryImage = {
+      id: 'img-1',
+      styleId: 'style-1',
+      fileId: 'file-1',
+      fileName: 'classic-tee.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 1024,
+      isPrimary: true,
+      sortOrder: 0,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    const carton = buildCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 3, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 7,
+    });
+    await renderPage(async (url) => {
+      if (url === '/packing-audit/cartons/carton-1') return { data: { data: carton } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    // StyleThumbnailCell only renders its "View style image" trigger when passed a non-null image —
+    // a single trigger (not one per source line) confirms the one-per-Style row carries it through.
+    const thumbnailTriggers = container.querySelectorAll('button[aria-label="View style image"]');
+    expect(thumbnailTriggers).toHaveLength(1);
+  });
+
+  it('renders no thumbnail trigger when the Style has no primary image', async () => {
+    const carton = buildCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 5, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 5,
+    });
+    await renderPage(async (url) => {
+      if (url === '/packing-audit/cartons/carton-1') return { data: { data: carton } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    expect(container.querySelectorAll('button[aria-label="View style image"]')).toHaveLength(0);
+  });
+});
+
 // NEW-AUTH: role-parametrized coverage for the Confirm Inspected mutation
 // CTA (canConfirmPackingAudits — PACKING_AUDIT_MUTATION_ROLES, QA_USER
 // only). Only ADMIN and QA_USER can even reach this page (route-level

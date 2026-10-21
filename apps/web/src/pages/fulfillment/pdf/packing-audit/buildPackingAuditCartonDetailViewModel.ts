@@ -1,6 +1,7 @@
 import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import type { PackingAuditQueueItem } from '../../types.js';
+import { distinctSizeColumns, groupLinesByStyle, type SizeColumn } from '../../style-size-grouping.js';
 import { PACKING_AUDIT_STATE_LABELS } from '../shared/fulfillmentPdfLabels.js';
 
 export type PackingAuditCartonDetailSource = PackingAuditQueueItem & { factoryDispatchId: string };
@@ -10,11 +11,12 @@ export interface PackingAuditCartonDetailPdfMeta {
   generatedBy?: string | null;
 }
 
-export interface PackingAuditCartonDetailLineRow {
-  id: string;
-  styleDisplay: string;
-  sizeLabel: string;
-  quantity: number;
+/** ISS-023 Phase 2: one Style x Size row within the carton's own contents matrix — see `PackingAuditCartonDetailPdfViewModel.styleRows`. */
+export interface PackingAuditCartonDetailStyleRow {
+  styleId: string;
+  styleNumber: string;
+  styleName: string | null;
+  values: Record<string, number | null>;
 }
 
 export interface PackingAuditCartonDetailHistoryRow {
@@ -33,7 +35,8 @@ export interface PackingAuditCartonDetailPdfViewModel {
   retired: boolean;
   destinationMismatch: boolean;
   totalQuantity: number;
-  lines: PackingAuditCartonDetailLineRow[];
+  sizeColumns: SizeColumn[];
+  styleRows: PackingAuditCartonDetailStyleRow[];
   auditHistory: PackingAuditCartonDetailHistoryRow[];
 }
 
@@ -70,11 +73,12 @@ export function buildPackingAuditCartonDetailViewModel(
     retired: carton.retired,
     destinationMismatch: carton.destinationMismatch,
     totalQuantity: carton.totalQuantity,
-    lines: carton.lines.map((line) => ({
-      id: line.saleOrderLineId,
-      styleDisplay: `${line.styleNumber} — ${line.styleName}`,
-      sizeLabel: line.sizeLabel,
-      quantity: line.quantity,
+    sizeColumns: distinctSizeColumns(carton.lines),
+    styleRows: groupLinesByStyle(carton.lines).map((group) => ({
+      styleId: group.styleId,
+      styleNumber: group.styleNumber,
+      styleName: group.styleName,
+      values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
     })),
     auditHistory: carton.auditHistory.map((entry) => ({
       cartonVersion: entry.cartonVersion,

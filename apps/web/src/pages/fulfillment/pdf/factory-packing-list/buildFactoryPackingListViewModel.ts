@@ -1,4 +1,4 @@
-import type { FactoryPackingCartonView, PackingListView } from '../../types.js';
+import type { FactoryPackingCartonView, PackingListLineView, PackingListView } from '../../types.js';
 import { FACTORY_DISPATCH_STATUS_LABELS, PACKING_AUDIT_STATE_LABELS } from '../shared/fulfillmentPdfLabels.js';
 import { distinctSizeColumns, groupLinesByStyle, type SizeColumn } from '../../style-size-grouping.js';
 
@@ -45,21 +45,16 @@ export interface FactoryPackingListRetiredCartonRow extends FactoryPackingListCa
   retiredAt: string | null;
 }
 
-export interface FactoryPackingListLineRow {
-  id: string;
-  styleDisplay: string;
-  sizeLabel: string;
-  requiredQuantity: number;
-  packedQuantity: number;
-}
-
 export interface FactoryPackingListDestinationSection {
   id: string;
   label: string;
   distributorName: string;
   addressLine: string;
   contactName: string | null;
-  lines: FactoryPackingListLineRow[];
+  /** ISS-023 Phase 2: Required/Packed progress as two Style x Size matrices (one metric per matrix — a single matrix cell cannot carry two quantities) instead of one flat row per Style+Size combination. */
+  sizeColumns: SizeColumn[];
+  requiredStyleRows: FactoryPackingListCartonStyleRow[];
+  packedStyleRows: FactoryPackingListCartonStyleRow[];
   cartons: FactoryPackingListCartonRow[];
 }
 
@@ -75,6 +70,18 @@ export interface FactoryPackingListPdfViewModel {
   statusLabel: string;
   destinations: FactoryPackingListDestinationSection[];
   retiredCartons: FactoryPackingListRetiredCartonRow[];
+}
+
+function destinationStyleRows(
+  lines: PackingListLineView[],
+  metric: 'requiredQuantity' | 'packedQuantity',
+): FactoryPackingListCartonStyleRow[] {
+  return groupLinesByStyle(lines.map((line) => ({ ...line, quantity: line[metric] }))).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
 }
 
 function buildCartonRow(carton: FactoryPackingCartonView): FactoryPackingListCartonRow {
@@ -129,13 +136,9 @@ export function buildFactoryPackingListViewModel(
       .filter(Boolean)
       .join(', '),
     contactName: destination.contactName,
-    lines: destination.lines.map((line) => ({
-      id: line.saleOrderLineId,
-      styleDisplay: `${line.styleNumber} — ${line.styleName}`,
-      sizeLabel: line.sizeLabel,
-      requiredQuantity: line.requiredQuantity,
-      packedQuantity: line.packedQuantity,
-    })),
+    sizeColumns: distinctSizeColumns(destination.lines),
+    requiredStyleRows: destinationStyleRows(destination.lines, 'requiredQuantity'),
+    packedStyleRows: destinationStyleRows(destination.lines, 'packedQuantity'),
     cartons: destination.cartons.map(buildCartonRow),
   }));
 

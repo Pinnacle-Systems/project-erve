@@ -10,7 +10,6 @@ import { PdfStyleSizeMatrix } from '../../../../lib/pdf/core/PdfStyleSizeMatrix.
 import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type {
   FactoryPackingListCartonRow,
-  FactoryPackingListLineRow,
   FactoryPackingListPdfViewModel,
   FactoryPackingListRetiredCartonRow,
 } from './buildFactoryPackingListViewModel.js';
@@ -19,18 +18,12 @@ const styles = StyleSheet.create({
   destinationBlock: { marginBottom: 12 },
   destinationHeading: { fontSize: 10, fontWeight: 700, color: '#111111', marginBottom: 4 },
   note: { fontSize: 8, color: '#555555', marginBottom: 4 },
+  summaryLabel: { fontSize: 8, fontWeight: 700, color: '#555555', marginTop: 4, marginBottom: 1 },
   cartonBlock: { marginTop: 6, marginBottom: 6, paddingLeft: 8 },
   cartonHeading: { fontSize: 9, fontWeight: 700, color: '#333333', marginBottom: 2 },
   cartonMeta: { fontSize: 8, color: '#555555', marginBottom: 2 },
   noCartons: { fontSize: 8, color: '#777777', marginTop: 4 },
 });
-
-const lineColumns: PdfTableColumn<FactoryPackingListLineRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '50%', value: (row) => row.styleDisplay },
-  { key: 'sizeLabel', header: 'Size', width: '15%', value: (row) => row.sizeLabel },
-  { key: 'requiredQuantity', header: 'Required', width: '17.5%', align: 'right', value: (row) => row.requiredQuantity },
-  { key: 'packedQuantity', header: 'Packed', width: '17.5%', align: 'right', value: (row) => row.packedQuantity },
-];
 
 function CartonBlock({ carton }: { carton: FactoryPackingListCartonRow }) {
   return (
@@ -91,7 +84,10 @@ export function FactoryPackingListDetailDocument({ viewModel }: FactoryPackingLi
             <Text style={styles.note}>
               {[destination.addressLine, destination.contactName].filter(Boolean).join(' · ')}
             </Text>
-            <PdfTable columns={lineColumns} rows={destination.lines} rowKey={(row) => row.id} />
+            <Text style={styles.summaryLabel}>Required</Text>
+            <PdfStyleSizeMatrix columns={destination.sizeColumns} rows={destination.requiredStyleRows} />
+            <Text style={styles.summaryLabel}>Packed</Text>
+            <PdfStyleSizeMatrix columns={destination.sizeColumns} rows={destination.packedStyleRows} />
             {destination.cartons.length > 0 ? (
               destination.cartons.map((carton) => <CartonBlock key={carton.id} carton={carton} />)
             ) : (

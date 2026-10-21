@@ -55,10 +55,32 @@ describe('buildPackingAuditCartonDetailViewModel', () => {
     expect(vm.identityItems.find((i) => i.label === 'Destination')?.value).toBe('Chennai');
   });
 
-  it('maps carton contents and total quantity', () => {
+  it('maps carton contents as a Style x Size matrix and total quantity', () => {
     const vm = buildPackingAuditCartonDetailViewModel(makeCarton(), { generatedAt: '2026-09-15T10:00:00Z' });
-    expect(vm.lines).toEqual([{ id: 'line-1', styleDisplay: 'ST-001 — Classic Tee', sizeLabel: 'Medium', quantity: 10 }]);
+    expect(vm.sizeColumns).toEqual([{ sizeId: 'size-1', sizeCode: 'M' }]);
+    expect(vm.styleRows).toEqual([{ styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 10 } }]);
     expect(vm.totalQuantity).toBe(10);
+  });
+
+  it('groups a carton with multiple Sizes of the same Style into one Style x Size row (ISS-023 Phase 2), reconciling to the carton total', () => {
+    const carton = makeCarton({
+      lines: [
+        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 3, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4, currentDestinationId: 'dest-1' },
+        { saleOrderLineId: 'line-3', styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', primaryImage: null, sizeId: 'size-3', sizeCode: 'L', sizeLabel: 'Large', quantity: 5, currentDestinationId: 'dest-1' },
+      ],
+      totalQuantity: 12,
+    });
+    const vm = buildPackingAuditCartonDetailViewModel(carton, { generatedAt: '2026-09-15T10:00:00Z' });
+    expect(vm.styleRows).toEqual([
+      { styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 3, 'size-2': 4 } },
+      { styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', values: { 'size-3': 5 } },
+    ]);
+    const reconciled = vm.styleRows.reduce(
+      (sum, row) => sum + Object.values(row.values).reduce((s: number, v) => s + (v ?? 0), 0),
+      0,
+    );
+    expect(reconciled).toBe(vm.totalQuantity);
   });
 
   it('maps retired and destinationMismatch flags', () => {
