@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthUser, ReportOperationsSummary } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import * as AuthContext from '../../auth/AuthContext.js';
@@ -11,6 +11,12 @@ import { ManagementDashboardPage } from './ManagementDashboardPage.js';
 
 let container: HTMLDivElement;
 let root: Root;
+
+// Finish the real lazy chart module's import graph before any test can unmount
+// the dashboard and tear down its environment while that import is in flight.
+beforeAll(async () => {
+  await import('./charts/ChartsSection.js');
+}, 30000);
 
 beforeEach(() => {
   container = document.createElement('div');
