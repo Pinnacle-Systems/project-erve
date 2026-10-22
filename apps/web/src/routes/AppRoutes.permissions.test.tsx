@@ -429,6 +429,31 @@ describe('AppRoutes Permissions', () => {
     });
   });
 
+  // BUG-005 Phase A audit residual: the carton-detail page itself trusts the carton's own
+  // destination/distributor snapshot correctly, but that was never covered by a route-level
+  // denial test for the carton-detail sub-route specifically (only the queue route above was).
+  // PACKING_AUDIT_VIEW_ROLES (ADMIN, QA_USER) is an intentional, already-confirmed policy —
+  // QA_USER is deliberately NOT factory-scoped (see factory-dispatch.service.ts) — this proves
+  // the route guard itself, not a new restriction.
+  describe('Packing Audit carton detail route guard (BUG-005)', () => {
+    it.each([
+      ['ADMIN', true],
+      ['QA_USER', true],
+      ['MERCHANDISER', false],
+      ['FACTORY_USER', false],
+      ['SENIOR_MANAGEMENT', false],
+      ['ACCOUNTANT', false],
+      ['DISTRIBUTOR', false],
+    ] as const)('packing audit carton detail route for %s = %s', async (role, allowed) => {
+      await renderRoutes(role, '/fulfillment/packing-audit/cartons/carton-1');
+      if (allowed) {
+        expect(getPageContent()).not.toContain('ForbiddenPage');
+      } else {
+        expect(getPageContent()).toContain('ForbiddenPage');
+      }
+    });
+  });
+
   // UXAUTH-008: /fulfillment/erve-packing-lists/new previously had no route
   // guard of its own and inherited only the broad
   // ERVE_PACKING_LIST_VIEW_ROLES parent guard — SENIOR_MANAGEMENT could
