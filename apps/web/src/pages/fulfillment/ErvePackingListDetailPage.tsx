@@ -200,7 +200,7 @@ export function ErvePackingListDetailPage() {
           />
         }
         primaryAction={isOpen && canMutate ? (
-          <Button onClick={() => setFinalizeOpen(true)} disabled={packingList.cartonCount === 0} loading={finalizeMutation.isPending}>
+          <Button onClick={() => { setFormError(''); setFinalizeOpen(true); }} disabled={packingList.cartonCount === 0} loading={finalizeMutation.isPending}>
             Finalize Packing List
           </Button>
         ) : undefined}
@@ -223,10 +223,11 @@ export function ErvePackingListDetailPage() {
         open={finalizeOpen && isOpen && canMutate}
         onOpenChange={setFinalizeOpen}
         title="Finalize Erve Packing List?"
-        description={`Finalize ${packingList.ervePackingListNumber} with ${packingList.cartonCount.toLocaleString()} cartons and ${packingList.totalQuantity.toLocaleString()} pieces. Cartons can no longer be added or removed after finalization.`}
+        description={`Finalize ${packingList.ervePackingListNumber} with ${packingList.cartonCount.toLocaleString()} ${packingList.cartonCount === 1 ? 'carton' : 'cartons'} and ${packingList.totalQuantity.toLocaleString()} pieces. Cartons can no longer be added or removed after finalization.`}
         confirmLabel="Finalize Packing List"
         cancelLabel="Keep Editing"
         loading={finalizeMutation.isPending}
+        error={formError || undefined}
         onConfirm={() => { if (!finalizeMutation.isPending && packingList.cartonCount > 0) finalizeMutation.mutate(); }}
       />
       {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
