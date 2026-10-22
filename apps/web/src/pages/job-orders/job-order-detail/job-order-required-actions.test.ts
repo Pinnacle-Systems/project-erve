@@ -11,6 +11,32 @@ const labels = (jobOrder: JobOrderDetail, user: AuthUser) =>
   getJobOrderRequiredActions(jobOrder, user).map((action) => action.label);
 
 describe('ISS-005 role-aware Job Order action discovery', () => {
+  it('does not offer the first Final batch before positive prepared quantity exists', () => {
+    const final = finalQualityActivity({ coverage: { preparedQuantityAuthoritative: false, complete: false, reconciliationConflict: false, availableBySize: [] } });
+    expect(labels(asOrder('IN_PRODUCTION', { qualityActivities: [final] }), asUser('QA_USER'))).toEqual([]);
+  });
+  it.each(['AVAILABLE', 'FAILED', 'COMPLETED'])('keeps PPM available independently of PP Sample %s', (ppStatus) => {
+    const activities = [
+      finalQualityActivity({ name: 'PP Sample', sequence: 1, executionMode: 'SEQUENTIAL_GATE', status: ppStatus, eligible: true, executionMultiplicity: 'SINGLE', qualityForm: { id: 'pp', code: 'PP', name: 'PP Sample', executionScope: 'SIZE' } }),
+      finalQualityActivity({ name: 'PPM', sequence: 2, executionMode: 'SEQUENTIAL_GATE', status: 'AVAILABLE', eligible: true, executionMultiplicity: 'SINGLE' }),
+    ];
+    const order = asOrder('CONFIRMED_BY_FACTORY', { stages: [stage('cut', 'Cutting', 3, 'NOT_STARTED')], qualityActivities: activities });
+    expect(labels(order, asUser('QA_USER'))).toContain('Start PPM');
+    expect(labels(order, asUser('FACTORY_USER'))).toEqual([]);
+  });
+  it('allows Cutting while a later sequential gate is still incomplete', () => {
+    expect(labels(asOrder('CONFIRMED_BY_FACTORY', { qualityActivities: [finalQualityActivity({ sequence: 10, executionMode: 'SEQUENTIAL_GATE', status: 'NOT_AVAILABLE', eligible: false })] }), asUser('FACTORY_USER'))).toEqual(['Start Cutting']);
+  });
+  it.each([null, { status: 'DRAFT', outcome: null }, { status: 'FINALIZED', outcome: 'FAIL' }])('does not offer Sewing completion without effective Inline PASS (%j)', (execution) => {
+    const stages = [stage('cut', 'Cutting', 1, 'COMPLETED'), stage('sew', 'Sewing', 3, 'IN_PROGRESS'), stage('finish', 'Finishing', 4, 'NOT_STARTED')];
+    const inline = finalQualityActivity({ executionMode: 'IN_PROCESS', executionMultiplicity: 'SINGLE', availabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE', associatedProductionActivity: { id: 'flow-sew', name: 'Sewing' }, execution, status: 'FAILED' });
+    expect(labels(asOrder('IN_PRODUCTION', { stages, qualityActivities: [inline] }), asUser('FACTORY_USER'))).toEqual([]);
+  });
+  it('offers Sewing completion after the effective Inline PASS', () => {
+    const stages = [stage('sew', 'Sewing', 3, 'IN_PROGRESS')];
+    const inline = finalQualityActivity({ executionMultiplicity: 'SINGLE', availabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE', associatedProductionActivity: { id: 'flow-sew', name: 'Sewing' }, execution: { status: 'FINALIZED', outcome: 'PASS' }, status: 'COMPLETED' });
+    expect(labels(asOrder('IN_PRODUCTION', { stages, qualityActivities: [inline] }), asUser('FACTORY_USER'))).toEqual(['Complete Sewing']);
+  });
   it('shows the next factory stage only when eligible and never exposes QA tasks', () => {
     const factory = asUser('FACTORY_USER');
     expect(labels(asOrder('CONFIRMED_BY_FACTORY'), factory)).toEqual(['Start Cutting']);
@@ -21,7 +47,7 @@ describe('ISS-005 role-aware Job Order action discovery', () => {
     expect(labels(asOrder('PRODUCTION_COMPLETE'), factory)).toEqual([]);
     const blocked = asOrder('CONFIRMED_BY_FACTORY', {
       qualityActivities: [finalQualityActivity({
-        executionMode: 'SEQUENTIAL_GATE', status: 'AVAILABLE', eligible: true,
+        sequence: 0, executionMode: 'SEQUENTIAL_GATE', status: 'AVAILABLE', eligible: true,
       })],
     });
     expect(labels(blocked, factory)).toEqual([]);

@@ -21,3 +21,7 @@ Pending; execution results will be recorded here before handoff. Synthetic accep
 
 Stage 1: API suite 55/55 passed; additional rejected-reassignment test 1/1 passed (55 deselected). Frontend mapping/login/return-path checks 25/25 passed across 4 files with maxWorkers=1. Web typecheck passed. RED reproduced inactive/suspended mapping 200 responses and missing confirmation dialogs. Initial cold PDF import timed out in an existing test; sequential rerun passed without changing its deadline. New rendered label assertions account for existing required-field markers.
 
+
+Stage 2: 123 focused frontend tests passed across four files; updated Final-batch eligibility and error tests then passed 27/27. Ten named API acceptance cases passed across Job Order, PP Sample/PPM, Inline and Final-batching files (154 unrelated cases deselected). At user direction, the preceding broader four-file API run was interrupted and is NOT passing evidence; the full API suite is reserved for CI. Existing pg adapter deprecation warnings occurred. Test fixture pre-production gates now precede Cutting rather than sharing its sequence, matching the actual backend rule.
+Ruling: also require positive authoritative available prepared quantity for the first Final batch overview link. A failing test and existing backend batch rejection demonstrated the same eligibility defect as subsequent batches; no quantity or QA rules changed.
+

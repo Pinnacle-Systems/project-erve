@@ -10,6 +10,38 @@ export type FlatSize = JobOrderLineSize & {
 export const disclaimerRequiredMessage =
   'Factory commercial terms / disclaimer is required before sending this Job Order to the factory.';
 
+/** Interpret only this action's established API failures; unexpected errors stay private. */
+export function sendToFactoryErrorMessage(error: unknown): string {
+  const retry = 'Unable to send this Job Order to the factory. Please try again. If the problem continues, reload and review the current Job Order status.';
+  if (!isAxiosError(error)) return retry;
+  if (!error.response) return 'Unable to contact the server. Check your connection and try again.';
+  const { status, data } = error.response;
+  if (status >= 500) return retry;
+  if (status === 401) return 'Your session has expired. Sign in again before sending this Job Order.';
+  if (status === 403) return 'You do not have permission to send this Job Order. Contact your administrator if you need access.';
+  if (status === 404) return 'This Job Order could not be found. Return to the Job Order list and refresh it.';
+  const body = data && typeof data === 'object' ? data.error : undefined;
+  if (!body || typeof body !== 'object') return retry;
+  if (body.code === 'DISCLAIMER_REQUIRED') return disclaimerRequiredMessage;
+  if (body.code === 'STALE_VERSION' || body.code === 'IDEMPOTENCY_KEY_REUSED')
+    return 'This Job Order has changed since it was loaded. Reload it, review the latest details, and try again.';
+  if (body.code === 'VALIDATION_ERROR' && Array.isArray(body.details?.issues)) {
+    const issues = body.details.issues.flatMap((issue: unknown) => {
+      if (!issue || typeof issue !== 'object' || !('message' in issue) || typeof issue.message !== 'string') return [];
+      const field = 'field' in issue && typeof issue.field === 'string' ? issue.field : '';
+      return [field ? `${field}: ${issue.message}` : issue.message];
+    });
+    if (issues.length) return issues.join('; ');
+  }
+  if (typeof body.message !== 'string' || !body.message.trim()) return retry;
+  if (body.message === 'Only DRAFT job orders can be sent to factory')
+    return 'Only a draft Job Order can be sent to the factory. Reload to review its current status.';
+  if (body.message === 'An inactive factory cannot receive a job order')
+    return 'This factory is inactive. Ask an administrator to activate it or update the draft Job Order to an active factory before sending.';
+  if (body.code === 'VALIDATION_ERROR' || body.code === 'CONFLICT') return body.message;
+  return retry;
+}
+
 export function mutationErrorMessage(error: unknown, fallback: string): string {
   if (isAxiosError<ApiErrorResponse>(error)) return error.response?.data.error.message ?? fallback;
   if (error instanceof Error && !error.message.startsWith('Request failed with status code'))
