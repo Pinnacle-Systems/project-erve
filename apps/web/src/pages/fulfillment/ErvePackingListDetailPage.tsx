@@ -200,7 +200,7 @@ export function ErvePackingListDetailPage() {
           />
         }
         primaryAction={isOpen && canMutate ? (
-          <Button onClick={() => { setFormError(''); setFinalizeOpen(true); }} disabled={packingList.cartonCount === 0} loading={finalizeMutation.isPending}>
+          <Button onClick={() => { setFormError(''); setFinalizeOpen(true); }} disabled={packingList.cartonCount === 0 || addCartonsMutation.isPending || removeCartonMutation.isPending} loading={finalizeMutation.isPending}>
             Finalize Packing List
           </Button>
         ) : undefined}
@@ -228,7 +228,7 @@ export function ErvePackingListDetailPage() {
         cancelLabel="Keep Editing"
         loading={finalizeMutation.isPending}
         error={formError || undefined}
-        onConfirm={() => { if (!finalizeMutation.isPending && packingList.cartonCount > 0) finalizeMutation.mutate(); }}
+        onConfirm={() => { if (!finalizeMutation.isPending && !addCartonsMutation.isPending && !removeCartonMutation.isPending && packingList.cartonCount > 0) finalizeMutation.mutate(); }}
       />
       {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
 
