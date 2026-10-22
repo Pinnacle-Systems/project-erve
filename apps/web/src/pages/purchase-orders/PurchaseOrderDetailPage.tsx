@@ -140,18 +140,6 @@ export function PurchaseOrderDetailPage() {
               <Link to={`/purchase-orders/${id}/edit`}>Edit</Link>
             </Button>
           )}
-          <Button variant="secondary" onClick={() => navigate('/purchase-orders')}>
-            Back
-          </Button>
-          </>
-        }
-        primaryAction={
-          <div className="flex gap-2">
-          {canCreateJobOrder && (
-            <Button asChild>
-              <Link to={`/job-orders/new?purchaseOrderId=${po.id}`}>Create Job Order</Link>
-            </Button>
-          )}
           {canMutateOrderSheet && (
             <Button
               variant="destructive"
@@ -161,7 +149,17 @@ export function PurchaseOrderDetailPage() {
               Cancel Order Sheet
             </Button>
           )}
-          </div>
+          <Button variant="secondary" onClick={() => navigate('/purchase-orders')}>
+            Back
+          </Button>
+          </>
+        }
+        primaryAction={
+          canCreateJobOrder ? (
+            <Button asChild>
+              <Link to={`/job-orders/new?purchaseOrderId=${po.id}`}>Create Job Order</Link>
+            </Button>
+          ) : undefined
         }
       />
 
@@ -232,8 +230,9 @@ export function PurchaseOrderDetailPage() {
         open={cancelDialogOpen}
         onOpenChange={setCancelDialogOpen}
         title="Cancel Order Sheet?"
-        description="This will cancel the Order Sheet using the existing cancel action."
+        description={`This will cancel Order Sheet ${po.poNumber}. It can no longer be used for Job Order planning.`}
         confirmLabel="Cancel Order Sheet"
+        cancelLabel="Keep Order Sheet"
         destructive
         loading={cancelMutation.isPending}
         onConfirm={() => cancelMutation.mutate(undefined, { onSuccess: () => setCancelDialogOpen(false) })}
