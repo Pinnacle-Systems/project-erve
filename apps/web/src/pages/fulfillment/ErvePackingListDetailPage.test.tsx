@@ -256,3 +256,90 @@ describe('ErvePackingListDetailPage factory/supplier provenance redaction (DEMO-
     expect(content()).toContain('EIFD/26-27/0001');
   });
 });
+
+
+describe('ErvePackingListDetailPage finalization safety and placement (UX-03/UX-10 batch 2)', () => {
+  function openDialog(): HTMLElement {
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    return dialog!;
+  }
+
+  function dialogButton(text: string): HTMLButtonElement {
+    const button = Array.from(openDialog().querySelectorAll('button')).find(
+      (item) => item.textContent?.trim() === text,
+    );
+    expect(button).toBeDefined();
+    return button!;
+  }
+
+  it('places a single authorized Finalize action above the detail panels, with no duplicate footer action', async () => {
+    await renderPage(buildPackingList(), 'ADMIN');
+    const buttons = Array.from(container.querySelectorAll('button')).filter(
+      (button) => button.textContent?.trim() === 'Finalize Packing List',
+    );
+    expect(buttons).toHaveLength(1);
+    const panelHeading = Array.from(container.querySelectorAll('*')).find(
+      (element) => element.textContent?.trim() === 'Erve India Consolidated Packing List',
+    );
+    expect(panelHeading).toBeDefined();
+    expect(buttons[0]!.compareDocumentPosition(panelHeading!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('requires confirmation with the EIPL business number, carton count and quantity, with a safe exit', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage(buildPackingList(), 'MERCHANDISER');
+    act(() => buttonByText('Finalize Packing List')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+
+    expect(post).not.toHaveBeenCalled();
+    expect(openDialog().textContent).toContain('EIPL/26-27/0001');
+    expect(openDialog().textContent).toContain('1 cartons');
+    expect(openDialog().textContent).toContain('10 pieces');
+    expect(openDialog().textContent).toContain('carton membership can no longer be edited');
+    act(() => dialogButton('Keep Editing').click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('uses the existing finalize endpoint only after acceptance', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: {} } } as never);
+    await renderPage(buildPackingList(), 'ADMIN');
+    act(() => buttonByText('Finalize Packing List')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    expect(post).not.toHaveBeenCalled();
+    act(() => dialogButton('Finalize Packing List').click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/erve-packing-lists/epl-1/finalize'));
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  });
+
+  it('keeps finalization disabled for a packing list with no cartons', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage(buildPackingList({ cartonCount: 0, totalQuantity: 0, cartons: [] }), 'ADMIN');
+    expect(buttonByText('Finalize Packing List')!.disabled).toBe(true);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('never offers finalization after the packing list has already been finalized or dispatched', async () => {
+    await renderPage(buildPackingList({ status: 'FINALIZED' }), 'ADMIN');
+    expect(buttonByText('Finalize Packing List')).toBeNull();
+  });
+
+  it('preserves the dialog and explains an API finalization failure', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: { data: { error: { message: 'A carton is no longer eligible for finalization' } } },
+    });
+    await renderPage(buildPackingList(), 'ADMIN');
+    act(() => buttonByText('Finalize Packing List')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    act(() => dialogButton('Finalize Packing List').click());
+    await vi.waitFor(() =>
+      expect(openDialog().querySelector('[role="alert"]')?.textContent).toContain(
+        'A carton is no longer eligible for finalization',
+      ),
+    );
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(dialogButton('Keep Editing').disabled).toBe(false);
+  });
+});
