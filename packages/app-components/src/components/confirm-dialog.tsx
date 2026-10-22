@@ -47,8 +47,6 @@ export const ConfirmDialog = ({
         className="max-w-md"
         onCloseAutoFocus={onCloseAutoFocus}
         aria-busy={loading || undefined}
-        // A pending mutation must not be dismissed accidentally by Escape or
-        // clicking the backdrop. Programmatic close after success still works.
         onEscapeKeyDown={(event) => { if (loading) event.preventDefault(); }}
         onPointerDownOutside={(event) => { if (loading) event.preventDefault(); }}
       >
