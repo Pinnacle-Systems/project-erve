@@ -256,3 +256,33 @@ describe('ErvePackingListDetailPage factory/supplier provenance redaction (DEMO-
     expect(content()).toContain('EIFD/26-27/0001');
   });
 });
+
+
+describe('Erve Packing List finalization safety and placement (UX-03/UX-10)', () => {
+  it('shows exactly one header Finalize action for an eligible list', async () => {
+    await renderPage(buildPackingList({ status: 'OPEN' }), 'ADMIN');
+    const buttons = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.trim() === 'Finalize Packing List');
+    expect(buttons).toHaveLength(1);
+    expect(container.firstElementChild?.firstElementChild?.textContent).toContain('Finalize Packing List');
+  });
+
+  it('requires explicit confirmation with business number, carton count and safe exit', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage(buildPackingList({ status: 'OPEN' }), 'ADMIN');
+    act(() => buttonByText('Finalize Packing List')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('EIPL/26-27/0001');
+    expect(dialog.textContent).toContain('1 cartons');
+    expect(dialog.textContent).toContain('10 pieces');
+    expect(post).not.toHaveBeenCalled();
+    const exit = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Keep Editing');
+    act(() => exit!.click());
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('does not expose Finalize on a finalized or dispatched list', async () => {
+    await renderPage(buildPackingList({ status: 'FINALIZED' }), 'ADMIN');
+    expect(buttonByText('Finalize Packing List')).toBeNull();
+  });
+});
