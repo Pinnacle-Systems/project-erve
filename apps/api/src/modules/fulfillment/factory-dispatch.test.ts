@@ -1537,7 +1537,7 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
     }
   });
 
-  it('carton mutation vs finalize: never both succeed; committed state stays internally consistent', async () => {
+  it.each(['concurrent', 'carton-first', 'finalize-first'] as const)('carton mutation vs finalize (%s): never both succeed; committed state stays internally consistent', async (ordering) => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 30);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
     const { token: qaToken } = await createRoleToken('QA_USER');
@@ -1566,14 +1566,71 @@ describe('Dispatch Order edit vs Factory Dispatch packing/finalize — concurren
       .set('Authorization', `Bearer ${factoryToken}`)
       .send({ expectedVersion: created.body.data.factoryDispatch.version });
 
-    const [cartonRes, finalizeRes] = await Promise.all([secondCartonPromise, finalizePromise]);
+    async function runRequests() {
+      if (ordering === 'carton-first') return [await secondCartonPromise, await finalizePromise] as const;
+      if (ordering === 'finalize-first') {
+        const finalized = await finalizePromise;
+        return [await secondCartonPromise, finalized] as const;
+      }
+      return Promise.all([secondCartonPromise, finalizePromise]);
+    }
+    const [cartonRes, finalizeRes] = await runRequests();
 
-    // C2 would push packed to 31 > 30 required, so it must fail regardless
-    // of ordering; finalize sees exactly 30/30 audited either way.
-    expect(cartonRes.status).toBe(409);
+    // Both operations take the same locks. Carton-first rejects 31 > 30;
+    // finalize-first rejects C2 at the earlier non-DRAFT status guard.
+    // The concurrent case may reach either guard, but no unrelated error.
+    const overPackingError = {
+      status: 409,
+      code: 'CONFLICT',
+      message: `Carton quantity for line ${fixture.saleOrderLineId} would exceed its Dispatch Order quantity (30)`,
+    };
+    const finalizedError = {
+      status: 400,
+      code: 'VALIDATION_ERROR',
+      message: 'Cartons can only be added to a DRAFT Factory Dispatch',
+    };
+    const validErrors = ordering === 'carton-first' ? [overPackingError]
+      : ordering === 'finalize-first' ? [finalizedError] : [overPackingError, finalizedError];
+    expect(validErrors).toContainEqual({
+      status: cartonRes.status,
+      code: cartonRes.body.error?.code,
+      message: cartonRes.body.error?.message,
+    });
     expect(finalizeRes.status).toBe(200);
-    const dispatchAfter = await prisma.factoryDispatch.findUniqueOrThrow({ where: { id: factoryDispatchId } });
+    const dispatchAfter = await prisma.factoryDispatch.findUniqueOrThrow({
+      where: { id: factoryDispatchId },
+      include: {
+        cartons: {
+          select: {
+            id: true, cartonNumber: true, retiredAt: true, version: true,
+            lines: { select: { saleOrderLineId: true, quantity: true } },
+            audits: { select: { cartonVersion: true } },
+          },
+        },
+      },
+    });
     expect(dispatchAfter.status).toBe('READY_FOR_ERVE');
+    expect(dispatchAfter.version).toBe(created.body.data.factoryDispatch.version + 1);
+    expect(dispatchAfter.finalizedAt).not.toBeNull();
+    expect(dispatchAfter.cartons).toEqual([{
+      id: carton.id, cartonNumber: 'C1', retiredAt: null, version: carton.version,
+      lines: [{ saleOrderLineId: fixture.saleOrderLineId, quantity: 30 }],
+      audits: [{ cartonVersion: carton.version }],
+    }]);
+    const [lineAfter, physicalPacked, attributedPacked] = await Promise.all([
+      prisma.saleOrderLine.findUniqueOrThrow({ where: { id: fixture.saleOrderLineId } }),
+      prisma.factoryPackingCartonLine.aggregate({
+        where: { saleOrderLineId: fixture.saleOrderLineId, carton: { retiredAt: null } },
+        _sum: { quantity: true },
+      }),
+      prisma.factoryDispatchLine.aggregate({
+        where: { saleOrderLineId: fixture.saleOrderLineId },
+        _sum: { packedQuantity: true },
+      }),
+    ]);
+    expect(lineAfter.quantity).toBe(30);
+    expect(physicalPacked._sum.quantity).toBe(30);
+    expect(attributedPacked._sum.packedQuantity).toBe(30);
   });
 });
 
