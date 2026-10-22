@@ -215,6 +215,31 @@ describe('PurchaseOrderDetailPage Style and Size-wise Quantities', () => {
     const inputs = Array.from(table!.querySelectorAll('input')) as HTMLInputElement[];
     expect(inputs.map((input) => input.value)).toEqual(['100', '0']);
   });
+
+  // ISS-040: the redundant gray summary banner above this grid (duplicating the
+  // Style identity and total already shown by the grid itself) was removed.
+  it('does not render a duplicate Style/total summary banner above the grid', async () => {
+    await renderPage();
+    // Previously a separate banner sat between the Panel and the table,
+    // repeating "Total: 350" (with the colon) alongside the grid's own row
+    // total, which renders the bare number "350" with no "Total:" prefix.
+    expect(content()).not.toContain('Total: 350');
+    // Style identity now appears exactly once (the grid's own row header),
+    // not twice (banner + grid).
+    const styleNumberMatches = content().match(/ST-101/g) ?? [];
+    expect(styleNumberMatches).toHaveLength(1);
+  });
+
+  // The removed banner was the only place Season info appeared on this page —
+  // it now lives in the Order Sheet Header panel instead of being dropped.
+  it('still shows the Order Sheet line Season in the Order Sheet Header once the banner is gone', async () => {
+    const po = buildPO();
+    po.lines[0]!.seasonSnapshots = [
+      { seasonId: 's1', code: 'SS27', name: 'Spring Summer 27', financialYear: '2026-27', displayName: 'SS27' },
+    ];
+    await renderPage(po);
+    expect(content()).toContain('SS27');
+  });
 });
 
 describe('PurchaseOrderDetailPage Planning State', () => {

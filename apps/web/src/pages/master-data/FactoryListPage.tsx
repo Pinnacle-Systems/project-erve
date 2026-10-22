@@ -1,27 +1,36 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { PageHeader, StatusBadge } from '@erve/app-components';
+import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canManageFactories } from '../../auth/permissions.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import type { Factory } from './types.js';
+import type { Factory, Status } from './types.js';
 
 export function FactoryListPage() {
   const { user } = useAuth();
   const canManage = canManageFactories(user);
-  // Opt-in cursor pagination (limit sent): Load more appends further pages.
-  // The PDF fetches every page.
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [status, setStatus] = useState<Status | ''>('');
+  const listParams = useMemo(
+    () => ({ search: debouncedSearch || undefined, status: status || undefined }),
+    [debouncedSearch, status],
+  );
+  // Opt-in cursor pagination (limit sent): Load more appends further pages; a
+  // filter change restarts at page 1. The PDF fetches every page (unfiltered
+  // — it keeps its existing full-export behavior).
   const { query: factoriesQuery, items: factories } = useCursorList<Factory>({
     queryKey: ['factories'],
     path: '/factories',
-    params: { limit: 25 },
+    params: { ...listParams, limit: 25 },
   });
 
   const generateFactoryListPdf = useCallback(async () => {
@@ -62,7 +71,26 @@ export function FactoryListPage() {
           ) : undefined
         }
       />
-      <div className="flex justify-end">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <FilterBar
+            searchValue={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search factories"
+            statusOptions={[
+              { label: 'All statuses', value: 'ALL' },
+              { label: 'Active', value: 'ACTIVE' },
+              { label: 'Inactive', value: 'INACTIVE' },
+            ]}
+            statusValue={status || 'ALL'}
+            onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as Status))}
+            hasActiveFilters={Boolean(search || status)}
+            onClearFilters={() => {
+              setSearch('');
+              setStatus('');
+            }}
+          />
+        </div>
         <PdfActionButtons
           isGenerating={pdfAction.isGenerating}
           error={pdfAction.error}

@@ -177,6 +177,10 @@ export function PurchaseOrderDetailPage() {
           <DescriptionList.Item label="Required Delivery" value={po.requiredDeliveryDate ? formatDate(po.requiredDeliveryDate) : null} />
           <DescriptionList.Item label="Purchase Mode" value={po.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale or Return'} />
           <DescriptionList.Item label="Total Qty" value={po.totalOrderedQuantity.toLocaleString()} />
+          <DescriptionList.Item
+            label="Season"
+            value={po.lines[0]?.seasonSnapshots.map((season) => season.displayName).join(', ')}
+          />
           <DescriptionList.Item label="Merchandiser" value={po.merchandiser?.name} />
           <DescriptionList.Item label="Created By" value={po.creator.name} />
           <DescriptionList.Item label="Created" value={formatDate(po.createdAt)} />
@@ -206,21 +210,14 @@ export function PurchaseOrderDetailPage() {
             primaryImage: line.primaryImage,
             values: Object.fromEntries(line.sizes.map((size) => [size.sizeId, size.orderedQuantity])),
           };
+          // The Style identity (thumbnail/number/name) and the line total are
+          // already rendered by StyleSizeGrid's own row header and row-total
+          // cell below — this used to be duplicated in a separate gray
+          // summary banner above the grid (ISS-040); the Season info that
+          // banner uniquely carried now lives in the Order Sheet Header
+          // panel above instead of being dropped.
           return (
             <Panel key={line.id} variant="bordered" padding="none" className="mb-4 last:mb-0">
-              <div className="border-b border-border-subtle bg-surface-muted px-4 py-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <StyleThumbnailCell styleId={line.styleId} image={line.primaryImage} size={40} viewerTitle={line.styleNumber} />
-                  <div>
-                    <span className="font-medium text-foreground">{line.styleNumber}</span>
-                    <span className="ml-2 text-sm text-muted-foreground">{line.styleName}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">{line.seasonSnapshots.map((season) => season.displayName).join(', ')}</span>
-                  </div>
-                </div>
-                <span className="text-sm font-medium text-foreground">
-                  Total: {line.totalOrderedQuantity.toLocaleString()}
-                </span>
-              </div>
               <StyleSizeGrid columns={columns} rows={[row]} variant="readOnly" showColumnTotals={false} />
             </Panel>
           );

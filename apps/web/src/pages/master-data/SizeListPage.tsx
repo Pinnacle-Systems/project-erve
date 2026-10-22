@@ -1,19 +1,20 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import { PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
+import { FilterBar, PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
 import { Button, NumericField, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import type { Size } from './types.js';
-import { useCallback, useState } from 'react';
+import type { Size, Status } from './types.js';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 function errorMessage(error: unknown) {
@@ -26,12 +27,20 @@ export function SizeListPage() {
   const { user } = useAuth();
   const [form, setForm] = useState({ code: '', label: '', sizeType: 'AGE', sortOrder: null as number | null });
   const [error, setError] = useState('');
-  // Opt-in cursor pagination (limit sent): Load more appends further pages.
-  // The PDF fetches every page.
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [status, setStatus] = useState<Status | ''>('');
+  const listParams = useMemo(
+    () => ({ search: debouncedSearch || undefined, status: status || undefined }),
+    [debouncedSearch, status],
+  );
+  // Opt-in cursor pagination (limit sent): Load more appends further pages; a
+  // filter change restarts at page 1. The PDF fetches every page (unfiltered
+  // — it keeps its existing full-export behavior).
   const { query: sizesQuery, items: sizes } = useCursorList<Size>({
     queryKey: ['sizes'],
     path: '/sizes',
-    params: { limit: 25 },
+    params: { ...listParams, limit: 25 },
   });
   const createMutation = useMutation({
     mutationFn: () => {
@@ -69,7 +78,7 @@ export function SizeListPage() {
   const pdfAction = usePdfAction({ generate: generateSizeListPdf, filename: sizeListPdfFilename });
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-5">
       <PageHeader title="Sizes" subtitle="Size codes available for style mapping" primaryAction={<Button asChild variant="secondary"><Link to="/master-data/sizes/import">Import</Link></Button>} />
 
       <Panel title="Add Size">
@@ -132,7 +141,26 @@ export function SizeListPage() {
         </form>
       </Panel>
 
-      <div className="flex justify-end">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <FilterBar
+            searchValue={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search sizes"
+            statusOptions={[
+              { label: 'All statuses', value: 'ALL' },
+              { label: 'Active', value: 'ACTIVE' },
+              { label: 'Inactive', value: 'INACTIVE' },
+            ]}
+            statusValue={status || 'ALL'}
+            onStatusChange={(value) => setStatus(value === 'ALL' ? '' : (value as Status))}
+            hasActiveFilters={Boolean(search || status)}
+            onClearFilters={() => {
+              setSearch('');
+              setStatus('');
+            }}
+          />
+        </div>
         <PdfActionButtons
           isGenerating={pdfAction.isGenerating}
           error={pdfAction.error}

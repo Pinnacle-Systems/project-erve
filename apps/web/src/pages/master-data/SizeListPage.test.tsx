@@ -16,6 +16,20 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  // Radix Select (the new status filter) calls scrollIntoView on its option
+  // elements when opened — unimplemented in jsdom.
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -25,6 +39,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function flushMicrotasks(): Promise<void> {
@@ -286,5 +301,73 @@ describe('SizeListPage inline Create', () => {
 
     expect(formGrid?.className).toContain('items-start');
     expect(formGrid?.className).not.toContain('items-end');
+  });
+
+  // U4-AUDIT-NEW-02 (root cause): the Code field's error-text slot is
+  // reserved before any error — the same node just gains text, rather than
+  // a new node mounting and growing the field's box.
+  it('reserves the error-text slot under Code before any error is shown', async () => {
+    await renderPageWithSizes([]);
+    const codeInput = findInput('Code *');
+    const reservedSlot = codeInput.closest('div[data-width]')?.querySelector('.min-h-\\[0\\.75rem\\]');
+    expect(reservedSlot).not.toBeNull();
+
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add Size' || button.textContent === 'Add',
+    );
+    await act(async () => submit!.click());
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    const reservedSlotAfterError = codeInput.closest('div[data-width]')?.querySelector('.min-h-\\[0\\.75rem\\]');
+    expect(reservedSlotAfterError).not.toBeNull();
+    expect(reservedSlotAfterError?.textContent).toBe('Required');
+  });
+});
+
+// UX-08: Size previously had no search/status filtering at all — it now uses
+// the same shared FilterBar as the other masters (Distributor/Factory/etc.),
+// wired into the same /sizes list query the backend already supports
+// (master-data.service.ts listSizes already accepts search/status).
+describe('SizeListPage FilterBar (UX-08)', () => {
+  it('renders a search input and a status filter above the table', async () => {
+    await renderPageWithSizes([]);
+    expect(container.querySelector('input[aria-label="Search"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Status"]')).not.toBeNull();
+  });
+
+  it('sends the selected status to the /sizes query', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/sizes') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter>
+            <AuthProvider>
+              <SizeListPage />
+            </AuthProvider>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await flushMicrotasks();
+    });
+    getSpy.mockClear();
+
+    const statusTrigger = container.querySelector<HTMLButtonElement>('[aria-label="Status"]')!;
+    await act(async () => statusTrigger.click());
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (el) => el.textContent?.trim() === 'Active',
+    )!;
+    await act(async () => option.click());
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(getSpy).toHaveBeenCalledWith('/sizes', expect.objectContaining({ params: expect.objectContaining({ status: 'ACTIVE' }) }));
   });
 });
