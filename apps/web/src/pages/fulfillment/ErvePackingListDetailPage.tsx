@@ -226,7 +226,7 @@ export function ErvePackingListDetailPage() {
         }
       />
 
-      {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>
+      {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
 
       <div className="space-y-6">
         <Panel title="Erve India Consolidated Packing List">
