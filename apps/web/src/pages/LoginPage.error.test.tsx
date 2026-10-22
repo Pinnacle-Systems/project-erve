@@ -53,6 +53,14 @@ async function submitFailedLogin(error: unknown): Promise<void> {
 }
 
 describe('LoginPage error feedback', () => {
+  it('renders shared role-neutral sign-in instructions and accessible field labels', async () => {
+    await submitFailedLogin(new Error('offline'));
+    expect(container.textContent).toContain('Sign in to your Erve account');
+    expect(container.textContent?.toLowerCase()).not.toContain('distributor');
+    expect(container.querySelector('label[for="identifier"]')?.textContent).toContain('Email or mobile number');
+    expect(container.querySelector('label[for="password"]')?.textContent).toContain('Password');
+    expect(container.querySelector('button[type="submit"]')?.textContent).toBe('Sign in');
+  });
   it('shows a generic failure message for a non-Axios rejection', async () => {
     await submitFailedLogin(new Error('Unexpected network failure'));
     expect(container.textContent).toContain('Unable to sign in. Please try again.');

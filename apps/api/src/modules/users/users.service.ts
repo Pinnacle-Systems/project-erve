@@ -544,6 +544,9 @@ export async function addDistributorMapping(
   if (distributor.status !== 'ACTIVE') {
     throw HttpError.badRequest('Cannot map a user to an inactive distributor');
   }
+  if (user.status !== 'ACTIVE') {
+    throw HttpError.badRequest('Only active users can be mapped to a distributor');
+  }
 
   // A distributor user belongs to exactly one distributor. The schema only
   // guarantees uniqueness per (user, distributor) pair, so the one-mapping

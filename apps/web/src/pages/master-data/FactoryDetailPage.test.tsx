@@ -104,11 +104,13 @@ function mockAuth(role: 'ADMIN' | 'MERCHANDISER') {
   } as unknown as ReturnType<typeof AuthContext.useAuth>);
 }
 
-async function renderPageWithRole(factory: Factory, role: 'ADMIN' | 'MERCHANDISER') {
+async function renderPageWithRole(factory: Factory, role: 'ADMIN' | 'MERCHANDISER', currentFactories = [{ id: 'old', name: 'Original Factory', code: 'OLD' }]) {
   mockAuth(role);
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === `/factories/${factory.id}`) return { data: { data: factory } };
     if (url === `/factories/${factory.id}/users`) return { data: { data: [] } };
+    if (url === `/factories/${factory.id}/user-options`) return { data: { data: [{ id: 'worker', name: 'Factory Worker', email: 'worker@test.local' }] } };
+    if (url === '/users/worker') return { data: { data: { factories: currentFactories } } };
     throw new Error(`Unexpected request: ${url}`);
   });
   act(() => {
@@ -129,6 +131,64 @@ async function renderPageWithRole(factory: Factory, role: 'ADMIN' | 'MERCHANDISE
 }
 
 describe('FactoryDetailPage — Mapped Factory Users inline creation (DEMO-015)', () => {
+  async function chooseWorker() {
+    const input = document.getElementById('lookup-assign-user') as HTMLInputElement;
+    await act(async () => { input.focus(); input.click(); });
+    await waitFor(() => Boolean(document.querySelector('[role="option"]')));
+    await act(async () => (document.querySelector('[role="option"]') as HTMLElement).click());
+  }
+  async function submitAssignment() {
+    await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  }
+  it('assigns an unmapped user directly, but never reassigns a user already at this factory', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} });
+    await renderPageWithRole(makeFactory(), 'ADMIN', []);
+    await chooseWorker(); await submitAssignment();
+    await waitFor(() => post.mock.calls.length === 1);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(post).toHaveBeenCalledExactlyOnceWith('/users/worker/factories', { factoryId: 'factory-1' });
+  });
+  it('does not show a cross-factory warning or submit when the current mapping is already the destination', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPageWithRole(makeFactory(), 'ADMIN', [{ id: 'factory-1', name: 'Acme Factory', code: 'FAC-1' }]);
+    await chooseWorker(); await submitAssignment();
+    await waitFor(() => Boolean(container.textContent?.includes('already mapped')));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('retains the selected user and dialog after failure and blocks duplicate confirmation', async () => {
+    let reject!: (error: Error) => void;
+    const post = vi.spyOn(apiClient, 'post').mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
+    await renderPageWithRole(makeFactory(), 'ADMIN'); await chooseWorker(); await submitAssignment();
+    await waitFor(() => Boolean(document.querySelector('[role="dialog"]')));
+    const confirm = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Confirm') as HTMLButtonElement;
+    await act(async () => { confirm.click(); confirm.click(); });
+    expect(post).toHaveBeenCalledTimes(1);
+    await act(async () => reject(new Error('Reassignment unavailable')));
+    await waitFor(() => Boolean(document.querySelector('[role="dialog"]')?.textContent?.includes('Reassignment unavailable')));
+    expect((document.getElementById('lookup-assign-user') as HTMLInputElement).value).toContain('Factory Worker');
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Original Factory');
+  });
+  it('confirms the old and new factory before assigning, and Cancel issues no mutation', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} });
+    await renderPageWithRole(makeFactory(), 'ADMIN');
+    const input = document.getElementById('lookup-assign-user') as HTMLInputElement;
+    await act(async () => { input.focus(); input.click(); });
+    await waitFor(() => Boolean(document.querySelector('[role="option"]')));
+    await act(async () => (document.querySelector('[role="option"]') as HTMLElement).click());
+    await act(async () => (container.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await waitFor(() => Boolean(document.querySelector('[role="dialog"]')));
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Original Factory');
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Acme Factory');
+    expect(post).not.toHaveBeenCalled();
+    await act(async () => (Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Cancel') as HTMLButtonElement).click());
+    expect(post).not.toHaveBeenCalled();
+    expect(input.value).toContain('Factory Worker');
+    await act(async () => (container.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await waitFor(() => Boolean(document.querySelector('[role="dialog"]')));
+    await act(async () => (Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Confirm') as HTMLButtonElement).click());
+    expect(post).toHaveBeenCalledExactlyOnceWith('/users/worker/factories', { factoryId: 'factory-1' });
+  });
   it('offers "+ Create new Factory User" for ADMIN, and the button opens the create dialog', async () => {
     const factory = makeFactory();
     await renderPageWithRole(factory, 'ADMIN');

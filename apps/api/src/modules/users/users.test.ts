@@ -41,6 +41,34 @@ afterAll(async () => {
 });
 
 describe('POST /users', () => {
+  it('keeps the original factory mapping and audit unchanged after rejected reassignment', async () => {
+    const admin = await createTestUserAndToken({ email: 'rollback-admin@test.local', password: 'password', roles: ['ADMIN'] });
+    const target = await createTestUserAndToken({ email: 'rollback-target@test.local', password: 'password', roles: ['FACTORY_USER'] });
+    const original = await createTestFactory({ code: 'ROLLBACK-ORIGINAL', name: 'Original' });
+    const inactive = await createTestFactory({ code: 'ROLLBACK-INACTIVE', name: 'Inactive' });
+    await prisma.factory.update({ where: { id: inactive.id }, data: { status: 'INACTIVE' } });
+    await request(app).post(`/users/${target.userId}/factories`).set('Authorization', `Bearer ${admin.token}`).send({ factoryId: original.id }).expect(200);
+    const mappings = await prisma.userFactory.findMany({ where: { userId: target.userId } });
+    const audits = await prisma.auditLog.count();
+    await request(app).post(`/users/${target.userId}/factories`).set('Authorization', `Bearer ${admin.token}`).send({ factoryId: inactive.id }).expect(400);
+    expect(await prisma.userFactory.findMany({ where: { userId: target.userId } })).toEqual(mappings);
+    expect(await prisma.auditLog.count()).toBe(audits);
+  });
+  it.each(['INACTIVE', 'SUSPENDED'] as const)('rejects %s distributor users even with forged ACTIVE status without changing mappings or audits', async (status) => {
+    const admin = await createTestUserAndToken({ email: 'mapping-admin@test.local', password: 'password', roles: ['ADMIN'] });
+    const target = await createTestUserAndToken({ email: 'mapping-target@test.local', password: 'password', roles: ['DISTRIBUTOR'], status });
+    const distributor = await createTestDistributor();
+    const mappings = await prisma.userDistributor.findMany();
+    const audits = await prisma.auditLog.count();
+    const res = await request(app).post(`/users/${target.userId}/distributors`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ distributorId: distributor.id, status: 'ACTIVE' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatchObject({ code: 'VALIDATION_ERROR', message: 'Only active users can be mapped to a distributor' });
+    expect(await prisma.userDistributor.findMany()).toEqual(mappings);
+    expect(await prisma.auditLog.count()).toBe(audits);
+  });
+
   it('allows an ADMIN to create a user', async () => {
     const { token } = await createTestUserAndToken({
       email: 'admin@test.local',
