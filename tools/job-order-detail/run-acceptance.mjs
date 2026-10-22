@@ -178,6 +178,9 @@ try {
         await driver.waitFor(`!!document.querySelector('[role=dialog]')`);
         await driver.clickButton('Review in Production');
         await driver.waitFor(`!document.querySelector('[role=dialog]')`);
+        await driver.waitFor(
+          `document.querySelector('[role=tab][data-state=active]')?.textContent === 'Production'`,
+        );
       }
       for (const tab of ['Overview', 'Production', 'Quality', 'History']) {
         await driver.clickButton(tab);
@@ -334,6 +337,9 @@ try {
   );
   await driver.clickButton('Review in Production');
   await driver.waitFor(`!document.querySelector('[role=dialog]')`);
+  await driver.waitFor(
+    `document.querySelector('[role=tab][data-state=active]')?.textContent === 'Production'`,
+  );
   await driver.clickButton('Overview');
   await driver.clickButton('Production');
   await driver.assert(
