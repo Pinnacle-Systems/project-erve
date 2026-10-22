@@ -51,7 +51,7 @@ No full Phase 3 benchmark or full web suite was repeated for this independent sc
 
 ## Limits and release UAT
 
-Browser verification covers Chrome only. Pathologically tall atomic rows and exports beyond the measured/tested envelope are not newly qualified. A worker that silently never responds and emits no error has no added timeout/cancellation; the action remains pending until navigation/reload, while observable success/error paths clean up deterministically.
+Browser verification covers Chrome only. Pathologically tall atomic rows and exports beyond the measured/tested envelope are not newly qualified. A worker that silently never responds and emits no error has no added timeout/cancellation; the action remains pending until a full page reload or document navigation, while observable success/error paths clean up deterministically.
 
 Native Print preview, pagination inspection and cancel/print cleanup remain manual release UAT in an authorized normal browser. Headless PDF/iframe verification does not satisfy that requirement. No browser-launch restrictions were bypassed and no production deployment was performed.
 
