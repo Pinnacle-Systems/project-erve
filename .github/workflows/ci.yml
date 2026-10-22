@@ -94,9 +94,23 @@ jobs:
       # Full web test suite execution in PR CI (CI-001 / PDF-001)
       - name: Run @erve/web tests
         env:
+          ISS044_PDF_EVIDENCE_DIR: ${{ runner.temp }}/iss044-pdfs
           BATCH4_PDF_EVIDENCE_DIR: ${{ startsWith(github.head_ref, 'batch4/') && format('{0}/batch4-pdfs', runner.temp) || '' }}
           PR2B_PDF_EVIDENCE_DIR: ${{ github.head_ref == 'feature/pr2b-job-order-pdf' && '.artifacts/pr2b-pdf' || '' }}
         run: pnpm --filter @erve/web test
+
+      - name: Render EIPL continuation-header PDF evidence
+        if: success() && startsWith(github.head_ref, 'fix/iss-044-')
+        run: node tools/batch4/render-pdfs.mjs "${{ runner.temp }}/iss044-pdfs"
+
+      - name: Upload EIPL continuation-header evidence
+        if: always() && startsWith(github.head_ref, 'fix/iss-044-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: iss044-pdfs-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/iss044-pdfs/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Render Batch 4 PDF acceptance evidence
         if: success() && startsWith(github.head_ref, 'batch4/')

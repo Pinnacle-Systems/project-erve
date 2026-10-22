@@ -17,6 +17,7 @@ const styles = StyleSheet.create({
   noCartons: { fontSize: 8, color: '#777777', marginTop: 4 },
   totalsLine: { fontSize: 9, fontWeight: 700, color: '#111111', marginTop: 4, textAlign: 'right' },
   dispatchNote: { fontSize: 9, color: '#0a6e1e', marginBottom: 8 },
+  summaryTitle: { fontSize: 10, fontWeight: 700, marginBottom: 6, color: '#333333' },
   // Match PdfFooter's chrome without its dynamic callback (global numbering is stamped later).
   footer: {
     position: 'absolute',
@@ -59,6 +60,7 @@ function CartonBlock({ carton }: { carton: ErvePackingListDetailCartonRow }) {
         maxColumnsPerGroup={10}
         keepBoundaryRows
         flattenForPagination
+        repeatPageHeaders
       />
     </View>
   );
@@ -77,8 +79,11 @@ export function ErvePackingListDetailDocument({
   last = true,
 }: ErvePackingListDetailDocumentProps) {
   return (
-    <PdfDocument orientation="landscape">
+    <PdfDocument orientation="landscape" experimentalPagination>
       <PdfHeader title={viewModel.title} subtitle={viewModel.subtitle} />
+      <Text style={styles.footer} fixed>
+        {' '}
+      </Text>
       {first ? (
         <>
           <PdfMetaSection generatedAt={viewModel.generatedAt} generatedBy={viewModel.generatedBy} />
@@ -111,20 +116,20 @@ export function ErvePackingListDetailDocument({
       </PdfSection>
 
       {last && viewModel.styleSizeSummaryRows.length > 0 ? (
-        <PdfSection title="Style / Size Summary" wrap>
+        <View>
+          <Text style={styles.summaryTitle} minPresenceAhead={48}>
+            Style / Size Summary
+          </Text>
           <PdfStyleSizeMatrix
             columns={viewModel.styleSizeSizeColumns}
             rows={viewModel.styleSizeSummaryRows}
             maxColumnsPerGroup={10}
             keepBoundaryRows
             flattenForPagination
+            repeatPageHeaders
           />
-        </PdfSection>
+        </View>
       ) : null}
-
-      <Text style={styles.footer} fixed>
-        {' '}
-      </Text>
     </PdfDocument>
   );
 }

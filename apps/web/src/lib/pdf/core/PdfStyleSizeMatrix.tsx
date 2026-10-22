@@ -69,6 +69,9 @@ export interface PdfStyleSizeMatrixRow {
 }
 
 export interface PdfStyleSizeMatrixProps {
+  /** Repeat each group's own header at physical page breaks. Requires the containing
+   * PdfDocument to opt into experimentalPagination so repeated heights are reserved. */
+  repeatPageHeaders?: boolean;
   /** Opt in to placing group rows directly in the matrix's flow. Avoids the legacy
    * paginator's empty nested-View split fallback when a group starts near a page end. */
   flattenForPagination?: boolean;
@@ -86,13 +89,9 @@ export interface PdfStyleSizeMatrixProps {
    */
   maxColumnsPerGroup?: number;
   /**
-   * Max Style rows rendered between header repeats. Unlike `@react-pdf/renderer`'s `fixed` (a
-   * document-wide running header, wrong here since a wide Size range can produce several
-   * independent column-group blocks, each of which would otherwise fix its own header at a
-   * position that then bleeds onto later, unrelated pages), the header is re-rendered inline in
-   * the row flow every N rows — content and headers flow and paginate together, scoped to this
-   * block only. Callers pick this for their own row height/page geometry via real visual
-   * verification, same as `maxColumnsPerGroup`.
+   * Legacy inline header interval when repeatPageHeaders is false. This does not track
+   * physical page boundaries. Page-aware callers instead use a fixed child inside each
+   * group container with the native opt-in paginator; never a document-wide fixed header.
    */
   rowsPerHeaderRepeat?: number;
   emptyMessage?: string;
@@ -152,6 +151,7 @@ export function PdfStyleSizeMatrix({
   styleColumnWidth = '28%',
   flattenForPagination = false,
   keepBoundaryRows = false,
+  repeatPageHeaders = false,
 }: PdfStyleSizeMatrixProps) {
   if (rows.length === 0) {
     return <Text style={styles.emptyMessage}>{emptyMessage}</Text>;
@@ -159,7 +159,7 @@ export function PdfStyleSizeMatrix({
 
   const groups = chunk(columns, maxColumnsPerGroup);
   const totalsColumnWidth = '10%';
-  const Container = flattenForPagination ? Fragment : View;
+  const Container = flattenForPagination && !repeatPageHeaders ? Fragment : View;
 
   return (
     <View>
@@ -182,6 +182,7 @@ export function PdfStyleSizeMatrix({
             key={key}
             style={styles.headerRow}
             wrap={false}
+            fixed={repeatPageHeaders}
             minPresenceAhead={keepBoundaryRows ? 30 : undefined}
           >
             <Text style={[styles.styleHeaderCell, { width: styleColumnWidth }]}>Style</Text>
@@ -196,55 +197,57 @@ export function PdfStyleSizeMatrix({
           </View>
         );
 
-        // Rows are chunked purely to decide how often the header repeats in the content flow —
-        // NOT to gate pagination. Neither this View nor the chunk Views below set `wrap={false}`,
-        // so `@react-pdf/renderer` paginates the whole group normally across as many pages as the
-        // data needs; only each individual row (and each header instance) is kept atomic. This
-        // deliberately avoids `fixed` — a `fixed` header is pinned at a document-wide position and
-        // repeats on every later page regardless of which group is still rendering, which breaks
-        // down the moment a document has more than one column-group block.
+        // EIPL keeps a View per group: the native paginator repeats a fixed child only
+        // in that container's continuation fragments and accounts for its height before
+        // placing rows. A completed group has no fragment on subsequent pages. Flattening
+        // would lose that scope. Legacy callers retain their inline row-count repeats.
         return (
           <Container key={groupIndex}>
             {groupLabel ? <Text style={styles.groupLabel}>{groupLabel}</Text> : null}
-            {chunk(rows, rowsPerHeaderRepeat).flatMap((rowChunk, chunkIndex) => [
-              renderHeaderRow(`header-${chunkIndex}`),
-              ...rowChunk.map((row) => (
-                <View
-                  key={row.styleId}
-                  style={styles.row}
-                  wrap={false}
-                  minPresenceAhead={
-                    keepBoundaryRows && row === rows[rows.length - 1] && showColumnTotals
-                      ? 44
-                      : undefined
-                  }
-                >
-                  <View style={[styles.styleCell, { width: styleColumnWidth }]}>
-                    {row.image !== undefined && row.image !== null ? (
-                      <View style={styles.styleThumbnailWrapper}>
-                        <PdfThumbnail image={row.image} width={20} height={20} />
+            {chunk(rows, repeatPageHeaders ? rows.length : rowsPerHeaderRepeat).flatMap(
+              (rowChunk, chunkIndex) => [
+                renderHeaderRow(`header-${chunkIndex}`),
+                ...rowChunk.map((row) => (
+                  <View
+                    key={row.styleId}
+                    style={styles.row}
+                    wrap={false}
+                    minPresenceAhead={
+                      keepBoundaryRows && row === rows[rows.length - 1] && showColumnTotals
+                        ? 44
+                        : undefined
+                    }
+                  >
+                    <View style={[styles.styleCell, { width: styleColumnWidth }]}>
+                      {row.image !== undefined && row.image !== null ? (
+                        <View style={styles.styleThumbnailWrapper}>
+                          <PdfThumbnail image={row.image} width={20} height={20} />
+                        </View>
+                      ) : null}
+                      <View>
+                        <Text style={styles.styleNumberText}>{row.styleNumber}</Text>
+                        {row.styleName ? (
+                          <Text style={styles.styleNameText}>{row.styleName}</Text>
+                        ) : null}
+                      </View>
+                    </View>
+                    {groupColumns.map((column) => (
+                      <View
+                        key={column.sizeId}
+                        style={[styles.cellWrapper, { width: sizeColWidth }]}
+                      >
+                        <Text style={styles.cellText}>{cellDisplay(row, column.sizeId)}</Text>
+                      </View>
+                    ))}
+                    {groupShowsTotals ? (
+                      <View style={[styles.cellWrapper, { width: totalsColumnWidth }]}>
+                        <Text style={styles.cellText}>{rowTotal(row, columns)}</Text>
                       </View>
                     ) : null}
-                    <View>
-                      <Text style={styles.styleNumberText}>{row.styleNumber}</Text>
-                      {row.styleName ? (
-                        <Text style={styles.styleNameText}>{row.styleName}</Text>
-                      ) : null}
-                    </View>
                   </View>
-                  {groupColumns.map((column) => (
-                    <View key={column.sizeId} style={[styles.cellWrapper, { width: sizeColWidth }]}>
-                      <Text style={styles.cellText}>{cellDisplay(row, column.sizeId)}</Text>
-                    </View>
-                  ))}
-                  {groupShowsTotals ? (
-                    <View style={[styles.cellWrapper, { width: totalsColumnWidth }]}>
-                      <Text style={styles.cellText}>{rowTotal(row, columns)}</Text>
-                    </View>
-                  ) : null}
-                </View>
-              )),
-            ])}
+                )),
+              ],
+            )}
             {showColumnTotals ? (
               <View style={styles.footerRow} wrap={false}>
                 <Text style={[styles.footerLabelCell, { width: styleColumnWidth }]}>Total</Text>
