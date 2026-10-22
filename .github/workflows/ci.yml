@@ -346,7 +346,6 @@ jobs:
     timeout-minutes: 15
     env:
       CHROME_BINARY: /usr/bin/google-chrome
-      BATCH4_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/batch4-browser
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -357,6 +356,8 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
       - name: Verify actual QA pages with synthetic API responses
+        env:
+          BATCH4_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/batch4-browser
         run: node tools/batch4/browser.mjs
       - name: Upload QA browser evidence
         if: always()

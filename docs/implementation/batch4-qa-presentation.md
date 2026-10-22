@@ -45,6 +45,8 @@ Preserve source USER Customer/Supplier, meeting and inspection dates, meeting co
 
 The initial unrestricted focused PDF run hit an unchanged long-list timeout under parallel load; the two-worker rerun passed. An early full run observed an in-progress Inline regression failure; the subsequent settled full run passed. No failing run is counted as acceptance.
 
+Local actionlint v1.7.12 reproduced a workflow context validation failure before jobs started: runner.temp is unavailable in job-level env. Moving the evidence path to step-level env corrected it; actionlint then passed.
+
 API integration uses CI's job-scoped Postgres 18 service. No local/shared/production database was accessed. Deployment ShellCheck, actionlint and fixture checks run in CI's Linux job.
 
 ## Browser and PDF evidence
