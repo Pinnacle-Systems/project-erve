@@ -8,7 +8,7 @@ import type { AuthUser, Role } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import * as AuthContext from '../../auth/AuthContext.js';
 import { ErvePackingListDetailPage } from './ErvePackingListDetailPage.js';
-import type { ErvePackingListDetail } from './types.js';
+import type { EligibleErveCartonView, ErvePackingListDetail } from './types.js';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -103,11 +103,11 @@ function buildPackingList(overrides: Partial<ErvePackingListDetail> = {}): ErveP
   };
 }
 
-async function renderPage(packingList: ErvePackingListDetail, role: Role = 'ADMIN') {
+async function renderPage(packingList: ErvePackingListDetail, role: Role = 'ADMIN', eligibleCartons: EligibleErveCartonView[] = []) {
   mockAuth(role);
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/erve-packing-lists/epl-1') return { data: { data: packingList } };
-    if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+    if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: eligibleCartons } };
     throw new Error(`Unexpected GET: ${url}`);
   });
 
@@ -259,6 +259,88 @@ describe('ErvePackingListDetailPage factory/supplier provenance redaction (DEMO-
 
 
 describe('Erve Packing List finalization safety and placement (UX-03/UX-10)', () => {
+  it('places the only Finalize button above the packing-list detail panels', async () => {
+    await renderPage(buildPackingList({ status: 'OPEN' }), 'ADMIN');
+    const action = buttonByText('Finalize Packing List')!;
+    const panelTitle = Array.from(container.querySelectorAll('*')).find(
+      (element) => element.textContent?.trim() === 'Erve India Consolidated Packing List',
+    );
+    expect(panelTitle).toBeDefined();
+    expect(action.compareDocumentPosition(panelTitle!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('prevents finalization while a carton removal is in flight and re-enables it after completion', async () => {
+    let resolveRemoval!: (value: unknown) => void;
+    const pendingRemoval = new Promise((resolve) => { resolveRemoval = resolve; });
+    const remove = vi.spyOn(apiClient, 'delete').mockReturnValue(pendingRemoval as never);
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage(buildPackingList({ status: 'OPEN' }), 'ADMIN');
+
+    const finalize = buttonByText('Finalize Packing List')!;
+    expect(finalize.disabled).toBe(false);
+    act(() => buttonByText('Remove')!.click());
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith('/erve-packing-lists/epl-1/cartons/carton-1'));
+    await vi.waitFor(() => expect(finalize.disabled).toBe(true));
+    act(() => finalize.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+
+    await act(async () => { resolveRemoval({ data: { data: null } }); });
+    await vi.waitFor(() => expect(finalize.disabled).toBe(false));
+  });
+
+  it('prevents finalization while selected cartons are being added and re-enables it afterward', async () => {
+    const candidate: EligibleErveCartonView = {
+      id: 'eligible-1',
+      cartonNumber: 'C2',
+      factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
+      factoryDispatchId: 'fd-1',
+      factoryDispatchNumber: 'EIFD/26-27/0001',
+      saleOrder: { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001' },
+      distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
+      destination: { id: 'dest-1', label: null, city: 'Chennai', state: 'TN' },
+      packageDetails: null,
+      weight: null,
+      totalQuantity: 8,
+      lines: [],
+    };
+    let resolveAdd!: (value: unknown) => void;
+    const pendingAdd = new Promise((resolve) => { resolveAdd = resolve; });
+    const post = vi.spyOn(apiClient, 'post').mockImplementation((url: string) => {
+      if (url === '/erve-packing-lists/epl-1/cartons') return pendingAdd as never;
+      throw new Error(`Unexpected POST: ${url}`);
+    });
+    await renderPage(buildPackingList({ status: 'OPEN' }), 'MERCHANDISER', [candidate]);
+
+    await vi.waitFor(() => expect(container.querySelector('input[aria-label="Select carton C2"]')).not.toBeNull());
+    act(() => (container.querySelector('input[aria-label="Select carton C2"]') as HTMLInputElement).click());
+    await vi.waitFor(() => expect(buttonByText('Add Selected Cartons')?.disabled).toBe(false));
+    const finalize = buttonByText('Finalize Packing List')!;
+    expect(finalize.disabled).toBe(false);
+    act(() => buttonByText('Add Selected Cartons')!.click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/erve-packing-lists/epl-1/cartons', { cartonIds: ['eligible-1'] }));
+    await vi.waitFor(() => expect(finalize.disabled).toBe(true));
+    act(() => finalize.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(post).toHaveBeenCalledTimes(1);
+
+    await act(async () => { resolveAdd({ data: { data: null } }); });
+    await vi.waitFor(() => expect(finalize.disabled).toBe(false));
+  });
+
+  it('closes the finalization confirmation after a successful submission', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: null } } as never);
+    await renderPage(buildPackingList({ status: 'OPEN' }), 'ADMIN');
+    act(() => buttonByText('Finalize Packing List')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'))
+      .find((b) => b.textContent === 'Finalize Packing List');
+    act(() => confirm!.click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/erve-packing-lists/epl-1/finalize'));
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  });
+
+
 
   it('does not enable finalization for an empty OPEN packing list', async () => {
     await renderPage(buildPackingList({ status: 'OPEN', cartonCount: 0, totalQuantity: 0, cartons: [] }), 'ADMIN');
