@@ -1,9 +1,11 @@
 // The single authoritative Style + Size barcode generator. Server-side only:
 // the web never derives a barcode, it only shows what the API stored.
 //
-//   barcode = <Season barcode serial><LMIX digits><Size number>
-//   e.g. serial 3 + LMIX1234 + size "3Y"  -> "312343"
-//        serial 3 + LMIX1234 + size "10Y" -> "3123410"
+//   Season barcode serials 1-2: <serial><LMIX digits><size number> (legacy)
+//   Season barcode serials 3+:  <serial><space><LMIX digits><size number padded to 2+ digits>
+//   e.g. serial 3 + LMIX12345678 + size "3Y"  -> "3 1234567803"
+//        serial 3 + LMIX12345678 + size "10Y" -> "3 1234567810"
+// Historical/persisted barcodes are NEVER reformatted by this generator.
 //
 // Parts are concatenated as strings (never added), and each part is parsed
 // strictly: a value that is not unambiguously one of the recognised shapes is
@@ -23,12 +25,15 @@ export interface BarcodeSource {
   sizeType: string;
 }
 
-// Supplied/historical barcodes are kept verbatim, so this only bounds them to
-// something printable and unambiguous (no whitespace/control characters);
-// historical values can legitimately be alphanumeric (e.g. "BJGGR26042008-3Y").
-export const SUPPLIED_BARCODE_PATTERN = /^[\x21-\x7E]{1,64}$/;
+// Supplied/historical barcodes are kept verbatim. Existing printable,
+// space-free historical values stay valid. From serial 3 onward, also allow
+// exactly ONE ASCII space after a valid Season serial, followed by numeric
+// LMIX+size digits (at least one LMIX digit and two size digits). Do not open
+// validation to arbitrary whitespace or free-text values with spaces.
+export const SUPPLIED_BARCODE_PATTERN =
+  /^(?=.{1,64}$)(?:[\x21-\x7E]+|(?:[3-9]|[1-9]\d{1,4}) \d{3,})$/;
 export const SUPPLIED_BARCODE_MESSAGE =
-  'Barcode must be 1-64 printable characters without spaces';
+  'Barcode must be 1-64 printable characters without spaces, or use the Season 3+ format "<season serial> <LMIX digits><2-digit size>"';
 
 const LMIX_PATTERN = /^LMIX(\d+)$/i;
 // Age sizes as printed on the master: "3", "10", or with a years suffix
@@ -72,7 +77,13 @@ export function generateStyleSizeBarcode(source: BarcodeSource): GeneratedBarcod
       message: `Size "${sizeLabel}" (${sizeType}) has no unambiguous numeric value`,
     };
   }
-  return { ok: true, barcode: `${seasonSerial}${lmixDigits}${sizeNumber}` };
+  // New format is applied only when generating a barcode. Saved/manual
+  // barcodes remain exactly as entered and Season 1-2 retain their legacy
+  // concatenated format.
+  const barcode = seasonSerial >= 3
+    ? `${seasonSerial} ${lmixDigits}${sizeNumber.padStart(2, '0')}`
+    : `${seasonSerial}${lmixDigits}${sizeNumber}`;
+  return { ok: true, barcode };
 }
 
 /** Trims a supplied barcode; blank means "not supplied" (null). Format is checked separately. */
