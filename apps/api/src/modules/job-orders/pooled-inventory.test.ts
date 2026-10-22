@@ -221,6 +221,78 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
   });
 });
 
+// BUG-007: editing a Dispatch Order releases-and-re-reserves its own
+// allocation in one transaction (reserveAcrossPools already adds this back
+// server-side for the mutation itself — see sale-orders.service.ts). These
+// cover the separate read-only pooled-inventory display the edit FORM
+// queries, which previously had no way to add the order's own commitment
+// back and so understated availableQuantity by exactly that amount.
+describe('BUG-007 — excludeSaleOrderId adds back only that order\'s own ACTIVE allocation', () => {
+  it('adds back the specified order\'s own commitment but keeps other orders\' committed subtracted', async () => {
+    const stock = await createReleasedQaStock({ quantity: 100 });
+    const merchToken = await createMerchandiserToken();
+
+    const ownOrder = await createAndAllocate(stock, merchToken, 40);
+    const otherOrder = await createAndAllocate(stock, merchToken, 10);
+
+    const withoutExclude = await getPooledFactoryInventory(prisma, {
+      factoryId: stock.factoryId,
+      styleId: stock.styleId,
+      sizeId: stock.sizeId,
+    });
+    expect(withoutExclude[0]).toMatchObject({ committedQuantity: 50, availableQuantity: 50 });
+
+    const excludingOwn = await getPooledFactoryInventory(prisma, {
+      factoryId: stock.factoryId,
+      styleId: stock.styleId,
+      sizeId: stock.sizeId,
+      excludeSaleOrderId: ownOrder.id,
+    });
+    expect(excludingOwn[0]).toMatchObject({ committedQuantity: 50, availableQuantity: 90 });
+
+    const excludingOther = await getPooledFactoryInventory(prisma, {
+      factoryId: stock.factoryId,
+      styleId: stock.styleId,
+      sizeId: stock.sizeId,
+      excludeSaleOrderId: otherOrder.id,
+    });
+    expect(excludingOther[0]).toMatchObject({ committedQuantity: 50, availableQuantity: 60 });
+  });
+
+  it('is a no-op when excludeSaleOrderId has no ACTIVE allocation against this pool', async () => {
+    const stock = await createReleasedQaStock({ quantity: 100 });
+    const merchToken = await createMerchandiserToken();
+    await createAndAllocate(stock, merchToken, 30);
+
+    const rows = await getPooledFactoryInventory(prisma, {
+      factoryId: stock.factoryId,
+      styleId: stock.styleId,
+      sizeId: stock.sizeId,
+      excludeSaleOrderId: createId(),
+    });
+    expect(rows[0]).toMatchObject({ committedQuantity: 30, availableQuantity: 70 });
+  });
+
+  it('GET /job-orders/pooled-inventory honors excludeSaleOrderId as a query param', async () => {
+    const stock = await createReleasedQaStock({ quantity: 100 });
+    const merchToken = await createMerchandiserToken();
+    const order = await createAndAllocate(stock, merchToken, 25);
+
+    const res = await request(app)
+      .get('/job-orders/pooled-inventory')
+      .query({
+        factoryId: stock.factoryId,
+        styleId: stock.styleId,
+        sizeId: stock.sizeId,
+        excludeSaleOrderId: order.id,
+      })
+      .set('Authorization', `Bearer ${merchToken}`)
+      .expect(200);
+    const row = (res.body.data as Array<{ sizeId: string }>).find((r) => r.sizeId === stock.sizeId);
+    expect(row).toMatchObject({ committedQuantity: 25, availableQuantity: 100 });
+  });
+});
+
 describe('GET /job-orders/pooled-inventory (route + authorization)', () => {
   it('is reachable as a literal route — never swallowed by GET /job-orders/:id', async () => {
     const { token } = await createTestUserAndToken({

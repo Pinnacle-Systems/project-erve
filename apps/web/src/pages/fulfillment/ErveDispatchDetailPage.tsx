@@ -11,7 +11,7 @@ import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import { canMutateErveDispatches, canViewInvoiceHandoffs } from '../../auth/permissions.js';
+import { canMutateErveDispatches } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { ErveDispatchView } from './types.js';
 
@@ -21,7 +21,6 @@ export function ErveDispatchDetailPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const canUpdateLr = canMutateErveDispatches(user);
-  const canSeeInvoices = canViewInvoiceHandoffs(user);
 
   const [transporter, setTransporter] = useState<string | null>(null);
   const [vehicleNumber, setVehicleNumber] = useState<string | null>(null);
@@ -79,12 +78,8 @@ export function ErveDispatchDetailPage() {
     // Dynamically imported so @react-pdf/renderer and the document code load only when a user
     // actually clicks Download/Print, not as part of the app's initial bundle.
     const { generateErveDispatchDetailPdfBlob } = await import('./pdf/erve-dispatch/generateErveDispatchDetailPdf.js');
-    return generateErveDispatchDetailPdfBlob(
-      dispatch,
-      { invoiceHandoffs: canSeeInvoices ? dispatch.invoiceHandoffs : null },
-      { generatedAt: new Date().toISOString(), generatedBy: user?.name },
-    );
-  }, [dispatch, canSeeInvoices, user?.name]);
+    return generateErveDispatchDetailPdfBlob(dispatch, { generatedAt: new Date().toISOString(), generatedBy: user?.name });
+  }, [dispatch, user?.name]);
 
   const pdfAction = usePdfAction({
     generate: generateErveDispatchDetailPdf,
@@ -163,33 +158,6 @@ export function ErveDispatchDetailPage() {
             <DescriptionList.Item label="Destination GSTIN" value={dispatch.destination?.gstin ?? '—'} />
             <DescriptionList.Item label="Address" value={[dispatch.destination?.addressLine1, dispatch.destination?.addressLine2, dispatch.destination?.city, dispatch.destination?.state, dispatch.destination?.postalCode, dispatch.destination?.country].filter(Boolean).join(', ')} span={3} />
           </DescriptionList>
-        </Panel>
-      )}
-
-      {canSeeInvoices && (
-        <Panel title="Invoice / Tally Status" padding="none">
-          <DataTable
-            rowKey="invoiceHandoffId"
-            data={dispatch.invoiceHandoffs}
-            onRowClick={(row) => navigate(`/fulfillment/invoices/${row.invoiceHandoffId}`)}
-            emptyState={<EmptyState title="No invoice handoffs" />}
-            columns={[
-              { key: 'mode', header: 'Mode', render: (r) => (r.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale-or-Return') },
-              { key: 'style', header: 'Style / Size', render: (r) => `${r.styleNumber} / ${r.sizeLabel}` },
-              { key: 'qty', header: 'Qty', align: 'right', render: (r) => r.quantity.toLocaleString() },
-              {
-                key: 'status',
-                header: 'Invoice Status',
-                render: (r) =>
-                  r.status === 'PENDING_TALLY' ? (
-                    <StatusBadge label="Pending Tally" tone="pending" />
-                  ) : (
-                    <StatusBadge label="Invoiced" tone="posted" />
-                  ),
-              },
-              { key: 'tallyInvoiceNumber', header: 'Tally Invoice #', render: (r) => r.tallyInvoiceNumber ?? '—' },
-            ]}
-          />
         </Panel>
       )}
 

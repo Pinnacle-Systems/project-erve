@@ -27,11 +27,6 @@ export interface ErvePackingListDetailStyleRow {
 export interface ErvePackingListDetailCartonRow {
   id: string;
   cartonNumber: string;
-  /** Confidential factory/supplier provenance (DEMO-020) — null when the source record omitted it. */
-  factoryName: string | null;
-  saleOrderNumber: string;
-  /** Confidential factory/supplier provenance (DEMO-020) — null when the source record omitted it. */
-  factoryDispatchNumber: string | null;
   packageDetails: string | null;
   weight: string | null;
   totalQuantity: number;
@@ -97,13 +92,12 @@ export function buildErvePackingListDetailViewModel(
     { label: 'Finalized At', value: packingList.finalizedAt ? formatPdfDateTime(packingList.finalizedAt) : null },
     { label: 'Cartons', value: packingList.cartonCount },
     { label: 'Total Quantity', value: packingList.totalQuantity },
-    // DEMO-020: confidential factory/supplier provenance — omitted from
-    // identityItems entirely (not just a blank value) when the source
-    // record didn't include it (see ErvePackingListSummary.sourceFactories).
-    ...(packingList.sourceFactories
-      ? [{ label: 'Source Factories', value: packingList.sourceFactories.map((f) => f.name).join(', ') || null }]
-      : []),
-    { label: 'Source Dispatch Orders', value: packingList.sourceDispatchOrders.map((s) => s.saleOrderNumber).join(', ') || null },
+    // ISS-054: internal factory provenance (Source Factories) and EISO
+    // Dispatch Order numbers (Source Dispatch Orders) are never printed on
+    // this external, distributor-facing PDF — DEMO-020 only suppressed a
+    // stray label when these were absent; this closes the gap and removes
+    // them outright, regardless of presence. The authorized web detail page
+    // (ErvePackingListDetailPage.tsx) still shows both — PDF-only redaction.
   ];
 
   const destinationItems: PdfKeyValueItem[] = [
@@ -132,12 +126,9 @@ export function buildErvePackingListDetailViewModel(
   const cartons: ErvePackingListDetailCartonRow[] = packingList.cartons.map((carton) => ({
     id: carton.id,
     cartonNumber: carton.cartonNumber,
-    // DEMO-020: confidential factory/supplier provenance — null (and never
-    // rendered, see ErvePackingListDetailDocument) when the source record
-    // omitted it.
-    factoryName: carton.factory?.name ?? null,
-    saleOrderNumber: carton.saleOrder.saleOrderNumber,
-    factoryDispatchNumber: carton.factoryDispatchNumber ?? null,
+    // ISS-054: carton.factory/saleOrder/factoryDispatchNumber (internal
+    // factory provenance, EISO, EIFD) are deliberately never copied onto
+    // this PDF-only row — see the identityItems comment above.
     packageDetails: carton.packageDetails,
     weight: carton.weight,
     totalQuantity: carton.totalQuantity,

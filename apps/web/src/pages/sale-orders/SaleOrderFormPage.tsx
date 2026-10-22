@@ -153,12 +153,15 @@ export function SaleOrderFormPage() {
   });
 
   const pooledInventoryQuery = useQuery({
-    queryKey: ['job-orders', 'pooled-inventory', factoryId],
+    // BUG-007: include the order id being edited so its own committed stock
+    // is added back onto availableQuantity (see pooled-inventory.service.ts)
+    // instead of this edit form understating what it can actually reserve.
+    queryKey: ['job-orders', 'pooled-inventory', factoryId, isEdit ? id : undefined],
     enabled: Boolean(factoryId),
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<PooledFactoryInventoryLine[]>>(
         '/job-orders/pooled-inventory',
-        { params: { factoryId } },
+        { params: { factoryId, excludeSaleOrderId: isEdit ? id : undefined } },
       );
       return res.data.data;
     },

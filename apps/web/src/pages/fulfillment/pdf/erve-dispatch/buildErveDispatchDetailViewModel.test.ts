@@ -4,7 +4,7 @@ import { buildErveDispatchDetailViewModel } from './buildErveDispatchDetailViewM
 
 it('prints destination facts from the finalized packing snapshot', () => {
   const dispatch = makeDispatch({ destination: { storeCode: 'ST-OLD', gstin: '22AAAAA0000A1Z5', label: 'Historic Store', addressLine1: 'Original Road', addressLine2: null, city: 'Chennai', state: 'TN', country: 'India', postalCode: '600001', contactName: 'Manager', contactEmail: 'old@example.com', contactPhone: '9876543210' } });
-  const vm = buildErveDispatchDetailViewModel(dispatch, { invoiceHandoffs: null }, { generatedAt: '2026-10-08T00:00:00Z' });
+  const vm = buildErveDispatchDetailViewModel(dispatch, { generatedAt: '2026-10-08T00:00:00Z' });
   expect(vm.identityItems).toContainEqual({ label: 'Store Code', value: 'ST-OLD' });
   expect(vm.identityItems).toContainEqual({ label: 'Destination GSTIN', value: '22AAAAA0000A1Z5' });
   expect(vm.identityItems).toContainEqual({ label: 'Destination Address', value: 'Original Road, Chennai, TN, 600001, India' });
@@ -55,21 +55,28 @@ function makeDispatch(overrides: Partial<ErveDispatchView> = {}): ErveDispatchVi
 }
 
 describe('buildErveDispatchDetailViewModel', () => {
-  it('maps identity, delivery ("not yet confirmed"), and Invoice/Tally rows when permitted', () => {
+  it('maps identity and delivery ("not yet confirmed")', () => {
     const dispatch = makeDispatch();
-    const vm = buildErveDispatchDetailViewModel(dispatch, { invoiceHandoffs: dispatch.invoiceHandoffs }, { generatedAt: '2026-07-01T10:00:00Z' });
+    const vm = buildErveDispatchDetailViewModel(dispatch, { generatedAt: '2026-07-01T10:00:00Z' });
 
     expect(vm.identityItems).toContainEqual({ label: 'Erve Dispatch Number', value: 'ED/26-27/0001' });
     expect(vm.deliveryItems).toContainEqual({ label: 'Delivery', value: 'Not yet confirmed' });
-    expect(vm.invoiceHandoffs).toEqual([
-      { invoiceHandoffId: 'ih-1', modeLabel: 'Outright', styleDisplay: 'ST-1 / Medium', quantity: 20, statusLabel: 'Pending Tally', tallyInvoiceNumber: null },
-    ]);
   });
 
-  it('represents an excluded Invoice/Tally section as null, never an empty array', () => {
+  // ISS-054/ISS-055: the EISO Dispatch Order number and the legacy
+  // Invoice/Tally Status section (InvoiceHandoff status, Tally voucher
+  // number) are never printed on this external, distributor-facing PDF —
+  // regardless of the viewer's own InvoiceHandoff permission. The legacy
+  // InvoiceHandoff model/service and the authorized web detail page are
+  // untouched; this removes presentation only, on this document.
+  it('never exposes the Dispatch Order (EISO) identity item or any Invoice/Tally field', () => {
     const dispatch = makeDispatch();
-    const vm = buildErveDispatchDetailViewModel(dispatch, { invoiceHandoffs: null }, { generatedAt: '2026-07-01T10:00:00Z' });
-    expect(vm.invoiceHandoffs).toBeNull();
+    const vm = buildErveDispatchDetailViewModel(dispatch, { generatedAt: '2026-07-01T10:00:00Z' });
+
+    expect(vm.identityItems.find((i) => i.label === 'Dispatch Order')).toBeUndefined();
+    expect(vm).not.toHaveProperty('invoiceHandoffs');
+    const serialized = JSON.stringify(vm);
+    expect(serialized).not.toMatch(/EISO|Tally/i);
   });
 
   it('shows a legacy-assumed delivery distinctly from a real confirmation', () => {
@@ -77,7 +84,7 @@ describe('buildErveDispatchDetailViewModel', () => {
       status: 'DELIVERED',
       deliveryConfirmationSource: 'LEGACY_ASSUMED_FULL_RECEIPT',
     });
-    const vm = buildErveDispatchDetailViewModel(dispatch, { invoiceHandoffs: [] }, { generatedAt: '2026-07-01T10:00:00Z' });
+    const vm = buildErveDispatchDetailViewModel(dispatch, { generatedAt: '2026-07-01T10:00:00Z' });
     expect(vm.deliveryItems).toContainEqual({ label: 'Delivery', value: 'Assumed full receipt (legacy — not actually confirmed)' });
   });
 
@@ -88,13 +95,13 @@ describe('buildErveDispatchDetailViewModel', () => {
       deliveredBy: { id: 'u2', name: 'Warehouse User', email: 'wh@erve.local' },
       deliveredAt: '2026-07-05T12:00:00.000Z',
     });
-    const vm = buildErveDispatchDetailViewModel(dispatch, { invoiceHandoffs: [] }, { generatedAt: '2026-07-06T10:00:00Z' });
+    const vm = buildErveDispatchDetailViewModel(dispatch, { generatedAt: '2026-07-06T10:00:00Z' });
     expect(vm.deliveryItems[0]?.value).toContain('Warehouse User');
   });
 
   it('does not leak unrelated/internal properties into the printable view model', () => {
     const dispatch = { ...makeDispatch(), internalId: 'secret', rawSnapshotJson: '{}' } as ErveDispatchView;
-    const vm = buildErveDispatchDetailViewModel(dispatch, { invoiceHandoffs: [] }, { generatedAt: '2026-07-01T10:00:00Z' });
+    const vm = buildErveDispatchDetailViewModel(dispatch, { generatedAt: '2026-07-01T10:00:00Z' });
     const serialized = JSON.stringify(vm);
     expect(serialized).not.toContain('internalId');
     expect(serialized).not.toContain('rawSnapshotJson');

@@ -1,4 +1,5 @@
 import { pdf } from '@react-pdf/renderer';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { describe, expect, it } from 'vitest';
 import { ErveDispatchDetailDocument } from './ErveDispatchDetailDocument.js';
 import type { ErveDispatchDetailPdfViewModel, ErveDispatchDetailSaleOrReturnRow } from './buildErveDispatchDetailViewModel.js';
@@ -11,9 +12,6 @@ function makeViewModel(overrides: Partial<ErveDispatchDetailPdfViewModel> = {}):
     generatedBy: 'Test Admin',
     identityItems: [{ label: 'Erve Dispatch Number', value: 'ED/26-27/0001' }],
     deliveryItems: [{ label: 'Delivery', value: 'Not yet confirmed' }],
-    invoiceHandoffs: [
-      { invoiceHandoffId: 'ih-1', modeLabel: 'Outright', styleDisplay: 'ST-1 / Medium', quantity: 20, statusLabel: 'Pending Tally', tallyInvoiceNumber: null },
-    ],
     saleOrReturnLines: [],
     ...overrides,
   };
@@ -34,16 +32,34 @@ function makeSaleOrReturnRow(overrides: Partial<ErveDispatchDetailSaleOrReturnRo
   };
 }
 
+async function extractText(blob: Blob): Promise<string[]> {
+  const task = getDocument({ data: new Uint8Array(await blob.arrayBuffer()), useSystemFonts: true });
+  try {
+    const doc = await task.promise;
+    const text: string[] = [];
+    for (let p = 1; p <= doc.numPages; p++) {
+      const items = (await (await doc.getPage(p)).getTextContent()).items;
+      for (const item of items) if ('str' in item) text.push(item.str);
+    }
+    return text;
+  } finally {
+    await task.destroy();
+  }
+}
+
 describe('ErveDispatchDetailDocument', () => {
-  it('renders with Invoice/Tally data permitted without throwing', async () => {
+  it('renders without throwing', async () => {
     const blob = await pdf(<ErveDispatchDetailDocument viewModel={makeViewModel()} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
     expect(blob.type).toBe('application/pdf');
   });
 
-  it('renders "Not available for this viewer" when the Invoice/Tally section is excluded (null), never as an empty table', async () => {
-    const blob = await pdf(<ErveDispatchDetailDocument viewModel={makeViewModel({ invoiceHandoffs: null })} />).toBlob();
-    expect(blob.size).toBeGreaterThan(0);
+  // ISS-055: the legacy Invoice/Tally Status section must never appear in
+  // the extracted PDF text — not conditionally hidden, never printed at all.
+  it('never prints an Invoice/Tally Status section or any Tally-labeled text', async () => {
+    const blob = await pdf(<ErveDispatchDetailDocument viewModel={makeViewModel()} />).toBlob();
+    const text = await extractText(blob);
+    expect(text.join(' ')).not.toMatch(/Tally|Invoice Status|Invoice Handoff/i);
   });
 
   it('renders with the Sale-or-Return Position section when present', async () => {

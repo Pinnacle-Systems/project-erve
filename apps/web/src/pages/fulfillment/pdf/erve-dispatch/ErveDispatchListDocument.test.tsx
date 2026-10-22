@@ -1,4 +1,5 @@
 import { pdf } from '@react-pdf/renderer';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { describe, expect, it } from 'vitest';
 import { ErveDispatchListDocument } from './ErveDispatchListDocument.js';
 import type { ErveDispatchListPdfRow, ErveDispatchListPdfViewModel } from './buildErveDispatchListViewModel.js';
@@ -9,7 +10,6 @@ function makeRow(overrides: Partial<ErveDispatchListPdfRow> = {}): ErveDispatchL
     erveDispatchNumber: 'ED/26-27/0001',
     ervePackingListNumber: 'EIPL/26-27/0001',
     distributorName: 'Acme Distributors',
-    saleOrderNumber: 'EISO/26-27/0001',
     dispatchDate: '30 Jun 2026',
     statusLabel: 'Dispatched',
     deliveredAt: '',
@@ -41,6 +41,24 @@ describe('ErveDispatchListDocument', () => {
   it('renders a single row without throwing', async () => {
     const blob = await pdf(<ErveDispatchListDocument viewModel={makeViewModel([makeRow()])} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
+  });
+
+  // ISS-054: the EISO Dispatch Order number is never a column in this
+  // external, distributor-facing PDF.
+  it('never prints an EISO-shaped Dispatch Order reference', async () => {
+    const blob = await pdf(<ErveDispatchListDocument viewModel={makeViewModel([makeRow()])} />).toBlob();
+    const task = getDocument({ data: new Uint8Array(await blob.arrayBuffer()), useSystemFonts: true });
+    try {
+      const doc = await task.promise;
+      const text: string[] = [];
+      for (let p = 1; p <= doc.numPages; p++) {
+        const items = (await (await doc.getPage(p)).getTextContent()).items;
+        for (const item of items) if ('str' in item) text.push(item.str);
+      }
+      expect(text.join(' ')).not.toMatch(/EISO|Dispatch Order/);
+    } finally {
+      await task.destroy();
+    }
   });
 
   it('renders a delivered row without throwing', async () => {

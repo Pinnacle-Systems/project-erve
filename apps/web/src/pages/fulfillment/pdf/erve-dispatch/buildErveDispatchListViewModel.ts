@@ -12,7 +12,6 @@ export interface ErveDispatchListPdfRow {
   erveDispatchNumber: string;
   ervePackingListNumber: string;
   distributorName: string;
-  saleOrderNumber: string;
   dispatchDate: string;
   statusLabel: string;
   deliveredAt: string;
@@ -46,7 +45,8 @@ export function buildErveDispatchListViewModel(
     erveDispatchNumber: d.erveDispatchNumber,
     ervePackingListNumber: d.ervePackingList.ervePackingListNumber,
     distributorName: d.distributor.name,
-    saleOrderNumber: d.saleOrder?.saleOrderNumber ?? 'Multiple',
+    // ISS-054: the EISO Dispatch Order number is never printed on this
+    // external, distributor-facing PDF.
     dispatchDate: formatPdfDate(d.dispatchDate),
     statusLabel: ERVE_DISPATCH_STATUS_LABELS[d.status],
     deliveredAt: d.deliveredAt ? formatPdfDate(d.deliveredAt) : '',

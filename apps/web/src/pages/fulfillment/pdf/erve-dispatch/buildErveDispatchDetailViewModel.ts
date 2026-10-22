@@ -8,15 +8,6 @@ export interface ErveDispatchDetailPdfMeta {
   generatedBy?: string | null;
 }
 
-export interface ErveDispatchDetailInvoiceHandoffRow {
-  invoiceHandoffId: string;
-  modeLabel: string;
-  styleDisplay: string;
-  quantity: number;
-  statusLabel: string;
-  tallyInvoiceNumber: string | null;
-}
-
 export interface ErveDispatchDetailSaleOrReturnRow {
   saleOrderLineId: string;
   styleDisplay: string;
@@ -36,28 +27,25 @@ export interface ErveDispatchDetailPdfViewModel {
   generatedBy?: string | null;
   identityItems: PdfKeyValueItem[];
   deliveryItems: PdfKeyValueItem[];
-  /** `null` when the current viewer's own permission check excludes the Invoice/Tally Status section on-screen. */
-  invoiceHandoffs: ErveDispatchDetailInvoiceHandoffRow[] | null;
   saleOrReturnLines: ErveDispatchDetailSaleOrReturnRow[];
 }
 
-/** Linked data the viewer's own role may or may not be permitted to see — pass `null` (not `[]`) when the current viewer's permission check excludes the section entirely, mirroring the Dispatch Order Detail PDF pattern. */
-export interface ErveDispatchDetailPdfRelated {
-  invoiceHandoffs: ErveDispatchView['invoiceHandoffs'] | null;
-}
-
 /**
- * Pure, synchronous, no HTTP — maps an already-loaded Erve Dispatch detail record + its
- * permission-gated Invoice/Tally section + meta into the plain view-model
- * ErveDispatchDetailDocument renders. Field-by-field allowlist, never `...dispatch`.
+ * Pure, synchronous, no HTTP — maps an already-loaded Erve Dispatch detail record + meta into the
+ * plain view-model ErveDispatchDetailDocument renders. Field-by-field allowlist, never
+ * `...dispatch`.
  *
  * Prints exactly the persisted delivery facts already exposed by the API (status, delivered
  * date/time, received quantities) — never a new POD/delivery workflow, and never a fabricated Tax
  * Invoice section merely because a future architecture expects one invoice per Dispatch.
+ *
+ * ISS-055: the legacy Invoice/Tally Status section (InvoiceHandoff status, Tally voucher number)
+ * is deliberately never printed here — ERVE India must not expose any user-facing Tally reference.
+ * The legacy `InvoiceHandoff` model, its backend service, and its own dedicated Invoice Handoff
+ * screens are untouched; this removes presentation only, on this document.
  */
 export function buildErveDispatchDetailViewModel(
   dispatch: ErveDispatchView,
-  related: ErveDispatchDetailPdfRelated,
   meta: ErveDispatchDetailPdfMeta,
 ): ErveDispatchDetailPdfViewModel {
   const identityItems: PdfKeyValueItem[] = [
@@ -70,7 +58,9 @@ export function buildErveDispatchDetailViewModel(
     { label: 'Erve Dispatch Number', value: dispatch.erveDispatchNumber },
     { label: 'Erve Packing List', value: dispatch.ervePackingList.ervePackingListNumber },
     { label: 'Distributor', value: dispatch.distributor.name },
-    { label: 'Dispatch Order', value: dispatch.saleOrder?.saleOrderNumber ?? 'Multiple Dispatch Orders' },
+    // ISS-054: the EISO Dispatch Order number is never printed on this
+    // external, distributor-facing PDF — the authorized web detail page
+    // (ErveDispatchDetailPage.tsx) still shows it. PDF-only redaction.
     { label: 'Status', value: ERVE_DISPATCH_STATUS_LABELS[dispatch.status] },
     { label: 'Dispatch Date', value: formatPdfDate(dispatch.dispatchDate) },
     { label: 'Total Quantity', value: dispatch.totalQuantity },
@@ -99,17 +89,6 @@ export function buildErveDispatchDetailViewModel(
     { label: 'Delivery Remarks', value: dispatch.deliveryRemarks },
   ];
 
-  const invoiceHandoffs: ErveDispatchDetailInvoiceHandoffRow[] | null = related.invoiceHandoffs
-    ? related.invoiceHandoffs.map((h) => ({
-        invoiceHandoffId: h.invoiceHandoffId,
-        modeLabel: h.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale-or-Return',
-        styleDisplay: `${h.styleNumber} / ${h.sizeLabel}`,
-        quantity: h.quantity,
-        statusLabel: h.status === 'PENDING_TALLY' ? 'Pending Tally' : 'Invoiced',
-        tallyInvoiceNumber: h.tallyInvoiceNumber,
-      }))
-    : null;
-
   const saleOrReturnLines: ErveDispatchDetailSaleOrReturnRow[] = dispatch.saleOrReturnLines.map((line) => ({
     saleOrderLineId: line.saleOrderLineId,
     styleDisplay: `${line.styleNumber} / ${line.sizeLabel}`,
@@ -129,7 +108,6 @@ export function buildErveDispatchDetailViewModel(
     generatedBy: meta.generatedBy,
     identityItems,
     deliveryItems,
-    invoiceHandoffs,
     saleOrReturnLines,
   };
 }

@@ -32,17 +32,14 @@ const styles = StyleSheet.create({
   },
 });
 
-// DEMO-020: carton.factoryName/factoryDispatchNumber are confidential
-// factory/supplier provenance and are null (not rendered — no stray
-// separators or placeholder text) whenever the source record omitted them.
+// ISS-054: the carton heading never prints internal factory provenance, the
+// EISO Dispatch Order number, or the EIFD Factory Dispatch number on this
+// external, distributor-facing PDF — physical carton identity is carried
+// entirely by the Factory's own hand-marked cartonNumber (see DEMO-019).
 // Exported so the redaction can be asserted directly against the string the
 // PDF prints, rather than only parsing the rendered PDF binary.
 export function cartonHeading(carton: ErvePackingListDetailCartonRow): string {
-  const parts = [`Carton ${carton.cartonNumber}`];
-  if (carton.factoryName) parts.push(carton.factoryName);
-  parts.push(carton.saleOrderNumber);
-  const segments = [parts.join(' — ')];
-  if (carton.factoryDispatchNumber) segments.push(`(${carton.factoryDispatchNumber})`);
+  const segments = [`Carton ${carton.cartonNumber}`];
   if (carton.weight) segments.push(`— ${carton.weight}`);
   return segments.join(' ');
 }
@@ -72,7 +69,7 @@ export interface ErvePackingListDetailDocumentProps {
   last?: boolean;
 }
 
-/** Landscape — one EIPL may consolidate cartons from several Factories/Dispatch Orders, and each carton's own provenance must stay visible without cramping. */
+/** Landscape — the Style/Size matrix columns need the width even though carton headings no longer print per-carton provenance (ISS-054). */
 export function ErvePackingListDetailDocument({
   viewModel,
   first = true,

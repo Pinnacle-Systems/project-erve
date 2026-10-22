@@ -45,6 +45,13 @@ export async function getPooledFactoryInventory(
     // seasonId, never a reconstructed transaction-time Season.
     seasonId?: string;
     recordOrigin?: 'LIVE_WORKFLOW' | 'HISTORICAL_IMPORT';
+    // BUG-007: when editing an existing Dispatch Order, its own ACTIVE
+    // allocations are still committed against the pool and would otherwise
+    // make availableQuantity understate what the edit can actually reserve
+    // (the edit releases-and-re-reserves in one transaction — mirrors
+    // reserveAcrossPools's effectiveAvailable in sale-orders.service.ts).
+    // Passing the order being edited adds its own committed quantity back.
+    excludeSaleOrderId?: string;
   },
 ): Promise<PooledFactoryInventoryLine[]> {
   const releaseLines = await client.qaReleaseLine.findMany({
@@ -86,13 +93,30 @@ export async function getPooledFactoryInventory(
   });
   const committedByLine = new Map(committed.map((row) => [row.qaReleaseLineId, row._sum.quantity ?? 0]));
 
+  const ownCommittedByLine = filters?.excludeSaleOrderId
+    ? new Map(
+        (
+          await client.stockAllocation.groupBy({
+            by: ['qaReleaseLineId'],
+            where: {
+              qaReleaseLineId: { in: releaseLines.map((line) => line.id) },
+              status: 'ACTIVE',
+              saleOrderLine: { saleOrderId: filters.excludeSaleOrderId },
+            },
+            _sum: { quantity: true },
+          })
+        ).map((row) => [row.qaReleaseLineId, row._sum.quantity ?? 0] as const),
+      )
+    : new Map<string, number>();
+
   const pool = new Map<string, PooledFactoryInventoryLine>();
   for (const line of releaseLines) {
     const jobOrderLine = line.jobOrderLineSize.jobOrderLine;
     const jobOrder = jobOrderLine.jobOrder;
     const key = `${jobOrder.factoryId}:${jobOrderLine.styleId}:${line.jobOrderLineSize.sizeId}`;
     const committedQuantity = committedByLine.get(line.id) ?? 0;
-    const availableQuantity = line.quantity - committedQuantity;
+    const ownCommittedQuantity = ownCommittedByLine.get(line.id) ?? 0;
+    const availableQuantity = line.quantity - committedQuantity + ownCommittedQuantity;
     const existing = pool.get(key);
     if (existing) {
       existing.releasedQuantity += line.quantity;
