@@ -294,7 +294,7 @@ describe('ErvePackingListDetailPage finalization safety and placement (UX-03/UX-
 
     expect(post).not.toHaveBeenCalled();
     expect(openDialog().textContent).toContain('EIPL/26-27/0001');
-    expect(openDialog().textContent).toContain('1 cartons');
+    expect(openDialog().textContent).toContain('1 carton');
     expect(openDialog().textContent).toContain('10 pieces');
     expect(openDialog().textContent).toContain('carton membership can no longer be edited');
     act(() => dialogButton('Keep Editing').click());
