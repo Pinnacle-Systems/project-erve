@@ -499,3 +499,82 @@ describe('FactoryInvoiceDetailPage load error handling (UXAUTH-018)', () => {
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
   });
 });
+
+
+describe('Factory Invoice confirmation safety (UX-03)', () => {
+
+  it('requires Accountant to save modified financial values before finalizing', async () => {
+    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
+    const finalize = buttonByText('Finalize')!;
+    expect(finalize.disabled).toBe(false);
+    const rateInput = inputs().find((i) => i.value === '150')!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(rateInput, '250');
+      rateInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+    expect(finalize.disabled).toBe(true);
+    expect(content()).toContain('Save financial changes before finalizing');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('submits the Factory confirmation only after confirming the dialog', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: buildInvoice({ status: 'FACTORY_CONFIRMED' }) } } as never);
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'FACTORY_USER');
+    act(() => buttonByText('Confirm Factory Invoice')!.click());
+    expect(post).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Confirm Factory Invoice')!;
+    act(() => confirm.click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/confirm', {}));
+  });
+
+  it('keeps the finalization dialog open and shows a retryable server error', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: { data: { error: { message: 'Invoice financial version changed' } } },
+    });
+    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
+    act(() => buttonByText('Finalize')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Finalize Factory Invoice')!;
+    act(() => confirm.click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/finalize', { expectedVersion: 1 }));
+    await vi.waitFor(() => expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('Invoice financial version changed'));
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+
+  it('requires explicit factory confirmation and only exposes pre-tax amount', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage(buildInvoice({ status: 'GENERATED', subtotal: 1500, gstAmount: 75, total: 1575 }), 'FACTORY_USER');
+    act(() => buttonByText('Confirm Factory Invoice')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('₹1,500.00');
+    expect(dialog.textContent).toContain('EIFD/26-27/0001');
+    expect(dialog.textContent).not.toContain('₹75.00');
+    expect(dialog.textContent).not.toContain('₹1,575.00');
+    expect(post).not.toHaveBeenCalled();
+    const exit = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Continue Reviewing');
+    act(() => exit!.click());
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('requires confirmation before Accountant finalization, and closing it does not submit', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
+    act(() => buttonByText('Finalize')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('EIFD/26-27/0001');
+    expect(dialog.textContent).toContain('Save any unsaved changes');
+    expect(post).not.toHaveBeenCalled();
+    const exit = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Continue Editing');
+    act(() => exit!.click());
+    expect(post).not.toHaveBeenCalled();
+  });
+});
