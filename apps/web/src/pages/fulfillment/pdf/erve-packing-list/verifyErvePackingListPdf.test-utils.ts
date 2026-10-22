@@ -18,6 +18,26 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
     const seen = new Map<string, number>();
     const order: string[] = [];
     const text: string[] = [];
+    const headers: {
+      page: number;
+      section: string;
+      group: number;
+      y: number;
+      sizes: string[];
+      rows: string[];
+      rowYs: number[];
+    }[] = [];
+    let group = 0;
+    let currentHeader: (typeof headers)[number] | null = null;
+    let headerRights: number[] = [];
+    function finishHeader() {
+      if (currentHeader)
+        expect(
+          currentHeader.rows.length,
+          `header without data: ${JSON.stringify(currentHeader)}`,
+        ).toBeGreaterThan(0);
+      currentHeader = null;
+    }
     let active = '',
       sizes: string[] = [],
       header = false,
@@ -37,6 +57,10 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
       expect(selected.length, `${active}/${record.style} source rows`).toBeGreaterThan(0);
       const columnOrder = [...new Set(rows.map((l) => l.sizeCode))];
       const groupStart = columnOrder.indexOf(record.sizes[0]!);
+      expect(groupStart, `${active}/${record.style} active group`).toBe(group * 10);
+      expect(record.hasTotal, `${active}/${record.style} Total heading`).toBe(
+        groupStart + 10 >= columnOrder.length,
+      );
       expect(record.sizes, `${active} size order`).toEqual(
         columnOrder.slice(groupStart, groupStart + 10),
       );
@@ -56,9 +80,11 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
         const key = `${active}|${record.style}|${size}`;
         seen.set(key, (seen.get(key) ?? 0) + 1);
       }
+      if (record.style === 'TOTAL') group++;
       record = null;
     }
     for (let p = 1; p <= doc.numPages; p++) {
+      let pageHeaderY: number | null = null;
       const page = await doc.getPage(p);
       const items = (await page.getTextContent()).items.filter((i) => 'str' in i && i.str.trim());
       const footers: string[] = [];
@@ -90,7 +116,10 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
         if (y < page.view[3]! - 72) body.push(item);
         const carton = /^Carton (CTN-\d+)/.exec(str);
         if (carton) {
+          pageHeaderY = null;
           finish();
+          finishHeader();
+          group = 0;
           active = carton[1]!;
           order.push(active);
           header = false;
@@ -106,34 +135,59 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
           continue;
         }
         if (str === 'Style / Size Summary') {
+          pageHeaderY = null;
           finish();
+          finishHeader();
+          group = 0;
           active = 'summary';
           header = false;
           continue;
         }
         if (/^Total:/.test(str)) {
           finish();
+          finishHeader();
           active = '';
           continue;
         }
         if (!active) continue;
         if (str === 'Style' && x < 100) {
           finish();
+          finishHeader();
+          pageHeaderY = y;
+          headerRights = [];
+          currentHeader = { page: p, section: active, group, y, sizes: [], rows: [], rowYs: [] };
+          headers.push(currentHeader);
           sizes = [];
           header = true;
           hasTotal = false;
           continue;
         }
         if (header && sections.get(active)!.some((l) => l.sizeCode === str)) {
+          expect(y).toBeCloseTo(pageHeaderY!, 2);
           sizes.push(str);
+          headerRights.push(x + item.width);
+          currentHeader!.sizes.push(str);
           continue;
         }
         if (str === 'Total' && x > 250 && header) {
+          expect(y).toBeCloseTo(pageHeaderY!, 2);
+          headerRights.push(x + item.width);
           hasTotal = true;
           continue;
         }
         if (/^ST-\d+$/.test(str) || (str === 'Total' && x < 100)) {
           finish();
+          if (str !== 'Total') {
+            expect(
+              pageHeaderY,
+              `page ${p}: ${active}/${str} needs a same-page Size header`,
+            ).not.toBeNull();
+            expect(pageHeaderY!).toBeGreaterThan(y);
+            expect(currentHeader?.section).toBe(active);
+            expect(currentHeader?.group).toBe(group);
+            currentHeader!.rows.push(str);
+            currentHeader!.rowYs.push(y);
+          }
           header = false;
           record = {
             style: str === 'Total' ? 'TOTAL' : str,
@@ -144,10 +198,18 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
           };
           continue;
         }
-        if (record && x > 250 && /^(\d+|—)$/.test(str)) record.values.push(str);
+        if (record && x > 250 && /^(\d+|—)$/.test(str)) {
+          expect(y, `${active}/${record.style} cell below header`).toBeLessThan(pageHeaderY!);
+          expect(x + item.width, `${active}/${record.style} cell column alignment`).toBeCloseTo(
+            headerRights[record.values.length]!,
+            1,
+          );
+          record.values.push(str);
+        }
         if (record && record.style !== 'TOTAL' && x < 250) record.names.push(str);
       }
       finish();
+      finishHeader();
       expect(footers).toEqual([`Page ${p} of ${doc.numPages}`]);
       expect(items.some((i) => 'str' in i && i.str === 'ERVE PACKING LIST')).toBe(true);
       expect(body.length, `blank replacement page ${p}`).toBeGreaterThan(0);
@@ -185,7 +247,7 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
           );
       }
     }
-    return { pages: doc.numPages, cells: seen.size, text };
+    return { pages: doc.numPages, cells: seen.size, text, headers };
   } finally {
     await task.destroy();
   }
