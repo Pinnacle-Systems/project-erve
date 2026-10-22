@@ -158,6 +158,24 @@ describe('AppLayout — role-gated navigation', () => {
     expect(distributorLink?.querySelector('.lucide-truck')).toBeNull();
   });
 
+  // ISS-052: "Factory Packing" and "Erve Packing Lists" are two different workflows that
+  // previously rendered with the identical PackageCheck icon in the same Fulfillment section —
+  // the concrete ambiguity the ticket describes. This proves the correction without asserting a
+  // general "every Fulfillment icon must be unique" rule (not required, and not what was asked).
+  it('gives "Factory Packing" a distinct icon from "Erve Packing Lists" while keeping both routes, labels and ADMIN visibility intact', async () => {
+    await renderAppLayout(['ADMIN']);
+    const labels = sidebarLinkLabels();
+
+    expect(labels).toContain('Factory Packing');
+    expect(labels).toContain('Erve Packing Lists');
+
+    const factoryPackingLink = container.querySelector('a[href="/fulfillment/factory-dispatches"]');
+    const ervePackingListsLink = container.querySelector('a[href="/fulfillment/erve-packing-lists"]');
+    expect(factoryPackingLink?.querySelector('.lucide-boxes')).not.toBeNull();
+    expect(factoryPackingLink?.querySelector('.lucide-package-check')).toBeNull();
+    expect(ervePackingListsLink?.querySelector('.lucide-package-check')).not.toBeNull();
+  });
+
   it('SENIOR_MANAGEMENT sees Styles, Distributors and Price Lists but not Sizes/Factories/Process Flows or Users', async () => {
     await renderAppLayout(['SENIOR_MANAGEMENT']);
     const labels = sidebarLinkLabels();

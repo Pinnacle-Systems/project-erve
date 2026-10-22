@@ -1,6 +1,7 @@
 import type { FactoryPackingCartonView, PackingListLineView, PackingListView } from '../../types.js';
 import { FACTORY_DISPATCH_STATUS_LABELS, PACKING_AUDIT_STATE_LABELS } from '../shared/fulfillmentPdfLabels.js';
 import { distinctSizeColumns, groupLinesByStyle, type SizeColumn } from '../../style-size-grouping.js';
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 
 export interface FactoryPackingListPdfMeta {
   generatedAt: string;
@@ -19,6 +20,9 @@ export interface FactoryPackingListCartonStyleRow {
   styleId: string;
   styleNumber: string;
   styleName: string | null;
+  /** ISS-039: the Style's resolved thumbnail — absent (not even a placeholder) when the caller
+   * passes no `styleImages` map at all, so callers that don't care about imagery see no field. */
+  image?: PdfImageSource;
   values: Record<string, number | null>;
 }
 
@@ -75,16 +79,24 @@ export interface FactoryPackingListPdfViewModel {
 function destinationStyleRows(
   lines: PackingListLineView[],
   metric: 'requiredQuantity' | 'packedQuantity',
+  styleImages?: Map<string, PdfImageSource>,
 ): FactoryPackingListCartonStyleRow[] {
-  return groupLinesByStyle(lines.map((line) => ({ ...line, quantity: line[metric] }))).map((group) => ({
-    styleId: group.styleId,
-    styleNumber: group.styleNumber,
-    styleName: group.styleName,
-    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
-  }));
+  return groupLinesByStyle(lines.map((line) => ({ ...line, quantity: line[metric] }))).map((group) => {
+    const image = styleImages?.get(group.styleId);
+    return {
+      styleId: group.styleId,
+      styleNumber: group.styleNumber,
+      styleName: group.styleName,
+      ...(image !== undefined ? { image } : {}),
+      values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+    };
+  });
 }
 
-function buildCartonRow(carton: FactoryPackingCartonView): FactoryPackingListCartonRow {
+function buildCartonRow(
+  carton: FactoryPackingCartonView,
+  styleImages?: Map<string, PdfImageSource>,
+): FactoryPackingListCartonRow {
   return {
     id: carton.id,
     cartonNumber: carton.cartonNumber,
@@ -100,12 +112,16 @@ function buildCartonRow(carton: FactoryPackingCartonView): FactoryPackingListCar
       quantity: line.quantity,
     })),
     sizeColumns: distinctSizeColumns(carton.lines),
-    styleRows: groupLinesByStyle(carton.lines).map((group) => ({
-      styleId: group.styleId,
-      styleNumber: group.styleNumber,
-      styleName: group.styleName,
-      values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
-    })),
+    styleRows: groupLinesByStyle(carton.lines).map((group) => {
+      const image = styleImages?.get(group.styleId);
+      return {
+        styleId: group.styleId,
+        styleNumber: group.styleNumber,
+        styleName: group.styleName,
+        ...(image !== undefined ? { image } : {}),
+        values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+      };
+    }),
   };
 }
 
@@ -120,10 +136,16 @@ function buildCartonRow(carton: FactoryPackingCartonView): FactoryPackingListCar
  * the same row). Audit state is the current persisted three-value state (never PASS/FAIL). No
  * Factory Invoice financial fields (rate/amount/GST) are read even though `factoryDispatch.
  * factoryInvoiceId` exists on the loaded record — that belongs to a later phase.
+ *
+ * ISS-039: `styleImages` is an optional, pre-resolved styleId -> PdfImageSource map (see
+ * prepareFactoryPackingListPdfImages.ts, the only network-touching step). Omitting it keeps every
+ * `FactoryPackingListCartonStyleRow.image` absent, not merely a placeholder — callers that don't
+ * resolve imagery (e.g. existing tests) see no field at all, so this stays backward-compatible.
  */
 export function buildFactoryPackingListViewModel(
   packingList: PackingListView,
   meta: FactoryPackingListPdfMeta,
+  styleImages?: Map<string, PdfImageSource>,
 ): FactoryPackingListPdfViewModel {
   const dispatch = packingList.factoryDispatch;
   const distributorsDisplay = packingList.distributors.map((d) => d.name).join(', ');
@@ -137,13 +159,13 @@ export function buildFactoryPackingListViewModel(
       .join(', '),
     contactName: destination.contactName,
     sizeColumns: distinctSizeColumns(destination.lines),
-    requiredStyleRows: destinationStyleRows(destination.lines, 'requiredQuantity'),
-    packedStyleRows: destinationStyleRows(destination.lines, 'packedQuantity'),
-    cartons: destination.cartons.map(buildCartonRow),
+    requiredStyleRows: destinationStyleRows(destination.lines, 'requiredQuantity', styleImages),
+    packedStyleRows: destinationStyleRows(destination.lines, 'packedQuantity', styleImages),
+    cartons: destination.cartons.map((carton) => buildCartonRow(carton, styleImages)),
   }));
 
   const retiredCartons: FactoryPackingListRetiredCartonRow[] = packingList.retiredCartons.map((carton) => ({
-    ...buildCartonRow(carton),
+    ...buildCartonRow(carton, styleImages),
     retiredAt: carton.retiredAt,
   }));
 

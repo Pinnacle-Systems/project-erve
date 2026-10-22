@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom';
 import { canViewGstComplianceSettings } from '@erve/shared';
 import { canViewRetailStores } from '../auth/permissions.js';
 import {
+  Boxes,
   ClipboardList,
   CalendarRange,
   Factory,
@@ -129,8 +130,11 @@ export function AppLayout() {
     {
       heading: 'Fulfillment',
       items: [
+        // ISS-052: distinct icon from "Erve Packing Lists" below — both previously used
+        // PackageCheck, making two visually-identical entries for two different workflows
+        // (the factory's own packing vs. Erve's own consolidated packing lists).
         ...(canViewFactoryDispatches(user)
-          ? [{ to: '/fulfillment/factory-dispatches', label: 'Factory Packing', icon: PackageCheck }]
+          ? [{ to: '/fulfillment/factory-dispatches', label: 'Factory Packing', icon: Boxes }]
           : []),
         ...(canViewPackingAudits(user)
           ? [{ to: '/fulfillment/packing-audit', label: 'Packing Audit', icon: ClipboardCheck }]

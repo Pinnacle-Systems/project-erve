@@ -233,6 +233,26 @@ describe('buildFactoryPackingListViewModel', () => {
     expect(vm.retiredCartons[0]?.retiredAt).toBe('2026-09-05T00:00:00.000Z');
   });
 
+  it('ISS-039: leaves every styleRow.image absent when no styleImages map is passed (backward compatible)', () => {
+    const vm = buildFactoryPackingListViewModel(makePackingList(), { generatedAt: '2026-09-15T10:00:00Z' });
+    expect(vm.destinations[0]?.requiredStyleRows[0]).not.toHaveProperty('image');
+    expect(vm.destinations[0]?.cartons[0]?.styleRows[0]).not.toHaveProperty('image');
+  });
+
+  it('ISS-039: attaches the resolved thumbnail to the destination Required/Packed rows and the carton rows for the same Style', () => {
+    const resolvedImage = { dataUri: 'data:image/jpeg;base64,mock' };
+    const styleImages = new Map([['style-1', resolvedImage]]);
+    const vm = buildFactoryPackingListViewModel(makePackingList(), { generatedAt: '2026-09-15T10:00:00Z' }, styleImages);
+    expect(vm.destinations[0]?.requiredStyleRows[0]?.image).toEqual(resolvedImage);
+    expect(vm.destinations[0]?.packedStyleRows[0]?.image).toEqual(resolvedImage);
+    expect(vm.destinations[0]?.cartons[0]?.styleRows[0]?.image).toEqual(resolvedImage);
+  });
+
+  it('ISS-039: a Style missing from the styleImages map renders as undefined, not a crash — a Style the map never resolved is distinct from one explicitly placeholdered', () => {
+    const vm = buildFactoryPackingListViewModel(makePackingList(), { generatedAt: '2026-09-15T10:00:00Z' }, new Map());
+    expect(vm.destinations[0]?.requiredStyleRows[0]?.image).toBeUndefined();
+  });
+
   it('does not leak unrelated/internal properties into the printable view model', () => {
     const packingList = { ...makePackingList(), __internalDebugFlag: true, someAuditInternal: 'secret' } as PackingListView;
     const vm = buildFactoryPackingListViewModel(packingList, { generatedAt: '2026-09-15T10:00:00Z' });
