@@ -499,3 +499,100 @@ describe('FactoryInvoiceDetailPage load error handling (UXAUTH-018)', () => {
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
   });
 });
+
+
+describe('FactoryInvoiceDetailPage consequential confirmations (UX-03 batch 2)', () => {
+  function openDialog(): HTMLElement {
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    return dialog!;
+  }
+
+  function dialogButton(text: string): HTMLButtonElement {
+    const button = Array.from(openDialog().querySelectorAll('button')).find(
+      (item) => item.textContent?.trim() === text,
+    );
+    expect(button).toBeDefined();
+    return button!;
+  }
+
+  it('does not confirm Factory amount before the user approves, and hides provisional GST/payable', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage(buildInvoice({ status: 'GENERATED', gstAmount: 75, total: 1575 }), 'FACTORY_USER');
+    act(() => buttonByText('Confirm Factory Invoice')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+
+    expect(post).not.toHaveBeenCalled();
+    expect(openDialog().textContent).toContain('EIFD/26-27/0001');
+    expect(openDialog().textContent).toContain('₹1,500.00');
+    expect(openDialog().textContent).not.toContain('₹75.00');
+    expect(openDialog().textContent).not.toContain('₹1,575.00');
+    act(() => dialogButton('Go Back').click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('invokes the existing Factory confirmation API only after the dialog is accepted', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: buildInvoice({ status: 'FACTORY_CONFIRMED' }) },
+    } as never);
+    await renderPage(buildInvoice(), 'FACTORY_USER');
+
+    act(() => buttonByText('Confirm Factory Invoice')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    expect(post).not.toHaveBeenCalled();
+    act(() => dialogButton('Confirm Factory Invoice').click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/confirm', {}));
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  });
+
+  it('shows the stored payable and current business reference before Accountant finalization', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: buildInvoice({ status: 'FINALIZED' }) },
+    } as never);
+    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', gstAmount: 75, total: 1575, version: 3 }), 'ACCOUNTANT');
+
+    act(() => buttonByText('Finalize')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    expect(post).not.toHaveBeenCalled();
+    expect(openDialog().textContent).toContain('EIFD/26-27/0001');
+    expect(openDialog().textContent).toContain('₹1,575.00');
+    act(() => dialogButton('Finalize Factory Invoice').click());
+    await vi.waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/finalize', { expectedVersion: 3 }),
+    );
+  });
+
+  it('prevents finalization while Accountant rate changes have not been saved', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
+    const rateInput = inputs().find((i) => i.value === '150')!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(rateInput, '250');
+      rateInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+    expect(buttonByText('Finalize')!.disabled).toBe(true);
+    expect(content()).toContain('Save financial changes before finalizing');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('keeps the confirmation open and displays a failed Factory confirmation error', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: { data: { error: { message: 'Factory Invoice is no longer eligible for confirmation' } } },
+    });
+    await renderPage(buildInvoice(), 'FACTORY_USER');
+    act(() => buttonByText('Confirm Factory Invoice')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    act(() => dialogButton('Confirm Factory Invoice').click());
+    await vi.waitFor(() =>
+      expect(openDialog().querySelector('[role="alert"]')?.textContent).toContain(
+        'Factory Invoice is no longer eligible for confirmation',
+      ),
+    );
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(dialogButton('Go Back').disabled).toBe(false);
+  });
+});
