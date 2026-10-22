@@ -20,6 +20,53 @@ function makeLine(overrides: Partial<StyleSizeQuantityLine> = {}): StyleSizeQuan
   };
 }
 
+describe('canonical Size ordering compatibility', () => {
+  const lines = [
+    { ...makeLine({ sizeId: 'missing', sizeCode: 'A' }), sizeSortOrder: undefined },
+    { ...makeLine({ sizeId: 'large', sizeCode: 'L' }), sizeSortOrder: 2 },
+    { ...makeLine({ sizeId: 'small', sizeCode: 'S' }), sizeSortOrder: -1 },
+    { ...makeLine({ sizeId: 'medium', sizeCode: 'M' }), sizeSortOrder: 0 },
+    { ...makeLine({ sizeId: 'equal', sizeCode: 'B' }), sizeSortOrder: 2 },
+  ];
+
+  it('orders matrix columns by finite rank then code with missing ranks last', () => {
+    expect(distinctSizeColumns(lines).map((size) => size.sizeId)).toEqual(['small', 'medium', 'equal', 'large', 'missing']);
+  });
+
+  it('orders compact breakdowns identically without changing totals or Style order', () => {
+    const grouped = groupLinesByStyle(lines);
+    expect(grouped[0]!.sizeEntries.map((size) => size.sizeId)).toEqual(['small', 'medium', 'equal', 'large', 'missing']);
+    expect(grouped[0]!.totalQuantity).toBe(50);
+    expect(lines[0]!.sizeId).toBe('missing');
+  });
+
+  it('orders financial breakdowns while preserving rate groups and authoritative amounts', () => {
+    const financial = lines.map((line, index) => ({ ...line, id: String(index), unitRate: 2, defaultRate: 2, lineAmount: 19.99 }));
+    const grouped = groupFinancialLinesByStyle(financial);
+    expect(grouped[0]!.sizeEntries.map((size) => size.sizeId)).toEqual(['small', 'medium', 'equal', 'large', 'missing']);
+    expect(grouped[0]!.amount).toBe(financial.reduce((sum, line) => sum + line.lineAmount, 0));
+  });
+
+  it('retains legacy first appearance when no finite metadata exists', () => {
+    const legacy = lines.map((line) => ({ ...line, sizeSortOrder: Number.NaN }));
+    expect(distinctSizeColumns(legacy).map((size) => size.sizeId)).toEqual(lines.map((line) => line.sizeId));
+  });
+
+  it('preserves Style first appearance even when their Sizes rank in the opposite order', () => {
+    const groups = groupLinesByStyle([
+      { ...makeLine({ styleId: 'first', sizeId: 'large', sizeCode: 'L' }), sizeSortOrder: 2 },
+      { ...makeLine({ styleId: 'second', sizeId: 'small', sizeCode: 'S' }), sizeSortOrder: 0 },
+    ]);
+    expect(groups.map((group) => group.styleId)).toEqual(['first', 'second']);
+  });
+
+  it('uses available metadata from a duplicate Size without duplicating columns or quantities', () => {
+    const duplicate = [...lines, { ...lines[0]!, sizeSortOrder: -2 }];
+    expect(distinctSizeColumns(duplicate).map((size) => size.sizeId)).toEqual(['missing', 'small', 'medium', 'equal', 'large']);
+    expect(groupLinesByStyle(duplicate)[0]!.sizeEntries[0]).toMatchObject({ sizeId: 'missing', quantity: 20 });
+  });
+});
+
 describe('groupLinesByStyle', () => {
   it('groups by stable styleId, not by display text', () => {
     // Two lines share the same styleNumber/styleName text but have

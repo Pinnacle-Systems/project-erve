@@ -5,6 +5,7 @@ export interface StyleSizeQuantityLine {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder?: number;
   quantity: number;
 }
 
@@ -32,13 +33,11 @@ export interface SizeColumn {
  * Groups Style+Size quantity lines by stable Style identity (`styleId`, never
  * display name) for the ISS-007/009/010 Style x Size presentation standard.
  *
- * Preserves each Style's and Size's first-appearance order from the source
- * lines. None of the carton/packing-list view types carry `Size.sortOrder`,
- * and the one endpoint that does (`GET /sizes`) is restricted to roles
- * narrower than who can view these screens (e.g. FACTORY_USER), so adding it
- * would mean an API/type contract change this batch is scoped to avoid —
- * first-appearance order is used instead of alphabetical as the next-best
- * signal.
+ * Preserves Style first appearance. Sizes follow authoritative Size.sortOrder,
+ * then code, when finite ordering metadata is available. Legacy inputs without
+ * any finite metadata retain first appearance; mixed inputs place missing
+ * ranks last. This compatibility policy is inferred from the existing master
+ * ordering, not a historical document snapshot rule.
  *
  * Duplicate Style+Size lines (defensive — not expected given the
  * `@@unique([cartonId, saleOrderLineId])` / per-destination Style+Size
@@ -65,10 +64,17 @@ export function groupLinesByStyle<T extends StyleSizeQuantityLine>(lines: T[]): 
     group.totalQuantity += line.quantity;
   }
 
-  return styleOrder.map((styleId) => groups.get(styleId)!);
+  const columns = distinctSizeColumns(lines);
+  const hasOrdering = lines.some((line) => Number.isFinite(line.sizeSortOrder));
+  return styleOrder.map((styleId) => {
+    const group = groups.get(styleId)!;
+    if (hasOrdering) group.sizeEntries = orderEntries(group.sizeEntries, columns);
+    return group;
+  });
 }
 
 export interface BusinessKeyedStyleSizeLine {
+  sizeSortOrder?: number;
   styleNumber: string;
   styleName: string;
   sizeCode: string;
@@ -92,13 +98,25 @@ export function withBusinessKeyIdentity<T extends BusinessKeyedStyleSizeLine>(
   return { ...line, styleId: line.styleNumber, sizeId: line.sizeCode };
 }
 
-/** Distinct Size columns across all lines, in first-appearance order — see `groupLinesByStyle`'s doc comment on why not sortOrder/alphabetical. */
-export function distinctSizeColumns<T extends { sizeId: string; sizeCode: string }>(lines: T[]): SizeColumn[] {
-  const seen = new Map<string, string>();
+/** Canonical Size columns with backward-compatible ordering for legacy inputs. */
+export function distinctSizeColumns<T extends { sizeId: string; sizeCode: string; sizeSortOrder?: number }>(lines: T[]): SizeColumn[] {
+  const seen = new Map<string, { sizeId: string; sizeCode: string; rank: number }>();
   for (const line of lines) {
-    if (!seen.has(line.sizeId)) seen.set(line.sizeId, line.sizeCode);
+    const rank = Number.isFinite(line.sizeSortOrder) ? line.sizeSortOrder! : Number.POSITIVE_INFINITY;
+    const existing = seen.get(line.sizeId);
+    if (!existing) seen.set(line.sizeId, { sizeId: line.sizeId, sizeCode: line.sizeCode, rank });
+    else existing.rank = Math.min(existing.rank, rank);
   }
-  return [...seen.entries()].map(([sizeId, sizeCode]) => ({ sizeId, sizeCode }));
+  const columns = [...seen.values()];
+  if (columns.some((column) => Number.isFinite(column.rank))) {
+    columns.sort((a, b) => (a.rank === b.rank ? 0 : a.rank - b.rank) || a.sizeCode.localeCompare(b.sizeCode));
+  }
+  return columns.map(({ sizeId, sizeCode }) => ({ sizeId, sizeCode }));
+}
+
+function orderEntries<T extends { sizeId: string }>(entries: T[], columns: SizeColumn[]): T[] {
+  const positions = new Map(columns.map((column, index) => [column.sizeId, index]));
+  return entries.sort((a, b) => positions.get(a.sizeId)! - positions.get(b.sizeId)!);
 }
 
 export interface FinancialStyleSizeLine {
@@ -109,6 +127,7 @@ export interface FinancialStyleSizeLine {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder?: number;
   quantity: number;
   unitRate: number;
   defaultRate: number;
@@ -190,5 +209,11 @@ export function groupFinancialLinesByStyle<T extends FinancialStyleSizeLine>(lin
     group.sourceLineIds.push(line.id);
   }
 
-  return order.map((key) => groups.get(key)!);
+  const columns = distinctSizeColumns(lines);
+  const hasOrdering = lines.some((line) => Number.isFinite(line.sizeSortOrder));
+  return order.map((key) => {
+    const group = groups.get(key)!;
+    if (hasOrdering) group.sizeEntries = orderEntries(group.sizeEntries, columns);
+    return group;
+  });
 }

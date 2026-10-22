@@ -156,7 +156,7 @@ const eligibilityCartonInclude = {
       saleOrder: { select: { id: true, saleOrderNumber: true } },
     },
   },
-  lines: { include: { saleOrderLine: { select: { style: { select: { id: true, styleNumber: true, styleName: true } }, size: { select: { id: true, code: true, label: true } } } } } },
+  lines: { include: { saleOrderLine: { select: { style: { select: { id: true, styleNumber: true, styleName: true } }, size: { select: { id: true, code: true, label: true, sortOrder: true } } } } } },
   audits: { orderBy: { cartonVersion: 'desc' as const }, take: 1 },
 } satisfies Prisma.FactoryPackingCartonInclude;
 
@@ -226,6 +226,7 @@ function toEligibleCartonView(carton: EligibilityCarton) {
       styleName: line.saleOrderLine.style.styleName,
       sizeCode: line.saleOrderLine.size.code,
       sizeLabel: line.saleOrderLine.size.label,
+      sizeSortOrder: line.saleOrderLine.size.sortOrder,
       quantity: line.quantity,
     })),
   };
@@ -295,7 +296,7 @@ const packingListInclude = {
           saleOrderLine: {
             select: {
               style: { select: { id: true, styleNumber: true, styleName: true } },
-              size: { select: { id: true, code: true, label: true } },
+              size: { select: { id: true, code: true, label: true, sortOrder: true } },
             },
           },
         },
@@ -336,13 +337,14 @@ function toPackingListCartonView(carton: PackingListRecord['cartons'][number], i
       styleName: line.saleOrderLine.style.styleName,
       sizeCode: line.saleOrderLine.size.code,
       sizeLabel: line.saleOrderLine.size.label,
+      sizeSortOrder: line.saleOrderLine.size.sortOrder,
       quantity: line.quantity,
     })),
   };
 }
 
 function toStyleSizeSummary(record: PackingListRecord) {
-  const byKey = new Map<string, { styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>();
+  const byKey = new Map<string, { styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; sizeSortOrder: number; quantity: number }>();
   for (const carton of record.cartons) {
     for (const line of carton.lines) {
       const key = `${line.saleOrderLine.style.id}:${line.saleOrderLine.size.id}`;
@@ -355,6 +357,7 @@ function toStyleSizeSummary(record: PackingListRecord) {
           styleName: line.saleOrderLine.style.styleName,
           sizeCode: line.saleOrderLine.size.code,
           sizeLabel: line.saleOrderLine.size.label,
+          sizeSortOrder: line.saleOrderLine.size.sortOrder,
           quantity: line.quantity,
         });
       }

@@ -254,12 +254,12 @@ describe('ErvePackingListCreatePage Style x Size presentation (ISS-023 Phase 3)'
       buildCarton({
         id: 'carton-1',
         cartonNumber: 'C1',
-        lines: [{ saleOrderLineId: 'line-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', quantity: 3 }],
+        lines: [{ saleOrderLineId: 'line-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 }],
       }),
       buildCarton({
         id: 'carton-2',
         cartonNumber: 'C2',
-        lines: [{ saleOrderLineId: 'line-2', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4 }],
+        lines: [{ saleOrderLineId: 'line-2', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 }],
       }),
     ];
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: cartons } } as never);
@@ -275,6 +275,8 @@ describe('ErvePackingListCreatePage Style x Size presentation (ISS-023 Phase 3)'
     expect(styleCells).toHaveLength(1);
     expect(content()).toContain('S');
     expect(content()).toContain('M');
+    const headers = Array.from(container.querySelectorAll('table thead')).map((head) => Array.from(head.querySelectorAll('th')).map((cell) => cell.textContent));
+    expect(headers).toContainEqual(['Style', 'M', 'S', 'Total']);
   });
 });
 
@@ -296,14 +298,14 @@ describe('ErvePackingListDetailPage Style x Size presentation (ISS-023 Phase 3)'
           weight: null,
           totalQuantity: 7,
           lines: [
-            { saleOrderLineId: 'line-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', quantity: 3 },
-            { saleOrderLineId: 'line-2', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4 },
+            { saleOrderLineId: 'line-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 },
+            { saleOrderLineId: 'line-2', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 },
           ],
         },
       ],
       styleSizeSummary: [
-        { styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', quantity: 3 },
-        { styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4 },
+        { styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 },
+        { styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 },
       ],
     });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
@@ -320,6 +322,8 @@ describe('ErvePackingListDetailPage Style x Size presentation (ISS-023 Phase 3)'
     expect(styleCells.length).toBeGreaterThanOrEqual(1);
     expect(content()).toContain('Style / Size Summary');
     expect(content()).toContain('7'); // carton row total reconciles (3 + 4)
+    const headers = Array.from(container.querySelectorAll('table thead')).map((head) => Array.from(head.querySelectorAll('th')).map((cell) => cell.textContent));
+    expect(headers.filter((header) => header[0] === 'Style')).toEqual([['Style', 'M', 'S', 'Total'], ['Style', 'M', 'S', 'Total']]);
   });
 });
 

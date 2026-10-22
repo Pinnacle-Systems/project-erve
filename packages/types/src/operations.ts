@@ -263,6 +263,7 @@ export interface SaleOrderLineView {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder?: number;
   quantity: number;
   remarks: string | null;
 }
@@ -326,6 +327,7 @@ export interface FactoryPackingQueueLine {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder?: number;
   allocatedQuantity: number;
   packedQuantity: number;
   remainingQuantity: number;
@@ -354,6 +356,7 @@ export interface FactoryPackingCartonLineView {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder?: number;
   quantity: number;
   /** The line's CURRENT destinationId — compare against the carton's own destinationId to detect a destination-move mismatch. */
   currentDestinationId: string;
@@ -401,6 +404,7 @@ export interface PackingListLineView {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder?: number;
   requiredQuantity: number;
   packedQuantity: number;
 }
@@ -494,6 +498,7 @@ export interface FactoryInvoiceLineView {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder?: number;
   /** Finalized physical packed quantity — read-only, never editable through this API. */
   quantity: number;
   /** Immutable snapshot of the Style<->Factory production rate used when the invoice was generated. */
@@ -543,7 +548,7 @@ export interface EligibleErveCartonView {
   packageDetails: string | null;
   weight: string | null;
   totalQuantity: number;
-  lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>;
+  lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; sizeSortOrder?: number; quantity: number }>;
 }
 
 /**
@@ -562,7 +567,7 @@ export interface ErvePackingListCartonView {
   packageDetails: string | null;
   weight: string | null;
   totalQuantity: number;
-  lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>;
+  lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; sizeSortOrder?: number; quantity: number }>;
 }
 
 export interface ErvePackingListDestinationSnapshot {
@@ -585,6 +590,7 @@ export interface ErvePackingListStyleSizeSummaryRow {
   styleName: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder?: number;
   quantity: number;
 }
 

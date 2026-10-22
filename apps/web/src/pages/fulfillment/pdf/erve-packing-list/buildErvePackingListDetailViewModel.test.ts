@@ -58,6 +58,22 @@ function makePackingList(overrides: Partial<ErvePackingListDetail> = {}): ErvePa
   };
 }
 
+it('orders actual carton and consolidated PDF matrices by authoritative ranks through business-key adapters', () => {
+  const packingList = makePackingList();
+  const lines = [
+    { saleOrderLineId: 'medium', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 4, quantity: 13 },
+    { saleOrderLineId: 'small', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 0, quantity: 7 },
+  ];
+  packingList.cartons[0]!.lines = lines;
+  packingList.styleSizeSummary = lines;
+  const vm = buildErvePackingListDetailViewModel(packingList, { generatedAt: '2026-10-08T00:00:00Z' });
+  expect(vm.cartons[0]!.sizeColumns.map((column) => column.sizeCode)).toEqual(['S', 'M']);
+  expect(vm.styleSizeSizeColumns.map((column) => column.sizeCode)).toEqual(['S', 'M']);
+  expect(vm.cartons[0]!.styleRows[0]!.values).toEqual({ S: 7, M: 13 });
+  expect(vm.styleSizeSummaryRows[0]!.values).toEqual({ S: 7, M: 13 });
+  expect(vm.totalQuantity).toBe(20);
+});
+
 describe('buildErvePackingListDetailViewModel', () => {
   it('maps identity, destination snapshot, and totals', () => {
     const vm = buildErvePackingListDetailViewModel(makePackingList(), { generatedAt: '2026-07-01T10:00:00Z', generatedBy: 'Test Admin' });

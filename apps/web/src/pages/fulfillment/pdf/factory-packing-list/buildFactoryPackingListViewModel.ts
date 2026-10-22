@@ -36,7 +36,7 @@ export interface FactoryPackingListCartonRow {
   totalQuantity: number;
   /** Used by the Retired Cartons summary table, which deliberately stays a flat per-carton row (ISS-010 did not touch it — it's already one row per carton, not repeated per Style/Size). */
   lines: FactoryPackingListCartonLineRow[];
-  /** ISS-010: Style x Size matrix for this carton's own contents — Sizes in first-appearance order (see style-size-grouping.ts; no Size.sortOrder is available on these views without an API contract change). */
+  /** ISS-010: Style x Size matrix for this carton's own contents — Sizes follow canonical master order when metadata is available (see style-size-grouping.ts). */
   sizeColumns: SizeColumn[];
   styleRows: FactoryPackingListCartonStyleRow[];
 }

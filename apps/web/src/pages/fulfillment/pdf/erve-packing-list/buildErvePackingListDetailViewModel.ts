@@ -36,7 +36,7 @@ export interface ErvePackingListDetailCartonRow {
   weight: string | null;
   totalQuantity: number;
   lines: ErvePackingListDetailCartonLineRow[];
-  /** ISS-023: Style x Size matrix for this carton's own contents — Sizes in first-appearance order (see style-size-grouping.ts; no Size.sortOrder is available on this view without an API contract change). */
+  /** ISS-023: Style x Size matrix for this carton's own contents — Sizes follow canonical master order when metadata is available (see style-size-grouping.ts). */
   sizeColumns: SizeColumn[];
   styleRows: ErvePackingListDetailStyleRow[];
 }
