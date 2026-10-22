@@ -38,7 +38,11 @@ const styles = StyleSheet.create({
   nonImageCell: { fontSize: 8, color: '#111111' },
 });
 
-function ChecklistBlockView({ rows: checklistRows }: { rows: Array<{ label: string; result: string; remarks?: string | null }> }) {
+function ChecklistBlockView({
+  rows: checklistRows,
+}: {
+  rows: Array<{ label: string; result: string; remarks?: string | null }>;
+}) {
   if (checklistRows.length === 0) return <Text style={styles.emptyText}>No items configured.</Text>;
   return (
     <View>
@@ -118,9 +122,19 @@ function AttachmentsBlockView({
   );
 }
 
+// Keep bounded narrative/sign-off blocks together; unbounded tables and evidence still flow.
+function compactBlock(block: QualityPdfBlock): boolean {
+  return (
+    (block.kind === 'grid' &&
+      block.items.length <= 6 &&
+      block.items.every((item) => String(item.value ?? '').length < 160)) ||
+    (block.kind === 'text' && block.value.length < 600)
+  );
+}
+
 function BlockView({ block }: { block: QualityPdfBlock }) {
   return (
-    <PdfSection title={block.heading} wrap>
+    <PdfSection title={block.heading} wrap={!compactBlock(block)} minPresenceAhead={36}>
       {block.description ? <Text style={styles.description}>{block.description}</Text> : null}
       {block.kind === 'grid' ? <PdfKeyValueSection items={block.items} columns={3} /> : null}
       {block.kind === 'checklist' ? <ChecklistBlockView rows={block.rows} /> : null}
@@ -128,7 +142,9 @@ function BlockView({ block }: { block: QualityPdfBlock }) {
         <TableBlockView columns={block.columns} rows={block.rows} emptyText={block.emptyText} />
       ) : null}
       {block.kind === 'text' ? <Text style={styles.textValue}>{block.value}</Text> : null}
-      {block.kind === 'attachments' ? <AttachmentsBlockView requirements={block.requirements} /> : null}
+      {block.kind === 'attachments' ? (
+        <AttachmentsBlockView requirements={block.requirements} />
+      ) : null}
     </PdfSection>
   );
 }
@@ -142,8 +158,15 @@ export function QualityBlocksRenderer({ sections }: QualityBlocksRendererProps) 
   return (
     <>
       {sections.map((section) => (
-        <PdfSection key={section.id} title={section.title} wrap>
-          {section.description ? <Text style={styles.description}>{section.description}</Text> : null}
+        <PdfSection
+          key={section.id}
+          title={section.title}
+          wrap={!(section.blocks.length <= 3 && section.blocks.every(compactBlock))}
+          minPresenceAhead={64}
+        >
+          {section.description ? (
+            <Text style={styles.description}>{section.description}</Text>
+          ) : null}
           {section.blocks.map((block, index) => (
             <BlockView key={`${section.id}-${index}`} block={block} />
           ))}

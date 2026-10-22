@@ -18,7 +18,6 @@ import {
   QualityChecklistRow,
   QualityExecutionHeader,
   QualityExecutionPageShell,
-  QualityExecutionSection,
   StatusBadge,
 } from '@erve/app-components';
 import { DataTable } from '@erve/data-display';
@@ -132,12 +131,30 @@ export function QaDetailPage() {
       ) : null}
       {ppSampleSession ? (
         <QualityExecutionHeader
+          compact
           title="PP Sample Checklist"
           formName="PP Sample form"
           attemptNumber={ppSampleSession.cycleNumber}
           status={ppSampleSession.status}
           context={`${data.jobOrderNumber} · ${data.factory.name}`}
           leadingVisual={identityVisual}
+          identity={
+            <>
+              {primaryStyle.consistent ? (
+                <span>
+                  {primaryStyle.style.styleNumber} - {primaryStyle.style.styleName}
+                </span>
+              ) : null}
+              <span>
+                Job Order quantity:{' '}
+                {data.lines.reduce((sum, line) => sum + line.orderedQuantity, 0)} pcs
+              </span>
+              <span>
+                Season snapshot:{' '}
+                {data.seasons.map((season) => season.displayName).join(', ') || 'Not recorded'}
+              </span>
+            </>
+          }
         />
       ) : (
         <PageHeader
@@ -154,18 +171,7 @@ export function QaDetailPage() {
           }
         />
       )}
-      {ppSampleSession ? (
-        <QualityExecutionSection title="Inspection context">
-          <DescriptionList columns={3}>
-            <DescriptionList.Item label="Job Order" value={data.jobOrderNumber} />
-            <DescriptionList.Item label="Factory" value={data.factory.name} />
-            <DescriptionList.Item
-              label="Season snapshot"
-              value={data.seasons.map((season) => season.displayName).join(', ') || 'Not recorded'}
-            />
-          </DescriptionList>
-        </QualityExecutionSection>
-      ) : (
+      {!ppSampleSession ? (
         <Panel title="Inspection context">
           <DescriptionList columns={3}>
             <DescriptionList.Item label="Factory" value={data.factory.name} />
@@ -176,7 +182,7 @@ export function QaDetailPage() {
             <DescriptionList.Item label="Prepared quantity" value={data.totals.prepared} />
           </DescriptionList>
         </Panel>
-      )}
+      ) : null}
       <QaInspectionForm
         detail={data}
         canMutate={canMutate}
@@ -413,13 +419,7 @@ export function QaDetailPage() {
           emptyState={audit.isLoading ? 'Loading history…' : 'No history available.'}
         />
       </Panel>
-      <Panel title="Downstream availability">
-        <p className="text-sm text-muted-foreground">
-          {data.status === 'QA_APPROVED'
-            ? `${data.totals.finalApproved} units are authoritative for the future warehouse workflow.`
-            : 'No quantity is downstream-ready until final QA approval.'}
-        </p>
-      </Panel>
+
     </div>
   );
   return ppSampleSession ? (

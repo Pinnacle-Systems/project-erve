@@ -1,3 +1,4 @@
+import { PageHeader } from './page-header.js';
 import type { HTMLAttributes, ReactNode } from 'react';
 import { cn } from '@erve/primitives';
 
@@ -56,6 +57,9 @@ export interface QualityExecutionHeaderProps extends Omit<HTMLAttributes<HTMLEle
   attemptNumber: number;
   status: ReactNode;
   context?: ReactNode;
+  compact?: boolean;
+  identity?: ReactNode;
+  batchNumber?: number;
   /** Optional identity visual (e.g. a Primary Style Image) rendered left of the title block — same slot convention as PageHeader. Opt-in — omitted by every existing caller, so it changes nothing for them. */
   leadingVisual?: ReactNode;
 }
@@ -68,6 +72,9 @@ export function QualityExecutionHeader({
   status,
   context,
   leadingVisual,
+  identity,
+  compact,
+  batchNumber,
   className,
   ...props
 }: QualityExecutionHeaderProps) {
@@ -77,16 +84,40 @@ export function QualityExecutionHeader({
       data-quality-execution-header="true"
       {...props}
     >
-      {leadingVisual && <div className="shrink-0">{leadingVisual}</div>}
-      <div className="min-w-0 flex-1 space-y-1">
-        <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
-        <p className="text-sm text-muted-foreground">
-          {formName}
-          {versionNumber === undefined ? null : ` v${versionNumber}`} · Attempt {attemptNumber} ·{' '}
-          <span className="font-medium text-foreground">{status}</span>
-        </p>
-        {context ? <div className="text-sm text-muted-foreground">{context}</div> : null}
-      </div>
+      {compact && typeof title === 'string' ? (
+        <PageHeader
+          className="w-full border-0 bg-transparent px-0 py-0"
+          density="compact"
+          wrapActions
+          leadingVisual={leadingVisual}
+          title={title}
+          details={
+            <div className="mt-1 space-y-1 text-sm text-muted-foreground">
+              <p>
+                {formName}
+                {versionNumber === undefined ? null : ` v${versionNumber}`} · Attempt{' '}
+                {attemptNumber} · <span className="font-medium text-foreground">{status}</span>
+                {batchNumber === undefined ? null : ` · Physical batch ${batchNumber}`}
+              </p>
+              {identity ? <div className="flex flex-wrap gap-x-4 gap-y-1">{identity}</div> : null}
+              {context}
+            </div>
+          }
+        />
+      ) : (
+        <>
+          {leadingVisual && <div className="shrink-0">{leadingVisual}</div>}
+          <div className="min-w-0 flex-1 space-y-1">
+            <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
+            <p className="text-sm text-muted-foreground">
+              {formName}
+              {versionNumber === undefined ? null : ` v${versionNumber}`} · Attempt {attemptNumber}{' '}
+              · <span className="font-medium text-foreground">{status}</span>
+            </p>
+            {context ? <div className="text-sm text-muted-foreground">{context}</div> : null}
+          </div>
+        </>
+      )}
     </header>
   );
 }

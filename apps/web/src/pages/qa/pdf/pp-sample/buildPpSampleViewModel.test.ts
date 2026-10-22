@@ -214,13 +214,7 @@ describe('buildPpSampleViewModel', () => {
     expect(serialized).not.toContain('secret-internal-id');
   });
 
-  it('prints a QA_APPROVED status downstream-availability message with the final approved total', () => {
-    const detail = makeQaInspectionDetail({ status: 'QA_APPROVED' });
-    const viewModel = buildPpSampleViewModel({ detail, evidenceImages: new Map(), primaryImage: { placeholder: true } }, META);
-    expect(viewModel.downstreamAvailabilityText).toBe(
-      '80 units are authoritative for the future warehouse workflow.',
-    );
-  });
+
 
   it('passes through an undefined generatedBy as-is (what useOptionalAuth()?.user?.name yields with no AuthProvider), never coerced to a string', () => {
     const viewModel = buildPpSampleViewModel(

@@ -94,10 +94,10 @@ function coverageSummary(coverage: JobOrder['qualityActivities'][number]['covera
   const prepared = coverage.preparedQuantityAuthoritative ? coverage.preparedQuantity : null;
   const inspected = coverage.inspectedPhysicalCoverage ?? coverage.inspectedQuantity;
   const parts = [
-    `Prepared ${prepared ?? 'pending'}`,
-    `Inspected ${inspected}`,
-    `Passed ${coverage.passedBatches}`,
-    `Failed ${coverage.failedBatches}`,
+    `Prepared: ${prepared === null ? 'pending' : `${prepared} pcs`}`,
+    `Inspected: ${inspected} pcs`,
+    `Batches passed: ${coverage.passedBatches}`,
+    `Batches failed: ${coverage.failedBatches}`,
   ];
   return parts.join(' · ');
 }

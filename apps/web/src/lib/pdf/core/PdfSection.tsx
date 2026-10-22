@@ -16,13 +16,19 @@ export interface PdfSectionProps {
    * onto a single page instead of letting it flow normally across pages.
    */
   wrap?: boolean;
+  /** Opt-in space for meaningful content following a flowing heading. */
+  minPresenceAhead?: number;
 }
 
 /** A titled block that stays together (moves to the next page as a whole rather than orphaning its heading). */
-export function PdfSection({ title, children, wrap = false }: PdfSectionProps) {
+export function PdfSection({ title, children, wrap = false, minPresenceAhead }: PdfSectionProps) {
   return (
     <View style={styles.container} wrap={wrap}>
-      {title ? <Text style={styles.title}>{title}</Text> : null}
+      {title ? (
+        <Text style={styles.title} minPresenceAhead={wrap ? minPresenceAhead : undefined}>
+          {title}
+        </Text>
+      ) : null}
       {children}
     </View>
   );

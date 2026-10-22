@@ -1,3 +1,4 @@
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { pdf } from '@react-pdf/renderer';
 import { describe, expect, it } from 'vitest';
 import { PpSampleDocument } from './PpSampleDocument.js';
@@ -93,4 +94,34 @@ describe('PpSampleDocument', () => {
     const blob = await pdf(<PpSampleDocument viewModel={viewModel} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   }, 30000);
+});
+
+
+it('ISS-045 exports inspection information without downstream inventory messaging', async () => {
+  const viewModel = buildPpSampleViewModel(
+    {
+      detail: makeQaInspectionDetail(),
+      evidenceImages: new Map(),
+      primaryImage: { placeholder: true },
+    },
+    META,
+  );
+  const blob = await pdf(<PpSampleDocument viewModel={viewModel} />).toBlob();
+  const task = getDocument({
+    data: new Uint8Array(await blob.arrayBuffer()),
+    useSystemFonts: true,
+  });
+  try {
+    const doc = await task.promise;
+    let text = '';
+    for (let n = 1; n <= doc.numPages; n++) {
+      const page = await doc.getPage(n);
+      const content = await page.getTextContent();
+      text += content.items.flatMap((item) => ('str' in item ? [item.str] : [])).join(' ');
+    }
+    expect(text).toContain('Checklist Item');
+    expect(text).not.toMatch(/Downstream Availability|downstream-ready|future warehouse/i);
+  } finally {
+    await task.destroy();
+  }
 });

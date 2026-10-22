@@ -72,6 +72,8 @@ export interface PdfStyleSizeMatrixProps {
   /** Opt in to placing group rows directly in the matrix's flow. Avoids the legacy
    * paginator's empty nested-View split fallback when a group starts near a page end. */
   flattenForPagination?: boolean;
+  /** Opt-in EIPL boundary protection without changing other document pagination. */
+  keepBoundaryRows?: boolean;
   columns: PdfStyleSizeMatrixColumn[];
   rows: PdfStyleSizeMatrixRow[];
   showRowTotals?: boolean;
@@ -149,6 +151,7 @@ export function PdfStyleSizeMatrix({
   emptyMessage = 'No styles to display.',
   styleColumnWidth = '28%',
   flattenForPagination = false,
+  keepBoundaryRows = false,
 }: PdfStyleSizeMatrixProps) {
   if (rows.length === 0) {
     return <Text style={styles.emptyMessage}>{emptyMessage}</Text>;
@@ -175,7 +178,12 @@ export function PdfStyleSizeMatrix({
             : null;
 
         const renderHeaderRow = (key: string) => (
-          <View key={key} style={styles.headerRow} wrap={false}>
+          <View
+            key={key}
+            style={styles.headerRow}
+            wrap={false}
+            minPresenceAhead={keepBoundaryRows ? 30 : undefined}
+          >
             <Text style={[styles.styleHeaderCell, { width: styleColumnWidth }]}>Style</Text>
             {groupColumns.map((column) => (
               <Text key={column.sizeId} style={[styles.headerCell, { width: sizeColWidth }]}>
@@ -201,7 +209,16 @@ export function PdfStyleSizeMatrix({
             {chunk(rows, rowsPerHeaderRepeat).flatMap((rowChunk, chunkIndex) => [
               renderHeaderRow(`header-${chunkIndex}`),
               ...rowChunk.map((row) => (
-                <View key={row.styleId} style={styles.row} wrap={false}>
+                <View
+                  key={row.styleId}
+                  style={styles.row}
+                  wrap={false}
+                  minPresenceAhead={
+                    keepBoundaryRows && row === rows[rows.length - 1] && showColumnTotals
+                      ? 44
+                      : undefined
+                  }
+                >
                   <View style={[styles.styleCell, { width: styleColumnWidth }]}>
                     {row.image !== undefined && row.image !== null ? (
                       <View style={styles.styleThumbnailWrapper}>

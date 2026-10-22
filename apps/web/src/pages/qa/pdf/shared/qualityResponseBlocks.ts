@@ -1,3 +1,4 @@
+import { qualityPresentationSections } from '@erve/app-components';
 import type { QualityExecutionPayload, QualityExecutionView } from '@erve/types';
 import { formatPdfDate, formatPdfValue } from '../../../../lib/pdf/format.js';
 import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
@@ -410,7 +411,7 @@ export function buildQualitySections(
   execution: QualityExecutionView,
   evidenceImages: Map<string, PdfImageSource>,
 ): QualityPdfSection[] {
-  return [...execution.sections]
+  return qualityPresentationSections(execution.sections)
     .sort((a, b) => a.sequence - b.sequence)
     .map((section) => ({
       id: section.id,
