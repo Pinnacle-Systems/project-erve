@@ -7,6 +7,7 @@ import {
   DialogDescription,
   DialogFooter,
   Button,
+  ValidationMessage,
 } from "@erve/primitives";
 
 export interface ConfirmDialogProps {
@@ -14,6 +15,8 @@ export interface ConfirmDialogProps {
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: string;
+  /** An operation failure shown inside the modal so users can retry in context. */
+  error?: string;
   confirmLabel?: string;
   cancelLabel?: string;
   destructive?: boolean;
@@ -28,6 +31,7 @@ export const ConfirmDialog = ({
   onOpenChange,
   title,
   description,
+  error,
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   destructive = false,
@@ -56,6 +60,11 @@ export const ConfirmDialog = ({
             <DialogDescription>{description}</DialogDescription>
           )}
         </DialogHeader>
+        {error && (
+          <ValidationMessage tone="error" className="mt-3">
+            {error}
+          </ValidationMessage>
+        )}
         <DialogFooter>
           <Button
             variant="secondary"
