@@ -102,6 +102,7 @@ function toLineView(line: SOLineRecord) {
     sizeId: line.sizeId,
     sizeCode: line.size.code,
     sizeLabel: line.size.label,
+    sizeSortOrder: line.size.sortOrder,
     quantity: line.quantity,
     remarks: line.remarks,
   };

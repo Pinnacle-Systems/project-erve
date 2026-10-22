@@ -119,6 +119,18 @@ describe('buildCartonLabelViewModel', () => {
     expect(vm.totalQuantity).toBe(18);
   });
 
+  it('prints authoritative Size order in a compact label even when carton lines arrive scrambled', () => {
+    const carton = makeCarton();
+    const source = carton.lines[0]!;
+    carton.lines = [
+      { ...source, sizeId: 'large', sizeCode: 'L', sizeLabel: 'Large', sizeSortOrder: 2, quantity: 3 },
+      { ...source, sizeId: 'small', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 0, quantity: 7 },
+    ];
+    const vm = buildCartonLabelViewModel(makeSource({ carton }), { generatedAt: '2026-09-15T10:00:00Z' });
+    expect(vm.styleRows[0]).toMatchObject({ sizeBreakdown: 'Small: 7 · Large: 3', quantity: 10 });
+    expect(vm.totalQuantity).toBe(10);
+  });
+
   it('sums duplicate Style+Size lines within the same carton into one Size Breakdown entry rather than printing it twice', () => {
     const carton = makeCarton({
       lines: [

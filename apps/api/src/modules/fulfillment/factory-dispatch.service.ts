@@ -138,6 +138,7 @@ export interface PackingListCartonView {
     sizeId: string;
     sizeCode: string;
     sizeLabel: string;
+    sizeSortOrder?: number;
     quantity: number;
     currentDestinationId: string;
   }>;
@@ -153,6 +154,7 @@ export interface PackingListLineView {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder?: number;
   requiredQuantity: number;
   packedQuantity: number;
 }
@@ -216,7 +218,7 @@ const packingListCartonInclude = {
           id: true,
           destinationId: true,
           style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
-          size: { select: { id: true, code: true, label: true } },
+          size: { select: { id: true, code: true, label: true, sortOrder: true } },
         },
       },
     },
@@ -268,6 +270,7 @@ function toPackingListCartonView(carton: CartonRecord): PackingListCartonView {
       sizeId: line.saleOrderLine.size.id,
       sizeCode: line.saleOrderLine.size.code,
       sizeLabel: line.saleOrderLine.size.label,
+      sizeSortOrder: line.saleOrderLine.size.sortOrder,
       quantity: line.quantity,
       currentDestinationId: line.saleOrderLine.destinationId,
     })),
@@ -296,7 +299,7 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       where: { saleOrderId: order.id },
       include: {
         style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
-        size: { select: { id: true, code: true, label: true } },
+        size: { select: { id: true, code: true, label: true, sortOrder: true } },
       },
       orderBy: { createdAt: 'asc' },
     }),
@@ -340,6 +343,7 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       sizeId: line.size.id,
       sizeCode: line.size.code,
       sizeLabel: line.size.label,
+      sizeSortOrder: line.size.sortOrder,
       requiredQuantity: line.quantity,
       packedQuantity: physicalPackedByLine.get(line.id) ?? 0,
     };
@@ -514,6 +518,7 @@ interface RawPackingQueueRow {
   sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder: number;
   allocatedQuantity: number;
   packedQuantity: number;
   remainingQuantity: number;
@@ -563,6 +568,7 @@ export async function getFactoryPackingQueue(
       sz.id AS "sizeId",
       sz.code AS "sizeCode",
       sz.label AS "sizeLabel",
+      sz.sort_order AS "sizeSortOrder",
       sol.quantity AS "allocatedQuantity",
       COALESCE(packed.qty, 0)::int AS "packedQuantity",
       (sol.quantity - COALESCE(packed.qty, 0))::int AS "remainingQuantity",
@@ -612,6 +618,7 @@ export async function getFactoryPackingQueue(
       sizeId: row.sizeId,
       sizeCode: row.sizeCode,
       sizeLabel: row.sizeLabel,
+      sizeSortOrder: row.sizeSortOrder,
       allocatedQuantity: row.allocatedQuantity,
       packedQuantity: row.packedQuantity,
       remainingQuantity: row.remainingQuantity,
