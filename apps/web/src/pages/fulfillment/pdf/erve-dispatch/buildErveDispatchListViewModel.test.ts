@@ -42,7 +42,6 @@ describe('buildErveDispatchListViewModel', () => {
       erveDispatchNumber: 'ED/26-27/0001',
       ervePackingListNumber: 'EIPL/26-27/0001',
       distributorName: 'Acme Distributors',
-      saleOrderNumber: 'EISO/26-27/0001',
       dispatchDate: '30 Jun 2026',
       statusLabel: 'Dispatched',
       deliveredAt: '',
@@ -52,9 +51,13 @@ describe('buildErveDispatchListViewModel', () => {
     });
   });
 
-  it('shows "Multiple" when a Dispatch consolidates several Dispatch Orders', () => {
-    const vm = buildErveDispatchListViewModel([makeDispatch({ saleOrder: null })], { generatedAt: '2026-07-01T10:00:00Z' });
-    expect(vm.rows[0]?.saleOrderNumber).toBe('Multiple');
+  // ISS-054: the EISO Dispatch Order number is never printed on this
+  // external, distributor-facing PDF, regardless of whether the Dispatch
+  // consolidates one or several Dispatch Orders.
+  it('never exposes a Dispatch Order (EISO) number on the row', () => {
+    const vm = buildErveDispatchListViewModel([makeDispatch()], { generatedAt: '2026-07-01T10:00:00Z' });
+    expect(vm.rows[0]).not.toHaveProperty('saleOrderNumber');
+    expect(JSON.stringify(vm.rows[0])).not.toContain('EISO');
   });
 
   it('shows the DELIVERED status and delivered date once confirmed', () => {

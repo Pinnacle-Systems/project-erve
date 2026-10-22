@@ -7,9 +7,6 @@ function makeCarton(overrides: Partial<ErvePackingListDetailCartonRow> = {}): Er
   return {
     id: 'carton-1',
     cartonNumber: 'CTN-001',
-    factoryName: 'Acme Factory',
-    saleOrderNumber: 'EISO/26-27/0001',
-    factoryDispatchNumber: 'FD/26-27/0001',
     packageDetails: 'Standard box',
     weight: '5kg',
     totalQuantity: 20,
@@ -59,8 +56,8 @@ describe('ErvePackingListDetailDocument', () => {
 
   it('renders cartons spanning multiple Factories/Dispatch Orders without throwing', async () => {
     const cartons = [
-      makeCarton({ id: 'carton-1', factoryName: 'Factory One', saleOrderNumber: 'EISO/26-27/0001' }),
-      makeCarton({ id: 'carton-2', factoryName: 'Factory Two', saleOrderNumber: 'EISO/26-27/0002' }),
+      makeCarton({ id: 'carton-1', cartonNumber: 'CTN-001' }),
+      makeCarton({ id: 'carton-2', cartonNumber: 'CTN-002' }),
     ];
     const blob = await pdf(<ErvePackingListDetailDocument viewModel={makeViewModel({ cartons, totalCartonCount: 2, totalQuantity: 40 })} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
@@ -116,29 +113,24 @@ describe('ErvePackingListDetailDocument', () => {
     }, 22000);
   });
 
-  // DEMO-020: proves the exact printed text omits the Factory/Factory
-  // Packing List segments — not just that some element is conditionally
-  // hidden — and leaves no stray separators behind.
-  describe('cartonHeading — factory/supplier provenance redaction (DEMO-020)', () => {
-    it('includes the Factory and Factory Packing List segments when provenance is present', () => {
-      expect(cartonHeading(makeCarton())).toBe('Carton CTN-001 — Acme Factory — EISO/26-27/0001 (FD/26-27/0001) — 5kg');
+  // ISS-054: the carton heading never prints internal factory provenance,
+  // the EISO Dispatch Order number, or the EIFD Factory Dispatch number —
+  // only the carton number (and weight, when present) on this external PDF.
+  describe('cartonHeading — internal provenance / EISO / EIFD redaction (ISS-054)', () => {
+    it('prints only the carton number and weight', () => {
+      expect(cartonHeading(makeCarton())).toBe('Carton CTN-001 — 5kg');
     });
 
-    it('omits the Factory and Factory Packing List segments — and their separators — when provenance is absent', () => {
-      const carton = makeCarton({ factoryName: null, factoryDispatchNumber: null });
-      const heading = cartonHeading(carton);
-      expect(heading).toBe('Carton CTN-001 — EISO/26-27/0001 — 5kg');
-      expect(heading).not.toContain('Acme Factory');
-      expect(heading).not.toContain('FD/26-27/0001');
-      expect(heading).not.toContain('()'); // no empty parens left behind
+    it('omits the weight segment — and its separator — when absent', () => {
+      const heading = cartonHeading(makeCarton({ weight: null }));
+      expect(heading).toBe('Carton CTN-001');
       expect(heading).not.toContain('null');
       expect(heading).not.toContain('undefined');
     });
 
-    it('renders a PDF without throwing when provenance is absent on every carton', async () => {
-      const cartons = [makeCarton({ factoryName: null, factoryDispatchNumber: null })];
-      const blob = await pdf(<ErvePackingListDetailDocument viewModel={makeViewModel({ cartons })} />).toBlob();
-      expect(blob.size).toBeGreaterThan(0);
+    it('never prints an EISO or EIFD-shaped reference, regardless of input', () => {
+      const heading = cartonHeading(makeCarton());
+      expect(heading).not.toMatch(/EISO|EIFD/);
     });
   });
 });

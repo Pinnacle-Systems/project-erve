@@ -8,8 +8,7 @@ import type { ErveDispatchListPdfRow, ErveDispatchListPdfViewModel } from './bui
 const columns: PdfTableColumn<ErveDispatchListPdfRow>[] = [
   { key: 'erveDispatchNumber', header: 'Dispatch #', width: '12%', value: (row) => row.erveDispatchNumber },
   { key: 'ervePackingListNumber', header: 'EIPL Number', width: '12%', value: (row) => row.ervePackingListNumber },
-  { key: 'distributorName', header: 'Distributor', width: '15%', value: (row) => row.distributorName },
-  { key: 'saleOrderNumber', header: 'Dispatch Order', width: '12%', value: (row) => row.saleOrderNumber },
+  { key: 'distributorName', header: 'Distributor', width: '27%', value: (row) => row.distributorName },
   { key: 'dispatchDate', header: 'Dispatch Date', width: '10%', value: (row) => row.dispatchDate },
   { key: 'statusLabel', header: 'Status', width: '8%', value: (row) => row.statusLabel },
   { key: 'deliveredAt', header: 'Delivered', width: '10%', value: (row) => row.deliveredAt },
@@ -21,7 +20,7 @@ export interface ErveDispatchListDocumentProps {
   viewModel: ErveDispatchListPdfViewModel;
 }
 
-/** Landscape — 9 columns (Dispatch #, EIPL Number, Distributor, Dispatch Order, dates, status, transport) would cramp in Portrait. */
+/** Landscape — 8 columns (Dispatch #, EIPL Number, Distributor, dates, status, transport) would cramp in Portrait. ISS-054: no Dispatch Order (EISO) column — never printed on this external PDF. */
 export function ErveDispatchListDocument({ viewModel }: ErveDispatchListDocumentProps) {
   return (
     <PdfDocument orientation="landscape">

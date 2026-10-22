@@ -124,14 +124,14 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
           order.push(active);
           header = false;
           const c = source.cartons.find((c) => c.cartonNumber === active)!;
-          for (const value of [
-            c.factory?.name,
-            c.saleOrder.saleOrderNumber,
-            c.factoryDispatchNumber,
-            c.weight,
-          ]) {
-            if (value) expect(str).toContain(value);
-          }
+          // ISS-054: internal factory provenance, EISO and EIFD are never
+          // printed in the carton heading on this external PDF, regardless
+          // of whether the source record carries them. Weight is not
+          // redacted — still expected when present.
+          if (c.factory?.name) expect(str).not.toContain(c.factory.name);
+          expect(str).not.toContain(c.saleOrder.saleOrderNumber);
+          if (c.factoryDispatchNumber) expect(str).not.toContain(c.factoryDispatchNumber);
+          if (c.weight) expect(str).toContain(c.weight);
           continue;
         }
         if (str === 'Style / Size Summary') {
@@ -235,6 +235,16 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
     ]);
     expect(text).toContain(source.ervePackingListNumber);
     expect(text).toContain(source.destination.label);
+    // ISS-054: no internal Factory name, EISO Dispatch Order number, or
+    // EIFD Factory Dispatch number anywhere in the extracted text, not just
+    // in the carton heading — covers identityItems too.
+    for (const c of source.cartons) {
+      if (c.factory?.name) expect(text).not.toContain(c.factory.name);
+      expect(text).not.toContain(c.saleOrder.saleOrderNumber);
+      if (c.factoryDispatchNumber) expect(text).not.toContain(c.factoryDispatchNumber);
+    }
+    if (source.sourceFactories) for (const f of source.sourceFactories) expect(text).not.toContain(f.name);
+    for (const so of source.sourceDispatchOrders) expect(text).not.toContain(so.saleOrderNumber);
     for (const [section, lines] of sections) {
       const sizes = [...new Set(lines.map((l) => l.sizeCode))];
       for (const style of [

@@ -1,8 +1,48 @@
 import type { PooledFactoryInventoryLine } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
+import { HttpError } from '../../errors/http-error.js';
+import type { CurrentUser } from '../../auth/current-user.js';
 import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 
 type Client = Prisma.TransactionClient | typeof prisma;
+
+// BUG-007 security correction: excludeSaleOrderId must never let a caller
+// inflate availableQuantity by naming an arbitrary Dispatch Order. Only a
+// role that can actually edit Dispatch Orders may use it, and only for an
+// order that genuinely exists, belongs to the requested Factory, and is
+// still editable. Mirrors sale-orders.service.ts's
+// assertDispatchOrderMutationAccess/isDispatchOrderLocked exactly —
+// duplicated narrowly here (not imported) because sale-orders.service.ts
+// already imports this file, and importing back would create a cycle. Keep
+// both in sync if the Dispatch Order mutation/lock rules ever change.
+export async function assertExcludableDispatchOrder(
+  client: Client,
+  user: CurrentUser,
+  factoryId: string | undefined,
+  excludeSaleOrderId: string,
+): Promise<void> {
+  if (!user.roles.some((r) => r === 'ADMIN' || r === 'MERCHANDISER')) {
+    throw HttpError.forbidden('You do not have permission to manage dispatch orders');
+  }
+  if (!factoryId) {
+    throw HttpError.badRequest('factoryId is required when excludeSaleOrderId is provided');
+  }
+  const order = await client.saleOrder.findUnique({
+    where: { id: excludeSaleOrderId },
+    select: { factoryId: true },
+  });
+  if (!order) throw HttpError.badRequest('Dispatch order not found');
+  if (order.factoryId !== factoryId) {
+    throw HttpError.badRequest('Dispatch order does not belong to the requested factory');
+  }
+  const [readyFactoryDispatch, anyErveDispatch] = await Promise.all([
+    client.factoryDispatch.count({ where: { saleOrderId: excludeSaleOrderId, status: 'READY_FOR_ERVE' } }),
+    client.erveDispatch.count({ where: { saleOrderId: excludeSaleOrderId } }),
+  ]);
+  if (readyFactoryDispatch > 0 || anyErveDispatch > 0) {
+    throw HttpError.badRequest('This dispatch order is locked: Factory Dispatch has already occurred');
+  }
+}
 
 // The Phase 2.1 target fact (see the Job Order Production Plan / QA-Pooled
 // Inventory Decoupling plan §12/§29): Final-QA-passed stock is dispatch-
@@ -45,6 +85,13 @@ export async function getPooledFactoryInventory(
     // seasonId, never a reconstructed transaction-time Season.
     seasonId?: string;
     recordOrigin?: 'LIVE_WORKFLOW' | 'HISTORICAL_IMPORT';
+    // BUG-007: when editing an existing Dispatch Order, its own ACTIVE
+    // allocations are still committed against the pool and would otherwise
+    // make availableQuantity understate what the edit can actually reserve
+    // (the edit releases-and-re-reserves in one transaction — mirrors
+    // reserveAcrossPools's effectiveAvailable in sale-orders.service.ts).
+    // Passing the order being edited adds its own committed quantity back.
+    excludeSaleOrderId?: string;
   },
 ): Promise<PooledFactoryInventoryLine[]> {
   const releaseLines = await client.qaReleaseLine.findMany({
@@ -86,13 +133,30 @@ export async function getPooledFactoryInventory(
   });
   const committedByLine = new Map(committed.map((row) => [row.qaReleaseLineId, row._sum.quantity ?? 0]));
 
+  const ownCommittedByLine = filters?.excludeSaleOrderId
+    ? new Map(
+        (
+          await client.stockAllocation.groupBy({
+            by: ['qaReleaseLineId'],
+            where: {
+              qaReleaseLineId: { in: releaseLines.map((line) => line.id) },
+              status: 'ACTIVE',
+              saleOrderLine: { saleOrderId: filters.excludeSaleOrderId },
+            },
+            _sum: { quantity: true },
+          })
+        ).map((row) => [row.qaReleaseLineId, row._sum.quantity ?? 0] as const),
+      )
+    : new Map<string, number>();
+
   const pool = new Map<string, PooledFactoryInventoryLine>();
   for (const line of releaseLines) {
     const jobOrderLine = line.jobOrderLineSize.jobOrderLine;
     const jobOrder = jobOrderLine.jobOrder;
     const key = `${jobOrder.factoryId}:${jobOrderLine.styleId}:${line.jobOrderLineSize.sizeId}`;
     const committedQuantity = committedByLine.get(line.id) ?? 0;
-    const availableQuantity = line.quantity - committedQuantity;
+    const ownCommittedQuantity = ownCommittedByLine.get(line.id) ?? 0;
+    const availableQuantity = line.quantity - committedQuantity + ownCommittedQuantity;
     const existing = pool.get(key);
     if (existing) {
       existing.releasedQuantity += line.quantity;

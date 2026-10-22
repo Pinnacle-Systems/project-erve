@@ -169,6 +169,10 @@ export const pooledInventoryQuerySchema = z.object({
   factoryId: z.string().trim().min(1).optional(),
   styleId: z.string().trim().min(1).optional(),
   sizeId: z.string().trim().min(1).optional(),
+  // BUG-007: the Dispatch Order being edited (not created) — its own ACTIVE
+  // allocations are added back onto availableQuantity, since editing
+  // releases-and-re-reserves in one transaction (see getPooledFactoryInventory).
+  excludeSaleOrderId: z.string().trim().min(1).optional(),
 });
 
 export const updatePreparedQuantitySchema = z.object({

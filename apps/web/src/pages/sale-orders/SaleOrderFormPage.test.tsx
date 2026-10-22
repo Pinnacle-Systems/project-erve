@@ -724,3 +724,135 @@ describe('SaleOrderFormPage edit hydration', () => {
     expect(container.querySelector('input[type="number"]')).toBeNull();
   });
 });
+
+// BUG-007 follow-up: excludeSaleOrderId must only be sent while editing at
+// this order's ORIGINAL Factory — switching Factory reallocates against a
+// different pool entirely, where this order holds no reservation to add
+// back (the backend now 400s a mismatched exclusion; the fix is the form
+// never sending one once Factory changes).
+describe('SaleOrderFormPage edit — excludeSaleOrderId tracks the original Factory (BUG-007 follow-up)', () => {
+  function makeSaleOrder(): SaleOrder {
+    const line1 = {
+      id: 'line-1',
+      destinationId: 'dest-1',
+      styleId: 'style-1',
+      styleNumber: 'ST-001',
+      styleName: 'Classic Tee',
+      primaryImage: null,
+      sizeId: 'size-1',
+      sizeCode: 'M',
+      sizeLabel: 'Medium',
+      quantity: 25,
+      remarks: null,
+    };
+    return {
+      id: 'so-1',
+      saleOrderNumber: 'EISO/26-27/0001',
+      distributors: [{ id: 'dist-1', code: 'D1', name: 'Distributor One', purchaseMode: 'OUTRIGHT' }],
+      factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
+      financialYear: { id: 'fy-1', code: '2026-27' },
+      soDate: '2026-09-08T00:00:00.000Z',
+      status: 'ACTIVE',
+      destinationCount: 1,
+      totalQuantity: 25,
+      createdAt: '2026-09-08T00:00:00.000Z',
+      isLocked: false,
+      version: 1,
+      updatedAt: '2026-09-08T00:00:00.000Z',
+      creator: { id: 'user-1', name: 'Admin', email: 'admin@test.local' },
+      remarks: null,
+      distributorGroups: [
+        {
+          id: 'group-1',
+          distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
+          purchaseMode: 'OUTRIGHT',
+          destinations: [
+            {
+              id: 'dest-1',
+              label: 'Primary Warehouse',
+              contactName: null,
+              contactEmail: null,
+              contactPhone: null,
+              addressLine1: '123 Test Industrial Estate',
+              addressLine2: null,
+              city: 'Mumbai',
+              state: 'Maharashtra',
+              country: 'India',
+              postalCode: null,
+              gstin: null,
+              canMoveDistributor: true,
+            },
+          ],
+          lines: [line1],
+        },
+      ],
+      lines: [line1],
+      fulfillment: { stage: 'AWAITING_PACKING', totalQuantity: 25, totalFactoryPackedQuantity: 0 },
+    };
+  }
+
+  async function renderEditForm() {
+    const so = makeSaleOrder();
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/sale-orders/so-1') return { data: { data: so } };
+      if (url === '/factories/options') {
+        return {
+          data: {
+            data: [
+              { id: 'fac-1', code: 'FAC1', name: 'Factory One', status: 'ACTIVE' },
+              { id: 'fac-2', code: 'FAC2', name: 'Factory Two', status: 'ACTIVE' },
+            ],
+          },
+        };
+      }
+      if (url === '/job-orders/pooled-inventory') return { data: { data: [] } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/sale-orders/so-1/edit']}>
+            <Routes>
+              <Route path="/sale-orders/:id/edit" element={<SaleOrderFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await flush();
+    await flush();
+  }
+
+  function lastPooledInventoryParams(): Record<string, unknown> | undefined {
+    const calls = vi
+      .mocked(apiClient.get)
+      .mock.calls.filter((call) => call[0] === '/job-orders/pooled-inventory');
+    return (calls.at(-1)?.[1] as { params?: Record<string, unknown> } | undefined)?.params;
+  }
+
+  it('sends excludeSaleOrderId while still editing at the original Factory', async () => {
+    await renderEditForm();
+    expect(lastPooledInventoryParams()).toMatchObject({ factoryId: 'fac-1', excludeSaleOrderId: 'so-1' });
+  });
+
+  it('omits excludeSaleOrderId once the user switches to a different Factory', async () => {
+    await renderEditForm();
+    await selectOption('Factory', 'Factory Two');
+    await flush();
+
+    const params = lastPooledInventoryParams();
+    expect(params?.factoryId).toBe('fac-2');
+    expect(params?.excludeSaleOrderId).toBeUndefined();
+  });
+
+  it('re-applies excludeSaleOrderId after switching back to the original Factory', async () => {
+    await renderEditForm();
+    await selectOption('Factory', 'Factory Two');
+    await flush();
+    await selectOption('Factory', 'Factory One');
+    await flush();
+
+    expect(lastPooledInventoryParams()).toMatchObject({ factoryId: 'fac-1', excludeSaleOrderId: 'so-1' });
+  });
+});

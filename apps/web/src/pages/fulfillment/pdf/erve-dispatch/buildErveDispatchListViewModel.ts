@@ -12,7 +12,6 @@ export interface ErveDispatchListPdfRow {
   erveDispatchNumber: string;
   ervePackingListNumber: string;
   distributorName: string;
-  saleOrderNumber: string;
   dispatchDate: string;
   statusLabel: string;
   deliveredAt: string;
@@ -32,10 +31,11 @@ export interface ErveDispatchListPdfViewModel {
 
 /**
  * Pure, synchronous, no HTTP: maps the already-fetched (all-pages) Erve Dispatch list into the
- * plain view-model ErveDispatchListDocument renders. Field-by-field allowlist, never
- * `...dispatch` — invoiceHandoffs/saleOrReturnLines (both present on the same ErveDispatchView row)
- * are deliberately excluded from the list row: they are printed by the Detail PDF instead. The
- * screen exposes no filter/sort control, so there is no filter summary.
+ * plain view-model ErveDispatchListDocument renders. Field-by-field allowlist, never `...dispatch`
+ * — saleOrReturnLines (present on the same ErveDispatchView row) is deliberately excluded from the
+ * list row: it is printed by the Detail PDF instead. invoiceHandoffs is excluded from both PDFs
+ * entirely (ISS-055 — no user-facing Tally references). The screen exposes no filter/sort control,
+ * so there is no filter summary.
  */
 export function buildErveDispatchListViewModel(
   dispatches: ErveDispatchView[],
@@ -46,7 +46,8 @@ export function buildErveDispatchListViewModel(
     erveDispatchNumber: d.erveDispatchNumber,
     ervePackingListNumber: d.ervePackingList.ervePackingListNumber,
     distributorName: d.distributor.name,
-    saleOrderNumber: d.saleOrder?.saleOrderNumber ?? 'Multiple',
+    // ISS-054: the EISO Dispatch Order number is never printed on this
+    // external, distributor-facing PDF.
     dispatchDate: formatPdfDate(d.dispatchDate),
     statusLabel: ERVE_DISPATCH_STATUS_LABELS[d.status],
     deliveredAt: d.deliveredAt ? formatPdfDate(d.deliveredAt) : '',

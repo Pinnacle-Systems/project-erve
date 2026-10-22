@@ -30,7 +30,7 @@ import {
   JOB_ORDER_PRODUCTION_MUTATION_ROLES,
   JOB_ORDER_STAGE_UNDO_ROLES,
 } from '@erve/shared';
-import { getPooledFactoryInventory } from './pooled-inventory.service.js';
+import { assertExcludableDispatchOrder, getPooledFactoryInventory } from './pooled-inventory.service.js';
 import { prisma } from '../../db/prisma.js';
 import { pooledInventoryQuerySchema } from './job-orders.validation.js';
 
@@ -157,6 +157,9 @@ jobOrdersRouter.get(
   requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'),
   asyncHandler(async (req, res) => {
     const filters = pooledInventoryQuerySchema.parse(req.query);
+    if (filters.excludeSaleOrderId) {
+      await assertExcludableDispatchOrder(prisma, req.user!, filters.factoryId, filters.excludeSaleOrderId);
+    }
     const rows = await getPooledFactoryInventory(prisma, filters);
     res.status(200).json(successResponse(rows));
   }),

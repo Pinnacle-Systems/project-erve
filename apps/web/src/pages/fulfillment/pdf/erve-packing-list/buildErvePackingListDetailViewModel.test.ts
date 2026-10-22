@@ -88,7 +88,7 @@ describe('buildErvePackingListDetailViewModel', () => {
     expect(vm.dispatchReference).toBeNull();
   });
 
-  it('preserves each carton\'s own Factory/Dispatch Order provenance when cartons span multiple sources', () => {
+  it('ISS-054: never exposes internal Factory/Dispatch Order provenance in the PDF view model, even when cartons span multiple sources', () => {
     const packingList = makePackingList({
       cartonCount: 2,
       totalQuantity: 40,
@@ -131,8 +131,9 @@ describe('buildErvePackingListDetailViewModel', () => {
     const vm = buildErvePackingListDetailViewModel(packingList, { generatedAt: '2026-07-01T10:00:00Z' });
 
     expect(vm.cartons).toHaveLength(2);
-    expect(vm.cartons[0]).toMatchObject({ factoryName: 'Factory One', saleOrderNumber: 'EISO/26-27/0001', factoryDispatchNumber: 'FD/26-27/0001' });
-    expect(vm.cartons[1]).toMatchObject({ factoryName: 'Factory Two', saleOrderNumber: 'EISO/26-27/0002', factoryDispatchNumber: 'FD/26-27/0002' });
+    const serialized = JSON.stringify(vm);
+    expect(serialized).not.toMatch(/Factory One|Factory Two/);
+    expect(serialized).not.toMatch(/EISO|FD\/26-27/);
     // The carton-line quantity, never a Dispatch Order requested/FactoryDispatch summary quantity.
     expect(vm.cartons[0]?.lines[0]?.quantity).toBe(20);
     expect(vm.cartons[1]?.lines[0]?.quantity).toBe(20);
@@ -261,33 +262,27 @@ describe('buildErvePackingListDetailViewModel', () => {
     });
   });
 
-  // DEMO-020: sourceFactories/carton.factory*/factoryDispatch* are
-  // confidential factory/supplier provenance, omitted entirely (not nulled)
-  // by the API for any role outside ERVE_PACKING_LIST_PROVENANCE_ROLES. This
-  // page's download/print are only ever reachable by that same authorized
-  // role set today, so there is no real request that omits these fields yet
-  // — but if the input ever lacks them, the PDF view model (and therefore
-  // the printed/downloaded document, which is built purely from this model)
-  // must not surface them anyway.
-  it('omits Source Factories and every carton factory/Factory-Packing-List field when the source record lacks provenance', () => {
-    const full = makePackingList();
-    const { sourceFactories: _sourceFactories, ...withoutSourceFactories } = full;
-    const packingList: ErvePackingListDetail = {
-      ...withoutSourceFactories,
-      cartons: full.cartons.map(({ factory: _factory, factoryDispatchId: _factoryDispatchId, factoryDispatchNumber: _factoryDispatchNumber, ...carton }) => carton),
-    };
+  // ISS-054: internal factory provenance and EISO/EIFD references are never
+  // printed on this external, distributor-facing PDF — regardless of
+  // whether the source record carries them (unlike the prior DEMO-020
+  // behavior, which only suppressed a stray label/separator when absent).
+  // The authorized web detail page (ErvePackingListDetailPage.tsx) is
+  // unaffected — this view model is PDF-only.
+  it('never prints Source Factories, Source Dispatch Orders, or any per-carton Factory/EISO/EIFD reference', () => {
+    const packingList = makePackingList();
 
     const vm = buildErvePackingListDetailViewModel(packingList, { generatedAt: '2026-07-01T10:00:00Z' });
 
     expect(vm.identityItems.find((i) => i.label === 'Source Factories')).toBeUndefined();
-    expect(vm.cartons[0]?.factoryName).toBeNull();
-    expect(vm.cartons[0]?.factoryDispatchNumber).toBeNull();
+    expect(vm.identityItems.find((i) => i.label === 'Source Dispatch Orders')).toBeUndefined();
+    expect(vm.cartons[0]).not.toHaveProperty('factoryName');
+    expect(vm.cartons[0]).not.toHaveProperty('saleOrderNumber');
+    expect(vm.cartons[0]).not.toHaveProperty('factoryDispatchNumber');
     const serialized = JSON.stringify(vm);
     expect(serialized).not.toContain('Acme Factory');
-    expect(serialized).not.toContain('FD/26-27/0001');
+    expect(serialized).not.toMatch(/EISO|FD\/26-27/);
 
     // Non-confidential fields are unaffected.
-    expect(vm.identityItems.find((i) => i.label === 'Source Dispatch Orders')?.value).toBe('EISO/26-27/0001');
     expect(vm.cartons[0]?.cartonNumber).toBe('CTN-001');
   });
 });

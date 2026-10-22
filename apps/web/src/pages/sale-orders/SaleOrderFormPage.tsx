@@ -126,6 +126,14 @@ export function SaleOrderFormPage() {
   // gone INACTIVE and dropped out of it too. Both must still display.
   const [selectedFactory, setSelectedFactory] = useState<FactoryLookupValue | null>(null);
   const factoryId = selectedFactory?.id ?? '';
+  // BUG-007 follow-up: the persisted Factory this Dispatch Order's own
+  // reservation actually lives at — changing Factory in edit mode triggers
+  // full stock reallocation at the NEW Factory (a totally separate pool),
+  // where this order holds no reservation to add back. Only when the
+  // selected Factory is still the original one does excludeSaleOrderId
+  // apply; switching Factory (or creating new) must query plain pooled
+  // availability, never a stale/mismatched exclusion.
+  const [originalFactoryId, setOriginalFactoryId] = useState<string | null>(null);
   const [soDate, setSoDate] = useState(() => getLocalDateString());
   const [remarks, setRemarks] = useState('');
   const [distributorGroups, setDistributorGroups] = useState<DistributorGroupDraft[]>([emptyDistributorGroup()]);
@@ -152,13 +160,20 @@ export function SaleOrderFormPage() {
     },
   });
 
+  // BUG-007: only exclude this order's own commitment when editing it AT
+  // ITS ORIGINAL FACTORY — switching Factory reallocates against a
+  // different pool entirely, where this order holds no reservation to add
+  // back (sending excludeSaleOrderId there would now correctly 400, since
+  // the backend validates it belongs to the requested factory).
+  const excludeSaleOrderId = isEdit && factoryId && factoryId === originalFactoryId ? id : undefined;
+
   const pooledInventoryQuery = useQuery({
-    queryKey: ['job-orders', 'pooled-inventory', factoryId],
+    queryKey: ['job-orders', 'pooled-inventory', factoryId, excludeSaleOrderId],
     enabled: Boolean(factoryId),
     queryFn: async () => {
       const res = await apiClient.get<ApiSuccessResponse<PooledFactoryInventoryLine[]>>(
         '/job-orders/pooled-inventory',
-        { params: { factoryId } },
+        { params: { factoryId, excludeSaleOrderId } },
       );
       return res.data.data;
     },
@@ -251,6 +266,7 @@ export function SaleOrderFormPage() {
     // without an effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedFactory(so.factory);
+    setOriginalFactoryId(so.factory.id);
     setSoDate(so.soDate.slice(0, 10));
     setRemarks(so.remarks ?? '');
     setExpectedVersion(so.version);
