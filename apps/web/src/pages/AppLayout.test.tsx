@@ -105,6 +105,32 @@ function sidebarTextContent(): string {
   return aside?.textContent ?? '';
 }
 
+describe('invoice workflow navigation after retirement', () => {
+  it.each<{ roles: Role[] }>([
+    { roles: ['ADMIN'] },
+    { roles: ['ACCOUNTANT'] },
+    { roles: ['MERCHANDISER'] },
+    { roles: ['SENIOR_MANAGEMENT'] },
+    { roles: ['FACTORY_USER'] },
+    { roles: ['QA_USER'] },
+    { roles: ['DISTRIBUTOR'] },
+    { roles: ['FACTORY_USER', 'ACCOUNTANT'] },
+    { roles: ['DISTRIBUTOR', 'MERCHANDISER'] },
+    { roles: ['ADMIN', 'ACCOUNTANT', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER', 'DISTRIBUTOR'] },
+  ])('keeps native invoice access and hides handoff navigation for $roles', async ({ roles }) => {
+    await renderAppLayout(roles);
+    expect(container.querySelector('a[href="/fulfillment/invoices"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/Invoice Handoff|Tally/i);
+    expect(container.querySelector('a[href="/fulfillment/tax-invoices"]') !== null).toBe(
+      roles.includes('ADMIN') || roles.includes('ACCOUNTANT'),
+    );
+    expect(container.querySelector('a[href="/fulfillment/factory-invoices"]') !== null).toBe(
+      roles.includes('ADMIN') || roles.includes('ACCOUNTANT') || roles.includes('FACTORY_USER'),
+    );
+    expect(container.querySelector('a[href="/dashboard"]')).not.toBeNull();
+  });
+});
+
 describe('AppLayout — role-gated navigation', () => {
   it.each(['ADMIN', 'ACCOUNTANT', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER', 'DISTRIBUTOR'] as Role[])(
     'shows GST Compliance Settings only to authorized %s', async (role) => {
@@ -141,7 +167,7 @@ describe('AppLayout — role-gated navigation', () => {
     expect(labels).not.toContain('+ New PO');
     expect(labels).toContain('Job Orders');
     expect(labels).toContain('Users');
-    expect(labels).toContain('Invoice Handoff');
+    expect(labels).not.toContain('Invoice Handoff');
     expect(labels).not.toContain('Invoices');
 
     expect(text).toContain('Master Data');
