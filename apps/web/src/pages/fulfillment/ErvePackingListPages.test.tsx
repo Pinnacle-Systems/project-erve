@@ -245,6 +245,88 @@ describe('ErvePackingListDetailPage', () => {
   });
 });
 
+// ISS-023 Phase 3: the selected/consolidated cartons' contents render as one Style row with Sizes
+// as columns, rather than one flat "Style/Size: qty" string per line.
+describe('ErvePackingListCreatePage Style x Size presentation (ISS-023 Phase 3)', () => {
+  it('groups multiple Sizes of the same Style across selected cartons into a single summary row', async () => {
+    mockAuth('MERCHANDISER');
+    const cartons = [
+      buildCarton({
+        id: 'carton-1',
+        cartonNumber: 'C1',
+        lines: [{ saleOrderLineId: 'line-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 }],
+      }),
+      buildCarton({
+        id: 'carton-2',
+        cartonNumber: 'C2',
+        lines: [{ saleOrderLineId: 'line-2', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 }],
+      }),
+    ];
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: cartons } } as never);
+
+    renderAt('/fulfillment/erve-packing-lists/new', '/fulfillment/erve-packing-lists/new', <ErvePackingListCreatePage />);
+    await flush();
+
+    checkboxByLabel('Select carton C1')!.click();
+    checkboxByLabel('Select carton C2')!.click();
+    await flush();
+
+    const styleCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
+    expect(styleCells).toHaveLength(1);
+    expect(content()).toContain('S');
+    expect(content()).toContain('M');
+    const headers = Array.from(container.querySelectorAll('table thead')).map((head) => Array.from(head.querySelectorAll('th')).map((cell) => cell.textContent));
+    expect(headers).toContainEqual(['Style', 'M', 'S', 'Total']);
+  });
+});
+
+// ISS-023 Phase 3: ErvePackingListDetailPage's own carton contents and consolidated Style/Size
+// Summary render as a Style x Size matrix instead of a flat per-line row/string.
+describe('ErvePackingListDetailPage Style x Size presentation (ISS-023 Phase 3)', () => {
+  it("renders each carton's own contents as a Style x Size matrix and the consolidated summary as one row per Style", async () => {
+    mockAuth('ADMIN');
+    const detail = buildDetail({
+      cartons: [
+        {
+          id: 'carton-1',
+          cartonNumber: 'C1',
+          factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
+          factoryDispatchId: 'fd-1',
+          factoryDispatchNumber: 'EIFD/26-27/0001',
+          saleOrder: { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001' },
+          packageDetails: null,
+          weight: null,
+          totalQuantity: 7,
+          lines: [
+            { saleOrderLineId: 'line-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 },
+            { saleOrderLineId: 'line-2', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 },
+          ],
+        },
+      ],
+      styleSizeSummary: [
+        { styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 },
+        { styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 },
+      ],
+    });
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/erve-packing-lists/epl-1') return { data: { data: detail } };
+      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    renderAt('/fulfillment/erve-packing-lists/epl-1', '/fulfillment/erve-packing-lists/:id', <ErvePackingListDetailPage />);
+    await flush();
+
+    // One Style row in the carton's own matrix, not two (Small + Medium collapsed into one row).
+    const styleCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
+    expect(styleCells.length).toBeGreaterThanOrEqual(1);
+    expect(content()).toContain('Style / Size Summary');
+    expect(content()).toContain('7'); // carton row total reconciles (3 + 4)
+    const headers = Array.from(container.querySelectorAll('table thead')).map((head) => Array.from(head.querySelectorAll('th')).map((cell) => cell.textContent));
+    expect(headers.filter((header) => header[0] === 'Style')).toEqual([['Style', 'M', 'S', 'Total'], ['Style', 'M', 'S', 'Total']]);
+  });
+});
+
 describe('ErvePackingListDetailPage PDF print (Phase 6)', () => {
   it('no longer renders the legacy "Print Packing List" window.print() button', async () => {
     mockAuth('MERCHANDISER');

@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from '@react-pdf/renderer';
-import { toFiniteNumber } from '@erve/primitives';
+import { Fragment } from 'react';
+import { toFiniteNumber } from '@erve/primitives/numeric';
 import { PdfThumbnail, type PdfImageSource } from './PdfThumbnail.js';
 
 const styles = StyleSheet.create({
@@ -10,8 +11,20 @@ const styles = StyleSheet.create({
     borderBottom: '1 solid #333333',
     paddingVertical: 4,
   },
-  headerCell: { fontSize: 8, fontWeight: 700, color: '#333333', paddingHorizontal: 4, textAlign: 'right' },
-  styleHeaderCell: { fontSize: 8, fontWeight: 700, color: '#333333', paddingHorizontal: 4, textAlign: 'left' },
+  headerCell: {
+    fontSize: 8,
+    fontWeight: 700,
+    color: '#333333',
+    paddingHorizontal: 4,
+    textAlign: 'right',
+  },
+  styleHeaderCell: {
+    fontSize: 8,
+    fontWeight: 700,
+    color: '#333333',
+    paddingHorizontal: 4,
+    textAlign: 'left',
+  },
   row: {
     flexDirection: 'row',
     borderBottom: '0.5 solid #dddddd',
@@ -26,7 +39,13 @@ const styles = StyleSheet.create({
   cellText: { fontSize: 8, color: '#111111', textAlign: 'right' },
   footerRow: { flexDirection: 'row', borderTop: '1 solid #333333', paddingVertical: 4 },
   footerLabelCell: { fontSize: 8, fontWeight: 700, color: '#111111', paddingHorizontal: 4 },
-  footerValueCell: { fontSize: 8, fontWeight: 700, color: '#111111', paddingHorizontal: 4, textAlign: 'right' },
+  footerValueCell: {
+    fontSize: 8,
+    fontWeight: 700,
+    color: '#111111',
+    paddingHorizontal: 4,
+    textAlign: 'right',
+  },
   emptyMessage: { fontSize: 8, color: '#777777', textAlign: 'center', paddingVertical: 10 },
 });
 
@@ -50,6 +69,9 @@ export interface PdfStyleSizeMatrixRow {
 }
 
 export interface PdfStyleSizeMatrixProps {
+  /** Opt in to placing group rows directly in the matrix's flow. Avoids the legacy
+   * paginator's empty nested-View split fallback when a group starts near a page end. */
+  flattenForPagination?: boolean;
   columns: PdfStyleSizeMatrixColumn[];
   rows: PdfStyleSizeMatrixRow[];
   showRowTotals?: boolean;
@@ -126,6 +148,7 @@ export function PdfStyleSizeMatrix({
   rowsPerHeaderRepeat = 25,
   emptyMessage = 'No styles to display.',
   styleColumnWidth = '28%',
+  flattenForPagination = false,
 }: PdfStyleSizeMatrixProps) {
   if (rows.length === 0) {
     return <Text style={styles.emptyMessage}>{emptyMessage}</Text>;
@@ -133,13 +156,19 @@ export function PdfStyleSizeMatrix({
 
   const groups = chunk(columns, maxColumnsPerGroup);
   const totalsColumnWidth = '10%';
+  const Container = flattenForPagination ? Fragment : View;
 
   return (
     <View>
       {groups.map((groupColumns, groupIndex) => {
         const isLastGroup = groupIndex === groups.length - 1;
         const groupShowsTotals = isLastGroup && showRowTotals;
-        const sizeColWidth = sizeColumnWidth(groupColumns, styleColumnWidth, groupShowsTotals, totalsColumnWidth);
+        const sizeColWidth = sizeColumnWidth(
+          groupColumns,
+          styleColumnWidth,
+          groupShowsTotals,
+          totalsColumnWidth,
+        );
         const groupLabel =
           groups.length > 1
             ? `Sizes ${groupColumns[0]!.sizeCode} – ${groupColumns[groupColumns.length - 1]!.sizeCode}${groupIndex > 0 ? ' (continued)' : ''}`
@@ -167,7 +196,7 @@ export function PdfStyleSizeMatrix({
         // repeats on every later page regardless of which group is still rendering, which breaks
         // down the moment a document has more than one column-group block.
         return (
-          <View key={groupIndex}>
+          <Container key={groupIndex}>
             {groupLabel ? <Text style={styles.groupLabel}>{groupLabel}</Text> : null}
             {chunk(rows, rowsPerHeaderRepeat).flatMap((rowChunk, chunkIndex) => [
               renderHeaderRow(`header-${chunkIndex}`),
@@ -181,7 +210,9 @@ export function PdfStyleSizeMatrix({
                     ) : null}
                     <View>
                       <Text style={styles.styleNumberText}>{row.styleNumber}</Text>
-                      {row.styleName ? <Text style={styles.styleNameText}>{row.styleName}</Text> : null}
+                      {row.styleName ? (
+                        <Text style={styles.styleNameText}>{row.styleName}</Text>
+                      ) : null}
                     </View>
                   </View>
                   {groupColumns.map((column) => (
@@ -201,7 +232,10 @@ export function PdfStyleSizeMatrix({
               <View style={styles.footerRow} wrap={false}>
                 <Text style={[styles.footerLabelCell, { width: styleColumnWidth }]}>Total</Text>
                 {groupColumns.map((column) => (
-                  <Text key={column.sizeId} style={[styles.footerValueCell, { width: sizeColWidth }]}>
+                  <Text
+                    key={column.sizeId}
+                    style={[styles.footerValueCell, { width: sizeColWidth }]}
+                  >
                     {groupColumnTotal(rows, column)}
                   </Text>
                 ))}
@@ -212,7 +246,7 @@ export function PdfStyleSizeMatrix({
                 ) : null}
               </View>
             ) : null}
-          </View>
+          </Container>
         );
       })}
     </View>

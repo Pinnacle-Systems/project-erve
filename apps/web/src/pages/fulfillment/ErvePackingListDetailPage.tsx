@@ -14,7 +14,50 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { canMutateErveDispatches } from '../../auth/permissions.js';
-import type { EligibleErveCartonView, ErvePackingListDetail } from './types.js';
+import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
+import type { StyleSizeGridRow } from '../../components/style-size-grid/types.js';
+import { distinctSizeColumns, groupLinesByStyle, withBusinessKeyIdentity } from './style-size-grouping.js';
+import type {
+  EligibleErveCartonView,
+  ErvePackingListCartonView,
+  ErvePackingListDetail,
+  ErvePackingListStyleSizeSummaryRow,
+} from './types.js';
+
+// ISS-023 Phase 3: this carton's own contents as one Style row per Style, with Sizes as columns,
+// instead of one flat "Style/Size: qty" string — mirrors the already-standardized Factory Packing
+// List / Packing Audit carton contents (ISS-023 Phase 1/2).
+function cartonStyleSizeRows(carton: ErvePackingListCartonView): StyleSizeGridRow[] {
+  return groupLinesByStyle(carton.lines.map(withBusinessKeyIdentity)).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
+}
+
+function styleSizeSummaryRows(rows: ErvePackingListStyleSizeSummaryRow[]): StyleSizeGridRow[] {
+  return groupLinesByStyle(rows.map(withBusinessKeyIdentity)).map((group) => ({
+    styleId: group.styleId,
+    styleNumber: group.styleNumber,
+    styleName: group.styleName,
+    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+  }));
+}
+
+// DEMO-020: carton.factory/factoryDispatchNumber are confidential factory/supplier provenance and
+// are omitted (not nulled) from the source record for a role outside ERVE_PACKING_LIST_PROVENANCE_
+// ROLES — this heading mirrors the PDF's own cartonHeading (ErvePackingListDetailDocument.tsx):
+// each segment (and its separator) is only printed when the field is actually present, so a
+// redacted carton never shows "Factory Packing List" at all, let alone "undefined"/"null".
+function cartonHeading(carton: ErvePackingListCartonView): string {
+  const parts = [`Carton ${carton.cartonNumber}`];
+  if (carton.factory) parts.push(carton.factory.name);
+  parts.push(carton.saleOrder.saleOrderNumber);
+  const segments = [parts.join(' — ')];
+  if (carton.factoryDispatchNumber) segments.push(`Factory Packing List ${carton.factoryDispatchNumber}`);
+  return segments.join(' — ');
+}
 
 const STATUS_LABEL: Record<ErvePackingListDetail['status'], string> = {
   OPEN: 'Open',
@@ -52,12 +95,6 @@ export function ErvePackingListDetailPage() {
   });
   const packingList = query.data;
   const isOpen = packingList?.status === 'OPEN';
-  // DEMO-020: sourceFactories/carton.factory are confidential factory/supplier
-  // provenance, omitted entirely from the API response for any role outside
-  // ERVE_PACKING_LIST_PROVENANCE_ROLES — this page is only ever route-gated to
-  // that same role set today, so hasProvenance is always true in practice,
-  // but the rendering below must not assume the key exists.
-  const hasProvenance = packingList?.sourceFactories !== undefined;
 
   const eligibleQuery = useQuery({
     enabled: isOpen && canMutate,
@@ -198,49 +235,47 @@ export function ErvePackingListDetailPage() {
           </DescriptionList>
         </Panel>
 
-        <Panel title="Cartons" padding="none">
-          <DataTable
-            rowKey="id"
-            data={packingList.cartons}
-            emptyState={<EmptyState title="No cartons selected yet" />}
-            columns={[
-              { key: 'carton', header: 'Carton #', accessor: 'cartonNumber' },
-              ...(hasProvenance
-                ? [
-                    { key: 'factory', header: 'Factory', render: (r: ErvePackingListDetail['cartons'][number]) => r.factory?.name ?? '—' },
-                    { key: 'factoryDispatch', header: 'Factory Packing List', accessor: 'factoryDispatchNumber' as const },
-                  ]
-                : []),
-              { key: 'dispatchOrder', header: 'Dispatch Order', render: (r) => r.saleOrder.saleOrderNumber },
-              { key: 'lines', header: 'Contents', render: (r) => r.lines.map((l) => `${l.styleNumber}/${l.sizeCode}: ${l.quantity}`).join(', ') },
-              { key: 'qty', header: 'Total Qty', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },
-              ...(isOpen && canMutate
-                ? [
-                    {
-                      key: 'remove',
-                      header: '',
-                      render: (r: ErvePackingListDetail['cartons'][number]) => (
-                        <Button variant="secondary" onClick={() => removeCartonMutation.mutate(r.id)} loading={removeCartonMutation.isPending}>
-                          Remove
-                        </Button>
-                      ),
-                    },
-                  ]
-                : []),
-            ]}
-          />
+        <Panel title="Cartons">
+          {packingList.cartons.length === 0 ? (
+            <EmptyState title="No cartons selected yet" />
+          ) : (
+            <div className="space-y-3">
+              {packingList.cartons.map((carton) => (
+                <div key={carton.id} className="rounded-md border border-border p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-medium">{cartonHeading(carton)}</div>
+                    {isOpen && canMutate && (
+                      <Button
+                        variant="ghost"
+                        density="compact"
+                        onClick={() => removeCartonMutation.mutate(carton.id)}
+                        loading={removeCartonMutation.isPending}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                  {carton.packageDetails && <div className="text-sm text-muted-foreground">{carton.packageDetails}</div>}
+                  <div className="mt-1 text-sm text-muted-foreground">Total Qty: {carton.totalQuantity.toLocaleString()}</div>
+                  <div className="mt-2">
+                    <StyleSizeGrid
+                      columns={distinctSizeColumns(carton.lines.map(withBusinessKeyIdentity))}
+                      rows={cartonStyleSizeRows(carton)}
+                      variant="readOnly"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Panel>
 
         {packingList.styleSizeSummary.length > 0 && (
-          <Panel title="Style / Size Summary" padding="none">
-            <DataTable
-              rowKey={(r) => `${r.styleNumber}-${r.sizeCode}`}
-              data={packingList.styleSizeSummary}
-              columns={[
-                { key: 'style', header: 'Style', render: (r) => `${r.styleNumber} — ${r.styleName}` },
-                { key: 'size', header: 'Size', accessor: 'sizeLabel' },
-                { key: 'qty', header: 'Quantity', align: 'right', render: (r) => r.quantity.toLocaleString() },
-              ]}
+          <Panel title="Style / Size Summary">
+            <StyleSizeGrid
+              columns={distinctSizeColumns(packingList.styleSizeSummary.map(withBusinessKeyIdentity))}
+              rows={styleSizeSummaryRows(packingList.styleSizeSummary)}
+              variant="readOnly"
             />
           </Panel>
         )}
