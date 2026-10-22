@@ -33,6 +33,7 @@ function renderGrid(children: ReactElement) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -41,6 +42,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.unstubAllGlobals();
 });
 
 function changeInput(input: HTMLInputElement, value: string): void {
@@ -50,6 +52,27 @@ function changeInput(input: HTMLInputElement, value: string): void {
 }
 
 describe('StyleSizeGrid — editable/computed/readOnly variants, totals, keyboard nav', () => {
+  it('applies cell capacity and reports invalid drafts without replacing committed quantities', () => {
+    const onCellChange = vi.fn();
+    const onCellValidationChange = vi.fn();
+    renderGrid(<StyleSizeGrid columns={columns} rows={rows} variant="editable"
+      cellOptions={() => ({ max: 25, helpText: '25 available', ariaLabel: 'Carton quantity' })}
+      onCellChange={onCellChange} onCellValidationChange={onCellValidationChange} />);
+    const input = container.querySelector('input[aria-label="Carton quantity"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(container.textContent).toContain('25 available');
+    act(() => changeInput(input, '26'));
+    act(() => input.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+    expect(onCellChange).not.toHaveBeenCalled();
+    expect(onCellValidationChange).toHaveBeenCalledWith('style-1', 'size-s', false);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toContain('25');
+    act(() => changeInput(input, '25'));
+    act(() => input.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+    expect(onCellChange).toHaveBeenCalledWith('style-1', 'size-s', 25);
+    expect(onCellValidationChange).toHaveBeenLastCalledWith('style-1', 'size-s', true);
+  });
+
   it('renders one editable cell per Size column and fires onCellChange on commit', () => {
     const onCellChange = vi.fn();
     renderGrid(<StyleSizeGrid columns={columns} rows={rows} variant="editable" onCellChange={onCellChange} />);

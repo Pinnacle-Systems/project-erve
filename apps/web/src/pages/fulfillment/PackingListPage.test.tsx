@@ -26,6 +26,7 @@ function mockAuth(role: Role) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -160,9 +161,10 @@ async function renderPage(packingList: PackingListView, role: Role = 'FACTORY_US
     throw new Error(`Unexpected GET: ${url}`);
   });
 
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   act(() => {
     root.render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={['/sale-orders/so-1/packing-list']}>
           <Routes>
             <Route path="/sale-orders/:id/packing-list" element={<PackingListPage />} />
@@ -172,9 +174,210 @@ async function renderPage(packingList: PackingListView, role: Role = 'FACTORY_US
     );
   });
   await vi.waitFor(() => expect(content()).not.toContain('Loading Packing List'));
+  return queryClient;
 }
 
+function enterQuantity(label: string, value: string) {
+  const input = container.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
+  act(() => input.focus());
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  act(() => input.blur());
+  return input;
+}
+
+describe('Carton quantity matrix', () => {
+  it('commits a valid draft before Save click and prevents duplicate pending submissions', async () => {
+    const list = buildPackingList();
+    await renderPage(list);
+    let complete!: (value: never) => void;
+    const patch = vi.spyOn(apiClient, 'patch').mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    act(() => buttonByText('Edit')!.click());
+    await flush();
+    const input = container.querySelector('input[aria-label="Quantity for ST-001 Medium"]') as HTMLInputElement;
+    act(() => input.focus());
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '7');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => buttonByText('Save Changes')!.focus());
+    act(() => { buttonByText('Save Changes')!.click(); buttonByText('Save Changes')!.click(); });
+    await flush();
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch).toHaveBeenCalledWith('/factory-dispatches/fd-1/cartons/carton-1', expect.objectContaining({ lines: [{ saleOrderLineId: 'line-1', quantity: 7 }] }));
+    expect(buttonByText('Save Changes')!.disabled).toBe(true);
+    await act(async () => complete({ data: { data: list } } as never));
+    await flush();
+  });
+
+  it('clears invalid drafts on Cancel and remounts clean quantities when reopening', async () => {
+    await renderPage(buildPackingList());
+    act(() => buttonByText('Edit')!.click());
+    await flush();
+    enterQuantity('Quantity for ST-001 Medium', '11');
+    expect(buttonByText('Save Changes')!.disabled).toBe(true);
+    act(() => buttonByText('Cancel')!.click());
+    act(() => buttonByText('Edit')!.click());
+    await flush();
+    expect(buttonByText('Save Changes')!.disabled).toBe(false);
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Quantity for ST-001 Medium"]')!.value).toBe('10');
+  });
+
+  it('resets quantities and invalid drafts when the edit destination changes', async () => {
+    const list = buildPackingList();
+    const second = structuredClone(list.destinations[0]!);
+    second.id = 'dest-2';
+    second.label = 'Second destination';
+    second.cartons = [];
+    second.lines[0]!.saleOrderLineId = 'second-line';
+    second.lines[0]!.packedQuantity = 0;
+    list.destinations.push(second);
+    await renderPage(list);
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: list } } as never);
+    act(() => buttonByText('Edit')!.click());
+    await flush();
+    enterQuantity('Quantity for ST-001 Medium', '11');
+    act(() => triggerByLabel('Destination').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })));
+    await flush();
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((el) => el.textContent?.includes('Second destination'))!;
+    expect(option).toBeTruthy();
+    act(() => option.click());
+    await flush();
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Quantity for ST-001 Medium"]')!.value).toBe('');
+    expect(buttonByText('Save Changes')!.disabled).toBe(true);
+    enterQuantity('Quantity for ST-001 Medium', '4');
+    act(() => buttonByText('Save Changes')!.click());
+    await flush();
+    expect(patch).toHaveBeenCalledWith('/factory-dispatches/fd-1/cartons/carton-1', expect.objectContaining({
+      destinationId: 'dest-2', lines: [{ saleOrderLineId: 'second-line', quantity: 4 }],
+    }));
+  });
+
+  it('groups multiple Styles and canonical Sizes, displays capacity, and posts only positive cells by line identity', async () => {
+    const list = buildPackingList();
+    const destination = list.destinations[0]!;
+    const line = destination.lines[0]!;
+    destination.lines = [
+      { ...line, saleOrderLineId: 'large', sizeId: 'large', sizeCode: 'L', sizeLabel: 'Large', sizeSortOrder: 2, packedQuantity: 3 },
+      { ...line, saleOrderLineId: 'small', sizeId: 'small', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 0, packedQuantity: 0 },
+      { ...line, saleOrderLineId: 'polo', styleId: 'polo', styleNumber: 'ST-002', sizeSortOrder: 1, packedQuantity: 0 },
+    ];
+    destination.cartons = [];
+    await renderPage(list);
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: list } } as never);
+    act(() => buttonByText('Add Carton')!.click());
+    await flush();
+    const input = container.querySelector('input[aria-label="Quantity for ST-001 Large"]') as HTMLInputElement;
+    const table = input.closest('table')!;
+    expect(table).toBeTruthy();
+    expect(Array.from(table.querySelectorAll('thead th')).map((n) => n.textContent)).toEqual(['Style', 'S', 'M', 'L', 'Total']);
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(table.textContent).toContain('7 available');
+    expect(table.textContent).toContain('—');
+    const number = triggerByLabel('Carton Number') as unknown as HTMLInputElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(number, 'C2');
+      number.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    enterQuantity('Quantity for ST-001 Large', '7');
+    enterQuantity('Quantity for ST-001 Small', '0');
+    enterQuantity('Quantity for ST-002 Medium', '2');
+    act(() => buttonByText('Add Carton')!.click());
+    await flush();
+    expect(post).toHaveBeenCalledWith('/sale-orders/so-1/packing-list/cartons', expect.objectContaining({
+      cartonNumber: 'C2', lines: [{ saleOrderLineId: 'large', quantity: 7 }, { saleOrderLineId: 'polo', quantity: 2 }],
+    }));
+  });
+
+  it('revalidates against refreshed capacity and keeps selected zero-capacity cells visible', async () => {
+    const list = buildPackingList();
+    const client = await renderPage(list);
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: list } } as never);
+    act(() => buttonByText('Edit')!.click());
+    await flush();
+    enterQuantity('Quantity for ST-001 Medium', '8');
+    const updated = structuredClone(list);
+    updated.destinations[0]!.lines[0]!.packedQuantity = 20;
+    // Even a changed carton response must not inflate the original-own contribution snapshot.
+    updated.destinations[0]!.cartons[0]!.lines[0]!.quantity = 20;
+    act(() => client.setQueryData(['packing-list', 'so-1'], updated));
+    await flush();
+    expect(container.querySelector('input[aria-label="Quantity for ST-001 Medium"]')).toBeTruthy();
+    expect(content()).toContain('0 available');
+    expect(buttonByText('Save Changes')!.disabled).toBe(true);
+    act(() => buttonByText('Save Changes')!.click());
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a selected line removed by refetch rather than dropping it from the payload', async () => {
+    const list = buildPackingList();
+    const client = await renderPage(list);
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: list } } as never);
+    act(() => buttonByText('Edit')!.click());
+    await flush();
+    const updated = structuredClone(list);
+    updated.destinations[0]!.lines = [];
+    act(() => client.setQueryData(['packing-list', 'so-1'], updated));
+    await flush();
+    expect(buttonByText('Save Changes')!.disabled).toBe(true);
+    act(() => buttonByText('Save Changes')!.click());
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it('adds back the edited carton own contents but rejects amounts above the replacement capacity', async () => {
+    const list = buildPackingList();
+    list.destinations[0]!.lines[0]!.requiredQuantity = 15;
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: list } } as never);
+    await renderPage(list);
+    act(() => buttonByText('Edit')!.click());
+    await flush();
+    expect(content()).toContain('15 available');
+    enterQuantity('Quantity for ST-001 Medium', '16');
+    expect(buttonByText('Save Changes')!.disabled).toBe(true);
+    enterQuantity('Quantity for ST-001 Medium', '15');
+    act(() => buttonByText('Save Changes')!.click());
+    await flush();
+    expect(patch).toHaveBeenCalledWith('/factory-dispatches/fd-1/cartons/carton-1', expect.objectContaining({
+      lines: [{ saleOrderLineId: 'line-1', quantity: 15 }], expectedVersion: 1,
+    }));
+  });
+});
+
 describe('PackingListPage carton edit (Phase 4)', () => {
+  it('blocks saving an invalid blurred draft instead of submitting its old committed quantity', async () => {
+    await renderPage(buildPackingList());
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: buildPackingList() } } as never);
+    act(() => buttonByText('Edit')!.click());
+    await flush();
+    const input = container.querySelector('input[aria-label="Quantity for ST-001 Medium"]') as HTMLInputElement;
+    expect(input.type).toBe('text');
+    act(() => input.focus());
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '11');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    // A real pointer click blurs the focused input before dispatching click.
+    act(() => buttonByText('Save Changes')!.focus());
+    act(() => buttonByText('Save Changes')!.click());
+    await flush();
+    expect(patch).not.toHaveBeenCalled();
+    expect(buttonByText('Save Changes')!.disabled).toBe(true);
+    expect(input.value).toBe('11');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    act(() => input.focus());
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '8');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => input.blur());
+    act(() => buttonByText('Save Changes')!.click());
+    await flush();
+    expect(patch).toHaveBeenCalledWith('/factory-dispatches/fd-1/cartons/carton-1',
+      expect.objectContaining({ lines: [{ saleOrderLineId: 'line-1', quantity: 8 }] }));
+  });
+
   it('shows an Edit action for an active DRAFT carton to FACTORY_USER', async () => {
     await renderPage(buildPackingList());
     expect(buttonByText('Edit')).not.toBeNull();
@@ -385,6 +588,7 @@ describe('PackingListPage carton packing metadata (DEMO-018)', () => {
     await act(async () => {
       setter.call(qtyInput, '1');
       qtyInput.dispatchEvent(new Event('input', { bubbles: true }));
+      qtyInput.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
     });
 
     expect(buttonByText('Add Carton')!.hasAttribute('disabled')).toBe(false);
