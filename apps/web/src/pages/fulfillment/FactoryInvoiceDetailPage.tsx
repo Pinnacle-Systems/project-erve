@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { createEnterToNextHandler, PageHeader, StatusBadge, TotalsPanel } from '@erve/app-components';
+import { ConfirmDialog, createEnterToNextHandler, PageHeader, StatusBadge, TotalsPanel } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -29,6 +29,7 @@ export function FactoryInvoiceDetailPage() {
   const [gstInput, setGstInput] = useState<string | null>(null);
   const [remarksInput, setRemarksInput] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
+  const [confirmation, setConfirmation] = useState<'confirm' | 'finalize' | null>(null);
 
   const query = useQuery({
     queryKey: ['factory-invoice', id],
@@ -50,6 +51,7 @@ export function FactoryInvoiceDetailPage() {
     },
     onSuccess: () => {
       setFormError('');
+      setConfirmation(null);
       return invalidate();
     },
     onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to confirm this Factory Invoice.')),
@@ -87,6 +89,7 @@ export function FactoryInvoiceDetailPage() {
     },
     onSuccess: () => {
       setFormError('');
+      setConfirmation(null);
       return invalidate();
     },
     onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to finalize this Factory Invoice.')),
@@ -153,7 +156,7 @@ export function FactoryInvoiceDetailPage() {
         }
         primaryAction={
           canConfirm && invoice.status === 'GENERATED' ? (
-            <Button onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>
+            <Button onClick={() => { setFormError(''); setConfirmation('confirm'); }} loading={confirmMutation.isPending}>
               Confirm Factory Invoice
             </Button>
           ) : editingFinancials ? (
@@ -166,7 +169,11 @@ export function FactoryInvoiceDetailPage() {
               >
                 Save Changes
               </Button>
-              <Button onClick={() => finalizeMutation.mutate()} loading={finalizeMutation.isPending}>
+              <Button
+                onClick={() => { setFormError(''); setConfirmation('finalize'); }}
+                disabled={hasFinancialChanges || saveFinancialsMutation.isPending}
+                loading={finalizeMutation.isPending}
+              >
                 Finalize
               </Button>
             </div>
@@ -175,6 +182,11 @@ export function FactoryInvoiceDetailPage() {
       />
 
       {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
+      {editingFinancials && hasFinancialChanges && (
+        <ValidationMessage tone="warning">
+          Save financial changes before finalizing this Factory Invoice.
+        </ValidationMessage>
+      )}
       {invoice.status === 'GENERATED' && canEditFinancials && (
         <ValidationMessage tone="warning">
           Awaiting Factory Confirmation — financial values cannot be edited until the Factory confirms this invoice.
@@ -317,6 +329,29 @@ export function FactoryInvoiceDetailPage() {
           </Panel>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmation === 'confirm'}
+        onOpenChange={(open) => { if (!open && !confirmMutation.isPending) setConfirmation(null); }}
+        title="Confirm Factory Invoice?"
+        description={`Confirm the pre-tax production amount ${formatMoney(invoice.subtotal)} for Factory Dispatch ${invoice.factoryDispatch.factoryDispatchNumber}. GST and final payable remain provisional until Accountant finalization.`}
+        confirmLabel="Confirm Factory Invoice"
+        cancelLabel="Go Back"
+        loading={confirmMutation.isPending}
+        error={confirmMutation.isError ? formError : undefined}
+        onConfirm={() => confirmMutation.mutate()}
+      />
+      <ConfirmDialog
+        open={confirmation === 'finalize'}
+        onOpenChange={(open) => { if (!open && !finalizeMutation.isPending) setConfirmation(null); }}
+        title="Finalize Factory Invoice?"
+        description={`Factory Dispatch ${invoice.factoryDispatch.factoryDispatchNumber} · Saved payable ${formatMoney(invoice.total)}. Finalization locks the invoice financial details. Confirm that all financial edits have been saved.`}
+        confirmLabel="Finalize Factory Invoice"
+        cancelLabel="Keep Editing"
+        loading={finalizeMutation.isPending}
+        error={finalizeMutation.isError ? formError : undefined}
+        onConfirm={() => { if (!hasFinancialChanges && !saveFinancialsMutation.isPending) finalizeMutation.mutate(); }}
+      />
     </div>
   );
 }
