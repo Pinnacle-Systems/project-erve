@@ -292,7 +292,6 @@ jobs:
     env:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erve_batch1_test
       CHROME_BINARY: /usr/bin/google-chrome
-      BATCH1_EVIDENCE_ROOT: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -310,6 +309,8 @@ jobs:
       - name: Verify fixture safety guards
         run: node --test tools/job-order-detail/safety.test.mjs
       - name: Verify Job Order browser geometry and persisted workflows
+        env:
+          BATCH1_EVIDENCE_ROOT: ${{ runner.temp }}
         run: pnpm --filter @erve/web test:job-order-browser
       - name: Upload synthetic browser acceptance evidence
         if: always()
