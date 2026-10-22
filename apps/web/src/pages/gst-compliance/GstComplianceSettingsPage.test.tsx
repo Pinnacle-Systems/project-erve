@@ -165,7 +165,7 @@ describe('GST Compliance Settings page', () => {
     let finishSave!: (value: unknown) => void;
     vi.mocked(apiClient.patch).mockImplementation(() => new Promise((resolve) => { finishSave = resolve; }) as ReturnType<typeof apiClient.patch>);
     await act(async () => control('switch', 'Enable Online GSTIN Verification').click());
-    await act(async () => { button('Save changes').click(); button('Save changes').click(); });
+    await act(async () => { button('Save changes').click(); button('Save changes').click(); }); await settle();
     expect(apiClient.patch).toHaveBeenCalledTimes(1);
     expect(control('switch', 'Enable Online GSTIN Verification').disabled).toBe(true);
     await act(async () => finishSave({ data: { success: true, data: { ...persisted, onlineGstinVerificationEnabled: true, version: 1 } } })); await settle();

@@ -6,15 +6,13 @@ import {
   buildFactoryPackingQueueListViewModel,
   type FactoryPackingQueueListPdfMeta,
 } from './buildFactoryPackingQueueListViewModel.js';
-import { FactoryPackingQueueListDocument } from './FactoryPackingQueueListDocument.js';
-import { renderPdfBlob } from '../../../../lib/pdf/generate.js';
+import type { FactoryPackingQueueWorkerResponse } from './factoryPackingQueueWorkerTypes.js';
 import type { FactoryPackingQueueLine } from '../../types.js';
 
 /**
- * The only static importer of `FactoryPackingQueueListDocument` (and therefore of
- * `@react-pdf/renderer` for the Factory Packing Queue). Callers reach this module via a dynamic
- * `import()` so the PDF engine and document code load only when a user actually clicks
- * Download/Print.
+ * Fetches the authorized export data on the UI thread, then renders the unchanged PDF
+ * in one dedicated worker. API/authentication clients never cross into the worker.
+ * Callers reach this module via the existing Download/Print dynamic import.
  *
  * Both the "Awaiting Packing" queue and "Your Factory Dispatches" sections are fetched across
  * every page (traversing all pages with fetchAllPaginatedRecords) so the PDF export is never
@@ -37,5 +35,38 @@ export async function generateFactoryPackingQueueListPdfBlob(
     prepareFactoryPackingQueueListPdfData(meta.factoryId),
   ]);
   const viewModel = buildFactoryPackingQueueListViewModel(awaitingPacking, factoryDispatches, meta);
-  return renderPdfBlob(<FactoryPackingQueueListDocument viewModel={viewModel} />);
+  const worker = new Worker(new URL('./factoryPackingQueueList.worker.ts', import.meta.url), {
+    type: 'module',
+  });
+  try {
+    return await new Promise<Blob>((resolve, reject) => {
+      worker.onmessage = (event: MessageEvent<FactoryPackingQueueWorkerResponse | null>) => {
+        const response = event.data;
+        if (
+          response?.type === 'success' &&
+          response.blob instanceof Blob &&
+          response.blob.type === 'application/pdf' &&
+          response.blob.size > 0
+        ) {
+          resolve(response.blob);
+        } else if (response?.type === 'error' && typeof response.message === 'string') {
+          reject(new Error(response.message));
+        } else {
+          reject(new Error('Packing Queue PDF worker response is invalid.'));
+        }
+      };
+      worker.onerror = (event) => {
+        event.preventDefault();
+        reject(new Error('Packing Queue PDF worker failed to load or render.'));
+      };
+      worker.onmessageerror = () =>
+        reject(new Error('Packing Queue PDF worker response could not be read.'));
+      worker.postMessage({ viewModel });
+    });
+  } finally {
+    worker.onmessage = null;
+    worker.onerror = null;
+    worker.onmessageerror = null;
+    worker.terminate();
+  }
 }
