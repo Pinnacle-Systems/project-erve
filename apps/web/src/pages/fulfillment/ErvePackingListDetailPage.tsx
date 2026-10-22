@@ -378,7 +378,7 @@ export function ErvePackingListDetailPage() {
         open={finalizeDialogOpen}
         onOpenChange={(open) => { if (!finalizeMutation.isPending) setFinalizeDialogOpen(open); }}
         title="Finalize Erve Packing List?"
-        description={`Finalize ${packingList.ervePackingListNumber} with ${packingList.cartonCount.toLocaleString()} cartons and ${packingList.totalQuantity.toLocaleString()} pieces? Once finalized, its carton membership can no longer be edited.`}
+        description={`Finalize ${packingList.ervePackingListNumber} with ${packingList.cartonCount.toLocaleString()} ${packingList.cartonCount === 1 ? 'carton' : 'cartons'} and ${packingList.totalQuantity.toLocaleString()} pieces? Once finalized, its carton membership can no longer be edited.`}
         confirmLabel="Finalize Packing List"
         cancelLabel="Keep Editing"
         loading={finalizeMutation.isPending}
