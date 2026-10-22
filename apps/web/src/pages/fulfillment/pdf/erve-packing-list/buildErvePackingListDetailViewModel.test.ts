@@ -138,6 +138,113 @@ describe('buildErvePackingListDetailViewModel', () => {
     expect(serialized).not.toContain('auditInternal');
   });
 
+  // ISS-023 Phase 3: carton/summary contents as one Style row x Size columns, instead of one flat
+  // row per Style+Size combination — aggregation must reconcile exactly with the source carton data.
+  describe('Style x Size matrix aggregation', () => {
+    it('groups multiple Sizes of the same Style into a single carton row instead of repeating the Style', () => {
+      const packingList = makePackingList({
+        cartons: [
+          {
+            id: 'carton-1',
+            cartonNumber: 'CTN-001',
+            factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
+            factoryDispatchId: 'fd-1',
+            factoryDispatchNumber: 'FD/26-27/0001',
+            saleOrder: { id: 'so1', saleOrderNumber: 'EISO/26-27/0001' },
+            packageDetails: null,
+            weight: null,
+            totalQuantity: 7,
+            lines: [
+              { saleOrderLineId: 'sol-1', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'S', sizeLabel: 'Small', quantity: 3 },
+              { saleOrderLineId: 'sol-2', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4 },
+            ],
+          },
+        ],
+      });
+
+      const vm = buildErvePackingListDetailViewModel(packingList, { generatedAt: '2026-07-01T10:00:00Z' });
+
+      expect(vm.cartons[0]?.styleRows).toHaveLength(1);
+      expect(vm.cartons[0]?.sizeColumns).toHaveLength(2);
+      expect(vm.cartons[0]?.styleRows[0]?.values).toEqual({ S: 3, M: 4 });
+    });
+
+    it('groups two different Styles into two separate carton rows, never merged by shared Size', () => {
+      const packingList = makePackingList({
+        cartons: [
+          {
+            id: 'carton-1',
+            cartonNumber: 'CTN-001',
+            factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
+            factoryDispatchId: 'fd-1',
+            factoryDispatchNumber: 'FD/26-27/0001',
+            saleOrder: { id: 'so1', saleOrderNumber: 'EISO/26-27/0001' },
+            packageDetails: null,
+            weight: null,
+            totalQuantity: 10,
+            lines: [
+              { saleOrderLineId: 'sol-1', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 6 },
+              { saleOrderLineId: 'sol-2', styleNumber: 'ST-2', styleName: 'Pants', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4 },
+            ],
+          },
+        ],
+      });
+
+      const vm = buildErvePackingListDetailViewModel(packingList, { generatedAt: '2026-07-01T10:00:00Z' });
+
+      expect(vm.cartons[0]?.styleRows).toHaveLength(2);
+      expect(vm.cartons[0]?.styleRows.map((r) => r.values.M)).toEqual([6, 4]);
+    });
+
+    it('consolidates the same Style/Size across multiple cartons from different Factories/Dispatch Orders into one Style/Size Summary row without double counting', () => {
+      const packingList = makePackingList({
+        cartonCount: 2,
+        totalQuantity: 14,
+        sourceFactories: [
+          { id: 'f1', code: 'F1', name: 'Factory One' },
+          { id: 'f2', code: 'F2', name: 'Factory Two' },
+        ],
+        cartons: [
+          {
+            id: 'carton-1',
+            cartonNumber: 'CTN-001',
+            factory: { id: 'f1', code: 'F1', name: 'Factory One' },
+            factoryDispatchId: 'fd-1',
+            factoryDispatchNumber: 'FD/26-27/0001',
+            saleOrder: { id: 'so1', saleOrderNumber: 'EISO/26-27/0001' },
+            packageDetails: null,
+            weight: null,
+            totalQuantity: 6,
+            lines: [{ saleOrderLineId: 'sol-1', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 6 }],
+          },
+          {
+            id: 'carton-2',
+            cartonNumber: 'CTN-002',
+            factory: { id: 'f2', code: 'F2', name: 'Factory Two' },
+            factoryDispatchId: 'fd-2',
+            factoryDispatchNumber: 'FD/26-27/0002',
+            saleOrder: { id: 'so2', saleOrderNumber: 'EISO/26-27/0002' },
+            packageDetails: null,
+            weight: null,
+            totalQuantity: 8,
+            lines: [{ saleOrderLineId: 'sol-2', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 8 }],
+          },
+        ],
+        styleSizeSummary: [{ styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 14 }],
+      });
+
+      const vm = buildErvePackingListDetailViewModel(packingList, { generatedAt: '2026-07-01T10:00:00Z' });
+
+      // Each carton keeps its own row (per-carton provenance never collapses)...
+      expect(vm.cartons).toHaveLength(2);
+      expect(vm.cartons[0]?.styleRows[0]?.values.M).toBe(6);
+      expect(vm.cartons[1]?.styleRows[0]?.values.M).toBe(8);
+      // ...but the consolidated summary is one row, correctly totaled, not double-counted.
+      expect(vm.styleSizeSummaryRows).toHaveLength(1);
+      expect(vm.styleSizeSummaryRows[0]?.values.M).toBe(14);
+    });
+  });
+
   // DEMO-020: sourceFactories/carton.factory*/factoryDispatch* are
   // confidential factory/supplier provenance, omitted entirely (not nulled)
   // by the API for any role outside ERVE_PACKING_LIST_PROVENANCE_ROLES. This
