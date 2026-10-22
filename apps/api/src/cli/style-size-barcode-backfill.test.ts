@@ -84,18 +84,19 @@ describe('barcode backfill plan', () => {
       ambiguousSize: 1,
       rejected: 3,
     });
-    expect(plan.wouldGenerate.map((row) => row.barcode).sort()).toEqual(['3123410', '312343']);
+    expect(plan.wouldGenerate.map((row) => row.barcode).sort()).toEqual(['3 123403', '3 123410']);
   });
 
-  it('reports a collision with an existing historical barcode and between two blank rows, writing neither', async () => {
+  it('reports collisions with existing values and other blank mappings without rewriting anything', async () => {
     await seed([
-      { season: { code: 'A', serial: 3 }, lmix: 'LMIX1234', size: { label: '3' }, barcode: '312343' }, // already holds the value
-      { season: { code: 'B', serial: 31 }, lmix: 'LMIX234', size: { label: '3' } }, // 31+234+3 would collide with it
-      // Different splits, same digits: 1+1111+1 and 11+111+1 both read "111111".
-      { season: { code: 'C', serial: 1 }, lmix: 'LMIX1111', size: { label: '1' } },
-      { season: { code: 'D', serial: 11 }, lmix: 'LMIX111', size: { label: '1' } },
+      // Same Season serial; a 3-digit numeric size still permits an LMIX+size
+      // boundary ambiguity (LMIX12+345 and LMIX123+45).
+      { season: { code: 'A', serial: 3 }, lmix: 'LMIX12', size: { label: '345' }, barcode: '3 12345' },
+      { season: { code: 'A', serial: 3 }, lmix: 'LMIX123', size: { label: '45' } },
+      // Separate blank mappings with identical proposed new barcodes.
+      { season: { code: 'A', serial: 3 }, lmix: 'LMIX56', size: { label: '789' } },
+      { season: { code: 'A', serial: 3 }, lmix: 'LMIX567', size: { label: '89' } },
     ]);
-
     const plan = planBarcodeBackfill(await loadBackfillRows());
 
     expect(plan.skipped.COLLISION).toHaveLength(3);
@@ -104,13 +105,23 @@ describe('barcode backfill plan', () => {
     expect(result.written).toBe(0);
   });
 
+  it('avoids collisions between Season 3 and 31 thanks to the separator', async () => {
+    await seed([
+      { season: { code: 'A', serial: 3 }, lmix: 'LMIX1234', size: { label: '3' }, barcode: '312343' },
+      { season: { code: 'B', serial: 31 }, lmix: 'LMIX234', size: { label: '3' } },
+    ]);
+    const plan = planBarcodeBackfill(await loadBackfillRows());
+    expect(plan.skipped.COLLISION).toHaveLength(0);
+    expect(plan.wouldGenerate.map((row) => row.barcode)).toEqual(['31 23403']);
+  });
+
   it('can preview unassigned Seasons with --assume-serial without being able to write them', async () => {
     await seed([{ season: { code: 'NOSER', serial: null }, lmix: 'LMIX1234', size: { label: '3' } }]);
 
     const preview = planBarcodeBackfill(await loadBackfillRows(), { assumeSerials: new Map([['NOSER', 5]]) });
 
     expect(summarizePlan(preview).wouldGenerate).toBe(1);
-    expect(preview.wouldGenerate[0]!.barcode).toBe('512343');
+    expect(preview.wouldGenerate[0]!.barcode).toBe('5 123403');
     expect(summarizePlan(planBarcodeBackfill(await loadBackfillRows())).missingSeasonSerial).toBe(1);
   });
 });
@@ -139,7 +150,7 @@ describe('barcode backfill execution', () => {
 
     expect(result).toEqual({ written: 1, skippedFilled: 0 });
     const barcodes = (await prisma.styleSize.findMany({ select: { barcode: true } })).map((r) => r.barcode);
-    expect(barcodes.sort()).toEqual(['312343', 'HIST-4', null].sort());
+    expect(barcodes.sort()).toEqual(['3 123403', 'HIST-4', null].sort());
   });
 
   it('is idempotent and does not overwrite a row filled between planning and writing', async () => {
