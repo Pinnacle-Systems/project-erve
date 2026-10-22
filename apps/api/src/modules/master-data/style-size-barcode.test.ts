@@ -60,7 +60,7 @@ const barcodesOf = async (styleId: string) =>
   );
 
 describe('Style create with sizes', () => {
-  it('generates <Season serial><LMIX digits><size number> per Style + Size', async () => {
+  it('generates Season 3+ <serial><space><LMIX digits><2-digit age> per Style + Size', async () => {
     const token = await adminToken();
     const season = await createSeason(3);
     const [s3, s10] = [await createSize('3'), await createSize('10')];
@@ -68,8 +68,8 @@ describe('Style create with sizes', () => {
     const res = await postStyle(token, { seasonId: season.id, sizes: [{ sizeId: s3.id }, { sizeId: s10.id }] });
 
     expect(res.status).toBe(201);
-    expect(await barcodesOf(res.body.data.id)).toEqual({ '3': '312343', '10': '3123410' });
-    expect(res.body.data.sizes.map((s: { barcode: string }) => s.barcode)).toEqual(['312343', '3123410']);
+    expect(await barcodesOf(res.body.data.id)).toEqual({ '3': '3 123403', '10': '3 123410' });
+    expect(res.body.data.sizes.map((s: { barcode: string }) => s.barcode)).toEqual(['3 123403', '3 123410']);
   });
 
   it('preserves a supplied (manual / historical) barcode verbatim and generates only the blanks', async () => {
@@ -83,7 +83,35 @@ describe('Style create with sizes', () => {
     });
 
     expect(res.status).toBe(201);
-    expect(await barcodesOf(res.body.data.id)).toEqual({ '3': 'BJGGR26042008-3Y', '4': '312344' });
+    expect(await barcodesOf(res.body.data.id)).toEqual({ '3': 'BJGGR26042008-3Y', '4': '3 123404' });
+  });
+
+  it('accepts manually supplied Season 3+ barcodes with exactly one space', async () => {
+    const token = await adminToken();
+    const season = await createSeason(3);
+    const [s3, s10] = [await createSize('3'), await createSize('10')];
+
+    const res = await postStyle(token, {
+      seasonId: season.id,
+      sizes: [{ sizeId: s3.id, barcode: '3 1234567803' }, { sizeId: s10.id, barcode: '3 1234567810' }],
+    });
+
+    expect(res.status).toBe(201);
+    expect(await barcodesOf(res.body.data.id)).toEqual({ '3': '3 1234567803', '10': '3 1234567810' });
+  });
+
+  it('does not replace existing legacy Season-3 barcode when a new size is added', async () => {
+    const token = await adminToken();
+    const season = await createSeason(3);
+    const [s3, s10] = [await createSize('3'), await createSize('10')];
+    const created = await postStyle(token, { seasonId: season.id, sizes: [{ sizeId: s3.id, barcode: '312343' }] });
+    expect(created.status).toBe(201);
+    const add = await request(app)
+      .post(`/styles/${created.body.data.id}/sizes`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ sizeId: s10.id });
+    expect(add.status).toBe(200);
+    expect(await barcodesOf(created.body.data.id)).toEqual({ '3': '312343', '10': '3 123410' });
   });
 
   it('rejects a duplicate barcode within the request and creates nothing', async () => {
@@ -113,11 +141,11 @@ describe('Style create with sizes', () => {
       styleNumber: 'ST-002',
       seasonId: season.id,
       lmixNumber: 'LMIX9999',
-      sizes: [{ sizeId: s3.id, barcode: '312343' }],
+      sizes: [{ sizeId: s3.id, barcode: '3 123403' }],
     });
 
     expect(second.status).toBe(409);
-    expect(second.body.error.message).toBe('Barcode 312343 is already assigned to Style ST-001 / Size 3.');
+    expect(second.body.error.message).toBe('Barcode 3 123403 is already assigned to Style ST-001 / Size 3.');
     expect(second.body.error.message).not.toMatch(/prisma|constraint/i);
     expect(await prisma.style.count()).toBe(1);
   });
@@ -177,7 +205,7 @@ describe('global uniqueness is enforced by the database', () => {
     const other = await postStyle(token, { styleNumber: 'ST-002', seasonId: season.id });
 
     const attempt = prisma.styleSize.create({
-      data: { id: createId(), styleId: other.body.data.id, sizeId: s3.id, barcode: '312343' },
+      data: { id: createId(), styleId: other.body.data.id, sizeId: s3.id, barcode: '3 123403' },
     });
 
     await expect(attempt).rejects.toMatchObject({ code: 'P2002' });
@@ -226,7 +254,7 @@ describe('adding / removing sizes on an existing Style', () => {
       .send({ sizeId: s10.id });
 
     expect(res.status).toBe(200);
-    expect(await barcodesOf(styleId)).toEqual({ '3': '312343', '10': '3123410' });
+    expect(await barcodesOf(styleId)).toEqual({ '3': '3 123403', '10': '3 123410' });
   });
 
   it('preserves a supplied barcode on add and blocks a duplicate with the owner named', async () => {
@@ -280,7 +308,7 @@ describe('adding / removing sizes on an existing Style', () => {
 
     expect(rename.status).toBe(200);
     expect(relmix.status).toBe(200);
-    expect(await barcodesOf(styleId)).toEqual({ '3': '312343' });
+    expect(await barcodesOf(styleId)).toEqual({ '3': '3 123403' });
   });
 
   it('records the released barcode in the audit trail when a size is removed', async () => {
@@ -293,7 +321,7 @@ describe('adding / removing sizes on an existing Style', () => {
 
     expect(res.status).toBe(200);
     const audit = await prisma.auditLog.findFirst({ where: { entityId: styleId, action: 'STYLE_SIZE_REMOVED' } });
-    expect(audit?.metadata).toMatchObject({ sizeId: s3.id, barcode: '312343' });
+    expect(audit?.metadata).toMatchObject({ sizeId: s3.id, barcode: '3 123403' });
   });
 
   it('historical-style callers (generateMissing: false) leave the barcode empty instead of failing or inventing one', async () => {
@@ -329,26 +357,26 @@ describe('manual barcode edit', () => {
     const res = await patchBarcode(token, styleId, s3.id, ' CUSTOM-3 ');
 
     expect(res.status).toBe(200);
-    expect(await barcodesOf(styleId)).toEqual({ '3': 'CUSTOM-3', '4': '312344' });
+    expect(await barcodesOf(styleId)).toEqual({ '3': 'CUSTOM-3', '4': '3 123404' });
     const audit = await prisma.auditLog.findFirst({ where: { entityId: styleId, action: 'STYLE_SIZE_BARCODE_UPDATED' } });
-    expect(audit?.metadata).toMatchObject({ from: '312343', to: 'CUSTOM-3' });
+    expect(audit?.metadata).toMatchObject({ from: '3 123403', to: 'CUSTOM-3' });
   });
 
   it('blocks a barcode owned by another Style + Size, and a blank value', async () => {
     const { token, styleId, s3 } = await setup();
 
-    const dup = await patchBarcode(token, styleId, s3.id, '312344');
+    const dup = await patchBarcode(token, styleId, s3.id, '3 123404');
     const blank = await patchBarcode(token, styleId, s3.id, '   ');
 
     expect(dup.status).toBe(409);
-    expect(dup.body.error.message).toBe('Barcode 312344 is already assigned to Style ST-001 / Size 4.');
+    expect(dup.body.error.message).toBe('Barcode 3 123404 is already assigned to Style ST-001 / Size 4.');
     expect(blank.status).toBe(400);
-    expect((await barcodesOf(styleId))['3']).toBe('312343');
+    expect((await barcodesOf(styleId))['3']).toBe('3 123403');
   });
 
   it('is a no-op when the barcode is unchanged and 404s for an unmapped size', async () => {
     const { token, styleId, s3 } = await setup();
-    expect((await patchBarcode(token, styleId, s3.id, '312343')).status).toBe(200);
+    expect((await patchBarcode(token, styleId, s3.id, '3 123403')).status).toBe(200);
     expect((await patchBarcode(token, styleId, 'missing', 'X-1')).status).toBe(404);
   });
 
@@ -399,7 +427,7 @@ describe('Season Barcode Serial', () => {
     expect((await patch(4)).status).toBe(200);
     expect((await patch(5)).status).toBe(200); // no barcodes yet
     const created = await postStyle(token, { seasonId: season.id, sizes: [{ sizeId: s3.id }] });
-    expect(await barcodesOf(created.body.data.id)).toEqual({ '3': '512343' });
+    expect(await barcodesOf(created.body.data.id)).toEqual({ '3': '5 123403' });
 
     const frozen = await patch(6);
     expect(frozen.status).toBe(409);

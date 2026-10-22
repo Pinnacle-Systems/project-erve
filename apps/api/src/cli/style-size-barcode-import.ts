@@ -10,7 +10,7 @@
 //   Style Number                  - OR - Season + LMIX (to identify the Style)
 import * as XLSX from 'xlsx';
 import { prisma } from '../db/prisma.js';
-import { parseSizeNumber, SUPPLIED_BARCODE_PATTERN } from '../modules/master-data/barcode.util.js';
+import { parseSizeNumber, SUPPLIED_BARCODE_MESSAGE, SUPPLIED_BARCODE_PATTERN } from '../modules/master-data/barcode.util.js';
 
 export interface SheetRow {
   /** 1-indexed row as shown in the spreadsheet (header is row 1). */
@@ -203,7 +203,7 @@ export function planBarcodeImport(rows: SheetRow[], catalog: Catalog): ImportPla
       continue;
     }
     if (!SUPPLIED_BARCODE_PATTERN.test(row.barcode)) {
-      reject('INVALID_BARCODE', row, 'barcode must be 1-64 printable characters without spaces');
+      reject('INVALID_BARCODE', row, SUPPLIED_BARCODE_MESSAGE);
       continue;
     }
     const styles = row.styleNumber

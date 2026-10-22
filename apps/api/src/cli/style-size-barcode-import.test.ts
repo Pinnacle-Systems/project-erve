@@ -166,6 +166,16 @@ describe('planBarcodeImport', () => {
     expect(result.wouldSet.map((r) => r.barcode)).toEqual(['BJGGR26042008-3Y', '22223', '3333334']);
   });
 
+  it('accepts an explicit Season 3+ barcode containing the required separator', async () => {
+    const s = await seed();
+    await s.style(s.aw26, 'AW26-NEW', 'LMIX12345678', [s.s3]);
+
+    const input = row({ rowNumber: 2, styleNumber: 'AW26-NEW', size: '3', barcode: '3 1234567803' });
+    const result = await plan([input]);
+    expect(summarizeImport(result)).toMatchObject({ wouldSet: 1, rejected: 0 });
+    expect(result.wouldSet[0]!.barcode).toBe('3 1234567803');
+  });
+
   it('identifies a Style by Season + LMIX and rejects ambiguity or absence', async () => {
     const s = await seed();
     await s.style(s.ss26, 'SS26-1', 'LMIX2222');
