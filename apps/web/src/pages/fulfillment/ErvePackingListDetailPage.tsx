@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
+import { ConfirmDialog, createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, LoadingState, EmptyState, ErrorState } from '@erve/data-display';
@@ -84,6 +84,7 @@ export function ErvePackingListDetailPage() {
   const [lrNumber, setLrNumber] = useState('');
   const [remarks, setRemarks] = useState('');
   const [formError, setFormError] = useState('');
+  const [finalizeDialogOpen, setFinalizeDialogOpen] = useState(false);
   const [addSelected, setAddSelected] = useState<Set<string>>(new Set());
 
   const query = useQuery({
@@ -135,7 +136,11 @@ export function ErvePackingListDetailPage() {
     mutationFn: async () => {
       await apiClient.post(`/erve-packing-lists/${id}/finalize`);
     },
-    onSuccess: () => invalidate(),
+    onSuccess: () => {
+      setFormError('');
+      setFinalizeDialogOpen(false);
+      invalidate();
+    },
     onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to finalize this Erve Packing List.')),
   });
 
@@ -208,9 +213,20 @@ export function ErvePackingListDetailPage() {
             </Button>
           </>
         }
+        primaryAction={
+          isOpen && canMutate ? (
+            <Button
+              onClick={() => { setFormError(''); setFinalizeDialogOpen(true); }}
+              disabled={packingList.cartonCount === 0 || addCartonsMutation.isPending || removeCartonMutation.isPending}
+              loading={finalizeMutation.isPending}
+            >
+              Finalize Packing List
+            </Button>
+          ) : undefined
+        }
       />
 
-      {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
+      {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>
 
       <div className="space-y-6">
         <Panel title="Erve India Consolidated Packing List">
@@ -329,14 +345,6 @@ export function ErvePackingListDetailPage() {
         </Panel>
       )}
 
-      {isOpen && canMutate && (
-        <div className="flex justify-end">
-          <Button onClick={() => finalizeMutation.mutate()} disabled={packingList.cartonCount === 0} loading={finalizeMutation.isPending}>
-            Finalize Packing List
-          </Button>
-        </div>
-      )}
-
       {packingList.status === 'FINALIZED' && canMutate && (
         <Panel title="Record Erve Dispatch">
           <div onKeyDown={createEnterToNextHandler()}>
@@ -365,6 +373,18 @@ export function ErvePackingListDetailPage() {
           .
         </ValidationMessage>
       )}
+
+      <ConfirmDialog
+        open={finalizeDialogOpen}
+        onOpenChange={(open) => { if (!finalizeMutation.isPending) setFinalizeDialogOpen(open); }}
+        title="Finalize Erve Packing List?"
+        description={`Finalize ${packingList.ervePackingListNumber} with ${packingList.cartonCount.toLocaleString()} cartons and ${packingList.totalQuantity.toLocaleString()} pieces? Once finalized, its carton membership can no longer be edited.`}
+        confirmLabel="Finalize Packing List"
+        cancelLabel="Keep Editing"
+        loading={finalizeMutation.isPending}
+        error={finalizeMutation.isError ? formError : undefined}
+        onConfirm={() => finalizeMutation.mutate()}
+      />
     </div>
   );
 }
