@@ -410,3 +410,39 @@ describe('PurchaseOrderDetailPage load error handling (UXAUTH-018)', () => {
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
   });
 });
+
+
+// UX-03/UX-10: cancellation remains explicitly destructive but is no longer
+// presented alongside the primary progression action (Create Job Order).
+describe('PurchaseOrderDetailPage action safety and hierarchy (UX-03/UX-10)', () => {
+  it('keeps Create Job Order as the main progression action and cancellation in secondary actions', async () => {
+    await renderPage();
+    const create = createJobOrderLink();
+    const cancel = cancelButton();
+    expect(create).not.toBeNull();
+    expect(cancel).not.toBeNull();
+    expect(cancel!.compareDocumentPosition(create!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('identifies the business reference and consequence before cancellation, with a safe exit', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPage();
+    act(() => cancelButton()?.click());
+
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('EIOS/25-26/0001');
+    expect(dialog.textContent).toContain('can no longer be used for Job Order planning');
+    const confirm = Array.from(dialog.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Cancel Order Sheet',
+    );
+    expect(confirm?.className).toContain('bg-danger');
+
+    const keep = Array.from(dialog.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Keep Order Sheet',
+    );
+    expect(keep).toBeDefined();
+    act(() => keep!.click());
+    expect(post).not.toHaveBeenCalled();
+  });
+});
