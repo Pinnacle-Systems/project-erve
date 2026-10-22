@@ -184,6 +184,39 @@ describe('ISS-020 Prepared Quantity editing and saving', () => {
     });
   });
 
+  it('accepts legitimate zero as a numeric payload', async () => {
+    await openPrepared(3);
+    const input = preparedInput();
+    act(() => {
+      input.focus();
+      changeInput(input, '0');
+      input.blur();
+    });
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValue({ data: { data: mockJobOrder('PRODUCTION_COMPLETE') } } as never);
+    act(() => saveButton().click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0]?.[1]).toMatchObject({
+      sizes: [{ jobOrderLineSizeId: 'size-1', preparedQuantity: 0 }],
+    });
+  });
+
+  it('preserves the edited quantity and shows feedback when Save fails', async () => {
+    await openPrepared();
+    const input = preparedInput();
+    act(() => {
+      input.focus();
+      changeInput(input, '7');
+      input.blur();
+    });
+    vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('offline'));
+    act(() => saveButton().click());
+    await vi.waitFor(() => expect(getActiveTabPanel(container).textContent).toContain('offline'));
+    expect(preparedInput().value).toBe('7');
+    expect(saveButton().disabled).toBe(false);
+  });
+
   it('retains an out-of-range draft and blocks Save without silently clamping it', async () => {
     await openPrepared();
     const input = preparedInput();

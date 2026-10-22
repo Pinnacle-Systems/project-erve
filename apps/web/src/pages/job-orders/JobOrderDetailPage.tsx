@@ -16,7 +16,6 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { QuantityMeasureGrid } from '../../components/style-size-grid/QuantityMeasureGrid.js';
 import type { JobOrder } from './types.js';
 import { JobOrderPageHeader } from './job-order-detail/JobOrderPageHeader.js';
-import { JobOrderStickyContext } from './job-order-detail/JobOrderStickyContext.js';
 import { JobOrderActionRequired } from './job-order-detail/JobOrderActionRequired.js';
 import { JobOrderOverviewTab } from './job-order-detail/tabs/JobOrderOverviewTab.js';
 import { JobOrderProductionTab } from './job-order-detail/tabs/JobOrderProductionTab.js';
@@ -273,12 +272,7 @@ export function JobOrderDetailPage() {
         factoryName={jobOrder.factory.name}
         lines={jobOrder.lines}
         pdfAction={pdfAction}
-      />
-
-      <JobOrderStickyContext
-        jobOrderNumber={jobOrder.jobOrderNumber}
-        style={styleSummary}
-        factoryName={jobOrder.factory.name}
+        seasonSnapshots={jobOrder.seasonSnapshots}
         isDelayed={jobOrder.isDelayed}
         operationalPresentation={operationalPresentation}
         actions={{

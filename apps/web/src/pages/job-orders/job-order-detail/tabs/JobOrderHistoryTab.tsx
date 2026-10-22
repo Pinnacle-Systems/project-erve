@@ -14,13 +14,6 @@ export interface JobOrderHistoryTabProps {
 export function JobOrderHistoryTab({ jobOrder, auditEntries, auditLoading }: JobOrderHistoryTabProps) {
   return (
     <div className="space-y-4">
-      <Panel title="Seasons">
-        <div className="text-sm text-muted-foreground">
-          {(jobOrder.seasonSnapshots ?? []).map((season) => season.displayName).join(', ') ||
-            'No Season snapshot'}
-        </div>
-      </Panel>
-
       <Panel title="Audit Log">
         <AuditTrail
           items={auditEntries.map((entry) => ({
