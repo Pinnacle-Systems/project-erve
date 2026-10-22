@@ -39,6 +39,14 @@ afterEach(() => {
 
 const content = () => container.textContent ?? '';
 
+function changeInput(input: HTMLInputElement, value: string) {
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 function buildDispatch(overrides: Partial<ErveDispatchView> = {}): ErveDispatchView {
   return {
     id: 'ed-1',
@@ -85,6 +93,102 @@ async function renderPage(getImpl: (url: string) => Promise<unknown>, role: Role
     );
   });
   await vi.waitFor(() => expect(content()).not.toContain('Loading dispatch'));
+}
+
+describe('delivery confirmation preserves legacy quantity dependencies', () => {
+  it.each([
+    { role: 'ADMIN', status: 'PENDING_TALLY' },
+    { role: 'ADMIN', status: 'INVOICED' },
+    { role: 'MERCHANDISER', status: 'PENDING_TALLY' },
+    { role: 'MERCHANDISER', status: 'INVOICED' },
+  ] as const)('submits full defaults for $role with $status handoffs in both purchase modes', async ({ role, status }) => {
+    const dispatch = buildDeliveryDispatch(status);
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: dispatch } });
+    await renderPage(async () => ({ data: { data: dispatch } }), role);
+    const quantities = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="number"]'));
+    expect(quantities.map((input) => input.value)).toEqual(['10', '25']);
+    expect(quantities.map((input) => input.max)).toEqual(['10', '25']);
+    expect(content()).not.toMatch(/Tally|PENDING_TALLY|INVOICED|Pending Tally|Invoice Handoff|Invoice Status|external-invoice/i);
+    await clickConfirmDelivery();
+    expect(patch).toHaveBeenCalledExactlyOnceWith('/erve-dispatches/ed-1/delivery', {
+      expectedVersion: 7,
+      lines: [
+        { saleOrderLineId: 'sol-outright', receivedQuantity: 10 },
+        { saleOrderLineId: 'sol-sale-return', receivedQuantity: 25 },
+      ],
+      remarks: undefined,
+    });
+  });
+
+  it.each(['PENDING_TALLY', 'INVOICED'] as const)(
+    'submits edited shortages and remarks without changing line identities for %s',
+    async (status) => {
+      const dispatch = buildDeliveryDispatch(status);
+      const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: dispatch } });
+      await renderPage(async () => ({ data: { data: dispatch } }));
+      const quantities = container.querySelectorAll<HTMLInputElement>('input[type="number"]');
+      expect(quantities).toHaveLength(2);
+      changeInput(quantities[0]!, '8');
+      changeInput(quantities[1]!, '20');
+      const remarks = Array.from(container.querySelectorAll('input')).find((input) =>
+        input.closest('div')?.textContent?.includes('Delivery Remarks'),
+      );
+      expect(remarks).toBeDefined();
+      changeInput(remarks!, 'Two outright and five consignment pieces short');
+      await clickConfirmDelivery();
+      expect(patch).toHaveBeenCalledExactlyOnceWith('/erve-dispatches/ed-1/delivery', {
+        expectedVersion: 7,
+        lines: [
+          { saleOrderLineId: 'sol-outright', receivedQuantity: 8 },
+          { saleOrderLineId: 'sol-sale-return', receivedQuantity: 20 },
+        ],
+        remarks: 'Two outright and five consignment pieces short',
+      });
+    },
+  );
+});
+
+function buildDeliveryDispatch(status: 'PENDING_TALLY' | 'INVOICED'): ErveDispatchView {
+  return buildDispatch({
+    version: 7,
+    totalQuantity: 35,
+    invoiceHandoffs: [
+      {
+        invoiceHandoffId: 'ih-outright',
+        saleOrderLineId: 'sol-outright',
+        purchaseMode: 'OUTRIGHT',
+        styleNumber: 'STYLE-OUT',
+        styleName: 'Outright Tee',
+        sizeCode: 'M',
+        sizeLabel: 'Medium',
+        quantity: 10,
+        status,
+        tallyInvoiceNumber: 'external-invoice-outright',
+        tallyInvoiceDate: '2026-09-01',
+      },
+      {
+        invoiceHandoffId: 'ih-sale-return',
+        saleOrderLineId: 'sol-sale-return',
+        purchaseMode: 'SALE_RETURN',
+        styleNumber: 'STYLE-SR',
+        styleName: 'Consignment Tee',
+        sizeCode: 'L',
+        sizeLabel: 'Large',
+        quantity: 25,
+        status,
+        tallyInvoiceNumber: 'external-invoice-sale-return',
+        tallyInvoiceDate: '2026-09-01',
+      },
+    ],
+  });
+}
+
+async function clickConfirmDelivery() {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    (element) => element.textContent === 'Confirm Delivery',
+  );
+  expect(button).toBeDefined();
+  await act(async () => button!.click());
 }
 
 describe('ErveDispatchDetailPage load error handling (UXAUTH-018)', () => {

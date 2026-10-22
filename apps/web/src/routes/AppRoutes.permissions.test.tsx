@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
-import { act } from 'react';
+import { act, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { MemoryRouter, Outlet } from 'react-router-dom';
+import { MemoryRouter, Outlet, useLocation } from 'react-router-dom';
 import type { AuthUser, Role } from '@erve/types';
 import { AppRoutes } from './AppRoutes.js';
 import * as AuthContext from '../auth/AuthContext.js';
@@ -16,6 +16,13 @@ vi.mock('../pages/fulfillment/TaxInvoiceListPage.js', () => ({
 vi.mock('../pages/fulfillment/TaxInvoiceDetailPage.js', () => ({
   TaxInvoiceDetailPage: () => <div>TaxInvoiceDetailPage</div>,
 }));
+vi.mock('../pages/fulfillment/FactoryInvoiceListPage.js', () => ({
+  FactoryInvoiceListPage: () => <div>FactoryInvoiceListPage</div>,
+}));
+vi.mock('../pages/fulfillment/FactoryInvoiceDetailPage.js', () => ({
+  FactoryInvoiceDetailPage: () => <div>FactoryInvoiceDetailPage</div>,
+}));
+vi.mock('../pages/LoginPage.js', () => ({ LoginPage: () => <div>LoginPage</div> }));
 vi.mock('../pages/AppLayout.js', () => ({
   AppLayout: () => (
     <div data-testid="layout">
@@ -106,23 +113,33 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-const renderRoutes = async (role: Role, initialUrl: string) => {
+let routeLocation: ReturnType<typeof useLocation>;
+function ObserveLocation() {
+  const location = useLocation();
+  useEffect(() => {
+    routeLocation = location;
+  }, [location]);
+  return null;
+}
+
+const renderRoutes = async (role: Role | Role[] | null, initialUrl: string) => {
   act(() => {
     root.unmount();
   });
   container.innerHTML = '';
   root = createRoot(container);
 
-  const user: AuthUser = {
+  const user: AuthUser | null = role === null ? null : {
     id: 'user-1',
     email: 'test@test.local',
     mobile: null,
     name: 'Test User',
-    roles: [role],
+    roles: Array.isArray(role) ? role : [role],
   };
 
   vi.spyOn(AuthContext, 'useAuth').mockReturnValue({
     user,
+    status: user ? 'authenticated' : 'unauthenticated',
     token: 'valid-token',
     login: vi.fn(),
     logout: vi.fn(),
@@ -140,6 +157,7 @@ const renderRoutes = async (role: Role, initialUrl: string) => {
     root.render(
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[initialUrl]}>
+          <ObserveLocation />
           <AppRoutes />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -154,6 +172,90 @@ const renderRoutes = async (role: Role, initialUrl: string) => {
 function getPageContent(): string {
   return container.textContent ?? '';
 }
+
+const legacyInvoiceUrls = [
+  '/fulfillment/invoices',
+  '/fulfillment/invoices/?status=PENDING_TALLY#saved',
+  '/fulfillment/invoices/arbitrary-legacy-record',
+  '/fulfillment/invoices/not-a-tax-invoice/?print=1',
+];
+
+describe('retired Invoice Handoff routes', () => {
+  it.each<Role>(['ADMIN', 'ACCOUNTANT', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'])(
+    '%s gets only a non-operational fallback at every legacy URL',
+    async (role) => {
+      const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: null } });
+      const patch = vi.spyOn(apiClient, 'patch');
+      const post = vi.spyOn(apiClient, 'post');
+      for (const url of legacyInvoiceUrls) {
+        await renderRoutes(role, url);
+        expect(getPageContent()).toContain('Invoice Handoff has been retired');
+        expect(getPageContent()).toContain('This legacy workflow is no longer available.');
+        expect(getPageContent()).not.toMatch(/Tally|Pending|Invoiced|Print|Download|Export|Save Correction/i);
+        expect(container.querySelectorAll('input, textarea, select')).toHaveLength(0);
+        const actions = Array.from(container.querySelectorAll('button, a'));
+        expect(actions.map((action) => action.textContent)).toEqual(['Return to Dashboard']);
+        expect(routeLocation.pathname).toBe(url.split('?')[0]);
+      }
+      expect(get).not.toHaveBeenCalled();
+      expect(patch).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each<Role>(['FACTORY_USER', 'QA_USER'])('%s remains forbidden', async (role) => {
+    const get = vi.spyOn(apiClient, 'get');
+    for (const url of legacyInvoiceUrls) {
+      await renderRoutes(role, url);
+      expect(getPageContent()).toContain('ForbiddenPage');
+      expect(getPageContent()).not.toContain('Invoice Handoff has been retired');
+    }
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it.each(legacyInvoiceUrls)('sends an unauthenticated visit to %s to login', async (url) => {
+    const get = vi.spyOn(apiClient, 'get');
+    await renderRoutes(null, url);
+    expect(getPageContent()).toContain('LoginPage');
+    expect(routeLocation.pathname).toBe('/login');
+    const requested = new URL(url, 'http://erve.test');
+    expect(routeLocation.state).toEqual({
+      from: { pathname: requested.pathname, search: requested.search, hash: requested.hash },
+    });
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('returns a combined-role user to Dashboard without resolving a legacy invoice ID', async () => {
+    const get = vi.spyOn(apiClient, 'get');
+    await renderRoutes(['FACTORY_USER', 'ACCOUNTANT'], '/fulfillment/invoices/legacy-id');
+    expect(getPageContent()).toContain('Invoice Handoff has been retired');
+    const action = Array.from(container.querySelectorAll('button, a')).find(
+      (element) => element.textContent === 'Return to Dashboard',
+    );
+    expect(action).toBeDefined();
+    await act(async () => (action as HTMLElement).click());
+    expect(routeLocation.pathname).toBe('/dashboard');
+    expect(getPageContent()).toContain('DashboardPage');
+    expect(get).not.toHaveBeenCalled();
+  });
+});
+
+describe('native Factory Invoice route permissions', () => {
+  it.each<Role>(['ADMIN', 'ACCOUNTANT', 'FACTORY_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'QA_USER', 'DISTRIBUTOR'])(
+    'preserves list and detail access for %s',
+    async (role) => {
+      const allowed = ['ADMIN', 'ACCOUNTANT', 'FACTORY_USER'].includes(role);
+      for (const [url, page] of [
+        ['/fulfillment/factory-invoices', 'FactoryInvoiceListPage'],
+        ['/fulfillment/factory-invoices/native-id', 'FactoryInvoiceDetailPage'],
+      ] as const) {
+        await renderRoutes(role, url);
+        expect(getPageContent()).toContain(allowed ? page : 'ForbiddenPage');
+        expect(getPageContent()).not.toContain('Invoice Handoff has been retired');
+      }
+    },
+  );
+});
 
 describe('AppRoutes Permissions', () => {
   it.each(['ADMIN', 'ACCOUNTANT', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER', 'DISTRIBUTOR'] as Role[])(

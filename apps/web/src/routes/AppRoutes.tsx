@@ -70,8 +70,7 @@ import { ErvePackingListCreatePage } from '../pages/fulfillment/ErvePackingListC
 import { ErvePackingListDetailPage } from '../pages/fulfillment/ErvePackingListDetailPage.js';
 import { ErveDispatchListPage } from '../pages/fulfillment/ErveDispatchListPage.js';
 import { ErveDispatchDetailPage } from '../pages/fulfillment/ErveDispatchDetailPage.js';
-import { InvoiceHandoffListPage } from '../pages/fulfillment/InvoiceHandoffListPage.js';
-import { InvoiceHandoffDetailPage } from '../pages/fulfillment/InvoiceHandoffDetailPage.js';
+import { RetiredInvoiceHandoffPage } from '../pages/fulfillment/RetiredInvoiceHandoffPage.js';
 import { FactoryInvoiceListPage } from '../pages/fulfillment/FactoryInvoiceListPage.js';
 import { FactoryInvoiceDetailPage } from '../pages/fulfillment/FactoryInvoiceDetailPage.js';
 import { TaxInvoiceListPage } from '../pages/fulfillment/TaxInvoiceListPage.js';
@@ -759,8 +758,8 @@ export function AppRoutes() {
           </RoleRoute>
         }
       >
-        <Route index element={<InvoiceHandoffListPage />} />
-        <Route path=":id" element={<InvoiceHandoffDetailPage />} />
+        <Route index element={<RetiredInvoiceHandoffPage />} />
+        <Route path=":id" element={<RetiredInvoiceHandoffPage />} />
       </Route>
       <Route
         path="/fulfillment/sale-or-return"

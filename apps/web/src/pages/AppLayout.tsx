@@ -45,7 +45,6 @@ import {
   canViewFactoryInvoices,
   canViewTaxInvoices,
   canViewPackingAudits,
-  canViewInvoiceHandoffs,
   canViewSaleOrReturnPositions,
   canViewDispatchOrders,
   canViewDistributorSalesReports,
@@ -150,9 +149,6 @@ export function AppLayout() {
           : []),
         ...(canViewErveDispatches(user)
           ? [{ to: '/fulfillment/erve-dispatches', label: 'Dispatches', icon: Truck }]
-          : []),
-        ...(canViewInvoiceHandoffs(user)
-          ? [{ to: '/fulfillment/invoices', label: 'Invoice Handoff', icon: Receipt }]
           : []),
         ...(canViewSaleOrReturnPositions(user)
           ? [{ to: '/fulfillment/sale-or-return', label: 'Sale-or-Return Stock', icon: RotateCcw }]
