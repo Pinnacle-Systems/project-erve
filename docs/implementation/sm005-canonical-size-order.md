@@ -10,7 +10,7 @@ The shared operational and financial presentation helpers use finite ranks first
 
 Style/group order, identity, quantity aggregation, financial compatibility groups, authoritative amounts, inactive referenced Sizes, and access rules are preserved. Raw Factory Packing Queue retrieval/cursors still use `(created_at, id)`; only presentation helpers sort Sizes. No additional Size master request or role permission is needed. Issued Tax Invoice snapshot behavior is unchanged.
 
-Existing shared helper consumers inherit canonical matrix/compact-breakdown ordering, including Dispatch Order, Factory Packing List, Packing Audit, carton labels, and Factory Invoice PDFs. Erve matrix consumers introduced separately by ISS-023 Phase 3 can consume the metadata without a further API change; this branch is based on main before that matrix change.
+Existing shared helper consumers inherit canonical matrix/compact-breakdown ordering, including Dispatch Order, Factory Packing List, Packing Audit, carton labels, and Factory Invoice PDFs. ISS-023 Phase 3 is integrated from main (`dd91ff9`). Its business-key adapters preserve the new metadata through object spreading; selected-carton, carton-detail, and consolidated-summary matrix columns now use canonical ordering. Targeted UI and PDF view-model regressions verify that integration.
 
 ## Derived acceptance checks
 
@@ -36,6 +36,8 @@ Verification completed:
 - `pnpm --filter @erve/api build`: passed.
 - `pnpm --filter @erve/web build`: passed, including web TypeScript checking. Vite reported its large-chunk advisory.
 - `pnpm --filter @erve/api lint` and `pnpm --filter @erve/web lint`: passed.
+
+After integrating Phase 3 from main, the affected Erve/helper run passed 7 files / 73 tests: shared grouping, create/detail UI, Erve PDF view model, PDF document structure/values, and worker tests. The complete DB-free API unit configuration passed again (9 files / 113 tests). The integrated web build/typecheck and web lint passed again. Vite emitted large-chunk and plugin-timing advisories only. The merged main introduced no API production changes; its prior API build/typecheck/lint evidence remains applicable.
 
 Full web tests, live database integration tests, browser acceptance, and performance benchmarks are outside this focused verification run.
 

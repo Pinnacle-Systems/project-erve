@@ -1,16 +1,13 @@
 import { StyleSheet, Text, View } from '@react-pdf/renderer';
 import { PdfDocument } from '../../../../lib/pdf/core/PdfDocument.js';
 import { PdfHeader } from '../../../../lib/pdf/core/PdfHeader.js';
-import { PdfFooter } from '../../../../lib/pdf/core/PdfFooter.js';
 import { PdfMetaSection } from '../../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
-import { PdfTable, type PdfTableColumn } from '../../../../lib/pdf/core/PdfTable.js';
+import { PdfStyleSizeMatrix } from '../../../../lib/pdf/core/PdfStyleSizeMatrix.js';
 import type {
-  ErvePackingListDetailCartonLineRow,
   ErvePackingListDetailCartonRow,
   ErvePackingListDetailPdfViewModel,
-  ErvePackingListDetailStyleSizeRow,
 } from './buildErvePackingListDetailViewModel.js';
 
 const styles = StyleSheet.create({
@@ -20,13 +17,19 @@ const styles = StyleSheet.create({
   noCartons: { fontSize: 8, color: '#777777', marginTop: 4 },
   totalsLine: { fontSize: 9, fontWeight: 700, color: '#111111', marginTop: 4, textAlign: 'right' },
   dispatchNote: { fontSize: 9, color: '#0a6e1e', marginBottom: 8 },
+  // Match PdfFooter's chrome without its dynamic callback (global numbering is stamped later).
+  footer: {
+    position: 'absolute',
+    bottom: 16,
+    left: 28,
+    right: 28,
+    fontSize: 8,
+    color: '#777777',
+    textAlign: 'center',
+    borderTop: '0.5 solid #cccccc',
+    paddingTop: 6,
+  },
 });
-
-const cartonLineColumns: PdfTableColumn<ErvePackingListDetailCartonLineRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '55%', value: (row) => row.styleDisplay },
-  { key: 'sizeLabel', header: 'Size', width: '20%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Quantity', width: '25%', align: 'right', value: (row) => row.quantity },
-];
 
 // DEMO-020: carton.factoryName/factoryDispatchNumber are confidential
 // factory/supplier provenance and are null (not rendered — no stray
@@ -47,59 +50,79 @@ function CartonBlock({ carton }: { carton: ErvePackingListDetailCartonRow }) {
   return (
     <View style={styles.cartonBlock}>
       <Text style={styles.cartonHeading}>{cartonHeading(carton)}</Text>
-      {carton.packageDetails ? <Text style={styles.cartonMeta}>{carton.packageDetails}</Text> : null}
-      <PdfTable columns={cartonLineColumns} rows={carton.lines} rowKey={(row) => row.saleOrderLineId} />
+      {carton.packageDetails ? (
+        <Text style={styles.cartonMeta}>{carton.packageDetails}</Text>
+      ) : null}
+      <PdfStyleSizeMatrix
+        columns={carton.sizeColumns}
+        rows={carton.styleRows}
+        maxColumnsPerGroup={10}
+        flattenForPagination
+      />
     </View>
   );
 }
 
-const styleSizeColumns: PdfTableColumn<ErvePackingListDetailStyleSizeRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '55%', value: (row) => row.styleDisplay },
-  { key: 'sizeLabel', header: 'Size', width: '20%', value: (row) => row.sizeLabel },
-  { key: 'quantity', header: 'Quantity', width: '25%', align: 'right', value: (row) => row.quantity },
-];
-
 export interface ErvePackingListDetailDocumentProps {
   viewModel: ErvePackingListDetailPdfViewModel;
+  first?: boolean;
+  last?: boolean;
 }
 
 /** Landscape — one EIPL may consolidate cartons from several Factories/Dispatch Orders, and each carton's own provenance must stay visible without cramping. */
-export function ErvePackingListDetailDocument({ viewModel }: ErvePackingListDetailDocumentProps) {
+export function ErvePackingListDetailDocument({
+  viewModel,
+  first = true,
+  last = true,
+}: ErvePackingListDetailDocumentProps) {
   return (
     <PdfDocument orientation="landscape">
       <PdfHeader title={viewModel.title} subtitle={viewModel.subtitle} />
-      <PdfMetaSection generatedAt={viewModel.generatedAt} generatedBy={viewModel.generatedBy} />
+      {first ? (
+        <>
+          <PdfMetaSection generatedAt={viewModel.generatedAt} generatedBy={viewModel.generatedBy} />
 
-      {viewModel.dispatchReference ? (
-        <Text style={styles.dispatchNote}>Dispatched as {viewModel.dispatchReference}.</Text>
+          {viewModel.dispatchReference ? (
+            <Text style={styles.dispatchNote}>Dispatched as {viewModel.dispatchReference}.</Text>
+          ) : null}
+
+          <PdfSection title="Erve Packing List Details">
+            <PdfKeyValueSection items={viewModel.identityItems} columns={4} />
+          </PdfSection>
+
+          <PdfSection title="Destination">
+            <PdfKeyValueSection items={viewModel.destinationItems} columns={3} />
+          </PdfSection>
+        </>
       ) : null}
 
-      <PdfSection title="Erve Packing List Details">
-        <PdfKeyValueSection items={viewModel.identityItems} columns={4} />
-      </PdfSection>
-
-      <PdfSection title="Destination">
-        <PdfKeyValueSection items={viewModel.destinationItems} columns={3} />
-      </PdfSection>
-
-      <PdfSection title="Cartons" wrap>
+      <PdfSection title={first ? 'Cartons' : 'Cartons (continued)'} wrap>
         {viewModel.cartons.length > 0 ? (
           viewModel.cartons.map((carton) => <CartonBlock key={carton.id} carton={carton} />)
         ) : (
           <Text style={styles.noCartons}>No cartons selected yet.</Text>
         )}
-        <Text style={styles.totalsLine}>
-          Total: {viewModel.totalCartonCount} cartons · {viewModel.totalQuantity} pieces
-        </Text>
+        {last ? (
+          <Text style={styles.totalsLine}>
+            Total: {viewModel.totalCartonCount} cartons · {viewModel.totalQuantity} pieces
+          </Text>
+        ) : null}
       </PdfSection>
 
-      {viewModel.styleSizeSummary.length > 0 ? (
+      {last && viewModel.styleSizeSummaryRows.length > 0 ? (
         <PdfSection title="Style / Size Summary" wrap>
-          <PdfTable columns={styleSizeColumns} rows={viewModel.styleSizeSummary} rowKey={(row) => row.key} />
+          <PdfStyleSizeMatrix
+            columns={viewModel.styleSizeSizeColumns}
+            rows={viewModel.styleSizeSummaryRows}
+            maxColumnsPerGroup={10}
+            flattenForPagination
+          />
         </PdfSection>
       ) : null}
 
-      <PdfFooter />
+      <Text style={styles.footer} fixed>
+        {' '}
+      </Text>
     </PdfDocument>
   );
 }
