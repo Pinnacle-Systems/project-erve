@@ -36,7 +36,7 @@ import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { resolveJobOrderPrimaryStyle } from '../job-orders/resolveJobOrderPrimaryStyle.js';
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import { StyleIdentityUnavailable } from '../../components/style/StyleIdentityUnavailable.js';
-import { IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
+import { QA_IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
 
 const qaTotalLabels: Record<string, string> = {
   prepared: 'Prepared',
@@ -108,12 +108,12 @@ export function QaDetailPage() {
     <StyleThumbnailCell
       styleId={primaryStyle.style.styleId}
       image={primaryStyle.style.primaryImage}
-      size={IDENTITY_HEADER_IMAGE_SIZE}
+      size={QA_IDENTITY_HEADER_IMAGE_SIZE}
       viewerTitle={primaryStyle.style.styleNumber}
     />
   ) : (
     <StyleIdentityUnavailable
-      size={IDENTITY_HEADER_IMAGE_SIZE}
+      size={QA_IDENTITY_HEADER_IMAGE_SIZE}
       reason="Style identity unavailable — this Job Order's lines disagree on Style, which should never happen. Reported for investigation, not guessed."
     />
   );

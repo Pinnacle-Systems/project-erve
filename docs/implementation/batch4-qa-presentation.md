@@ -40,10 +40,12 @@ Preserve source USER Customer/Supplier, meeting and inspection dates, meeting co
 - `pnpm --filter @erve/app-components test --maxWorkers=2`: 122 tests passed.
 - `node --test tools/pr8/*.test.mjs`: 5 tests passed.
 - `pnpm -r typecheck`, `pnpm -r lint`, `pnpm -r build`: passed. Existing DatePicker hook warnings and build chunk-size notices remain.
-- `node tools/batch4/browser.mjs`: 16 workflow/viewport combinations, four finalized read-only cases and four actual PDF downloads passed. All 16 had one h1, no horizontal overflow, no derived provenance, accessible PDF actions and working authenticated image retrieval/viewers. Desktop headers measured 120px; mobile headers 136px (PP) and 224px (execution forms with Season).
+- `node tools/batch4/browser.mjs`: 16 workflow/viewport combinations, four finalized read-only cases and four actual PDF downloads passed. All 16 had one h1, no horizontal overflow, no derived provenance, accessible PDF actions and working authenticated image retrieval/viewers. Desktop headers measured 88px (PP) and 92px (executions); mobile headers 136px (PP) and 224px (execution forms with Season).
 - Independent read-only review identified the canonical Inline quantity gap and pending-context export race. Both have regression tests and fixes.
 
 The initial unrestricted focused PDF run hit an unchanged long-list timeout under parallel load; the two-worker rerun passed. An early full run observed an in-progress Inline regression failure; the subsequent settled full run passed. No failing run is counted as acceptance.
+
+The Linux browser run exposed a 264px mobile Final header, above the compactness guard. Compact QA thumbnails now use 80px instead of 120px while retaining the same authenticated high-resolution viewer. Local browser acceptance (16 widths/workflows, four finalized cases and four downloads) and 58 affected component tests passed after the correction.
 
 Local actionlint v1.7.12 reproduced a workflow context validation failure before jobs started: runner.temp is unavailable in job-level env. Moving the evidence path to step-level env corrected it; actionlint then passed.
 
@@ -52,7 +54,7 @@ API integration uses CI's job-scoped Postgres 18 service. No local/shared/produc
 ## Browser and PDF evidence
 
 Local logs and generated PDF/PNG/position JSON files: `C:/Users/kalay/workspace/batch4-evidence-20261022/`.
-Browser evidence: `C:/Users/kalay/AppData/Local/Temp/erve-batch4-browser-1QZW5E/` (screenshots, measurements, actual downloads).
+Browser evidence: `C:/Users/kalay/AppData/Local/Temp/erve-batch4-browser-b5McxL/` (screenshots, measurements, actual downloads).
 The PR CI publishes `batch4-browser-<head>` and `batch4-pdfs-<head>` artifacts for remote review; artifacts retain 14 days.
 
 Fixtures verify 72 pieces/two passed batches, 12,500 pieces with three passed/one failed batches, zero/missing prepared quantity, authoritative coverage versus repeated attempts, single/consolidated customer contexts, authored fields and finalized executions. Existing Job Order PDF tests preserve authorized provenance.

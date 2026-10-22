@@ -7,3 +7,6 @@
  * visually consistent rather than each screen picking its own number.
  */
 export const IDENTITY_HEADER_IMAGE_SIZE = 120;
+
+/** Compact QA identity reserves more text width at narrow viewports. Viewer resolution is unchanged. */
+export const QA_IDENTITY_HEADER_IMAGE_SIZE = 80;

@@ -83,9 +83,10 @@ try {
       const metrics = await driver.evaluate(`(() => {
         const header = document.querySelector('[data-quality-execution-header]');
         const bounds = header.getBoundingClientRect();
-        return { width: innerWidth, scrollWidth: document.documentElement.scrollWidth, headerHeight: bounds.height, headings: document.querySelectorAll('h1').length, provenanceAbsent: !/Distributor Alpha|EIOS-|Private Planner|Downstream availability/.test(document.body.innerText), authored: ${JSON.stringify(workflow)} === 'PP Sample' || document.body.innerText.includes('Supplier'), pdfActions: [...document.querySelectorAll('button')].some(b => b.textContent.includes('Download PDF')) };
+        return { width: innerWidth, scrollWidth: document.documentElement.scrollWidth, headerHeight: bounds.height, thumbnailWidth: header.querySelector('[aria-label="View style image"]')?.parentElement.getBoundingClientRect().width ?? 0, headings: document.querySelectorAll('h1').length, provenanceAbsent: !/Distributor Alpha|EIOS-|Private Planner|Downstream availability/.test(document.body.innerText), authored: ${JSON.stringify(workflow)} === 'PP Sample' || document.body.innerText.includes('Supplier'), pdfActions: [...document.querySelectorAll('button')].some(b => b.textContent.includes('Download PDF')) };
       })()`);
       assert.equal(metrics.headings, 1);
+      assert.equal(metrics.thumbnailWidth, 80, 'Compact primary QA thumbnail');
       assert.ok(metrics.scrollWidth <= metrics.width + 1, JSON.stringify(metrics));
       assert.ok(metrics.provenanceAbsent);
       assert.ok(metrics.authored);
