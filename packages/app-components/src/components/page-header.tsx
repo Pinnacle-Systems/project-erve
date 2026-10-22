@@ -19,6 +19,10 @@ export interface PageHeaderProps {
   /** Optional identity visual (e.g. a Primary Style Image) rendered left of the title block. Opt-in — omitted by every existing caller, so it changes nothing for them. */
   leadingVisual?: ReactNode;
   status?: ReactNode;
+  /** Optional context below the identity, beside the leading visual. */
+  details?: ReactNode;
+  /** Opt in to wrapping long identity text and actions on compact screens. */
+  wrapActions?: boolean;
   primaryAction?: ReactNode;
   secondaryActions?: ReactNode;
   meta?: MetaItem[];
@@ -33,6 +37,8 @@ export const PageHeader = ({
   breadcrumbSlot,
   leadingVisual,
   status,
+  details,
+  wrapActions = false,
   primaryAction,
   secondaryActions,
   meta,
@@ -56,8 +62,8 @@ export const PageHeader = ({
       <Breadcrumbs items={breadcrumbs} compact className="mb-1.5" />
     ) : null}
 
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex min-w-0 flex-1 items-start gap-3">
+    <div className={cn("flex items-start justify-between gap-4", wrapActions && "flex-wrap")}>
+      <div className={cn("flex min-w-0 flex-1 items-start gap-3", wrapActions && "basis-96")}>
         {leadingVisual && <div className="shrink-0">{leadingVisual}</div>}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -76,18 +82,20 @@ export const PageHeader = ({
           {subtitle && (
             <p
               className={cn(
-                "text-muted-foreground mt-0.5 truncate",
+                "text-muted-foreground mt-0.5",
+                wrapActions ? "break-words" : "truncate",
                 density === "compact" ? "text-xs" : "text-sm",
               )}
             >
               {subtitle}
             </p>
           )}
+          {details}
         </div>
       </div>
 
       {(secondaryActions || primaryAction) && (
-        <div className="flex items-center gap-2 shrink-0 pt-0.5">
+        <div className={cn("flex items-center gap-2 pt-0.5", wrapActions ? "min-w-0 max-w-full flex-wrap" : "shrink-0")}>
           {secondaryActions}
           {primaryAction}
         </div>

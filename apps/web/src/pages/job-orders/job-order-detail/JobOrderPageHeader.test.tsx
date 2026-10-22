@@ -23,7 +23,13 @@ afterEach(() => {
 });
 
 function line(overrides: Partial<JobOrderPrimaryStyle> = {}): JobOrderPrimaryStyle {
-  return { styleId: 'style-1', styleNumber: 'STY-0001', styleName: 'Basic Tee', primaryImage: null, ...overrides };
+  return {
+    styleId: 'style-1',
+    styleNumber: 'STY-0001',
+    styleName: 'Basic Tee',
+    primaryImage: null,
+    ...overrides,
+  };
 }
 
 function render(props: Partial<JobOrderPageHeaderProps> = {}) {
@@ -43,6 +49,35 @@ function render(props: Partial<JobOrderPageHeaderProps> = {}) {
             factoryName="Sunrise Textiles"
             lines={[line()]}
             pdfAction={pdfAction}
+            seasonSnapshots={[]}
+            isDelayed={false}
+            operationalPresentation={{
+              heading: 'Current Activity',
+              name: 'Final Inspection',
+              stateLabel: 'In Progress',
+              tone: 'warning',
+              secondaryLanes: [
+                {
+                  domain: 'PRODUCTION',
+                  heading: 'Production',
+                  name: 'Sewing',
+                  stateLabel: 'Completed',
+                  tone: 'success',
+                },
+              ],
+            }}
+            actions={{
+              canSend: false,
+              onSend: vi.fn(),
+              sendError: '',
+              canConfirm: false,
+              onConfirm: vi.fn(),
+              confirmPending: false,
+              confirmDisabled: true,
+              confirmError: '',
+              canCancelJobOrder: false,
+              onCancel: vi.fn(),
+            }}
             {...props}
           />
         </QueryClientProvider>
@@ -69,5 +104,34 @@ describe('JobOrderPageHeader', () => {
     const marker = container.querySelector('[role="img"]');
     expect(marker).not.toBeNull();
     expect(marker!.getAttribute('aria-label')).toMatch(/unavailable/i);
+  });
+});
+
+describe('consolidated Job Order identity and operations', () => {
+  it('shows Style, factory, recorded Season and both operational dimensions together', () => {
+    render({
+      seasonSnapshots: [
+        {
+          seasonId: 's1',
+          code: 'SS26',
+          name: 'Summer',
+          financialYear: '2026-27',
+          displayName: 'SS26 Summer',
+        },
+      ],
+      isDelayed: true,
+    });
+    expect(container.textContent).toContain('STY-0001');
+    expect(container.textContent).toContain('Basic Tee');
+    expect(container.textContent).toContain('Sunrise Textiles');
+    expect(container.textContent).toContain('SS26 Summer');
+    expect(container.textContent).toContain('Final Inspection');
+    expect(container.textContent).toContain('Sewing');
+    expect(container.textContent).toContain('Completed');
+    expect(container.textContent).toContain('Delayed');
+  });
+  it('makes missing recorded Season explicit', () => {
+    render();
+    expect(container.textContent).toContain('No Season snapshot recorded');
   });
 });

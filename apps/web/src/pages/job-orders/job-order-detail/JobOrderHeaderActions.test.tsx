@@ -1,8 +1,10 @@
 /** @vitest-environment jsdom */
-import { act } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { JobOrderStickyContext, type JobOrderStickyContextProps } from './JobOrderStickyContext.js';
+import { JobOrderPageHeader, type JobOrderPageHeaderProps } from './JobOrderPageHeader.js';
+import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -19,9 +21,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const defaultProps: JobOrderStickyContextProps = {
+const defaultProps: JobOrderPageHeaderProps = {
   jobOrderNumber: 'JO-2026-001',
-  style: { label: 'Summer Tee', multiple: false },
+  lines: [],
+  seasonSnapshots: [],
+  pdfAction: { isGenerating: false, error: null, handleDownload: vi.fn(), handlePrint: vi.fn() },
   factoryName: 'Sunrise Textiles',
   isDelayed: false,
   operationalPresentation: {
@@ -45,10 +49,18 @@ const defaultProps: JobOrderStickyContextProps = {
   },
 };
 
-describe('JobOrderStickyContext', () => {
+function renderHeader(element: ReactNode) {
+  root.render(
+    <MemoryRouter>
+      <QueryClientProvider client={new QueryClient()}>{element}</QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe('JobOrderPageHeader actions', () => {
   it('renders disabled Confirm button with acknowledgement guidance when confirmDisabled is true', () => {
     act(() => {
-      root.render(<JobOrderStickyContext {...defaultProps} />);
+      renderHeader(<JobOrderPageHeader {...defaultProps} />);
     });
 
     const confirmBtn = container.querySelector('button');
@@ -58,14 +70,14 @@ describe('JobOrderStickyContext', () => {
     expect(confirmBtn?.className).toContain('bg-primary');
 
     expect(container.textContent).toContain(
-      'Complete the acknowledgement below before confirming the Job Order.',
+      'Review and acknowledge the disclaimer in Production before confirming.',
     );
   });
 
   it('renders enabled Confirm button and hides acknowledgement guidance when confirmDisabled is false', () => {
     act(() => {
-      root.render(
-        <JobOrderStickyContext
+      renderHeader(
+        <JobOrderPageHeader
           {...defaultProps}
           actions={{
             ...defaultProps.actions,
@@ -78,14 +90,14 @@ describe('JobOrderStickyContext', () => {
     const confirmBtn = container.querySelector('button');
     expect(confirmBtn?.disabled).toBe(false);
     expect(container.textContent).not.toContain(
-      'Complete the acknowledgement below before confirming the Job Order.',
+      'Review and acknowledge the disclaimer in Production before confirming.',
     );
   });
 
   it('renders error message instead of acknowledgement guidance when confirmError is set', () => {
     act(() => {
-      root.render(
-        <JobOrderStickyContext
+      renderHeader(
+        <JobOrderPageHeader
           {...defaultProps}
           actions={{
             ...defaultProps.actions,
@@ -98,14 +110,14 @@ describe('JobOrderStickyContext', () => {
 
     expect(container.textContent).toContain('Failed to confirm Job Order on server');
     expect(container.textContent).not.toContain(
-      'Complete the acknowledgement below before confirming the Job Order.',
+      'Review and acknowledge the disclaimer in Production before confirming.',
     );
   });
 
   it('does not render Confirm button when canConfirm is false (authorization preserved)', () => {
     act(() => {
-      root.render(
-        <JobOrderStickyContext
+      renderHeader(
+        <JobOrderPageHeader
           {...defaultProps}
           actions={{
             ...defaultProps.actions,
@@ -116,17 +128,19 @@ describe('JobOrderStickyContext', () => {
     });
 
     expect(
-      Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.trim() === 'Confirm'),
+      Array.from(container.querySelectorAll('button')).some(
+        (b) => b.textContent?.trim() === 'Confirm',
+      ),
     ).toBe(false);
     expect(container.textContent).not.toContain(
-      'Complete the acknowledgement below before confirming the Job Order.',
+      'Review and acknowledge the disclaimer in Production before confirming.',
     );
   });
 
   it('renders Send to Factory with primary styling when canSend is true', () => {
     act(() => {
-      root.render(
-        <JobOrderStickyContext
+      renderHeader(
+        <JobOrderPageHeader
           {...defaultProps}
           actions={{
             ...defaultProps.actions,

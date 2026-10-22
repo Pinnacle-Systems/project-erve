@@ -120,7 +120,7 @@ describe('JobOrderDetailPage tab navigation', () => {
 
     act(() => switchJobOrderTab(container, 'History'));
     expect(getActiveTabPanel(container).textContent).toContain('Audit Log');
-    expect(getActiveTabPanel(container).textContent).toContain('Seasons');
+    expect(getActiveTabPanel(container).textContent).not.toContain('Seasons');
   });
 
   it('supports arrow-key navigation between tab triggers (Radix roving tabindex)', async () => {
@@ -291,92 +291,48 @@ describe('JobOrderDetailPage ?tab= deep linking', () => {
   });
 });
 
-describe('ISS-019 Job Order page gutter alignment', () => {
-  it('aligns tabs and operational summary to the PageHeader inner gutters across breakpoints', async () => {
-    await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
-
-    // PageHeader uses px-6; avoid adding a wider nested desktop inset
-    // for either the sticky summary or the tabbed content.
-    const header = container.querySelector('h1')?.closest('[class*="px-6"]');
-    expect(header).not.toBeNull();
-
-    const sticky = container.querySelector('.sticky') as HTMLElement;
-    expect(sticky.classList.contains('px-6')).toBe(true);
-    expect(sticky.classList.contains('md:px-8')).toBe(false);
-    expect(sticky.classList.contains('px-4')).toBe(false);
-
-    const tabs = container.querySelector('[role="tablist"]');
-    expect(tabs).not.toBeNull();
-    const tabInset = tabs!.closest('.px-6') as HTMLElement | null;
-    expect(tabInset).not.toBeNull();
-    expect(tabInset!.classList.contains('md:px-8')).toBe(false);
-    expect(getActiveTabPanel(container).textContent).toContain('Lifecycle');
-    act(() => switchJobOrderTab(container, 'Production'));
-    expect(getActiveTabPanel(container).textContent).toContain('Current Stage:');
+describe('ISS-041 single Job Order header', () => {
+  it('places identity, operational context and actions in one header without a sticky duplicate', async () => {
+    await renderJobOrderDetail(container, root, { status: 'DRAFT', overrides: draftOverrides });
+    expect(container.querySelectorAll('h1')).toHaveLength(1);
+    const header = container.querySelector('.job-order-header')!;
+    expect(header.textContent).toContain('JO-001');
+    expect(header.textContent).toContain('ST-1');
+    expect(header.textContent).toContain('Send to Factory');
+    expect(
+      header.querySelector('[aria-label="Current Job Order operational state"]'),
+    ).not.toBeNull();
+    expect(container.querySelector('[style*="--app-shell-header-height"]')).toBeNull();
   });
 });
 
-describe('JobOrderDetailPage sticky context', () => {
-  it('keeps the Factory Confirm action beside the identity on desktop, without wrapping below it', async () => {
+describe('JobOrderDetailPage consolidated header', () => {
+  it('keeps the acknowledgement-gated Confirm action in the header', async () => {
     authState.roles = ['FACTORY_USER'];
     await renderJobOrderDetail(container, root, { status: 'SENT_TO_FACTORY' });
-
-    // The header uses a two-column grid at desktop width, with a
-    // minmax(0,1fr) identity column that can shrink/wrap its long
-    // Style description. The action column remains on the right.
-    // jsdom does not calculate responsive element positions; the
-    // classes guard the responsive layout contract.
-    const sticky = container.querySelector('.sticky') as HTMLElement;
-    expect(sticky.classList.contains('grid')).toBe(true);
-    expect(sticky.classList.contains('grid-cols-1')).toBe(true);
-    expect(sticky.classList.contains('xl:grid-cols-[minmax(0,1fr)_auto]')).toBe(true);
-
-    const identity = sticky.children[0] as HTMLElement;
-    const actions = sticky.children[1] as HTMLElement;
-    expect(identity.classList.contains('min-w-0')).toBe(true);
-    expect(actions.classList.contains('justify-self-end')).toBe(true);
-    expect(actions.classList.contains('xl:flex-nowrap')).toBe(true);
-
-    const confirm = Array.from(actions.querySelectorAll('button')).find((button) => button.textContent === 'Confirm');
-    expect(confirm).toBeDefined();
-    expect(confirm!.disabled).toBe(true);
-    expect(actions.textContent).toContain('Complete the acknowledgement below before confirming the Job Order.');
+    const header = container.querySelector('.job-order-header')!;
+    const confirm = [...header.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Confirm',
+    )!;
+    expect(confirm.disabled).toBe(true);
+    expect(header.textContent).toContain('Review and acknowledge the disclaimer in Production');
   });
-
-  it('stacks the Send confirmation overlay and dialog above the sticky summary', async () => {
+  it('opens the existing Send confirmation from the header', async () => {
     await renderJobOrderDetail(container, root, {
       status: 'DRAFT',
-      overrides: { disclaimerText: 'Approved factory commercial terms.' },
+      overrides: { disclaimerText: 'Approved terms' },
     });
-
-    const sticky = container.querySelector('.sticky') as HTMLElement;
-    const send = Array.from(container.querySelectorAll('button')).find(
+    const send = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Send to Factory',
+    )!;
+    act(() => send.click());
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(
+      'Send job order to factory?',
     );
-    expect(send).toBeDefined();
-    act(() => send!.click());
-
-    // The dialog is portaled to document.body. React/jsdom does not perform
-    // paint-order layout, so enforce the actual Tailwind stacking contract
-    // shared by the overlay, dialog content and sticky context.
-    const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement;
-    const overlay = document.body.querySelector('.fixed.inset-0') as HTMLElement;
-    expect(dialog).not.toBeNull();
-    expect(overlay).not.toBeNull();
-    expect(dialog.textContent).toContain('Send job order to factory?');
-
-    const layer = (element: HTMLElement) => {
-      const token = Array.from(element.classList).find((name) => /^z-\d+$/.test(name));
-      return token ? Number(token.slice(2)) : NaN;
-    };
-    expect(Number.isFinite(layer(sticky))).toBe(true);
-    expect(layer(sticky)).toBeLessThan(layer(overlay));
-    expect(layer(sticky)).toBeLessThan(layer(dialog));
   });
-
   it('shows Job Order number, factory, and status regardless of which tab is active', async () => {
     await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages });
-    const sticky = container.querySelector('.sticky') as HTMLElement;
+    const sticky = container.querySelector('.job-order-header') as HTMLElement;
     expect(sticky).not.toBeNull();
     expect(sticky.textContent).toContain('JO-001');
     expect(sticky.textContent).toContain('Test Factory');
@@ -532,7 +488,7 @@ describe('JobOrderDetailPage workflow rendering', () => {
     const operational = container.querySelector('[aria-label="Current Job Order operational state"]')!;
     expect(operational.textContent).toContain('Current Activity');
     expect(operational.textContent).toContain('Size Set / Pre-Production Report');
-    expect(operational.textContent).toContain('Production:Locked');
+    expect(operational.textContent).toContain('Production: Locked');
 
     act(() => switchJobOrderTab(container, 'Production'));
     expect(getActiveTabPanel(container).textContent).toContain('Locked until pre-production Quality gates are completed.');
@@ -799,4 +755,50 @@ describe('JobOrderDetailPage historical import presentation', () => {
     const totalCell = planRow.querySelector('td:last-child');
     expect(totalCell?.textContent).toBe((0).toLocaleString());
   });
+});
+
+describe('ISS-003 visit and refetch boundaries', () => {
+  it('keeps dismissal across an actual refetch and prompts again on a fresh mounted visit', async () => {
+    authState.roles = ['FACTORY_USER'];
+    const client = await renderJobOrderDetail(container, root, {
+      status: 'SENT_TO_FACTORY',
+      overrides: draftOverrides,
+    });
+    const review = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Review in Production',
+    )!;
+    act(() => review.click());
+    const before = vi.mocked(apiClient.get).mock.calls.length;
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ['job-order', 'jo-1'] });
+    });
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before);
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(vi.mocked(apiClient.get).mock.calls.some(([url]) => url === '/job-orders/jo-1')).toBe(
+      true,
+    );
+    act(() => root.unmount());
+    root = createRoot(container);
+    await renderJobOrderDetail(container, root, {
+      status: 'SENT_TO_FACTORY',
+      overrides: draftOverrides,
+    });
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(
+      'Factory confirmation required',
+    );
+  });
+  it.each(['ADMIN', 'QA_USER', 'MERCHANDISER', 'ACCOUNTANT', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'])(
+    'never offers confirmation to %s without the Factory role',
+    async (role) => {
+      authState.roles = [role];
+      await renderJobOrderDetail(container, root, {
+        status: 'SENT_TO_FACTORY',
+        overrides: draftOverrides,
+      });
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+      expect(
+        [...container.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Confirm'),
+      ).toBe(false);
+    },
+  );
 });

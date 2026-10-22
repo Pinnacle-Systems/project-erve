@@ -274,6 +274,56 @@ jobs:
 
           echo "Extracted release-artifact smoke tests passed: standalone executables verified in isolated CI environment"
 
+  job-order-browser:
+    name: Job Order browser acceptance (disposable Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erve_batch1_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d erve_batch1_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erve_batch1_test
+      CHROME_BINARY: /usr/bin/google-chrome
+      BATCH1_EVIDENCE_ROOT: ${{ runner.temp }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dependencies and generate Prisma client
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm --filter @erve/api prisma:generate
+      - name: Migrate this job's disposable database
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: pnpm --filter @erve/api prisma:migrate:deploy
+      - name: Verify fixture safety guards
+        run: node --test tools/job-order-detail/safety.test.mjs
+      - name: Verify Job Order browser geometry and persisted workflows
+        run: pnpm --filter @erve/web test:job-order-browser
+      - name: Upload synthetic browser acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-order-browser-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/erve-batch1-*/geometry.json
+            ${{ runner.temp }}/erve-batch1-*/assertions.json
+            ${{ runner.temp }}/erve-batch1-*/console-errors.json
+            ${{ runner.temp }}/erve-batch1-*/screenshots/
+          if-no-files-found: error
+          retention-days: 14
+
   validate-deployment:
     name: Validate deployment scripts and workflows
     runs-on: ubuntu-latest

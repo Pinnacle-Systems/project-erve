@@ -199,3 +199,25 @@ describe('JobOrderHistoryTab — historical imported Job Order', () => {
     expect(panel.textContent).not.toContain('Factory acknowledgement is pending');
   });
 });
+
+it('removes the Season presentation card without erasing Season audit events', async () => {
+  await renderHistory('PRODUCTION_COMPLETE', [audit('season-audit', {code: 'AW25'}, 'SEASON_RECORDED')], {
+    seasonSnapshots: [
+      {
+        seasonId: 's1',
+        code: 'AW25',
+        name: 'Winter',
+        financialYear: '2025-26',
+        displayName: 'AW25 Winter',
+      },
+    ],
+  });
+  const panel = getActiveTabPanel(container);
+  expect([...panel.querySelectorAll('h2,h3')].some((node) => node.textContent === 'Seasons')).toBe(
+    false,
+  );
+  expect(panel.textContent).toContain('Audit Log');
+  expect(panel.textContent).toContain('Season recorded');
+  expect(panel.textContent).toContain('Alice');
+  expect(panel.textContent).toContain('Factory acknowledgement evidence');
+});

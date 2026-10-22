@@ -48,7 +48,7 @@ export async function renderJobOrderDetail(
   container: HTMLElement,
   root: Root,
   options: RenderJobOrderDetailOptions = {},
-): Promise<void> {
+): Promise<QueryClient> {
   const {
     status = 'DRAFT',
     stages,
@@ -79,6 +79,7 @@ export async function renderJobOrderDetail(
   });
 
   await vi.waitFor(() => expect(container.textContent).not.toContain('Loading job order'));
+  return queryClient;
 }
 
 export function content(container: HTMLElement): string {
