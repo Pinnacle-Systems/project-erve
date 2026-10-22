@@ -197,7 +197,7 @@ export function FactoryInvoiceDetailPage() {
         open={finalizeOpen && editingFinancials}
         onOpenChange={setFinalizeOpen}
         title="Finalize Factory Invoice?"
-        description={`Finalize the Factory Invoice for ${invoice.factoryDispatch.factoryDispatchNumber}. Financial values will be locked. Save any unsaved changes before finalizing.`}
+        description={`Finalize the Factory Invoice for ${invoice.factoryDispatch.factoryDispatchNumber}. Saved payable: ${formatMoney(invoice.total)}. Financial values will be locked. Save any unsaved changes before finalizing.`}
         confirmLabel="Finalize Factory Invoice"
         cancelLabel="Continue Editing"
         loading={finalizeMutation.isPending}
