@@ -94,8 +94,22 @@ jobs:
       # Full web test suite execution in PR CI (CI-001 / PDF-001)
       - name: Run @erve/web tests
         env:
+          BATCH4_PDF_EVIDENCE_DIR: ${{ startsWith(github.head_ref, 'batch4/') && format('{0}/batch4-pdfs', runner.temp) || '' }}
           PR2B_PDF_EVIDENCE_DIR: ${{ github.head_ref == 'feature/pr2b-job-order-pdf' && '.artifacts/pr2b-pdf' || '' }}
         run: pnpm --filter @erve/web test
+
+      - name: Render Batch 4 PDF acceptance evidence
+        if: success() && startsWith(github.head_ref, 'batch4/')
+        run: node tools/batch4/render-pdfs.mjs "${{ runner.temp }}/batch4-pdfs"
+
+      - name: Upload Batch 4 PDF evidence
+        if: success() && startsWith(github.head_ref, 'batch4/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: batch4-pdfs-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/batch4-pdfs/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload synthetic Job Order PDF review evidence
         if: success() && github.head_ref == 'feature/pr2b-job-order-pdf'
@@ -322,6 +336,39 @@ jobs:
             ${{ runner.temp }}/erve-batch1-*/assertions.json
             ${{ runner.temp }}/erve-batch1-*/console-errors.json
             ${{ runner.temp }}/erve-batch1-*/screenshots/
+          if-no-files-found: error
+          retention-days: 14
+
+  qa-browser:
+    name: QA presentation browser acceptance
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'batch4/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CHROME_BINARY: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Verify actual QA pages with synthetic API responses
+        env:
+          BATCH4_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/batch4-browser
+        run: node tools/batch4/browser.mjs
+      - name: Upload QA browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: batch4-browser-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/batch4-browser/screenshots/
+            ${{ runner.temp }}/batch4-browser/measurements.json
+            ${{ runner.temp }}/batch4-browser/console-errors.json
+            ${{ runner.temp }}/batch4-browser/downloads/
           if-no-files-found: error
           retention-days: 14
 

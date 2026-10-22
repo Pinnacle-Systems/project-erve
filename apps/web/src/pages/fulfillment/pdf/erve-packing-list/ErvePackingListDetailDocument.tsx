@@ -57,6 +57,7 @@ function CartonBlock({ carton }: { carton: ErvePackingListDetailCartonRow }) {
         columns={carton.sizeColumns}
         rows={carton.styleRows}
         maxColumnsPerGroup={10}
+        keepBoundaryRows
         flattenForPagination
       />
     </View>
@@ -115,6 +116,7 @@ export function ErvePackingListDetailDocument({
             columns={viewModel.styleSizeSizeColumns}
             rows={viewModel.styleSizeSummaryRows}
             maxColumnsPerGroup={10}
+            keepBoundaryRows
             flattenForPagination
           />
         </PdfSection>

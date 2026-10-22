@@ -1,3 +1,4 @@
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pdf } from '@react-pdf/renderer';
@@ -451,4 +452,79 @@ it('writes complete builder-to-document synthetic evidence', async () => {
       Buffer.from(await blob.arrayBuffer()),
     );
   }
+});
+
+
+describe('ISS-042 inspection units', () => {
+  it.each([
+    [72, 72, 2, 0, 'Prepared: 72 pcs · Inspected: 72 pcs · Batches passed: 2 · Batches failed: 0'],
+    [
+      12500,
+      10000,
+      3,
+      1,
+      'Prepared: 12500 pcs · Inspected: 10000 pcs · Batches passed: 3 · Batches failed: 1',
+    ],
+    [0, 0, 0, 0, 'Prepared: 0 pcs · Inspected: 0 pcs · Batches passed: 0 · Batches failed: 0'],
+    [
+      null,
+      18,
+      1,
+      0,
+      'Prepared: pending · Inspected: 18 pcs · Batches passed: 1 · Batches failed: 0',
+    ],
+  ])(
+    'exports distinct garment and batch units (%s prepared)',
+    async (prepared, inspected, passed, failed, expected) => {
+      const activity = ppSampleActivity({
+        name: 'Final Inspection',
+        coverage: {
+          preparedQuantityAuthoritative: prepared !== null,
+          preparedQuantity: prepared,
+          inspectedQuantity: inspected + 90,
+          inspectedPhysicalCoverage: inspected,
+          remainingQuantity: 0,
+          complete: true,
+          reconciliationConflict: false,
+          state: 'COMPLETE',
+          passedBatches: passed,
+          failedBatches: failed,
+          hasFailedBatches: failed > 0,
+          batches: [
+            {
+              id: 'physical-1',
+              batchNumber: 1,
+              inspectedQuantity: inspected,
+              status: 'FINALIZED',
+              outcome: 'PASS',
+              finalizedAt: null,
+              attemptCount: 7,
+            },
+          ],
+        },
+      });
+      const model = buildJobOrderDetailViewModel(makeJobOrder({ qualityActivities: [activity] }), {
+        generatedAt: '2026-10-22T10:00:00Z',
+      });
+      expect(model.qualityActivities[0]?.coverageSummary).toBe(expected);
+      const blob = await pdf(JobOrderDetailDocument({ viewModel: model })).toBlob();
+      const task = getDocument({
+        data: new Uint8Array(await blob.arrayBuffer()),
+        useSystemFonts: true,
+      });
+      try {
+        const doc = await task.promise;
+        let text = '';
+        for (let n = 1; n <= doc.numPages; n++) {
+          const page = await doc.getPage(n);
+          const content = await page.getTextContent();
+          text +=
+            content.items.flatMap((item) => ('str' in item ? [item.str] : [])).join(' ') + ' ';
+        }
+        expect(text.replace(/\s+/g, ' ')).toContain(expected);
+      } finally {
+        await task.destroy();
+      }
+    },
+  );
 });

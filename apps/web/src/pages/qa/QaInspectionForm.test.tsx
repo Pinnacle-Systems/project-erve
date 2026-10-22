@@ -349,18 +349,17 @@ describe('QaInspectionForm', () => {
 
     expect(container.querySelector('[data-quality-execution-shell="true"]')).not.toBeNull();
     expect(container.querySelector('h1')?.textContent).toBe('PP Sample Checklist');
+    expect(container.textContent).not.toMatch(/Downstream availability|downstream-ready|future warehouse/i);
+    expect(container.querySelectorAll('h1')).toHaveLength(1);
     expect(container.textContent).toContain('PP Sample form · Attempt 1 · DRAFT');
     const back = container.querySelector('a[aria-label="Back to Job Order JO-001"]');
     expect(back?.textContent).toContain('Job Order JO-001');
     expect(back?.getAttribute('href')).toBe('/job-orders/jo-1');
-    // With Distributor/PO provenance removed from QA's view entirely, the
-    // shared execution shell's context line now identifies the Job Order by
-    // number + factory instead — legitimately repeating "JO-001" alongside
-    // the dedicated "Back to Job Order" link and Inspection context panel.
     expect(
       container.querySelector('[data-quality-execution-header="true"]')?.textContent,
     ).toContain('JO-001 · Factory');
-    expect(container.textContent).toContain('Job OrderJO-001');
+    expect(container.querySelector('[data-quality-execution-header]')?.textContent).toContain('Summer 26');
+    expect(container.textContent).not.toContain('Inspection context');
     expect(container.textContent).not.toContain('Back');
   });
 
@@ -1455,4 +1454,15 @@ it('renders only pinned checklist rows and the saved form label', async () => {
   expect(container.textContent).not.toContain('Confirm Metal Detection');
   expect(container.textContent).not.toContain('Fit sample made based on buyer comments');
   expect(container.textContent).toContain('Confirm PP have been checked and are correct');
+});
+
+
+it('omits downstream inventory messaging from historical QA detail without process-flow linkage', async () => {
+  const data = detail();
+  vi.mocked(useAuth).mockReturnValue({ user: { id: 'qa-1', name: 'QA User', email: 'qa@example.invalid', mobile: null, roles: ['QA_USER'] }, status: 'authenticated', logoutReason: null, login: vi.fn(), logout: vi.fn(), retrySession: vi.fn() });
+  vi.spyOn(apiClient, 'get').mockImplementation(async url => ({ data: { data: String(url).includes('/audit') ? [] : data } }));
+  await act(async () => root.render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/qa/jo-1']}><Routes><Route path="/qa/:id" element={<QaDetailPage />} /></Routes></MemoryRouter></QueryClientProvider>));
+  for (let n = 0; n < 30 && !container.querySelector('h1'); n++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+  expect(container.textContent).toContain('Inspection history');
+  expect(container.textContent).not.toMatch(/Downstream availability|downstream-ready|future warehouse/i);
 });

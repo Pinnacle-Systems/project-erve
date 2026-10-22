@@ -12,6 +12,7 @@ import { QualityExecutionPage } from './QualityExecutionPage.js';
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -139,6 +140,8 @@ describe('web Quality execution workflow', () => {
 
     expect(container.querySelector('[data-quality-execution-shell="true"]')).not.toBeNull();
     expect(container.querySelector('h1')?.textContent).toBe(title);
+    expect(container.querySelectorAll('h1')).toHaveLength(1);
+    expect(container.querySelector('[data-quality-execution-header]')?.textContent).toContain('Basic Tee');
     expect(container.textContent).toContain(`${formName} v1 · Attempt 1 · DRAFT`);
     const back = container.querySelector('a[aria-label="Back to Job Order JO-2026-000001"]');
     expect(back?.textContent).toContain('←');
@@ -408,4 +411,39 @@ describe('web Quality execution role-gated mutation controls (UXAUTH-006)', () =
       expect(buttons).toContain('Finalize');
     },
   );
+});
+
+
+it('loads authorized Job Order identity when canonical Inline has no quantity field', async () => {
+  vi.spyOn(apiClient, 'get').mockImplementation(async url => ({ data: { data: String(url) === '/job-orders/j1' ? { id: 'j1', factory: { name: 'Authorized Factory' }, orderedQuantityTotal: 7200, seasonSnapshots: [{ displayName: 'Recorded Winter 26' }], sourceOrderSheets: [{ distributorName: 'Private Distributor', poNumber: 'EIOS-PRIVATE' }] } : view } }));
+  await act(async () => root.render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/quality-executions/e1']}><Routes><Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} /></Routes></MemoryRouter></QueryClientProvider>));
+  for (let n = 0; n < 30 && !container.querySelector('[data-quality-execution-header]')?.textContent?.includes('7200'); n++) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+  }
+  const header = container.querySelector('[data-quality-execution-header]')!;
+  expect(header.textContent).toContain('7200');
+  expect(header.textContent).toContain('Authorized Factory');
+  expect(header.textContent).toContain('Recorded Winter 26');
+  expect(container.textContent).not.toMatch(/Private Distributor|EIOS-PRIVATE/);
+});
+
+
+it('waits for authorized identity before enabling PDF actions', async () => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+    if (String(url) === '/job-orders/j1') {
+      await pending;
+      return { data: { data: { id: 'j1', factory: { name: 'Authorized Factory' }, orderedQuantityTotal: 7200, seasonSnapshots: [] } } };
+    }
+    return { data: { data: view } };
+  });
+  await act(async () => root.render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/quality-executions/e1']}><Routes><Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} /></Routes></MemoryRouter></QueryClientProvider>));
+  for (let n = 0; n < 30 && !container.querySelector('h1'); n++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+  const download = [...container.querySelectorAll('button')].find(button => button.textContent === 'Download PDF')!;
+  expect(download.disabled).toBe(true);
+  await act(async () => release());
+  for (let n = 0; n < 30 && download.disabled; n++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+  expect(download.disabled).toBe(false);
+  expect(container.querySelector('[data-quality-execution-header]')?.textContent).toContain('7200');
 });

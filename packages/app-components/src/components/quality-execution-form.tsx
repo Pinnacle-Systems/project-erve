@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { qualityIdentityItems, qualityPresentationSections } from '../quality-presentation.js';
 import { Button, Checkbox, DatePicker, Textarea, TextField } from '@erve/primitives';
 import { calculateQualityExecutionOutcome } from '@erve/types';
 import type {
@@ -93,6 +94,10 @@ export interface QualityExecutionFormProps {
    * for a FINALIZED execution.
    */
   canMutate?: boolean;
+  leadingVisual?: ReactNode;
+  /** Web routine QA identity; opt-in keeps existing mobile consumers unchanged. */
+  compactIdentity?: boolean;
+  identityItems?: Array<{ label: string; value: string }>;
 }
 
 export function QualityExecutionForm(props: QualityExecutionFormProps) {
@@ -183,7 +188,28 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
       onSubmit={(event) => event.preventDefault()}
     >
       <QualityExecutionHeader
+        compact={props.compactIdentity}
+        leadingVisual={props.leadingVisual}
         title={displayActivityName(execution.activityName)}
+        identity={
+          props.compactIdentity ? (
+            <>
+              <span>{execution.jobOrderNumber}</span>
+              {execution.primaryStyle.consistent ? (
+                <span>
+                  {execution.primaryStyle.style.styleNumber} -{' '}
+                  {execution.primaryStyle.style.styleName}
+                </span>
+              ) : null}
+              {(props.identityItems ?? qualityIdentityItems(execution)).map((item) => (
+                <span key={item.label}>
+                  {item.label}: {item.value}
+                </span>
+              ))}
+            </>
+          ) : undefined
+        }
+        batchNumber={execution.finalBatch?.batchNumber}
         formName={execution.qualityForm.name}
         versionNumber={execution.qualityForm.versionNumber}
         attemptNumber={execution.attemptNumber}
@@ -256,7 +282,10 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
           ) : null}
         </QualityExecutionSection>
       ) : null}
-      {[...execution.sections]
+      {(props.compactIdentity
+        ? qualityPresentationSections(execution.sections, true)
+        : [...execution.sections]
+      )
         .sort((a, b) => a.sequence - b.sequence)
         .map((section) => (
           <QualityExecutionSection
@@ -547,7 +576,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                                 const nextRemarks =
                                   patch.remarks !== undefined
                                     ? patch.remarks
-                                    : current?.remarks ?? null;
+                                    : (current?.remarks ?? null);
                                 set(
                                   'attendees',
                                   nextName.trim()

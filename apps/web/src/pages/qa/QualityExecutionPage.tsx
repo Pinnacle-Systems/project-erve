@@ -1,9 +1,15 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import { QualityExecutionForm, QualityExecutionPageShell } from '@erve/app-components';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, ValidationMessage } from '@erve/primitives';
+import { QualityExecutionForm, QualityExecutionPageShell, qualityIdentityItems } from '@erve/app-components';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  ValidationMessage,
+} from '@erve/primitives';
 import { useAuthedImage } from '../../lib/use-authed-image.js';
 import type {
   ApiErrorResponse,
@@ -12,6 +18,7 @@ import type {
   QualityExecutionValidationError,
   QualityExecutionView,
   FinalQualityBatchView,
+  JobOrderDetail,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useOptionalAuth } from '../../auth/AuthContext.js';
@@ -22,7 +29,7 @@ import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { displayQualityActivityName } from './pdf/shared/displayQualityActivityName.js';
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import { StyleIdentityUnavailable } from '../../components/style/StyleIdentityUnavailable.js';
-import { IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
+import { QA_IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
 
 export function QualityExecutionPage() {
   const { executionId = '' } = useParams();
@@ -31,7 +38,9 @@ export function QualityExecutionPage() {
   const user = useOptionalAuth()?.user;
   const [message, setMessage] = useState('');
   const [validationErrors, setValidationErrors] = useState<QualityExecutionValidationError[]>([]);
-  const [viewingAttachment, setViewingAttachment] = useState<{ id: string; name: string } | null>(null);
+  const [viewingAttachment, setViewingAttachment] = useState<{ id: string; name: string } | null>(
+    null,
+  );
   const query = useQuery({
     queryKey: ['quality-execution', executionId],
     queryFn: async () =>
@@ -41,6 +50,20 @@ export function QualityExecutionPage() {
         )
       ).data.data,
   });
+  // Existing role-scoped read supplies identity absent from historical/canonical form definitions.
+  // Project only QA identity; never render planning/provenance from this response.
+  const jobOrder = useQuery({
+    queryKey: ['job-order', query.data?.jobOrderId],
+    enabled: Boolean(query.data?.jobOrderId),
+    queryFn: async () => (await apiClient.get<ApiSuccessResponse<JobOrderDetail>>(`/job-orders/${query.data!.jobOrderId}`)).data.data,
+    retry: false,
+  });
+  const recordedContext = jobOrder.data?.id === query.data?.jobOrderId ? jobOrder.data : undefined;
+  const identityItems = useMemo(() => recordedContext ? [
+    ...(recordedContext.factory ? [{ label: 'Factory', value: recordedContext.factory.name }] : []),
+    ...(typeof recordedContext.orderedQuantityTotal === 'number' ? [{ label: 'Job Order quantity', value: `${recordedContext.orderedQuantityTotal} pcs` }] : []),
+    ...(recordedContext.seasonSnapshots?.length ? [{ label: 'Season snapshot', value: recordedContext.seasonSnapshots.map(season => season.displayName).join(', ') }] : []),
+  ] : query.data ? qualityIdentityItems(query.data) : [], [recordedContext, query.data]);
   const mutation = useMutation({
     mutationFn: async ({
       payload,
@@ -72,9 +95,9 @@ export function QualityExecutionPage() {
         rawMessage === 'Invalid request data' ||
         rawMessage.toLowerCase().includes('validation error');
       const fallbackMessage = isRawTransport
-        ? (validationErrors.length
-            ? 'Please correct the highlighted fields before saving.'
-            : 'Please review and complete the required inspection fields.')
+        ? validationErrors.length
+          ? 'Please correct the highlighted fields before saving.'
+          : 'Please review and complete the required inspection fields.'
         : rawMessage;
       setMessage(
         api?.code === 'STALE_VERSION'
@@ -149,8 +172,9 @@ export function QualityExecutionPage() {
     return generateQualityExecutionPdfBlob(executionData, {
       generatedAt: new Date().toISOString(),
       generatedBy: user?.name,
+      identityItems,
     });
-  }, [executionData, user?.name]);
+  }, [executionData, user?.name, identityItems]);
   const pdfAction = usePdfAction({
     generate: generateQualityExecutionPdf,
     filename: () =>
@@ -176,70 +200,67 @@ export function QualityExecutionPage() {
     );
   return (
     <>
-    <QualityExecutionPageShell
-      jobOrderId={query.data.jobOrderId}
-      jobOrderNumber={query.data.jobOrderNumber}
-      actions={
-        <PdfActionButtons
-          isGenerating={pdfAction.isGenerating}
-          error={pdfAction.error}
-          onDownload={pdfAction.handleDownload}
-          onPrint={pdfAction.handlePrint}
+      <QualityExecutionPageShell
+        jobOrderId={query.data.jobOrderId}
+        jobOrderNumber={query.data.jobOrderNumber}
+        actions={
+          <PdfActionButtons
+            disabled={jobOrder.isFetching}
+            disabledHint="Loading Job Order context"
+            isGenerating={pdfAction.isGenerating}
+            error={pdfAction.error}
+            onDownload={pdfAction.handleDownload}
+            onPrint={pdfAction.handlePrint}
+          />
+        }
+      >
+        <QualityExecutionForm
+          compactIdentity
+          identityItems={identityItems}
+          key={`${query.data.id}:${query.data.version}`}
+          execution={query.data}
+          leadingVisual={
+            query.data.primaryStyle.consistent ? (
+              <StyleThumbnailCell
+                styleId={query.data.primaryStyle.style.id}
+                image={query.data.primaryStyle.style.primaryImage}
+                size={QA_IDENTITY_HEADER_IMAGE_SIZE}
+                viewerTitle={query.data.primaryStyle.style.styleNumber}
+              />
+            ) : (
+              <StyleIdentityUnavailable
+                size={QA_IDENTITY_HEADER_IMAGE_SIZE}
+                reason="Style identity unavailable — this Job Order's lines disagree on Style, which should never happen. Reported for investigation, not guessed."
+              />
+            )
+          }
+          busy={mutation.isPending || batchMutation.isPending}
+          error={message}
+          validationErrors={validationErrors}
+          canMutate={canMutateQualityExecution(user)}
+          onSave={(payload) =>
+            mutation.mutateAsync({ payload, finalize: false }).then(() => undefined)
+          }
+          onFinalize={(payload) =>
+            mutation.mutateAsync({ payload, finalize: true }).then(() => undefined)
+          }
+          onUpload={upload}
+          onRemoveAttachment={removeAttachment}
+          onViewAttachment={(id, name) => setViewingAttachment({ id, name })}
+          onStartReinspection={() =>
+            batchMutation.mutateAsync({ action: 'reinspect' }).then(() => undefined)
+          }
+          onCancelBatch={(reason) =>
+            batchMutation.mutateAsync({ action: 'cancel', reason }).then(() => undefined)
+          }
+          onPermanentlyReject={(reason) =>
+            batchMutation
+              .mutateAsync({ action: 'permanently-reject', reason })
+              .then(() => undefined)
+          }
         />
-      }
-    >
-      <div className="flex items-start gap-3">
-        {query.data.primaryStyle.consistent ? (
-          <StyleThumbnailCell
-            styleId={query.data.primaryStyle.style.id}
-            image={query.data.primaryStyle.style.primaryImage}
-            size={IDENTITY_HEADER_IMAGE_SIZE}
-            viewerTitle={query.data.primaryStyle.style.styleNumber}
-          />
-        ) : (
-          <StyleIdentityUnavailable
-            size={IDENTITY_HEADER_IMAGE_SIZE}
-            reason="Style identity unavailable — this Job Order's lines disagree on Style, which should never happen. Reported for investigation, not guessed."
-          />
-        )}
-        <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-semibold text-foreground">
-            {displayQualityActivityName(query.data.activityName)}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {query.data.jobOrderNumber}
-            {query.data.primaryStyle.consistent ? ` · ${query.data.primaryStyle.style.styleNumber}` : ''}
-          </p>
-        </div>
-      </div>
-      <QualityExecutionForm
-        key={`${query.data.id}:${query.data.version}`}
-        execution={query.data}
-        busy={mutation.isPending || batchMutation.isPending}
-        error={message}
-        validationErrors={validationErrors}
-        canMutate={canMutateQualityExecution(user)}
-        onSave={(payload) =>
-          mutation.mutateAsync({ payload, finalize: false }).then(() => undefined)
-        }
-        onFinalize={(payload) =>
-          mutation.mutateAsync({ payload, finalize: true }).then(() => undefined)
-        }
-        onUpload={upload}
-        onRemoveAttachment={removeAttachment}
-        onViewAttachment={(id, name) => setViewingAttachment({ id, name })}
-        onStartReinspection={() =>
-          batchMutation.mutateAsync({ action: 'reinspect' }).then(() => undefined)
-        }
-        onCancelBatch={(reason) =>
-          batchMutation.mutateAsync({ action: 'cancel', reason }).then(() => undefined)
-        }
-        onPermanentlyReject={(reason) =>
-          batchMutation.mutateAsync({ action: 'permanently-reject', reason }).then(() => undefined)
-        }
-      />
-    </QualityExecutionPageShell>
-    {/* Keep the dialog mounted so Radix observes a controlled closed-to-open
+      </QualityExecutionPageShell>
+      {/* Keep the dialog mounted so Radix observes a controlled closed-to-open
         transition, rather than mounting a brand-new controlled-open portal
         in the same click that selected the evidence. */}
     <Dialog

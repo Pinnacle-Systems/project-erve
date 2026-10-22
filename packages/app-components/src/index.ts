@@ -149,3 +149,5 @@ export {
   DEFAULT_FORM_CONTROL_SELECTOR,
 } from './components/enter-to-next.js';
 export type { EnterToNextOptions } from './components/enter-to-next.js';
+
+export * from './quality-presentation.js';

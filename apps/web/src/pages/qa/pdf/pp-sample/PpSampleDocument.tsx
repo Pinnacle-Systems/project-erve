@@ -39,7 +39,13 @@ const styles = StyleSheet.create({
   checklistRow: { flexDirection: 'row', borderBottom: '0.5 solid #dddddd', paddingVertical: 4 },
   checklistCell: { fontSize: 8, color: '#111111', paddingHorizontal: 4 },
   remarksText: { fontSize: 8, color: '#333333', marginTop: 4 },
-  evidenceHeading: { fontSize: 8, fontWeight: 700, color: '#555555', marginTop: 4, marginBottom: 4 },
+  evidenceHeading: {
+    fontSize: 8,
+    fontWeight: 700,
+    color: '#555555',
+    marginTop: 4,
+    marginBottom: 4,
+  },
   evidenceRow: { flexDirection: 'row', flexWrap: 'wrap' },
   evidenceItem: { width: 90, marginRight: 10, marginBottom: 8 },
   evidenceFileName: { fontSize: 7, color: '#333333', marginTop: 3 },
@@ -57,8 +63,20 @@ const styles = StyleSheet.create({
 const reworkColumns: PdfTableColumn<PpSampleReworkRow>[] = [
   { key: 'styleNumber', header: 'Style', width: '25%', value: (row) => row.styleNumber },
   { key: 'sizeCode', header: 'Size', width: '15%', value: (row) => row.sizeCode },
-  { key: 'quantity', header: 'Quantity', width: '15%', align: 'right', value: (row) => row.quantity },
-  { key: 'attemptNumber', header: 'Attempt', width: '15%', align: 'right', value: (row) => row.attemptNumber },
+  {
+    key: 'quantity',
+    header: 'Quantity',
+    width: '15%',
+    align: 'right',
+    value: (row) => row.quantity,
+  },
+  {
+    key: 'attemptNumber',
+    header: 'Attempt',
+    width: '15%',
+    align: 'right',
+    value: (row) => row.attemptNumber,
+  },
   { key: 'statusLabel', header: 'Status', width: '30%', value: (row) => row.statusLabel },
 ];
 
@@ -85,8 +103,11 @@ function EvidenceGrid({ items }: { items: PpSampleEvidenceItem[] }) {
 
 function FormBlock({ form }: { form: PpSampleFormRow }) {
   return (
-    <View style={styles.formBlock} wrap={false}>
-      <Text style={styles.formHeading}>{`Size ${form.sizeLabel} — ${form.styleNumber}`}</Text>
+    <View style={styles.formBlock}>
+      <Text
+        style={styles.formHeading}
+        minPresenceAhead={64}
+      >{`Size ${form.sizeLabel} — ${form.styleNumber}`}</Text>
       <PdfKeyValueSection
         items={[
           { label: 'Sample Quantity', value: form.sampleQuantity },
@@ -97,7 +118,7 @@ function FormBlock({ form }: { form: PpSampleFormRow }) {
       />
       {form.checklist.length > 0 ? (
         <View>
-          <View style={styles.checklistHeaderRow} fixed>
+          <View style={styles.checklistHeaderRow} fixed minPresenceAhead={24}>
             <Text style={[styles.checklistHeaderCell, { width: '55%' }]}>Checklist Item</Text>
             <Text style={[styles.checklistHeaderCell, { width: '20%' }]}>Result</Text>
             <Text style={[styles.checklistHeaderCell, { width: '25%' }]}>Remarks</Text>
@@ -114,7 +135,9 @@ function FormBlock({ form }: { form: PpSampleFormRow }) {
       {form.inspectionRemarks ? (
         <Text style={styles.remarksText}>{`Inspection remarks: ${form.inspectionRemarks}`}</Text>
       ) : null}
-      <Text style={styles.evidenceHeading}>Evidence</Text>
+      <Text style={styles.evidenceHeading} minPresenceAhead={30}>
+        Evidence
+      </Text>
       <EvidenceGrid items={form.evidence} />
     </View>
   );
@@ -122,8 +145,10 @@ function FormBlock({ form }: { form: PpSampleFormRow }) {
 
 function SessionBlock({ session }: { session: PpSampleSessionRow }) {
   return (
-    <PdfSection title={session.cycleLabel} wrap>
-      <Text style={styles.note}>{`${session.inspectorName} · ${session.finalizedLabel ?? 'Draft'}`}</Text>
+    <PdfSection title={session.cycleLabel} wrap minPresenceAhead={80}>
+      <Text
+        style={styles.note}
+      >{`${session.inspectorName} · ${session.finalizedLabel ?? 'Draft'}`}</Text>
       <PdfKeyValueSection items={[{ label: 'Status', value: session.statusLabel }]} columns={4} />
       {session.forms.map((form) => (
         <FormBlock key={form.id} form={form} />
@@ -152,7 +177,7 @@ export function PpSampleDocument({ viewModel }: PpSampleDocumentProps) {
       <PdfSection title="Inspection Context">
         <View style={styles.identityRow}>
           <View style={styles.identityImageWrapper}>
-            <PdfThumbnail image={viewModel.image} width={90} height={90} />
+            <PdfThumbnail image={viewModel.image} width={60} height={60} />
           </View>
           <View style={styles.identityContent}>
             <PdfKeyValueSection items={viewModel.headerItems} columns={4} />
@@ -168,16 +193,16 @@ export function PpSampleDocument({ viewModel }: PpSampleDocumentProps) {
         viewModel.sessions.map((session) => <SessionBlock key={session.id} session={session} />)
       )}
 
-      <PdfSection title="Reinspection Handoff" wrap>
+      <PdfSection
+        title="Reinspection Handoff"
+        wrap={viewModel.reworkTasks.length > 0}
+        minPresenceAhead={40}
+      >
         {viewModel.reworkTasks.length === 0 ? (
           <Text style={styles.emptyText}>No open corrections.</Text>
         ) : (
           <PdfTable columns={reworkColumns} rows={viewModel.reworkTasks} rowKey={(row) => row.id} />
         )}
-      </PdfSection>
-
-      <PdfSection title="Downstream Availability">
-        <Text style={styles.note}>{viewModel.downstreamAvailabilityText}</Text>
       </PdfSection>
 
       <PdfFooter />

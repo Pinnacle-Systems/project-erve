@@ -1,3 +1,5 @@
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { contextExecution } from '../../../../test-support/qa-presentation-fixture.js';
 import { pdf } from '@react-pdf/renderer';
 import { describe, expect, it } from 'vitest';
 import { QualityExecutionDocument } from './QualityExecutionDocument.js';
@@ -148,3 +150,37 @@ describe('QualityExecutionDocument', () => {
     expect(blob.size).toBeGreaterThan(0);
   }, 30000);
 });
+
+
+it.each(['Pre-Production Meeting', 'Inline Inspection', 'Final Inspection'])(
+  'ISS-047 suppresses derived provenance in actual %s PDF while preserving authored fields',
+  async (activity) => {
+    const viewModel = buildQualityExecutionViewModel(
+      {
+        execution: contextExecution(activity),
+        evidenceImages: new Map(),
+        primaryImage: { placeholder: true },
+      },
+      META,
+    );
+    const blob = await pdf(<QualityExecutionDocument viewModel={viewModel} />).toBlob();
+    const task = getDocument({
+      data: new Uint8Array(await blob.arrayBuffer()),
+      useSystemFonts: true,
+    });
+    try {
+      const doc = await task.promise;
+      let text = '';
+      for (let n = 1; n <= doc.numPages; n++) {
+        const content = await (await doc.getPage(n)).getTextContent();
+        text += content.items.flatMap((item) => ('str' in item ? [item.str] : [])).join(' ');
+      }
+      expect(text).not.toMatch(/Distributor Alpha|Distributor Beta|EIOS-|Private Planner/);
+      expect(text).toContain('Authored Buyer');
+      expect(text).toContain('Authored Supplier');
+      expect(text).toContain('15 Jan 2026');
+    } finally {
+      await task.destroy();
+    }
+  },
+);

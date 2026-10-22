@@ -620,23 +620,30 @@ export function QaInspectionForm({
           )}
           <FormSection title="Inspection Details">
             <DescriptionList columns={3}>
-              <DescriptionList.Item label="Job Order" value={detail.jobOrderNumber} />
-              <DescriptionList.Item
-                label="Style / colour"
-                value={
-                  <div className="flex items-center gap-2">
-                    {line && (
-                      <StyleThumbnailCell
-                        styleId={line.styleId}
-                        image={line.primaryImage}
-                        size={32}
-                        viewerTitle={line.styleNumber}
-                      />
-                    )}
-                    <span>{`${selected.styleNumber} · ${selected.colour ?? '—'}`}</span>
-                  </div>
-                }
-              />
+              {!ppSample && (
+                <DescriptionList.Item label="Job Order" value={detail.jobOrderNumber} />
+              )}
+              {!ppSample && (
+                <DescriptionList.Item
+                  label="Style / colour"
+                  value={
+                    <div className="flex items-center gap-2">
+                      {line && (
+                        <StyleThumbnailCell
+                          styleId={line.styleId}
+                          image={line.primaryImage}
+                          size={32}
+                          viewerTitle={line.styleNumber}
+                        />
+                      )}
+                      <span>{`${selected.styleNumber} · ${selected.colour ?? '—'}`}</span>
+                    </div>
+                  }
+                />
+              )}
+              {ppSample && (
+                <DescriptionList.Item label="Colour" value={selected.colour ?? 'Not recorded'} />
+              )}
               <DescriptionList.Item label="Selected size" value={selected.sizeLabel} />
               {ppSample && (
                 <DescriptionList.Item label="Sample quantity" value={ppSample.sampleQuantity} />

@@ -9,6 +9,7 @@ import type { PreparedQualityExecutionPdfData } from './prepareQualityExecutionP
 export interface QualityExecutionPdfMeta {
   generatedAt: string;
   generatedBy?: string | null;
+  identityItems?: Array<{ label: string; value: string }>;
 }
 
 const STATUS_LABELS: Record<QualityExecutionView['status'], string> = {
@@ -68,6 +69,7 @@ export interface QualityExecutionPdfViewModel {
   subtitle: string;
   generatedAt: string;
   generatedBy?: string | null;
+  identityItems?: Array<{ label: string; value: string }>;
   headerItems: PdfKeyValueItem[];
   outcome: QualityExecutionOutcomeViewModel | null;
   finalBatch: QualityFinalBatchViewModel | null;
@@ -136,6 +138,8 @@ export function buildQualityExecutionViewModel(
 
   const headerItems: PdfKeyValueItem[] = [
     { label: 'Job Order Number', value: execution.jobOrderNumber },
+    ...(execution.primaryStyle.consistent ? [{ label: 'Style', value: `${execution.primaryStyle.style.styleNumber} - ${execution.primaryStyle.style.styleName}` }] : []),
+    ...(meta.identityItems ?? []),
     { label: 'QA Activity', value: activityDisplayName },
     { label: 'QA Form', value: execution.qualityForm.name },
     { label: 'Form Version', value: execution.qualityForm.versionNumber },

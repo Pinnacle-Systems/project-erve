@@ -65,7 +65,6 @@ export interface PpSamplePdfViewModel {
   headerItems: PdfKeyValueItem[];
   sessions: PpSampleSessionRow[];
   reworkTasks: PpSampleReworkRow[];
-  downstreamAvailabilityText: string;
   image: PdfImageSource;
 }
 
@@ -174,10 +173,6 @@ export function buildPpSampleViewModel(
     headerItems,
     sessions,
     reworkTasks,
-    downstreamAvailabilityText:
-      detail.status === 'QA_APPROVED'
-        ? `${detail.totals.finalApproved} units are authoritative for the future warehouse workflow.`
-        : 'No quantity is downstream-ready until final QA approval.',
     image: primaryImage,
   };
 }
