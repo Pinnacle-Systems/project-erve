@@ -502,6 +502,35 @@ describe('FactoryInvoiceDetailPage load error handling (UXAUTH-018)', () => {
 
 
 describe('Factory Invoice confirmation safety (UX-03)', () => {
+  it('shows the persisted payable amount (not the production subtotal) before Accountant finalization', async () => {
+    const invoice = buildInvoice({ status: 'FACTORY_CONFIRMED', subtotal: 1500, gstAmount: 75, total: 1575 });
+    await renderPage(invoice, 'ACCOUNTANT');
+    act(() => buttonByText('Finalize')!.click());
+
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('EIFD/26-27/0001');
+    expect(dialog.textContent).toContain('Saved payable: ₹1,575.00');
+    expect(dialog.textContent).not.toContain('Saved payable: ₹1,500.00');
+
+    const close = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Continue Editing');
+    act(() => close!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  });
+
+  it('closes the invoice finalization confirmation after a successful request', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: buildInvoice({ status: 'FINALIZED' }) } } as never);
+    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', total: 1575, gstAmount: 75 }), 'ACCOUNTANT');
+    act(() => buttonByText('Finalize')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'))
+      .find((b) => b.textContent === 'Finalize Factory Invoice');
+    act(() => confirm!.click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/finalize', { expectedVersion: 1 }));
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  });
+
+
 
   it('requires Accountant to save modified financial values before finalizing', async () => {
     await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
