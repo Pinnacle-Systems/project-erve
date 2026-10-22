@@ -259,6 +259,41 @@ describe('ErvePackingListDetailPage factory/supplier provenance redaction (DEMO-
 
 
 describe('Erve Packing List finalization safety and placement (UX-03/UX-10)', () => {
+
+  it('does not enable finalization for an empty OPEN packing list', async () => {
+    await renderPage(buildPackingList({ status: 'OPEN', cartonCount: 0, totalQuantity: 0, cartons: [] }), 'ADMIN');
+    expect(buttonByText('Finalize Packing List')?.disabled).toBe(true);
+  });
+
+  it('submits the finalize request only after the user confirms', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: null } } as never);
+    await renderPage(buildPackingList({ status: 'OPEN' }), 'ADMIN');
+    act(() => buttonByText('Finalize Packing List')!.click());
+    expect(post).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const finalize = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Finalize Packing List')!;
+    act(() => finalize.click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/erve-packing-lists/epl-1/finalize'));
+  });
+
+  it('shows a failed finalization in its dialog instead of silently hiding the error', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: { data: { error: { message: 'Carton allocation changed' } } },
+    });
+    await renderPage(buildPackingList({ status: 'OPEN' }), 'ADMIN');
+    act(() => buttonByText('Finalize Packing List')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const finalize = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Finalize Packing List')!;
+    act(() => finalize.click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/erve-packing-lists/epl-1/finalize'));
+    await vi.waitFor(() => expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('Carton allocation changed'));
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+
   it('shows exactly one header Finalize action for an eligible list', async () => {
     await renderPage(buildPackingList({ status: 'OPEN' }), 'ADMIN');
     const buttons = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.trim() === 'Finalize Packing List');
@@ -273,7 +308,7 @@ describe('Erve Packing List finalization safety and placement (UX-03/UX-10)', ()
     await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain('EIPL/26-27/0001');
-    expect(dialog.textContent).toContain('1 cartons');
+    expect(dialog.textContent).toContain('1 carton');
     expect(dialog.textContent).toContain('10 pieces');
     expect(post).not.toHaveBeenCalled();
     const exit = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Keep Editing');
