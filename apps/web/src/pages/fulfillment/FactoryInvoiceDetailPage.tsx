@@ -157,7 +157,7 @@ export function FactoryInvoiceDetailPage() {
         }
         primaryAction={
           canConfirm && invoice.status === 'GENERATED' ? (
-            <Button onClick={() => setConfirmOpen(true)} loading={confirmMutation.isPending}>
+            <Button onClick={() => { setFormError(''); setConfirmOpen(true); }} loading={confirmMutation.isPending}>
               Confirm Factory Invoice
             </Button>
           ) : editingFinancials ? (
@@ -170,7 +170,11 @@ export function FactoryInvoiceDetailPage() {
               >
                 Save Changes
               </Button>
-              <Button onClick={() => setFinalizeOpen(true)} loading={finalizeMutation.isPending}>
+              <Button
+                onClick={() => { setFormError(''); setFinalizeOpen(true); }}
+                disabled={hasFinancialChanges || saveFinancialsMutation.isPending}
+                loading={finalizeMutation.isPending}
+              >
                 Finalize
               </Button>
             </div>
@@ -186,6 +190,7 @@ export function FactoryInvoiceDetailPage() {
         confirmLabel="Confirm Factory Invoice"
         cancelLabel="Continue Reviewing"
         loading={confirmMutation.isPending}
+        error={formError || undefined}
         onConfirm={() => { if (!confirmMutation.isPending) confirmMutation.mutate(); }}
       />
       <ConfirmDialog
@@ -196,9 +201,13 @@ export function FactoryInvoiceDetailPage() {
         confirmLabel="Finalize Factory Invoice"
         cancelLabel="Continue Editing"
         loading={finalizeMutation.isPending}
-        onConfirm={() => { if (!finalizeMutation.isPending) finalizeMutation.mutate(); }}
+        error={formError || undefined}
+        onConfirm={() => { if (!finalizeMutation.isPending && !hasFinancialChanges && !saveFinancialsMutation.isPending) finalizeMutation.mutate(); }}
       />
       {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
+      {editingFinancials && hasFinancialChanges && (
+        <ValidationMessage tone="warning">Save financial changes before finalizing this Factory Invoice.</ValidationMessage>
+      )}
       {invoice.status === 'GENERATED' && canEditFinancials && (
         <ValidationMessage tone="warning">
           Awaiting Factory Confirmation — financial values cannot be edited until the Factory confirms this invoice.
