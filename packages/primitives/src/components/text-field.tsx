@@ -133,23 +133,32 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
         ) : (
           inputElement
         )}
-        {resolvedError && (
-          <p
-            id={errorId}
-            className="text-xs text-[var(--erp-form-field-error-text-color)] leading-none"
-            role="alert"
-          >
-            {resolvedError}
-          </p>
-        )}
-        {resolvedHelpText && (
-          <p
-            id={helpId}
-            className="text-xs text-[var(--erp-form-field-help-text-color)] leading-none"
-          >
-            {resolvedHelpText}
-          </p>
-        )}
+        {/*
+          Fixed-height slot for the error/help text, reserved whether or not
+          either is currently shown. Without this, a field with no helpText
+          grows by one line the instant its error first appears, dropping it
+          out of alignment with siblings that assume a fixed field height
+          (e.g. a submit button positioned with a hardcoded top offset).
+        */}
+        <div className="min-h-[0.75rem]">
+          {resolvedError && (
+            <p
+              id={errorId}
+              className="text-xs text-[var(--erp-form-field-error-text-color)] leading-none"
+              role="alert"
+            >
+              {resolvedError}
+            </p>
+          )}
+          {resolvedHelpText && (
+            <p
+              id={helpId}
+              className="text-xs text-[var(--erp-form-field-help-text-color)] leading-none"
+            >
+              {resolvedHelpText}
+            </p>
+          )}
+        </div>
       </div>
     );
   },

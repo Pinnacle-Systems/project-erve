@@ -18,6 +18,20 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  // Radix Select (the new status filter) calls scrollIntoView on its option
+  // elements when opened — unimplemented in jsdom.
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -27,6 +41,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function flushMicrotasks(): Promise<void> {
@@ -179,7 +194,11 @@ describe('FactoryListPage Add Factory navigation', () => {
     // navigates to the routed Create page (asserted separately below) — so
     // the text "Add Factory" legitimately remains, just as a link, not a form.
     expect(container.querySelector('form')).toBeNull();
-    expect(container.querySelector('input')).toBeNull();
+    // The page's only <input> is now the FilterBar search box (UX-08) — not
+    // a leftover field from the old inline form, which never had a "Search"
+    // labeled input.
+    expect(container.querySelector('input[aria-label="Search"]')).not.toBeNull();
+    expect(container.querySelectorAll('input')).toHaveLength(1);
   });
 
   it('shows a page-level Add Factory action linking to /master-data/factories/new for a manage role', async () => {
@@ -197,5 +216,51 @@ describe('FactoryListPage Add Factory navigation', () => {
       (a) => a.textContent === 'Add Factory',
     );
     expect(addLink).toBeUndefined();
+  });
+});
+
+// UX-08: Factory previously had no search/status filtering at all — it now
+// uses the same shared FilterBar as Distributor/HSN/etc., wired into the same
+// /factories list query the backend already supports (master-data.service.ts
+// listFactoriesPage already accepts search/status).
+describe('FactoryListPage FilterBar (UX-08)', () => {
+  it('renders a search input and a status filter above the table', async () => {
+    await renderPageWithFactories([]);
+    expect(container.querySelector('input[aria-label="Search"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Status"]')).not.toBeNull();
+  });
+
+  it('sends the selected status to the /factories query', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/factories') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter>
+            <AuthProvider>
+              <FactoryListPage />
+            </AuthProvider>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await flushMicrotasks();
+    });
+    getSpy.mockClear();
+
+    const statusTrigger = container.querySelector<HTMLButtonElement>('[aria-label="Status"]')!;
+    await act(async () => statusTrigger.click());
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (el) => el.textContent?.trim() === 'Active',
+    )!;
+    await act(async () => option.click());
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(getSpy).toHaveBeenCalledWith('/factories', expect.objectContaining({ params: expect.objectContaining({ status: 'ACTIVE' }) }));
   });
 });

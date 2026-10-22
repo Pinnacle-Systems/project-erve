@@ -312,23 +312,26 @@ export const SelectField = forwardRef<
             <SelectContent>{children}</SelectContent>
           </SelectRoot>
         </DensityOverrideProvider>
-        {errorMessage && (
-          <p
-            id={errorId}
-            className="text-xs text-[var(--erp-form-field-error-text-color)] leading-none"
-            role="alert"
-          >
-            {errorMessage}
-          </p>
-        )}
-        {!errorMessage && helpText && (
-          <p
-            id={helpId}
-            className="text-xs text-[var(--erp-form-field-help-text-color)] leading-none"
-          >
-            {helpText}
-          </p>
-        )}
+        {/* Reserved whether or not there's an error/help text — see TextField's identical slot. */}
+        <div className="min-h-[0.75rem]">
+          {errorMessage && (
+            <p
+              id={errorId}
+              className="text-xs text-[var(--erp-form-field-error-text-color)] leading-none"
+              role="alert"
+            >
+              {errorMessage}
+            </p>
+          )}
+          {!errorMessage && helpText && (
+            <p
+              id={helpId}
+              className="text-xs text-[var(--erp-form-field-help-text-color)] leading-none"
+            >
+              {helpText}
+            </p>
+          )}
+        </div>
       </div>
     );
   },

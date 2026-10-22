@@ -1,14 +1,15 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import { ConfirmDialog, PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
+import { ConfirmDialog, FilterBar, PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, Panel } from '@erve/layout';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
+import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import {
   FinancialYearSelect,
   toCompactFinancialYearCode,
@@ -20,7 +21,7 @@ import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import type { Season } from './types.js';
+import type { Season, Status } from './types.js';
 
 function errorMessage(error: unknown) {
   if (isAxiosError(error)) return (error.response?.data?.error?.message as string | undefined) ?? error.message;
@@ -36,6 +37,9 @@ export function SeasonListPage() {
   const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState<Season | null>(null);
   const [filterFinancialYearId, setFilterFinancialYearId] = useState('');
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [statusFilter, setStatusFilter] = useState<Status | ''>('');
   const [error, setError] = useState('');
   const [confirmStatusSeason, setConfirmStatusSeason] = useState<Season | null>(null);
   // Bumped whenever the Add/Edit form's target identity changes (switching
@@ -56,12 +60,21 @@ export function SeasonListPage() {
   // Only applies while adding (not mid-edit) and the user hasn't picked one.
   const effectiveFinancialYearId =
     form.financialYearId || (editing ? '' : currentFinancialYearQuery.data?.id ?? '');
+  const listParams = useMemo(
+    () => ({
+      search: debouncedSearch || undefined,
+      status: statusFilter || undefined,
+      financialYearId: filterFinancialYearId || undefined,
+    }),
+    [debouncedSearch, statusFilter, filterFinancialYearId],
+  );
   // Opt-in cursor pagination (limit sent): Load more appends further pages; a
-  // Financial Year change restarts at page 1. The PDF fetches every page.
+  // filter change restarts at page 1. The PDF fetches every page (unfiltered
+  // by search/status — it keeps its existing Financial-Year-only scope).
   const { query: seasonsQuery, items: seasons } = useCursorList<Season>({
     queryKey: ['seasons'],
     path: '/seasons',
-    params: { financialYearId: filterFinancialYearId || undefined, limit: 25 },
+    params: { ...listParams, limit: 25 },
   });
   const generateSeasonListPdf = useCallback(async () => {
     // Dynamically imported so @react-pdf/renderer and the document code load only when a user
@@ -139,7 +152,7 @@ export function SeasonListPage() {
     setError('');
     setFormKey((key) => key + 1);
   };
-  return <div className="space-y-3">
+  return <div className="space-y-5">
     <PageHeader title="Seasons" subtitle="Season master records used by Styles. Inactive Seasons remain visible on historical records." primaryAction={<Button asChild variant="secondary"><Link to="/master-data/seasons/import">Import</Link></Button>} />
     <Panel title={editing ? 'Edit Season' : 'Add Season'}>
       <form className="space-y-4" noValidate onKeyDown={createEnterToNextHandler()} onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
@@ -172,12 +185,34 @@ export function SeasonListPage() {
       </form>
     </Panel>
     <div className="flex items-start justify-between gap-3">
-      <FinancialYearSelect
-        aria-label="Filter by Financial Year"
-        value={filterFinancialYearId}
-        onValueChange={setFilterFinancialYearId}
-        allLabel="All Financial Years"
-      />
+      <div className="flex-1">
+        <FilterBar
+          searchValue={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search Seasons"
+          statusOptions={[
+            { label: 'All statuses', value: 'ALL' },
+            { label: 'Active', value: 'ACTIVE' },
+            { label: 'Inactive', value: 'INACTIVE' },
+          ]}
+          statusValue={statusFilter || 'ALL'}
+          onStatusChange={(value) => setStatusFilter(value === 'ALL' ? '' : (value as Status))}
+          customFilters={
+            <FinancialYearSelect
+              aria-label="Filter by Financial Year"
+              value={filterFinancialYearId}
+              onValueChange={setFilterFinancialYearId}
+              allLabel="All Financial Years"
+            />
+          }
+          hasActiveFilters={Boolean(search || statusFilter || filterFinancialYearId)}
+          onClearFilters={() => {
+            setSearch('');
+            setStatusFilter('');
+            setFilterFinancialYearId('');
+          }}
+        />
+      </div>
       <PdfActionButtons
         isGenerating={pdfAction.isGenerating}
         error={pdfAction.error}

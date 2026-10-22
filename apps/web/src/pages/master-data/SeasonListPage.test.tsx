@@ -245,6 +245,41 @@ describe('SeasonListPage Financial Year integration', () => {
     expect(filterTrigger?.textContent).toContain('All Financial Years');
   });
 
+  // UX-08: Season previously had only the Financial Year filter — it now also
+  // has the same shared FilterBar search/status controls as the other
+  // masters, wired into the same /seasons list query the backend already
+  // supports (master-data.service.ts listSeasonsPage already accepts
+  // search/status), alongside the existing Financial Year filter.
+  it('renders a search input and status filter alongside the Financial Year filter', async () => {
+    await renderPage(baseAdapter());
+    expect(container.querySelector('input[aria-label="Search"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Status"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Filter by Financial Year"]')).not.toBeNull();
+  });
+
+  it('sends the selected status to the /seasons query', async () => {
+    const seasonsParams: Array<Record<string, unknown>> = [];
+    const inner = baseAdapter();
+    const recordingAdapter: AxiosAdapter = (async (config: InternalAxiosRequestConfig) => {
+      if (config.url === '/seasons' && config.method === 'get') {
+        seasonsParams.push(config.params as Record<string, unknown>);
+      }
+      return inner(config);
+    }) as AxiosAdapter;
+    await renderPage(recordingAdapter);
+    seasonsParams.length = 0;
+
+    const statusTrigger = container.querySelector<HTMLButtonElement>('[aria-label="Status"]')!;
+    await act(async () => statusTrigger.click());
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (el) => el.textContent?.trim() === 'Active',
+    )!;
+    await act(async () => option.click());
+    await flush();
+
+    expect(seasonsParams.some((params) => params.status === 'ACTIVE')).toBe(true);
+  });
+
   it('creates a Season sending the defaulted Financial Year id', async () => {
     let createBody: Record<string, unknown> | undefined;
     await renderPage(
@@ -328,6 +363,29 @@ describe('SeasonListPage Financial Year integration', () => {
 
     expect(formGrid?.className).toContain('items-start');
     expect(formGrid?.className).not.toContain('items-end');
+  });
+
+  // U4-AUDIT-NEW-02 (root cause): TextField/SelectField reserve a fixed-height
+  // slot for their error/help text, so a field's own box does not grow the
+  // instant a validation error first appears — the growth is what previously
+  // misaligned the Add/Save button next to it. Verified structurally (the
+  // reserved-height slot is present) since jsdom does not compute real layout.
+  it('reserves the error-text slot under Season code before any error is shown', async () => {
+    await renderPage(baseAdapter());
+    const codeField = container.querySelector<HTMLInputElement>('#field-season-code');
+    const reservedSlot = codeField?.closest('div[data-width]')?.querySelector('.min-h-\\[0\\.75rem\\]');
+    expect(reservedSlot).not.toBeNull();
+
+    const submit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add Season',
+    );
+    await act(async () => submit!.click());
+    await flush();
+
+    // Same slot, now carrying the "Required" text — not a newly-mounted node.
+    const reservedSlotAfterError = codeField?.closest('div[data-width]')?.querySelector('.min-h-\\[0\\.75rem\\]');
+    expect(reservedSlotAfterError).not.toBeNull();
+    expect(reservedSlotAfterError?.textContent).toBe('Required');
   });
 });
 
