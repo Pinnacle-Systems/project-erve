@@ -10,6 +10,9 @@ export interface StyleSizeGridProps {
   variant: StyleSizeGridVariant;
   /** Required when variant === 'editable'. Never called for 'computed'/'readOnly' grids — there is nothing to edit. */
   onCellChange?: (styleId: string, sizeId: string, value: number | null) => void;
+  /** Optional domain constraints and visible guidance for individual editable cells. */
+  cellOptions?: (styleId: string, sizeId: string) => { max?: number; helpText?: ReactNode; ariaLabel?: string };
+  onCellValidationChange?: (styleId: string, sizeId: string, isValid: boolean) => void;
   min?: number;
   max?: number;
   showRowTotals?: boolean;
@@ -34,6 +37,8 @@ export function StyleSizeGrid({
   rows,
   variant,
   onCellChange,
+  cellOptions,
+  onCellValidationChange,
   min = 0,
   max,
   showRowTotals = true,
@@ -83,21 +88,26 @@ export function StyleSizeGrid({
                 const value = row.values[column.sizeId] ?? null;
                 const hasCell = column.sizeId in row.values;
                 const columnEditable = column.editable ?? true;
+                const options = cellOptions?.(row.styleId, column.sizeId);
                 return (
                   <td key={column.sizeId} className="px-2 py-1.5">
                     {!hasCell ? (
                       <span className="block text-right text-muted-foreground">—</span>
                     ) : variant === 'editable' && columnEditable ? (
-                      <NumericField
-                        variant="cell"
-                        className="border-[var(--erp-form-field-border)] bg-surface-raised shadow-none hover:border-[var(--erp-form-field-border)]"
-                        mode="integer"
-                        min={min}
-                        max={max}
-                        value={value}
-                        aria-label={`${row.styleNumber} ${column.sizeCode} quantity`}
-                        onChange={(next) => onCellChange?.(row.styleId, column.sizeId, next)}
-                      />
+                      <>
+                        <NumericField
+                          variant="cell"
+                          className="border-[var(--erp-form-field-border)] bg-surface-raised shadow-none hover:border-[var(--erp-form-field-border)]"
+                          mode="integer"
+                          min={min}
+                          max={options?.max ?? max}
+                          value={value}
+                          aria-label={options?.ariaLabel ?? `${row.styleNumber} ${column.sizeCode} quantity`}
+                          onChange={(next) => onCellChange?.(row.styleId, column.sizeId, next)}
+                          onValidationChange={(valid) => onCellValidationChange?.(row.styleId, column.sizeId, valid)}
+                        />
+                        {options?.helpText && <div className="mt-1 text-right text-xs text-muted-foreground">{options.helpText}</div>}
+                      </>
                     ) : (
                       <GridCellInput
                         numeric

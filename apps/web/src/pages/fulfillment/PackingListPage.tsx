@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -14,6 +14,7 @@ import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { CartonLabelButton } from './CartonLabelButton.js';
+import { CartonQuantityPicker, selectedCartonLines, type CartonQuantities } from './CartonQuantityPicker.js';
 import { distinctSizeColumns, groupLinesByStyle } from './style-size-grouping.js';
 import { canMutateFactoryDispatches, canViewFactoryInvoices } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
@@ -109,7 +110,13 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
   const [netWeight, setNetWeight] = useState('');
   const [grossWeight, setGrossWeight] = useState('');
   const [dimensions, setDimensions] = useState('');
-  const [cartonLineQty, setCartonLineQty] = useState<Record<string, string>>({});
+  // Blur commits precede Save clicks. Refs keep submission guards current in that
+  // event sequence; state renders committed quantities and invalid-draft buttons.
+  const [cartonLineQty, setCartonLineQty] = useState<CartonQuantities>({});
+  const cartonQtyRef = useRef<CartonQuantities>({});
+  const addInvalidRef = useRef(new Set<string>());
+  const [addInvalid, setAddInvalid] = useState(new Set<string>());
+  const savingCartonRef = useRef(false);
   const [addingForDestination, setAddingForDestination] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
   const [abandonOpen, setAbandonOpen] = useState(false);
@@ -127,7 +134,10 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
   const [editNetWeight, setEditNetWeight] = useState('');
   const [editGrossWeight, setEditGrossWeight] = useState('');
   const [editDimensions, setEditDimensions] = useState('');
-  const [editLineQty, setEditLineQty] = useState<Record<string, string>>({});
+  const [editLineQty, setEditLineQty] = useState<CartonQuantities>({});
+  const editQtyRef = useRef<CartonQuantities>({});
+  const editInvalidRef = useRef(new Set<string>());
+  const [editInvalid, setEditInvalid] = useState(new Set<string>());
   const [editOriginalLineQty, setEditOriginalLineQty] = useState<Record<string, number>>({});
 
   const query = useQuery({
@@ -143,11 +153,45 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
     return queryClient.invalidateQueries({ queryKey });
   }
 
+  function resetAdd() {
+    cartonQtyRef.current = {};
+    setCartonLineQty({});
+    addInvalidRef.current.clear();
+    setAddInvalid(new Set());
+    setAddingForDestination(null);
+  }
+
+  function changeQuantity(id: string, quantity: number | null, edit = false) {
+    const ref = edit ? editQtyRef : cartonQtyRef;
+    ref.current = { ...ref.current, [id]: quantity };
+    (edit ? setEditLineQty : setCartonLineQty)(ref.current);
+  }
+
+  function changeValidity(id: string, valid: boolean, edit = false) {
+    const ref = edit ? editInvalidRef : addInvalidRef;
+    if (valid) ref.current.delete(id);
+    else ref.current.add(id);
+    (edit ? setEditInvalid : setAddInvalid)(new Set(ref.current));
+  }
+
+  function canSaveCarton(destinationId: string, edit = false) {
+    const lines = packingList?.destinations.find((d) => d.id === destinationId)?.lines ?? [];
+    return canMutate && (!packingList?.factoryDispatch || packingList.factoryDispatch.status === 'DRAFT') &&
+      !(edit ? editInvalidRef : addInvalidRef).current.size &&
+      selectedCartonLines(lines, (edit ? editQtyRef : cartonQtyRef).current, edit ? editOriginalLineQty : {}) !== null;
+  }
+
+  function submitCarton(destinationId: string, edit = false) {
+    if (savingCartonRef.current || !canSaveCarton(destinationId, edit) || (!edit && !cartonNumber.trim())) return;
+    savingCartonRef.current = true;
+    if (edit) editCartonMutation.mutate();
+    else addCartonMutation.mutate(destinationId);
+  }
+
   const addCartonMutation = useMutation({
     mutationFn: async (destinationId: string) => {
-      const lines = Object.entries(cartonLineQty)
-        .filter(([, v]) => v.trim() !== '')
-        .map(([saleOrderLineId, v]) => ({ saleOrderLineId, quantity: Number(v) }));
+      const lines = selectedCartonLines(packingList?.destinations.find((d) => d.id === destinationId)?.lines ?? [], cartonQtyRef.current);
+      if (!canSaveCarton(destinationId) || !lines) throw new Error('Invalid carton quantities.');
       const res = await apiClient.post<ApiSuccessResponse<PackingListView>>(
         `/sale-orders/${packingList!.saleOrderId}/packing-list/cartons`,
         {
@@ -168,11 +212,11 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
       setNetWeight('');
       setGrossWeight('');
       setDimensions('');
-      setCartonLineQty({});
-      setAddingForDestination(null);
+      resetAdd();
       return invalidate();
     },
     onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to add the carton.')),
+    onSettled: () => { savingCartonRef.current = false; },
   });
 
   const removeCartonMutation = useMutation({
@@ -193,18 +237,24 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
     setEditGrossWeight('');
     setEditDimensions('');
     setEditLineQty({});
+    editQtyRef.current = {};
+    editInvalidRef.current.clear();
+    setEditInvalid(new Set());
     setEditOriginalLineQty({});
   }
 
   function openEdit(carton: FactoryPackingCartonView) {
-    setAddingForDestination(null);
+    resetAdd();
+    editInvalidRef.current.clear();
+    setEditInvalid(new Set());
     setEditingCartonId(carton.id);
     setEditDestinationId(carton.destinationId);
     setEditPackageDetails(carton.packageDetails ?? '');
     setEditNetWeight(carton.netWeight ?? '');
     setEditGrossWeight(carton.grossWeight ?? '');
     setEditDimensions(carton.dimensions ?? '');
-    setEditLineQty(Object.fromEntries(carton.lines.map((l) => [l.saleOrderLineId, String(l.quantity)])));
+    editQtyRef.current = Object.fromEntries(carton.lines.map((l) => [l.saleOrderLineId, l.quantity]));
+    setEditLineQty(editQtyRef.current);
     setEditOriginalLineQty(Object.fromEntries(carton.lines.map((l) => [l.saleOrderLineId, l.quantity])));
   }
 
@@ -215,6 +265,9 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
     // destination's lines are no longer valid choices and must not be
     // silently resubmitted.
     setEditLineQty({});
+    editQtyRef.current = {};
+    editInvalidRef.current.clear();
+    setEditInvalid(new Set());
   }
 
   const editingCarton = editingCartonId
@@ -224,9 +277,8 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
   const editCartonMutation = useMutation({
     mutationFn: async () => {
       const carton = editingCarton!;
-      const lines = Object.entries(editLineQty)
-        .filter(([, v]) => v.trim() !== '')
-        .map(([saleOrderLineId, v]) => ({ saleOrderLineId, quantity: Number(v) }));
+      const lines = selectedCartonLines(packingList?.destinations.find((d) => d.id === editDestinationId)?.lines ?? [], editQtyRef.current, editOriginalLineQty);
+      if (!carton || !canSaveCarton(editDestinationId, true) || !lines) throw new Error('Invalid carton quantities.');
       const res = await apiClient.patch<ApiSuccessResponse<PackingListView>>(
         `/factory-dispatches/${packingList!.factoryDispatch!.id}/cartons/${carton.id}`,
         {
@@ -246,6 +298,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
       return invalidate();
     },
     onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to update the carton.')),
+    onSettled: () => { savingCartonRef.current = false; },
   });
 
   const finalizeMutation = useMutation({
@@ -449,41 +502,23 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                             onChange={(e) => setEditDimensions(e.target.value)}
                           />
                         </div>
-                        <div className="space-y-2">
-                          {(packingList.destinations.find((d) => d.id === editDestinationId)?.lines ?? []).map((line) => {
-                            const remaining =
-                              line.requiredQuantity - line.packedQuantity + (editOriginalLineQty[line.saleOrderLineId] ?? 0);
-                            if (remaining <= 0 && !(line.saleOrderLineId in editLineQty)) return null;
-                            return (
-                              <div key={line.saleOrderLineId} className="flex items-center gap-3">
-                                <span className="w-64 text-sm">
-                                  {line.styleNumber} / {line.sizeLabel} — {remaining} available
-                                </span>
-                                <TextField
-                                  aria-label={`Quantity for ${line.styleNumber} ${line.sizeLabel}`}
-                                  type="number"
-                                  min={0}
-                                  max={remaining}
-                                  density="compact"
-                                  width="xs"
-                                  value={editLineQty[line.saleOrderLineId] ?? ''}
-                                  onChange={(e) =>
-                                    setEditLineQty((current) => ({ ...current, [line.saleOrderLineId]: e.target.value }))
-                                  }
-                                />
-                              </div>
-                            );
-                          })}
-                        </div>
+                        <CartonQuantityPicker
+                          key={`${carton.id}:${editDestinationId}`}
+                          lines={packingList.destinations.find((d) => d.id === editDestinationId)?.lines ?? []}
+                          quantities={editLineQty}
+                          originalQuantities={editOriginalLineQty}
+                          onChange={(id, quantity) => changeQuantity(id, quantity, true)}
+                          onValidationChange={(id, valid) => changeValidity(id, valid, true)}
+                        />
                         <div className="flex gap-2">
                           <Button
-                            onClick={() => editCartonMutation.mutate()}
-                            disabled={Object.values(editLineQty).every((v) => !v.trim())}
+                            onClick={() => submitCarton(editDestinationId, true)}
+                            disabled={!isDraft || !canMutate || editInvalid.size > 0 || !selectedCartonLines(packingList.destinations.find((d) => d.id === editDestinationId)?.lines ?? [], editLineQty, editOriginalLineQty) || addCartonMutation.isPending || editCartonMutation.isPending}
                             loading={editCartonMutation.isPending}
                           >
                             Save Changes
                           </Button>
-                          <Button variant="secondary" onClick={closeEdit}>
+                          <Button variant="secondary" onClick={closeEdit} disabled={editCartonMutation.isPending}>
                             Cancel
                           </Button>
                         </div>
@@ -515,7 +550,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                           />
                           {isDraft && canMutate && (
                             <div className="flex gap-2">
-                              <Button variant="ghost" density="compact" onClick={() => openEdit(carton)}>
+                              <Button variant="ghost" density="compact" onClick={() => openEdit(carton)} disabled={addCartonMutation.isPending || editCartonMutation.isPending}>
                                 Edit
                               </Button>
                               <Button
@@ -556,46 +591,28 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                         <TextField label="Gross Weight, kg" type="number" min={0} value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} />
                         <TextField label="Dimensions" value={dimensions} onChange={(e) => setDimensions(e.target.value)} />
                       </div>
-                      <div className="space-y-2">
-                        {destination.lines.map((line) => {
-                          const remaining = line.requiredQuantity - line.packedQuantity;
-                          if (remaining <= 0) return null;
-                          return (
-                            <div key={line.saleOrderLineId} className="flex items-center gap-3">
-                              <span className="w-64 text-sm">
-                                {line.styleNumber} / {line.sizeLabel} — {remaining} remaining
-                              </span>
-                              <TextField
-                                aria-label={`Quantity for ${line.styleNumber} ${line.sizeLabel}`}
-                                type="number"
-                                min={0}
-                                max={remaining}
-                                density="compact"
-                                width="xs"
-                                value={cartonLineQty[line.saleOrderLineId] ?? ''}
-                                onChange={(e) =>
-                                  setCartonLineQty((current) => ({ ...current, [line.saleOrderLineId]: e.target.value }))
-                                }
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <CartonQuantityPicker
+                        key={destination.id}
+                        lines={destination.lines}
+                        quantities={cartonLineQty}
+                        onChange={changeQuantity}
+                        onValidationChange={changeValidity}
+                      />
                       <div className="flex gap-2">
                         <Button
-                          onClick={() => addCartonMutation.mutate(destination.id)}
-                          disabled={!cartonNumber.trim() || Object.values(cartonLineQty).every((v) => !v.trim())}
+                          onClick={() => submitCarton(destination.id)}
+                          disabled={!cartonNumber.trim() || addInvalid.size > 0 || !selectedCartonLines(destination.lines, cartonLineQty) || addCartonMutation.isPending || editCartonMutation.isPending}
                           loading={addCartonMutation.isPending}
                         >
                           Add Carton
                         </Button>
-                        <Button variant="secondary" onClick={() => setAddingForDestination(null)}>
+                        <Button variant="secondary" onClick={resetAdd} disabled={addCartonMutation.isPending}>
                           Cancel
                         </Button>
                       </div>
                     </div>
                   ) : (
-                    <Button variant="secondary" onClick={() => setAddingForDestination(destination.id)}>
+                    <Button variant="secondary" onClick={() => { closeEdit(); resetAdd(); setAddingForDestination(destination.id); }} disabled={addCartonMutation.isPending || editCartonMutation.isPending}>
                       Add Carton
                     </Button>
                   )}
