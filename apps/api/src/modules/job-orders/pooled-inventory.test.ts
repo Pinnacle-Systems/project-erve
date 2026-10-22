@@ -227,6 +227,13 @@ describe('pooled Factory + Style + Size inventory (Phase 2.1)', () => {
 // cover the separate read-only pooled-inventory display the edit FORM
 // queries, which previously had no way to add the order's own commitment
 // back and so understated availableQuantity by exactly that amount.
+//
+// The first three tests below call getPooledFactoryInventory directly — the
+// pure aggregation function, a trusted-input internal helper (its
+// factoryId/styleId/sizeId params were never existence-checked either).
+// The security-correction tests further down go through the actual route,
+// which is where excludeSaleOrderId's authorization/eligibility gate
+// (assertExcludableDispatchOrder) lives.
 describe('BUG-007 — excludeSaleOrderId adds back only that order\'s own ACTIVE allocation', () => {
   it('adds back the specified order\'s own commitment but keeps other orders\' committed subtracted', async () => {
     const stock = await createReleasedQaStock({ quantity: 100 });
@@ -290,6 +297,117 @@ describe('BUG-007 — excludeSaleOrderId adds back only that order\'s own ACTIVE
       .expect(200);
     const row = (res.body.data as Array<{ sizeId: string }>).find((r) => r.sizeId === stock.sizeId);
     expect(row).toMatchObject({ committedQuantity: 25, availableQuantity: 100 });
+  });
+});
+
+// BUG-007 security correction: excludeSaleOrderId must never let a caller
+// inflate availableQuantity by naming an arbitrary/unauthorized/ineligible
+// Dispatch Order. Every rejection path below must error, never silently
+// fall back to treating excludeSaleOrderId as absent.
+describe('BUG-007 security correction — excludeSaleOrderId authorization and eligibility', () => {
+  async function seniorManagementToken() {
+    const { token } = await createTestUserAndToken({
+      email: `senior-mgmt-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['SENIOR_MANAGEMENT'],
+    });
+    return token;
+  }
+
+  it('rejects excludeSaleOrderId from a view-only role (SENIOR_MANAGEMENT) with 403, never inflating availability', async () => {
+    const stock = await createReleasedQaStock({ quantity: 100 });
+    const merchToken = await createMerchandiserToken();
+    const order = await createAndAllocate(stock, merchToken, 25);
+    const seniorToken = await seniorManagementToken();
+
+    const res = await request(app)
+      .get('/job-orders/pooled-inventory')
+      .query({ factoryId: stock.factoryId, styleId: stock.styleId, sizeId: stock.sizeId, excludeSaleOrderId: order.id })
+      .set('Authorization', `Bearer ${seniorToken}`)
+      .expect(403);
+    expect(res.body.error?.code ?? res.body.code).toBeTruthy();
+  });
+
+  it('preserves normal pooled-inventory reads for a view-only role when excludeSaleOrderId is omitted', async () => {
+    const seniorToken = await seniorManagementToken();
+    await request(app)
+      .get('/job-orders/pooled-inventory')
+      .set('Authorization', `Bearer ${seniorToken}`)
+      .expect(200);
+  });
+
+  it('rejects an excludeSaleOrderId that does not belong to the requested factory with 400', async () => {
+    const stockA = await createReleasedQaStock({ quantity: 100 });
+    const stockB = await createReleasedQaStock({ quantity: 100 });
+    expect(stockA.factoryId).not.toBe(stockB.factoryId);
+    const merchToken = await createMerchandiserToken();
+    const orderAtFactoryA = await createAndAllocate(stockA, merchToken, 20);
+
+    await request(app)
+      .get('/job-orders/pooled-inventory')
+      .query({ factoryId: stockB.factoryId, excludeSaleOrderId: orderAtFactoryA.id })
+      .set('Authorization', `Bearer ${merchToken}`)
+      .expect(400);
+
+    // The Factory A pool itself must still read correctly and unaffected.
+    const rows = await getPooledFactoryInventory(prisma, { factoryId: stockA.factoryId, styleId: stockA.styleId, sizeId: stockA.sizeId });
+    expect(rows[0]).toMatchObject({ committedQuantity: 20, availableQuantity: 80 });
+  });
+
+  it('rejects a nonexistent excludeSaleOrderId with 400', async () => {
+    const stock = await createReleasedQaStock({ quantity: 100 });
+    const merchToken = await createMerchandiserToken();
+
+    await request(app)
+      .get('/job-orders/pooled-inventory')
+      .query({ factoryId: stock.factoryId, excludeSaleOrderId: createId() })
+      .set('Authorization', `Bearer ${merchToken}`)
+      .expect(400);
+  });
+
+  it('rejects an excludeSaleOrderId for an order no longer eligible for editing (Factory Dispatch already READY_FOR_ERVE) with 400', async () => {
+    const stock = await createReleasedQaStock({ quantity: 100 });
+    const merchToken = await createMerchandiserToken();
+    const order = await createAndAllocate(stock, merchToken, 20);
+
+    // Mirrors dispatch-orders.test.ts's own "locked Dispatch Order" convention.
+    const financialYear = await prisma.financialYear.findFirstOrThrow();
+    await prisma.factoryDispatch.create({
+      data: {
+        id: createId(),
+        factoryDispatchNumber: `EIFD/LOCK/${createId()}`,
+        factoryId: stock.factoryId,
+        saleOrderId: order.id,
+        status: 'READY_FOR_ERVE',
+        preparedById: (await prisma.user.findFirstOrThrow()).id,
+        financialYearId: financialYear.id,
+        factoryDispatchSerial: 999998,
+      },
+    });
+
+    await request(app)
+      .get('/job-orders/pooled-inventory')
+      .query({ factoryId: stock.factoryId, excludeSaleOrderId: order.id })
+      .set('Authorization', `Bearer ${merchToken}`)
+      .expect(400);
+  });
+
+  it('allows an authorized edit (ADMIN) to exclude a real, own-factory, still-editable Dispatch Order', async () => {
+    const stock = await createReleasedQaStock({ quantity: 100 });
+    const merchToken = await createMerchandiserToken();
+    const { token: adminToken } = await createTestUserAndToken({
+      email: `admin-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['ADMIN'],
+    });
+    const order = await createAndAllocate(stock, merchToken, 30);
+
+    const res = await request(app)
+      .get('/job-orders/pooled-inventory')
+      .query({ factoryId: stock.factoryId, styleId: stock.styleId, sizeId: stock.sizeId, excludeSaleOrderId: order.id })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(res.body.data[0]).toMatchObject({ committedQuantity: 30, availableQuantity: 100 });
   });
 });
 
