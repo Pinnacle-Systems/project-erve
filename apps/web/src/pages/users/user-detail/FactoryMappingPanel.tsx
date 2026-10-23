@@ -43,21 +43,37 @@ function FactoryMappingPanelInner({ user }: { user: AdminUserSummary }) {
     },
   });
 
-  const invalidate = () =>
-    Promise.all([
+  // Invalidates the factories involved in a reassignment, not just the
+  // admin-user record — a Factory Detail page already open on either side
+  // (old or new factory) embeds a roster (['factory-users', factoryId]) and
+  // a usage count (['factory', factoryId]) that must not go stale.
+  // `previousFactoryId` is undefined for a first-time assignment, where
+  // there is no old factory to refresh.
+  const invalidate = (previousFactoryId: string | undefined, newFactoryId: string) => {
+    const promises = [
       queryClient.invalidateQueries({ queryKey: ['admin-user', user.id] }),
       queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
-    ]);
+      queryClient.invalidateQueries({ queryKey: ['factory-users', newFactoryId] }),
+      queryClient.invalidateQueries({ queryKey: ['factory', newFactoryId] }),
+    ];
+    if (previousFactoryId && previousFactoryId !== newFactoryId) {
+      promises.push(
+        queryClient.invalidateQueries({ queryKey: ['factory-users', previousFactoryId] }),
+        queryClient.invalidateQueries({ queryKey: ['factory', previousFactoryId] }),
+      );
+    }
+    return Promise.all(promises);
+  };
 
   const assignMutation = useMutation({
-    mutationFn: async (factoryId: string) => {
+    mutationFn: async ({ factoryId }: { factoryId: string; previousFactoryId: string | undefined }) => {
       setError('');
       await apiClient.post(`/users/${user.id}/factories`, { factoryId });
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, variables) => {
       setSelectedFactoryId('');
       setDestination(null);
-      await invalidate();
+      await invalidate(variables.previousFactoryId, variables.factoryId);
     },
     onError: (caught) => setError(toErrorMessage(caught, 'Unable to assign factory')),
     onSettled: () => { submitting.current = false; },
@@ -66,7 +82,10 @@ function FactoryMappingPanelInner({ user }: { user: AdminUserSummary }) {
   const assign = (factoryId: string) => {
     if (submitting.current) return;
     submitting.current = true;
-    assignMutation.mutate(factoryId);
+    // Captured before the mutation starts, so a later prop/state change
+    // (e.g. a fast in-place navigation) cannot redirect which factory's
+    // caches get invalidated when this specific call resolves.
+    assignMutation.mutate({ factoryId, previousFactoryId: mapped?.id });
   };
 
   const currentSelection = selectedFactoryId || mapped?.id || 'NONE';

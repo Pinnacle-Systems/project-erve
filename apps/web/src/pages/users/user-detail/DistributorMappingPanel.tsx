@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { DistributorOption } from '@erve/types';
 import { ConfirmDialog, createEnterToNextHandler } from '@erve/app-components';
@@ -15,11 +15,20 @@ import { toErrorMessage } from './toErrorMessage.js';
 // driven by `mapped`. If the API ever returns more than one mapping, every
 // entry is still shown (not just the first) instead of silently dropping the
 // rest.
+// Keyed by user.id so this never carries state (a selection, an open remove
+// confirmation) across an in-place navigation to a different, already-cached
+// user — the :id route does not otherwise unmount this panel when the
+// destination user's data is cached. Mirrors FactoryMappingPanel.
 export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
+  return <DistributorMappingPanelInner key={user.id} user={user} />;
+}
+
+function DistributorMappingPanelInner({ user }: { user: AdminUserSummary }) {
   const queryClient = useQueryClient();
   const [selectedDistributor, setSelectedDistributor] = useState<DistributorOption | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [error, setError] = useState('');
+  const submitting = useRef(false);
 
   const mapped = user.distributors[0];
 
@@ -45,10 +54,9 @@ export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
   });
 
   const removeMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (mappingId: string) => {
       setError('');
-      if (!mapped) return;
-      await apiClient.delete(`/users/${user.id}/distributors/${mapped.id}`);
+      await apiClient.delete(`/users/${user.id}/distributors/${mappingId}`);
     },
     onSuccess: async () => {
       setConfirmRemove(false);
@@ -58,7 +66,14 @@ export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
       setConfirmRemove(false);
       setError(toErrorMessage(caught, 'Unable to remove distributor mapping'));
     },
+    onSettled: () => { submitting.current = false; },
   });
+
+  const remove = () => {
+    if (submitting.current || !mapped) return;
+    submitting.current = true;
+    removeMutation.mutate(mapped.id);
+  };
 
   return (
     <Panel title="Distributor Mapping">
@@ -114,7 +129,7 @@ export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
 
       <ConfirmDialog
         open={confirmRemove}
-        onOpenChange={setConfirmRemove}
+        onOpenChange={(open) => { if (!open && !submitting.current) setConfirmRemove(false); }}
         title="Remove distributor mapping"
         description={
           mapped ? `${user.name} will lose access to ${mapped.name}'s Order Sheets.` : undefined
@@ -122,7 +137,7 @@ export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
         confirmLabel="Remove"
         destructive
         loading={removeMutation.isPending}
-        onConfirm={() => removeMutation.mutate()}
+        onConfirm={remove}
       />
     </Panel>
   );
