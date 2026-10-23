@@ -165,3 +165,70 @@ it('does not reassign a different user if the displayed user changes while a con
   expect(confirmButton).toBeUndefined();
   expect(post).not.toHaveBeenCalled();
 });
+
+function invalidatedKeys(spy: ReturnType<typeof vi.spyOn>) {
+  return spy.mock.calls.map((call: unknown[]) => (call[0] as { queryKey: unknown[] }).queryKey);
+}
+
+it('invalidates both the old and new factory rosters and usage caches on reassignment', async () => {
+  vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} });
+  const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+  await render();
+  await selectNew();
+  await submit();
+  await click('Confirm');
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  const keys = invalidatedKeys(invalidate);
+  expect(keys).toContainEqual(['admin-user', 'worker']);
+  expect(keys).toContainEqual(['admin-users']);
+  expect(keys).toContainEqual(['factory-users', 'old']);
+  expect(keys).toContainEqual(['factory', 'old']);
+  expect(keys).toContainEqual(['factory-users', 'new']);
+  expect(keys).toContainEqual(['factory', 'new']);
+  // Unrelated caches are left alone.
+  expect(keys).not.toContainEqual(['factories', 'options']);
+});
+
+it('invalidates only the destination factory on a first-time assignment (no previous factory)', async () => {
+  vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} });
+  const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+  await render(false);
+  await selectNew();
+  await submit();
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  const keys = invalidatedKeys(invalidate);
+  expect(keys).toContainEqual(['admin-user', 'worker']);
+  expect(keys).toContainEqual(['admin-users']);
+  expect(keys).toContainEqual(['factory-users', 'new']);
+  expect(keys).toContainEqual(['factory', 'new']);
+  expect(keys).not.toContainEqual(['factory-users', 'old']);
+  expect(keys).not.toContainEqual(['factory', 'old']);
+  expect(keys).not.toContainEqual(['factories', 'options']);
+});
+
+it('invalidates nothing on Cancel', async () => {
+  vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} });
+  const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+  await render();
+  await selectNew();
+  await submit();
+  await click('Cancel');
+  expect(invalidate).not.toHaveBeenCalled();
+});
+
+it('invalidates nothing when the reassignment fails', async () => {
+  vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('Reassignment unavailable'));
+  const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+  await render();
+  await selectNew();
+  await submit();
+  await click('Confirm');
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  expect(invalidate).not.toHaveBeenCalled();
+});
