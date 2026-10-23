@@ -127,7 +127,7 @@ describe('Style import reliability', () => {
     const style = await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-DRIFT', styleName: 'Tee', finalMrp: 100, seasonId: season.id } });
     const run = await prisma.styleBulkImportRun.create({ data: { id: createId(), sourceFileName: 'old.xlsx', sourceFileChecksum: 'old', status: 'EXECUTED', actorUserId: actor.id, totalRows: 1 } });
     await prisma.styleBulkImportRowResult.create({ data: { id: createId(), runId: run.id, rowNumber: 2, styleNumber: style.styleNumber, styleId: style.id, outcome: 'IMAGE_PENDING', expectedImageChecksum: createHash('sha256').update(png).digest('hex') } });
-    const plan = { sourceFileChecksum: 'old', totalRows: 1, fileLevelImageWarnings: [], rows: [{ rowNumber: 2, styleNumber: style.styleNumber, status: 'RESUME_IMAGE_PENDING' as const, existingStyleId: style.id, imageCount: 1, create: { styleName: 'Tee', finalMrp: 100, seasonId: season.id, lmixNumber: null, sizes: [{ sizeId: size.id, barcode: 'BC-DRIFT' }], factoryMappings: [], images: [{ buffer: png, fileName: 'expected.png', rowNumber: 2 }] } }] };
+    const plan = { sourceFileChecksum: 'old', totalRows: 1, fileLevelImageWarnings: [], rows: [{ rowNumber: 2, styleNumber: style.styleNumber, status: 'RESUME_IMAGE_PENDING' as const, existingStyleId: style.id, imageCount: 1, create: { styleName: 'Tee', finalMrp: 100, royaltyPercentage: null, seasonId: season.id, lmixNumber: null, sizes: [{ sizeId: size.id, barcode: 'BC-DRIFT' }], factoryMappings: [], images: [{ buffer: png, fileName: 'expected.png', rowNumber: 2 }] } }] };
     if (drift === 'season') {
       const other = await createTestSeason({ code: 'SS26' });
       await prisma.style.update({ where: { id: style.id }, data: { seasonId: other.id } });
@@ -277,7 +277,7 @@ describe('Style import reliability', () => {
     await uploadStyleImage(actor, style.id, { buffer: Buffer.concat([png, Buffer.from('unrelated')]), originalName: 'unrelated.png' });
     const run = await prisma.styleBulkImportRun.create({ data: { id: createId(), sourceFileName: 'old.xlsx', sourceFileChecksum: 'old', status: 'EXECUTED', actorUserId: actor.id, totalRows: 1 } });
     await prisma.styleBulkImportRowResult.create({ data: { id: createId(), runId: run.id, rowNumber: 2, styleNumber: style.styleNumber, styleId: style.id, outcome: 'IMAGE_PENDING', expectedImageChecksum: createHash('sha256').update(png).digest('hex') } });
-    const plan = { sourceFileChecksum: 'old', totalRows: 1, fileLevelImageWarnings: [], rows: [{ rowNumber: 2, styleNumber: style.styleNumber, status: 'RESUME_IMAGE_PENDING' as const, existingStyleId: style.id, imageCount: 1, create: { styleName: 'Tee', finalMrp: 100, seasonId: season.id, lmixNumber: null, sizes: [{ sizeId: size.id, barcode: 'BC-REC' }], factoryMappings: [], images: [{ buffer: png, fileName: 'expected.png', rowNumber: 2 }] } }] };
+    const plan = { sourceFileChecksum: 'old', totalRows: 1, fileLevelImageWarnings: [], rows: [{ rowNumber: 2, styleNumber: style.styleNumber, status: 'RESUME_IMAGE_PENDING' as const, existingStyleId: style.id, imageCount: 1, create: { styleName: 'Tee', finalMrp: 100, royaltyPercentage: null, seasonId: season.id, lmixNumber: null, sizes: [{ sizeId: size.id, barcode: 'BC-REC' }], factoryMappings: [], images: [{ buffer: png, fileName: 'expected.png', rowNumber: 2 }] } }] };
     expect((await executeBulkStyleImport(actor, plan, 'old.xlsx')).results[0]!.outcome).toBe('COMPLETED');
     expect(await prisma.styleImage.count({ where: { styleId: style.id } })).toBe(2);
   });
