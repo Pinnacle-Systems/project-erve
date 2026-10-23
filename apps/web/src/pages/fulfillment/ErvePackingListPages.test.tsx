@@ -133,10 +133,23 @@ function buildDetail(overrides: Partial<ErvePackingListDetail> = {}): ErvePackin
         packageDetails: null,
         weight: null,
         totalQuantity: 20,
-        lines: [{ saleOrderLineId: 'line-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 }],
+        lines: [
+          {
+            saleOrderLineId: 'line-1',
+            styleId: 'style-1',
+            styleNumber: 'ST-001',
+            styleName: 'Classic Tee',
+            primaryImage: null,
+            sizeCode: 'M',
+            sizeLabel: 'Medium',
+            quantity: 20,
+          },
+        ],
       },
     ],
-    styleSizeSummary: [{ styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 }],
+    styleSizeSummary: [
+      { styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 },
+    ],
     ...overrides,
   };
 }
@@ -298,14 +311,14 @@ describe('ErvePackingListDetailPage Style x Size presentation (ISS-023 Phase 3)'
           weight: null,
           totalQuantity: 7,
           lines: [
-            { saleOrderLineId: 'line-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 },
-            { saleOrderLineId: 'line-2', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 },
+            { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 },
+            { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 },
           ],
         },
       ],
       styleSizeSummary: [
-        { styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 },
-        { styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 },
+        { styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 10, quantity: 3 },
+        { styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 },
       ],
     });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {

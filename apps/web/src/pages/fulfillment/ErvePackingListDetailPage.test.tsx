@@ -89,8 +89,10 @@ function buildPackingList(overrides: Partial<ErvePackingListDetail> = {}): ErveP
         lines: [
           {
             saleOrderLineId: 'line-1',
+            styleId: 'style-1',
             styleNumber: 'ST-001',
             styleName: 'Classic Tee',
+            primaryImage: null,
             sizeCode: 'M',
             sizeLabel: 'Medium',
             quantity: 10,
@@ -401,5 +403,149 @@ describe('Erve Packing List finalization safety and placement (UX-03/UX-10)', ()
   it('does not expose Finalize on a finalized or dispatched list', async () => {
     await renderPage(buildPackingList({ status: 'FINALIZED' }), 'ADMIN');
     expect(buttonByText('Finalize Packing List')).toBeNull();
+  });
+});
+
+// ISS-053: Cartons and Style/Size Summary used to render every thumbnail as the empty placeholder,
+// because withBusinessKeyIdentity's fake styleId (= styleNumber) would have broken
+// StyleThumbnailCell's authenticated fetch even if an image had been wired up. These tests render
+// the real page (no IntersectionObserver stub, so thumbnails fetch immediately — unlike
+// PackingListPage.test.tsx's ISS-035 lazy-load case) and assert on the actual authenticated
+// requests apiClient.get issues, not just on markup.
+describe('ISS-053 Style thumbnails — Cartons and Style/Size Summary', () => {
+  const imageA = {
+    id: 'img-a', styleId: 'style-aaaa-1111', fileId: 'file-a', fileName: 'a.jpg', mimeType: 'image/jpeg',
+    sizeBytes: 10, isPrimary: true, sortOrder: 0, createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z',
+  };
+  const imageB = { ...imageA, id: 'img-b', styleId: 'style-bbbb-2222', fileId: 'file-b', fileName: 'b.jpg' };
+  const noImageStyleId = 'style-cccc-3333';
+
+  // Style A repeats across both cartons (and the consolidated summary); Style B appears once;
+  // the no-image Style also appears once — covers multiple Styles, a Style repeated across
+  // cartons, and the missing-image fallback in one fixture.
+  function buildMultiStylePackingList(): ErvePackingListDetail {
+    return buildPackingList({
+      cartonCount: 2,
+      totalQuantity: 30,
+      cartons: [
+        {
+          id: 'carton-1',
+          cartonNumber: 'C1',
+          factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
+          factoryDispatchId: 'fd-1',
+          factoryDispatchNumber: 'EIFD/26-27/0001',
+          saleOrder: { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001' },
+          packageDetails: null,
+          weight: null,
+          totalQuantity: 10,
+          lines: [
+            { saleOrderLineId: 'line-1', styleId: imageA.styleId, styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: imageA, sizeCode: 'M', sizeLabel: 'Medium', quantity: 10 },
+          ],
+        },
+        {
+          id: 'carton-2',
+          cartonNumber: 'C2',
+          factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
+          factoryDispatchId: 'fd-1',
+          factoryDispatchNumber: 'EIFD/26-27/0001',
+          saleOrder: { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001' },
+          packageDetails: null,
+          weight: null,
+          totalQuantity: 20,
+          lines: [
+            { saleOrderLineId: 'line-2', styleId: imageA.styleId, styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: imageA, sizeCode: 'L', sizeLabel: 'Large', quantity: 5 },
+            { saleOrderLineId: 'line-3', styleId: imageB.styleId, styleNumber: 'ST-002', styleName: 'Denim Jeans', primaryImage: imageB, sizeCode: 'M', sizeLabel: 'Medium', quantity: 8 },
+            { saleOrderLineId: 'line-4', styleId: noImageStyleId, styleNumber: 'ST-003', styleName: 'No Photo Cap', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 7 },
+          ],
+        },
+      ],
+      styleSizeSummary: [
+        { styleId: imageA.styleId, styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: imageA, sizeCode: 'M', sizeLabel: 'Medium', quantity: 10 },
+        { styleId: imageA.styleId, styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: imageA, sizeCode: 'L', sizeLabel: 'Large', quantity: 5 },
+        { styleId: imageB.styleId, styleNumber: 'ST-002', styleName: 'Denim Jeans', primaryImage: imageB, sizeCode: 'M', sizeLabel: 'Medium', quantity: 8 },
+        { styleId: noImageStyleId, styleNumber: 'ST-003', styleName: 'No Photo Cap', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 7 },
+      ],
+    });
+  }
+
+  async function renderWithImageTracking(packingList: ErvePackingListDetail): Promise<string[]> {
+    mockAuth('ADMIN');
+    const imageRequests: string[] = [];
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/erve-packing-lists/epl-1') return { data: { data: packingList } };
+      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+      if (url.includes('/images/')) {
+        imageRequests.push(url);
+        return { data: new Blob(['fake-image-bytes'], { type: 'image/jpeg' }) };
+      }
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/fulfillment/erve-packing-lists/epl-1']}>
+            <Routes>
+              <Route path="/fulfillment/erve-packing-lists/:id" element={<ErvePackingListDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await vi.waitFor(() => expect(content()).not.toContain('Loading Erve Packing List'));
+    // One row per Style per table (Carton 1: A; Carton 2: A+B+no-image; Summary: A+B+no-image) — 5
+    // real images across both cartons + the summary, once IntersectionObserver is undefined (jsdom
+    // default here) so every thumbnail fetches immediately rather than waiting to scroll into view.
+    await vi.waitFor(() => expect(imageRequests.length).toBeGreaterThanOrEqual(5));
+    return imageRequests;
+  }
+
+  it("requests every Style's protected image by its real UUID, never by its styleNumber business key", async () => {
+    const imageRequests = await renderWithImageTracking(buildMultiStylePackingList());
+    for (const url of imageRequests) {
+      expect(url).toMatch(/^\/styles\/[^/]+\/images\/[^/]+\/content$/);
+      expect(url).not.toMatch(/\/styles\/ST-00\d\//);
+    }
+  });
+
+  it('requests the same Style A image identically from both cartons and the consolidated summary (repeated Style, same identity)', async () => {
+    const imageRequests = await renderWithImageTracking(buildMultiStylePackingList());
+    const expectedUrl = `/styles/${imageA.styleId}/images/${imageA.id}/content`;
+    const styleARequests = imageRequests.filter((url) => url === expectedUrl);
+    // Carton 1's own row, Carton 2's own row, and the consolidated Style/Size Summary row.
+    expect(styleARequests).toHaveLength(3);
+  });
+
+  it('requests distinct Styles through distinct, correctly-associated image URLs — never swapped', async () => {
+    const imageRequests = await renderWithImageTracking(buildMultiStylePackingList());
+    const urlA = `/styles/${imageA.styleId}/images/${imageA.id}/content`;
+    const urlB = `/styles/${imageB.styleId}/images/${imageB.id}/content`;
+    expect(imageRequests).toContain(urlA);
+    expect(imageRequests).toContain(urlB);
+    expect(urlA).not.toBe(urlB);
+    // Carton 2's own row + the summary row — never Style A's image, never Style A's count (3).
+    expect(imageRequests.filter((url) => url === urlB)).toHaveLength(2);
+  });
+
+  it('never issues an authenticated image request for a Style with no uploaded image (missing-image fallback)', async () => {
+    const imageRequests = await renderWithImageTracking(buildMultiStylePackingList());
+    expect(imageRequests.some((url) => url.includes(noImageStyleId))).toBe(false);
+    // The no-image Style's cell renders without a "View style image" button — a plain placeholder,
+    // never a broken reference — in both Carton 2's own grid and the Style/Size Summary.
+    const noImageCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-003'));
+    expect(noImageCells.length).toBeGreaterThan(0);
+    expect(noImageCells.some((cell) => cell.querySelector('button[aria-label="View style image"]'))).toBe(false);
+  });
+
+  it('shows a clickable thumbnail for every Style that does have an image, in both the Cartons and Style/Size Summary sections', async () => {
+    await renderWithImageTracking(buildMultiStylePackingList());
+    const styleACells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
+    const styleBCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-002'));
+    // Carton 1, Carton 2, and the Summary each contribute one Style-A row.
+    expect(styleACells.length).toBeGreaterThanOrEqual(3);
+    expect(styleACells.every((cell) => cell.querySelector('button[aria-label="View style image"]'))).toBe(true);
+    // Carton 2 and the Summary each contribute one Style-B row.
+    expect(styleBCells.length).toBeGreaterThanOrEqual(2);
+    expect(styleBCells.every((cell) => cell.querySelector('button[aria-label="View style image"]'))).toBe(true);
   });
 });

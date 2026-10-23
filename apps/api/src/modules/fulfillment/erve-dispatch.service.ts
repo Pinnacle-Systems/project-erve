@@ -11,6 +11,7 @@ import { allocateDocumentSerial } from '../master-data/document-sequence.service
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { createInvoiceHandoffsForDispatch } from './invoice-handoff.service.js';
 import { resolveDistributorPricingForSnapshot } from '../price-lists/price-lookup.js';
+import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 import {
   computeAvailability,
   getActualSoldQuantityForPair,
@@ -295,7 +296,7 @@ const packingListInclude = {
         include: {
           saleOrderLine: {
             select: {
-              style: { select: { id: true, styleNumber: true, styleName: true } },
+              style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
               size: { select: { id: true, code: true, label: true, sortOrder: true } },
             },
           },
@@ -333,8 +334,13 @@ function toPackingListCartonView(carton: PackingListRecord['cartons'][number], i
     totalQuantity,
     lines: carton.lines.map((line) => ({
       saleOrderLineId: line.saleOrderLineId,
+      // ISS-053: the Style UUID (never styleNumber) and its resolved primary image, so
+      // StyleThumbnailCell/PdfThumbnail can address the real, authenticated image endpoint
+      // instead of the business-key substitution the web/PDF layers previously had to use.
+      styleId: line.saleOrderLine.style.id,
       styleNumber: line.saleOrderLine.style.styleNumber,
       styleName: line.saleOrderLine.style.styleName,
+      primaryImage: toPrimaryImageView(line.saleOrderLine.style.images),
       sizeCode: line.saleOrderLine.size.code,
       sizeLabel: line.saleOrderLine.size.label,
       sizeSortOrder: line.saleOrderLine.size.sortOrder,
@@ -344,7 +350,19 @@ function toPackingListCartonView(carton: PackingListRecord['cartons'][number], i
 }
 
 function toStyleSizeSummary(record: PackingListRecord) {
-  const byKey = new Map<string, { styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; sizeSortOrder: number; quantity: number }>();
+  const byKey = new Map<
+    string,
+    {
+      styleId: string;
+      styleNumber: string;
+      styleName: string;
+      primaryImage: ReturnType<typeof toPrimaryImageView>;
+      sizeCode: string;
+      sizeLabel: string;
+      sizeSortOrder: number;
+      quantity: number;
+    }
+  >();
   for (const carton of record.cartons) {
     for (const line of carton.lines) {
       const key = `${line.saleOrderLine.style.id}:${line.saleOrderLine.size.id}`;
@@ -353,8 +371,10 @@ function toStyleSizeSummary(record: PackingListRecord) {
         existing.quantity += line.quantity;
       } else {
         byKey.set(key, {
+          styleId: line.saleOrderLine.style.id,
           styleNumber: line.saleOrderLine.style.styleNumber,
           styleName: line.saleOrderLine.style.styleName,
+          primaryImage: toPrimaryImageView(line.saleOrderLine.style.images),
           sizeCode: line.saleOrderLine.size.code,
           sizeLabel: line.saleOrderLine.size.label,
           sizeSortOrder: line.saleOrderLine.size.sortOrder,

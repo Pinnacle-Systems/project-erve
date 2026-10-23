@@ -84,18 +84,39 @@ export interface BusinessKeyedStyleSizeLine {
 
 /**
  * Adapts a line that carries only the Style/Size *business* identifiers (styleNumber/sizeCode) into
- * the `groupLinesByStyle`/`distinctSizeColumns` identity shape (`styleId`/`sizeId`). ERVE consolidation
- * views (`EligibleErveCartonView`, `ErvePackingListCartonView`, `ErvePackingListStyleSizeSummaryRow`)
- * never carry a Style/Size foreign key — Erve Packing List cartons only ever need the Dispatch Order
- * line reference — so there is no `styleId`/`sizeId` to read. styleNumber/sizeCode are each entity's
- * own stable business key (already the display identity everywhere these views are shown), so
- * reusing them as the grouping key here is safe and avoids widening the API response just for this
- * presentation summary (ISS-023).
+ * the `groupLinesByStyle`/`distinctSizeColumns` identity shape (`styleId`/`sizeId`). `EligibleErveCartonView`
+ * (the Erve Packing List "Add Cartons" preview) never carries a Style/Size foreign key — it only ever
+ * needs the Dispatch Order line reference — so there is no `styleId`/`sizeId` to read there.
+ * styleNumber/sizeCode are each entity's own stable business key (already the display identity
+ * everywhere these views are shown), so reusing them as the grouping key here is safe and avoids
+ * widening that endpoint's response just for this presentation summary (ISS-023).
+ *
+ * `ErvePackingListCartonView`/`ErvePackingListStyleSizeSummaryRow` used to need this same shim, but
+ * now carry a real `styleId` (ISS-053, so the authenticated Style image endpoint has a real UUID to
+ * address) — use `withSizeIdentity` for those instead, which leaves the already-real `styleId` alone.
  */
 export function withBusinessKeyIdentity<T extends BusinessKeyedStyleSizeLine>(
   line: T,
 ): T & { styleId: string; sizeId: string } {
   return { ...line, styleId: line.styleNumber, sizeId: line.sizeCode };
+}
+
+export interface SizeKeyedLine {
+  sizeSortOrder?: number;
+  sizeCode: string;
+  sizeLabel: string;
+  quantity: number;
+}
+
+/**
+ * Adapts a line that already carries a real `styleId` (ISS-053's `ErvePackingListCartonView`/
+ * `ErvePackingListStyleSizeSummaryRow`) but only a Size business key (`sizeCode`) into the
+ * `groupLinesByStyle`/`distinctSizeColumns` identity shape. Unlike `withBusinessKeyIdentity`, this
+ * never touches `styleId` — substituting `styleNumber` for an already-real Style UUID would break
+ * the authenticated Style image lookup (`/styles/:id/images/:imageId/content`).
+ */
+export function withSizeIdentity<T extends SizeKeyedLine>(line: T): T & { sizeId: string } {
+  return { ...line, sizeId: line.sizeCode };
 }
 
 /** Canonical Size columns with backward-compatible ordering for legacy inputs. */

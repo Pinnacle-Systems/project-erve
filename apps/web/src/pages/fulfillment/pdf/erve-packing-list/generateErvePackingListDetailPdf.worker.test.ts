@@ -32,17 +32,23 @@ afterEach(() => vi.unstubAllGlobals());
 const source = packingListFixture(1, 1, 1);
 const meta = { generatedAt: '2026-10-21T00:00:00Z', generatedBy: 'Worker test' };
 
+// ISS-053: the Worker itself is still constructed synchronously (unchanged construction-failure
+// behavior below), but `postMessage` now waits on prepareErvePackingListDetailPdfImages — an
+// async, if here trivially-empty, step — before it fires. `ready` waits for that one microtask
+// hop so tests can trigger onmessage/onerror/onmessageerror only once those handlers are actually
+// attached (they're assigned inside the Promise executor that now runs after that await).
+async function ready(worker: TestWorker): Promise<void> {
+  await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalled());
+}
+
 it('runs the complete generation in a dedicated module worker and returns its final Blob', async () => {
   const result = generateErvePackingListDetailPdfBlob(source, meta);
-  if (TestWorker.instances.length === 0) {
-    await result;
-    expect(TestWorker.instances).toHaveLength(1);
-    return;
-  }
   const worker = TestWorker.instances[0]!;
+  await ready(worker);
   expect(worker.url.pathname).toMatch(/ervePackingListDetail\.worker\.ts$/);
   expect(worker.options).toEqual({ type: 'module' });
-  expect(worker.postMessage).toHaveBeenCalledWith({ packingList: source, meta });
+  // No Style in this fixture has a primary image, so the resolved map is empty — never undefined.
+  expect(worker.postMessage).toHaveBeenCalledWith({ packingList: source, meta, images: new Map() });
   const blob = new Blob(['complete PDF'], { type: 'application/pdf' });
   worker.reply({ type: 'success', blob });
   expect(await result).toBe(blob);
@@ -55,21 +61,25 @@ it('runs the complete generation in a dedicated module worker and returns its fi
 it('rejects a worker render failure and terminates before allowing another generation', async () => {
   const result = generateErvePackingListDetailPdfBlob(source, meta);
   const worker = TestWorker.instances[0]!;
+  await ready(worker);
   worker.reply({ type: 'error', message: 'Synthetic batch failure' });
   await expect(result).rejects.toThrow('Synthetic batch failure');
   expect(worker.terminate).toHaveBeenCalledTimes(1);
   const retry = generateErvePackingListDetailPdfBlob(source, meta);
-  TestWorker.instances[1]!.reply({
+  const retryWorker = TestWorker.instances[1]!;
+  await ready(retryWorker);
+  retryWorker.reply({
     type: 'success',
     blob: new Blob(['retry'], { type: 'application/pdf' }),
   });
   expect((await retry).size).toBe(5);
-  expect(TestWorker.instances[1]!.terminate).toHaveBeenCalledTimes(1);
+  expect(retryWorker.terminate).toHaveBeenCalledTimes(1);
 });
 
 it('rejects worker startup/runtime errors and cleans up', async () => {
   const result = generateErvePackingListDetailPdfBlob(source, meta);
   const worker = TestWorker.instances[0]!;
+  await ready(worker);
   worker.onerror?.({ preventDefault: vi.fn() } as unknown as ErrorEvent);
   await expect(result).rejects.toThrow('Packing list PDF worker failed');
   expect(worker.terminate).toHaveBeenCalledTimes(1);
@@ -78,6 +88,7 @@ it('rejects worker startup/runtime errors and cleans up', async () => {
 it('rejects message decoding errors and cleans up', async () => {
   const result = generateErvePackingListDetailPdfBlob(source, meta);
   const worker = TestWorker.instances[0]!;
+  await ready(worker);
   worker.onmessageerror?.();
   await expect(result).rejects.toThrow('Packing list PDF worker response');
   expect(worker.terminate).toHaveBeenCalledTimes(1);
@@ -92,9 +103,11 @@ it.each([
   'rejects malformed or empty PDF responses rather than returning incomplete content: %j',
   async (reply) => {
     const result = generateErvePackingListDetailPdfBlob(source, meta);
-    TestWorker.instances[0]!.reply(reply);
+    const worker = TestWorker.instances[0]!;
+    await ready(worker);
+    worker.reply(reply);
     await expect(result).rejects.toThrow('Packing list PDF worker response');
-    expect(TestWorker.instances[0]!.terminate).toHaveBeenCalledTimes(1);
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
   },
 );
 

@@ -59,7 +59,11 @@ it.each([1, 2, 7, 8, 9, 10, 11, 12, 13, 14])(
   'maps Size headers on every physical page (%i styles)',
   async (count) => {
     const result = await verify(packingListFixture(1, count, 3), `styles-${count}`);
-    if (count === 2) expect(result.pages).toBe(1); // no trailing-margin artifact page
+    // ISS-053: rows now always carry a thumbnail box (a placeholder when the Style has no
+    // uploaded image, matching the Dispatch Order PDF's identical convention), so this fixture's
+    // 2-Style summary now genuinely spans 2 pages rather than fitting on 1 — verified not to be a
+    // blank/trailing-margin artifact (page 2 carries ST-002's own full repeated header + totals).
+    if (count === 2) expect(result.pages).toBe(2);
     if (count === 11) {
       const summary = result.headers.filter((h) => h.section === 'summary');
       expect(summary.length).toBeGreaterThan(1);

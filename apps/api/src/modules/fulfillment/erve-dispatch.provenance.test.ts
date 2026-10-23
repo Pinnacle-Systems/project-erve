@@ -19,10 +19,38 @@ import { toPackingListDetail, toPackingListSummary } from './erve-dispatch.servi
 
 type PackingListRecordArg = Parameters<typeof toPackingListDetail>[0];
 
+// ISS-053: Style identity/imagery is an independent, unconditional field on these DTOs — it must
+// appear identically whether or not the caller is authorized to see factory/supplier provenance
+// (includeProvenance), so the fixture carries a real uploaded image (not just a bare id) to
+// exercise toPrimaryImageView's actual mapping, not merely the null branch.
+const STYLE_IMAGE_RECORD = {
+  id: 'img-1',
+  styleId: 'style-1',
+  fileId: 'file-1',
+  file: { fileName: 'shirt.jpg', mimeType: 'image/jpeg', sizeBytes: 1234 },
+  isPrimary: true,
+  sortOrder: 0,
+  createdAt: new Date('2026-09-01T00:00:00.000Z'),
+  updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+};
+
+const EXPECTED_PRIMARY_IMAGE = {
+  id: 'img-1',
+  styleId: 'style-1',
+  fileId: 'file-1',
+  fileName: 'shirt.jpg',
+  mimeType: 'image/jpeg',
+  sizeBytes: 1234,
+  isPrimary: true,
+  sortOrder: 0,
+  createdAt: '2026-09-01T00:00:00.000Z',
+  updatedAt: '2026-09-01T00:00:00.000Z',
+};
+
 function buildFixtureRecord(): PackingListRecordArg {
   const factory = { id: 'fac-1', code: 'FAC1', name: 'Confidential Factory Pvt Ltd' };
   const saleOrder = { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001' };
-  const style = { id: 'style-1', styleNumber: 'ST-100', styleName: 'Classic Shirt' };
+  const style = { id: 'style-1', styleNumber: 'ST-100', styleName: 'Classic Shirt', images: [STYLE_IMAGE_RECORD] };
   const size = { id: 'size-1', code: 'M', label: 'Medium' };
 
   return {
@@ -98,7 +126,22 @@ describe('DEMO-020 — Erve Packing List factory/supplier provenance redaction',
     expect(detail.cartons[0]?.cartonNumber).toBe('C1');
     expect(detail.cartons[0]?.saleOrder.saleOrderNumber).toBe('EISO/26-27/0001');
     expect(detail.sourceDispatchOrders).toEqual([{ id: 'so-1', saleOrderNumber: 'EISO/26-27/0001' }]);
-    expect(detail.styleSizeSummary).toEqual([{ styleNumber: 'ST-100', styleName: 'Classic Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 5 }]);
+    expect(detail.styleSizeSummary).toEqual([
+      { styleId: 'style-1', styleNumber: 'ST-100', styleName: 'Classic Shirt', primaryImage: EXPECTED_PRIMARY_IMAGE, sizeCode: 'M', sizeLabel: 'Medium', quantity: 5 },
+    ]);
+    // ISS-053: Style identity/imagery is never swept into the DEMO-020 factory/supplier
+    // confidentiality redaction — it's a different boundary entirely, so it must still be the
+    // real UUID and the uploaded image even when includeProvenance is false.
+    expect(detail.cartons[0]?.lines[0]).toEqual({
+      saleOrderLineId: 'sol-1',
+      styleId: 'style-1',
+      styleNumber: 'ST-100',
+      styleName: 'Classic Shirt',
+      primaryImage: EXPECTED_PRIMARY_IMAGE,
+      sizeCode: 'M',
+      sizeLabel: 'Medium',
+      quantity: 5,
+    });
   });
 
   it('toPackingListSummary omits sourceFactories when includeProvenance is false', () => {
@@ -115,6 +158,13 @@ describe('DEMO-020 — Erve Packing List factory/supplier provenance redaction',
     expect(detail.cartons[0]?.factory).toEqual({ id: 'fac-1', code: 'FAC1', name: 'Confidential Factory Pvt Ltd' });
     expect(detail.cartons[0]?.factoryDispatchId).toBe('fd-1');
     expect(detail.cartons[0]?.factoryDispatchNumber).toBe('EIFD/26-27/0001');
+    // ISS-053: the authorized-provenance branch must not duplicate, drop, or otherwise disturb
+    // Style identity/imagery — identical to the redacted case above.
+    expect(detail.cartons[0]?.lines[0]?.styleId).toBe('style-1');
+    expect(detail.cartons[0]?.lines[0]?.primaryImage).toEqual(EXPECTED_PRIMARY_IMAGE);
+    expect(detail.styleSizeSummary).toEqual([
+      { styleId: 'style-1', styleNumber: 'ST-100', styleName: 'Classic Shirt', primaryImage: EXPECTED_PRIMARY_IMAGE, sizeCode: 'M', sizeLabel: 'Medium', quantity: 5 },
+    ]);
 
     const summary = toPackingListSummary(record, true);
     expect(summary.sourceFactories).toEqual([{ id: 'fac-1', code: 'FAC1', name: 'Confidential Factory Pvt Ltd' }]);

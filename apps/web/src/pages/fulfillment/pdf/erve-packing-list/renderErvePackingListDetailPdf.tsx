@@ -4,18 +4,22 @@ import {
 } from './buildErvePackingListDetailViewModel.js';
 import { ErvePackingListDetailDocument } from './ErvePackingListDetailDocument.js';
 import { renderPdfBlob } from '../../../../lib/pdf/generate.js';
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 import type { ErvePackingListDetail } from '../../types.js';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 /**
- * The unchanged Phase 3D rendering pipeline, called inside the dedicated worker.
- * The already-authorized detail record is passed by the UI; no extra fetch or DOM access here.
+ * The unchanged Phase 3D rendering pipeline, called inside the dedicated worker. The
+ * already-authorized detail record is passed by the UI; no extra fetch or DOM access here —
+ * `images` (ISS-053) is already resolved on the main thread by
+ * prepareErvePackingListDetailPdfImages before this worker ever runs.
  */
 export async function renderErvePackingListDetailPdfBlob(
   packingList: ErvePackingListDetail,
   meta: ErvePackingListDetailPdfMeta,
+  images: Map<string, PdfImageSource> = new Map(),
 ): Promise<Blob> {
-  const viewModel = buildErvePackingListDetailViewModel(packingList, meta);
+  const viewModel = buildErvePackingListDetailViewModel(packingList, meta, images);
   const merged = await PDFDocument.create();
   const batchSize = 10;
   // One empty batch preserves the OPEN / no-cartons document. Await each render/copy

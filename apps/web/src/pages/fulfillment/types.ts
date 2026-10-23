@@ -41,6 +41,7 @@ import type {
   DispatchOrderFulfillmentStage,
   DispatchOrderFulfillmentSummary,
   SaleOrReturnPositionRow,
+  StylePrimaryImageView,
 } from '@erve/types';
 
 export type {
@@ -86,6 +87,7 @@ export type {
   DispatchOrderFulfillmentStage,
   DispatchOrderFulfillmentSummary,
   SaleOrReturnPositionRow,
+  StylePrimaryImageView,
 };
 
 export interface Distributor {
