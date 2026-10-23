@@ -567,7 +567,18 @@ export interface ErvePackingListCartonView {
   packageDetails: string | null;
   weight: string | null;
   totalQuantity: number;
-  lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; sizeSortOrder?: number; quantity: number }>;
+  lines: Array<{
+    saleOrderLineId: string;
+    /** ISS-053: the Style's real UUID — never substitute styleNumber, which breaks the authenticated Style image endpoint. */
+    styleId: string;
+    styleNumber: string;
+    styleName: string;
+    primaryImage: StylePrimaryImageView | null;
+    sizeCode: string;
+    sizeLabel: string;
+    sizeSortOrder?: number;
+    quantity: number;
+  }>;
 }
 
 export interface ErvePackingListDestinationSnapshot {
@@ -586,8 +597,11 @@ export interface ErvePackingListDestinationSnapshot {
 }
 
 export interface ErvePackingListStyleSizeSummaryRow {
+  /** ISS-053: the Style's real UUID — never substitute styleNumber, which breaks the authenticated Style image endpoint. */
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  primaryImage: StylePrimaryImageView | null;
   sizeCode: string;
   sizeLabel: string;
   sizeSortOrder?: number;
