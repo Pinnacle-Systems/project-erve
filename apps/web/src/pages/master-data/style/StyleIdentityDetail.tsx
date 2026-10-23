@@ -17,7 +17,6 @@ export function StyleIdentityDetail({ style }: { style: Style }) {
       />,
     ],
     ['Category', style.categoryDescription],
-    ['Item Name Group', style.itemNameGroup],
     ['IP Name', style.ipName],
     ['Licensor', style.licensor],
     ['Colour', style.colour],

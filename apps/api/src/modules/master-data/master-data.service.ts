@@ -403,9 +403,12 @@ export async function updateStyle(
   input: Record<string, unknown> & {
     sizes?: StyleSizeRequest[];
     factoryMappings?: StyleFactoryMappingRequest[];
+    // ISS-062: see refreshHsnDescriptionSchema's comment in
+    // master-data.validation.ts and the handling of this key below.
+    refreshHsnDescription?: { hsnId: string; expectedDescription: string | null };
   },
 ) {
-  const { sizes, factoryMappings, ...styleFields } = input;
+  const { sizes, factoryMappings, refreshHsnDescription, ...styleFields } = input;
   const existing = await prisma.style.findUnique({
     where: { id: styleId },
     include: { styleSizes: true, styleFactoryMappings: true },
@@ -441,6 +444,56 @@ export async function updateStyle(
     }
   }
 
+  // ISS-062: explicit, user-confirmed refresh of hsnDescription from the
+  // live Hsn record. Deliberately separate from the hsnId-reassignment
+  // branch just above - that branch only resyncs hsnCode/hsnDescription
+  // when hsnId itself changes; this lets a user pull a since-changed
+  // description for the SAME HSN that's already linked (the staleness
+  // ISS-062 fixes), but only via this explicit, previewed action - never
+  // automatically on an ordinary edit. The server derives the authoritative
+  // new description itself from the live Hsn record at save time; it never
+  // trusts the client-supplied `expectedDescription` as the value to write,
+  // only as a precondition that must still hold (checked below).
+  let hsnDescriptionRefreshAudit: { hsnId: string; before: string | null; after: string | null } | null = null;
+  if (refreshHsnDescription) {
+    // Preliminary check only - NOT the authoritative guard against a
+    // concurrent hsnId change (that's the `updateMany` inside the
+    // transaction below, which re-checks against the row's current
+    // persisted hsnId at the actual moment of write). This early check
+    // instead catches a same-REQUEST inconsistency: the hsnId this save
+    // will itself leave the Style with - either a value changing in this
+    // same PATCH (handled above) or its current, unchanged one - must
+    // match what the refresh was previewed against, or the request is
+    // internally contradictory (e.g. reassigning to a different HSN while
+    // also submitting a refresh computed for the old one).
+    const effectiveHsnId = 'hsnId' in styleFields ? (styleFields.hsnId as string | null) : existing.hsnId;
+    if (effectiveHsnId !== refreshHsnDescription.hsnId) {
+      throw HttpError.conflict(
+        "This Style's HSN changed since the description was previewed. Refresh the description again before saving.",
+        { reason: 'HSN_DESCRIPTION_REFRESH_HSN_CHANGED' },
+      );
+    }
+    // Deliberately NOT assertActiveHsn: refreshing an already-linked,
+    // since-INACTIVE Hsn's description is allowed - this only re-reads that
+    // same record's description, it is not a new inactive-HSN selection.
+    const liveHsn = await prisma.hsn.findUnique({ where: { id: refreshHsnDescription.hsnId } });
+    if (!liveHsn) {
+      throw HttpError.badRequest('The linked HSN record could not be found');
+    }
+    if (liveHsn.description !== refreshHsnDescription.expectedDescription) {
+      throw HttpError.conflict(
+        'The HSN description changed again since it was previewed. Refresh and retry.',
+        { reason: 'HSN_DESCRIPTION_REFRESH_STALE' },
+      );
+    }
+    hsnDescriptionRefreshAudit = {
+      hsnId: liveHsn.id,
+      before: existing.hsnDescription,
+      after: liveHsn.description,
+    };
+    styleFields.hsnDescription = liveHsn.description;
+  }
+
   const sizesPlan = sizes
     ? await planStyleSizeUpdate(
         styleId,
@@ -465,7 +518,30 @@ export async function updateStyle(
 
   try {
     await prisma.$transaction(async (tx) => {
-      if (Object.keys(styleFields).length > 0) {
+      if (refreshHsnDescription) {
+        // Authoritative, TOCTOU-safe guard for the staged refresh: the
+        // pre-transaction `effectiveHsnId` check above can only see the
+        // hsnId this request itself intends - it cannot see a DIFFERENT
+        // request's concurrent hsnId change that lands between that read
+        // and this write. `updateMany` with hsnId in its WHERE clause is
+        // evaluated by Postgres against the row's CURRENT committed value
+        // at the moment of this statement, inside this same transaction -
+        // if some other operation already moved the Style onto a
+        // different HSN, this matches zero rows and we reject instead of
+        // silently writing a description for an HSN the Style is no
+        // longer linked to (and we never touch whatever that concurrent
+        // change did - zero rows updated means nothing here is written).
+        const result = await tx.style.updateMany({
+          where: { id: styleId, hsnId: refreshHsnDescription.hsnId },
+          data: styleFields as Prisma.StyleUncheckedUpdateInput,
+        });
+        if (result.count === 0) {
+          throw HttpError.conflict(
+            "This Style's HSN changed since the description was previewed. Refresh the description again before saving.",
+            { reason: 'HSN_DESCRIPTION_REFRESH_HSN_CHANGED' },
+          );
+        }
+      } else if (Object.keys(styleFields).length > 0) {
         await tx.style.update({
           where: { id: styleId },
           data: styleFields as Prisma.StyleUncheckedUpdateInput,
@@ -507,6 +583,26 @@ export async function updateStyle(
           });
         }
       }
+      // ISS-062 quality bar: this audit record commits in the SAME
+      // transaction as the Style write it describes (unlike STYLE_UPDATED
+      // just below, which deliberately stays non-transactional/unchanged) -
+      // so the refresh and its audit trail can never diverge.
+      if (hsnDescriptionRefreshAudit) {
+        await recordAuditLog(
+          {
+            actorId: actor.id,
+            action: 'STYLE_HSN_DESCRIPTION_REFRESHED',
+            entityType: 'Style',
+            entityId: styleId,
+            metadata: {
+              hsnId: hsnDescriptionRefreshAudit.hsnId,
+              before: hsnDescriptionRefreshAudit.before,
+              after: hsnDescriptionRefreshAudit.after,
+            },
+          },
+          tx,
+        );
+      }
     });
   } catch (error) {
     await throwIfBarcodeConflict(error, touchedBarcodes);
@@ -525,6 +621,54 @@ export async function updateStyle(
   });
 
   return getStyleById(styleId);
+}
+
+export interface HsnDescriptionRefreshPreview {
+  hsnId: string | null;
+  currentDescription: string | null;
+  proposedDescription: string | null;
+  isStale: boolean;
+  canRefresh: boolean;
+}
+
+/**
+ * Read-only preview for ISS-062's explicit "Refresh HSN Description"
+ * action: compares the Style's saved hsnDescription snapshot against its
+ * linked Hsn record's CURRENT description, without writing anything.
+ * Reading an inactive-but-linked Hsn here is fine - this only re-reads that
+ * same record's description, it's not a new inactive-HSN selection (see
+ * assertActiveHsn, deliberately NOT used here).
+ */
+export async function previewHsnDescriptionRefresh(
+  styleId: string,
+): Promise<HsnDescriptionRefreshPreview> {
+  const style = await prisma.style.findUnique({
+    where: { id: styleId },
+    select: { hsnId: true, hsnDescription: true },
+  });
+  if (!style) {
+    throw HttpError.notFound('Style not found');
+  }
+  if (!style.hsnId) {
+    return {
+      hsnId: null,
+      currentDescription: null,
+      proposedDescription: null,
+      isStale: false,
+      canRefresh: false,
+    };
+  }
+  const hsn = await prisma.hsn.findUnique({ where: { id: style.hsnId } });
+  if (!hsn) {
+    throw HttpError.badRequest('The linked HSN record could not be found');
+  }
+  return {
+    hsnId: hsn.id,
+    currentDescription: style.hsnDescription,
+    proposedDescription: hsn.description,
+    isStale: hsn.description !== style.hsnDescription,
+    canRefresh: true,
+  };
 }
 
 // assertActiveSeason requires the season to be ACTIVE - correct when the

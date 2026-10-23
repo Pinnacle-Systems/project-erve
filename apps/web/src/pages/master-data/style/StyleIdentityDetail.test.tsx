@@ -80,6 +80,15 @@ describe('StyleIdentityDetail', () => {
     expect(container.textContent).not.toContain('HSN');
   });
 
+  // ISS-059: Item Name Group is removed from the detail view even when the
+  // underlying Style record still has a stored value (old data preserved,
+  // just no longer surfaced here).
+  it('ISS-059: never renders an Item Name Group row', () => {
+    render(<StyleIdentityDetail style={makeStyle({ itemNameGroup: 'Some Group' })} />);
+    expect(container.textContent).not.toContain('Item Name Group');
+    expect(container.textContent).not.toContain('Some Group');
+  });
+
   it('falls back to the empty-value dash for missing optional fields', () => {
     render(<StyleIdentityDetail style={makeStyle()} />);
     expect(container.textContent).toContain('—');

@@ -301,6 +301,18 @@ stylesRouter.patch(
   }),
 );
 
+// ISS-062: read-only preview for the explicit "Refresh HSN Description"
+// action - same RBAC as editing the Style itself (no separate viewer-level
+// access; this is part of the edit flow, not Style browsing).
+stylesRouter.get(
+  '/:id/hsn-description-refresh',
+  canManageMasterData,
+  asyncHandler(async (req, res) => {
+    const preview = await masterDataService.previewHsnDescriptionRefresh(req.params.id! as string);
+    res.status(200).json(successResponse(preview));
+  }),
+);
+
 stylesRouter.post(
   '/:id/sizes',
   canManageMasterData,

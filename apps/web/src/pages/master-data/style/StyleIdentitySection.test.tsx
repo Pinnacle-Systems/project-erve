@@ -77,7 +77,6 @@ describe('StyleIdentitySection', () => {
       'Season',
       'Status',
       'Category',
-      'Item Name Group',
       'IP Name',
       'Licensor',
       'Colour',
@@ -89,6 +88,24 @@ describe('StyleIdentitySection', () => {
     const season = findLabel('Season');
     expect(season).toBeDefined();
     expect(season!.querySelector('[aria-hidden="true"]')?.textContent?.trim()).toBe('*');
+  });
+
+  // ISS-059: Item Name Group must no longer render or be editable from this
+  // form, even though the underlying form-state field/label still exist for
+  // other code that reads/round-trips it (see style-form-state.ts).
+  it('ISS-059: never renders the Item Name Group field', () => {
+    render(
+      <StyleIdentitySection
+        form={{ ...emptyForm, itemNameGroup: 'Some Group' }}
+        onFieldChange={() => {}}
+        seasonId=""
+        onSeasonChange={() => {}}
+        seasons={[]}
+        error=""
+      />,
+    );
+    expect(container.textContent).not.toContain('Item Name Group');
+    expect(findLabel('Item Name Group')).toBeUndefined();
   });
 
   it('shows Required on Style Number/Name only once a save has failed with them empty', () => {

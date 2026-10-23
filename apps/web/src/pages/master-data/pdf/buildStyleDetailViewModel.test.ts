@@ -55,6 +55,17 @@ describe('buildStyleDetailViewModel', () => {
     expect(vm.identityItems.find((i) => i.label === 'Final MRP')?.value).toBe('499.00');
   });
 
+  // ISS-059: Item Name Group is removed from the PDF view model, even when
+  // the underlying Style record still has a stored value.
+  it('ISS-059: never includes an Item Name Group row', () => {
+    const style = makeStyle({ itemNameGroup: 'Some Group' });
+    const vm = buildStyleDetailViewModel(
+      { style, primaryImage: { placeholder: true } },
+      { generatedAt: '2026-09-12T00:00:00Z' },
+    );
+    expect(vm.identityItems.find((i) => i.label === 'Item Name Group')).toBeUndefined();
+  });
+
   it('passes through the resolved primary image (or its placeholder marker) unchanged', () => {
     const withImage = buildStyleDetailViewModel(
       { style: makeStyle(), primaryImage: { dataUri: 'data:image/jpeg;base64,xyz' } },

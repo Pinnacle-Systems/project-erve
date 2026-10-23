@@ -2,6 +2,7 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { apiClient } from '../../../lib/api-client.js';
 import type { HsnOption } from '../types.js';
 import { emptyForm } from './style-form-state.js';
 import { StyleCommercialSection } from './StyleCommercialSection.js';
@@ -99,5 +100,39 @@ describe('StyleCommercialSection', () => {
     });
 
     expect(onFieldChange).toHaveBeenCalledWith('finalMrp', '499');
+  });
+
+  // ISS-062: the "Refresh HSN Description" action is opt-in via this prop so
+  // create mode (no saved Style to refresh against) never renders it.
+  it('does not render the HSN description refresh action when hsnDescriptionRefresh is omitted (create mode)', () => {
+    render(
+      <StyleCommercialSection
+        form={emptyForm}
+        onFieldChange={() => {}}
+        hsnId=""
+        onHsnChange={() => {}}
+        hsns={[]}
+        error=""
+      />,
+    );
+    expect(container.textContent).not.toContain('Refresh HSN Description');
+  });
+
+  it('renders the HSN description refresh action when provided (edit mode)', () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: { data: { hsnId: 'hsn-1', currentDescription: null, proposedDescription: null, isStale: false, canRefresh: false } },
+    });
+    render(
+      <StyleCommercialSection
+        form={emptyForm}
+        onFieldChange={() => {}}
+        hsnId="hsn-1"
+        onHsnChange={() => {}}
+        hsns={[hsn()]}
+        error=""
+        hsnDescriptionRefresh={{ styleId: 'style-1', staged: null, onStage: () => {} }}
+      />,
+    );
+    expect(container.textContent).toContain('Refresh HSN Description');
   });
 });

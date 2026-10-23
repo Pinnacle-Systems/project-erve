@@ -40,6 +40,11 @@ export const fieldLabels: Record<StyleFieldKey, string> = {
 // not a key of StyleFormFields — it's rendered specially by
 // StyleIdentitySection since Season is a separate SelectField backed by its
 // own query, not a plain text/status field.
+// ISS-059: Item Name Group is deliberately NOT in this layout any more - the
+// field no longer renders or is editable from the create/edit form. It
+// stays in StyleFormFields/emptyForm/fieldLabels below and is hydrated from
+// the API, but cleanPayload omits it on save so ordinary edits preserve the
+// current stored value without changing the API/schema.
 export const identityFieldLayout = [
   { key: 'styleNumber', width: 'sm' },
   { key: 'styleName', width: 'md' },
@@ -47,7 +52,6 @@ export const identityFieldLayout = [
   { key: 'season', width: 'md' },
   { key: 'status', width: 'sm' },
   { key: 'categoryDescription', width: 'sm' },
-  { key: 'itemNameGroup', width: 'md' },
   { key: 'ipName', width: 'sm' },
   { key: 'licensor', width: 'md' },
   { key: 'colour', width: 'sm' },
@@ -90,8 +94,17 @@ export function validateStyleForm(form: StyleFormFields, seasonId: string): stri
 }
 
 export function cleanPayload(form: StyleFormFields, seasonId: string, hsnId: string | null) {
+  // ISS-059 fix: itemNameGroup is hidden from this form and must never be
+  // echoed back on an ordinary save. It's still hydrated into form state
+  // by StyleFormPage purely so StyleFormFields keeps a stable shape for
+  // any other code that reads it - but it must never leave the browser on
+  // save. Sending it back would round-trip a value captured when the form
+  // opened, silently clobbering any change made to it (by another process,
+  // a bulk import, etc.) in the meantime, since the server can't tell
+  // "unchanged" apart from "deliberately re-sent" once it's in the body.
+  const { itemNameGroup: _itemNameGroup, ...formWithoutItemNameGroup } = form;
   return {
-    ...form,
+    ...formWithoutItemNameGroup,
     finalMrp: Number(form.finalMrp),
     royaltyPercentage: form.royaltyPercentage === '' ? null : Number(form.royaltyPercentage),
     seasonId,

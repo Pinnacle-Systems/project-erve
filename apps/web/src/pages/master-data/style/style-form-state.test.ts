@@ -68,6 +68,26 @@ describe('cleanPayload', () => {
     const payload = cleanPayload({ ...emptyForm, finalMrp: '499' }, 'season-1', null);
     expect(payload.hsnId).toBeNull();
   });
+
+  // ISS-059 fix: itemNameGroup is hidden from the form but was previously
+  // still echoed back on every save, round-tripping a value captured when
+  // the form opened - a correctness bug since nothing else can ever change
+  // that value out from under a stale form submission otherwise. It must
+  // never appear in the outgoing payload at all, regardless of what the
+  // form state holds for it.
+  it('ISS-059: never includes itemNameGroup in the outgoing payload, even when the form holds a value', () => {
+    const payload = cleanPayload(
+      { ...emptyForm, finalMrp: '499', itemNameGroup: 'Some Group' },
+      'season-1',
+      'hsn-1',
+    );
+    expect(payload).not.toHaveProperty('itemNameGroup');
+  });
+
+  it('ISS-059: never includes itemNameGroup even when the form holds no value', () => {
+    const payload = cleanPayload({ ...emptyForm, finalMrp: '499', itemNameGroup: '' }, 'season-1', null);
+    expect(payload).not.toHaveProperty('itemNameGroup');
+  });
 });
 
 describe('toStyleSizeRequest', () => {

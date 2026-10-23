@@ -279,4 +279,67 @@ describe('StyleFormPage — UXAUTH-019 edit-load gating', () => {
 
     expect(patch).not.toHaveBeenCalled();
   });
+
+  // ISS-059 fix: itemNameGroup is hidden from the UI, but the save path was
+  // still echoing back whatever value the form loaded with - a correctness
+  // bug, since nothing stops some OTHER process from changing that value
+  // between when this form opened and when it saves, and this form would
+  // then silently clobber it back on an otherwise-unrelated save. The fix
+  // makes cleanPayload omit the key entirely; these tests prove that holds
+  // from the real save path, not just at the cleanPayload-unit level.
+  describe('ISS-059: itemNameGroup is never sent back on an ordinary save', () => {
+    it('does not include itemNameGroup in the outgoing PATCH when the stored Style has a non-null value', async () => {
+      const style = makeStyle({ itemNameGroup: 'Original Group' });
+      mockStyleGets({ '/styles/style-1': () => Promise.resolve({ data: { data: style } }) });
+      const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: style } });
+      renderStylePage('/master-data/styles/style-1/edit', '/master-data/styles/:id/edit');
+      await waitFor(() => container.querySelector('#field-style-name') !== null, 'form did not render');
+
+      const input = container.querySelector<HTMLInputElement>('#field-style-name')!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      act(() => {
+        setter.call(input, 'Renamed Tee');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await act(async () => container.querySelector('form')!.requestSubmit());
+      await waitFor(() => patch.mock.calls.length > 0, 'style PATCH was not sent');
+
+      const [, body] = patch.mock.calls[0]!;
+      expect(body).not.toHaveProperty('itemNameGroup');
+      expect(body).toMatchObject({ styleName: 'Renamed Tee' });
+    });
+
+    it('does not include itemNameGroup in the outgoing PATCH when the stored Style has a null value', async () => {
+      const style = makeStyle({ itemNameGroup: null });
+      mockStyleGets({ '/styles/style-1': () => Promise.resolve({ data: { data: style } }) });
+      const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: style } });
+      renderStylePage('/master-data/styles/style-1/edit', '/master-data/styles/:id/edit');
+      await waitFor(() => container.querySelector('#field-style-name') !== null, 'form did not render');
+
+      await act(async () => container.querySelector('form')!.requestSubmit());
+      await waitFor(() => patch.mock.calls.length > 0, 'style PATCH was not sent');
+
+      expect(patch.mock.calls[0]![1]).not.toHaveProperty('itemNameGroup');
+    });
+
+    it('cannot clobber an Item Name Group changed by another process after the edit form loaded, because the field is never sent at all', async () => {
+      // The form loaded with 'Loaded At Open' - standing in for whatever
+      // value was true when the GET resolved. Some other process could
+      // change it in the database at any point after that; the form has
+      // no way to know, and (by the fix) no way to send its own stale
+      // snapshot back either, whether or not the user touches any other
+      // field.
+      const style = makeStyle({ itemNameGroup: 'Loaded At Open' });
+      mockStyleGets({ '/styles/style-1': () => Promise.resolve({ data: { data: style } }) });
+      const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: style } });
+      renderStylePage('/master-data/styles/style-1/edit', '/master-data/styles/:id/edit');
+      await waitFor(() => container.querySelector('#field-style-name') !== null, 'form did not render');
+
+      // Submit as-is, with no edits at all, simulating a plain resave.
+      await act(async () => container.querySelector('form')!.requestSubmit());
+      await waitFor(() => patch.mock.calls.length > 0, 'style PATCH was not sent');
+
+      expect(patch.mock.calls[0]![1]).not.toHaveProperty('itemNameGroup');
+    });
+  });
 });
