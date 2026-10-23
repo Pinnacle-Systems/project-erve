@@ -1,6 +1,7 @@
 import type { AuthUser } from '@erve/types';
 import { canManageJobOrderProduction, canMutateQualityExecution } from '../../../auth/permissions.js';
 import type { JobOrder } from '../types.js';
+import { getProductionStageEligibility } from './job-order-production-eligibility.js';
 
 export type JobOrderActionTarget =
   | { kind: 'tab'; tab: 'production' | 'quality' }
@@ -29,11 +30,8 @@ export function getJobOrderRequiredActions(
     canManageJobOrderProduction(user) &&
     ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status)
   ) {
-    const gateLocked = jobOrder.qualityActivities.some(
-      (activity) => activity.executionMode === 'SEQUENTIAL_GATE' && activity.status !== 'COMPLETED',
-    );
-    const next = jobOrder.stages.find((stage) => stage.status !== 'COMPLETED');
-    if (!gateLocked && next && (next.status === 'NOT_STARTED' || next.status === 'IN_PROGRESS')) {
+    const { nextStage: next, canStart, canComplete } = getProductionStageEligibility(jobOrder);
+    if (next && (canStart || canComplete)) {
       const verb = next.status === 'NOT_STARTED' ? 'Start' : 'Complete';
       actions.push({
         id: `stage:${next.id}`,
@@ -65,7 +63,13 @@ export function getJobOrderRequiredActions(
 
       if (!activity.eligible) continue;
 
-      if (!activity.execution && activity.status === 'AVAILABLE') {
+      const canStartFinalBatch = activity.executionMultiplicity !== 'BATCHED' || Boolean(
+        activity.coverage?.preparedQuantityAuthoritative &&
+        !activity.coverage.complete && !activity.coverage.reconciliationConflict &&
+        activity.coverage.availableBySize?.some((size) => size.availableQuantity > 0),
+      );
+
+      if (!activity.execution && activity.status === 'AVAILABLE' && canStartFinalBatch) {
         actions.push({
           id: `qa:start:${activity.processFlowVersionStageId}`,
           label: `Start ${activity.name}`,
@@ -94,10 +98,7 @@ export function getJobOrderRequiredActions(
       // suggest a new batch solely because the previous attempt is finalized.
       if (activity.executionMultiplicity === 'BATCHED' &&
         activity.execution?.status === 'FINALIZED' &&
-        activity.coverage &&
-        !activity.coverage.complete &&
-        !activity.coverage.reconciliationConflict &&
-        activity.coverage.availableBySize?.some((size) => size.availableQuantity > 0)) {
+        canStartFinalBatch) {
         actions.push({
           id: `qa:batch:${activity.processFlowVersionStageId}`,
           label: `Start next ${activity.name} batch`,

@@ -538,6 +538,9 @@ export async function addDistributorMapping(
       'Only users with the DISTRIBUTOR role can be mapped to a distributor',
     );
   }
+  if (user.status !== 'ACTIVE') {
+    throw HttpError.badRequest('Only active users can be mapped to a distributor');
+  }
   if (!distributor) {
     throw HttpError.badRequest('Unknown distributor');
   }

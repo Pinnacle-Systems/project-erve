@@ -29,6 +29,7 @@ import { ProductionStageStepper } from '../../ProductionStageStepper.js';
 import { STAGE_LABELS, formatDateTime } from '../../job-order-ui.js';
 import { mutationErrorMessage, type FlatSize } from '../job-order-detail-utils.js';
 import { JobOrderPlanningGrid } from '../../JobOrderPlanningGrid.js';
+import { getProductionStageEligibility } from '../job-order-production-eligibility.js';
 import { QuantityMeasureGrid } from '../../../../components/style-size-grid/QuantityMeasureGrid.js';
 import type {
   QuantityMeasureGridColumn,
@@ -186,10 +187,7 @@ export function JobOrderProductionTab({
   });
 
   const canMutateProduction = canManageJobOrderProduction(user);
-  const nextStage = jobOrder.stages.find((stage) => stage.status !== 'COMPLETED');
-  const productionQualityGateLocked = jobOrder.qualityActivities.some(
-    (activity) => activity.executionMode === 'SEQUENTIAL_GATE' && activity.status !== 'COMPLETED',
-  );
+  const { nextStage, gateLocked: productionQualityGateLocked, inlineLocked, canStart, canComplete } = getProductionStageEligibility(jobOrder);
   const canManageProductionStage =
     canMutateProduction &&
     ['CONFIRMED_BY_FACTORY', 'IN_PRODUCTION'].includes(jobOrder.status) &&
@@ -521,7 +519,7 @@ export function JobOrderProductionTab({
                   Complete {nextStage.stageNameSnapshot} when work for this stage has finished.
                 </p>
                 <div className="flex flex-wrap items-end gap-3">
-                  {nextStage.status === 'NOT_STARTED' && (
+                  {canStart && (
                     <Button
                       variant="default"
                       onClick={() => startStageMutation.mutate(nextStage.id)}
@@ -530,7 +528,7 @@ export function JobOrderProductionTab({
                       Start {nextStage.stageNameSnapshot}
                     </Button>
                   )}
-                  {nextStage.status === 'IN_PROGRESS' && (
+                  {canComplete && (
                     <Button
                       variant="default"
                       onClick={() => completeStageMutation.mutate(nextStage.id)}
@@ -540,6 +538,9 @@ export function JobOrderProductionTab({
                     </Button>
                   )}
                 </div>
+                {inlineLocked && (
+                  <p className="text-sm text-muted-foreground">Inline QA must pass before this stage can be completed. Production work can continue.</p>
+                )}
                 {startStageMutation.isError && (
                   <ValidationMessage tone="error">
                     {mutationErrorMessage(startStageMutation.error, `Unable to start ${nextStage.stageNameSnapshot}.`)}

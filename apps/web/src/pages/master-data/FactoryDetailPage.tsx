@@ -15,7 +15,7 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { UserLookupField, userLookupQueryKey } from '../users/UserLookupField.js';
 import { InlineUserCreateDialog } from '../users/InlineUserCreateDialog.js';
-import type { Factory, FactoryUser } from './types.js';
+import type { AdminUserSummary, Factory, FactoryUser } from './types.js';
 
 function errorMessage(error: unknown, fallback: string) {
   if (isAxiosError(error))
@@ -32,17 +32,30 @@ function errorMessage(error: unknown, fallback: string) {
 // action here either: revoking factory access is done from the user's own
 // detail page by removing the FACTORY_USER role, which the backend takes
 // the mapping down with atomically.
+// Keyed by factory.id so this never carries state (a pending lookup, an
+// open reassignment confirmation, a selection) across an in-place
+// navigation to a different, already-cached factory — the :id route does
+// not otherwise unmount this panel when the destination's data is cached.
 function MappedUsers({ factory }: { factory: Factory }) {
+  return <MappedUsersPanel key={factory.id} factory={factory} />;
+}
+
+function MappedUsersPanel({ factory }: { factory: Factory }) {
   const { user: currentUser } = useAuth();
   const client = useQueryClient();
   const [selected, setSelected] = useState<UserOption | null>(null);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [reassignment, setReassignment] = useState<{ user: UserOption; previousName: string } | null>(null);
+  const submitting = useRef(false);
   const creationGeneration = useRef(0);
+  const assignmentVisit = useRef(0);
   const [generation, setGeneration] = useState(0);
   useEffect(
     () => () => {
       creationGeneration.current += 1;
+      assignmentVisit.current += 1;
     },
     [],
   );
@@ -59,23 +72,58 @@ function MappedUsers({ factory }: { factory: Factory }) {
   const userOptionsPath = `/factories/${factory.id}/user-options`;
   const refresh = () =>
     Promise.all([
-      client.invalidateQueries({ queryKey: ['factory-users', factory.id] }),
+      client.invalidateQueries({ queryKey: ['factory-users'] }),
+      client.invalidateQueries({ queryKey: ['admin-user'] }),
       // The newly mapped user is no longer a candidate here.
       client.invalidateQueries({ queryKey: userLookupQueryKey(userOptionsPath) }),
       client.invalidateQueries({ queryKey: ['factory', factory.id] }),
     ]);
   const assign = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (target: UserOption) => {
       setError('');
-      if (!selected) throw new Error('Select a factory user');
-      await apiClient.post(`/users/${selected.id}/factories`, { factoryId: factory.id });
+      await apiClient.post(`/users/${target.id}/factories`, { factoryId: factory.id });
     },
     onSuccess: async () => {
       setSelected(null);
+      setReassignment(null);
       await refresh();
     },
     onError: (caught) => setError(errorMessage(caught, 'Unable to assign user')),
+    onSettled: () => { submitting.current = false; },
   });
+  const assignUser = (target: UserOption) => {
+    if (submitting.current) return;
+    submitting.current = true;
+    assign.mutate(target);
+  };
+  const reviewAssignment = async () => {
+    if (submitting.current || reassignment || factory.status !== 'ACTIVE') return;
+    setError('');
+    if (!selected) { setError('Select a factory user'); return; }
+    const target = selected;
+    const visit = assignmentVisit.current;
+    submitting.current = true;
+    setChecking(true);
+    try {
+      const response = await apiClient.get<ApiSuccessResponse<AdminUserSummary>>(`/users/${target.id}`);
+      if (visit !== assignmentVisit.current) { submitting.current = false; return; }
+      const previous = response.data.data.factories[0];
+      if (previous?.id === factory.id) {
+        setError('User is already mapped to this factory');
+      } else if (previous) {
+        setReassignment({ user: target, previousName: previous.name });
+      } else {
+        // Keep the submission lock through the existing atomic operation.
+        assign.mutate(target);
+        return;
+      }
+    } catch (caught) {
+      setError(errorMessage(caught, 'Unable to check the current factory assignment. Please try again.'));
+    } finally {
+      setChecking(false);
+    }
+    submitting.current = false;
+  };
   return (
     <Panel title="Mapped Factory Users">
       <div className="space-y-4">
@@ -84,7 +132,7 @@ function MappedUsers({ factory }: { factory: Factory }) {
           onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
-            assign.mutate();
+            void reviewAssignment();
           }}
         >
           <UserLookupField
@@ -92,11 +140,11 @@ function MappedUsers({ factory }: { factory: Factory }) {
             searchPath={userOptionsPath}
             value={selected}
             onChange={setSelected}
-            disabled={factory.status !== 'ACTIVE'}
+            disabled={factory.status !== 'ACTIVE' || checking || assign.isPending}
             emptyMessage="No active factory users available"
             noMatchMessage="No active factory users match your search"
           />
-          <Button type="submit" loading={assign.isPending} disabled={factory.status !== 'ACTIVE'}>
+          <Button type="submit" loading={checking || assign.isPending} disabled={factory.status !== 'ACTIVE'}>
             Assign
           </Button>
         </form>
@@ -162,6 +210,15 @@ function MappedUsers({ factory }: { factory: Factory }) {
           }
         />
       </div>
+      <ConfirmDialog
+        open={reassignment !== null}
+        onOpenChange={(open) => { if (!open && !submitting.current) { setReassignment(null); setError(''); } }}
+        title="Reassign factory user?"
+        description={reassignment ? `Confirming will move ${reassignment.user.name} from ${reassignment.previousName} to ${factory.name}, replacing the existing factory assignment.` : undefined}
+        error={error}
+        loading={assign.isPending}
+        onConfirm={() => { if (reassignment) assignUser(reassignment.user); }}
+      />
       {creating && (
         <Dialog
           open

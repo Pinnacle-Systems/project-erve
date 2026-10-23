@@ -318,6 +318,11 @@ describe('Factory detail — user assignment lookup (UL)', () => {
       if (config.url === '/factories/factory-1/users')
         return ok(config, { success: true, data: state.mapped });
       if (config.url === optionsUrl) return ok(config, { success: true, data: state.candidates });
+      if (config.url === '/users/u-2' && config.method === 'get')
+        return ok(config, {
+          success: true,
+          data: { factories: [{ id: 'factory-other', name: 'Other Factory' }] },
+        });
       if (config.url === '/users/u-2/factories' && config.method === 'post') {
         state.candidates = state.candidates.filter((candidate) => candidate.id !== 'u-2');
         state.mapped = [{ ...eli, status: 'ACTIVE', roles: ['FACTORY_USER'] }];
@@ -346,7 +351,8 @@ describe('Factory detail — user assignment lookup (UL)', () => {
   });
 
   it('assigns (a reassignment from another factory included) with the unchanged POST body, then refreshes', async () => {
-    // Eli is currently mapped to another factory — still a candidate here.
+    // Eli is currently mapped to another factory — still a candidate here,
+    // but now requires confirmation (USR-002) before the atomic reassignment.
     const state = { candidates: [dana, eli], mapped: [] as unknown[] };
     await renderPage('/master-data/factories/factory-1', ['ADMIN'], handler(state));
 
@@ -354,6 +360,16 @@ describe('Factory detail — user assignment lookup (UL)', () => {
     await choose('Eli Candidate');
     await clickAssign();
 
+    await waitUntil(() => Boolean(document.querySelector('[role="dialog"]')));
+    expect(requests.filter((request) => request.method === 'post')).toHaveLength(0);
+    const confirm = Array.from(document.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Confirm',
+    ) as HTMLButtonElement;
+    await act(async () => confirm.click());
+
+    await waitUntil(
+      () => requests.filter((request) => request.method === 'post').length > 0,
+    );
     expect(requests.filter((request) => request.method === 'post')).toEqual([
       expect.objectContaining({ url: '/users/u-2/factories', body: { factoryId: 'factory-1' } }),
     ]);

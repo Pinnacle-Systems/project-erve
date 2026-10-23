@@ -353,7 +353,7 @@ describe('JobOrderDetailPage state persistence across tab switches', () => {
         qualityActivities: [
           {
             processFlowVersionStageId: 'quality-1',
-            sequence: 1,
+            sequence: 0,
             name: 'Size Set / Pre-Production Report',
             status: 'AVAILABLE',
             eligible: true,
@@ -464,7 +464,7 @@ describe('JobOrderDetailPage workflow rendering', () => {
         qualityActivities: [
           {
             processFlowVersionStageId: 'quality-1',
-            sequence: 1,
+            sequence: 0,
             name: 'Size Set / Pre-Production Report',
             status: 'AVAILABLE',
             eligible: true,
@@ -502,6 +502,34 @@ describe('JobOrderDetailPage workflow rendering', () => {
 });
 
 describe('JobOrderDetailPage Send validation (disclaimer, cross-tab)', () => {
+  it.each([
+    [{ isAxiosError: true }, 'Check your connection'],
+    [{ isAxiosError: true, response: { status: 500, data: { error: { message: 'private stack trace' } } } }, 'Please try again'],
+    [{ isAxiosError: true, response: { status: 400, data: {} } }, 'Please try again'],
+    [{ isAxiosError: true, response: { status: 403, data: {} } }, 'permission'],
+    [{ isAxiosError: true, response: { status: 409, data: { error: { code: 'STALE_VERSION' } } } }, 'Reload'],
+    [{ isAxiosError: true, response: { status: 400, data: { error: { code: 'VALIDATION_ERROR', details: { issues: [{ field: 'expectedVersion', message: 'Expected a number' }] } } } } }, 'expectedVersion: Expected a number'],
+  ])('shows safe feedback and preserves terms after send failure (%j)', async (error, message) => {
+    vi.spyOn(apiClient, 'post').mockRejectedValue(error);
+    await renderJobOrderDetail(container, root, { status: 'DRAFT', overrides: { disclaimerText: 'Persisted commercial terms' } });
+    await act(async () => (Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Send to Factory') as HTMLButtonElement).click());
+    await act(async () => (Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Send') as HTMLButtonElement).click());
+    await vi.waitFor(() => expect(content(container)).toContain(message));
+    expect(content(container)).not.toContain('private stack trace');
+    act(() => switchJobOrderTab(container, 'Production'));
+    expect((container.querySelector('#job-order-disclaimer') as HTMLTextAreaElement).value).toBe('Persisted commercial terms');
+  });
+  it('refreshes the Job Order and audit after successful send without changing the request contract', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: mockJobOrder('SENT_TO_FACTORY') } });
+    const client = await renderJobOrderDetail(container, root, { status: 'DRAFT', overrides: { disclaimerText: 'Saved terms' } });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    await act(async () => (Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Send to Factory') as HTMLButtonElement).click());
+    await act(async () => (Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Send') as HTMLButtonElement).click());
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    expect(post).toHaveBeenCalledExactlyOnceWith('/job-orders/jo-1/actions/send-to-factory', { expectedVersion: 1 }, { headers: { 'Idempotency-Key': 'jo-1:send:1' } });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['job-order', 'jo-1'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['job-order-audit', 'jo-1'] });
+  });
   it('blocks send before the API call, switches to Production, and focuses the required disclaimer', async () => {
     const post = vi.spyOn(apiClient, 'post');
     await renderJobOrderDetail(container, root, { status: 'DRAFT' });

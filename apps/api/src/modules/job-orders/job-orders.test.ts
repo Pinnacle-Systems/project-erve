@@ -241,6 +241,34 @@ async function createJobOrder(
 }
 
 describe('job orders API', () => {
+  it('keeps Send-to-Factory validation failures distinct and leaves the draft unchanged', async () => {
+    const graph = await createSeedGraph();
+    const created = await createJobOrder(graph.admin.token, graph, 1);
+    expect(created.status).toBe(201);
+    const order = created.body.data;
+    const send = (body: object, key: string, token = graph.admin.token, id = order.id) => request(app)
+      .post(`/job-orders/${id}/actions/send-to-factory`).set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', key).send(body);
+    const invalid = await send({ expectedVersion: 'invalid' }, 'send-invalid-field');
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error.details.issues).toEqual(expect.arrayContaining([expect.objectContaining({ field: 'expectedVersion' })]));
+    await prisma.jobOrder.update({ where: { id: order.id }, data: { disclaimerText: null } });
+    const missing = await send({ expectedVersion: order.version }, 'send-no-disclaimer');
+    expect(missing.status).toBe(400);
+    expect(missing.body.error.code).toBe('DISCLAIMER_REQUIRED');
+    const qa = await createTestUserAndToken({ email: 'send-denied-qa@test.local', password: 'password', roles: ['QA_USER'] });
+    await send({ expectedVersion: order.version }, 'send-denied', qa.token).expect(403);
+    await send({ expectedVersion: order.version }, 'send-missing', graph.admin.token, createId()).expect(404);
+    expect(await prisma.jobOrder.findUnique({ where: { id: order.id } })).toMatchObject({ status: 'DRAFT', version: order.version });
+    expect(await prisma.auditLog.count({ where: { entityId: order.id, action: 'JOB_ORDER_SENT_TO_FACTORY' } })).toBe(0);
+    await prisma.jobOrder.update({ where: { id: order.id }, data: { disclaimerText: 'Saved terms' } });
+    const success = await send({ expectedVersion: order.version }, 'send-valid');
+    expect(success.status).toBe(200);
+    const invalidState = await send({ expectedVersion: success.body.data.version }, 'send-invalid-state');
+    expect(invalidState.status).toBe(400);
+    expect(invalidState.body.error.message).toBe('Only DRAFT job orders can be sent to factory');
+    expect(await prisma.auditLog.count({ where: { entityId: order.id, action: 'JOB_ORDER_SENT_TO_FACTORY' } })).toBe(1);
+  });
   it('allows the assigned Factory to read Job Order Style photos without Style master access', async () => {
     const graph = await createSeedGraph();
     const factory = await createTestUserAndToken({
@@ -292,6 +320,14 @@ describe('job orders API', () => {
 
     // Gallery works for QA, but no unauthorised Factory or Distributor gains access.
     await request(app).get(contentPath).set('Authorization', `Bearer ${qa.token}`).expect(200);
+    const qaMetadata = await request(app).get(listPath).set('Authorization', `Bearer ${qa.token}`).expect(200);
+    expect(qaMetadata.body.data[0].id).toBe(image.body.data.id);
+    await request(app).get(`/styles/${graph.style.id}`).set('Authorization', `Bearer ${qa.token}`).expect(403);
+    await request(app).get('/styles').set('Authorization', `Bearer ${qa.token}`).expect(403);
+    await request(app).get(`${listPath}/${createId()}/content`).set('Authorization', `Bearer ${qa.token}`).expect(404);
+    await request(app).get(`${listPath}/${createId()}/content`).set('Authorization', `Bearer ${factory.token}`).expect(404);
+    await request(app).get(contentPath).expect(401);
+    await request(app).get(listPath).expect(401);
     await request(app).get(contentPath).set('Authorization', `Bearer ${foreignFactory.token}`).expect(403);
     await request(app).get(listPath).set('Authorization', `Bearer ${foreignFactory.token}`).expect(403);
     await request(app).get(contentPath).set('Authorization', `Bearer ${distributor.token}`).expect(403);

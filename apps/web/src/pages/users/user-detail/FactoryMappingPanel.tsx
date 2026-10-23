@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { createEnterToNextHandler } from '@erve/app-components';
+import { ConfirmDialog, createEnterToNextHandler } from '@erve/app-components';
 import { Badge, Button, SelectField, SelectItem, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
 import { apiClient } from '../../../lib/api-client.js';
@@ -18,10 +18,20 @@ import { toErrorMessage } from './toErrorMessage.js';
 // state via useEffect on load) — that's what keeps this Select's mount-time
 // value change safe from the Radix hydration race documented across U2/U3A.
 // Preserve that shape; do not introduce a useEffect-based hydration copy here.
+// Keyed by user.id so this never carries state (a selection, an open
+// reassignment confirmation) across an in-place navigation to a different,
+// already-cached user — the :id route does not otherwise unmount this
+// panel when the destination user's data is cached.
 export function FactoryMappingPanel({ user }: { user: AdminUserSummary }) {
+  return <FactoryMappingPanelInner key={user.id} user={user} />;
+}
+
+function FactoryMappingPanelInner({ user }: { user: AdminUserSummary }) {
   const queryClient = useQueryClient();
   const [selectedFactoryId, setSelectedFactoryId] = useState('');
   const [error, setError] = useState('');
+  const [destination, setDestination] = useState<FactoryOption | null>(null);
+  const submitting = useRef(false);
 
   const mapped = user.factories[0];
 
@@ -40,17 +50,24 @@ export function FactoryMappingPanel({ user }: { user: AdminUserSummary }) {
     ]);
 
   const assignMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (factoryId: string) => {
       setError('');
-      if (!selectedFactoryId) throw new Error('Select a factory to assign');
-      await apiClient.post(`/users/${user.id}/factories`, { factoryId: selectedFactoryId });
+      await apiClient.post(`/users/${user.id}/factories`, { factoryId });
     },
     onSuccess: async () => {
       setSelectedFactoryId('');
+      setDestination(null);
       await invalidate();
     },
     onError: (caught) => setError(toErrorMessage(caught, 'Unable to assign factory')),
+    onSettled: () => { submitting.current = false; },
   });
+
+  const assign = (factoryId: string) => {
+    if (submitting.current) return;
+    submitting.current = true;
+    assignMutation.mutate(factoryId);
+  };
 
   const currentSelection = selectedFactoryId || mapped?.id || 'NONE';
   const unchanged = Boolean(mapped) && currentSelection === mapped?.id;
@@ -73,13 +90,19 @@ export function FactoryMappingPanel({ user }: { user: AdminUserSummary }) {
           onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
-            assignMutation.mutate();
+            if (unchanged || submitting.current || destination) return;
+            setError('');
+            const next = factoriesQuery.data?.find((factory) => factory.id === selectedFactoryId);
+            if (!next) { setError('Select a factory to assign'); return; }
+            if (mapped && mapped.id !== next.id) setDestination(next);
+            else assign(next.id);
           }}
         >
           <SelectField
             label={mapped ? 'Reassign factory' : 'Assign factory'}
             value={currentSelection}
             onValueChange={(value) => setSelectedFactoryId(value === 'NONE' ? '' : value)}
+            disabled={assignMutation.isPending}
           >
             {mapped ? null : <SelectItem value="NONE">Select an active factory</SelectItem>}
             {(factoriesQuery.data ?? []).map((factory) => (
@@ -100,6 +123,15 @@ export function FactoryMappingPanel({ user }: { user: AdminUserSummary }) {
 
         {error ? <ValidationMessage tone="error">{error}</ValidationMessage> : null}
       </div>
+      <ConfirmDialog
+        open={destination !== null}
+        onOpenChange={(open) => { if (!open && !submitting.current) { setDestination(null); setError(''); } }}
+        title="Reassign factory user?"
+        description={destination ? `Confirming will move this user from ${mapped?.name} to ${destination.name}, replacing the existing factory assignment.` : undefined}
+        error={error}
+        loading={assignMutation.isPending}
+        onConfirm={() => { if (destination) assign(destination.id); }}
+      />
     </Panel>
   );
 }

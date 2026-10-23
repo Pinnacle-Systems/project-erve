@@ -8,7 +8,7 @@ import { apiClient } from '../../../../lib/api-client.js';
 import { JobOrderDetailPage } from '../../JobOrderDetailPage.js';
 import { STAGE_LABELS } from '../../job-order-ui.js';
 import { changeInput, content, getActiveTabPanel, renderJobOrderDetail, switchJobOrderTab } from '../test-utils.js';
-import { draftOverrides, mockJobOrder, stage, standardStages, styleLookup } from '../fixtures.js';
+import { draftOverrides, finalQualityActivity, mockJobOrder, stage, standardStages, styleLookup } from '../fixtures.js';
 
 const authState = vi.hoisted(() => ({ roles: ['MERCHANDISER', 'FACTORY_USER'] }));
 
@@ -50,6 +50,21 @@ async function renderProduction(
 }
 
 describe('JobOrderProductionTab workflow rendering', () => {
+  it('keeps the production control and overview consistent when a later gate is pending', async () => {
+    await renderJobOrderDetail(container, root, { status: 'IN_PRODUCTION', stages: standardStages, overrides: { qualityActivities: [finalQualityActivity({ sequence: 10, executionMode: 'SEQUENTIAL_GATE', status: 'NOT_AVAILABLE' })] } });
+    expect(container.querySelector('[aria-label="Action Required"]')?.textContent).toContain('Start Cutting');
+    act(() => switchJobOrderTab(container, 'Production'));
+    expect(getActiveTabPanel(container).textContent).toContain('Start Cutting');
+  });
+  it.each(['FAIL', 'PASS'] as const)('allows Sewing work but completion only after Inline %s', async (outcome) => {
+    const stages = [stage('cut', 'Cutting', 1, 'COMPLETED'), stage('sew', 'Sewing', 3, 'IN_PROGRESS')];
+    await renderProduction('IN_PRODUCTION', stages, { qualityActivities: [finalQualityActivity({
+      executionMode: 'IN_PROCESS', executionMultiplicity: 'SINGLE', availabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE', associatedProductionActivity: { id: 'flow-sew', name: 'Sewing' }, execution: { status: 'FINALIZED', outcome }, status: outcome === 'PASS' ? 'COMPLETED' : 'FAILED',
+    })] });
+    const buttons = Array.from(getActiveTabPanel(container).querySelectorAll('button')).map((b) => b.textContent);
+    expect(buttons.includes('Complete Sewing')).toBe(outcome === 'PASS');
+    if (outcome === 'FAIL') expect(getActiveTabPanel(container).textContent).toContain('Production work can continue.');
+  });
   it('renders the draft notice without production controls', async () => {
     await renderProduction('DRAFT');
     const panel = getActiveTabPanel(container);

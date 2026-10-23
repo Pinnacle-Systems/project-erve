@@ -41,6 +41,46 @@ afterAll(async () => {
 });
 
 describe('POST /users', () => {
+  it('keeps distributor mapping ADMIN-only and preserves missing-user validation', async () => {
+    const admin = await createTestUserAndToken({ email: 'mapping-auth-admin@test.local', password: 'password', roles: ['ADMIN'] });
+    const qa = await createTestUserAndToken({ email: 'mapping-auth-qa@test.local', password: 'password', roles: ['QA_USER'] });
+    const target = await createTestUserAndToken({ email: 'mapping-auth-target@test.local', password: 'password', roles: ['DISTRIBUTOR'] });
+    const distributor = await createTestDistributor();
+    const audits = await prisma.auditLog.count();
+    await request(app).post(`/users/${target.userId}/distributors`).set('Authorization', `Bearer ${qa.token}`).send({ distributorId: distributor.id }).expect(403);
+    const missing = await request(app).post(`/users/${createId()}/distributors`).set('Authorization', `Bearer ${admin.token}`).send({ distributorId: distributor.id }).expect(404);
+    expect(missing.body.error.message).toBe('User not found');
+    expect(await prisma.userDistributor.count()).toBe(0);
+    expect(await prisma.auditLog.count()).toBe(audits);
+  });
+  it('keeps the original factory mapping and audit unchanged after rejected reassignment', async () => {
+    const admin = await createTestUserAndToken({ email: 'rollback-admin@test.local', password: 'password', roles: ['ADMIN'] });
+    const target = await createTestUserAndToken({ email: 'rollback-target@test.local', password: 'password', roles: ['FACTORY_USER'] });
+    const original = await createTestFactory({ code: 'ROLLBACK-ORIGINAL', name: 'Original' });
+    const inactive = await createTestFactory({ code: 'ROLLBACK-INACTIVE', name: 'Inactive' });
+    await prisma.factory.update({ where: { id: inactive.id }, data: { status: 'INACTIVE' } });
+    await request(app).post(`/users/${target.userId}/factories`).set('Authorization', `Bearer ${admin.token}`).send({ factoryId: original.id }).expect(200);
+    const mappings = await prisma.userFactory.findMany({ where: { userId: target.userId } });
+    const audits = await prisma.auditLog.count();
+    await request(app).post(`/users/${target.userId}/factories`).set('Authorization', `Bearer ${admin.token}`).send({ factoryId: inactive.id }).expect(400);
+    expect(await prisma.userFactory.findMany({ where: { userId: target.userId } })).toEqual(mappings);
+    expect(await prisma.auditLog.count()).toBe(audits);
+  });
+  it.each(['INACTIVE', 'SUSPENDED'] as const)('rejects %s distributor users even with forged ACTIVE status without changing mappings or audits', async (status) => {
+    const admin = await createTestUserAndToken({ email: 'mapping-admin@test.local', password: 'password', roles: ['ADMIN'] });
+    const target = await createTestUserAndToken({ email: 'mapping-target@test.local', password: 'password', roles: ['DISTRIBUTOR'], status });
+    const distributor = await createTestDistributor();
+    const mappings = await prisma.userDistributor.findMany();
+    const audits = await prisma.auditLog.count();
+    const res = await request(app).post(`/users/${target.userId}/distributors`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ distributorId: distributor.id, status: 'ACTIVE' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatchObject({ code: 'VALIDATION_ERROR', message: 'Only active users can be mapped to a distributor' });
+    expect(await prisma.userDistributor.findMany()).toEqual(mappings);
+    expect(await prisma.auditLog.count()).toBe(audits);
+  });
+
   it('allows an ADMIN to create a user', async () => {
     const { token } = await createTestUserAndToken({
       email: 'admin@test.local',

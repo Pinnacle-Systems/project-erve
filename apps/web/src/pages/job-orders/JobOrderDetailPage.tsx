@@ -25,6 +25,7 @@ import {
   disclaimerRequiredMessage,
   getJobOrderStyleSummary,
   mutationErrorMessage,
+  sendToFactoryErrorMessage,
   type FlatSize,
 } from './job-order-detail/job-order-detail-utils.js';
 
@@ -114,11 +115,8 @@ export function JobOrderDetailPage() {
       invalidate();
     },
     onError: (error) => {
-      const apiCode = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error.code : undefined;
-      const message =
-        apiCode === 'DISCLAIMER_REQUIRED'
-          ? disclaimerRequiredMessage
-          : mutationErrorMessage(error, 'Unable to send this Job Order to the factory.');
+      const apiCode = isAxiosError<ApiErrorResponse>(error) ? error.response?.data?.error?.code : undefined;
+      const message = sendToFactoryErrorMessage(error);
       setSendDialogOpen(false);
       setSendError(message);
       if (apiCode === 'DISCLAIMER_REQUIRED') {
