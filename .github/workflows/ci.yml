@@ -453,3 +453,6 @@ jobs:
       # (unlike an unprivileged Windows dev machine).
       - name: Run deployment script fixture tests
         run: bash scripts/deployment/test/run-tests.sh
+
+      - name: Test fail-closed exact-commit deployment CI guard
+        run: node --test scripts/deployment/test/verify-main-ci-success.test.mjs
