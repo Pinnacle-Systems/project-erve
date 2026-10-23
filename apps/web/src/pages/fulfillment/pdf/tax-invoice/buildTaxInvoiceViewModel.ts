@@ -83,6 +83,7 @@ export interface TaxInvoicePdfGroup {
   image: PdfImageSource;
 }
 export interface TaxInvoicePdfViewModel {
+  gstTreatment: TaxInvoiceView['gstTreatment'];
   invoiceNumber: string;
   invoiceDate: string;
   financialYear: string | null;
@@ -196,6 +197,7 @@ export function buildTaxInvoiceViewModel(
     adjustment !== null && BigInt(decimal(adjustment).replace('.', '')) > 0n;
   const financialYear = invoice.financialYear?.code ?? null;
   return {
+    gstTreatment: invoice.gstTreatment,
     invoiceNumber: invoice.invoiceNumber,
     invoiceDate: formatInvoiceDate(invoice.finalizedAt),
     financialYear,

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { DataTable, ErrorState } from '@erve/data-display';
 import { Button } from '@erve/primitives';
 import { Panel } from '@erve/layout';
@@ -20,6 +20,7 @@ export function TaxInvoiceLines({
   pending: boolean;
   onOverride: (line: TaxInvoiceLineView) => void;
 }) {
+  const regionId = useId();
   const [selected, setSelected] = useState<string | null>(null);
   let groups: TaxInvoiceLineGroup[];
   try {
@@ -33,7 +34,6 @@ export function TaxInvoiceLines({
     );
   }
   const active = groups.find((group) => group.id === selected);
-  const regionId = 'invoice-source-lines';
   return (
     <Panel title="Invoice lines · physical quantities are read-only" padding="none">
       <DataTable
@@ -69,6 +69,16 @@ export function TaxInvoiceLines({
                   <div className="min-w-0 break-words">
                     <span className="font-medium">{group.styleNumber}</span>
                     <div className="text-xs text-muted-foreground">{group.styleName}</div>
+                    <Button
+                      variant="link"
+                      className="mt-1 text-xs font-normal"
+                      aria-label={`Source lines (${group.sourceLines.length}) for ${group.styleNumber}`}
+                      aria-expanded={selected === group.id}
+                      aria-controls={regionId}
+                      onClick={() => setSelected(selected === group.id ? null : group.id)}
+                    >
+                      Source lines ({group.sourceLines.length})
+                    </Button>
                   </div>
                 </div>
               );
@@ -136,21 +146,6 @@ export function TaxInvoiceLines({
             header: 'Taxable',
             align: 'right',
             render: (group) => formatInvoiceMoney(group.taxableValue),
-          },
-          {
-            key: 'review',
-            header: 'Review',
-            render: (group) => (
-              <Button
-                variant="secondary"
-                density="compact"
-                aria-expanded={selected === group.id}
-                aria-controls={regionId}
-                onClick={() => setSelected(selected === group.id ? null : group.id)}
-              >
-                Review lines ({group.sourceLines.length})
-              </Button>
-            ),
           },
         ]}
       />

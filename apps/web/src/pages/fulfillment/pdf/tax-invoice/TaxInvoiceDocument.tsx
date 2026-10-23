@@ -1,3 +1,4 @@
+import { taxInvoiceGstComponents } from '../../tax-invoice-gst-presentation.js';
 import { Image, StyleSheet, Text, View } from '@react-pdf/renderer';
 import { PdfDocument } from '../../../../lib/pdf/core/PdfDocument.js';
 import { PdfFooter } from '../../../../lib/pdf/core/PdfFooter.js';
@@ -27,14 +28,22 @@ const styles = StyleSheet.create({
   parties: { flexDirection: 'row', borderWidth: 0.5, borderColor: '#999999', marginBottom: 6 },
   party: { width: '50%', padding: 6, fontSize: 8, lineHeight: 1.2 },
   partyTitle: { fontWeight: 700, fontSize: 9, marginBottom: 3 },
-  image: { width: 28, height: 28, objectFit: 'contain' },
+  image: { width: 32, height: 32, objectFit: 'contain' },
   imageCaption: { fontSize: 7, color: '#666666' },
-  group: { borderBottom: '0.5 solid #999999', marginBottom: 5 },
-  financialSummary: { flexDirection: 'row', backgroundColor: '#eeeeee', paddingVertical: 4 },
-  financialLabel: { fontSize: 7, color: '#555555', marginBottom: 2, textAlign: 'right' },
+  group: { borderBottom: '0.5 solid #999999' },
+  financialSummary: { flexDirection: 'row', paddingVertical: 3 },
+  columnHeading: { fontSize: 7, fontWeight: 700, textAlign: 'right', paddingHorizontal: 3 },
+  tableHeading: {
+    flexDirection: 'row',
+    backgroundColor: '#eeeeee',
+    paddingVertical: 4,
+    borderBottom: '0.5 solid #999999',
+  },
+  styleIdentity: { width: '26%', paddingHorizontal: 3 },
+  colour: { fontSize: 7, lineHeight: 1.2 },
   financialValue: { fontSize: 8, textAlign: 'right' },
-  styleCode: { fontSize: 9, fontWeight: 700, paddingHorizontal: 4, paddingVertical: 3 },
-  groupDetails: { paddingHorizontal: 4, paddingTop: 3, paddingBottom: 4 },
+  styleCode: { fontSize: 8, fontWeight: 700, lineHeight: 1.2 },
+  groupDetails: { paddingHorizontal: 3, paddingTop: 2, paddingBottom: 3 },
   groupName: { fontSize: 8, fontWeight: 700, lineHeight: 1.2 },
   detailText: { fontSize: 8, lineHeight: 1.2 },
   sizeList: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 2 },
@@ -103,89 +112,146 @@ function sizeTokens(sizes: string): string[] {
   return tokens?.join(', ') === sizes ? tokens : [sizes];
 }
 
-function FinancialCell({
-  label,
-  value,
-  width,
-}: {
-  label: string;
-  value: string | number;
-  width: string;
-}) {
+const financialColumns = [
+  { label: 'Image', width: '8%', left: true },
+  { label: 'Style', width: '26%', left: true },
+  { label: 'Size : Qty', width: '18%', left: true },
+  { label: 'Qty', width: '5%' },
+  { label: 'HSN / GST', width: '13%' },
+  { label: 'MRP (INR)', width: '9%' },
+  { label: 'Rate (INR)', width: '9%' },
+  { label: 'Taxable (INR)', width: '12%' },
+];
+function FinancialCell({ value, width }: { value: string | number; width: string }) {
   return (
-    <View style={{ width, paddingHorizontal: 4 }}>
-      <Text style={styles.financialLabel}>{label}</Text>
+    <View style={{ width, paddingHorizontal: 3 }}>
       <Text style={styles.financialValue}>{value}</Text>
     </View>
   );
 }
+function Sizes({ tokens }: { tokens: string[] }) {
+  return (
+    <View style={styles.sizeList}>
+      {tokens.map((token, index) => (
+        <View key={index} style={styles.sizeToken} wrap={false}>
+          <Text style={styles.detailText}>
+            {token}
+            {index < tokens.length - 1 ? ' |' : ''}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
 
-/** A group can span pages; only its compact financial summary and each size token stay together. */
-function InvoiceGroup({ group }: { group: TaxInvoicePdfGroup }) {
+/** Ordinary Styles are complete table rows. Oversized identity/colour/Sizes flow below once. */
+function InvoiceGroup({ group, last }: { group: TaxInvoicePdfGroup; last: boolean }) {
   const tokens = sizeTokens(group.sizes);
+  // Layout selection never slices or changes the issued identity or quantities.
+  const flowingIdentity =
+    group.styleNumber.length + group.styleName.length > 180 ||
+    /[\r\n]/.test(group.styleNumber + group.styleName);
+  const flowingDetails =
+    flowingIdentity ||
+    /[\r\n]/.test(group.colour + group.sizes) ||
+    group.colour.length > 80 ||
+    tokens.length > 12 ||
+    tokens.some((token) => token.length > 60);
   return (
     <>
-      <View wrap={false} minPresenceAhead={72}>
-        <Text style={styles.styleCode}>{group.styleNumber}</Text>
-        <View style={styles.financialSummary}>
-          <View style={{ width: '8%', paddingHorizontal: 4 }}>
-            {'dataUri' in group.image ? (
-              <Image src={group.image.dataUri} style={styles.image} />
-            ) : (
-              <View>
-                <PdfThumbnail image={{ placeholder: true }} width={28} height={18} />
-                <Text style={styles.imageCaption}>Missing</Text>
-              </View>
-            )}
-          </View>
-          <FinancialCell
-            label="HSN / GST"
-            value={`${group.hsnCode} / ${group.gstPercent}${group.gstPercent === 'Unavailable' ? '' : '%'}`}
-            width="24%"
-          />
-          <FinancialCell label="MRP (INR)" value={group.mrp} width="16%" />
-          <FinancialCell label="Qty" value={group.quantity} width="8%" />
-          <FinancialCell label="Rate (INR)" value={group.rate} width="20%" />
-          <FinancialCell label="Taxable (INR)" value={group.taxable} width="24%" />
-        </View>
-      </View>
-      <View style={[styles.groupDetails, styles.group]}>
-        {group.styleName && (
-          <Text style={styles.groupName} minPresenceAhead={12}>
-            {group.styleName}
-          </Text>
-        )}
-        {group.description && group.description !== group.styleName && (
-          <Text style={styles.detailText} orphans={2} widows={2}>
-            {group.description}
-          </Text>
-        )}
-        <Text style={styles.detailText} orphans={2} widows={2}>
-          Colour: {group.colour}
-        </Text>
-        <View style={styles.sizeList}>
-          {tokens.map((token, index) => (
-            <View key={index} style={styles.sizeToken} wrap={false}>
-              <Text style={styles.detailText}>
-                {token}
-                {index < tokens.length - 1 ? ' |' : ''}
-              </Text>
+      <View
+        style={[styles.financialSummary, ...(flowingDetails ? [] : [styles.group])]}
+        wrap={false}
+        minPresenceAhead={last ? 180 : 24}
+      >
+        <View style={{ width: '8%', paddingHorizontal: 3, alignItems: 'center' }}>
+          {'dataUri' in group.image ? (
+            <Image src={group.image.dataUri} style={styles.image} />
+          ) : (
+            <View>
+              <PdfThumbnail image={{ placeholder: true }} width={32} height={24} />
+              <Text style={styles.imageCaption}>Missing</Text>
             </View>
-          ))}
+          )}
         </View>
+        <View style={styles.styleIdentity}>
+          {flowingIdentity ? (
+            <Text style={styles.groupName}>Style details below</Text>
+          ) : (
+            <>
+              <Text style={styles.styleCode}>{group.styleNumber}</Text>
+              {group.styleName && <Text style={styles.groupName}>{group.styleName}</Text>}
+            </>
+          )}
+          {!flowingDetails && <Text style={styles.colour}>Colour: {group.colour}</Text>}
+        </View>
+        <View style={{ width: '18%', paddingHorizontal: 3 }}>
+          {flowingDetails ? (
+            <Text style={styles.colour}>Size details below</Text>
+          ) : (
+            <Sizes tokens={tokens} />
+          )}
+        </View>
+        <FinancialCell value={group.quantity} width="5%" />
+        <FinancialCell
+          value={`${group.hsnCode} / ${group.gstPercent}${group.gstPercent === 'Unavailable' ? '' : '%'}`}
+          width="13%"
+        />
+        <FinancialCell value={group.mrp} width="9%" />
+        <FinancialCell value={group.rate} width="9%" />
+        <FinancialCell value={group.taxable} width="12%" />
       </View>
+      {flowingDetails && (
+        <View style={[styles.groupDetails, styles.group]}>
+          {flowingIdentity && (
+            <>
+              <Text style={styles.styleCode} orphans={2} widows={2}>
+                {group.styleNumber}
+              </Text>
+              <Text style={styles.groupName} orphans={2} widows={2}>
+                {group.styleName}
+              </Text>
+            </>
+          )}
+          <Text style={styles.detailText} orphans={2} widows={2}>
+            Colour: {group.colour}
+          </Text>
+          <Sizes tokens={tokens} />
+        </View>
+      )}
     </>
   );
 }
-const hsnColumns: PdfTableColumn<NonNullable<TaxInvoicePdfViewModel['hsnSummary']>[number]>[] = [
-  { key: 'hsn', header: 'HSN / SAC', width: '16%', value: (row) => row.hsnCode },
-  { key: 'gst', header: 'GST', width: '8%', align: 'right', value: (row) => row.gstPercent },
-  { key: 'taxable', header: 'Taxable', width: '16%', align: 'right', value: (row) => row.taxable },
-  { key: 'cgst', header: 'CGST', width: '15%', align: 'right', value: (row) => row.cgst },
-  { key: 'sgst', header: 'SGST', width: '15%', align: 'right', value: (row) => row.sgst },
-  { key: 'igst', header: 'IGST', width: '15%', align: 'right', value: (row) => row.igst },
-  { key: 'total', header: 'Total GST', width: '15%', align: 'right', value: (row) => row.totalGst },
-];
+function hsnColumns(
+  treatment: TaxInvoicePdfViewModel['gstTreatment'],
+): PdfTableColumn<NonNullable<TaxInvoicePdfViewModel['hsnSummary']>[number]>[] {
+  const components = taxInvoiceGstComponents(treatment);
+  return [
+    { key: 'hsn', header: 'HSN / SAC', width: '18%', value: (row) => row.hsnCode },
+    { key: 'gst', header: 'GST', width: '10%', align: 'right', value: (row) => row.gstPercent },
+    {
+      key: 'taxable',
+      header: 'Taxable',
+      width: '22%',
+      align: 'right',
+      value: (row) => row.taxable,
+    },
+    ...components.map((component) => ({
+      key: component.key,
+      header: component.label,
+      width: `${30 / components.length}%`,
+      align: 'right' as const,
+      value: (row: NonNullable<TaxInvoicePdfViewModel['hsnSummary']>[number]) => row[component.key],
+    })),
+    {
+      key: 'total',
+      header: 'Total GST',
+      width: '20%',
+      align: 'right',
+      value: (row) => row.totalGst,
+    },
+  ];
+}
 function TotalRow({
   label,
   value,
@@ -209,6 +275,7 @@ export function TaxInvoiceDocument({
   viewModel: TaxInvoicePdfViewModel;
   logoSrc?: string | null;
 }) {
+  const components = taxInvoiceGstComponents(model.gstTreatment);
   return (
     <PdfDocument orientation="portrait">
       {model.isCancelled && (
@@ -294,40 +361,71 @@ export function TaxInvoiceDocument({
           Issued Style, image and order details are unavailable for this legacy invoice.
         </Text>
       )}
-      {model.groups.map((group) => (
-        <InvoiceGroup key={group.id} group={group} />
-      ))}
-      <View style={styles.totals} wrap={false} minPresenceAhead={90}>
-        <View style={styles.totalColumn}>
-          <TotalRow label="Taxable value" value={model.totals.taxable} />
-          <TotalRow label="CGST" value={model.totals.cgst} />
-          <TotalRow label="SGST" value={model.totals.sgst} />
-          <TotalRow label="IGST" value={model.totals.igst} />
-          <TotalRow label="Total GST" value={model.totals.gst} />
+      <View>
+        <View style={styles.tableHeading} fixed minPresenceAhead={64}>
+          {financialColumns.map((column) => (
+            <Text
+              key={column.label}
+              style={[
+                styles.columnHeading,
+                { width: column.width, textAlign: column.left ? 'left' : 'right' },
+              ]}
+            >
+              {column.label}
+            </Text>
+          ))}
         </View>
-        <View style={styles.totalColumn}>
-          <TotalRow
-            label={
-              model.totals.totalLabel === 'Original issued total'
-                ? 'Grand total'
-                : 'Grand total (before round-off)'
-            }
-            value={model.totals.grandTotal}
-          />
-          <TotalRow
-            label="Round-off adjustment"
-            value={model.totals.roundOffAdjustment ?? 'Unavailable'}
-          />
-          <TotalRow label={model.totals.totalLabel} value={model.totals.payable} payable />
-          <TotalRow label="Total physical quantity" value={`${model.totalQuantity} pcs`} />
+        {model.groups.map((group, index) => (
+          <InvoiceGroup key={group.id} group={group} last={index === model.groups.length - 1} />
+        ))}
+        <View style={styles.totals} wrap={false} minPresenceAhead={90}>
+          <View style={styles.totalColumn}>
+            <TotalRow label="Taxable value" value={model.totals.taxable} />
+            {components.length ? (
+              components.map((component) => (
+                <TotalRow
+                  key={component.key}
+                  label={component.label}
+                  value={model.totals[component.key]}
+                />
+              ))
+            ) : (
+              <TotalRow label="Tax components" value="Unavailable: GST treatment is unresolved" />
+            )}
+            <TotalRow label="Total GST" value={model.totals.gst} />
+          </View>
+          <View style={styles.totalColumn}>
+            <TotalRow
+              label={
+                model.totals.totalLabel === 'Original issued total'
+                  ? 'Grand total'
+                  : 'Grand total (before round-off)'
+              }
+              value={model.totals.grandTotal}
+            />
+            <TotalRow
+              label="Round-off adjustment"
+              value={model.totals.roundOffAdjustment ?? 'Unavailable'}
+            />
+            <TotalRow label={model.totals.totalLabel} value={model.totals.payable} payable />
+            <TotalRow label="Total physical quantity" value={`${model.totalQuantity} pcs`} />
+          </View>
         </View>
+        <Text style={styles.words}>Amount chargeable (in words): {model.totals.amountWords}</Text>
       </View>
-      <Text style={styles.words}>Amount chargeable (in words): {model.totals.amountWords}</Text>
       <Text style={styles.sectionTitle} minPresenceAhead={26}>
         HSN-wise tax summary (INR)
       </Text>
-      {model.hsnSummary ? (
-        <PdfTable columns={hsnColumns} rows={model.hsnSummary} rowKey={(row) => row.id} />
+      {!components.length ? (
+        <Text style={styles.unavailable}>
+          HSN tax summary unavailable: GST treatment is unresolved.
+        </Text>
+      ) : model.hsnSummary ? (
+        <PdfTable
+          columns={hsnColumns(model.gstTreatment)}
+          rows={model.hsnSummary}
+          rowKey={(row) => row.id}
+        />
       ) : (
         <Text style={styles.unavailable}>Issued HSN summary unavailable.</Text>
       )}

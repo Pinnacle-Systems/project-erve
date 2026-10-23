@@ -98,7 +98,9 @@ describe('ISS-030 contextual Tax Invoice GST presentation', () => {
       hsnSummary: taxInvoiceFixture().hsnSummary,
     });
     expect(container.querySelector('table')).toBeNull();
-    expect(container.textContent).toContain('Tax summary unavailable until GST treatment is resolved.');
+    expect(container.textContent).toContain(
+      'Tax summary unavailable until GST treatment is resolved.',
+    );
     expect(container.textContent).toContain('Tax components');
     expect(container.textContent).toContain('Unavailable until GST treatment is resolved');
     expect(container.textContent).not.toContain('CGST');
@@ -122,4 +124,28 @@ describe('ISS-030 contextual Tax Invoice GST presentation', () => {
     expect(container.textContent).toContain('Round-off adjustment');
     expect(container.textContent).toContain('₹490.00');
   });
+});
+
+it('keeps populated tax fields unavailable when treatment is unresolved', () => {
+  show({
+    gstTreatment: null,
+    totalCgst: '12.3456789',
+    totalSgst: '98.7654321',
+    totalIgst: '45.6789123',
+  });
+  expect(container.querySelector('table')).toBeNull();
+  expect(container.textContent).not.toMatch(/12.3456789|98.7654321|45.6789123/);
+  expect(container.textContent).toContain('GST treatment is resolved');
+});
+it('distinguishes missing applicable tax from a saved zero on cancelled invoices', () => {
+  show({
+    status: 'CANCELLED',
+    gstTreatment: 'INTRA',
+    totalCgst: '0',
+    totalSgst: null,
+    review: { state: 'CANCELLED', isPreview: false, calculatedAt: null, blockers: [] },
+  });
+  expect(headers()).toEqual(['HSN', 'GST', 'Taxable value', 'CGST', 'SGST']);
+  expect(container.textContent).toContain('Unavailable');
+  expect(container.textContent).not.toContain('IGST');
 });

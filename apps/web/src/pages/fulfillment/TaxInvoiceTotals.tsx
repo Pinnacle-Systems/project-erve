@@ -1,3 +1,4 @@
+import { taxInvoiceGstComponents } from './tax-invoice-gst-presentation.js';
 import { TotalsPanel } from '@erve/app-components';
 import { Panel } from '@erve/layout';
 import { DataTable } from '@erve/data-display';
@@ -10,20 +11,17 @@ import {
 
 export function TaxInvoiceTotals({ invoice }: { invoice: TaxInvoiceReviewView }) {
   const issued = invoiceIssuedAmount(invoice);
-  const isIntra = invoice.gstTreatment === 'INTRA';
-  const isInter = invoice.gstTreatment === 'INTER';
-  const taxTotals = isIntra
-    ? [
-        { label: 'CGST', value: formatInvoiceMoney(invoice.totalCgst) },
-        { label: 'SGST', value: formatInvoiceMoney(invoice.totalSgst) },
-      ]
-    : isInter
-      ? [{ label: 'IGST', value: formatInvoiceMoney(invoice.totalIgst) }]
-      : [{ label: 'Tax components', value: 'Unavailable until GST treatment is resolved' }];
+  const components = taxInvoiceGstComponents(invoice.gstTreatment);
+  const taxTotals = components.length
+    ? components.map((component) => ({
+        label: component.label,
+        value: formatInvoiceMoney(invoice[component.totalField]),
+      }))
+    : [{ label: 'Tax components', value: 'Unavailable until GST treatment is resolved' }];
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
       <Panel title="HSN tax summary" padding="none" className="min-w-0">
-        {invoice.hsnSummary && (isIntra || isInter) ? (
+        {invoice.hsnSummary && components.length > 0 ? (
           <DataTable
             rowKey={(row) => `${row.hsnCode}-${row.gstPercent}`}
             data={invoice.hsnSummary}
@@ -36,32 +34,12 @@ export function TaxInvoiceTotals({ invoice }: { invoice: TaxInvoiceReviewView })
                 align: 'right',
                 render: (row) => formatInvoiceMoney(row.taxableValue),
               },
-              ...(isIntra
-                ? [
-                    {
-                      key: 'cgst',
-                      header: 'CGST',
-                      align: 'right' as const,
-                      render: (row: TaxInvoiceHsnSummary) => formatInvoiceMoney(row.cgstAmount),
-                    },
-                    {
-                      key: 'sgst',
-                      header: 'SGST',
-                      align: 'right' as const,
-                      render: (row: TaxInvoiceHsnSummary) => formatInvoiceMoney(row.sgstAmount),
-                    },
-                  ]
-                : []),
-              ...(isInter
-                ? [
-                    {
-                      key: 'igst',
-                      header: 'IGST',
-                      align: 'right' as const,
-                      render: (row: TaxInvoiceHsnSummary) => formatInvoiceMoney(row.igstAmount),
-                    },
-                  ]
-                : []),
+              ...components.map((component) => ({
+                key: component.key,
+                header: component.label,
+                align: 'right' as const,
+                render: (row: TaxInvoiceHsnSummary) => formatInvoiceMoney(row[component.hsnField]),
+              })),
             ]}
           />
         ) : (
