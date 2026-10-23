@@ -134,9 +134,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  api-tests:
-    name: API integration tests (Postgres)
+  api-test-shards:
+    name: API integration tests (Postgres) — shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
+    # Each matrix job gets its own runner and separate Postgres service.
+    # Keep fileParallelism: false in apps/api/vitest.config.ts: each shard
+    # executes its assigned files serially against its own disposable DB.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     # Every workflow run provisions its own ephemeral Postgres service below.
     # Do not apply a shared concurrency group across PRs: GitHub Actions keeps
     # only one pending job per group, silently cancelling earlier PR checks
@@ -221,19 +228,22 @@ jobs:
       - name: Bundle production CLIs
         run: pnpm --filter @erve/api run bundle
 
-      - name: Run API tests
-        run: pnpm --filter @erve/api test
+      - name: Run API tests (shard ${{ matrix.shard }}/4)
+        run: pnpm --filter @erve/api exec vitest run --shard=${{ matrix.shard }}/4
 
       # Independent CI verification of the extracted release artifact:
       # Builds the production tarball via package-production.sh, extracts it,
       # and runs both CLIs in standalone Node.js against the ephemeral test database,
       # proving that the packaged bundle runs without tsx/dev dependencies.
       - name: Package production release artifact for verification
+        # This verification is independent of the test sharding and runs once.
+        if: matrix.shard == 1
         env:
           GITHUB_SHA: ${{ github.sha }}
         run: bash scripts/deployment/package-production.sh
 
       - name: Smoke-test extracted release-artifact CLIs against disposable database
+        if: matrix.shard == 1
         run: |
           set -Eeuo pipefail
           cd .deploy-build/verify-extract/api
@@ -301,6 +311,25 @@ jobs:
           echo "$PREFLIGHT_OUTPUT" | grep -q "CHK_PERMISSIONS: Read-Only Database Access Guarantee"
 
           echo "Extracted release-artifact smoke tests passed: standalone executables verified in isolated CI environment"
+
+  # Preserve the existing branch-protection check name. A matrix check alone
+  # changes its status-check contexts, which can leave protected PRs blocked.
+  # This gate also makes failures in any one of the four shards fail CI.
+  api-tests:
+    name: API integration tests (Postgres)
+    needs: api-test-shards
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all API shards to succeed
+        env:
+          SHARDS_RESULT: ${{ needs.api-test-shards.result }}
+        run: |
+          if [ "$SHARDS_RESULT" != "success" ]; then
+            echo "::error::API test sharding failed: $SHARDS_RESULT"
+            exit 1
+          fi
+          echo "All 4 isolated API test shards passed (including release artifact verification)."
 
   job-order-browser:
     name: Job Order browser acceptance (disposable Postgres)
