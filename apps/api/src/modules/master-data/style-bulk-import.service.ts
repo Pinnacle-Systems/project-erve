@@ -27,6 +27,12 @@
 //                   entirely to generate every barcode)
 //   Factory Mappings (optional, semicolon-separated CODE:PRICE pairs, e.g.
 //                      "CLIFTON:450.00;GREEN_WAY:460.00")
+//   Royalty %      (optional — a plain numeric cell showing 7.5 and a
+//                   genuinely Excel "Percentage"-formatted cell showing 7.5%
+//                   (internally stored as the fraction 0.075) both resolve to
+//                   7.5; blank or an entirely missing column means "no
+//                   royalty set", never a rejection. Must be 0-100 inclusive
+//                   when supplied — see resolveRoyaltyPercentageCell below.)
 // Primary Style images are PNGs embedded directly in the workbook, anchored
 // to their Style's row (see xlsx-embedded-images.ts) — not a column.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
@@ -94,6 +100,16 @@ export interface BulkStyleImportSheetRow {
   // Optional. Blank (or the column missing entirely) means "no HSN yet" —
   // never a rejection. A non-blank value must resolve to an ACTIVE Hsn.
   hsnCode: string;
+  // Optional. '' means "no royalty supplied" (blank cell or column entirely
+  // missing) — royaltyPercentage is then null, never a rejection.
+  // royaltyPercentageRaw carries the display text for error messages only;
+  // royaltyPercentage is the fully resolved number (already converted out of
+  // Excel Percentage-format fractions, see resolveRoyaltyPercentageCell) —
+  // null means blank, NaN means present-but-unparseable, a finite number is
+  // the resolved value, not yet range-checked (0-100 is enforced in
+  // planBulkStyleImport, matching how finalMrpRaw/finalMrp works).
+  royaltyPercentageRaw: string;
+  royaltyPercentage: number | null;
   sizeCodes: string[];
   barcodes: string[];
   factoryMappings: Array<{ factoryCode: string; priceRaw: string }>;
@@ -124,8 +140,35 @@ export function listBulkStyleImportWorksheets(buffer: Buffer): string[] {
 
 const styleMetadataFields = ['description', 'categoryDescription', 'ipName', 'licensor', 'colour'] as const;
 
+// Royalty % cannot go through the plain string SHEET_HEADERS pipeline below
+// (same as Size Codes/Barcodes/Factory Mappings) because a genuinely
+// Excel-"Percentage"-formatted numeric cell stores its RAW value as a
+// fraction (0.075) while DISPLAYING "7.50%" — the formatted text SHEET_HEADERS
+// would otherwise capture is lossy (e.g. a "0%" format rounds display to a
+// whole percent) and can't be reliably reversed. Reading the cell object
+// directly (raw value + its number-format string) is the only way to recover
+// the true percentage-points value for both a plain numeric cell (7.5) and a
+// percentage-formatted one (0.075 displayed as 7.5%) — both must resolve to
+// the same 7.5. Requires XLSX.read's `cellNF: true` below, which populates
+// `.z` (the cell's number format string) on each parsed cell.
+function resolveRoyaltyPercentageCell(sheet: XLSX.WorkSheet, sheetRowIndex: number, column: number): { raw: string; value: number | null } {
+  if (column < 0) return { raw: '', value: null };
+  const cell: XLSX.CellObject | undefined = sheet[XLSX.utils.encode_cell({ r: sheetRowIndex, c: column })];
+  if (!cell || cell.v === undefined || cell.v === null || cell.v === '') return { raw: '', value: null };
+  if (cell.t === 'n') {
+    const numeric = typeof cell.v === 'number' ? cell.v : Number(cell.v);
+    const isPercentFormat = typeof cell.z === 'string' && cell.z.includes('%');
+    const resolved = isPercentFormat ? numeric * 100 : numeric;
+    return { raw: cell.w !== undefined ? String(cell.w) : String(cell.v), value: Number.isFinite(resolved) ? Math.round(resolved * 100) / 100 : NaN };
+  }
+  const text = String(cell.v).trim();
+  if (text === '') return { raw: '', value: null };
+  const parsed = Number(text);
+  return { raw: text, value: Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : NaN };
+}
+
 export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): BulkStyleImportSheetRow[] {
-  const workbook = XLSX.read(buffer, { type: 'buffer', raw: true });
+  const workbook = XLSX.read(buffer, { type: 'buffer', raw: true, cellNF: true });
   const sheet = workbook.Sheets[worksheet ?? workbook.SheetNames[0]!];
   if (!sheet) throw new Error(`Worksheet "${worksheet ?? ''}" does not exist`);
   const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, range: 0, raw: false, defval: '', blankrows: true });
@@ -141,6 +184,7 @@ export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): B
   const barcodesColumn = headerCells.indexOf('barcodes');
   const factoryMappingsColumn = headerCells.indexOf('factory mappings');
   const factoryNamesColumn = headerCells.indexOf('factory name mappings');
+  const royaltyColumn = headerCells.indexOf('royalty %');
 
   return raw.slice(1).map((cells, index) => {
     const row: Record<string, string> = {};
@@ -150,6 +194,7 @@ export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): B
     });
     const metadata: Partial<Pick<BulkStyleImportSheetRow, (typeof styleMetadataFields)[number]>> = {};
     for (const field of styleMetadataFields) if (Object.hasOwn(row, field)) metadata[field] = row[field];
+    const royaltyCell = resolveRoyaltyPercentageCell(sheet, index + 1, royaltyColumn);
     return {
       ...metadata,
       rowNumber: index + 2,
@@ -160,6 +205,8 @@ export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): B
       financialYear: row.financialYear ?? '',
       lmixNumber: row.lmixNumber ?? '',
       hsnCode: row.hsnCode ?? '',
+      royaltyPercentageRaw: royaltyCell.raw,
+      royaltyPercentage: royaltyCell.value,
       sizeCodes: splitList(String(cells[sizeCodesColumn] ?? '')),
       barcodes: barcodesColumn >= 0 ? splitPositionalList(String(cells[barcodesColumn] ?? '')) : [],
       factoryMappings:
@@ -179,7 +226,7 @@ export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): B
             return { factoryName: separator < 0 ? pair : pair.slice(0, separator).trim(), priceRaw: separator < 0 ? '' : pair.slice(separator + 1).trim() };
           }) : [],
     };
-  }).filter((row) => row.styleNumber || row.styleName || row.finalMrpRaw || row.seasonCode || row.sizeCodes.length || row.lmixNumber || row.hsnCode || row.barcodes.length || row.factoryMappings.length || row.factoryNameMappings.length || row.financialYear);
+  }).filter((row) => row.styleNumber || row.styleName || row.finalMrpRaw || row.seasonCode || row.sizeCodes.length || row.lmixNumber || row.hsnCode || row.barcodes.length || row.factoryMappings.length || row.factoryNameMappings.length || row.financialYear || row.royaltyPercentageRaw);
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +247,7 @@ export type BulkStyleImportRejectionReason =
   | 'INVALID_FACTORY_PRICE'
   | 'UNKNOWN_HSN'
   | 'INACTIVE_HSN'
+  | 'INVALID_ROYALTY_PERCENTAGE'
   | 'SIZE_BARCODE_COUNT_MISMATCH'
   | 'AMBIGUOUS_IMAGE_ANCHOR'
   | 'AMBIGUOUS_SEASON'
@@ -218,6 +266,10 @@ export interface BulkStyleImportCreateFields {
   licensor?: string | null;
   colour?: string | null;
   finalMrp: number;
+  // Always present (never undefined) on a create-only plan row: null means
+  // "no royalty supplied" (blank cell or the column entirely missing),
+  // exactly as if the field had never existed — never a rejection.
+  royaltyPercentage: number | null;
   seasonId: string;
   lmixNumber: string | null;
   // Absent (undefined) means "no HSN Code supplied" — the key is left out of
@@ -304,6 +356,24 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
     if (!Number.isFinite(finalMrp) || finalMrp <= 0) {
       reject('INVALID_FINAL_MRP', `"${sheetRow.finalMrpRaw}" is not a valid positive MRP`);
       continue;
+    }
+
+    // Blank (or the column missing entirely) is "not supplied" — never a
+    // rejection, resolved to null below. A non-blank value must be a finite
+    // number in 0-100 inclusive (a plain 7.5 cell and a genuinely Excel
+    // Percentage-formatted cell displaying 7.5% both arrive here already
+    // resolved to 7.5 by resolveRoyaltyPercentageCell — see parsing above).
+    let royaltyPercentage: number | null = null;
+    if (sheetRow.royaltyPercentageRaw !== '') {
+      if (!Number.isFinite(sheetRow.royaltyPercentage)) {
+        reject('INVALID_ROYALTY_PERCENTAGE', `"${sheetRow.royaltyPercentageRaw}" is not a valid Royalty %`);
+        continue;
+      }
+      if (sheetRow.royaltyPercentage! < 0 || sheetRow.royaltyPercentage! > 100) {
+        reject('INVALID_ROYALTY_PERCENTAGE', `Royalty % "${sheetRow.royaltyPercentageRaw}" must be between 0 and 100`);
+        continue;
+      }
+      royaltyPercentage = sheetRow.royaltyPercentage!;
     }
 
     const matchingSeasons = seasons.filter((s) => norm(s.code) === norm(sheetRow.seasonCode) && (!sheetRow.financialYear || norm(s.financialYear.code) === norm(sheetRow.financialYear)));
@@ -409,6 +479,7 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
       ...metadata,
       styleName: sheetRow.styleName,
       finalMrp,
+      royaltyPercentage,
       seasonId: season.id,
       lmixNumber: sheetRow.lmixNumber || null,
       hsnId,
@@ -508,6 +579,12 @@ async function existingStyleConflict(styleId: string, styleNumber: string, input
   for (const field of styleMetadataFields) if (input[field] !== undefined && (existing[field] ?? '') !== (input[field] ?? '')) changed.push(field);
   if (existing.status !== 'ACTIVE') changed.push('inactive Style');
   if (Number(existing.finalMrp) !== input.finalMrp) changed.push('MRP');
+  // Decimal-vs-number: compare via Number(), never the generic styleMetadataFields
+  // string-coercion path above (`(existing[field] ?? '') !== (input[field] ?? '')`)
+  // which would stringify a Prisma.Decimal incorrectly. input.royaltyPercentage is
+  // always present (null means "not supplied"), so this is a straight comparison.
+  const existingRoyaltyPercentage = existing.royaltyPercentage === null ? null : Number(existing.royaltyPercentage);
+  if (existingRoyaltyPercentage !== input.royaltyPercentage) changed.push('Royalty %');
   if (existing.seasonId !== input.seasonId || (existing.lmixNumber ?? null) !== input.lmixNumber) changed.push('Season/LMIX');
   if (input.hsnId && existing.hsnId !== input.hsnId) changed.push('HSN');
   if (existing.styleSizes.length !== input.sizes.length || new Set(input.sizes.map(size => size.sizeId)).size !== input.sizes.length || input.sizes.some(size => !existing.styleSizes.some(current => current.sizeId === size.sizeId && current.status === 'ACTIVE' && (!size.barcode || current.barcode === size.barcode)))) changed.push('Sizes/barcodes');
@@ -705,7 +782,7 @@ export function buildBulkStyleImportTemplate(): Buffer {
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([[
     'Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes', 'Financial Year',
     'LMIX Number', 'HSN Code', 'Barcodes', 'Factory Name Mappings', 'Factory Mappings',
-    'Description', 'Category', 'IP Name', 'Licensor', 'Colour',
+    'Description', 'Category', 'IP Name', 'Licensor', 'Colour', 'Royalty %',
   ]]), 'Styles');
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
     ['Style import instructions'],
@@ -714,6 +791,7 @@ export function buildBulkStyleImportTemplate(): Buffer {
     ['Pictures may be in any column; multiple pictures on one Style row are supported. JPEG sources are converted to PNG.'],
     ['No filename, base64 or URL column is required. Only image bytes packaged in the workbook are used.'],
     ['Financial Year disambiguates Season Codes used in more than one year. Supply existing master codes; do not infer missing business fields.'],
+    ['Royalty % is optional (0-100). Enter a plain number such as 7.5 to mean 7.5%; leave the cell blank for no royalty.'],
   ]), 'Instructions');
   return XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }

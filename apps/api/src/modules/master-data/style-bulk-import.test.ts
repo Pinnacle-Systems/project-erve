@@ -8,6 +8,8 @@ import {
   executeBulkStyleImport,
   parseBulkStyleImportSheet,
   planBulkStyleImport,
+  bulkStyleImportConfirmationToken,
+  verifyBulkStyleImportConfirmation,
   type BulkStyleImportPlan,
 } from './style-bulk-import.service.js';
 import * as styleImagesService from './style-images.service.js';
@@ -64,6 +66,35 @@ function buildSheet(rows: Array<Record<string, string>>): Buffer {
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
+// Like buildSheet, but appends a Royalty % column and lets each row control
+// exactly how that cell is physically written: a plain numeric cell (Excel
+// "General" format), a genuinely Excel "Percentage"-formatted numeric cell
+// (raw value stored as a fraction, e.g. 0.075 displaying as "7.50%" — the
+// real-world case this feature must handle, not just a string), free text,
+// or left out entirely — exercising parseBulkStyleImportSheet's actual
+// cell-format detection rather than just string parsing.
+type RoyaltyCell =
+  | { kind: 'blank' }
+  | { kind: 'number'; value: number }
+  | { kind: 'percent'; value: number; format?: string }
+  | { kind: 'text'; value: string };
+function buildRoyaltySheet(rows: Array<{ base: Record<string, string>; royalty: RoyaltyCell }>): Buffer {
+  const headers = ['Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes', 'HSN Code', 'Barcodes', 'Factory Mappings', 'Royalty %'];
+  const data = [headers, ...rows.map(({ base }) => headers.map((h) => base[h] ?? (h === 'Barcodes' ? `TEST-${base['Style Number']}` : '')))];
+  const sheet = XLSX.utils.aoa_to_sheet(data);
+  const royaltyColumn = headers.indexOf('Royalty %');
+  rows.forEach(({ royalty }, index) => {
+    const address = XLSX.utils.encode_cell({ r: index + 1, c: royaltyColumn });
+    if (royalty.kind === 'blank') { delete sheet[address]; return; }
+    if (royalty.kind === 'number') { sheet[address] = { t: 'n', v: royalty.value }; return; }
+    if (royalty.kind === 'percent') { sheet[address] = { t: 'n', v: royalty.value, z: royalty.format ?? '0.00%' }; return; }
+    sheet[address] = { t: 's', v: royalty.value };
+  });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Sheet1');
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+
 // Builds a minimal plan row set directly (bypassing XLSX image-anchor
 // construction, which is already covered end-to-end in
 // xlsx-embedded-images.test.ts) so these atomicity/recovery scenarios stay
@@ -88,6 +119,7 @@ function bareCreatePlan(
         create: {
           styleName: 'Test Style',
           finalMrp: 999,
+          royaltyPercentage: null,
           seasonId,
           lmixNumber: null,
           // An explicit barcode (not null) — generation requires the test
@@ -417,5 +449,261 @@ describe('executeBulkStyleImport — atomicity and recovery', () => {
     expect(summary.results[0]!.outcome).toBe('FAILED');
     expect(summary.results[1]!.outcome).toBe('COMPLETED'); // the unrelated row is unaffected
     expect(await prisma.style.findUnique({ where: { styleNumber: 'ST-UNRELATED' } })).not.toBeNull();
+  });
+});
+
+describe('Royalty % (ISS-060)', () => {
+  describe('parseBulkStyleImportSheet — cell-format resolution', () => {
+    it('resolves a plain numeric cell (7.5) to 7.5', () => {
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R1', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 7.5 } },
+      ]);
+      const rows = parseBulkStyleImportSheet(buffer);
+      expect(rows[0]!.royaltyPercentage).toBe(7.5);
+    });
+
+    it('resolves a genuinely Excel Percentage-formatted cell (raw 0.075, format "0.00%") to 7.5 — the same value as the plain numeric cell', () => {
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R2', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'percent', value: 0.075 } },
+      ]);
+      const rows = parseBulkStyleImportSheet(buffer);
+      expect(rows[0]!.royaltyPercentage).toBe(7.5);
+    });
+
+    it('resolves a blank cell to null', () => {
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R3', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'blank' } },
+      ]);
+      const rows = parseBulkStyleImportSheet(buffer);
+      expect(rows[0]!.royaltyPercentage).toBeNull();
+      expect(rows[0]!.royaltyPercentageRaw).toBe('');
+    });
+
+    it('resolves an entirely missing Royalty % column (old workbook) to null, without throwing', () => {
+      const buffer = buildSheet([
+        { 'Style Number': 'ST-R4', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' },
+      ]);
+      const rows = parseBulkStyleImportSheet(buffer);
+      expect(rows[0]!.royaltyPercentage).toBeNull();
+      expect(rows[0]!.royaltyPercentageRaw).toBe('');
+    });
+
+    it('flags non-numeric text as unparseable (NaN sentinel) rather than silently coercing it', () => {
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R5', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'text', value: 'abc' } },
+      ]);
+      const rows = parseBulkStyleImportSheet(buffer);
+      expect(Number.isNaN(rows[0]!.royaltyPercentage!)).toBe(true);
+      expect(rows[0]!.royaltyPercentageRaw).toBe('abc');
+    });
+
+    it('preserves 2-decimal precision for a decimal value (12.34)', () => {
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R6', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 12.34 } },
+      ]);
+      const rows = parseBulkStyleImportSheet(buffer);
+      expect(rows[0]!.royaltyPercentage).toBe(12.34);
+    });
+  });
+
+  describe('planBulkStyleImport — validation and batch semantics', () => {
+    it('plans a CREATE row with royaltyPercentage 0 — zero is a valid, explicit value, not treated as blank', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-ZERO', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 0 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]!.status).toBe('CREATE');
+      expect(plan.rows[0]!.create!.royaltyPercentage).toBe(0);
+    });
+
+    it('rejects a negative Royalty % with a row-level error', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-NEG', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: -5 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'INVALID_ROYALTY_PERCENTAGE' });
+    });
+
+    it('rejects a Royalty % above 100 with a row-level error', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-OVER', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 101 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'INVALID_ROYALTY_PERCENTAGE' });
+    });
+
+    it('rejects non-numeric Royalty % text with a row-level error, without aborting the rest of the batch', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-BAD', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'text', value: 'not-a-number' } },
+        { base: { 'Style Number': 'ST-R-GOOD', 'Style Name': 'B', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 10 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'INVALID_ROYALTY_PERCENTAGE' });
+      expect(plan.rows[1]).toMatchObject({ status: 'CREATE' });
+      expect(plan.rows[1]!.create!.royaltyPercentage).toBe(10);
+    });
+
+    it('a plain numeric cell (7.5) and a genuinely Percentage-formatted cell (0.075) both plan to 7.5', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-PLAIN', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 7.5 } },
+        { base: { 'Style Number': 'ST-R-PCT', 'Style Name': 'B', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'percent', value: 0.075 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]!.create!.royaltyPercentage).toBe(7.5);
+      expect(plan.rows[1]!.create!.royaltyPercentage).toBe(7.5);
+    });
+
+    it('plans multiple Style rows with mixed royalty values (valid, zero, blank) independently', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-MIX-1', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 12.34 } },
+        { base: { 'Style Number': 'ST-R-MIX-2', 'Style Name': 'B', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 0 } },
+        { base: { 'Style Number': 'ST-R-MIX-3', 'Style Name': 'C', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'blank' } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows.map((row) => row.status)).toEqual(['CREATE', 'CREATE', 'CREATE']);
+      expect(plan.rows.map((row) => row.create!.royaltyPercentage)).toEqual([12.34, 0, null]);
+    });
+
+    it('an old workbook built without the Royalty % column still plans a CREATE row with royaltyPercentage null', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const buffer = buildSheet([
+        { 'Style Number': 'ST-R-OLD', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]!.status).toBe('CREATE');
+      expect(plan.rows[0]!.create!.royaltyPercentage).toBeNull();
+    });
+  });
+
+  describe('executeBulkStyleImport — persistence', () => {
+    it('a valid Royalty % imports and persists correctly (import -> DB -> GET Style equality)', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const user = await actor();
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-PERSIST', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 7.5 } },
+      ]);
+      await executeBulkStyleImport(user, await planBulkStyleImport(buffer), 'royalty.xlsx');
+      const style = await prisma.style.findUniqueOrThrow({ where: { styleNumber: 'ST-R-PERSIST' } });
+      expect(Number(style.royaltyPercentage)).toBe(7.5);
+    });
+
+    it('zero persists as 0, not null', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const user = await actor();
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-PERSIST-ZERO', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 0 } },
+      ]);
+      await executeBulkStyleImport(user, await planBulkStyleImport(buffer), 'royalty.xlsx');
+      const style = await prisma.style.findUniqueOrThrow({ where: { styleNumber: 'ST-R-PERSIST-ZERO' } });
+      expect(style.royaltyPercentage).not.toBeNull();
+      expect(Number(style.royaltyPercentage)).toBe(0);
+    });
+
+    it('a blank cell persists as null', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const user = await actor();
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-PERSIST-BLANK', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'blank' } },
+      ]);
+      await executeBulkStyleImport(user, await planBulkStyleImport(buffer), 'royalty.xlsx');
+      const style = await prisma.style.findUniqueOrThrow({ where: { styleNumber: 'ST-R-PERSIST-BLANK' } });
+      expect(style.royaltyPercentage).toBeNull();
+    });
+
+    it('a decimal value (12.34) persists with correct 2-decimal precision', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const user = await actor();
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-PERSIST-DEC', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 12.34 } },
+      ]);
+      await executeBulkStyleImport(user, await planBulkStyleImport(buffer), 'royalty.xlsx');
+      const style = await prisma.style.findUniqueOrThrow({ where: { styleNumber: 'ST-R-PERSIST-DEC' } });
+      expect(Number(style.royaltyPercentage)).toBe(12.34);
+    });
+
+    it('an old workbook (no Royalty % column) still imports successfully end-to-end, with royaltyPercentage left null', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const user = await actor();
+      const buffer = buildSheet([
+        { 'Style Number': 'ST-R-OLD-E2E', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' },
+      ]);
+      const summary = await executeBulkStyleImport(user, await planBulkStyleImport(buffer), 'old.xlsx');
+      expect(summary.results[0]!.outcome).toBe('COMPLETED');
+      const style = await prisma.style.findUniqueOrThrow({ where: { styleNumber: 'ST-R-OLD-E2E' } });
+      expect(style.royaltyPercentage).toBeNull();
+    });
+  });
+
+  describe('existingStyleConflict — royaltyPercentage drift', () => {
+    it('fires EXISTING_STYLE_CONFLICT when the imported Royalty % differs from the stored value', async () => {
+      const season = await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-R-CONFLICT', styleName: 'A', finalMrp: 100, royaltyPercentage: 5, seasonId: season.id } });
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-CONFLICT', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 7.5 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'EXISTING_STYLE_CONFLICT' });
+      expect(plan.rows[0]!.detail).toContain('Royalty %');
+    });
+
+    it('does NOT fire when the imported Royalty % matches the stored value exactly', async () => {
+      const season = await createTestSeason({ code: 'AW25' });
+      const size = await createSize('S');
+      const style = await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-R-MATCH', styleName: 'A', finalMrp: 100, royaltyPercentage: 7.5, seasonId: season.id } });
+      await prisma.styleSize.create({ data: { id: createId(), styleId: style.id, sizeId: size.id, barcode: 'TEST-ST-R-MATCH' } });
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-MATCH', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 7.5 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]!.status).toBe('SKIP_EXISTING');
+    });
+  });
+
+  describe('confirmation token round-trip', () => {
+    it('a plan containing royaltyPercentage round-trips through generation and verification without special-casing', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const user = await actor();
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-TOKEN', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 7.5 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]!.create!.royaltyPercentage).toBe(7.5);
+      const token = bulkStyleImportConfirmationToken(plan, user.id);
+      expect(() => verifyBulkStyleImportConfirmation(plan, user.id, token)).not.toThrow();
+    });
+
+    it('rejects confirmation when royaltyPercentage changed between token issuance and verification', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const user = await actor();
+      const original = await planBulkStyleImport(buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-TOKEN-2', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 7.5 } },
+      ]));
+      const token = bulkStyleImportConfirmationToken(original, user.id);
+      const drifted = await planBulkStyleImport(buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-TOKEN-2', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 9.9 } },
+      ]));
+      expect(() => verifyBulkStyleImportConfirmation(drifted, user.id, token)).toThrow();
+    });
   });
 });
