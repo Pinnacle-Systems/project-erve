@@ -13,7 +13,13 @@ const styles = StyleSheet.create({
     borderBottom: '1 solid #999999',
   },
   content: { flexDirection: 'row', alignItems: 'center' },
-  logo: { width: 86, height: 28, objectFit: 'contain', marginRight: 12 },
+  // ISS-043: the source artwork (apps/web/src/assets/erve-logo.png) is ~7.3:1
+  // (1117x153px) wide, not the ~3:1 the previous 86x28 box assumed. `contain`
+  // inside a mismatched box silently shrinks further to fit the narrower
+  // dimension — the logo was rendering at an effective ~86x11.8pt, visibly
+  // undersized next to the 14pt title. This box matches the real ratio
+  // (160/22 ≈ 7.27) so `contain` fills it almost exactly on both axes.
+  logo: { width: 160, height: 22, objectFit: 'contain', marginRight: 14 },
   heading: { flex: 1 },
   title: { fontSize: 14, fontWeight: 700, color: '#111111' },
   subtitle: { fontSize: 9, color: '#555555', marginTop: 2 },
