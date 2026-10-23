@@ -538,14 +538,14 @@ export async function addDistributorMapping(
       'Only users with the DISTRIBUTOR role can be mapped to a distributor',
     );
   }
+  if (user.status !== 'ACTIVE') {
+    throw HttpError.badRequest('Only active users can be mapped to a distributor');
+  }
   if (!distributor) {
     throw HttpError.badRequest('Unknown distributor');
   }
   if (distributor.status !== 'ACTIVE') {
     throw HttpError.badRequest('Cannot map a user to an inactive distributor');
-  }
-  if (user.status !== 'ACTIVE') {
-    throw HttpError.badRequest('Only active users can be mapped to a distributor');
   }
 
   // A distributor user belongs to exactly one distributor. The schema only

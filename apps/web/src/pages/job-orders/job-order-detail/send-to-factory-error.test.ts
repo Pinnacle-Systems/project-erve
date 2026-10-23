@@ -2,16 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { sendToFactoryErrorMessage } from './job-order-detail-utils.js';
 
 const failure = (status: number, code: string, message: string, details?: unknown) => ({
-  isAxiosError: true, response: { status, data: { error: { code, message, details } } },
+  isAxiosError: true,
+  response: { status, data: { error: { code, message, details } } },
 });
 describe('Send-to-Factory feedback', () => {
   it('retains individual field validation problems', () => {
-    expect(sendToFactoryErrorMessage(failure(400, 'VALIDATION_ERROR', 'Invalid request data', {
-      issues: [{ field: 'expectedVersion', message: 'Expected a number' }, { field: 'disclaimerText', message: 'Terms are required' }],
-    }))).toContain('expectedVersion: Expected a number');
-    expect(sendToFactoryErrorMessage(failure(400, 'VALIDATION_ERROR', 'Invalid request data', {
-      issues: [{ field: 'disclaimerText', message: 'Terms are required' }],
-    }))).toContain('disclaimerText: Terms are required');
+    expect(
+      sendToFactoryErrorMessage(
+        failure(400, 'VALIDATION_ERROR', 'Invalid request data', {
+          issues: [
+            { field: 'expectedVersion', message: 'Expected a number' },
+            { field: 'disclaimerText', message: 'Terms are required' },
+          ],
+        }),
+      ),
+    ).toContain('expectedVersion: Expected a number');
+    expect(
+      sendToFactoryErrorMessage(
+        failure(400, 'VALIDATION_ERROR', 'Invalid request data', {
+          issues: [{ field: 'disclaimerText', message: 'Terms are required' }],
+        }),
+      ),
+    ).toContain('disclaimerText: Terms are required');
   });
   it.each([
     [400, 'DISCLAIMER_REQUIRED', 'Required', /commercial terms.*required/i],
@@ -22,7 +34,9 @@ describe('Send-to-Factory feedback', () => {
     [401, 'UNAUTHORIZED', 'Expired', /sign in/i],
     [404, 'NOT_FOUND', 'Job order not found', /Job Order.*found/i],
   ])('handles existing %s/%s failures', (status, code, message, expected) => {
-    expect(sendToFactoryErrorMessage(failure(status as number, code as string, message as string))).toMatch(expected as RegExp);
+    expect(
+      sendToFactoryErrorMessage(failure(status as number, code as string, message as string)),
+    ).toMatch(expected as RegExp);
   });
   it.each([
     new Error('secret stack trace'),

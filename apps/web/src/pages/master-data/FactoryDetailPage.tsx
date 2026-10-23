@@ -42,13 +42,24 @@ function MappedUsers({ factory }: { factory: Factory }) {
   const [reassignment, setReassignment] = useState<{ user: UserOption; previousName: string } | null>(null);
   const submitting = useRef(false);
   const creationGeneration = useRef(0);
+  const assignmentVisit = useRef(0);
   const [generation, setGeneration] = useState(0);
   useEffect(
     () => () => {
       creationGeneration.current += 1;
+      assignmentVisit.current += 1;
     },
     [],
   );
+  // The route does not remount this component when navigating between two
+  // factories' detail pages whose data is already cached (no loading-state
+  // unmount occurs), so a pending lookup from the previous factory must
+  // also be invalidated on an in-place factory switch, not just on unmount
+  // — otherwise the stale continuation assigns into whichever factory is
+  // current when the lookup resolves, not the one originally selected.
+  useEffect(() => {
+    assignmentVisit.current += 1;
+  }, [factory.id]);
   function closeCreation() {
     creationGeneration.current += 1;
     setCreating(false);
@@ -91,10 +102,12 @@ function MappedUsers({ factory }: { factory: Factory }) {
     setError('');
     if (!selected) { setError('Select a factory user'); return; }
     const target = selected;
+    const visit = assignmentVisit.current;
     submitting.current = true;
     setChecking(true);
     try {
       const response = await apiClient.get<ApiSuccessResponse<AdminUserSummary>>(`/users/${target.id}`);
+      if (visit !== assignmentVisit.current) { submitting.current = false; return; }
       const previous = response.data.data.factories[0];
       if (previous?.id === factory.id) {
         setError('User is already mapped to this factory');

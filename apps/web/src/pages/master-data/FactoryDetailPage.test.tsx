@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthUser } from '@erve/types';
@@ -140,6 +140,95 @@ describe('FactoryDetailPage — Mapped Factory Users inline creation (DEMO-015)'
   async function submitAssignment() {
     await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   }
+  it('does not assign after leaving the page while the current mapping is being checked', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderPageWithRole(makeFactory(), 'ADMIN'); await chooseWorker();
+    let complete!: (value: { data: { data: { factories: [] } } }) => void;
+    vi.mocked(apiClient.get).mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    await submitAssignment();
+    act(() => root.render(null));
+    await act(async () => complete({ data: { data: { factories: [] } } }));
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('does not assign after switching to an already-cached different factory while the current mapping is being checked', async () => {
+    // When the destination factory's data is still cached (no "Loading
+    // factory" state is shown), the :id route does not unmount MappedUsers
+    // on an in-place navigation between two factories — this exercises the
+    // companion guard to the unmount case above for that scenario.
+    const factoryA = makeFactory({ id: 'factory-1', name: 'Acme Factory' });
+    const factoryB = makeFactory({ id: 'factory-2', name: 'Other Factory', code: 'FAC-2' });
+    mockAuth('ADMIN');
+    const post = vi.spyOn(apiClient, 'post');
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === `/factories/${factoryA.id}`) return { data: { data: factoryA } };
+      if (url === `/factories/${factoryB.id}`) return { data: { data: factoryB } };
+      if (url === `/factories/${factoryA.id}/users` || url === `/factories/${factoryB.id}/users`) return { data: { data: [] } };
+      if (url === `/factories/${factoryA.id}/user-options`) return { data: { data: [{ id: 'worker', name: 'Factory Worker', email: 'worker@test.local' }] } };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    function Harness() {
+      const [destination, setDestination] = useState(factoryB.id);
+      return (
+        <MemoryRouter initialEntries={[`/master-data/factories/${factoryA.id}`]}>
+          <NavSwitcher destination={destination} setDestination={setDestination} other={factoryA.id} otherB={factoryB.id} />
+          <Routes>
+            <Route path="/master-data/factories/:id" element={<FactoryDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+    }
+    function NavSwitcher({
+      destination,
+      setDestination,
+      other,
+      otherB,
+    }: {
+      destination: string;
+      setDestination: (id: string) => void;
+      other: string;
+      otherB: string;
+    }) {
+      const navigate = useNavigate();
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            navigate(`/master-data/factories/${destination}`);
+            setDestination(destination === otherB ? other : otherB);
+          }}
+        >
+          Go to other factory
+        </button>
+      );
+    }
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <Harness />
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => { await flushMicrotasks(); });
+    await waitForLoaded();
+    const clickNav = async () => {
+      const navButton = Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === 'Go to other factory',
+      ) as HTMLButtonElement;
+      await act(async () => navButton.click());
+      await waitForLoaded();
+    };
+    // Warm the cache for both factories so a later switch shows no loading
+    // state (and therefore does not unmount MappedUsers).
+    await clickNav();
+    await clickNav();
+    await chooseWorker();
+    let complete!: (value: { data: { data: { factories: [] } } }) => void;
+    vi.mocked(apiClient.get).mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    await submitAssignment();
+    await clickNav();
+    await act(async () => complete({ data: { data: { factories: [] } } }));
+    expect(post).not.toHaveBeenCalled();
+  });
   it('assigns an unmapped user directly, but never reassigns a user already at this factory', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} });
     await renderPageWithRole(makeFactory(), 'ADMIN', []);
