@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -23,22 +23,8 @@ function toErrorMessage(caught: unknown): string {
 }
 
 export function HsnFormPage() {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { id } = useParams();
   const isEdit = Boolean(id);
-  const { user } = useAuth();
-  // RBAC finalization review: MERCHANDISER keeps full identity edit rights
-  // on this form but must not assign/change the GST Rule Set — enforced
-  // server-side regardless (hsn.service.ts), disabled here too so a
-  // MERCHANDISER never sees a field they cannot actually use.
-  const canAssignGst = canAssignHsnGstRuleSet(user);
-
-  const [code, setCode] = useState('');
-  const [description, setDescription] = useState('');
-  const [status, setStatus] = useState<Status>('ACTIVE');
-  const [gstRuleSetId, setGstRuleSetId] = useState<string>(UNASSIGNED);
-  const [error, setError] = useState('');
 
   const hsnQuery = useQuery({
     queryKey: ['hsn', id],
@@ -52,20 +38,68 @@ export function HsnFormPage() {
   const ruleSetOptionsQuery = useQuery({
     queryKey: ['hsn-gst-rule-set-options'],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<GstRuleSetOption[]>>('/hsns/gst-rule-set-options');
+      const res = await apiClient.get<ApiSuccessResponse<GstRuleSetOption[]>>(
+        '/hsns/gst-rule-set-options',
+      );
       return res.data.data;
     },
   });
 
-  useEffect(() => {
-    if (!hsnQuery.data) return;
-    const hsn = hsnQuery.data;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCode(hsn.code);
-    setDescription(hsn.description ?? '');
-    setStatus(hsn.status);
-    setGstRuleSetId(hsn.gstRuleSet?.id ?? UNASSIGNED);
-  }, [hsnQuery.data]);
+  if (isEdit && !hsnQuery.data) {
+    if (hsnQuery.isError) {
+      return <ErrorState title="Unable to load HSN" description={hsnQuery.error.message} />;
+    }
+    return <LoadingState label="Loading HSN" />;
+  }
+  if (ruleSetOptionsQuery.isPending) {
+    return <LoadingState label="Loading HSN" />;
+  }
+
+  return (
+    <HsnForm
+      key={id ?? 'create'}
+      hsn={isEdit ? hsnQuery.data : undefined}
+      options={ruleSetOptionsQuery.data ?? []}
+      optionsUnavailable={ruleSetOptionsQuery.isError}
+    />
+  );
+}
+
+function HsnForm({
+  hsn,
+  options,
+  optionsUnavailable,
+}: {
+  hsn?: Hsn;
+  options: GstRuleSetOption[];
+  optionsUnavailable: boolean;
+}) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const canAssignGst = canAssignHsnGstRuleSet(user);
+  // Mount once per record, with its values already loaded. Refetches must
+  // never hydrate over a draft or change a mounted Radix select's value.
+  const [initialHsn] = useState(hsn);
+  const id = initialHsn?.id;
+  const isEdit = Boolean(id);
+  const [code, setCode] = useState(initialHsn?.code ?? '');
+  const [description, setDescription] = useState(initialHsn?.description ?? '');
+  const [status, setStatus] = useState<Status>(initialHsn?.status ?? 'ACTIVE');
+  const [selectedRuleSet, setSelectedRuleSet] = useState(initialHsn?.gstRuleSet ?? null);
+  const [error, setError] = useState('');
+  const gstRuleSetId = selectedRuleSet?.id ?? UNASSIGNED;
+  // The options endpoint offers ACTIVE records only. Retain the saved and
+  // selected entries so an inactive assignment or a refetch cannot blank it.
+  const ruleSets = new Map(
+    options.filter((option) => option.status === 'ACTIVE').map((option) => [option.id, option]),
+  );
+  if (initialHsn?.gstRuleSet && !ruleSets.has(initialHsn.gstRuleSet.id)) {
+    ruleSets.set(initialHsn.gstRuleSet.id, initialHsn.gstRuleSet);
+  }
+  if (selectedRuleSet && !ruleSets.has(selectedRuleSet.id)) {
+    ruleSets.set(selectedRuleSet.id, selectedRuleSet);
+  }
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -77,7 +111,11 @@ export function HsnFormPage() {
         code: code.trim(),
         description: description.trim() || null,
         status,
-        gstRuleSetId: gstRuleSetId === UNASSIGNED ? null : gstRuleSetId,
+        // Omission preserves the relationship, including concurrent changes
+        // made elsewhere. Only an authorized, explicit change is submitted.
+        ...(canAssignGst && (selectedRuleSet?.id ?? null) !== (initialHsn?.gstRuleSet?.id ?? null)
+          ? { gstRuleSetId: selectedRuleSet?.id ?? null }
+          : {}),
       };
       const res = isEdit
         ? await apiClient.patch<ApiSuccessResponse<Hsn>>(`/hsns/${id}`, payload)
@@ -87,17 +125,9 @@ export function HsnFormPage() {
     onSuccess: async (hsn) => {
       await queryClient.invalidateQueries({ queryKey: ['hsns'] });
       await queryClient.invalidateQueries({ queryKey: ['hsn', hsn.id] });
-      navigate(`/hsns/${hsn.id}`);
     },
     onError: (caught) => setError(toErrorMessage(caught)),
   });
-
-  if (isEdit && hsnQuery.isLoading) {
-    return <LoadingState label="Loading HSN" />;
-  }
-  if (isEdit && hsnQuery.isError) {
-    return <ErrorState title="Unable to load HSN" description={hsnQuery.error.message} />;
-  }
 
   return (
     <div className="space-y-5">
@@ -118,7 +148,8 @@ export function HsnFormPage() {
           onKeyDown={createEnterToNextHandler()}
           onSubmit={(event) => {
             event.preventDefault();
-            mutation.mutate();
+            // Per-call callbacks do not run after this record's form unmounts.
+            mutation.mutate(undefined, { onSuccess: (saved) => navigate(`/hsns/${saved.id}`) });
           }}
         >
           <FormSection title="HSN Identity">
@@ -152,17 +183,33 @@ export function HsnFormPage() {
               <SelectField
                 label="GST Rule Set"
                 value={gstRuleSetId}
-                onValueChange={setGstRuleSetId}
+                onValueChange={(value) => {
+                  // Ignore empty native select hydration events. Clearing
+                  // requires choosing the explicit Unassigned option.
+                  if (!canAssignGst || optionsUnavailable || !value) return;
+                  if (value === UNASSIGNED) setSelectedRuleSet(null);
+                  else {
+                    const option = ruleSets.get(value);
+                    if (option) setSelectedRuleSet(option);
+                  }
+                }}
                 width="fill"
-                disabled={!canAssignGst || ruleSetOptionsQuery.isLoading}
+                disabled={!canAssignGst || optionsUnavailable}
               >
                 <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
-                {(ruleSetOptionsQuery.data ?? []).map((option) => (
+                {Array.from(ruleSets.values()).map((option) => (
                   <SelectItem key={option.id} value={option.id}>
                     {option.code} — {option.name}
+                    {option.status === 'INACTIVE' ? ' (inactive)' : ''}
                   </SelectItem>
                 ))}
               </SelectField>
+              {optionsUnavailable && (
+                <ValidationMessage tone="error">
+                  Unable to load GST Rule Sets. The existing assignment is preserved; other HSN
+                  fields can still be saved.
+                </ValidationMessage>
+              )}
               {!canAssignGst && (
                 <p className="col-span-full text-sm text-muted-foreground">
                   Only Admin or Accountant may assign or change the GST Rule Set.

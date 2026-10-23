@@ -15,7 +15,9 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function tokenWithRoles(roles: Array<'ADMIN' | 'MERCHANDISER' | 'ACCOUNTANT' | 'FACTORY_USER' | 'SENIOR_MANAGEMENT'>) {
+async function tokenWithRoles(
+  roles: Array<'ADMIN' | 'MERCHANDISER' | 'ACCOUNTANT' | 'FACTORY_USER' | 'SENIOR_MANAGEMENT'>,
+) {
   const { token } = await createTestUserAndToken({
     email: `user-${createId().slice(-8)}@test.local`,
     password: 'pass',
@@ -33,6 +35,81 @@ async function createRuleSet(token: string) {
 }
 
 describe('HSN master', () => {
+  it.each(['MERCHANDISER', 'ACCOUNTANT'] as const)(
+    'preserves an inactive assignment on an ordinary %s update',
+    async (role) => {
+      const adminToken = await tokenWithRoles(['ADMIN']);
+      const ruleSetId = await createRuleSet(adminToken);
+      const created = await request(app)
+        .post('/hsns')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ code: '61091000', gstRuleSetId: ruleSetId });
+      await prisma.gstRuleSet.update({ where: { id: ruleSetId }, data: { status: 'INACTIVE' } });
+      const token = await tokenWithRoles([role]);
+      const options = await request(app)
+        .get('/hsns/gst-rule-set-options')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(options.body.data.some((option: { id: string }) => option.id === ruleSetId)).toBe(
+        false,
+      );
+      const detail = await request(app)
+        .get(`/hsns/${created.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(detail.body.data.gstRuleSet).toMatchObject({ id: ruleSetId, status: 'INACTIVE' });
+      await request(app)
+        .patch(`/hsns/${created.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ description: 'Legitimate unrelated edit' })
+        .expect(200);
+      const retrieved = await request(app)
+        .get(`/hsns/${created.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(retrieved.body.data).toMatchObject({
+        description: 'Legitimate unrelated edit',
+        gstRuleSet: { id: ruleSetId },
+      });
+      expect(
+        (await prisma.hsn.findUniqueOrThrow({ where: { id: created.body.data.id } })).gstRuleSetId,
+      ).toBe(ruleSetId);
+    },
+  );
+
+  it.each(['MERCHANDISER', 'ACCOUNTANT'] as const)(
+    'preserves all persisted values after a failed %s save',
+    async (role) => {
+      const adminToken = await tokenWithRoles(['ADMIN']);
+      const ruleSetId = await createRuleSet(adminToken);
+      const created = await request(app)
+        .post('/hsns')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ code: '61091000', description: 'Original', gstRuleSetId: ruleSetId });
+      await request(app)
+        .post('/hsns')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ code: '62034200' })
+        .expect(201);
+      const token = await tokenWithRoles([role]);
+      await request(app)
+        .patch(`/hsns/${created.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: '62034200',
+          description: 'Must not persist',
+          ...(role === 'ACCOUNTANT' ? { gstRuleSetId: null } : {}),
+        })
+        .expect(409);
+      const stored = await prisma.hsn.findUniqueOrThrow({ where: { id: created.body.data.id } });
+      expect(stored).toMatchObject({
+        code: '61091000',
+        description: 'Original',
+        gstRuleSetId: ruleSetId,
+      });
+    },
+  );
+
   it('creates an HSN with no GST Rule Set assignment', async () => {
     const token = await tokenWithRoles(['ADMIN']);
     const res = await request(app)
@@ -41,7 +118,11 @@ describe('HSN master', () => {
       .send({ code: '61091000', description: 'Boys / T-Shirt' });
 
     expect(res.status).toBe(201);
-    expect(res.body.data).toMatchObject({ code: '61091000', description: 'Boys / T-Shirt', gstRuleSet: null });
+    expect(res.body.data).toMatchObject({
+      code: '61091000',
+      description: 'Boys / T-Shirt',
+      gstRuleSet: null,
+    });
   });
 
   it('rejects a code that is not exactly 8 digits', async () => {
@@ -55,8 +136,14 @@ describe('HSN master', () => {
 
   it('rejects a duplicate HSN code', async () => {
     const token = await tokenWithRoles(['ADMIN']);
-    await request(app).post('/hsns').set('Authorization', `Bearer ${token}`).send({ code: '61091000' });
-    const dup = await request(app).post('/hsns').set('Authorization', `Bearer ${token}`).send({ code: '61091000' });
+    await request(app)
+      .post('/hsns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: '61091000' });
+    const dup = await request(app)
+      .post('/hsns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: '61091000' });
     expect(dup.status).toBe(409);
   });
 
@@ -85,7 +172,9 @@ describe('HSN master', () => {
     expect(updated.status).toBe(200);
     expect(updated.body.data.gstRuleSet.id).toBe(ruleSetId);
 
-    const entries = await prisma.auditLog.findMany({ where: { entityId: hsnId, action: 'HSN_UPDATED' } });
+    const entries = await prisma.auditLog.findMany({
+      where: { entityId: hsnId, action: 'HSN_UPDATED' },
+    });
     expect(entries).toHaveLength(1);
     expect(entries[0]!.metadata).toMatchObject({
       before: { gstRuleSetId: null },
@@ -217,7 +306,10 @@ describe('HSN master', () => {
 
   it('GET /hsns/options returns every HSN regardless of status (mirrors /seasons/options)', async () => {
     const token = await tokenWithRoles(['ADMIN', 'MERCHANDISER']);
-    await request(app).post('/hsns').set('Authorization', `Bearer ${token}`).send({ code: '61091000' });
+    await request(app)
+      .post('/hsns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: '61091000' });
     await request(app)
       .post('/hsns')
       .set('Authorization', `Bearer ${token}`)
@@ -225,7 +317,10 @@ describe('HSN master', () => {
 
     const res = await request(app).get('/hsns/options').set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.map((h: { code: string }) => h.code).sort()).toEqual(['61046200', '61091000']);
+    expect(res.body.data.map((h: { code: string }) => h.code).sort()).toEqual([
+      '61046200',
+      '61091000',
+    ]);
   });
 
   describe('RBAC finalization: HSN -> GST Rule Set assignment is finance-only', () => {
@@ -243,7 +338,10 @@ describe('HSN master', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ description: 'Updated description', status: 'INACTIVE' });
       expect(updated.status).toBe(200);
-      expect(updated.body.data).toMatchObject({ description: 'Updated description', status: 'INACTIVE' });
+      expect(updated.body.data).toMatchObject({
+        description: 'Updated description',
+        status: 'INACTIVE',
+      });
     });
 
     it('rejects MERCHANDISER creating an HSN with a GST Rule Set assignment', async () => {
@@ -258,7 +356,7 @@ describe('HSN master', () => {
       expect(res.status).toBe(403);
     });
 
-    it('rejects MERCHANDISER assigning, reassigning, or unassigning an HSN\'s GST Rule Set', async () => {
+    it("rejects MERCHANDISER assigning, reassigning, or unassigning an HSN's GST Rule Set", async () => {
       const adminToken = await tokenWithRoles(['ADMIN']);
       const ruleSetA = await createRuleSet(adminToken);
       const ruleSetB = await createRuleSet(adminToken);
@@ -317,7 +415,10 @@ describe('HSN master', () => {
         .set('Authorization', `Bearer ${merchToken}`)
         .send({ gstRuleSetId: ruleSetId, description: 'Merchandiser edit' });
       expect(res.status).toBe(200);
-      expect(res.body.data).toMatchObject({ description: 'Merchandiser edit', gstRuleSet: { id: ruleSetId } });
+      expect(res.body.data).toMatchObject({
+        description: 'Merchandiser edit',
+        gstRuleSet: { id: ruleSetId },
+      });
     });
 
     it('allows ACCOUNTANT (finance) to assign, reassign, and unassign a GST Rule Set', async () => {
