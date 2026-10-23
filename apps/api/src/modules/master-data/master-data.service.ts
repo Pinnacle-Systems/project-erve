@@ -456,12 +456,16 @@ export async function updateStyle(
   // only as a precondition that must still hold (checked below).
   let hsnDescriptionRefreshAudit: { hsnId: string; before: string | null; after: string | null } | null = null;
   if (refreshHsnDescription) {
-    // The hsnId this save will actually leave the Style with - either a
-    // value changing in this same PATCH (handled above) or its current,
-    // unchanged one. A staged refresh is only valid against whichever HSN
-    // the Style ends up linked to; if that differs from what was
-    // previewed, the refresh is rejected distinctly from an ordinary
-    // validation failure so the client can tell the user to re-preview.
+    // Preliminary check only - NOT the authoritative guard against a
+    // concurrent hsnId change (that's the `updateMany` inside the
+    // transaction below, which re-checks against the row's current
+    // persisted hsnId at the actual moment of write). This early check
+    // instead catches a same-REQUEST inconsistency: the hsnId this save
+    // will itself leave the Style with - either a value changing in this
+    // same PATCH (handled above) or its current, unchanged one - must
+    // match what the refresh was previewed against, or the request is
+    // internally contradictory (e.g. reassigning to a different HSN while
+    // also submitting a refresh computed for the old one).
     const effectiveHsnId = 'hsnId' in styleFields ? (styleFields.hsnId as string | null) : existing.hsnId;
     if (effectiveHsnId !== refreshHsnDescription.hsnId) {
       throw HttpError.conflict(
@@ -514,7 +518,30 @@ export async function updateStyle(
 
   try {
     await prisma.$transaction(async (tx) => {
-      if (Object.keys(styleFields).length > 0) {
+      if (refreshHsnDescription) {
+        // Authoritative, TOCTOU-safe guard for the staged refresh: the
+        // pre-transaction `effectiveHsnId` check above can only see the
+        // hsnId this request itself intends - it cannot see a DIFFERENT
+        // request's concurrent hsnId change that lands between that read
+        // and this write. `updateMany` with hsnId in its WHERE clause is
+        // evaluated by Postgres against the row's CURRENT committed value
+        // at the moment of this statement, inside this same transaction -
+        // if some other operation already moved the Style onto a
+        // different HSN, this matches zero rows and we reject instead of
+        // silently writing a description for an HSN the Style is no
+        // longer linked to (and we never touch whatever that concurrent
+        // change did - zero rows updated means nothing here is written).
+        const result = await tx.style.updateMany({
+          where: { id: styleId, hsnId: refreshHsnDescription.hsnId },
+          data: styleFields as Prisma.StyleUncheckedUpdateInput,
+        });
+        if (result.count === 0) {
+          throw HttpError.conflict(
+            "This Style's HSN changed since the description was previewed. Refresh the description again before saving.",
+            { reason: 'HSN_DESCRIPTION_REFRESH_HSN_CHANGED' },
+          );
+        }
+      } else if (Object.keys(styleFields).length > 0) {
         await tx.style.update({
           where: { id: styleId },
           data: styleFields as Prisma.StyleUncheckedUpdateInput,

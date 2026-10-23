@@ -443,6 +443,93 @@ describe('styles API', () => {
       expect(saved.body.error.details).toMatchObject({ reason: 'HSN_DESCRIPTION_REFRESH_HSN_CHANGED' });
     });
 
+    // Code-review follow-up: the test above omits hsnId from the stale
+    // save, so it was already caught by the pre-transaction check (which
+    // falls back to a fresh `existing.hsnId` read when hsnId is absent).
+    // This test reproduces the actual TOCTOU gap that check cannot see on
+    // its own: the stale client ALSO resubmits the OLD hsnId it still has
+    // in its (unrefreshed) form state, so the pre-check's `effectiveHsnId`
+    // matches the refresh's target even though the row's truly-current
+    // hsnId has moved on. Only the atomic `updateMany` guard inside the
+    // transaction - which checks the row's hsnId at the actual moment of
+    // write - can catch this.
+    it('TOCTOU: rejects a stale refresh when a concurrent operation changes the Style\'s hsnId after preview, even though the stale client resubmits the old hsnId, and never reverts the concurrent change', async () => {
+      const token = await adminToken();
+      const hsnA = await createHsnFixture({ description: 'HSN A description' });
+      const hsnB = await createHsnFixture({ description: 'HSN B description' });
+      const style = await createStyle(token, { hsnId: hsnA.id }).then((res) => res.body.data);
+
+      // 1. Style is linked to HSN A. 2. User previews a refresh for HSN A.
+      await prisma.hsn.update({ where: { id: hsnA.id }, data: { description: 'HSN A refreshed description' } });
+      const preview = await request(app)
+        .get(`/styles/${style.id}/hsn-description-refresh`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(preview.body.data.proposedDescription).toBe('HSN A refreshed description');
+
+      // 3. Some other authorized operation changes the Style's hsnId from A to B.
+      const concurrent = await request(app)
+        .patch(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ hsnId: hsnB.id });
+      expect(concurrent.status).toBe(200);
+      expect(concurrent.body.data.hsnId).toBe(hsnB.id);
+
+      // 4. The original user submits a full Style PATCH containing their
+      // stale form's hsnId (A) plus the staged refresh for A's description.
+      const saved = await request(app)
+        .patch(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          hsnId: hsnA.id,
+          refreshHsnDescription: { hsnId: hsnA.id, expectedDescription: 'HSN A refreshed description' },
+        });
+
+      // 5. Expect 409, Style still linked to B, no audit event recorded.
+      expect(saved.status).toBe(409);
+      expect(saved.body.error.details).toMatchObject({ reason: 'HSN_DESCRIPTION_REFRESH_HSN_CHANGED' });
+
+      const after = await request(app)
+        .get(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(after.body.data.hsnId).toBe(hsnB.id);
+      expect(after.body.data.hsnCode).toBe(hsnB.code);
+
+      const audit = await prisma.auditLog.findFirst({
+        where: { entityType: 'Style', entityId: style.id, action: 'STYLE_HSN_DESCRIPTION_REFRESHED' },
+      });
+      expect(audit).toBeNull();
+    });
+
+    it('TOCTOU guard does not affect a normal refresh with no concurrent change', async () => {
+      const token = await adminToken();
+      const hsn = await createHsnFixture({ description: 'Steady' });
+      const style = await createStyle(token, { hsnId: hsn.id }).then((res) => res.body.data);
+      await prisma.hsn.update({ where: { id: hsn.id }, data: { description: 'Refreshed' } });
+
+      const saved = await request(app)
+        .patch(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ hsnId: hsn.id, refreshHsnDescription: { hsnId: hsn.id, expectedDescription: 'Refreshed' } });
+
+      expect(saved.status).toBe(200);
+      expect(saved.body.data.hsnDescription).toBe('Refreshed');
+    });
+
+    it('TOCTOU guard does not affect an ordinary (non-refresh) HSN reassignment from A to B', async () => {
+      const token = await adminToken();
+      const hsnA = await createHsnFixture({ description: 'HSN A' });
+      const hsnB = await createHsnFixture({ description: 'HSN B' });
+      const style = await createStyle(token, { hsnId: hsnA.id }).then((res) => res.body.data);
+
+      const saved = await request(app)
+        .patch(`/styles/${style.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ hsnId: hsnB.id });
+
+      expect(saved.status).toBe(200);
+      expect(saved.body.data).toMatchObject({ hsnId: hsnB.id, hsnCode: hsnB.code, hsnDescription: 'HSN B' });
+    });
+
     it('rejects unauthorized roles from previewing or saving a refresh', async () => {
       const admin = await adminToken();
       const { token: qaToken } = await createTestUserAndToken({
