@@ -40,6 +40,12 @@ export const fieldLabels: Record<StyleFieldKey, string> = {
 // not a key of StyleFormFields — it's rendered specially by
 // StyleIdentitySection since Season is a separate SelectField backed by its
 // own query, not a plain text/status field.
+// ISS-059: Item Name Group is deliberately NOT in this layout any more - the
+// field no longer renders or is editable from the create/edit form. It
+// stays in StyleFormFields/emptyForm/fieldLabels below (and is still
+// hydrated from and sent back to the API unchanged - see StyleFormPage),
+// purely so existing stored values on old Styles round-trip untouched by an
+// ordinary edit of this form, without the API/schema being touched at all.
 export const identityFieldLayout = [
   { key: 'styleNumber', width: 'sm' },
   { key: 'styleName', width: 'md' },
@@ -47,7 +53,6 @@ export const identityFieldLayout = [
   { key: 'season', width: 'md' },
   { key: 'status', width: 'sm' },
   { key: 'categoryDescription', width: 'sm' },
-  { key: 'itemNameGroup', width: 'md' },
   { key: 'ipName', width: 'sm' },
   { key: 'licensor', width: 'md' },
   { key: 'colour', width: 'sm' },

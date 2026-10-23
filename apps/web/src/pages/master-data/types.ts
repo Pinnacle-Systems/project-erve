@@ -198,6 +198,27 @@ export interface HsnSummary {
 
 export type Hsn = HsnSummary;
 
+// ISS-062: GET /styles/:id/hsn-description-refresh - read-only preview for
+// the explicit "Refresh HSN Description" action. See
+// style/HsnDescriptionRefresh.tsx.
+export interface HsnDescriptionRefreshPreview {
+  hsnId: string | null;
+  currentDescription: string | null;
+  proposedDescription: string | null;
+  isStale: boolean;
+  canRefresh: boolean;
+}
+
+// A staged-but-unsaved refresh, carried in StyleFormPage's form state and
+// sent as `refreshHsnDescription` on the next Save Style call (see
+// style-form-state.ts's cleanPayload). expectedDescription is the
+// precondition the server re-checks against the live Hsn record at save
+// time - it never trusts this string as the value to write.
+export interface StagedHsnDescriptionRefresh {
+  hsnId: string;
+  expectedDescription: string | null;
+}
+
 export interface StyleImage {
   id: string;
   styleId: string;

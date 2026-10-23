@@ -69,8 +69,21 @@ export const createStyleSchema = z.object({
   factoryMappings: z.array(styleFactorySchema).optional(),
 });
 
+// ISS-062: an explicit, previewed "Refresh HSN Description" intent, staged
+// into the Style edit form and sent alongside the rest of an ordinary save
+// (never a standalone PATCH - see StyleFormPage). `expectedDescription` is
+// the Hsn's description as read at preview time, a PRECONDITION the server
+// re-checks against the live Hsn record at save time - never a replacement
+// value the server trusts directly. See updateStyle's handling of this key
+// in master-data.service.ts for the staleness checks that make this safe.
+export const refreshHsnDescriptionSchema = z.object({
+  hsnId: z.string().trim().min(1),
+  expectedDescription: z.string().trim().nullable(),
+});
+
 export const updateStyleSchema = createStyleSchema
   .partial()
+  .extend({ refreshHsnDescription: refreshHsnDescriptionSchema.optional() })
   .refine((value) => Object.keys(value).length > 0, {
     message: 'At least one field is required',
   });

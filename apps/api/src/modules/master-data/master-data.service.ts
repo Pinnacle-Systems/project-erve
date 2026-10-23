@@ -403,9 +403,12 @@ export async function updateStyle(
   input: Record<string, unknown> & {
     sizes?: StyleSizeRequest[];
     factoryMappings?: StyleFactoryMappingRequest[];
+    // ISS-062: see refreshHsnDescriptionSchema's comment in
+    // master-data.validation.ts and the handling of this key below.
+    refreshHsnDescription?: { hsnId: string; expectedDescription: string | null };
   },
 ) {
-  const { sizes, factoryMappings, ...styleFields } = input;
+  const { sizes, factoryMappings, refreshHsnDescription, ...styleFields } = input;
   const existing = await prisma.style.findUnique({
     where: { id: styleId },
     include: { styleSizes: true, styleFactoryMappings: true },
@@ -439,6 +442,52 @@ export async function updateStyle(
         styleFields.hsnDescription = hsn.description;
       }
     }
+  }
+
+  // ISS-062: explicit, user-confirmed refresh of hsnDescription from the
+  // live Hsn record. Deliberately separate from the hsnId-reassignment
+  // branch just above - that branch only resyncs hsnCode/hsnDescription
+  // when hsnId itself changes; this lets a user pull a since-changed
+  // description for the SAME HSN that's already linked (the staleness
+  // ISS-062 fixes), but only via this explicit, previewed action - never
+  // automatically on an ordinary edit. The server derives the authoritative
+  // new description itself from the live Hsn record at save time; it never
+  // trusts the client-supplied `expectedDescription` as the value to write,
+  // only as a precondition that must still hold (checked below).
+  let hsnDescriptionRefreshAudit: { hsnId: string; before: string | null; after: string | null } | null = null;
+  if (refreshHsnDescription) {
+    // The hsnId this save will actually leave the Style with - either a
+    // value changing in this same PATCH (handled above) or its current,
+    // unchanged one. A staged refresh is only valid against whichever HSN
+    // the Style ends up linked to; if that differs from what was
+    // previewed, the refresh is rejected distinctly from an ordinary
+    // validation failure so the client can tell the user to re-preview.
+    const effectiveHsnId = 'hsnId' in styleFields ? (styleFields.hsnId as string | null) : existing.hsnId;
+    if (effectiveHsnId !== refreshHsnDescription.hsnId) {
+      throw HttpError.conflict(
+        "This Style's HSN changed since the description was previewed. Refresh the description again before saving.",
+        { reason: 'HSN_DESCRIPTION_REFRESH_HSN_CHANGED' },
+      );
+    }
+    // Deliberately NOT assertActiveHsn: refreshing an already-linked,
+    // since-INACTIVE Hsn's description is allowed - this only re-reads that
+    // same record's description, it is not a new inactive-HSN selection.
+    const liveHsn = await prisma.hsn.findUnique({ where: { id: refreshHsnDescription.hsnId } });
+    if (!liveHsn) {
+      throw HttpError.badRequest('The linked HSN record could not be found');
+    }
+    if (liveHsn.description !== refreshHsnDescription.expectedDescription) {
+      throw HttpError.conflict(
+        'The HSN description changed again since it was previewed. Refresh and retry.',
+        { reason: 'HSN_DESCRIPTION_REFRESH_STALE' },
+      );
+    }
+    hsnDescriptionRefreshAudit = {
+      hsnId: liveHsn.id,
+      before: existing.hsnDescription,
+      after: liveHsn.description,
+    };
+    styleFields.hsnDescription = liveHsn.description;
   }
 
   const sizesPlan = sizes
@@ -507,6 +556,26 @@ export async function updateStyle(
           });
         }
       }
+      // ISS-062 quality bar: this audit record commits in the SAME
+      // transaction as the Style write it describes (unlike STYLE_UPDATED
+      // just below, which deliberately stays non-transactional/unchanged) -
+      // so the refresh and its audit trail can never diverge.
+      if (hsnDescriptionRefreshAudit) {
+        await recordAuditLog(
+          {
+            actorId: actor.id,
+            action: 'STYLE_HSN_DESCRIPTION_REFRESHED',
+            entityType: 'Style',
+            entityId: styleId,
+            metadata: {
+              hsnId: hsnDescriptionRefreshAudit.hsnId,
+              before: hsnDescriptionRefreshAudit.before,
+              after: hsnDescriptionRefreshAudit.after,
+            },
+          },
+          tx,
+        );
+      }
     });
   } catch (error) {
     await throwIfBarcodeConflict(error, touchedBarcodes);
@@ -525,6 +594,54 @@ export async function updateStyle(
   });
 
   return getStyleById(styleId);
+}
+
+export interface HsnDescriptionRefreshPreview {
+  hsnId: string | null;
+  currentDescription: string | null;
+  proposedDescription: string | null;
+  isStale: boolean;
+  canRefresh: boolean;
+}
+
+/**
+ * Read-only preview for ISS-062's explicit "Refresh HSN Description"
+ * action: compares the Style's saved hsnDescription snapshot against its
+ * linked Hsn record's CURRENT description, without writing anything.
+ * Reading an inactive-but-linked Hsn here is fine - this only re-reads that
+ * same record's description, it's not a new inactive-HSN selection (see
+ * assertActiveHsn, deliberately NOT used here).
+ */
+export async function previewHsnDescriptionRefresh(
+  styleId: string,
+): Promise<HsnDescriptionRefreshPreview> {
+  const style = await prisma.style.findUnique({
+    where: { id: styleId },
+    select: { hsnId: true, hsnDescription: true },
+  });
+  if (!style) {
+    throw HttpError.notFound('Style not found');
+  }
+  if (!style.hsnId) {
+    return {
+      hsnId: null,
+      currentDescription: null,
+      proposedDescription: null,
+      isStale: false,
+      canRefresh: false,
+    };
+  }
+  const hsn = await prisma.hsn.findUnique({ where: { id: style.hsnId } });
+  if (!hsn) {
+    throw HttpError.badRequest('The linked HSN record could not be found');
+  }
+  return {
+    hsnId: hsn.id,
+    currentDescription: style.hsnDescription,
+    proposedDescription: hsn.description,
+    isStale: hsn.description !== style.hsnDescription,
+    canRefresh: true,
+  };
 }
 
 // assertActiveSeason requires the season to be ACTIVE - correct when the

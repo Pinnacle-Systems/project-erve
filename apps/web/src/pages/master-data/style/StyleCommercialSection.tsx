@@ -1,6 +1,7 @@
 import { FormGrid, FormSection } from '@erve/layout';
 import { SelectField, SelectItem, TextField } from '@erve/primitives';
-import type { HsnOption } from '../types.js';
+import type { HsnOption, StagedHsnDescriptionRefresh } from '../types.js';
+import { HsnDescriptionRefresh } from './HsnDescriptionRefresh.js';
 import {
   commercialFieldLayout,
   fieldLabels,
@@ -19,6 +20,14 @@ export interface StyleCommercialSectionProps {
   hsns: HsnOption[];
   /** Truthy once a save attempt has failed validation — same "error &&" gating the pre-restructure form used to decide whether to surface field-level errors. */
   error: string;
+  // ISS-062: only present in edit mode (there's no saved Style to refresh
+  // against on create), so the "Refresh HSN Description" action is hidden
+  // on create.
+  hsnDescriptionRefresh?: {
+    styleId: string;
+    staged: StagedHsnDescriptionRefresh | null;
+    onStage: (value: StagedHsnDescriptionRefresh | null) => void;
+  };
 }
 
 export function StyleCommercialSection({
@@ -28,6 +37,7 @@ export function StyleCommercialSection({
   onHsnChange,
   hsns,
   error,
+  hsnDescriptionRefresh,
 }: StyleCommercialSectionProps) {
   const hasError = Boolean(error);
 
@@ -77,6 +87,13 @@ export function StyleCommercialSection({
           );
         })}
       </FormGrid>
+      {hsnDescriptionRefresh ? (
+        <HsnDescriptionRefresh
+          styleId={hsnDescriptionRefresh.styleId}
+          staged={hsnDescriptionRefresh.staged}
+          onStage={hsnDescriptionRefresh.onStage}
+        />
+      ) : null}
     </FormSection>
   );
 }

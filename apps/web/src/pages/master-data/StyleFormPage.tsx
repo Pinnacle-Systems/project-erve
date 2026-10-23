@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { isAxiosError } from 'axios';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -9,6 +10,7 @@ import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { useFormDirty, useUnsavedChangesWarning } from '../../lib/use-unsaved-changes.js';
 import { imageErrorMessage, StyleImagesPanel } from './StyleImagesPanel.js';
+import type { StagedHsnDescriptionRefresh } from './types.js';
 import { StyleIdentitySection } from './style/StyleIdentitySection.js';
 import { StyleCommercialSection } from './style/StyleCommercialSection.js';
 import { StyleSizesField } from './style/StyleSizesField.js';
@@ -26,6 +28,17 @@ import {
 } from './style/style-form-state.js';
 import type { FactoryOption, HsnOption, SeasonOption, SizeOption, Style } from './types.js';
 
+// ISS-062: distinguishes the two "refresh went stale" rejections
+// (updateStyle's HSN_DESCRIPTION_REFRESH_HSN_CHANGED / _STALE reasons)
+// from every other save failure, so the staged refresh can be cleared
+// instead of left to fail the same way again on retry.
+function isStaleHsnRefreshError(caught: unknown): boolean {
+  if (!isAxiosError(caught)) return false;
+  const reason = (caught.response?.data as { error?: { details?: { reason?: unknown } } } | undefined)
+    ?.error?.details?.reason;
+  return typeof reason === 'string' && reason.startsWith('HSN_DESCRIPTION_REFRESH');
+}
+
 export function StyleFormPage() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -39,6 +52,13 @@ export function StyleFormPage() {
   const [hsnId, setHsnId] = useState('');
   const [factoryMappings, setFactoryMappings] = useState<StyleFactoryMappingRow[]>([]);
   const [error, setError] = useState('');
+  // ISS-062: a previewed-and-confirmed "Refresh HSN Description" action,
+  // staged here (not sent immediately) so it saves atomically with the
+  // rest of this edit via the normal Save Style call below. Reset on hsnId
+  // change (a staged refresh only applies to the HSN it was previewed
+  // against) and whenever the record being edited changes (see the id
+  // effect below) so it can never leak across Styles.
+  const [stagedHsnRefresh, setStagedHsnRefresh] = useState<StagedHsnDescriptionRefresh | null>(null);
   // Create-mode only: an image picked before the style exists. The style
   // must be created first (the image endpoint needs a style ID), so this is
   // an explicit two-step flow — see the mutation below for the honest
@@ -129,6 +149,15 @@ export function StyleFormPage() {
     setHydrated(true);
   }, [styleQuery.data, seasonsQuery.data, hsnsQuery.data]);
 
+  // ISS-062: a staged refresh must never leak across Styles - reset it
+  // whenever the record being edited changes (including navigating from
+  // one Style's edit page straight to another's without an intervening
+  // unmount).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setStagedHsnRefresh(null);
+  }, [id]);
+
   const mutation = useMutation({
     mutationFn: async () => {
       setError('');
@@ -153,6 +182,7 @@ export function StyleFormPage() {
         ...cleanPayload(form, seasonId, hsnId || null),
         sizes: selectedSizeIds.map((sizeId) => toStyleSizeRequest(sizeId, barcodeBySizeId)),
         factoryMappings: toStyleFactoryMappingRequests(factoryMappings),
+        ...(stagedHsnRefresh ? { refreshHsnDescription: stagedHsnRefresh } : {}),
       };
       const response = isEdit
         ? await apiClient.patch<ApiSuccessResponse<Style>>(`/styles/${id}`, payload)
@@ -185,7 +215,14 @@ export function StyleFormPage() {
     },
     onSuccess: (style) => navigate(`/master-data/styles/${style.id}`),
     // Surfaces the API's own message (e.g. "Barcode X is already assigned to Style S / Size Z.").
-    onError: (caught) => setError(imageErrorMessage(caught, 'Unable to save style')),
+    onError: (caught) => {
+      // ISS-062: a staged refresh the server rejected as stale (the HSN
+      // selection or its description changed again between preview and
+      // save) can never be retried as-is - clear it so the user re-does
+      // the preview rather than resubmitting the same doomed payload.
+      if (isStaleHsnRefreshError(caught)) setStagedHsnRefresh(null);
+      setError(imageErrorMessage(caught, 'Unable to save style'));
+    },
   });
 
   // Browser reload/close protection for unsaved input. Baseline is the empty
@@ -202,6 +239,7 @@ export function StyleFormPage() {
         exFactoryPrice,
       })),
       pendingImage: pendingImage?.name ?? null,
+      stagedHsnRefresh,
     },
     hydrated,
   );
@@ -264,9 +302,21 @@ export function StyleFormPage() {
             form={form}
             onFieldChange={(key, value) => setForm((current) => ({ ...current, [key]: value }))}
             hsnId={hsnId}
-            onHsnChange={setHsnId}
+            onHsnChange={(value) => {
+              setHsnId(value);
+              // A staged refresh is only valid against the HSN it was
+              // previewed for - changing the selection invalidates it
+              // (the server would reject it as stale anyway, but clearing
+              // it here avoids a confusing failed save).
+              setStagedHsnRefresh((staged) => (staged && staged.hsnId !== value ? null : staged));
+            }}
             hsns={hsnsQuery.data ?? []}
             error={error}
+            hsnDescriptionRefresh={
+              isEdit && id
+                ? { styleId: id, staged: stagedHsnRefresh, onStage: setStagedHsnRefresh }
+                : undefined
+            }
           />
 
           <StyleSizesField

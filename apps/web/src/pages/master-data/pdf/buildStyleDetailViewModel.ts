@@ -43,7 +43,6 @@ export function buildStyleDetailViewModel(
       { label: 'Status', value: style.status },
       { label: 'Description', value: style.description },
       { label: 'Category', value: style.categoryDescription },
-      { label: 'Item Name Group', value: style.itemNameGroup },
       { label: 'IP Name', value: style.ipName },
       { label: 'Licensor', value: style.licensor },
       { label: 'Colour', value: style.colour },
