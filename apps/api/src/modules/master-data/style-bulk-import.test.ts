@@ -479,12 +479,12 @@ describe('Royalty % (ISS-060)', () => {
       expect(rows[0]!.royaltyPercentageRaw).toBe('');
     });
 
-    it('resolves an entirely missing Royalty % column (old workbook) to null, without throwing', () => {
+    it('resolves an entirely missing Royalty % column (old workbook) to undefined ("not specified"), distinct from a present-but-blank cell (null)', () => {
       const buffer = buildSheet([
         { 'Style Number': 'ST-R4', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' },
       ]);
       const rows = parseBulkStyleImportSheet(buffer);
-      expect(rows[0]!.royaltyPercentage).toBeNull();
+      expect(rows[0]!.royaltyPercentage).toBeUndefined();
       expect(rows[0]!.royaltyPercentageRaw).toBe('');
     });
 
@@ -576,7 +576,7 @@ describe('Royalty % (ISS-060)', () => {
       expect(plan.rows.map((row) => row.create!.royaltyPercentage)).toEqual([12.34, 0, null]);
     });
 
-    it('an old workbook built without the Royalty % column still plans a CREATE row with royaltyPercentage null', async () => {
+    it('an old workbook built without the Royalty % column still plans a CREATE row with royaltyPercentage undefined ("not specified")', async () => {
       await createTestSeason({ code: 'AW25' });
       await createSize('S');
       const buffer = buildSheet([
@@ -584,7 +584,27 @@ describe('Royalty % (ISS-060)', () => {
       ]);
       const plan = await planBulkStyleImport(buffer);
       expect(plan.rows[0]!.status).toBe('CREATE');
-      expect(plan.rows[0]!.create!.royaltyPercentage).toBeNull();
+      expect(plan.rows[0]!.create!.royaltyPercentage).toBeUndefined();
+    });
+
+    it('rejects a raw small-negative value (-0.001) even though its rounded form (-0/0) would appear in-range', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-NEG-TINY', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: -0.001 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'INVALID_ROYALTY_PERCENTAGE' });
+    });
+
+    it('rejects a raw slightly-over-100 value (100.001) even though its rounded form (100.00) would appear in-range', async () => {
+      await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-OVER-TINY', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 100.001 } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'INVALID_ROYALTY_PERCENTAGE' });
     });
   });
 
@@ -676,6 +696,42 @@ describe('Royalty % (ISS-060)', () => {
       const plan = await planBulkStyleImport(buffer);
       expect(plan.rows[0]!.status).toBe('SKIP_EXISTING');
     });
+
+    it('does NOT fire when the Royalty % column is entirely absent (old workbook), even though the existing Style has a stored non-null royalty', async () => {
+      const season = await createTestSeason({ code: 'AW25' });
+      const size = await createSize('S');
+      const style = await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-R-OLD-SKIP', styleName: 'A', finalMrp: 100, royaltyPercentage: 5, seasonId: season.id } });
+      await prisma.styleSize.create({ data: { id: createId(), styleId: style.id, sizeId: size.id, barcode: 'TEST-ST-R-OLD-SKIP' } });
+      const buffer = buildSheet([
+        { 'Style Number': 'ST-R-OLD-SKIP', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S', Barcodes: 'TEST-ST-R-OLD-SKIP' },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]!.status).toBe('SKIP_EXISTING');
+    });
+
+    it('fires when the Royalty % column is present but the cell is blank (explicit null), and the existing Style has a stored non-null royalty', async () => {
+      const season = await createTestSeason({ code: 'AW25' });
+      await createSize('S');
+      await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-R-BLANK-CONFLICT', styleName: 'A', finalMrp: 100, royaltyPercentage: 5, seasonId: season.id } });
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-BLANK-CONFLICT', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'blank' } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'EXISTING_STYLE_CONFLICT' });
+      expect(plan.rows[0]!.detail).toContain('Royalty %');
+    });
+
+    it('does NOT fire when the Royalty % column is present but blank, and the existing Style also has a null royalty', async () => {
+      const season = await createTestSeason({ code: 'AW25' });
+      const size = await createSize('S');
+      const style = await prisma.style.create({ data: { id: createId(), styleNumber: 'ST-R-BLANK-MATCH', styleName: 'A', finalMrp: 100, seasonId: season.id } });
+      await prisma.styleSize.create({ data: { id: createId(), styleId: style.id, sizeId: size.id, barcode: 'TEST-ST-R-BLANK-MATCH' } });
+      const buffer = buildRoyaltySheet([
+        { base: { 'Style Number': 'ST-R-BLANK-MATCH', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'blank' } },
+      ]);
+      const plan = await planBulkStyleImport(buffer);
+      expect(plan.rows[0]!.status).toBe('SKIP_EXISTING');
+    });
   });
 
   describe('confirmation token round-trip', () => {
@@ -704,6 +760,47 @@ describe('Royalty % (ISS-060)', () => {
         { base: { 'Style Number': 'ST-R-TOKEN-2', 'Style Name': 'A', 'Final MRP': '100', 'Season Code': 'AW25', 'Size Codes': 'S' }, royalty: { kind: 'number', value: 9.9 } },
       ]));
       expect(() => verifyBulkStyleImportConfirmation(drifted, user.id, token)).toThrow();
+    });
+  });
+
+  describe('pending-image recovery — royaltyPercentage three-state round-trip', () => {
+    // Drives the REAL service-written v2 provenance (imageProvenance/
+    // matchesImageProvenance are private, so this exercises them through
+    // the actual execute path rather than hand-crafting the JSON string) —
+    // a first real COMPLETED run, then simulates "committed but not yet
+    // confirmed" by flipping that row-result back to IMAGE_PENDING, then
+    // resumes with the SAME create object (so provenance matches exactly)
+    // to confirm the resume path reconciles correctly for all three
+    // royaltyPercentage states: not-specified (undefined), explicit null,
+    // and a number.
+    it.each([
+      ['not specified (column absent)', undefined] as const,
+      ['explicit null (blank cell)', null] as const,
+      ['a number', 12.5] as const,
+    ])('round-trips royaltyPercentage = %s through COMPLETED -> simulated-pending -> RESUME_IMAGE_PENDING recovery', async (_label, royaltyPercentage) => {
+      const season = await createTestSeason();
+      const size = await createSize('S');
+      const user = await actor();
+      const styleNumber = `ST-R-RECOVER-${String(royaltyPercentage)}`;
+      const plan = bareCreatePlan(2, styleNumber, season.id, size.id, [{ buffer: PNG, fileName: 'photo.png', rowNumber: 2 }]);
+      plan.rows[0]!.create!.royaltyPercentage = royaltyPercentage;
+
+      const firstRun = await executeBulkStyleImport(user, plan, 'royalty-recover.xlsx');
+      expect(firstRun.results[0]!.outcome).toBe('COMPLETED');
+      const style = await prisma.style.findUniqueOrThrow({ where: { styleNumber } });
+      const rowResult = await prisma.styleBulkImportRowResult.findFirstOrThrow({ where: { styleNumber, outcome: 'COMPLETED' } });
+
+      // Simulate "committed but not confirmed" (the only way IMAGE_PENDING
+      // can genuinely arise — see the module's doc comment on crash
+      // recovery) by flipping the real, service-written row back to
+      // IMAGE_PENDING, reusing the exact same `create` object reference so
+      // its freshly-recomputed provenance byte-matches what was stored.
+      await prisma.styleBulkImportRowResult.update({ where: { id: rowResult.id }, data: { outcome: 'IMAGE_PENDING' } });
+
+      const resumePlan: BulkStyleImportPlan = { ...plan, rows: [{ ...plan.rows[0]!, status: 'RESUME_IMAGE_PENDING', existingStyleId: style.id }] };
+      const secondRun = await executeBulkStyleImport(user, resumePlan, 'royalty-recover.xlsx');
+      expect(secondRun.results[0]!.outcome).toBe('COMPLETED');
+      expect(await prisma.styleImage.count({ where: { styleId: style.id } })).toBe(1); // no duplicate
     });
   });
 });

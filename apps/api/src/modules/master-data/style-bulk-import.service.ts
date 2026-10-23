@@ -100,16 +100,26 @@ export interface BulkStyleImportSheetRow {
   // Optional. Blank (or the column missing entirely) means "no HSN yet" —
   // never a rejection. A non-blank value must resolve to an ACTIVE Hsn.
   hsnCode: string;
-  // Optional. '' means "no royalty supplied" (blank cell or column entirely
-  // missing) — royaltyPercentage is then null, never a rejection.
-  // royaltyPercentageRaw carries the display text for error messages only;
-  // royaltyPercentage is the fully resolved number (already converted out of
-  // Excel Percentage-format fractions, see resolveRoyaltyPercentageCell) —
-  // null means blank, NaN means present-but-unparseable, a finite number is
-  // the resolved value, not yet range-checked (0-100 is enforced in
-  // planBulkStyleImport, matching how finalMrpRaw/finalMrp works).
+  // Optional, with THREE distinct states (never a rejection by itself):
+  //   undefined — the Royalty % column is entirely absent from this
+  //                workbook (an old workbook predating this feature); "not
+  //                specified", must never be asserted or compared against
+  //                an existing Style's stored value.
+  //   null       — the column is present but this row's cell is blank; an
+  //                explicit "no royalty" that DOES get written and DOES
+  //                participate in existing-Style conflict comparison.
+  //   NaN        — the column is present and this row's cell has content
+  //                that isn't a valid number (row-level rejection).
+  //   a number   — the column is present with a resolved value, already
+  //                converted out of an Excel Percentage-format fraction
+  //                (see resolveRoyaltyPercentageCell) but NOT YET rounded
+  //                or range-checked — planBulkStyleImport validates the
+  //                raw value against 0-100 before rounding for storage, so
+  //                an out-of-range value isn't masked by rounding first.
+  // royaltyPercentageRaw carries the display text for error messages only
+  // ('' for both the undefined and null states).
   royaltyPercentageRaw: string;
-  royaltyPercentage: number | null;
+  royaltyPercentage: number | null | undefined;
   sizeCodes: string[];
   barcodes: string[];
   factoryMappings: Array<{ factoryCode: string; priceRaw: string }>;
@@ -151,20 +161,30 @@ const styleMetadataFields = ['description', 'categoryDescription', 'ipName', 'li
 // percentage-formatted one (0.075 displayed as 7.5%) — both must resolve to
 // the same 7.5. Requires XLSX.read's `cellNF: true` below, which populates
 // `.z` (the cell's number format string) on each parsed cell.
-function resolveRoyaltyPercentageCell(sheet: XLSX.WorkSheet, sheetRowIndex: number, column: number): { raw: string; value: number | null } {
-  if (column < 0) return { raw: '', value: null };
+//
+// Deliberately returns the RAW, unrounded resolved value — rounding to 2
+// decimal places happens only in planBulkStyleImport, AFTER range validation
+// passes, so an out-of-range input (e.g. -0.001 or 100.001) can't be masked
+// by rounding into apparent validity (e.g. -0.001 rounding to -0/0, or
+// 100.001 rounding to 100.00) before the 0-100 check ever sees it.
+//
+// `column < 0` (the header itself is missing from this workbook) is
+// distinct from "this row's cell is blank" — see BulkStyleImportSheetRow's
+// royaltyPercentage doc comment for why that distinction matters.
+function resolveRoyaltyPercentageCell(sheet: XLSX.WorkSheet, sheetRowIndex: number, column: number): { raw: string; value: number | null | undefined } {
+  if (column < 0) return { raw: '', value: undefined };
   const cell: XLSX.CellObject | undefined = sheet[XLSX.utils.encode_cell({ r: sheetRowIndex, c: column })];
   if (!cell || cell.v === undefined || cell.v === null || cell.v === '') return { raw: '', value: null };
   if (cell.t === 'n') {
     const numeric = typeof cell.v === 'number' ? cell.v : Number(cell.v);
     const isPercentFormat = typeof cell.z === 'string' && cell.z.includes('%');
     const resolved = isPercentFormat ? numeric * 100 : numeric;
-    return { raw: cell.w !== undefined ? String(cell.w) : String(cell.v), value: Number.isFinite(resolved) ? Math.round(resolved * 100) / 100 : NaN };
+    return { raw: cell.w !== undefined ? String(cell.w) : String(cell.v), value: Number.isFinite(resolved) ? resolved : NaN };
   }
   const text = String(cell.v).trim();
   if (text === '') return { raw: '', value: null };
   const parsed = Number(text);
-  return { raw: text, value: Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : NaN };
+  return { raw: text, value: Number.isFinite(parsed) ? parsed : NaN };
 }
 
 export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): BulkStyleImportSheetRow[] {
@@ -266,10 +286,15 @@ export interface BulkStyleImportCreateFields {
   licensor?: string | null;
   colour?: string | null;
   finalMrp: number;
-  // Always present (never undefined) on a create-only plan row: null means
-  // "no royalty supplied" (blank cell or the column entirely missing),
-  // exactly as if the field had never existed — never a rejection.
-  royaltyPercentage: number | null;
+  // Three states, mirroring hsnId's undefined-vs-null distinction below:
+  // undefined means "the Royalty % column is entirely absent from this
+  // workbook" — not specified, the key is left out of the object passed to
+  // createStyle (a no-op there, same as before this column existed) and
+  // never compared against an existing Style's stored value in
+  // existingStyleConflict. null means "the column is present but this
+  // row's cell is blank" — an explicit, comparable "no royalty". A number
+  // means a validated, already-rounded-to-2-decimals value.
+  royaltyPercentage?: number | null;
   seasonId: string;
   lmixNumber: string | null;
   // Absent (undefined) means "no HSN Code supplied" — the key is left out of
@@ -358,22 +383,25 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
       continue;
     }
 
-    // Blank (or the column missing entirely) is "not supplied" — never a
-    // rejection, resolved to null below. A non-blank value must be a finite
-    // number in 0-100 inclusive (a plain 7.5 cell and a genuinely Excel
-    // Percentage-formatted cell displaying 7.5% both arrive here already
-    // resolved to 7.5 by resolveRoyaltyPercentageCell — see parsing above).
-    let royaltyPercentage: number | null = null;
-    if (sheetRow.royaltyPercentageRaw !== '') {
+    // Royalty % has three states (see BulkStyleImportSheetRow's doc comment):
+    // undefined (column entirely absent from this workbook) stays
+    // undefined — "not specified", never asserted and never compared
+    // against an existing Style below. null (column present, cell blank)
+    // stays an explicit null. Anything else must be a finite RAW number in
+    // 0-100 inclusive, validated BEFORE rounding for storage — so e.g. a
+    // raw -0.001 or 100.001 is rejected even though its rounded form
+    // (-0/0 or 100.00) would otherwise appear in-range.
+    let royaltyPercentage: number | null | undefined = sheetRow.royaltyPercentage === undefined ? undefined : null;
+    if (sheetRow.royaltyPercentage !== undefined && sheetRow.royaltyPercentage !== null) {
       if (!Number.isFinite(sheetRow.royaltyPercentage)) {
         reject('INVALID_ROYALTY_PERCENTAGE', `"${sheetRow.royaltyPercentageRaw}" is not a valid Royalty %`);
         continue;
       }
-      if (sheetRow.royaltyPercentage! < 0 || sheetRow.royaltyPercentage! > 100) {
+      if (sheetRow.royaltyPercentage < 0 || sheetRow.royaltyPercentage > 100) {
         reject('INVALID_ROYALTY_PERCENTAGE', `Royalty % "${sheetRow.royaltyPercentageRaw}" must be between 0 and 100`);
         continue;
       }
-      royaltyPercentage = sheetRow.royaltyPercentage!;
+      royaltyPercentage = Math.round(sheetRow.royaltyPercentage * 100) / 100;
     }
 
     const matchingSeasons = seasons.filter((s) => norm(s.code) === norm(sheetRow.seasonCode) && (!sheetRow.financialYear || norm(s.financialYear.code) === norm(sheetRow.financialYear)));
@@ -581,10 +609,16 @@ async function existingStyleConflict(styleId: string, styleNumber: string, input
   if (Number(existing.finalMrp) !== input.finalMrp) changed.push('MRP');
   // Decimal-vs-number: compare via Number(), never the generic styleMetadataFields
   // string-coercion path above (`(existing[field] ?? '') !== (input[field] ?? '')`)
-  // which would stringify a Prisma.Decimal incorrectly. input.royaltyPercentage is
-  // always present (null means "not supplied"), so this is a straight comparison.
-  const existingRoyaltyPercentage = existing.royaltyPercentage === null ? null : Number(existing.royaltyPercentage);
-  if (existingRoyaltyPercentage !== input.royaltyPercentage) changed.push('Royalty %');
+  // which would stringify a Prisma.Decimal incorrectly. Only compared when the
+  // Royalty % column was actually present in this import (undefined means "not
+  // specified" — an old workbook without the column must never be flagged as
+  // conflicting just because an existing Style happens to have some stored
+  // royalty); a present-but-blank cell (null) IS compared, since that's an
+  // explicit, comparable "no royalty".
+  if (input.royaltyPercentage !== undefined) {
+    const existingRoyaltyPercentage = existing.royaltyPercentage === null ? null : Number(existing.royaltyPercentage);
+    if (existingRoyaltyPercentage !== input.royaltyPercentage) changed.push('Royalty %');
+  }
   if (existing.seasonId !== input.seasonId || (existing.lmixNumber ?? null) !== input.lmixNumber) changed.push('Season/LMIX');
   if (input.hsnId && existing.hsnId !== input.hsnId) changed.push('HSN');
   if (existing.styleSizes.length !== input.sizes.length || new Set(input.sizes.map(size => size.sizeId)).size !== input.sizes.length || input.sizes.some(size => !existing.styleSizes.some(current => current.sizeId === size.sizeId && current.status === 'ACTIVE' && (!size.barcode || current.barcode === size.barcode)))) changed.push('Sizes/barcodes');
