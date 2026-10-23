@@ -1,7 +1,8 @@
 import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 import { ERVE_PACKING_LIST_STATUS_LABELS } from '../shared/fulfillmentPdfLabels.js';
-import { distinctSizeColumns, groupLinesByStyle, withBusinessKeyIdentity, type SizeColumn } from '../../style-size-grouping.js';
+import { distinctSizeColumns, groupLinesByStyle, withSizeIdentity, type SizeColumn } from '../../style-size-grouping.js';
 import type { ErvePackingListDetail } from '../../types.js';
 
 export interface ErvePackingListDetailPdfMeta {
@@ -22,6 +23,8 @@ export interface ErvePackingListDetailStyleRow {
   styleNumber: string;
   styleName: string;
   values: Record<string, number | null>;
+  /** ISS-053: the Style's primary image, already resolved to a data URI by prepareErvePackingListDetailPdfImages — never fetched here. */
+  image?: PdfImageSource;
 }
 
 export interface ErvePackingListDetailCartonRow {
@@ -53,13 +56,15 @@ export interface ErvePackingListDetailPdfViewModel {
 }
 
 function toStyleRows(
-  lines: Array<{ styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>,
+  lines: Array<{ styleId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>,
+  images: Map<string, PdfImageSource>,
 ): ErvePackingListDetailStyleRow[] {
-  return groupLinesByStyle(lines.map(withBusinessKeyIdentity)).map((group) => ({
+  return groupLinesByStyle(lines.map(withSizeIdentity)).map((group) => ({
     styleId: group.styleId,
     styleNumber: group.styleNumber,
     styleName: group.styleName,
     values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+    image: images.get(group.styleId) ?? { placeholder: true },
   }));
 }
 
@@ -81,6 +86,8 @@ function toStyleRows(
 export function buildErvePackingListDetailViewModel(
   packingList: ErvePackingListDetail,
   meta: ErvePackingListDetailPdfMeta,
+  /** ISS-053: already-resolved Style primary images, keyed by Style UUID — see prepareErvePackingListDetailPdfImages. */
+  images: Map<string, PdfImageSource> = new Map(),
 ): ErvePackingListDetailPdfViewModel {
   const identityItems: PdfKeyValueItem[] = [
     { label: 'EIPL Number', value: packingList.ervePackingListNumber },
@@ -138,8 +145,8 @@ export function buildErvePackingListDetailViewModel(
       sizeLabel: line.sizeLabel,
       quantity: line.quantity,
     })),
-    sizeColumns: distinctSizeColumns(carton.lines.map(withBusinessKeyIdentity)),
-    styleRows: toStyleRows(carton.lines),
+    sizeColumns: distinctSizeColumns(carton.lines.map(withSizeIdentity)),
+    styleRows: toStyleRows(carton.lines, images),
   }));
 
   return {
@@ -152,8 +159,8 @@ export function buildErvePackingListDetailViewModel(
     cartons,
     totalCartonCount: packingList.cartonCount,
     totalQuantity: packingList.totalQuantity,
-    styleSizeSizeColumns: distinctSizeColumns(packingList.styleSizeSummary.map(withBusinessKeyIdentity)),
-    styleSizeSummaryRows: toStyleRows(packingList.styleSizeSummary),
+    styleSizeSizeColumns: distinctSizeColumns(packingList.styleSizeSummary.map(withSizeIdentity)),
+    styleSizeSummaryRows: toStyleRows(packingList.styleSizeSummary, images),
     dispatchReference: packingList.dispatch?.erveDispatchNumber ?? null,
   };
 }

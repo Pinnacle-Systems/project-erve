@@ -1,8 +1,15 @@
 import type { ErvePackingListDetail } from '../../types.js';
 import type { ErvePackingListDetailPdfMeta } from './buildErvePackingListDetailViewModel.js';
 import type { ErvePackingListDetailWorkerResponse } from './ervePackingListDetailWorkerTypes.js';
+import { prepareErvePackingListDetailPdfImages } from './prepareErvePackingListDetailPdfImages.js';
 
-/** One isolated worker per action. Only the final immutable Blob crosses back to the UI. */
+/**
+ * One isolated worker per action. Only the final immutable Blob crosses back to the UI. ISS-053:
+ * the worker is started immediately (unchanged construction-failure/cleanup behavior), but
+ * `postMessage` waits on the one authenticated step this module performs itself — resolving every
+ * distinct Style's primary image to a data URI — since the worker has no fetch/auth context of
+ * its own (mirrors prepareJobOrderDetailPdfData.ts's main-thread-only network access).
+ */
 export async function generateErvePackingListDetailPdfBlob(
   packingList: ErvePackingListDetail,
   meta: ErvePackingListDetailPdfMeta,
@@ -11,6 +18,7 @@ export async function generateErvePackingListDetailPdfBlob(
     type: 'module',
   });
   try {
+    const images = await prepareErvePackingListDetailPdfImages(packingList);
     return await new Promise<Blob>((resolve, reject) => {
       worker.onmessage = (event: MessageEvent<ErvePackingListDetailWorkerResponse | null>) => {
         const response = event.data;
@@ -33,7 +41,7 @@ export async function generateErvePackingListDetailPdfBlob(
       };
       worker.onmessageerror = () =>
         reject(new Error('Packing list PDF worker response could not be read.'));
-      worker.postMessage({ packingList, meta });
+      worker.postMessage({ packingList, meta, images });
     });
   } finally {
     worker.onmessage = null;

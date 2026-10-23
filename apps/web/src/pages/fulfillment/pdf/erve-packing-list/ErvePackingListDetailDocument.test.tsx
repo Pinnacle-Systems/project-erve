@@ -1,7 +1,9 @@
 import { pdf } from '@react-pdf/renderer';
+import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { describe, expect, it } from 'vitest';
 import { cartonHeading, ErvePackingListDetailDocument } from './ErvePackingListDetailDocument.js';
 import type { ErvePackingListDetailCartonRow, ErvePackingListDetailPdfViewModel } from './buildErvePackingListDetailViewModel.js';
+import { createSolidColorPngDataUri } from '../../../../test-support/solid-color-png.js';
 
 function makeCarton(overrides: Partial<ErvePackingListDetailCartonRow> = {}): ErvePackingListDetailCartonRow {
   return {
@@ -131,6 +133,74 @@ describe('ErvePackingListDetailDocument', () => {
     it('never prints an EISO or EIFD-shaped reference, regardless of input', () => {
       const heading = cartonHeading(makeCarton());
       expect(heading).not.toMatch(/EISO|EIFD/);
+    });
+  });
+
+  // ISS-053: buildErvePackingListDetailViewModel already resolves `row.image`, and
+  // PdfStyleSizeMatrix already renders it via PdfThumbnail — this proves the full chain renders a
+  // real, aspect-ratio-correct thumbnail per distinct Style, both in a carton and in the Style/Size
+  // Summary, and that a missing image paints no image at all rather than a broken reference.
+  describe('ISS-053 Style thumbnails', () => {
+    it('renders each Style\'s own distinct, aspect-ratio-correct thumbnail in a carton and the summary, with no image at all for a Style with none uploaded', async () => {
+      const portrait = { dataUri: createSolidColorPngDataUri(100, 160) };
+      const landscape = { dataUri: createSolidColorPngDataUri(200, 90) };
+      const sizeColumns = [{ sizeId: 'M', sizeCode: 'M' }];
+      const styleRows = [
+        { styleId: 'ST-1', styleNumber: 'ST-1', styleName: 'Shirt', values: { M: 10 }, image: portrait },
+        { styleId: 'ST-2', styleNumber: 'ST-2', styleName: 'Pants', values: { M: 10 }, image: landscape },
+        { styleId: 'ST-3', styleNumber: 'ST-3', styleName: 'Socks', values: { M: 10 }, image: { placeholder: true as const } },
+      ];
+      const viewModel = makeViewModel({
+        cartons: [makeCarton({ sizeColumns, styleRows, totalQuantity: 30 })],
+        styleSizeSizeColumns: sizeColumns,
+        styleSizeSummaryRows: styleRows,
+      });
+      const blob = await pdf(<ErvePackingListDetailDocument viewModel={viewModel} />).toBlob();
+      const task = getDocument({ data: new Uint8Array(await blob.arrayBuffer()), useSystemFonts: true });
+      try {
+        const document = await task.promise;
+        const page = await document.getPage(1);
+        const ops = await page.getOperatorList();
+        // The shared PdfHeader also paints the ERVE logo (ISS-018) — excluded by its own known
+        // natural pixel dimensions, since this test is only about the Style thumbnails.
+        const paintIndices = ops.fnArray.flatMap((fn, i) => {
+          if (fn !== OPS.paintImageXObject) return [];
+          const [, naturalWidth, naturalHeight] = ops.argsArray[i] as [string, number, number];
+          return naturalWidth === 1117 && naturalHeight === 153 ? [] : [i];
+        });
+        // 2 Styles with real images x 2 tables (carton + summary) = 4. ST-3's placeholder paints
+        // nothing, in either table.
+        expect(paintIndices).toHaveLength(4);
+
+        const rendered = paintIndices.map((paintIndex) => {
+          let transformIndex = -1;
+          for (let i = paintIndex - 1; i >= 0; i -= 1) {
+            if (ops.fnArray[i] === OPS.transform) {
+              transformIndex = i;
+              break;
+            }
+          }
+          const matrix = ops.argsArray[transformIndex] as number[];
+          return { width: Math.abs(matrix[0]!), height: Math.abs(matrix[3]!) };
+        });
+
+        const box = 20; // PdfStyleSizeMatrix's own fixed thumbnail box (styles.ts: width/height 20).
+        for (const [index, image] of rendered.entries()) {
+          // Carton table first, then the Style/Size Summary — portrait (ST-1), then landscape (ST-2).
+          const isPortrait = index % 2 === 0;
+          if (isPortrait) {
+            expect(image.height).toBeCloseTo(box, 0);
+            expect(image.width).toBeCloseTo(box * (100 / 160), 0);
+          } else {
+            expect(image.width).toBeCloseTo(box, 0);
+            expect(image.height).toBeCloseTo(box * (90 / 200), 0);
+          }
+          expect(image.width).toBeLessThanOrEqual(box + 0.5);
+          expect(image.height).toBeLessThanOrEqual(box + 0.5);
+        }
+      } finally {
+        await task.destroy();
+      }
     });
   });
 });

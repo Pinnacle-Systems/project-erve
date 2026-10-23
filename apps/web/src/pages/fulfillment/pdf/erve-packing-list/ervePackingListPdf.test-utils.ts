@@ -1,17 +1,24 @@
-import type { ErvePackingListDetail } from '../../types.js';
+import type { ErvePackingListDetail, StylePrimaryImageView } from '../../types.js';
 
-/** Deterministic, synthetic packed quantities, distinct per carton/style/size. */
+/**
+ * Deterministic, synthetic packed quantities, distinct per carton/style/size. `styleImages`
+ * (ISS-053) optionally supplies a primary image per style index — omitted styles resolve to
+ * `null`, matching a Style with no uploaded image.
+ */
 export function packingListFixture(
   count: number,
   styles: number,
   sizes: number,
+  styleImages: ReadonlyArray<StylePrimaryImageView | null> = [],
 ): ErvePackingListDetail {
   const cartons = Array.from({ length: count }, (_, c) => {
     const lines = Array.from({ length: styles }, (_, s) =>
       Array.from({ length: sizes }, (_, z) => ({
         saleOrderLineId: `line-${s}-${z}`,
+        styleId: `style-${s}`,
         styleNumber: `ST-${String(s + 1).padStart(3, '0')}`,
         styleName: `Style ${s + 1}`,
+        primaryImage: styleImages[s] ?? null,
         sizeCode: `SZ${z + 1}`,
         sizeLabel: `Size ${z + 1}`,
         quantity: (c + 1) * 1000 + s * sizes + z + 1,

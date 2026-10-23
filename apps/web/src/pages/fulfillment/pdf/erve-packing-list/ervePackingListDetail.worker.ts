@@ -12,6 +12,7 @@ self.addEventListener(
       const blob = await renderErvePackingListDetailPdfBlob(
         event.data.packingList,
         event.data.meta,
+        event.data.images,
       );
       self.postMessage({ type: 'success', blob } satisfies ErvePackingListDetailWorkerResponse);
     } catch (error) {

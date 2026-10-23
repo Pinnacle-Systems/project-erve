@@ -16,7 +16,7 @@ import { useAuth } from '../../auth/AuthContext.js';
 import { canMutateErveDispatches } from '../../auth/permissions.js';
 import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
 import type { StyleSizeGridRow } from '../../components/style-size-grid/types.js';
-import { distinctSizeColumns, groupLinesByStyle, withBusinessKeyIdentity } from './style-size-grouping.js';
+import { distinctSizeColumns, groupLinesByStyle, withSizeIdentity } from './style-size-grouping.js';
 import type {
   EligibleErveCartonView,
   ErvePackingListCartonView,
@@ -24,23 +24,29 @@ import type {
   ErvePackingListStyleSizeSummaryRow,
 } from './types.js';
 
-// ISS-023 Phase 3: this carton's own contents as one Style row per Style, with Sizes as columns,
-// instead of one flat "Style/Size: qty" string — mirrors the already-standardized Factory Packing
-// List / Packing Audit carton contents (ISS-023 Phase 1/2).
+// ISS-023 Phase 3 / ISS-053: this carton's own contents as one Style row per Style, with Sizes as
+// columns and each Style's own authorized thumbnail — mirrors the already-standardized Factory
+// Packing List / Packing Audit carton contents (ISS-023 Phase 1/2, ISS-035's primaryImageByStyle
+// pattern in PackingListPage.tsx). `styleId` is already the real Style UUID (ISS-053) — never
+// substitute styleNumber, which would break StyleThumbnailCell's authenticated image fetch.
 function cartonStyleSizeRows(carton: ErvePackingListCartonView): StyleSizeGridRow[] {
-  return groupLinesByStyle(carton.lines.map(withBusinessKeyIdentity)).map((group) => ({
+  const primaryImageByStyle = new Map(carton.lines.map((line) => [line.styleId, line.primaryImage] as const));
+  return groupLinesByStyle(carton.lines.map(withSizeIdentity)).map((group) => ({
     styleId: group.styleId,
     styleNumber: group.styleNumber,
     styleName: group.styleName,
+    primaryImage: primaryImageByStyle.get(group.styleId) ?? null,
     values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
   }));
 }
 
 function styleSizeSummaryRows(rows: ErvePackingListStyleSizeSummaryRow[]): StyleSizeGridRow[] {
-  return groupLinesByStyle(rows.map(withBusinessKeyIdentity)).map((group) => ({
+  const primaryImageByStyle = new Map(rows.map((row) => [row.styleId, row.primaryImage] as const));
+  return groupLinesByStyle(rows.map(withSizeIdentity)).map((group) => ({
     styleId: group.styleId,
     styleNumber: group.styleNumber,
     styleName: group.styleName,
+    primaryImage: primaryImageByStyle.get(group.styleId) ?? null,
     values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
   }));
 }
@@ -279,7 +285,7 @@ export function ErvePackingListDetailPage() {
                   <div className="mt-1 text-sm text-muted-foreground">Total Qty: {carton.totalQuantity.toLocaleString()}</div>
                   <div className="mt-2">
                     <StyleSizeGrid
-                      columns={distinctSizeColumns(carton.lines.map(withBusinessKeyIdentity))}
+                      columns={distinctSizeColumns(carton.lines.map(withSizeIdentity))}
                       rows={cartonStyleSizeRows(carton)}
                       variant="readOnly"
                     />
@@ -293,7 +299,7 @@ export function ErvePackingListDetailPage() {
         {packingList.styleSizeSummary.length > 0 && (
           <Panel title="Style / Size Summary">
             <StyleSizeGrid
-              columns={distinctSizeColumns(packingList.styleSizeSummary.map(withBusinessKeyIdentity))}
+              columns={distinctSizeColumns(packingList.styleSizeSummary.map(withSizeIdentity))}
               rows={styleSizeSummaryRows(packingList.styleSizeSummary)}
               variant="readOnly"
             />

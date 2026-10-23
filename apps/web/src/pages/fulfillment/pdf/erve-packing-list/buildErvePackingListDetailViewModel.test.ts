@@ -50,10 +50,10 @@ function makePackingList(overrides: Partial<ErvePackingListDetail> = {}): ErvePa
         packageDetails: 'Standard box',
         weight: '5kg',
         totalQuantity: 20,
-        lines: [{ saleOrderLineId: 'sol-1', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 }],
+        lines: [{ saleOrderLineId: 'sol-1', styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 }],
       },
     ],
-    styleSizeSummary: [{ styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 }],
+    styleSizeSummary: [{ styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 }],
     ...overrides,
   };
 }
@@ -61,8 +61,8 @@ function makePackingList(overrides: Partial<ErvePackingListDetail> = {}): ErvePa
 it('orders actual carton and consolidated PDF matrices by authoritative ranks through business-key adapters', () => {
   const packingList = makePackingList();
   const lines = [
-    { saleOrderLineId: 'medium', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 4, quantity: 13 },
-    { saleOrderLineId: 'small', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 0, quantity: 7 },
+    { saleOrderLineId: 'medium', styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 4, quantity: 13 },
+    { saleOrderLineId: 'small', styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 0, quantity: 7 },
   ];
   packingList.cartons[0]!.lines = lines;
   packingList.styleSizeSummary = lines;
@@ -111,7 +111,7 @@ describe('buildErvePackingListDetailViewModel', () => {
           packageDetails: null,
           weight: null,
           totalQuantity: 20,
-          lines: [{ saleOrderLineId: 'sol-1', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 }],
+          lines: [{ saleOrderLineId: 'sol-1', styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 20 }],
         },
         {
           id: 'carton-2',
@@ -123,7 +123,7 @@ describe('buildErvePackingListDetailViewModel', () => {
           packageDetails: null,
           weight: null,
           totalQuantity: 20,
-          lines: [{ saleOrderLineId: 'sol-2', styleNumber: 'ST-2', styleName: 'Pants', sizeCode: 'L', sizeLabel: 'Large', quantity: 20 }],
+          lines: [{ saleOrderLineId: 'sol-2', styleId: 'style-ST-2', styleNumber: 'ST-2', styleName: 'Pants', primaryImage: null, sizeCode: 'L', sizeLabel: 'Large', quantity: 20 }],
         },
       ],
     });
@@ -172,8 +172,8 @@ describe('buildErvePackingListDetailViewModel', () => {
             weight: null,
             totalQuantity: 7,
             lines: [
-              { saleOrderLineId: 'sol-1', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'S', sizeLabel: 'Small', quantity: 3 },
-              { saleOrderLineId: 'sol-2', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4 },
+              { saleOrderLineId: 'sol-1', styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'S', sizeLabel: 'Small', quantity: 3 },
+              { saleOrderLineId: 'sol-2', styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 4 },
             ],
           },
         ],
@@ -200,8 +200,8 @@ describe('buildErvePackingListDetailViewModel', () => {
             weight: null,
             totalQuantity: 10,
             lines: [
-              { saleOrderLineId: 'sol-1', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 6 },
-              { saleOrderLineId: 'sol-2', styleNumber: 'ST-2', styleName: 'Pants', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4 },
+              { saleOrderLineId: 'sol-1', styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 6 },
+              { saleOrderLineId: 'sol-2', styleId: 'style-ST-2', styleNumber: 'ST-2', styleName: 'Pants', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 4 },
             ],
           },
         ],
@@ -232,7 +232,7 @@ describe('buildErvePackingListDetailViewModel', () => {
             packageDetails: null,
             weight: null,
             totalQuantity: 6,
-            lines: [{ saleOrderLineId: 'sol-1', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 6 }],
+            lines: [{ saleOrderLineId: 'sol-1', styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 6 }],
           },
           {
             id: 'carton-2',
@@ -244,10 +244,10 @@ describe('buildErvePackingListDetailViewModel', () => {
             packageDetails: null,
             weight: null,
             totalQuantity: 8,
-            lines: [{ saleOrderLineId: 'sol-2', styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 8 }],
+            lines: [{ saleOrderLineId: 'sol-2', styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 8 }],
           },
         ],
-        styleSizeSummary: [{ styleNumber: 'ST-1', styleName: 'Shirt', sizeCode: 'M', sizeLabel: 'Medium', quantity: 14 }],
+        styleSizeSummary: [{ styleId: 'style-ST-1', styleNumber: 'ST-1', styleName: 'Shirt', primaryImage: null, sizeCode: 'M', sizeLabel: 'Medium', quantity: 14 }],
       });
 
       const vm = buildErvePackingListDetailViewModel(packingList, { generatedAt: '2026-07-01T10:00:00Z' });

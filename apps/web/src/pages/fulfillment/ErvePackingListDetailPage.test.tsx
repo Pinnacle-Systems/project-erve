@@ -89,8 +89,10 @@ function buildPackingList(overrides: Partial<ErvePackingListDetail> = {}): ErveP
         lines: [
           {
             saleOrderLineId: 'line-1',
+            styleId: 'style-1',
             styleNumber: 'ST-001',
             styleName: 'Classic Tee',
+            primaryImage: null,
             sizeCode: 'M',
             sizeLabel: 'Medium',
             quantity: 10,
