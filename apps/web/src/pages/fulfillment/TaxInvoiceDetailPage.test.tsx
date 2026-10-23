@@ -509,3 +509,17 @@ describe('PR1 recovery failure and issued-state safety', () => {
     },
   );
 });
+
+it('retains source review and disables override after a failed financial refresh', async () => {
+  await render(taxInvoiceFixture());
+  vi.mocked(apiClient.get).mockRejectedValue(new Error('Review temporarily unavailable'));
+  const patch = vi.spyOn(apiClient, 'patch');
+  await act(async () => button('Finalize invoice')!.click());
+  await act(async () => button('Confirm finalization')!.click());
+  await vi.waitFor(() => expect(text()).toContain('Unable to refresh Tax Invoice'));
+  await act(async () => button('Source lines (1)')!.click());
+  expect(text()).toContain('line-1');
+  expect(button('Override')!.disabled).toBe(true);
+  expect(button('Finalize invoice')!.disabled).toBe(true);
+  expect(patch).not.toHaveBeenCalled();
+});

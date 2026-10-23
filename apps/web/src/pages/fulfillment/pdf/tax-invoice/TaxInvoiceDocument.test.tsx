@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { cloneElement } from 'react';
 import { pdf } from '@react-pdf/renderer';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PdfDocument } from '../../../../lib/pdf/core/PdfDocument.js';
 import { describe, expect, it } from 'vitest';
 import { TaxInvoiceDocument } from './TaxInvoiceDocument.js';
@@ -45,27 +46,36 @@ async function render(invoice = issuedTaxInvoiceFixture(), imageDataUri?: string
   };
 }
 describe('issued Tax Invoice PDF document', () => {
-  it('keeps each financial header with opening descriptive content on the laid-out page', async () => {
-    const image = await fs.readFile(
-      new URL('../../../../../public/erve-logo.png', import.meta.url),
-    );
-    const result = await render(
-      iss032TaxInvoiceFixture(14),
-      `data:image/png;base64,${image.toString('base64')}`,
-    );
-    let headers = 0;
-    for (const page of result.layout!.children!) {
-      for (const [index, child] of page.children!.entries()) {
-        if (!nodes(child).some((node) => /^(SS26-|SYNTHETIC-STYLE-)/.test(node.value ?? '')))
-          continue;
-        headers++;
-        const next = page.children![index + 1];
-        expect(
-          next && nodes(next).some((node) => node.value === 'Synthetic cotton printed T-shirt'),
-        ).toBe(true);
+  it('keeps each financial entry with its own Style name on the laid-out page', async () => {
+    const invoice = iss032TaxInvoiceFixture(14);
+    for (const line of invoice.documentSnapshot!.lines)
+      line.style.styleName = `Opening name for Style ${line.style.styleNumber === 'SS26-14026001' ? 0 : line.style.styleNumber.split('-').at(-1)}`;
+    const result = await render(invoice);
+    const task = getDocument({
+      data: new Uint8Array(await result.blob.arrayBuffer()),
+      useSystemFonts: true,
+    });
+    try {
+      const document = await task.promise;
+      let headers = 0;
+      for (let number = 1; number <= document.numPages; number++) {
+        const content = await (await document.getPage(number)).getTextContent();
+        const text = content.items.map((item) => ('str' in item ? item.str : '')).join(' ');
+        for (const code of [
+          'SS26-14026001',
+          ...Array.from({ length: 13 }, (_, index) => `SYNTHETIC-STYLE-${index + 1}`),
+        ]) {
+          if (!content.items.some((item) => 'str' in item && item.str === code)) continue;
+          headers++;
+          expect(text).toContain(
+            `Opening name for Style ${code === 'SS26-14026001' ? 0 : code.split('-').at(-1)}`,
+          );
+        }
       }
+      expect(headers).toBe(14);
+    } finally {
+      await task.destroy();
     }
-    expect(headers).toBe(14);
   });
   it('keeps the six age sizes and complete Style code in one logical financial entry', async () => {
     const invoice = iss032TaxInvoiceFixture();
@@ -106,13 +116,14 @@ describe('issued Tax Invoice PDF document', () => {
     const result = await render(invoice);
     for (let index = 1; index <= 9; index++) expect(result.text).toContain(`TEST-${index}`);
   });
-  it('flows a description taller than a printable page without artificial financial entries', async () => {
+  it('uses the concise Style name instead of a page-tall description without artificial financial entries', async () => {
     const invoice = iss032VisualFixtures().find(
       (fixture) => fixture.name === 'long-description',
     )!.invoice;
     const result = await render(invoice);
-    expect(result.bytes.match(/\/Type \/Page\b/g)!.length).toBeGreaterThan(1);
-    expect(result.text).toContain('DESCRIPTION END MARKER');
+    expect(result.bytes.match(/\/Type \/Page\b/g)).toHaveLength(1);
+    expect(result.text).not.toContain('DESCRIPTION END MARKER');
+    expect(result.text).toContain('Synthetic cotton printed T-shirt');
     expect(result.text).not.toContain('continued');
     expect(result.text.match(/SS26-14026001/g)).toHaveLength(1);
     expect(
