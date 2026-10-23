@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  # Read exact-commit CI workflow runs before building production artifacts.
+  actions: read
 
 # Only one production deployment may run at a time. Deliberately NOT
 # cancel-in-progress: a deployment that has already started changing
@@ -22,8 +24,28 @@ env:
   DATABASE_URL: postgresql://erve_ci:erve_ci@127.0.0.1:5432/erve_ci
 
 jobs:
+  verify-main-ci:
+    name: Verify exact commit passed main CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact deployment commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Require completed successful main push CI for this SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/deployment/verify-main-ci-success.mjs
+
   build-and-verify:
-    name: Build, test, and package
+    name: Build, package, and smoke-test
+    needs: verify-main-ci
     runs-on: ubuntu-latest
     # Same Postgres major version policy as ci.yml — keep these in sync,
     # and re-check against `SHOW server_version;` on the VPS periodically.
@@ -95,12 +117,10 @@ jobs:
       - name: Run @erve/client tests
         run: pnpm --filter @erve/client test
 
-      # Applies the committed migration history to a blank disposable
-      # database, proving a fresh Postgres instance can reach the expected
-      # schema, then seeds and runs the API's own test suite against it.
-      # This container is destroyed with the job — it is never the
-      # production database and this workflow never receives production
-      # database credentials.
+      # Keep migration replay and seeding on a throwaway DB for the
+      # packaged artifact's real DB-backed smoke tests. The complete API
+      # suite has already passed in the exact-commit main CI gate above.
+      # No production database connection is available to this build job.
       - name: Apply database migrations (disposable CI database)
         env:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
@@ -109,26 +129,6 @@ jobs:
         run: pnpm --filter @erve/api prisma:migrate:deploy
 
       - name: Seed reference data (disposable CI database)
-        env:
-          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
-          JWT_ACCESS_SECRET: ci-only-access-token-secret-value-not-used-anywhere-else
-          JWT_REFRESH_SECRET: ci-only-refresh-token-secret-value-not-used-anywhere-else
-        run: pnpm --filter @erve/api prisma:seed
-
-      - name: Run API tests (disposable CI database)
-        env:
-          JWT_ACCESS_SECRET: ci-only-access-token-secret-value-not-used-anywhere-else
-          JWT_REFRESH_SECRET: ci-only-refresh-token-secret-value-not-used-anywhere-else
-          NODE_ENV: test
-        run: pnpm --filter @erve/api test
-
-      # The API test suite truncates users/styles/etc. between every test
-      # (see apps/api/src/test/helpers.ts resetDatabase), which wipes out
-      # the seeded admin user and reference data seeded above. Re-seed
-      # (idempotent — every seed step upserts or no-ops if already present)
-      # so the packaged-artifact smoke test below has known, real data and
-      # a known login to exercise.
-      - name: Re-seed reference data before packaging
         env:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
           JWT_ACCESS_SECRET: ci-only-access-token-secret-value-not-used-anywhere-else
@@ -155,7 +155,7 @@ jobs:
       # its own installed node_modules, not the monorepo's — no monorepo
       # TypeScript source and no workspace package resolution is available
       # or used here) against the same disposable database used for API
-      # tests above, and proves it actually serves real, DB-backed traffic:
+      # reference seed data above, and proves it serves real DB-backed traffic:
       # Prisma connectivity, a real query, the bundled @erve/shared and
       # @erve/types runtime code, and production config loading via the
       # app's own dotenv/config mechanism. Testing the extracted archive
