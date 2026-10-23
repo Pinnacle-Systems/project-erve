@@ -320,6 +320,14 @@ describe('job orders API', () => {
 
     // Gallery works for QA, but no unauthorised Factory or Distributor gains access.
     await request(app).get(contentPath).set('Authorization', `Bearer ${qa.token}`).expect(200);
+    const qaMetadata = await request(app).get(listPath).set('Authorization', `Bearer ${qa.token}`).expect(200);
+    expect(qaMetadata.body.data[0].id).toBe(image.body.data.id);
+    await request(app).get(`/styles/${graph.style.id}`).set('Authorization', `Bearer ${qa.token}`).expect(403);
+    await request(app).get('/styles').set('Authorization', `Bearer ${qa.token}`).expect(403);
+    await request(app).get(`${listPath}/${createId()}/content`).set('Authorization', `Bearer ${qa.token}`).expect(404);
+    await request(app).get(`${listPath}/${createId()}/content`).set('Authorization', `Bearer ${factory.token}`).expect(404);
+    await request(app).get(contentPath).expect(401);
+    await request(app).get(listPath).expect(401);
     await request(app).get(contentPath).set('Authorization', `Bearer ${foreignFactory.token}`).expect(403);
     await request(app).get(listPath).set('Authorization', `Bearer ${foreignFactory.token}`).expect(403);
     await request(app).get(contentPath).set('Authorization', `Bearer ${distributor.token}`).expect(403);

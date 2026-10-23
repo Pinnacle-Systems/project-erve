@@ -250,35 +250,150 @@ try {
     body: imageForm,
   });
   assert.equal(uploaded.status, 201, 'Synthetic primary Style image uploads');
-  await visit(fixtures.prepared);
-  await driver.waitFor(`document.querySelector('.job-order-header img')?.naturalWidth === 512`);
-  await driver.evaluate(
-    `document.querySelector('.job-order-header [aria-label="View style image"]').focus()`,
-  );
-  await driver.command('Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: 'Enter',
-    code: 'Enter',
-    text: '\r',
-    unmodifiedText: '\r',
-    windowsVirtualKeyCode: 13,
-  });
-  await driver.command('Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: 'Enter',
-    windowsVirtualKeyCode: 13,
-  });
-  await driver.waitFor(
-    `[...document.querySelectorAll('[role=dialog] img')].some(img => img.naturalWidth === 512)`,
-  );
-  await driver.captureEvidence({
-    caseId: 'ISS041',
-    step: 'style-viewer',
-    expected: 'authenticated original 512px synthetic image',
-    observed: 'opened from keyboard by assigned Factory User',
-  });
-  await driver.evaluate(`document.querySelector('[aria-label="Close viewer"]').click()`);
-  await driver.waitFor(`!document.querySelector('[role=dialog]')`);
+  for (const role of ['FACTORY_USER', 'QA_USER']) {
+    await visit(fixtures.prepared, role);
+    await driver.waitFor(`document.querySelector('.job-order-header img')?.naturalWidth === 512`);
+    await driver.evaluate(
+      `document.querySelector('.job-order-header [aria-label="View style image"]').focus()`,
+    );
+    await driver.command('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      text: '\r',
+      unmodifiedText: '\r',
+      windowsVirtualKeyCode: 13,
+    });
+    await driver.command('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Enter',
+      windowsVirtualKeyCode: 13,
+    });
+    await driver.waitFor(
+      `[...document.querySelectorAll('[role=dialog] img')].some(img => img.naturalWidth === 512)`,
+    );
+    await driver.captureEvidence({
+      caseId: 'ISS002',
+      step: `style-viewer-${role}`,
+      expected: 'authenticated original 512px synthetic image',
+      observed: `opened from keyboard by authorized ${role}`,
+    });
+    await driver.evaluate(`document.querySelector('[aria-label="Close viewer"]').click()`);
+    await driver.waitFor(`!document.querySelector('[role=dialog]')`);
+  }
+  // The same protected endpoints serve thumbnails and originals. UI visibility
+  // never substitutes for authorization of a direct request.
+  const image = (await uploaded.json()).data;
+  const imagePaths = [
+    `/styles/${fixtures.styleId}/images`,
+    `/styles/${fixtures.styleId}/images/${image.id}/content`,
+  ];
+  for (const path of imagePaths) {
+    const denied = await fetch(`${apiUrl}${path}`, {
+      headers: { Authorization: `Bearer ${fixtures.unauthorized.token}` },
+    });
+    assert.equal(denied.status, 403, 'Other Factory cannot request protected Style media directly');
+    assert.equal(
+      (await fetch(`${apiUrl}${path}`)).status,
+      401,
+      'Unauthenticated image access is denied',
+    );
+  }
+  for (const role of ['FACTORY_USER', 'QA_USER']) {
+    assert.equal(
+      (
+        await fetch(`${apiUrl}/styles/${fixtures.styleId}`, {
+          headers: { Authorization: `Bearer ${fixtures.actors[role].token}` },
+        })
+      ).status,
+      403,
+      'Image access does not grant Style Master access',
+    );
+  }
+  for (const width of [1440, 390]) {
+    await driver.viewport(width, 1000);
+    await visit(fixtures.actions.preproduction, 'QA_USER');
+    await driver.assert(
+      'ISS005',
+      `PP and PPM are parallel at ${width}px`,
+      `['Start PP Sample', 'Start PPM'].every(label => [...document.querySelectorAll('[aria-label="Action Required"] button')].some(button => button.textContent === label))`,
+    );
+    await visit(fixtures.actions.preproduction, 'FACTORY_USER');
+    await driver.assert(
+      'ISS005',
+      'both pre-production gates block factory start',
+      `!document.querySelector('[aria-label="Action Required"]')`,
+    );
+    await visit(fixtures.actions.cutting, 'FACTORY_USER');
+    await driver.assert(
+      'ISS005',
+      'later gate does not hide eligible Cutting',
+      `document.querySelector('[aria-label="Action Required"]').textContent.includes('Start Cutting')`,
+    );
+    await driver.evaluate(
+      `[...document.querySelectorAll('[aria-label="Action Required"] button')].find(b => b.textContent === 'Start Cutting').focus()`,
+    );
+    await driver.command('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      text: '\r',
+      unmodifiedText: '\r',
+      windowsVirtualKeyCode: 13,
+    });
+    await driver.command('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13,
+    });
+    await driver.waitFor(
+      `location.search.includes('tab=production') && document.querySelector('[role="tabpanel"][data-state="active"]')?.textContent.includes('Current Stage: Cutting')`,
+    );
+    await driver.assert(
+      'ISS005',
+      'responsive action navigation does not overflow',
+      'document.documentElement.scrollWidth <= innerWidth + 1',
+    );
+    for (const [order, allowed] of [
+      [fixtures.actions.inlineFail, false],
+      [fixtures.actions.inlinePass, true],
+    ]) {
+      await visit(order, 'FACTORY_USER');
+      await driver.assert(
+        'ISS005',
+        `effective Inline PASS controls Sewing completion: ${allowed}`,
+        `[...document.querySelectorAll('[aria-label="Action Required"] button')].some(b => b.textContent === 'Complete Sewing') === ${allowed}`,
+      );
+    }
+    await visit(fixtures.prepared, 'QA_USER');
+    await driver.assert(
+      'ISS005',
+      'no Final batch action without prepared quantity',
+      `!document.querySelector('[aria-label="Action Required"]')`,
+    );
+    await visit(fixtures.actions.qaReady, 'QA_USER');
+    await driver.assert(
+      'ISS005',
+      'Final QA is available before production completes',
+      `document.querySelector('[aria-label="Action Required"]')?.textContent.includes('Start Final Inspection')`,
+    );
+    await driver.clickButton('Start Final Inspection');
+    await driver.waitFor(`location.search.includes('tab=quality')`);
+    await driver.captureEvidence({
+      caseId: 'ISS005',
+      step: `qa-navigation-${width}`,
+      expected: 'existing Quality tab with prepared Final batch work',
+      observed: 'role-scoped navigation at desktop/mobile width',
+    });
+    await visit(fixtures.actions.cutting, 'SENIOR_MANAGEMENT');
+    await driver.assert(
+      'ISS005',
+      'read-only role receives no action summary',
+      `!document.querySelector('[aria-label="Action Required"]')`,
+    );
+  }
+  await driver.viewport(1280, 1000);
   // Persisted snapshots, including explicitly inconsistent legacy evidence.
   await visit(fixtures.missing, 'MERCHANDISER');
   await driver.assert(
