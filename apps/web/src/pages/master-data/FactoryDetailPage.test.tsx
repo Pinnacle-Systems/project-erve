@@ -229,6 +229,89 @@ describe('FactoryDetailPage — Mapped Factory Users inline creation (DEMO-015)'
     await act(async () => complete({ data: { data: { factories: [] } } }));
     expect(post).not.toHaveBeenCalled();
   });
+  it('closes a pending reassignment confirmation when switching to an already-cached different factory', async () => {
+    // A still-open confirmation dialog must not survive an in-place switch
+    // to a different (already-cached) factory — otherwise clicking Confirm
+    // would reassign the originally-selected worker into whichever factory
+    // is current, using a description that already looks outdated.
+    const factoryA = makeFactory({ id: 'factory-1', name: 'Acme Factory' });
+    const factoryB = makeFactory({ id: 'factory-2', name: 'Other Factory', code: 'FAC-2' });
+    mockAuth('ADMIN');
+    const post = vi.spyOn(apiClient, 'post');
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === `/factories/${factoryA.id}`) return { data: { data: factoryA } };
+      if (url === `/factories/${factoryB.id}`) return { data: { data: factoryB } };
+      if (url === `/factories/${factoryA.id}/users` || url === `/factories/${factoryB.id}/users`) return { data: { data: [] } };
+      if (url === `/factories/${factoryA.id}/user-options`) return { data: { data: [{ id: 'worker', name: 'Factory Worker', email: 'worker@test.local' }] } };
+      if (url === '/users/worker') return { data: { data: { factories: [{ id: 'elsewhere', name: 'Elsewhere Factory' }] } } };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    function Harness() {
+      const [destination, setDestination] = useState(factoryB.id);
+      return (
+        <MemoryRouter initialEntries={[`/master-data/factories/${factoryA.id}`]}>
+          <NavSwitcher destination={destination} setDestination={setDestination} other={factoryA.id} otherB={factoryB.id} />
+          <Routes>
+            <Route path="/master-data/factories/:id" element={<FactoryDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+    }
+    function NavSwitcher({
+      destination,
+      setDestination,
+      other,
+      otherB,
+    }: {
+      destination: string;
+      setDestination: (id: string) => void;
+      other: string;
+      otherB: string;
+    }) {
+      const navigate = useNavigate();
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            navigate(`/master-data/factories/${destination}`);
+            setDestination(destination === otherB ? other : otherB);
+          }}
+        >
+          Go to other factory
+        </button>
+      );
+    }
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <Harness />
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => { await flushMicrotasks(); });
+    await waitForLoaded();
+    const clickNav = async () => {
+      const navButton = Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === 'Go to other factory',
+      ) as HTMLButtonElement;
+      await act(async () => navButton.click());
+      await waitForLoaded();
+    };
+    // Warm the cache for both factories so a later switch shows no loading
+    // state (and therefore does not unmount MappedUsers).
+    await clickNav();
+    await clickNav();
+    await chooseWorker();
+    await submitAssignment();
+    await waitFor(() => Boolean(document.querySelector('[role="dialog"]')));
+    await clickNav();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    const confirmButton = Array.from(document.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Confirm',
+    );
+    expect(confirmButton).toBeUndefined();
+    expect(post).not.toHaveBeenCalled();
+  });
   it('assigns an unmapped user directly, but never reassigns a user already at this factory', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} });
     await renderPageWithRole(makeFactory(), 'ADMIN', []);

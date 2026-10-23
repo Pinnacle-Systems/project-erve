@@ -32,7 +32,15 @@ function errorMessage(error: unknown, fallback: string) {
 // action here either: revoking factory access is done from the user's own
 // detail page by removing the FACTORY_USER role, which the backend takes
 // the mapping down with atomically.
+// Keyed by factory.id so this never carries state (a pending lookup, an
+// open reassignment confirmation, a selection) across an in-place
+// navigation to a different, already-cached factory — the :id route does
+// not otherwise unmount this panel when the destination's data is cached.
 function MappedUsers({ factory }: { factory: Factory }) {
+  return <MappedUsersPanel key={factory.id} factory={factory} />;
+}
+
+function MappedUsersPanel({ factory }: { factory: Factory }) {
   const { user: currentUser } = useAuth();
   const client = useQueryClient();
   const [selected, setSelected] = useState<UserOption | null>(null);
@@ -51,15 +59,6 @@ function MappedUsers({ factory }: { factory: Factory }) {
     },
     [],
   );
-  // The route does not remount this component when navigating between two
-  // factories' detail pages whose data is already cached (no loading-state
-  // unmount occurs), so a pending lookup from the previous factory must
-  // also be invalidated on an in-place factory switch, not just on unmount
-  // — otherwise the stale continuation assigns into whichever factory is
-  // current when the lookup resolves, not the one originally selected.
-  useEffect(() => {
-    assignmentVisit.current += 1;
-  }, [factory.id]);
   function closeCreation() {
     creationGeneration.current += 1;
     setCreating(false);

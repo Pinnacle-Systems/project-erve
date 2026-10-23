@@ -18,7 +18,15 @@ import { toErrorMessage } from './toErrorMessage.js';
 // state via useEffect on load) — that's what keeps this Select's mount-time
 // value change safe from the Radix hydration race documented across U2/U3A.
 // Preserve that shape; do not introduce a useEffect-based hydration copy here.
+// Keyed by user.id so this never carries state (a selection, an open
+// reassignment confirmation) across an in-place navigation to a different,
+// already-cached user — the :id route does not otherwise unmount this
+// panel when the destination user's data is cached.
 export function FactoryMappingPanel({ user }: { user: AdminUserSummary }) {
+  return <FactoryMappingPanelInner key={user.id} user={user} />;
+}
+
+function FactoryMappingPanelInner({ user }: { user: AdminUserSummary }) {
   const queryClient = useQueryClient();
   const [selectedFactoryId, setSelectedFactoryId] = useState('');
   const [error, setError] = useState('');

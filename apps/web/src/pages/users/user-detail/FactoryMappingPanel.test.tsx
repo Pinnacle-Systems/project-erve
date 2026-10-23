@@ -123,3 +123,45 @@ it('retains the destination and original mapping when reassignment fails', async
     'Destination Factory',
   );
 });
+it('does not reassign a different user if the displayed user changes while a confirmation is pending', async () => {
+  // The User Detail page does not remount this panel on an in-place
+  // navigation between two already-cached users (same shape as the
+  // FactoryDetailPage navigation race), so a pending confirmation for
+  // worker-a must not survive to be confirmed against worker-b.
+  const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} });
+  const userA = { id: 'worker-a', factories: [oldFactory] } as unknown as AdminUserSummary;
+  const userB = { id: 'worker-b', factories: [] } as unknown as AdminUserSummary;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  await act(async () =>
+    root.render(
+      <QueryClientProvider client={queryClient}>
+        <FactoryMappingPanel user={userA} />
+      </QueryClientProvider>,
+    ),
+  );
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  await selectNew();
+  await submit();
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  // Navigate in place to a different user while the confirmation is open.
+  await act(async () =>
+    root.render(
+      <QueryClientProvider client={queryClient}>
+        <FactoryMappingPanel user={userB} />
+      </QueryClientProvider>,
+    ),
+  );
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  const confirmButton = Array.from(document.querySelectorAll('button')).find(
+    (b) => b.textContent === 'Confirm',
+  );
+  expect(confirmButton).toBeUndefined();
+  expect(post).not.toHaveBeenCalled();
+});
