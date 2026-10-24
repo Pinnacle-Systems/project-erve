@@ -545,15 +545,30 @@ export function FactoryTaskDetailPage() {
                 </div>
               )}
               {activity.status === 'MISSED' && <p>Not performed during Sewing</p>}
-              {activity.qualityForm.executionScope === 'SIZE' &&
-                activity.executionHistory.map((cycle) => (
-                  <p key={cycle.id} className="text-sm">
-                    Cycle {cycle.attemptNumber}:{' '}
-                    {cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size'} · Qty{' '}
-                    {cycle.sampleQuantity} ·{' '}
-                    {cycle.status === 'DRAFT' ? 'IN PROGRESS' : cycle.outcome}
-                  </p>
-                ))}
+              {/* ISS-050: Final Inspection's history mixes attempts from every physical
+                  batch together — its batch/attempt navigation lives on the execution
+                  detail page instead, so this list covers the non-batched checkpoints. */}
+              {activity.executionMultiplicity !== 'BATCHED' &&
+                activity.executionHistory.map((cycle) => {
+                  const label =
+                    activity.qualityForm.executionScope === 'SIZE'
+                      ? `Cycle ${cycle.attemptNumber}: ${cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size'} · Qty ${cycle.sampleQuantity} · ${cycle.status === 'DRAFT' ? 'IN PROGRESS' : cycle.outcome}`
+                      : `Attempt ${cycle.attemptNumber}: ${cycle.status === 'DRAFT' ? 'IN PROGRESS' : cycle.outcome}`;
+                  return activity.qualityForm.executionScope === 'SIZE' ? (
+                    <p key={cycle.id} className="text-sm">
+                      {label}
+                    </p>
+                  ) : (
+                    <button
+                      key={cycle.id}
+                      type="button"
+                      className="block w-full rounded border border-border p-2 text-left text-sm"
+                      onClick={() => navigate(`/quality-executions/${cycle.id}`)}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               {activity.execution ? (
                 <div>
                   <button

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { qualityIdentityItems, qualityPresentationSections } from '../quality-presentation.js';
-import { Button, Checkbox, DatePicker, Textarea, TextField } from '@erve/primitives';
+import { Button, Checkbox, DatePicker, SelectField, SelectItem, Textarea, TextField } from '@erve/primitives';
 import { calculateQualityExecutionOutcome } from '@erve/types';
 import type {
   QualityExecutionPayload,
@@ -98,6 +98,32 @@ export interface QualityExecutionFormProps {
   /** Web routine QA identity; opt-in keeps existing mobile consumers unchanged. */
   compactIdentity?: boolean;
   identityItems?: Array<{ label: string; value: string }>;
+  /**
+   * ISS-050: every other recorded attempt for this same Job Order activity,
+   * for checkpoints that are NOT physically batched (PPM/Inline). Batched
+   * (Final Inspection) attempt history instead comes from
+   * `execution.finalBatch.attempts`, which is always already present. Omitted
+   * or a single entry renders no selector at all (nothing to switch between).
+   */
+  attemptHistory?: Array<{
+    id: string;
+    attemptNumber: number;
+    status: 'DRAFT' | 'FINALIZED' | 'CANCELLED';
+    outcome: 'PASS' | 'FAIL' | null;
+    startedAt: string;
+    finalizedAt: string | null;
+  }>;
+  /** Navigate to a different, already-authorized attempt's own persisted execution. */
+  onSelectAttempt?(executionId: string): void;
+  /**
+   * ISS-048: navigate to a different physical Final batch. The caller
+   * resolves which specific attempt within that batch to open (typically its
+   * latest) and then calls onSelectAttempt/navigates — this component only
+   * reports which batch id was chosen.
+   */
+  onSelectBatch?(batchId: string): void;
+  /** True while the caller is resolving which attempt a batch switch should open. */
+  batchSwitchPending?: boolean;
 }
 
 export function QualityExecutionForm(props: QualityExecutionFormProps) {
@@ -180,6 +206,29 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
   const currentBatchConflict = execution.coverage?.preparedQuantityAuthoritative
     ? quantityThroughCurrentBatch > (execution.coverage.preparedQuantity ?? 0)
     : false;
+  // ISS-050/048: once history navigation can open an earlier, superseded
+  // attempt within an AWAITING_REINSPECTION batch, that attempt is still
+  // individually FINALIZED and the batch disposition it shares with every
+  // other attempt is unchanged — so without this check, viewing a stale
+  // attempt would wrongly expose the batch-level reinspect/permanently-reject
+  // controls that only make sense for the batch's actual latest attempt.
+  // Seeded with execution.attemptNumber so the currently-loaded attempt always
+  // counts even if finalBatch.attempts happens not to include it.
+  const latestBatchAttemptNumber = execution.finalBatch
+    ? execution.finalBatch.attempts.reduce(
+        (max, attempt) => Math.max(max, attempt.attemptNumber),
+        execution.attemptNumber,
+      )
+    : null;
+  const isLatestBatchAttempt =
+    latestBatchAttemptNumber === null || execution.attemptNumber === latestBatchAttemptNumber;
+  const sortedAttemptHistory = [...(props.attemptHistory ?? [])].sort(
+    (left, right) => right.attemptNumber - left.attemptNumber,
+  );
+  const latestHistoryAttemptNumber = sortedAttemptHistory.reduce(
+    (max, attempt) => Math.max(max, attempt.attemptNumber),
+    0,
+  );
 
   return (
     <form
@@ -228,11 +277,76 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
           ) : undefined
         }
       />
+      {!execution.finalBatch && sortedAttemptHistory.length > 1 ? (
+        <QualityExecutionSection
+          title="Inspection attempts"
+          description="Every recorded attempt for this activity is retained. Selecting an earlier attempt opens its own saved, read-only record — it never overwrites the latest attempt."
+        >
+          <SelectField
+            id="quality-history-attempt-select"
+            label="Inspection attempt"
+            aria-label="Select an inspection attempt to view"
+            value={execution.id}
+            onValueChange={(value) => {
+              if (value !== execution.id) props.onSelectAttempt?.(value);
+            }}
+          >
+            {sortedAttemptHistory.map((attempt) => (
+              <SelectItem key={attempt.id} value={attempt.id}>
+                {`Attempt ${attempt.attemptNumber}${attempt.attemptNumber === latestHistoryAttemptNumber ? ' (Latest)' : ''} — ${
+                  attempt.status === 'DRAFT' ? 'In progress' : attempt.outcome ?? 'Finalized'
+                }`}
+              </SelectItem>
+            ))}
+          </SelectField>
+          {execution.attemptNumber !== latestHistoryAttemptNumber ? (
+            <p className="mt-2 text-sm text-muted-foreground" role="status">
+              Viewing a historical, read-only attempt. Select the latest attempt above to return to
+              the current one.
+            </p>
+          ) : null}
+        </QualityExecutionSection>
+      ) : null}
       {execution.finalBatch ? (
         <QualityExecutionSection
           title={`Physical Final batch ${execution.finalBatch.batchNumber}`}
           description="The size allocation belongs to this physical batch and stays unchanged across every inspection attempt."
         >
+          {execution.coverage && execution.coverage.batches.length > 1 ? (
+            <div className="mb-4 space-y-2">
+              <SelectField
+                id="quality-history-batch-select"
+                label="Physical batch"
+                aria-label="Select a physical Final Inspection batch to view"
+                value={execution.finalBatch.id}
+                disabled={props.batchSwitchPending}
+                onValueChange={(value) => {
+                  if (value !== execution.finalBatch!.id) props.onSelectBatch?.(value);
+                }}
+              >
+                {[...execution.coverage.batches]
+                  .sort((left, right) => left.batchNumber - right.batchNumber)
+                  .map((batch) => {
+                    const latestBatchNumber = execution.coverage!.batches.reduce(
+                      (max, item) => Math.max(max, item.batchNumber),
+                      0,
+                    );
+                    const outcomeLabel =
+                      batch.status === 'DRAFT' ? 'In progress' : batch.outcome ?? titleCase(batch.disposition ?? 'DRAFT');
+                    return (
+                      <SelectItem key={batch.id} value={batch.id}>
+                        {`Batch ${batch.batchNumber}${batch.batchNumber === latestBatchNumber ? ' (Latest)' : ''} — ${outcomeLabel}`}
+                      </SelectItem>
+                    );
+                  })}
+              </SelectField>
+              {props.batchSwitchPending ? (
+                <p className="text-sm text-muted-foreground" role="status">
+                  Loading selected batch…
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <QualityReadOnlyGrid>
             <QualityReadOnlyValue
               label="Physical quantity"
@@ -253,26 +367,47 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
           <div className="mt-4 space-y-2">
             <p className="text-sm font-semibold text-foreground">Inspection attempts</p>
             <ol className="space-y-2" aria-label="Final batch inspection attempts">
-              {execution.finalBatch.attempts.map((attempt) => (
-                <li
-                  key={attempt.id}
-                  className="rounded-md border border-border bg-surface-raised px-3 py-2 text-sm"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span>Attempt {attempt.attemptNumber}</span>
-                    <span className="font-medium">
-                      {attempt.status === 'FINALIZED' ? attempt.outcome : titleCase(attempt.status)}
-                    </span>
-                  </div>
-                  {attempt.status === 'FINALIZED' &&
-                  attempt.outcome === 'FAIL' &&
-                  attempt.rejectionReason ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Rejection / Defect Reason: {attempt.rejectionReason}
-                    </p>
-                  ) : null}
-                </li>
-              ))}
+              {execution.finalBatch.attempts.map((attempt) => {
+                const isCurrent = attempt.id === execution.id;
+                const body = (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        Attempt {attempt.attemptNumber}
+                        {attempt.attemptNumber === latestBatchAttemptNumber ? ' (Latest)' : ''}
+                        {isCurrent ? ' — Currently viewing' : ''}
+                      </span>
+                      <span className="font-medium">
+                        {attempt.status === 'FINALIZED' ? attempt.outcome : titleCase(attempt.status)}
+                      </span>
+                    </div>
+                    {attempt.status === 'FINALIZED' &&
+                    attempt.outcome === 'FAIL' &&
+                    attempt.rejectionReason ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Rejection / Defect Reason: {attempt.rejectionReason}
+                      </p>
+                    ) : null}
+                  </>
+                );
+                return (
+                  <li key={attempt.id}>
+                    {isCurrent || !props.onSelectAttempt ? (
+                      <div className="rounded-md border border-border bg-surface-raised px-3 py-2 text-sm">
+                        {body}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-left text-sm hover:bg-surface-muted"
+                        onClick={() => props.onSelectAttempt?.(attempt.id)}
+                      >
+                        {body}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ol>
           </div>
           {execution.finalBatch.release ? (
@@ -1870,6 +2005,7 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
       )}
       {execution.status === 'FINALIZED' &&
       canMutate &&
+      isLatestBatchAttempt &&
       execution.finalBatch?.disposition === 'AWAITING_REINSPECTION' ? (
         <div className="space-y-3 rounded-md border border-border bg-surface-muted p-4">
           <p className="text-sm text-muted-foreground">

@@ -11,6 +11,13 @@ import { QualityExecutionPage } from './QualityExecutionPage.js';
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // Radix Select (the new attempt/batch history selectors) calls
+  // scrollIntoView on open, which jsdom does not implement.
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -174,5 +181,71 @@ describe('mobile Quality execution workflow', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(post).toHaveBeenCalledWith('/quality-executions/e1/attachments', expect.any(FormData));
+  });
+});
+
+// ISS-050/048: mobile shares the exact QualityExecutionForm component with
+// web, so the attempt/batch selectors render identically — this covers only
+// this page's own data-fetching/navigation wiring (attemptHistory lookup and
+// the batch-switch GET+navigate), not the selector UI itself.
+describe('mobile Quality execution history navigation (ISS-050/048)', () => {
+  it("navigates to an earlier Inline QA attempt's own execution id, resolved from the Job Order detail response", async () => {
+    const latest: QualityExecutionView = {
+      ...view,
+      activityName: 'Inline Inspection',
+      qualityForm: { ...view.qualityForm, code: 'INLINE', name: 'Inline Inspection Report' },
+      attemptNumber: 2,
+      batchNumber: 1,
+      coverage: null,
+    };
+    const earlier: QualityExecutionView = { ...latest, id: 'exec-1', attemptNumber: 1 };
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path === '/job-orders/j1')
+        return {
+          data: {
+            data: {
+              id: 'j1',
+              qualityActivities: [
+                {
+                  processFlowVersionStageId: 'a1',
+                  executionHistory: [
+                    { id: 'exec-1', attemptNumber: 1, status: 'FINALIZED', outcome: 'FAIL', startedAt: '', finalizedAt: '' },
+                    { id: 'e1', attemptNumber: 2, status: 'FINALIZED', outcome: 'PASS', startedAt: '', finalizedAt: '' },
+                  ],
+                },
+              ],
+            },
+          },
+        };
+      if (path === '/quality-executions/exec-1') return { data: { data: earlier } };
+      return { data: { data: latest } };
+    });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/quality-executions/e1']}>
+            <Routes>
+              <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    const trigger = await vi.waitFor(() => {
+      const node = container.querySelector<HTMLButtonElement>('#quality-history-attempt-select');
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    await act(async () => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const option = await vi.waitFor(() => {
+      const node = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((item) =>
+        item.textContent?.includes('Attempt 1'),
+      );
+      expect(node).not.toBeUndefined();
+      return node!;
+    });
+    await act(async () => option.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await vi.waitFor(() => expect(container.textContent).toContain('Viewing a historical, read-only attempt'));
   });
 });

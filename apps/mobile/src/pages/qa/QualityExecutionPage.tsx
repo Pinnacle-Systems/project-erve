@@ -10,6 +10,7 @@ import type {
   QualityExecutionValidationError,
   QualityExecutionView,
   FinalQualityBatchView,
+  JobOrderDetail,
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 
@@ -19,6 +20,7 @@ export function QualityExecutionPage() {
   const client = useQueryClient();
   const [message, setMessage] = useState('');
   const [validationErrors, setValidationErrors] = useState<QualityExecutionValidationError[]>([]);
+  const [batchSwitchPending, setBatchSwitchPending] = useState(false);
   const query = useQuery({
     queryKey: ['quality-execution', executionId],
     queryFn: async () =>
@@ -28,6 +30,24 @@ export function QualityExecutionPage() {
         )
       ).data.data,
   });
+  // ISS-050: non-batched (PPM/Inline) attempt history has no field of its own
+  // on QualityExecutionView — reuse the Job Order detail response (already
+  // authorized, already computes executionHistory) rather than add a new
+  // backend endpoint or projection.
+  const jobOrder = useQuery({
+    queryKey: ['job-order', query.data?.jobOrderId],
+    enabled: Boolean(query.data?.jobOrderId),
+    queryFn: async () =>
+      (await apiClient.get<ApiSuccessResponse<JobOrderDetail>>(`/job-orders/${query.data!.jobOrderId}`))
+        .data.data,
+    retry: false,
+  });
+  const attemptHistory =
+    jobOrder.data?.id === query.data?.jobOrderId
+      ? jobOrder.data?.qualityActivities?.find(
+          (activity) => activity.processFlowVersionStageId === query.data?.processFlowActivityId,
+        )?.executionHistory
+      : undefined;
   const mutation = useMutation({
     mutationFn: async ({
       payload,
@@ -71,6 +91,27 @@ export function QualityExecutionPage() {
   const removeAttachment = async (attachmentId: string) => {
     await apiClient.delete(`/quality-executions/attachments/${attachmentId}`);
     await query.refetch();
+  };
+  const selectAttempt = (nextExecutionId: string) => {
+    if (nextExecutionId === executionId) return;
+    navigate(`/quality-executions/${nextExecutionId}`);
+  };
+  const selectBatch = async (batchId: string) => {
+    if (batchId === query.data?.finalBatch?.id) return;
+    setBatchSwitchPending(true);
+    try {
+      const batch = (
+        await apiClient.get<ApiSuccessResponse<FinalQualityBatchView>>(
+          `/quality-executions/final-batches/${batchId}`,
+        )
+      ).data.data;
+      const latestAttempt = [...batch.attempts].sort(
+        (left, right) => right.attemptNumber - left.attemptNumber,
+      )[0];
+      if (latestAttempt) navigate(`/quality-executions/${latestAttempt.id}`);
+    } finally {
+      setBatchSwitchPending(false);
+    }
   };
   const batchMutation = useMutation({
     mutationFn: async ({
@@ -140,6 +181,10 @@ export function QualityExecutionPage() {
         }
         onUpload={upload}
         onRemoveAttachment={removeAttachment}
+        attemptHistory={attemptHistory}
+        onSelectAttempt={selectAttempt}
+        onSelectBatch={(batchId) => void selectBatch(batchId)}
+        batchSwitchPending={batchSwitchPending}
         onStartReinspection={() =>
           batchMutation.mutateAsync({ action: 'reinspect' }).then(() => undefined)
         }

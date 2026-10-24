@@ -393,3 +393,119 @@ describe('FactoryTaskDetailPage rework', () => {
     expect(container.querySelector('textarea')).toBeNull();
   });
 });
+
+// ISS-050: mirrors the web JobOrderQualityTab fix — Inline QA's recorded
+// attempts were previously invisible here too (gated to PP Sample/SIZE scope
+// only), even though the same executionHistory data already existed.
+describe('FactoryTaskDetailPage ISS-050 non-batched attempt history discoverability', () => {
+  const inlineActivity = () => ({
+    processFlowVersionStageId: 'inline-quality',
+    sequence: 3,
+    name: 'Inline Inspection',
+    status: 'AVAILABLE' as const,
+    eligible: true,
+    qualityForm: {
+      id: 'inline-form',
+      code: 'INLINE',
+      name: 'Inline Inspection Report',
+      executionScope: 'JOB_ORDER' as const,
+    },
+    qualityFormVersion: { id: 'inline-version', versionNumber: 1 },
+    executionMode: 'IN_PROCESS' as const,
+    associatedProductionActivity: null,
+    availabilityPolicy: 'WHILE_ASSOCIATED_ACTIVITY_ACTIVE' as const,
+    progressThresholdPercent: null,
+    gateSatisfactionRequirement: null,
+    executionMultiplicity: 'SINGLE' as const,
+    coverageTarget: null,
+    coverage: null,
+    execution: {
+      id: 'exec-2',
+      attemptNumber: 2,
+      batchNumber: 1,
+      inspectedQuantity: null,
+      status: 'FINALIZED' as const,
+      version: 1,
+      outcome: 'PASS' as const,
+      startedAt: '',
+      finalizedAt: '',
+    },
+    executionHistory: [
+      {
+        id: 'exec-1',
+        attemptNumber: 1,
+        batchNumber: 1,
+        inspectedQuantity: null,
+        sampleJobOrderLineSizeId: null,
+        sampleQuantity: null,
+        sampleSizeCode: null,
+        sampleSizeLabel: null,
+        ppSampleSessionId: null,
+        ppSampleFormId: null,
+        status: 'FINALIZED' as const,
+        outcome: 'FAIL' as const,
+        startedBy: { id: 'u1', name: 'QA One', email: 'qa1@test.local' },
+        finalizedBy: { id: 'u1', name: 'QA One', email: 'qa1@test.local' },
+        startedAt: '',
+        finalizedAt: '',
+      },
+      {
+        id: 'exec-2',
+        attemptNumber: 2,
+        batchNumber: 1,
+        inspectedQuantity: null,
+        sampleJobOrderLineSizeId: null,
+        sampleQuantity: null,
+        sampleSizeCode: null,
+        sampleSizeLabel: null,
+        ppSampleSessionId: null,
+        ppSampleFormId: null,
+        status: 'FINALIZED' as const,
+        outcome: 'PASS' as const,
+        startedBy: { id: 'u1', name: 'QA One', email: 'qa1@test.local' },
+        finalizedBy: { id: 'u1', name: 'QA One', email: 'qa1@test.local' },
+        startedAt: '',
+        finalizedAt: '',
+      },
+    ],
+  });
+
+  it('lists every recorded Inline QA attempt as a clickable row', async () => {
+    await renderTask(job({ qualityActivities: [inlineActivity()] }));
+    expect(container.textContent).toContain('Attempt 1');
+    const attemptButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.startsWith('Attempt 1'),
+    );
+    expect(attemptButton).not.toBeUndefined();
+  });
+
+  it('never renders PP Sample (SIZE scope) history rows as clickable — that navigation stays out of this PR', async () => {
+    await renderTask(
+      job({
+        qualityActivities: [
+          {
+            ...inlineActivity(),
+            name: 'PP Sample',
+            qualityForm: { id: 'pp-form', code: 'PP_SAMPLE', name: 'PP Sample Report', executionScope: 'SIZE' as const },
+          },
+        ],
+      }),
+    );
+    expect(container.textContent).toContain('Cycle 1');
+    const button = Array.from(container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('Cycle 1'),
+    );
+    expect(button).toBeUndefined();
+  });
+
+  it('does not render the attempt-history list for a BATCHED checkpoint (Final Inspection uses its own batch navigation)', async () => {
+    await renderTask(
+      job({
+        qualityActivities: [
+          { ...finalQualityActivity(), executionHistory: [inlineActivity().executionHistory[0]!] },
+        ],
+      }),
+    );
+    expect(container.textContent).not.toContain('Attempt 1');
+  });
+});

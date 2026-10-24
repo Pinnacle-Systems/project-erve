@@ -27,6 +27,24 @@ function button(label: string): HTMLButtonElement {
   return [...container.querySelectorAll('button')].find((item) => item.textContent === label)!;
 }
 
+async function flush() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+}
+
+function openSelect(triggerId: string) {
+  const trigger = container.querySelector<HTMLButtonElement>(`#${triggerId}`)!;
+  act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+}
+
+function selectOption(labelSubstring: string) {
+  const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (item) => item.textContent?.includes(labelSubstring),
+  )!;
+  act(() => option.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+}
+
 function validationError(
   componentId: string,
   componentTitle: string,
@@ -1635,5 +1653,287 @@ describe('Final Inspection mandatory rejection reason on FAIL', () => {
     );
     expect(container.textContent).toContain('Rejection / Defect Reason: Broken zipper');
     expect(container.textContent).not.toContain('Rejection / Defect Reason: null');
+  });
+
+  // ISS-050/048: history navigation for the generic engine (PPM/Inline/Final).
+  // PP Sample's own history/evidence system is deliberately out of scope here.
+  describe('ISS-050/048 attempt and physical-batch history navigation', () => {
+    it('shows no attempt selector for a non-batched checkpoint with only one recorded attempt (PPM has no retry)', () => {
+      const item = execution('FINALIZED');
+      const onSave = vi.fn();
+      const onFinalize = vi.fn();
+      act(() =>
+        root.render(
+          <QualityExecutionForm
+            execution={item}
+            onSave={onSave}
+            onFinalize={onFinalize}
+            attemptHistory={[
+              {
+                id: item.id,
+                attemptNumber: 1,
+                status: 'FINALIZED',
+                outcome: 'PASS',
+                startedAt: '',
+                finalizedAt: '',
+              },
+            ]}
+            onSelectAttempt={vi.fn()}
+          />,
+        ),
+      );
+      expect(container.querySelector('#quality-history-attempt-select')).toBeNull();
+      expect(container.textContent).not.toContain('Inspection attempts');
+    });
+
+    it('also shows no attempt selector when no history is supplied at all (existing mobile/test callers unaffected)', () => {
+      act(() =>
+        root.render(
+          <QualityExecutionForm execution={execution('FINALIZED')} onSave={vi.fn()} onFinalize={vi.fn()} />,
+        ),
+      );
+      expect(container.querySelector('#quality-history-attempt-select')).toBeNull();
+    });
+
+    it('lets an authorized user open an earlier non-batched attempt (Inline QA) by its own id, without touching Save/Finalize', async () => {
+      const item = execution('FINALIZED');
+      const onSelectAttempt = vi.fn();
+      const onSave = vi.fn();
+      const onFinalize = vi.fn();
+      act(() =>
+        root.render(
+          <QualityExecutionForm
+            execution={item}
+            onSave={onSave}
+            onFinalize={onFinalize}
+            attemptHistory={[
+              {
+                id: 'attempt-1',
+                attemptNumber: 1,
+                status: 'FINALIZED',
+                outcome: 'FAIL',
+                startedAt: '',
+                finalizedAt: '',
+              },
+              {
+                id: item.id,
+                attemptNumber: 2,
+                status: 'FINALIZED',
+                outcome: 'PASS',
+                startedAt: '',
+                finalizedAt: '',
+              },
+            ]}
+            onSelectAttempt={onSelectAttempt}
+          />,
+        ),
+      );
+      expect(container.textContent).toContain('Viewing a historical, read-only attempt');
+      openSelect('quality-history-attempt-select');
+      await flush();
+      selectOption('Attempt 1');
+      await flush();
+      expect(onSelectAttempt).toHaveBeenCalledTimes(1);
+      expect(onSelectAttempt).toHaveBeenCalledWith('attempt-1');
+      expect(onSave).not.toHaveBeenCalled();
+      expect(onFinalize).not.toHaveBeenCalled();
+    });
+
+    it('offers a physical-batch selector for Final Inspection with more than one batch and reports the chosen batch id, without touching Save/Finalize', async () => {
+      const item = finalExecution('FINALIZED');
+      // finalExecution() already seeds coverage.batches = [batch-1, batch-2(=item.id)].
+      item.finalBatch = {
+        id: item.coverage!.batches[1]!.id,
+        batchNumber: 2,
+        physicalQuantity: 25,
+        disposition: 'RELEASED',
+        allocations: [],
+        attempts: [
+          {
+            id: item.id,
+            attemptNumber: 1,
+            status: 'FINALIZED',
+            outcome: 'PASS',
+            rejectionReason: null,
+            startedAt: '',
+            finalizedAt: '',
+          },
+        ],
+        release: null,
+      };
+      const onSelectBatch = vi.fn();
+      const onSave = vi.fn();
+      const onFinalize = vi.fn();
+      act(() =>
+        root.render(
+          <QualityExecutionForm
+            execution={item}
+            onSave={onSave}
+            onFinalize={onFinalize}
+            onSelectBatch={onSelectBatch}
+          />,
+        ),
+      );
+      expect(container.querySelector('#quality-history-batch-select')).not.toBeNull();
+      openSelect('quality-history-batch-select');
+      await flush();
+      selectOption('Batch 1');
+      await flush();
+      expect(onSelectBatch).toHaveBeenCalledTimes(1);
+      expect(onSelectBatch).toHaveBeenCalledWith('batch-1');
+      expect(onSave).not.toHaveBeenCalled();
+      expect(onFinalize).not.toHaveBeenCalled();
+    });
+
+    it("lets an authorized user open an earlier attempt within the same Final Inspection batch, and never renders the currently-viewed attempt as clickable", () => {
+      const item = finalExecution('FINALIZED');
+      item.coverage = null;
+      item.finalBatch = {
+        id: 'batch-9',
+        batchNumber: 1,
+        physicalQuantity: 60,
+        disposition: 'RELEASED',
+        allocations: [],
+        attempts: [
+          {
+            id: 'attempt-1',
+            attemptNumber: 1,
+            status: 'FINALIZED',
+            outcome: 'FAIL',
+            rejectionReason: 'Broken zipper',
+            startedAt: '',
+            finalizedAt: '',
+          },
+          {
+            id: item.id,
+            attemptNumber: 2,
+            status: 'FINALIZED',
+            outcome: 'PASS',
+            rejectionReason: null,
+            startedAt: '',
+            finalizedAt: '',
+          },
+        ],
+        release: null,
+      };
+      const onSelectAttempt = vi.fn();
+      act(() =>
+        root.render(
+          <QualityExecutionForm
+            execution={item}
+            onSave={vi.fn()}
+            onFinalize={vi.fn()}
+            onSelectAttempt={onSelectAttempt}
+          />,
+        ),
+      );
+      expect(container.textContent).toContain('Attempt 2 (Latest) — Currently viewing');
+      const currentAttemptButtons = [...container.querySelectorAll('button')].filter((node) =>
+        node.textContent?.includes('Currently viewing'),
+      );
+      expect(currentAttemptButtons).toHaveLength(0);
+      const earlierAttemptButton = [...container.querySelectorAll('button')].find((node) =>
+        node.textContent?.startsWith('Attempt 1'),
+      )!;
+      earlierAttemptButton.click();
+      expect(onSelectAttempt).toHaveBeenCalledTimes(1);
+      expect(onSelectAttempt).toHaveBeenCalledWith('attempt-1');
+    });
+
+    it('keeps batch-level Start reinspection / Mark permanently rejected off a superseded, non-latest attempt in an AWAITING_REINSPECTION batch', () => {
+      const item = finalExecution('FINALIZED');
+      item.id = 'attempt-1';
+      item.attemptNumber = 1;
+      item.coverage = null;
+      item.finalBatch = {
+        id: 'batch-9',
+        batchNumber: 1,
+        physicalQuantity: 20,
+        disposition: 'AWAITING_REINSPECTION',
+        allocations: [],
+        attempts: [
+          {
+            id: 'attempt-1',
+            attemptNumber: 1,
+            status: 'FINALIZED',
+            outcome: 'FAIL',
+            rejectionReason: 'Broken zipper',
+            startedAt: '',
+            finalizedAt: '',
+          },
+          {
+            id: 'attempt-2',
+            attemptNumber: 2,
+            status: 'FINALIZED',
+            outcome: 'FAIL',
+            rejectionReason: 'Still broken',
+            startedAt: '',
+            finalizedAt: '',
+          },
+        ],
+        release: null,
+      };
+      act(() =>
+        root.render(
+          <QualityExecutionForm
+            execution={item}
+            onSave={vi.fn()}
+            onFinalize={vi.fn()}
+            onStartReinspection={vi.fn()}
+            onPermanentlyReject={vi.fn()}
+          />,
+        ),
+      );
+      expect(container.textContent).not.toContain('Start reinspection');
+      expect(container.textContent).not.toContain('Mark permanently rejected');
+    });
+
+    it('still offers Start reinspection / Mark permanently rejected when viewing the batch\'s true latest attempt', () => {
+      const item = finalExecution('FINALIZED');
+      item.id = 'attempt-2';
+      item.attemptNumber = 2;
+      item.coverage = null;
+      item.finalBatch = {
+        id: 'batch-9',
+        batchNumber: 1,
+        physicalQuantity: 20,
+        disposition: 'AWAITING_REINSPECTION',
+        allocations: [],
+        attempts: [
+          {
+            id: 'attempt-1',
+            attemptNumber: 1,
+            status: 'FINALIZED',
+            outcome: 'FAIL',
+            rejectionReason: 'Broken zipper',
+            startedAt: '',
+            finalizedAt: '',
+          },
+          {
+            id: 'attempt-2',
+            attemptNumber: 2,
+            status: 'FINALIZED',
+            outcome: 'FAIL',
+            rejectionReason: 'Still broken',
+            startedAt: '',
+            finalizedAt: '',
+          },
+        ],
+        release: null,
+      };
+      act(() =>
+        root.render(
+          <QualityExecutionForm
+            execution={item}
+            onSave={vi.fn()}
+            onFinalize={vi.fn()}
+            onStartReinspection={vi.fn()}
+            onPermanentlyReject={vi.fn()}
+          />,
+        ),
+      );
+      expect(container.textContent).toContain('Start reinspection');
+      expect(container.textContent).toContain('Mark permanently rejected');
+    });
   });
 });

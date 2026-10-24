@@ -373,34 +373,67 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                     Not performed during the associated Production activity.
                   </p>
                 )}
-                {activity.qualityForm.executionScope === 'SIZE' && activity.executionHistory.length > 0 && (
+                {/* ISS-050: Final Inspection's executionHistory mixes attempts from every
+                    physical batch together (batch navigation for it lives on the execution
+                    detail page instead, where batch/attempt scope stays unambiguous), so this
+                    discoverability table is for the three non-batched checkpoints only. */}
+                {activity.executionMultiplicity !== 'BATCHED' && activity.executionHistory.length > 0 && (
                   <DataTable
                     density="compact"
                     containerClassName="mt-4"
                     rowKey="id"
                     data={activity.executionHistory}
-                    columns={[
-                      { key: 'attempt', header: 'Cycle', accessor: 'attemptNumber' },
-                      {
-                        key: 'size',
-                        header: 'Sample size',
-                        render: (cycle) => cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size',
-                      },
-                      { key: 'quantity', header: 'Quantity', accessor: 'sampleQuantity', align: 'right' },
-                      {
-                        key: 'status',
-                        header: 'Result',
-                        render: (cycle) =>
-                          cycle.status === 'DRAFT' ? (
-                            <StatusBadge label="In Progress" tone="info" />
-                          ) : (
-                            <StatusBadge
-                              label={cycle.outcome ?? 'Finalized'}
-                              tone={cycle.outcome === 'PASS' ? 'success' : 'danger'}
-                            />
-                          ),
-                      },
-                    ]}
+                    onRowClick={
+                      canViewQa(user) && activity.qualityForm.executionScope !== 'SIZE'
+                        ? (cycle) => navigate(`/quality-executions/${cycle.id}`)
+                        : undefined
+                    }
+                    columns={
+                      activity.qualityForm.executionScope === 'SIZE'
+                        ? [
+                            { key: 'attempt', header: 'Cycle', accessor: 'attemptNumber' },
+                            {
+                              key: 'size',
+                              header: 'Sample size',
+                              render: (cycle) => cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size',
+                            },
+                            { key: 'quantity', header: 'Quantity', accessor: 'sampleQuantity', align: 'right' },
+                            {
+                              key: 'status',
+                              header: 'Result',
+                              render: (cycle) =>
+                                cycle.status === 'DRAFT' ? (
+                                  <StatusBadge label="In Progress" tone="info" />
+                                ) : (
+                                  <StatusBadge
+                                    label={cycle.outcome ?? 'Finalized'}
+                                    tone={cycle.outcome === 'PASS' ? 'success' : 'danger'}
+                                  />
+                                ),
+                            },
+                          ]
+                        : [
+                            { key: 'attempt', header: 'Attempt', accessor: 'attemptNumber' },
+                            {
+                              key: 'started',
+                              header: 'Started',
+                              render: (cycle) => formatDateTime(cycle.startedAt),
+                            },
+                            {
+                              key: 'status',
+                              header: 'Result',
+                              render: (cycle) =>
+                                cycle.status === 'DRAFT' ? (
+                                  <StatusBadge label="In Progress" tone="info" />
+                                ) : (
+                                  <StatusBadge
+                                    label={cycle.outcome ?? 'Finalized'}
+                                    tone={cycle.outcome === 'PASS' ? 'success' : 'danger'}
+                                  />
+                                ),
+                            },
+                          ]
+                    }
                   />
                 )}
                 {activity.execution ? (
