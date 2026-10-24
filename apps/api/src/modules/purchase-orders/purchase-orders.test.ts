@@ -119,7 +119,6 @@ describe('Order Sheet (purchase orders) API', () => {
         seasonId: expect.any(String),
         code: expect.any(String),
         name: 'Test Season',
-        financialYear: '26-27',
       });
     });
 
@@ -1258,7 +1257,9 @@ describe('Order Sheet Style lookup (P1L1)', () => {
     ]);
     expect(Object.keys(option.season).sort()).toEqual(['code', 'displayName']);
     expect(option).toMatchObject({ id: style.id, lmixNumber: 'LMIX4000001', status: 'ACTIVE', primaryImage: null });
-    expect(option.season.displayName).toMatch(/ 26-27$/);
+    // ISS-SEASON-FY: Season has no Financial Year — displayName is always
+    // just the Code.
+    expect(option.season.displayName).toBe(option.season.code);
   });
 
   it('resolves primaryImage to the Style\'s actual primary image, not just the first one created', async () => {

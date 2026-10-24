@@ -62,7 +62,6 @@ try {
   const season = await createTestSeason({
     code: `SS26-${suffix}`,
     name: 'Recorded Summer',
-    financialYearId: financialYear.id,
   });
   const style = await prisma.style.create({
     data: {
@@ -164,8 +163,6 @@ try {
             seasonId: season.id,
             code: 'SS26',
             name: 'Recorded Summer',
-            financialYear: '2026-27',
-            displayName: 'SS26 Recorded Summer',
           },
         },
         ...(status === 'IN_PRODUCTION'
@@ -333,8 +330,6 @@ try {
       seasonId: null,
       code: 'AW25',
       name: 'Recorded Winter',
-      financialYear: '2025-26',
-      displayName: 'AW25 Recorded Winter',
     },
   });
   const sharp = createRequire(new URL('../../apps/api/package.json', import.meta.url))('sharp');

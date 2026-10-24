@@ -89,7 +89,6 @@ const files = {
       'Style Name': 'PR8 ENGINEERING ONLY STYLE',
       'Final MRP': '100',
       'Season Code': snapshot.business.seasons[0].code,
-      'Financial Year': snapshot.business.seasons[0].financialYear,
       'Size Codes': snapshot.business.sizes[0].code,
       Barcodes: 'PR8-SYNTHETIC-BARCODE-001',
       'Factory Name Mappings': `${factoryName}:25`,
