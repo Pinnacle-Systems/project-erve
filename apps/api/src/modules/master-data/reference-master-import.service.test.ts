@@ -18,8 +18,7 @@ async function actor(role: 'ADMIN' | 'MERCHANDISER' | 'ACCOUNTANT' = 'ADMIN') {
   );
 }
 const files = {
-  seasons:
-    'Season Code,Season Name,Financial Year,Barcode Serial,Status\nAW26,Winter,2026-27,,INACTIVE\n',
+  seasons: 'Season Code,Season Name,Barcode Serial,Status\nAW26,Winter,,INACTIVE\n',
   sizes: 'Size Code,Size Label,Size Type,Sort Order,Status\nxxs,Small,ALPHA,0,INACTIVE\n',
   hsns: 'HSN Code,Description,Status\n01234567,Text,INACTIVE\n',
 };
@@ -27,14 +26,6 @@ describe('reference master import persistence', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
     await resetDatabase();
-    await prisma.financialYear.create({
-      data: {
-        id: createId(),
-        code: '2026-27',
-        startDate: new Date('2026-04-01'),
-        endDate: new Date('2027-03-31'),
-      },
-    });
   });
   it.each(['seasons', 'sizes', 'hsns'] as const)(
     'creates %s with audit/provenance then skips exact inactive records',
@@ -86,46 +77,45 @@ describe('reference master import persistence', () => {
         planMasterImport(user, kind, Buffer.from('Name\nX'), 'm.csv'),
       ).rejects.toMatchObject({ statusCode: 403 });
   });
-  it('permits the same Season Code in different years and detects globally held serials', async () => {
+  // ISS-SEASON-FY: Season Code is globally unique, case-insensitive.
+  it('rejects a duplicate Season Code within one upload and detects a globally held Barcode Serial across different codes', async () => {
     const user = await actor();
-    await prisma.financialYear.create({
-      data: {
-        id: createId(),
-        code: '2027-28',
-        startDate: new Date('2027-04-01'),
-        endDate: new Date('2028-03-31'),
-      },
-    });
-    const file = Buffer.from(
-      'Season Code,Season Name,Financial Year,Barcode Serial\nAW,Winter,2026-27,1\nAW,Winter,2027-28,2\n',
-    );
+    const file = Buffer.from('Season Code,Season Name,Barcode Serial\nAW,Winter,1\n');
     const plan = await planMasterImport(user, 'seasons', file, 's.csv');
-    expect(plan.summary.CREATE).toBe(2);
+    expect(plan.summary.CREATE).toBe(1);
     expect(
       (await executeMasterImport(user, 'seasons', file, 's.csv', undefined, plan.confirmationToken))
         .summary.CREATE,
-    ).toBe(2);
-    const held = await planMasterImport(
+    ).toBe(1);
+
+    const duplicateCode = await planMasterImport(
       user,
       'seasons',
-      Buffer.from('Season Code,Season Name,Financial Year,Barcode Serial\nSS,Summer,2027-28,1\n'),
+      Buffer.from('Season Code,Season Name,Barcode Serial\naw,Winter Again,2\n'),
       's.csv',
     );
-    expect(held.summary.NEEDS_REVIEW).toBe(1);
+    expect(duplicateCode.summary.NEEDS_REVIEW).toBe(1);
+
+    const heldSerial = await planMasterImport(
+      user,
+      'seasons',
+      Buffer.from('Season Code,Season Name,Barcode Serial\nSS,Summer,1\n'),
+      's.csv',
+    );
+    expect(heldSerial.summary.NEEDS_REVIEW).toBe(1);
   });
-  it('enforces existing case-insensitive Season Code + Financial Year uniqueness', async () => {
-    const year = await prisma.financialYear.findFirstOrThrow();
+  it('enforces existing case-insensitive global Season Code uniqueness', async () => {
     await prisma.season.create({
-      data: { id: createId(), code: 'AW', name: 'Winter', financialYearId: year.id },
+      data: { id: createId(), code: 'AW', name: 'Winter' },
     });
     await expect(
       prisma.season.create({
-        data: { id: createId(), code: 'aw', name: 'Another', financialYearId: year.id },
+        data: { id: createId(), code: 'aw', name: 'Another' },
       }),
     ).rejects.toMatchObject({ code: 'P2002' });
     expect(await prisma.season.count()).toBe(1);
     expect(
-      await prisma.$queryRaw`SELECT indexname FROM pg_indexes WHERE indexname = 'seasons_financial_year_id_code_ci_key'`,
+      await prisma.$queryRaw`SELECT indexname FROM pg_indexes WHERE indexname = 'seasons_code_ci_key'`,
     ).toHaveLength(1);
   });
   it.each(['seasons', 'sizes', 'hsns'] as const)(
@@ -204,16 +194,13 @@ describe('reference master import persistence', () => {
     expect(plan.rows[0]!.outcome).toBe('NEEDS_REVIEW');
     expect(plan.summary.CREATE).toBe(0);
   });
-  it('rejects invalid values, unknown years and duplicate serials and identities', async () => {
+  it('rejects invalid values and duplicate serials and identities', async () => {
     const user = await actor();
-    const header = 'Season Code,Season Name,Financial Year,Barcode Serial\n';
+    const header = 'Season Code,Season Name,Barcode Serial\n';
     const p = await planMasterImport(
       user,
       'seasons',
-      Buffer.from(
-        header +
-          'AW,Winter,2026-27,1\nAW,Winter,2026-27,2\nSS,Summer,2026-27,1\nBAD,Bad,missing,3\n',
-      ),
+      Buffer.from(header + 'AW,Winter,1\nAW,Winter,2\nSS,Summer,1\n,Bad,3\n'),
       's.csv',
     );
     expect(p.rows.map((r) => r.outcome)).toEqual([

@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createId } from '@erve/shared';
 import { prisma } from '../../../db/prisma.js';
-import { createTestFinancialYear, createTestUserAndToken, resetDatabase } from '../../../test/helpers.js';
+import { createTestUserAndToken, resetDatabase } from '../../../test/helpers.js';
 import { computeContentStructureFingerprint, computeStageStructureFingerprint } from '../process-flow-pin.js';
 import { H3A_BUNDLE_FORMAT, H3A_MIGRATION_VERSION, type BundleFileRef, type H3aBundle, type LoadedBundle } from './bundle.js';
 import type { TargetProfile } from './target-profiles.js';
@@ -34,7 +34,6 @@ const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 async function fixture() {
   const adminEmail = `admin-${createId().toLowerCase()}@test.local`;
   await createTestUserAndToken({ email: adminEmail, password: 'pass', roles: ['ADMIN'] });
-  const fy = await createTestFinancialYear();
   const sizeA = await prisma.size.create({ data: { id: createId(), code: `T3-${createId()}`, label: '3', sizeType: 'AGE', sortOrder: 3 } });
   const sizeB = await prisma.size.create({ data: { id: createId(), code: `T4-${createId()}`, label: '4', sizeType: 'AGE', sortOrder: 4 } });
   const flowCode = `SYN-FLOW-${createId()}`;
@@ -79,7 +78,7 @@ async function fixture() {
       description: 'synthetic', sourceArchives: ['synthetic'], sourceManifestAggregateSha256: 'a'.repeat(64), parserVersion: '1.0.0', sourceOverridesSha256: 'b'.repeat(64),
       approvedProcessFlow: { processFlowCode: flowCode, versionNumber: 1, fingerprint: 'f'.repeat(64), stageStructureFingerprint: computeStageStructureFingerprint([]), stages: [] },
     },
-    seasons: [{ code: seasonCode, name: 'Synthetic Season', financialYearCode: fy.code }],
+    seasons: [{ code: seasonCode, name: 'Synthetic Season' }],
     styles,
     jobOrders,
   };

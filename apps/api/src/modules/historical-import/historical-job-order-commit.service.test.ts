@@ -54,8 +54,7 @@ function adminUser(userId: string): CurrentUser {
 async function buildFixture(recordCount = 2) {
   const admin = await createTestUserAndToken({ email: `admin-${createId().toLowerCase()}@test.local`, password: 'pass', roles: ['ADMIN'] });
   const factory = await createTestFactory();
-  const financialYear = await createTestFinancialYear();
-  const season = await prisma.season.create({ data: { id: createId(), code: `SYN-${createId()}`, name: 'Synthetic season', financialYearId: financialYear.id } });
+  const season = await prisma.season.create({ data: { id: createId(), code: `SYN-${createId()}`, name: 'Synthetic season' } });
   const sizeA = await prisma.size.create({ data: { id: createId(), code: `SYN-A-${createId()}`, label: '3', sizeType: 'AGE', sortOrder: 3 } });
   const sizeB = await prisma.size.create({ data: { id: createId(), code: `SYN-B-${createId()}`, label: '4', sizeType: 'AGE', sortOrder: 4 } });
   const flow = await prisma.processFlow.create({

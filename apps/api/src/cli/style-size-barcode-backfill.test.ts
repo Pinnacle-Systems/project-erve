@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createId } from '@erve/shared';
 import { prisma } from '../db/prisma.js';
-import { createTestFinancialYear, resetDatabase } from '../test/helpers.js';
+import { resetDatabase } from '../test/helpers.js';
 import {
   executeBarcodeBackfill,
   loadBackfillRows,
@@ -24,7 +24,6 @@ async function seed(rows: Array<{
   size: { label: string; type?: 'AGE' | 'ALPHA' };
   barcode?: string | null;
 }>) {
-  const financialYear = await createTestFinancialYear();
   const seasons = new Map<string, string>();
   const sizes = new Map<string, string>();
   const styles = new Map<string, string>();
@@ -33,7 +32,7 @@ async function seed(rows: Array<{
       const id = createId();
       seasons.set(row.season.code, id);
       await prisma.season.create({
-        data: { id, code: row.season.code, name: row.season.code, financialYearId: financialYear.id, barcodeSerial: row.season.serial },
+        data: { id, code: row.season.code, name: row.season.code, barcodeSerial: row.season.serial },
       });
     }
     const sizeKey = `${row.size.type ?? 'AGE'}:${row.size.label}`;

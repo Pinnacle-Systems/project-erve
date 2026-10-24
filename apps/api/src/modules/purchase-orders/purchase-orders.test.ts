@@ -5,7 +5,6 @@ import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
   createTestDistributor,
-  createTestFinancialYear,
   createTestJobOrderStub,
   createTestUserAndToken,
   resetDatabase,
@@ -34,11 +33,6 @@ async function createSize(code: string, sortOrder: number) {
 
 async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED' }) {
   const seasonId = createId();
-  // Fixed date, not "now" — keeps this deterministic regardless of when the
-  // suite runs, and matches createPO's default poDate's Financial Year
-  // (2026-06-30 -> FY 2026-27) so fixtures stay intuitive, even though no
-  // PO<->Season FY-consistency rule actually requires this to match.
-  const financialYear = await createTestFinancialYear(new Date('2026-06-30'));
   const id = createId();
   return prisma.style.create({
     data: {
@@ -56,7 +50,6 @@ async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCO
           id: seasonId,
           code: `T-${seasonId.slice(-6)}`,
           name: 'Test Season',
-          financialYearId: financialYear.id,
         },
       },
     },
@@ -126,7 +119,6 @@ describe('Order Sheet (purchase orders) API', () => {
         seasonId: expect.any(String),
         code: expect.any(String),
         name: 'Test Season',
-        financialYear: '26-27',
       });
     });
 
@@ -1265,7 +1257,9 @@ describe('Order Sheet Style lookup (P1L1)', () => {
     ]);
     expect(Object.keys(option.season).sort()).toEqual(['code', 'displayName']);
     expect(option).toMatchObject({ id: style.id, lmixNumber: 'LMIX4000001', status: 'ACTIVE', primaryImage: null });
-    expect(option.season.displayName).toMatch(/ 26-27$/);
+    // ISS-SEASON-FY: Season has no Financial Year — displayName is always
+    // just the Code.
+    expect(option.season.displayName).toBe(option.season.code);
   });
 
   it('resolves primaryImage to the Style\'s actual primary image, not just the first one created', async () => {

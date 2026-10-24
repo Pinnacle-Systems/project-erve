@@ -7,7 +7,6 @@ import { signAccessToken } from '../../auth/jwt.js';
 import {
   createTestDistributor,
   createTestFactory,
-  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -52,13 +51,11 @@ async function createSeedGraph() {
   const size = await prisma.size.create({
     data: { id: createId(), code: `SZ-${createId()}`, label: '3', sizeType: 'AGE', sortOrder: 3 },
   });
-  const financialYear = await createTestFinancialYear(new Date('2026-06-30'));
   const season = await prisma.season.create({
     data: {
       id: createId(),
       code: `UNDO-${createId()}`,
       name: 'Undo Test Season',
-      financialYearId: financialYear.id,
     },
   });
   const style = await prisma.style.create({

@@ -72,7 +72,7 @@ interface StyleFixture {
   sizes: Array<{ id: string; code: string; label: string; sortOrder: number }>;
 }
 
-const season = { code: 'SS26', displayName: 'SS26 26-27' };
+const season = { code: 'SS26', displayName: 'SS26' };
 
 const testStyle: StyleFixture = {
   id: 'style-1',

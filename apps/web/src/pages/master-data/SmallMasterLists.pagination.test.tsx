@@ -44,9 +44,8 @@ const season = (n: number) => ({
   id: `se-${n}`,
   code: `SS${pad(n)}`,
   name: `Season ${pad(n)}`,
-  displayName: `SS${pad(n)} 26-27`,
+  displayName: `SS${pad(n)}`,
   status: 'ACTIVE',
-  financialYear: { id: 'fy-1', code: '2026-27' },
 });
 const flow = (n: number) => ({
   id: `pf-${n}`,
@@ -64,10 +63,6 @@ const form = (n: number) => ({
   status: 'ACTIVE',
   versions: [],
 });
-
-// Seasons also loads Financial Years (filter + create form defaults).
-const seasonOtherGet = (url: string) =>
-  url.startsWith('/financial-years') ? (url.endsWith('/current') ? null : []) : [];
 
 // PAG8: the small master lists page by cursor (opt-in via limit); those with
 // a list PDF export every matching page, not only the loaded rows.
@@ -111,14 +106,12 @@ describe('small master list pagination (PAG8)', () => {
       noun: 'Seasons',
       row: season,
       rowText: (n) => `SS${pad(n)}`,
-      otherGet: seasonOtherGet,
     });
     await expectPdfExportsEveryPage({
       element: <SeasonListPage />,
       path: '/seasons',
       row: season,
       generator: seasonGenerator,
-      otherGet: seasonOtherGet,
     });
   });
 

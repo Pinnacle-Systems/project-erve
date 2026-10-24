@@ -8,7 +8,7 @@ import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { getPooledFactoryInventory } from '../job-orders/pooled-inventory.service.js';
 import { importHistoricalJobOrder, type ImportHistoricalJobOrderInput } from './historical-import.service.js';
-import { createTestFactory, createTestFinancialYear, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import { createTestFactory, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 
 beforeEach(resetDatabase);
 afterAll(() => prisma.$disconnect());
@@ -31,7 +31,7 @@ async function buildFixture() {
   const admin = await createTestUserAndToken({ email: `admin-${createId()}@test.local`, password: 'pass', roles: ['ADMIN'] });
   const factory = await createTestFactory();
   const season = await prisma.season.create({
-    data: { id: createId(), code: `HIST-${createId()}`, name: 'Historical fixture season', financialYearId: (await createTestFinancialYear()).id },
+    data: { id: createId(), code: `HIST-${createId()}`, name: 'Historical fixture season' },
   });
   const style = await prisma.style.create({
     data: { id: createId(), styleNumber: `HIST-ST-${createId()}`, styleName: 'Historical Style', finalMrp: 500, seasonId: season.id },

@@ -4,7 +4,6 @@ import * as XLSX from 'xlsx';
 import { createApp } from '../../app.js';
 import { createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 import { prisma } from '../../db/prisma.js';
-import { createId } from '@erve/shared';
 
 const app = createApp();
 async function token(roles: ('ADMIN' | 'QA_USER' | 'ACCOUNTANT' | 'MERCHANDISER')[] = ['ADMIN']) {
@@ -31,8 +30,7 @@ describe('authorized business import HTTP workflows', () => {
   });
   it.each(['seasons', 'sizes', 'hsns'] as const)('uploads, confirms and displays persisted history for %s', async kind => {
     const auth = await token(kind === 'hsns' ? ['ACCOUNTANT'] : ['MERCHANDISER']);
-    await prisma.financialYear.create({ data: { id: createId(), code: '2026-27', startDate: new Date('2026-04-01'), endDate: new Date('2027-03-31') } });
-    const files = { seasons: 'Season Code,Season Name,Financial Year\nAW,Winter,2026-27\n', sizes: 'Size Code,Size Label,Size Type,Sort Order\nxxs,Small,ALPHA,0\n', hsns: 'HSN Code,Description\n01234567,Text\n' };
+    const files = { seasons: 'Season Code,Season Name\nAW,Winter\n', sizes: 'Size Code,Size Label,Size Type,Sort Order\nxxs,Small,ALPHA,0\n', hsns: 'HSN Code,Description\n01234567,Text\n' };
     const file = Buffer.from(files[kind]);
     const preview = await request(app).post(`/master-imports/${kind}/preflight`).set('Authorization', `Bearer ${auth}`).attach('file', file, 'm.csv');
     expect(preview.status).toBe(200); expect(preview.body.data.summary.CREATE).toBe(1);

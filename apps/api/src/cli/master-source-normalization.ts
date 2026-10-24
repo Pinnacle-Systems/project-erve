@@ -71,7 +71,6 @@ export const STYLE_HEADERS = [
   'HSN Code',
   'Barcodes',
   'Factory Mappings',
-  'Financial Year',
   'Factory Name Mappings',
   'Business Style',
   'Description',

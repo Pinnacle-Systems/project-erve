@@ -229,23 +229,17 @@ async function references(actor: CurrentUser, loaded: Loaded, worksheet: string)
   }
   for (const row of records(loaded.files.seasons)) {
     try {
-      if (!row['Financial Year']) throw HttpError.conflict('Season Financial Year needs review');
-      const fy = await prisma.financialYear.findUnique({ where: { code: row['Financial Year'] } });
-      if (!fy) throw HttpError.conflict('Season Financial Year is outside the bootstrap window');
       const input = createSeasonSchema.parse({
         code: row.Code,
         name: row.Name,
-        financialYearId: fy.id,
       });
-      const existing = await prisma.season.findFirst({
-        where: { code: input.code, financialYearId: fy.id },
-      });
+      const existing = await prisma.season.findFirst({ where: { code: input.code } });
       if (existing && (existing.name !== input.name || existing.status !== 'ACTIVE'))
         throw HttpError.conflict('Existing Season values differ');
       if (!existing) await createSeason(actor, input);
       outcomes.push({
         kind: 'Season',
-        key: `${input.code}:${fy.code}`,
+        key: input.code,
         outcome: existing ? 'SKIP_EXISTING' : 'CREATE',
       });
     } catch (error) {
@@ -295,11 +289,11 @@ export async function disposableBusinessSnapshot() {
     prisma.factory.findMany({ orderBy: { code: 'asc' } }),
     prisma.distributor.findMany({ orderBy: { code: 'asc' } }),
     prisma.retailStore.findMany({ include: { distributor: true }, orderBy: { code: 'asc' } }),
-    prisma.season.findMany({ include: { financialYear: true }, orderBy: { code: 'asc' } }),
+    prisma.season.findMany({ orderBy: { code: 'asc' } }),
     prisma.size.findMany({ orderBy: { code: 'asc' } }),
     prisma.style.findMany({
       include: {
-        season: { include: { financialYear: true } },
+        season: true,
         styleSizes: { include: { size: true } },
         styleFactoryMappings: { include: { factory: true } },
       },
@@ -354,7 +348,6 @@ export async function disposableBusinessSnapshot() {
       code: season.code,
       name: season.name,
       status: season.status,
-      financialYear: season.financialYear.code,
       barcodeSerial: season.barcodeSerial,
     })),
     sizes: sizes.map((size) => withoutIds(size)),
@@ -366,7 +359,6 @@ export async function disposableBusinessSnapshot() {
       finalMrp: String(style.finalMrp),
       status: style.status,
       season: style.season.code,
-      financialYear: style.season.financialYear.code,
       sizes: style.styleSizes
         .map((size) => ({ code: size.size.code, barcode: size.barcode, status: size.status }))
         .sort((a, b) => a.code.localeCompare(b.code)),

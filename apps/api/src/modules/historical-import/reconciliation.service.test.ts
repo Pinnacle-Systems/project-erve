@@ -61,8 +61,7 @@ const OK_IMAGE: ExtractedImageCandidate = {
 };
 
 async function seedMasterData() {
-  const financialYear = await createTestFinancialYear();
-  const season = await prisma.season.create({ data: { id: createId(), code: 'AW25', name: 'Autumn Winter 25', financialYearId: financialYear.id } });
+  const season = await prisma.season.create({ data: { id: createId(), code: 'AW25', name: 'Autumn Winter 25' } });
   const factory = await createTestFactory({ code: 'CLIFTON', name: 'Clifton export Pvt Ltd' });
   const style = await prisma.style.create({
     data: { id: createId(), styleNumber: `ST-${createId()}`, styleName: 'Girls Hoody', lmixNumber: 'LMIX29524002', finalMrp: 500, seasonId: season.id },
@@ -74,7 +73,7 @@ async function seedMasterData() {
 
 describe('reconcileSeason', () => {
   it('matches by exact code, never auto-creates', async () => {
-    const season = await prisma.season.create({ data: { id: createId(), code: 'AW25', name: 'AW25', financialYearId: (await createTestFinancialYear()).id } });
+    const season = await prisma.season.create({ data: { id: createId(), code: 'AW25', name: 'AW25' } });
     await expect(reconcileSeason(prisma, 'AW25')).resolves.toMatchObject({ status: 'MATCHED', seasonId: season.id });
     await expect(reconcileSeason(prisma, 'SS26')).resolves.toMatchObject({ status: 'UNMATCHED', seasonId: null });
   });

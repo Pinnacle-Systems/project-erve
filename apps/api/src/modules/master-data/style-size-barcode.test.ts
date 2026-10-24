@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { Prisma, prisma } from '../../db/prisma.js';
-import { createTestFinancialYear, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import { createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 import { addStyleSize } from './master-data.service.js';
 
 const app = createApp();
@@ -23,9 +23,8 @@ async function adminToken() {
 }
 
 async function createSeason(barcodeSerial: number | null = 3, code = `S${barcodeSerial ?? 'X'}`) {
-  const financialYear = await createTestFinancialYear();
   return prisma.season.create({
-    data: { id: createId(), code, name: `Season ${code}`, financialYearId: financialYear.id, barcodeSerial },
+    data: { id: createId(), code, name: `Season ${code}`, barcodeSerial },
   });
 }
 
@@ -388,30 +387,27 @@ describe('manual barcode edit', () => {
 });
 
 describe('Season Barcode Serial', () => {
-  const seasonBody = (financialYearId: string, extra: Record<string, unknown> = {}) => ({
+  const seasonBody = (extra: Record<string, unknown> = {}) => ({
     code: 'AW26',
     name: 'Autumn Winter 2026',
-    financialYearId,
     ...extra,
   });
 
   it('is never auto-assigned: a Season created without one has none', async () => {
     const token = await adminToken();
-    const fy = await createTestFinancialYear();
-    const res = await request(app).post('/seasons').set('Authorization', `Bearer ${token}`).send(seasonBody(fy.id));
+    const res = await request(app).post('/seasons').set('Authorization', `Bearer ${token}`).send(seasonBody());
     expect(res.status).toBe(201);
     expect(res.body.data.barcodeSerial).toBeNull();
   });
 
   it('is unique across Seasons with a clear message', async () => {
     const token = await adminToken();
-    const fy = await createTestFinancialYear();
-    await request(app).post('/seasons').set('Authorization', `Bearer ${token}`).send(seasonBody(fy.id, { barcodeSerial: 3 }));
+    await request(app).post('/seasons').set('Authorization', `Bearer ${token}`).send(seasonBody({ barcodeSerial: 3 }));
 
     const dup = await request(app)
       .post('/seasons')
       .set('Authorization', `Bearer ${token}`)
-      .send(seasonBody(fy.id, { code: 'SS27', barcodeSerial: 3 }));
+      .send(seasonBody({ code: 'SS27', barcodeSerial: 3 }));
 
     expect(dup.status).toBe(409);
     expect(dup.body.error.message).toBe('Barcode Serial 3 is already used by Season AW26');
@@ -452,12 +448,11 @@ describe('Season Barcode Serial', () => {
 
   it('rejects a non-positive or fractional serial', async () => {
     const token = await adminToken();
-    const fy = await createTestFinancialYear();
     for (const barcodeSerial of [0, -1, 1.5]) {
       const res = await request(app)
         .post('/seasons')
         .set('Authorization', `Bearer ${token}`)
-        .send(seasonBody(fy.id, { barcodeSerial }));
+        .send(seasonBody({ barcodeSerial }));
       expect(res.status).toBe(400);
     }
   });

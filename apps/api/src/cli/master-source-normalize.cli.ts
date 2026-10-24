@@ -7,7 +7,6 @@ const { values } = parseArgs({
     'audit-root': { type: 'string' },
     'output-root': { type: 'string' },
     corrections: { type: 'string' },
-    'season-mapping': { type: 'string' },
     help: { type: 'boolean' },
   },
   strict: true,
@@ -15,7 +14,7 @@ const { values } = parseArgs({
 
 if (values.help) {
   console.log(
-    'File-only normalization: --source-root PATH --audit-root PATH --output-root PATH [--corrections reviewed.json] [--season-mapping verified.json]',
+    'File-only normalization: --source-root PATH --audit-root PATH --output-root PATH [--corrections reviewed.json]',
   );
 } else {
   try {
@@ -26,7 +25,6 @@ if (values.help) {
       auditRoot: values['audit-root'],
       outputRoot: values['output-root'],
       correctionsFile: values.corrections,
-      seasonMappingFile: values['season-mapping'],
     });
     console.log(
       JSON.stringify(

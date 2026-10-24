@@ -65,10 +65,8 @@ export interface FactoryPlan {
 export interface SeasonPlan {
   code: string;
   name: string;
-  financialYearCode: string;
   action: EntityAction;
   seasonId: string | null;
-  financialYearId: string | null;
   detail: string;
 }
 export interface SizePlan {
@@ -194,22 +192,20 @@ export async function planH3aImport(client: Client, loaded: LoadedBundle, profil
   }
   const factoryIdByCanonical = new Map(factories.filter((f) => f.factoryId).map((f) => [f.canonicalName, f.factoryId!] as const));
 
-  // --- Seasons
+  // --- Seasons (ISS-SEASON-FY: Season has no Financial Year of its own —
+  // resolved/created by Code alone, globally unique.)
   const seasons: SeasonPlan[] = [];
   for (const spec of bundle.seasons) {
-    const fy = await client.financialYear.findUnique({ where: { code: spec.financialYearCode }, select: { id: true } });
-    const existing = await client.season.findMany({ where: { code: spec.code }, include: { financialYear: { select: { code: true } } } });
+    const existing = await client.season.findMany({ where: { code: spec.code } });
     let row: SeasonPlan;
     if (existing.length > 1) {
-      row = { ...spec, action: 'CONFLICT', seasonId: null, financialYearId: fy?.id ?? null, detail: `${existing.length} Seasons carry code ${spec.code}` };
+      row = { ...spec, action: 'CONFLICT', seasonId: null, detail: `${existing.length} Seasons carry code ${spec.code}` };
     } else if (existing.length === 1) {
       const e = existing[0]!;
-      const exact = e.name === spec.name && e.financialYear.code === spec.financialYearCode;
-      row = { ...spec, action: exact ? 'EXACT_EXISTING' : 'CONFLICT', seasonId: e.id, financialYearId: e.financialYearId, detail: exact ? 'exists' : `existing is "${e.name}" in FY ${e.financialYear.code}` };
-    } else if (!fy) {
-      row = { ...spec, action: 'CONFLICT', seasonId: null, financialYearId: null, detail: `Financial Year ${spec.financialYearCode} does not exist (never created by this importer)` };
+      const exact = e.name === spec.name;
+      row = { ...spec, action: exact ? 'EXACT_EXISTING' : 'CONFLICT', seasonId: e.id, detail: exact ? 'exists' : `existing is "${e.name}"` };
     } else {
-      row = { ...spec, action: 'MISSING_CREATE', seasonId: null, financialYearId: fy.id, detail: 'absent; will be created' };
+      row = { ...spec, action: 'MISSING_CREATE', seasonId: null, detail: 'absent; will be created' };
     }
     if (row.action === 'CONFLICT') problems.push(`Season ${spec.code}: ${row.detail}`);
     seasons.push(row);
@@ -513,7 +509,7 @@ export async function executeH3aImport(
     log(`Factory created: ${f.code} ${f.name}`);
   }
   for (const s of before.seasons.filter((r) => r.action === 'MISSING_CREATE')) {
-    await createSeason(actor, { code: s.code, name: s.name, financialYearId: s.financialYearId!, status: 'ACTIVE' });
+    await createSeason(actor, { code: s.code, name: s.name, status: 'ACTIVE' });
     created.seasons.push(s.code);
     log(`Season created: ${s.code}`);
   }

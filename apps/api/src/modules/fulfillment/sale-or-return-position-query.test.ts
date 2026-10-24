@@ -71,7 +71,7 @@ async function createSharedTestContext() {
   const actorId = await createTestUser({ email: `actor-${nextSeq()}-${createId()}@test.local`, password: 'pass', roles: ['ADMIN'] });
   const factory = await createTestFactory();
   const season = await prisma.season.create({
-    data: { id: createId(), code: `S-${nextSeq()}-${createId()}`, name: 'Season', financialYearId: financialYear.id },
+    data: { id: createId(), code: `S-${nextSeq()}-${createId()}`, name: 'Season' },
   });
   const size = await prisma.size.create({
     data: { id: createId(), code: `SZ-${nextSeq()}-${createId()}`, label: 'M', sizeType: 'ALPHA', sortOrder: 1 },

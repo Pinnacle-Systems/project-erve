@@ -6,7 +6,6 @@ import { prisma } from '../../db/prisma.js';
 import {
   createTestDistributor,
   createTestFactory,
-  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -54,9 +53,8 @@ async function createGraph() {
   const size = await prisma.size.create({
     data: { id: createId(), code: `SZ-${createId()}`, label: 'One Size', sizeType: 'AGE', sortOrder: 1 },
   });
-  const financialYear = await createTestFinancialYear(new Date('2026-06-30'));
   const season = await prisma.season.create({
-    data: { id: createId(), code: `QW-${createId()}`, name: 'QW Season', financialYearId: financialYear.id },
+    data: { id: createId(), code: `QW-${createId()}`, name: 'QW Season' },
   });
   const style = await prisma.style.create({
     data: {

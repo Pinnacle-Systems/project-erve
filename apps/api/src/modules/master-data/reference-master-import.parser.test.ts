@@ -7,12 +7,10 @@ describe('reference master parsing', () => {
     expect(
       parseMasterImportFile(
         'seasons',
-        Buffer.from(
-          'Season Code,Season Name,Financial Year,Barcode Serial\nAW26,Winter,2026-27,\n',
-        ),
+        Buffer.from('Season Code,Season Name,Barcode Serial\nAW26,Winter,\n'),
         's.csv',
       ).rows[0]?.input,
-    ).toEqual({ code: 'AW26', name: 'Winter', financialYear: '2026-27' });
+    ).toEqual({ code: 'AW26', name: 'Winter' });
     expect(
       parseMasterImportFile(
         'sizes',
@@ -50,7 +48,7 @@ describe('reference master parsing', () => {
     ).toThrow(/GST/);
   });
   it.each([
-    ['seasons', 'Season Code,Season Name\nAW26,Winter'],
+    ['seasons', 'Season Code\nAW26'],
     ['sizes', 'Size Code,Size Label,Size Type\nS,Small,ALPHA'],
     ['hsns', 'Description\nMissing'],
   ] as const)('requires complete headers for %s', (kind, csv) => {

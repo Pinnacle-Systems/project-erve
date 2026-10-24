@@ -9,7 +9,7 @@ import { ThemeProvider } from '@erve/theme';
 import { apiClient } from '../../lib/api-client.js';
 import { StyleLookupField, type StyleLookupValue } from './StyleLookupField.js';
 
-const season = { code: 'SS26', displayName: 'SS26 26-27' };
+const season = { code: 'SS26', displayName: 'SS26' };
 const tee: OrderSheetStyleOption = {
   id: 'style-1',
   styleNumber: 'ST-001',

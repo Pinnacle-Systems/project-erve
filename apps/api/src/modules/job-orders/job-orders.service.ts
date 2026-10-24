@@ -40,7 +40,7 @@ import { getActiveStyleSizeIds } from '../master-data/style-size.util.js';
 import { isOrderSheetEligibleForJobOrder } from '../purchase-orders/purchase-order-eligibility.js';
 
 const jobOrderInclude = {
-  seasonSnapshots: { orderBy: [{ financialYear: 'asc' as const }, { name: 'asc' as const }] },
+  seasonSnapshots: { orderBy: [{ code: 'asc' as const }] },
   financialYear: { select: { id: true, code: true } },
   // Always fetched (cheap: at most a handful of rows per Job Order) — the
   // role-aware trim happens in toJobOrderView, not here, so a single query
@@ -734,12 +734,13 @@ function toJobOrderView(
     }),
     sourceOrderSheetCount: jobOrder.orderSheets.length,
     unitPrice: jobOrder.unitPrice.toNumber(),
+    // ISS-SEASON-FY: Season has no Financial Year — displayName is always
+    // just the Code.
     seasonSnapshots: jobOrder.seasonSnapshots.map((season) => ({
       seasonId: season.seasonId,
       code: season.code,
       name: season.name,
-      financialYear: season.financialYear,
-      displayName: season.displayName,
+      displayName: season.code,
     })),
     confirmedBy: jobOrder.confirmer,
     confirmedAt: jobOrder.confirmedAt?.toISOString() ?? null,
@@ -1573,8 +1574,6 @@ export async function createJobOrder(
                     seasonId: season.seasonId,
                     code: season.code,
                     name: season.name,
-                    financialYear: season.financialYear,
-                    displayName: season.displayName,
                   },
                 ]),
               ),

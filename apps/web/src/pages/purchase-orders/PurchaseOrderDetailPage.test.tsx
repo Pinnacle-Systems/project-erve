@@ -235,7 +235,7 @@ describe('PurchaseOrderDetailPage Style and Size-wise Quantities', () => {
   it('still shows the Order Sheet line Season in the Order Sheet Header once the banner is gone', async () => {
     const po = buildPO();
     po.lines[0]!.seasonSnapshots = [
-      { seasonId: 's1', code: 'SS27', name: 'Spring Summer 27', financialYear: '2026-27', displayName: 'SS27' },
+      { seasonId: 's1', code: 'SS27', name: 'Spring Summer 27', displayName: 'SS27' },
     ];
     await renderPage(po);
     expect(content()).toContain('SS27');

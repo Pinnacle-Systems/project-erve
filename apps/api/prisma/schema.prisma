@@ -595,11 +595,13 @@ model UserFactory {
 // Financial Year is the sole authority for the 1-Apr–31-Mar fiscal boundary.
 // Rows are historical reference data: once created, startDate/endDate must
 // never change (see financial-year.service.ts's create-or-validate
-// ensureFinancialYear). Every applicable business document and Season
-// resolves to exactly one row via its own effective date — never inherited
-// through a parent/lineage relationship. Overlap is prevented at the database
-// level (see the migration's exclusion constraint), mirroring the
-// PriceList non-overlapping-active-period precedent.
+// ensureFinancialYear). Every applicable business document resolves to
+// exactly one row via its own effective date — never inherited through a
+// parent/lineage relationship. Season has no Financial Year of its own
+// (ISS-SEASON-FY) and is never the source of a document's Financial Year.
+// Overlap is prevented at the database level (see the migration's exclusion
+// constraint), mirroring the PriceList non-overlapping-active-period
+// precedent.
 model FinancialYear {
   id        String   @id
   code      String   @unique // "2026-27"
@@ -608,7 +610,6 @@ model FinancialYear {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  seasons            Season[]
   purchaseOrders     DistributorPurchaseOrder[]
   jobOrders          JobOrder[]
   saleOrders         SaleOrder[]
@@ -836,21 +837,26 @@ model GstValueBand {
 // exactly one Financial Year (a real relation, not free text) — the compact
 // two-year display form (e.g. 26-27) is derived from FinancialYear.code for
 // display, never duplicated in storage.
+// ISS-SEASON-FY: Season identity is its Code alone, globally unique
+// (case-insensitive, trimmed) regardless of status — see the
+// seasons_code_ci_key expression index in the
+// remove_season_financial_year migration. Financial Year was removed
+// entirely: a Season is not a per-year record, and every business
+// document (OS/JO/DO/invoice) continues to resolve its own Financial Year
+// independently from its own date, never from its Season.
 model Season {
-  id              String   @id
-  code            String
-  name            String
-  financialYearId String   @map("financial_year_id")
-  status          String   @default("ACTIVE")
+  id            String   @id
+  code          String
+  name          String
+  status        String   @default("ACTIVE")
   // Stable numeric prefix for generated Style+Size barcodes. Deliberately
   // independent of code/name/ordering and never derived from row counts.
   // Null = not yet assigned (barcodes cannot be generated for its Styles).
-  barcodeSerial   Int?     @unique @map("barcode_serial")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  barcodeSerial Int?     @unique @map("barcode_serial")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
-  financialYear FinancialYear @relation(fields: [financialYearId], references: [id], onDelete: Restrict)
-  styles        Style[]
+  styles Style[]
 
   @@index([status])
   @@map("seasons")
@@ -1259,14 +1265,18 @@ model DistributorPurchaseOrderLine {
   @@map("distributor_purchase_order_lines")
 }
 
+// A frozen Code+Name snapshot of the Style's Season at Order Sheet creation
+// time — Season is live master data and can be renamed or deactivated
+// later, but this record's evidence of what it was at creation must not
+// drift. Season has no Financial Year (ISS-SEASON-FY), so there is nothing
+// to snapshot beyond code/name; the display label is always derived from
+// `code` at read time, never stored.
 model PurchaseOrderLineSeasonSnapshot {
   id                  String   @id
   purchaseOrderLineId String   @map("purchase_order_line_id")
   seasonId            String?  @map("season_id")
   code                String
   name                String
-  financialYear       String   @map("financial_year")
-  displayName         String   @map("display_name")
   createdAt           DateTime @default(now()) @map("created_at")
 
   purchaseOrderLine DistributorPurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Cascade)
@@ -3133,14 +3143,16 @@ model QualityAttachment {
   @@map("quality_attachments")
 }
 
+// A frozen Code+Name snapshot of the Job Order's Season(s) at creation time
+// — see PurchaseOrderLineSeasonSnapshot's doc comment. Season has no
+// Financial Year (ISS-SEASON-FY); the display label is always derived from
+// `code` at read time, never stored.
 model JobOrderSeasonSnapshot {
   id            String   @id
   jobOrderId    String   @map("job_order_id")
   seasonId      String?  @map("season_id")
   code          String
   name          String
-  financialYear String   @map("financial_year")
-  displayName   String   @map("display_name")
   createdAt     DateTime @default(now()) @map("created_at")
 
   jobOrder JobOrder @relation(fields: [jobOrderId], references: [id], onDelete: Cascade)

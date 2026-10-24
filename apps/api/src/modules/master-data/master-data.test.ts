@@ -6,13 +6,11 @@ import { prisma } from '../../db/prisma.js';
 import {
   createTestDistributor,
   createTestFactory,
-  createTestFinancialYear,
   createTestUser,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
 import { assertProcessFlowVersionMutable, previewHsnDescriptionRefresh } from './master-data.service.js';
-import { toCompactFinancialYearCode } from './financial-year.util.js';
 
 const app = createApp();
 
@@ -36,17 +34,13 @@ async function createSize(code = 'AGE_3') {
 // are barcode-ready (serials are globally unique, so never reuse one).
 let nextBarcodeSerial = 1;
 
-async function createActiveSeason(
-  overrides?: Partial<{ code: string; name: string; financialYearId: string }>,
-) {
+async function createActiveSeason(overrides?: Partial<{ code: string; name: string }>) {
   const suffix = createId().slice(-6);
-  const financialYear = await createTestFinancialYear();
   return prisma.season.create({
     data: {
       id: createId(),
       code: `T-${suffix}`,
       name: `Test Season ${suffix}`,
-      financialYearId: financialYear.id,
       barcodeSerial: nextBarcodeSerial++,
       ...overrides,
     },
@@ -836,18 +830,18 @@ describe('seasons API', () => {
       password: 'password',
       roles: ['ADMIN'],
     });
-    const financialYear = await createTestFinancialYear();
     const created = await request(app)
       .post('/seasons')
       .set('Authorization', `Bearer ${token}`)
-      .send({ code: ' aw-core ', name: ' Autumn/Winter ', financialYearId: financialYear.id });
+      .send({ code: ' aw-core ', name: ' Autumn/Winter ' });
     expect(created.status).toBe(201);
     expect(created.body.data).toMatchObject({
       code: 'AW-CORE',
       name: 'Autumn/Winter',
-      financialYear: { id: financialYear.id, code: financialYear.code },
-      displayName: `AW-CORE ${toCompactFinancialYearCode(financialYear.code)}`,
+      displayName: 'AW-CORE',
     });
+    expect(created.body.data).not.toHaveProperty('financialYear');
+    expect(created.body.data).not.toHaveProperty('financialYearId');
     const read = await request(app)
       .get(`/seasons/${created.body.data.id}`)
       .set('Authorization', `Bearer ${token}`);
@@ -864,7 +858,10 @@ describe('seasons API', () => {
     expect(inactive.body.data.status).toBe('INACTIVE');
   });
 
-  it('enforces configurable code/year identity and Season-management authorization', async () => {
+  // ISS-SEASON-FY: Season Code is globally unique, case-insensitive, and
+  // trimmed, independent of status — there is no Financial Year to scope
+  // it by any more.
+  it('enforces globally unique, case-insensitive Season Codes and Season-management authorization', async () => {
     const admin = await createTestUserAndToken({
       email: 'season-admin@test.local',
       password: 'password',
@@ -875,8 +872,7 @@ describe('seasons API', () => {
       password: 'password',
       roles: ['FACTORY_USER'],
     });
-    const financialYear = await createTestFinancialYear();
-    const payload = { code: 'custom-1', name: 'Shared descriptive name', financialYearId: financialYear.id };
+    const payload = { code: 'custom-1', name: 'Shared descriptive name' };
     expect(
       (
         await request(app)
@@ -902,20 +898,41 @@ describe('seasons API', () => {
       ).status,
     ).toBe(409);
 
-    // The same code is valid again in a *different* Financial Year — this
-    // is a code+FY composite identity, not a global code uniqueness rule.
-    const otherFinancialYear = await createTestFinancialYear(new Date('2030-06-01'));
-    const otherFyRes = await request(app)
+    // Case-insensitive: lowercase 'custom-1' collides with the already-
+    // created 'CUSTOM-1'.
+    const caseInsensitiveRes = await request(app)
       .post('/seasons')
       .set('Authorization', `Bearer ${admin.token}`)
-      .send({ ...payload, code: 'custom-1', financialYearId: otherFinancialYear.id });
-    expect(otherFyRes.status).toBe(201);
+      .send({ ...payload, code: 'Custom-1' });
+    expect(caseInsensitiveRes.status).toBe(409);
+    expect(caseInsensitiveRes.body.error.message).toContain('CUSTOM-1');
 
-    const unknownFyRes = await request(app)
+    // Deactivating the existing Season does not free up its code.
+    const existing = await prisma.season.findFirstOrThrow({ where: { code: 'CUSTOM-1' } });
+    await request(app)
+      .patch(`/seasons/${existing.id}/status`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ status: 'INACTIVE' });
+    const afterDeactivateRes = await request(app)
       .post('/seasons')
       .set('Authorization', `Bearer ${admin.token}`)
-      .send({ ...payload, code: 'custom-3', financialYearId: 'not-a-real-financial-year-id' });
-    expect(unknownFyRes.status).toBe(400);
+      .send({ ...payload, code: 'custom-1' });
+    expect(afterDeactivateRes.status).toBe(409);
+
+    // Editing a Season without changing its code succeeds.
+    const noopEdit = await request(app)
+      .patch(`/seasons/${existing.id}`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ code: 'custom-1', name: 'Renamed' });
+    expect(noopEdit.status).toBe(200);
+    expect(noopEdit.body.data.name).toBe('Renamed');
+
+    // Changing a Season's code to another existing code is rejected.
+    const renameToExisting = await request(app)
+      .patch(`/seasons/${existing.id}`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ code: 'CUSTOM-2' });
+    expect(renameToExisting.status).toBe(409);
 
     expect(
       (
@@ -2600,18 +2617,17 @@ describe('small master list pagination (PAG8)', () => {
     expect(active).toHaveLength(4);
   });
 
-  it('Seasons: pages keep FY/name order with an id tie-breaker and the financialYearId filter', async () => {
+  it('Seasons: pages keep code order with an id tie-breaker', async () => {
     const token = await adminToken();
-    const fy = await createTestFinancialYear();
     for (let index = 0; index < 3; index += 1) {
       await prisma.season.create({
-        data: { id: createId(), code: `SS-${index}`, name: 'Same Season', financialYearId: fy.id },
+        data: { id: createId(), code: `SS-${index}`, name: 'Same Season' },
       });
     }
 
-    const paged = await walk(token, '/seasons', { financialYearId: fy.id });
+    const paged = await walk(token, '/seasons');
     expect(paged).toHaveLength(3);
-    expect(paged).toEqual(await legacyIds(token, '/seasons', { financialYearId: fy.id }));
+    expect(paged).toEqual(await legacyIds(token, '/seasons'));
   });
 
   it('Process Flows: legacy array unchanged; pages follow code order', async () => {

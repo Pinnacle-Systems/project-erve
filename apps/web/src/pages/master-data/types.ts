@@ -9,7 +9,6 @@ export interface Season {
   id: string;
   code: string;
   name: string;
-  financialYear: { id: string; code: string };
   displayName: string;
   barcodeSerial?: number | null;
   status: Status;

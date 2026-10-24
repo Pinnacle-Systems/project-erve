@@ -139,7 +139,6 @@ function makeStyle(overrides: Partial<Style> = {}): Style {
       id: 's1',
       code: 'SS27',
       name: 'Spring Summer 27',
-      financialYear: { id: 'fy1', code: 'FY27' },
       displayName: 'SS27',
       status: 'ACTIVE',
     },

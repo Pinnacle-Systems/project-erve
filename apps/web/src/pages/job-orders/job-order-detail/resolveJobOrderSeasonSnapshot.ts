@@ -10,13 +10,7 @@ export function resolveJobOrderSeasonSnapshot(
   const unique = [
     ...new Map(
       snapshots.map((snapshot) => [
-        JSON.stringify([
-          snapshot.seasonId,
-          snapshot.code,
-          snapshot.name,
-          snapshot.financialYear,
-          snapshot.displayName,
-        ]),
+        JSON.stringify([snapshot.seasonId, snapshot.code, snapshot.name, snapshot.displayName]),
         snapshot,
       ]),
     ).values(),
@@ -24,6 +18,6 @@ export function resolveJobOrderSeasonSnapshot(
   if (unique.length === 1) return { kind: 'single', label: unique[0]!.displayName };
   return {
     kind: 'conflict',
-    label: `Inconsistent recorded Season: ${unique.map((season) => `${season.displayName} (${season.code}; ${season.name}; ${season.financialYear}; ${season.seasonId ?? 'no linked Season'})`).join(' / ')}`,
+    label: `Inconsistent recorded Season: ${unique.map((season) => `${season.displayName} (${season.code}; ${season.name}; ${season.seasonId ?? 'no linked Season'})`).join(' / ')}`,
   };
 }
