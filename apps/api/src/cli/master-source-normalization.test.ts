@@ -10,6 +10,7 @@ import {
   storeCandidates,
   commercialConflicts,
   parseInvoiceLines,
+  STYLE_HEADERS,
 } from './master-source-normalization.js';
 import { buildStylesWorkbook, runSourceNormalization } from './master-source-export.js';
 import { extractEmbeddedImagesByRow } from './xlsx-embedded-images.js';
@@ -27,9 +28,17 @@ describe('historical source normalization', () => {
       overflow,
     );
     const sheet = XLSX.read(bytes, { type: 'buffer' }).Sheets.Styles!;
-    expect(sheet.B2).toMatchObject({ t: 's', v: '=1+1' });
-    expect(sheet.B2.f).toBeUndefined();
-    const reference = JSON.parse(sheet.S2.v as string);
+    // Columns are located by header name, not a hardcoded letter, so this
+    // test doesn't silently break whenever a column is added/removed from
+    // STYLE_HEADERS.
+    const styleNameCell = XLSX.utils.encode_cell({ r: 1, c: STYLE_HEADERS.indexOf('Style Name') });
+    const sourceProvenanceCell = XLSX.utils.encode_cell({
+      r: 1,
+      c: STYLE_HEADERS.indexOf('Source Provenance'),
+    });
+    expect(sheet[styleNameCell]).toMatchObject({ t: 's', v: '=1+1' });
+    expect(sheet[styleNameCell].f).toBeUndefined();
+    const reference = JSON.parse(sheet[sourceProvenanceCell].v as string);
     expect(reference.report).toBe('reports/oversized-cell-values.json');
     expect(reference.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(overflow.get(reference.sha256)).toBe(evidence);

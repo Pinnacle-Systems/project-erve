@@ -90,7 +90,6 @@ export interface BulkStyleImportSheetRow {
   colour?: string;
   finalMrpRaw: string;
   seasonCode: string;
-  financialYear: string;
   // Optional. The existing barcode generator (barcode.util.ts, unchanged)
   // requires either an explicit barcode per Size or a Style LMIX Number in
   // the form "LMIX<digits>" to auto-generate one — this column exists so a
@@ -139,7 +138,6 @@ const SHEET_HEADERS: Record<
   colour: 'colour',
   'final mrp': 'finalMrpRaw',
   'season code': 'seasonCode',
-  'financial year': 'financialYear',
   'lmix number': 'lmixNumber',
   'hsn code': 'hsnCode',
 };
@@ -222,7 +220,6 @@ export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): B
       styleName: row.styleName ?? '',
       finalMrpRaw: row.finalMrpRaw ?? '',
       seasonCode: row.seasonCode ?? '',
-      financialYear: row.financialYear ?? '',
       lmixNumber: row.lmixNumber ?? '',
       hsnCode: row.hsnCode ?? '',
       royaltyPercentageRaw: royaltyCell.raw,
@@ -246,7 +243,7 @@ export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): B
             return { factoryName: separator < 0 ? pair : pair.slice(0, separator).trim(), priceRaw: separator < 0 ? '' : pair.slice(separator + 1).trim() };
           }) : [],
     };
-  }).filter((row) => row.styleNumber || row.styleName || row.finalMrpRaw || row.seasonCode || row.sizeCodes.length || row.lmixNumber || row.hsnCode || row.barcodes.length || row.factoryMappings.length || row.factoryNameMappings.length || row.financialYear || row.royaltyPercentageRaw);
+  }).filter((row) => row.styleNumber || row.styleName || row.finalMrpRaw || row.seasonCode || row.sizeCodes.length || row.lmixNumber || row.hsnCode || row.barcodes.length || row.factoryMappings.length || row.factoryNameMappings.length || row.royaltyPercentageRaw);
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +267,6 @@ export type BulkStyleImportRejectionReason =
   | 'INVALID_ROYALTY_PERCENTAGE'
   | 'SIZE_BARCODE_COUNT_MISMATCH'
   | 'AMBIGUOUS_IMAGE_ANCHOR'
-  | 'AMBIGUOUS_SEASON'
   | 'AMBIGUOUS_FACTORY'
   | 'DOMAIN_VALIDATION_FAILED'
   | 'DUPLICATE_BARCODE_IN_FILE'
@@ -343,7 +339,7 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
   }
 
   const [seasons, sizes, factories, hsns, existingStyles] = await Promise.all([
-    prisma.season.findMany({ select: { id: true, code: true, status: true, financialYear: { select: { code: true } } } }),
+    prisma.season.findMany({ select: { id: true, code: true, status: true } }),
     prisma.size.findMany({ select: { id: true, code: true, status: true } }),
     prisma.factory.findMany({ select: { id: true, code: true, name: true, status: true } }),
     prisma.hsn.findMany({ select: { id: true, code: true, status: true } }),
@@ -404,12 +400,9 @@ export async function planBulkStyleImport(buffer: Buffer, worksheet?: string): P
       royaltyPercentage = Math.round(sheetRow.royaltyPercentage * 100) / 100;
     }
 
-    const matchingSeasons = seasons.filter((s) => norm(s.code) === norm(sheetRow.seasonCode) && (!sheetRow.financialYear || norm(s.financialYear.code) === norm(sheetRow.financialYear)));
-    if (matchingSeasons.length > 1) {
-      reject('AMBIGUOUS_SEASON', `Season "${sheetRow.seasonCode}" exists in multiple Financial Years; supply Financial Year`);
-      continue;
-    }
-    const season = matchingSeasons[0];
+    // ISS-SEASON-FY: Season Code is globally unique, so resolution is by
+    // Code alone — no Financial Year disambiguation needed.
+    const season = seasons.find((s) => norm(s.code) === norm(sheetRow.seasonCode));
     if (!season) {
       reject('UNKNOWN_SEASON', `No Season with code "${sheetRow.seasonCode}"`);
       continue;
@@ -814,7 +807,7 @@ export function verifyBulkStyleImportConfirmation(plan: BulkStyleImportPlan, act
 export function buildBulkStyleImportTemplate(): Buffer {
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([[
-    'Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes', 'Financial Year',
+    'Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes',
     'LMIX Number', 'HSN Code', 'Barcodes', 'Factory Name Mappings', 'Factory Mappings',
     'Description', 'Category', 'IP Name', 'Licensor', 'Colour', 'Royalty %',
   ]]), 'Styles');
@@ -824,7 +817,7 @@ export function buildBulkStyleImportTemplate(): Buffer {
     ['Pictures: embed PNG or JPEG pictures anchored to their Style row, or use Excel Picture in Cell on that row.'],
     ['Pictures may be in any column; multiple pictures on one Style row are supported. JPEG sources are converted to PNG.'],
     ['No filename, base64 or URL column is required. Only image bytes packaged in the workbook are used.'],
-    ['Financial Year disambiguates Season Codes used in more than one year. Supply existing master codes; do not infer missing business fields.'],
+    ['Season Code is globally unique; Financial Year is not part of Season identity and is not needed. Supply existing master codes; do not infer missing business fields.'],
     ['Royalty % is optional (0-100). Enter a plain number such as 7.5 to mean 7.5%; leave the cell blank for no royalty.'],
   ]), 'Instructions');
   return XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }) as Buffer;

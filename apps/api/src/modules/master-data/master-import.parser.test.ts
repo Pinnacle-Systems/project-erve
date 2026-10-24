@@ -10,7 +10,7 @@ function book(sheets: Record<string, unknown[][]>) {
 }
 describe('downloadable business master templates (ISS-036)', () => {
   const samples = {
-    seasons: { 'Season Code': 'SS', 'Season Name': 'Summer', 'Financial Year': '2026-27' },
+    seasons: { 'Season Code': 'SS', 'Season Name': 'Summer' },
     sizes: { 'Size Code': 'M', 'Size Label': 'Medium', 'Size Type': 'ALPHA', 'Sort Order': '2' },
     hsns: { 'HSN Code': '01234567', Description: 'Knitwear' },
     factories: { Name: 'Factory One' },

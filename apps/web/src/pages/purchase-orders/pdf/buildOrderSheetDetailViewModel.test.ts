@@ -31,7 +31,7 @@ function makeOrder(overrides: Partial<PurchaseOrder> = {}): PurchaseOrder {
         lineStatus: 'ACTIVE',
         remarks: null,
         seasonSnapshots: [
-          { seasonId: 's1', code: 'SS27', name: 'Spring Summer 27', financialYear: '2026-27', displayName: 'SS27' },
+          { seasonId: 's1', code: 'SS27', name: 'Spring Summer 27', displayName: 'SS27' },
         ],
         sizes: [
           { id: 'sz-1', sizeId: 'size-s', sizeCode: 'S', sizeLabel: 'Small', orderedQuantity: 200, saleOrderedQuantity: 0, dispatchedQuantity: 0, deliveredQuantity: 0, actualSoldQuantity: 0, returnedQuantity: 0, reassignedQuantity: 0 },

@@ -10,12 +10,6 @@ import { apiClient } from '../../lib/api-client.js';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import { fetchAllListPages } from '../../lib/pdf/fetchAllListPages.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
-import {
-  FinancialYearSelect,
-  toCompactFinancialYearCode,
-  useCurrentFinancialYearQuery,
-  useFinancialYearsQuery,
-} from '../../lib/financial-years.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
@@ -31,46 +25,24 @@ function errorMessage(error: unknown) {
 export function SeasonListPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const currentFinancialYearQuery = useCurrentFinancialYearQuery();
-  const financialYearsQuery = useFinancialYearsQuery();
-  const emptyForm = { code: '', name: '', financialYearId: '', barcodeSerial: '' };
+  const emptyForm = { code: '', name: '', barcodeSerial: '' };
   const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState<Season | null>(null);
-  const [filterFinancialYearId, setFilterFinancialYearId] = useState('');
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
   const [statusFilter, setStatusFilter] = useState<Status | ''>('');
   const [error, setError] = useState('');
   const [confirmStatusSeason, setConfirmStatusSeason] = useState<Season | null>(null);
-  // Bumped whenever the Add/Edit form's target identity changes (switching
-  // into or out of Edit, or resetting after a successful save) so the
-  // Financial Year Select below remounts with `key`. Its value otherwise
-  // changes on an already-mounted, already-interactive Select — e.g. Add's
-  // '' -> current-FY default, or Add's default -> a different Season's FY on
-  // Edit — which is exactly the external (non-user-driven) post-mount value
-  // change that reproduces Radix's hidden bubble-select clobbering the
-  // display back to the placeholder (confirmed via the Case C regression
-  // test in SeasonListPage.test.tsx; Cases A/B proved the Add form's own
-  // '' -> current-FY default transition is safe on its own, so this key only
-  // needs to change on a target switch, not on every query resolution).
-  const [formKey, setFormKey] = useState(0);
-  // The Add-Season form defaults to the current Financial Year once it's
-  // known — derived at render time (never written back into state) so it
-  // updates as soon as the query resolves, without a setState-in-effect.
-  // Only applies while adding (not mid-edit) and the user hasn't picked one.
-  const effectiveFinancialYearId =
-    form.financialYearId || (editing ? '' : currentFinancialYearQuery.data?.id ?? '');
   const listParams = useMemo(
     () => ({
       search: debouncedSearch || undefined,
       status: statusFilter || undefined,
-      financialYearId: filterFinancialYearId || undefined,
     }),
-    [debouncedSearch, statusFilter, filterFinancialYearId],
+    [debouncedSearch, statusFilter],
   );
   // Opt-in cursor pagination (limit sent): Load more appends further pages; a
   // filter change restarts at page 1. The PDF fetches every page (unfiltered
-  // by search/status — it keeps its existing Financial-Year-only scope).
+  // by search/status).
   const { query: seasonsQuery, items: seasons } = useCursorList<Season>({
     queryKey: ['seasons'],
     path: '/seasons',
@@ -80,17 +52,12 @@ export function SeasonListPage() {
     // Dynamically imported so @react-pdf/renderer and the document code load only when a user
     // actually clicks Download/Print, not as part of the app's initial bundle.
     const { generateSeasonListPdfBlob } = await import('./pdf/generateSeasonListPdf.js');
-    const selectedFinancialYear = financialYearsQuery.data?.find(
-      (fy) => fy.id === filterFinancialYearId,
-    );
     return generateSeasonListPdfBlob(
-      await fetchAllListPages<Season>('/seasons', {
-        financialYearId: filterFinancialYearId || undefined,
-      }),
-      { financialYear: selectedFinancialYear ? toCompactFinancialYearCode(selectedFinancialYear.code) : undefined },
+      await fetchAllListPages<Season>('/seasons', {}),
+      {},
       { generatedAt: new Date().toISOString(), generatedBy: user?.name },
     );
-  }, [filterFinancialYearId, financialYearsQuery.data, user?.name]);
+  }, [user?.name]);
 
   const seasonListPdfFilename = useCallback(
     () => buildPdfFilename(['ERVE-Seasons', getLocalDateString()]),
@@ -107,12 +74,10 @@ export function SeasonListPage() {
       const value = {
         code: form.code.trim().toUpperCase(),
         name: form.name.trim(),
-        financialYearId: effectiveFinancialYearId,
         // Blank = none yet (never auto-assigned); omitted on edit so an unset field cannot clear a serial.
         ...(barcodeSerial === '' ? {} : { barcodeSerial: Number(barcodeSerial) }),
       };
-      if (!value.code || !value.name || !value.financialYearId)
-        throw new Error('Season code, name, and Financial Year are required');
+      if (!value.code || !value.name) throw new Error('Season code and name are required');
       if (barcodeSerial !== '' && !/^[1-9]\d{0,4}$/.test(barcodeSerial))
         throw new Error('Barcode Serial must be a whole number from 1 to 99999');
       return editing ? apiClient.patch(`/seasons/${editing.id}`, value) : apiClient.post('/seasons', value);
@@ -120,7 +85,6 @@ export function SeasonListPage() {
     onSuccess: async () => {
       setForm(emptyForm);
       setEditing(null);
-      setFormKey((key) => key + 1);
       await refresh();
     },
     onError: (caught) => setError(errorMessage(caught)),
@@ -140,17 +104,14 @@ export function SeasonListPage() {
     setForm({
       code: season.code,
       name: season.name,
-      financialYearId: season.financialYear.id,
       barcodeSerial: season.barcodeSerial == null ? '' : String(season.barcodeSerial),
     });
     setError('');
-    setFormKey((key) => key + 1);
   };
   const beginAdd = () => {
     setEditing(null);
     setForm(emptyForm);
     setError('');
-    setFormKey((key) => key + 1);
   };
   return <div className="space-y-5">
     <PageHeader title="Seasons" subtitle="Season master records used by Styles. Inactive Seasons remain visible on historical records." primaryAction={<Button asChild variant="secondary"><Link to="/master-data/seasons/import">Import</Link></Button>} />
@@ -159,15 +120,6 @@ export function SeasonListPage() {
         <FormGrid layout="content">
           <TextField required label="Season code" value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} errorMessage={error && !form.code.trim() ? 'Required' : undefined} width="sm" />
           <TextField required label="Season name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} errorMessage={error && !form.name.trim() ? 'Required' : undefined} width="md" />
-          <FinancialYearSelect
-            key={formKey}
-            label="Financial Year"
-            required
-            width="xs"
-            value={effectiveFinancialYearId}
-            onValueChange={(value) => setForm({ ...form, financialYearId: value })}
-            errorMessage={error && !effectiveFinancialYearId ? 'Required' : undefined}
-          />
           <TextField
             label="Barcode Serial"
             inputMode="numeric"
@@ -197,19 +149,10 @@ export function SeasonListPage() {
           ]}
           statusValue={statusFilter || 'ALL'}
           onStatusChange={(value) => setStatusFilter(value === 'ALL' ? '' : (value as Status))}
-          customFilters={
-            <FinancialYearSelect
-              aria-label="Filter by Financial Year"
-              value={filterFinancialYearId}
-              onValueChange={setFilterFinancialYearId}
-              allLabel="All Financial Years"
-            />
-          }
-          hasActiveFilters={Boolean(search || statusFilter || filterFinancialYearId)}
+          hasActiveFilters={Boolean(search || statusFilter)}
           onClearFilters={() => {
             setSearch('');
             setStatusFilter('');
-            setFilterFinancialYearId('');
           }}
         />
       </div>
@@ -224,8 +167,6 @@ export function SeasonListPage() {
       { key: 'code', header: 'Code', accessor: 'code' },
       { key: 'name', header: 'Season name', accessor: 'name' },
       { key: 'barcodeSerial', header: 'Barcode serial', render: (season) => season.barcodeSerial ?? '-' },
-      { key: 'financialYear', header: 'Financial year', render: (season) => toCompactFinancialYearCode(season.financialYear.code) },
-      { key: 'displayName', header: 'Display', accessor: 'displayName' },
       { key: 'status', header: 'Status', render: (season) => <StatusBadge label={season.status} tone={season.status === 'ACTIVE' ? 'success' : 'muted'} /> },
       { key: 'actions', header: 'Actions', render: (season) => <div className="flex gap-2"><Button variant="secondary" onClick={() => beginEdit(season)}>Edit</Button><Button variant="secondary" onClick={() => setConfirmStatusSeason(season)}>{season.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}</Button></div> },
     ]} data={seasons} loading={seasonsQuery.isLoading} loadingState={<LoadingState variant="rows" label="Loading Seasons" />} emptyState={<EmptyState title="No Seasons found" description="Create a Season before assigning it to a Style." />} error={seasonsQuery.isError ? <ErrorState title="Unable to load Seasons" description={seasonsQuery.error.message} /> : undefined} />

@@ -94,7 +94,7 @@ function toCsv(header: string[], rows: unknown[][]): string {
 function planCsv(plan: H3aPlan): string {
   const rows: unknown[][] = [
     ...plan.factories.map((f) => ['Factory', f.canonicalName, f.code, f.action, f.detail]),
-    ...plan.seasons.map((s) => ['Season', s.code, s.financialYearCode, s.action, s.detail]),
+    ...plan.seasons.map((s) => ['Season', s.code, s.action, s.detail]),
     ...plan.sizes.map((s) => ['Size', s.sourceSizeCode, s.targetSizeCode, s.action, s.detail]),
     ['ProcessFlow', plan.processFlow.processFlowCode, `v${plan.processFlow.versionNumber}`, plan.processFlow.versionId ? 'EXACT_EXISTING' : 'CONFLICT', plan.processFlow.detail],
     ...plan.styles.map((s) => [

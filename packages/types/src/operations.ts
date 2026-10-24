@@ -139,11 +139,13 @@ export interface PurchaseOrderLine {
   primaryImage: StylePrimaryImageView | null;
   lineStatus: 'ACTIVE' | 'CANCELLED';
   remarks: string | null;
+  // A frozen Code+Name snapshot of the Style's Season at creation time —
+  // Season has no Financial Year of its own (ISS-SEASON-FY), so
+  // displayName is always just the Code.
   seasonSnapshots: Array<{
     seasonId: string | null;
     code: string;
     name: string;
-    financialYear: string;
     displayName: string;
   }>;
   sizes: PurchaseOrderLineSize[];
@@ -1311,11 +1313,13 @@ export interface JobOrderDetail extends JobOrderSummary {
     processFlowActivityId: string | null;
     associatedProductionActivity: { id: string; name: string } | null;
   };
+  // A frozen Code+Name snapshot of the Job Order's Season(s) at creation
+  // time — Season has no Financial Year of its own (ISS-SEASON-FY), so
+  // displayName is always just the Code.
   seasonSnapshots: Array<{
     seasonId: string | null;
     code: string;
     name: string;
-    financialYear: string;
     displayName: string;
   }>;
   processFlowVersion: {

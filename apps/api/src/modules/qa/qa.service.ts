@@ -100,7 +100,7 @@ const detailInclude = {
   factory: { select: { id: true, code: true, name: true } },
   // No Order Sheet / Purchase Order / Distributor provenance here — QA
   // identifies work through Job Order Number, Style and Factory only (§22).
-  seasonSnapshots: { select: { code: true, displayName: true } },
+  seasonSnapshots: { select: { code: true } },
   lines: {
     include: {
       style: {
@@ -260,9 +260,12 @@ function toDetail(record: DetailRecord): QaInspectionDetail {
   return {
     id: record.id,
     jobOrderNumber: record.jobOrderNumber,
+    // ISS-SEASON-FY: displayName is always derived from `code`, never the
+    // stored `displayName` column, so a pre-migration snapshot's FY suffix
+    // never surfaces here either — the stored row itself is untouched.
     seasons: record.seasonSnapshots.map((season) => ({
       code: season.code,
-      displayName: season.displayName,
+      displayName: season.code,
     })),
     factory: record.factory,
     status: record.status,

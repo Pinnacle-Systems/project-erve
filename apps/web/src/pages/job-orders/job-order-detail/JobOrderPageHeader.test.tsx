@@ -115,7 +115,6 @@ describe('consolidated Job Order identity and operations', () => {
           seasonId: 's1',
           code: 'SS26',
           name: 'Summer',
-          financialYear: '2026-27',
           displayName: 'SS26 Summer',
         },
       ],

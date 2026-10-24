@@ -62,7 +62,7 @@ async function createMinimalJobOrder(options: {
       finalMrp: 100,
       seasonId: (
         await prisma.season.create({
-          data: { id: createId(), code: `RPT-S-${createId()}`, name: 'RPT Season', financialYearId: financialYear.id },
+          data: { id: createId(), code: `RPT-S-${createId()}`, name: 'RPT Season' },
         })
       ).id,
     },
@@ -446,7 +446,7 @@ describe('Distributor Returns report (RPT1 6.12) — cancelled-after-approved tr
         finalMrp: 100,
         seasonId: (
           await prisma.season.create({
-            data: { id: createId(), code: `RET-S-${createId()}`, name: 'Ret Season', financialYearId: financialYear.id },
+            data: { id: createId(), code: `RET-S-${createId()}`, name: 'Ret Season' },
           })
         ).id,
       },

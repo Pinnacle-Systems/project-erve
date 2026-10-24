@@ -198,7 +198,7 @@ async function main(): Promise<void> {
         stages: li.stages,
       },
     },
-    seasons: REQUIRED_SEASONS.map((s) => ({ code: s.code, name: s.name, financialYearCode: s.financialYearCode })),
+    seasons: REQUIRED_SEASONS.map((s) => ({ code: s.code, name: s.name })),
     styles,
     jobOrders,
   };

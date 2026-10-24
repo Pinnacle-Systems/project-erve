@@ -136,7 +136,6 @@ export interface NormalizationOptions {
   outputRoot: string;
   correctionsFile?: string;
   invoiceEvidence?: InvoiceEvidence[];
-  seasonMappingFile?: string;
 }
 interface SourceManifest {
   path: string;
@@ -337,45 +336,6 @@ export async function runSourceNormalization(options: NormalizationOptions) {
         ),
       );
   }
-  const seasonMapping = options.seasonMappingFile
-    ? await jsonFile<
-        Array<{
-          seasonCode: string;
-          financialYear: string;
-          evidence: { file: string; sha256: string };
-          status: string;
-        }>
-      >(options.seasonMappingFile)
-    : [];
-  const seasonFY = new Map<string, string>();
-  for (const mapping of seasonMapping.filter((m) => m.status === 'APPROVED')) {
-    if (
-      !mapping.financialYear ||
-      !mapping.evidence?.file ||
-      sha256(await readFile(mapping.evidence.file)) !== mapping.evidence.sha256
-    )
-      throw new Error('Season mapping evidence checksum mismatch');
-    const historical = await jsonFile<{
-      seasons?: Array<{ code: string; financialYearCode: string }>;
-    }>(mapping.evidence.file);
-    if (
-      !historical.seasons?.some(
-        (s) => s.code === mapping.seasonCode && s.financialYearCode === mapping.financialYear,
-      )
-    )
-      throw new Error('Season mapping disagrees with historical bundle evidence');
-    if (
-      seasonFY.has(mapping.seasonCode) &&
-      seasonFY.get(mapping.seasonCode) !== mapping.financialYear
-    )
-      throw new Error('Conflicting reviewed Season mappings');
-    seasonFY.set(mapping.seasonCode, mapping.financialYear);
-    evidence.push({
-      path: mapping.evidence.file,
-      sha256: mapping.evidence.sha256,
-      sizeBytes: (await readFile(mapping.evidence.file)).length,
-    });
-  }
   const styleRows: CanonicalRow[] = [];
   const rates: CanonicalRow[] = [];
   const barcodeRows: CanonicalRow[] = [];
@@ -514,7 +474,6 @@ export async function runSourceNormalization(options: NormalizationOptions) {
         })
         .join(','),
       'Factory Mappings': '',
-      'Financial Year': seasonFY.get(mrp.season) ?? '',
       'Factory Name Mappings':
         factoryName && mrp.exFactoryCost !== null ? `${factoryName}:${mrp.exFactoryCost}` : '',
       'Business Style': mrp.baseCodeDigits,
@@ -849,10 +808,12 @@ export async function runSourceNormalization(options: NormalizationOptions) {
   const seasonCodes = [
     ...new Set(mrpRows.map((m) => m.season).filter((v): v is string => Boolean(v))),
   ];
+  // ISS-SEASON-FY: Season has no Financial Year of its own any more — the
+  // generated Season Master export is identified by Code alone, and there
+  // is nothing to flag as "unresolved" about a Financial Year.
   const seasons = seasonCodes.map((code) => ({
     Code: code,
     Name: code,
-    'Financial Year': seasonFY.get(code) ?? '',
     'Source Key': businessSourceKey('season', [code]),
     'Source Provenance': JSON.stringify({
       file: mrpSheet.source.path,
@@ -863,17 +824,6 @@ export async function runSourceNormalization(options: NormalizationOptions) {
       ],
     }),
   }));
-  for (const season of seasons)
-    if (!season['Financial Year'])
-      exceptions.push(
-        finding(
-          'SEASON_FINANCIAL_YEAR_UNRESOLVED',
-          'Financial Year is not inferred from Season code; needs reviewed source mapping',
-          season.Code,
-          undefined,
-          season['Source Key'],
-        ),
-      );
   const sizeCodes = [...new Set(barcodeData.records.map((b) => b.size).filter(Boolean))].sort(
     (a, b) => Number(a) - Number(b),
   );
@@ -950,13 +900,7 @@ export async function runSourceNormalization(options: NormalizationOptions) {
     );
     await save(generated, file, csv(safeRows, headers));
   };
-  await saveRows('seasons.csv', seasons, [
-    'Code',
-    'Name',
-    'Financial Year',
-    'Source Key',
-    'Source Provenance',
-  ]);
+  await saveRows('seasons.csv', seasons, ['Code', 'Name', 'Source Key', 'Source Provenance']);
   await saveRows('sizes.csv', sizes, [
     'Code',
     'Label',
@@ -1045,8 +989,6 @@ export async function runSourceNormalization(options: NormalizationOptions) {
     const bytes = await readFile(options.correctionsFile);
     await save(reports, 'applied-corrections.json', bytes);
   }
-  if (options.seasonMappingFile)
-    await save(reports, 'applied-season-mapping.json', await readFile(options.seasonMappingFile));
   const counts = {
     sources: sources.length,
     poSources: verifiedPOs.length,

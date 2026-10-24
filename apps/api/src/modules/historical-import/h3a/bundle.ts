@@ -55,7 +55,6 @@ export interface BundleFileRef {
 export interface BundleSeasonSpec {
   code: string;
   name: string;
-  financialYearCode: string;
 }
 
 export interface BundleStyleSpec {

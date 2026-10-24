@@ -8,8 +8,7 @@ function makeRow(overrides: Partial<SeasonListPdfRow> = {}): SeasonListPdfRow {
     id: 'season-1',
     code: 'SS26',
     name: 'Summer 26',
-    financialYearCode: '26-27',
-    displayName: 'SS26 26-27',
+    displayName: 'SS26',
     status: 'ACTIVE',
     ...overrides,
   };
@@ -19,7 +18,6 @@ function makeViewModel(rows: SeasonListPdfRow[]): SeasonListPdfViewModel {
   return {
     title: 'SEASON MASTER LIST',
     subtitle: 'Season master records',
-    filters: [{ label: 'Financial Year', value: '' }],
     generatedAt: '2026-09-12T10:00:00Z',
     generatedBy: 'Test Admin',
     totalCount: rows.length,
@@ -44,12 +42,6 @@ describe('SeasonListDocument', () => {
       makeRow({ id: `season-${i}`, code: `SS${String(i).padStart(2, '0')}` }),
     );
     const blob = await pdf(<SeasonListDocument viewModel={makeViewModel(rows)} />).toBlob();
-    expect(blob.size).toBeGreaterThan(0);
-  });
-
-  it('renders the active Financial Year filter chip', async () => {
-    const vm = { ...makeViewModel([]), filters: [{ label: 'Financial Year', value: '26-27' }] };
-    const blob = await pdf(<SeasonListDocument viewModel={vm} />).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 });

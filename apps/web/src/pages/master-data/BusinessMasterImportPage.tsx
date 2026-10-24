@@ -59,11 +59,6 @@ function ImportRows({ rows, kind }: { rows: MasterImportRow[]; kind: MasterImpor
                   render: (row: MasterImportRow) => row.input.name ?? row.raw['Season Name'] ?? '',
                 },
                 {
-                  key: 'year',
-                  header: 'Financial year',
-                  render: (row: MasterImportRow) => row.raw['Financial Year'] ?? '',
-                },
-                {
                   key: 'serial',
                   header: 'Barcode serial',
                   render: (row: MasterImportRow) => row.input.barcodeSerial ?? 'NULL',
@@ -321,7 +316,7 @@ function ImportWorkflow({ kind }: { kind: MasterImportKind }) {
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           {kind === 'seasons'
-            ? 'Season Code + Financial Year identifies a Season. Financial Year must exist. Blank Barcode Serial stays NULL; automatic Style barcodes may require it.'
+            ? 'Season Code alone identifies a Season, globally and case-insensitively unique. Blank Barcode Serial stays NULL; automatic Style barcodes may require it.'
             : kind === 'sizes'
               ? 'Supply the original Size Code, label, valid Size Type and integer Sort Order. Existing metadata is never changed.'
               : kind === 'hsns'

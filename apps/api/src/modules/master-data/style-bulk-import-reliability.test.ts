@@ -179,11 +179,10 @@ describe('Style import reliability', () => {
     const image = await prisma.styleImage.findFirstOrThrow({ include: { file: true } });
     expect(await getFileStorage().read(image.file.storageKey)).toEqual(png);
   });
-  it('resolves FY and factory business names without requiring legacy codes', async () => {
+  it('resolves factory business names without requiring legacy codes', async () => {
     const { season } = await setup();
-    const fy = await prisma.season.findUniqueOrThrow({ where: { id: season.id }, include: { financialYear: true } });
     const factory = await prisma.factory.create({ data: { id: createId(), code: 'LEGACY', name: 'Business Factory' } });
-    const plan = await planBulkStyleImport(workbook([['ST-NAME', 'Tee', 100, 'AW25', 'S', 'BC-NAME', fy.financialYear.code, ' business   factory :450']]));
+    const plan = await planBulkStyleImport(workbook([['ST-NAME', 'Tee', 100, 'AW25', 'S', 'BC-NAME', '', ' business   factory :450']]));
     expect(plan.rows[0]).toMatchObject({ status: 'CREATE', create: { seasonId: season.id, factoryMappings: [{ factoryId: factory.id, exFactoryPrice: 450 }] } });
   });
   it('binds preview confirmation to actor, worksheet, eligibility and expiry', async () => {
@@ -221,12 +220,12 @@ describe('Style import reliability', () => {
     const buffer = workbook([[], ['ST-ROW', 'Tee', 100, 'AW25', 'S', 'BC-ROW']], true);
     expect(parseBulkStyleImportSheet(buffer, 'Styles')).toMatchObject([{ rowNumber: 3, styleNumber: 'ST-ROW' }]);
   });
-  it('rejects an ambiguous season rather than picking the last financial year', async () => {
-    await setup();
-    const fy = await prisma.financialYear.create({ data: { id: createId(), code: '2024-25', startDate: new Date('2024-04-01'), endDate: new Date('2025-03-31') } });
-    await createTestSeason({ code: 'AW25', financialYearId: fy.id });
-    const plan = await planBulkStyleImport(workbook([['ST-AMB', 'Tee', 100, 'AW25', 'S', 'BC-AMB']]));
-    expect(plan.rows[0]).toMatchObject({ status: 'REJECTED', reason: 'AMBIGUOUS_SEASON' });
+  // ISS-SEASON-FY: Season Code is globally unique, so resolution is by
+  // Code alone, case-insensitively.
+  it('resolves a Season by code alone, case-insensitively', async () => {
+    const { season } = await setup();
+    const plan = await planBulkStyleImport(workbook([['ST-CI', 'Tee', 100, 'aw25', 'S', 'BC-CI']]));
+    expect(plan.rows[0]).toMatchObject({ status: 'CREATE', create: { seasonId: season.id } });
   });
   it('previews domain barcode errors before executing, without writing', async () => {
     await setup();

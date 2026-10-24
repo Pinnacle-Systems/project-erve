@@ -22,7 +22,7 @@ function makeStyle(overrides: Partial<Style> = {}): Style {
     finalMrp: 499,
     royaltyPercentage: null,
     status: 'ACTIVE',
-    season: { id: 's1', code: 'SS27', name: 'Spring Summer 27', financialYear: { id: 'fy1', code: 'FY27' }, displayName: 'SS27', status: 'ACTIVE' },
+    season: { id: 's1', code: 'SS27', name: 'Spring Summer 27', displayName: 'SS27', status: 'ACTIVE' },
     sizes: [],
     factories: [],
     images: [],

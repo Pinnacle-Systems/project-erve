@@ -5,7 +5,6 @@ import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
   createTestDistributor,
-  createTestFinancialYear,
   createTestJobOrderStub,
   createTestUserAndToken,
   resetDatabase,
@@ -34,11 +33,6 @@ async function createSize(code: string, sortOrder: number) {
 
 async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCONTINUED' }) {
   const seasonId = createId();
-  // Fixed date, not "now" — keeps this deterministic regardless of when the
-  // suite runs, and matches createPO's default poDate's Financial Year
-  // (2026-06-30 -> FY 2026-27) so fixtures stay intuitive, even though no
-  // PO<->Season FY-consistency rule actually requires this to match.
-  const financialYear = await createTestFinancialYear(new Date('2026-06-30'));
   const id = createId();
   return prisma.style.create({
     data: {
@@ -56,7 +50,6 @@ async function createStyle(overrides?: { status?: 'ACTIVE' | 'INACTIVE' | 'DISCO
           id: seasonId,
           code: `T-${seasonId.slice(-6)}`,
           name: 'Test Season',
-          financialYearId: financialYear.id,
         },
       },
     },

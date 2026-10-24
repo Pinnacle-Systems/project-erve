@@ -103,9 +103,6 @@ const seasonFieldsSchema = z.object({
   name: z.string().trim().min(1, 'Season name is required').max(80),
   // Stable numeric prefix of generated barcodes (unique; see barcode.util.ts).
   barcodeSerial: z.coerce.number().int().positive().max(99999).optional().nullable(),
-  // References the shared Financial Year master — not arbitrary free text.
-  // Existence is validated server-side against the FinancialYear table.
-  financialYearId: z.string().trim().min(1, 'Financial Year is required'),
   status: seasonStatusSchema.optional(),
 });
 export const createSeasonSchema = seasonFieldsSchema;
@@ -117,7 +114,6 @@ export const updateSeasonStatusSchema = z.object({ status: seasonStatusSchema })
 export const listSeasonsQuerySchema = z.object({
   status: z.string().trim().optional(),
   search: z.string().trim().optional(),
-  financialYearId: z.string().trim().optional(),
   ...optionalPageQueryFields,
 });
 

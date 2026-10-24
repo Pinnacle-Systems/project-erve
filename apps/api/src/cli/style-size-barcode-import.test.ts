@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createId } from '@erve/shared';
 import { prisma } from '../db/prisma.js';
-import { createTestFinancialYear, resetDatabase } from '../test/helpers.js';
+import { resetDatabase } from '../test/helpers.js';
 import {
   executeBarcodeImport,
   loadCatalog,
@@ -24,10 +24,9 @@ afterAll(async () => {
 // The three historical barcode regimes: AW25 and SS26 carry their own
 // supplied values (no Barcode Serial); AW26 is the first serial-prefixed season.
 async function seed() {
-  const fy = await createTestFinancialYear();
   const season = async (code: string, serial: number | null) => {
     const id = createId();
-    await prisma.season.create({ data: { id, code, name: code, financialYearId: fy.id, barcodeSerial: serial } });
+    await prisma.season.create({ data: { id, code, name: code, barcodeSerial: serial } });
     return id;
   };
   const size = (label: string) =>

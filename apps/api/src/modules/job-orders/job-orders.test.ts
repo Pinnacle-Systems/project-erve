@@ -8,7 +8,6 @@ import { isProgressThresholdMet } from './job-orders.service.js';
 import {
   createTestDistributor,
   createTestFactory,
-  createTestFinancialYear,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -49,15 +48,11 @@ async function createSeedGraph() {
   const sizeB = await prisma.size.create({
     data: { id: createId(), code: 'AGE_4', label: '4', sizeType: 'AGE', sortOrder: 4 },
   });
-  // Fixed date, not "now" — keeps the compact-code assertions below
-  // deterministic regardless of when the suite runs.
-  const financialYear = await createTestFinancialYear(new Date('2026-06-30'));
   const season = await prisma.season.create({
     data: {
       id: createId(),
       code: 'JO-TEST',
       name: 'Job Order Test Season',
-      financialYearId: financialYear.id,
     },
   });
   const style = await prisma.style.create({
@@ -821,13 +816,11 @@ describe('job orders API', () => {
     // Sheet (distributor + style + size) needs to be genuinely independent.
     const graph = await createSeedGraph();
     const secondDistributor = await createTestDistributor();
-    const secondFinancialYear = await createTestFinancialYear(new Date('2026-06-30'));
     const secondSeason = await prisma.season.create({
       data: {
         id: createId(),
         code: 'JO-TEST-2',
         name: 'Job Order Test Season 2',
-        financialYearId: secondFinancialYear.id,
       },
     });
     const secondStyle = await prisma.style.create({
@@ -1011,11 +1004,13 @@ describe('job orders API', () => {
     );
     expect(res.body.data.orderedQuantityTotal).toBe(4);
     expect(res.body.data.unitPrice).toBe(199.5);
+    // ISS-SEASON-FY: Season has no Financial Year — the snapshot carries
+    // only Code/Name, and displayName is always just the Code.
     expect(res.body.data.seasonSnapshots).toEqual([
       expect.objectContaining({
         code: 'JO-TEST',
         name: 'Job Order Test Season',
-        financialYear: '26-27',
+        displayName: 'JO-TEST',
       }),
     ]);
     const persisted = await prisma.jobOrder.findUniqueOrThrow({ where: { id: res.body.data.id } });
@@ -2628,13 +2623,11 @@ describe('multi-source Order Sheet job orders (Order Sheet Phase 2)', () => {
     const sheetA = await createOrderSheet(graph.admin.token, graph, [
       { sizeId: graph.sizeAId, orderedQuantity: 10 },
     ]);
-    const otherFinancialYear = await createTestFinancialYear(new Date('2026-06-30'));
     const otherSeason = await prisma.season.create({
       data: {
         id: createId(),
         code: `OTHER-SEASON-${createId()}`,
         name: 'Other Style Season',
-        financialYearId: otherFinancialYear.id,
       },
     });
     const otherStyle = await prisma.style.create({
@@ -2927,13 +2920,11 @@ describe('multi-source Order Sheet job orders (Order Sheet Phase 2)', () => {
     const sheetA = await createOrderSheet(graph.admin.token, graph, [
       { sizeId: graph.sizeAId, orderedQuantity: 10 },
     ]);
-    const otherFinancialYear = await createTestFinancialYear(new Date('2026-06-30'));
     const otherSeason = await prisma.season.create({
       data: {
         id: createId(),
         code: `OTHER-SEASON2-${createId()}`,
         name: 'Other Style 2 Season',
-        financialYearId: otherFinancialYear.id,
       },
     });
     const otherStyle = await prisma.style.create({

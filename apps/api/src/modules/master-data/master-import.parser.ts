@@ -17,7 +17,6 @@ export const masterImportHeaders: Record<MasterImportKind, string[]> = {
   seasons: [
     'Season Code',
     'Season Name',
-    'Financial Year',
     'Barcode Serial',
     'Status',
     'Source Key',
@@ -66,7 +65,6 @@ export function buildMasterImportTemplate(kind: MasterImportKind): Buffer {
 const fields: Record<string, string> = {
   'season code': 'code',
   'season name': 'name',
-  'financial year': 'financialYear',
   'barcode serial': 'barcodeSerial',
   'size code': 'code',
   'size label': 'label',
@@ -157,7 +155,7 @@ export function parseMasterImportFile(
     );
   const required =
     kind === 'seasons'
-      ? ['season code', 'season name', 'financial year']
+      ? ['season code', 'season name']
       : kind === 'sizes'
         ? ['size code', 'size label', 'size type', 'sort order']
         : kind === 'hsns'

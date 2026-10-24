@@ -69,12 +69,7 @@ export async function requireMasterImportActor(
   return current;
 }
 function identity(kind: MasterImportKind, input: Record<string, unknown>): string {
-  if (referenceKind(kind))
-    return checksum(
-      JSON.stringify(
-        kind === 'seasons' ? [normalized(input.code), input.financialYearId] : [input.code],
-      ),
-    );
+  if (referenceKind(kind)) return checksum(JSON.stringify([normalized(input.code)]));
   const fields =
     kind === 'factories'
       ? ['name']
@@ -118,17 +113,11 @@ async function validatedInput(
       Object.entries(input).map(([key, value]) => [key, value == null ? null : String(value)]),
     );
   if (kind === 'seasons') {
-    const years = await db.financialYear.findMany();
-    const year = years.find((fy) => normalized(fy.code) === normalized(parsed.input.financialYear));
-    if (!year)
-      throw HttpError.badRequest('Financial Year code must reference an existing Financial Year');
-    const { financialYear: _year, ...input } = parsed.input;
     return strings(
       createSeasonSchema.parse({
-        ...input,
-        financialYearId: year.id,
-        barcodeSerial: input.barcodeSerial ?? null,
-        status: input.status ?? 'ACTIVE',
+        ...parsed.input,
+        barcodeSerial: parsed.input.barcodeSerial ?? null,
+        status: parsed.input.status ?? 'ACTIVE',
       }),
     );
   }
@@ -340,11 +329,7 @@ export async function planMasterImport(
     parsed.rows.map((source) => [
       source.rowNumber,
       referenceKind(kind) && source.input.code
-        ? JSON.stringify(
-            kind === 'seasons'
-              ? [normalized(source.input.code), normalized(source.input.financialYear)]
-              : [source.input.code],
-          )
+        ? JSON.stringify([kind === 'seasons' ? normalized(source.input.code) : source.input.code])
         : undefined,
     ]),
   );
@@ -431,12 +416,6 @@ export async function executeMasterImport(
 ): Promise<MasterImportResult> {
   actor = await requireMasterImportActor(actor, prisma, kind);
   const plan = await planMasterImport(actor, kind, buffer, fileName, worksheet);
-  const parsedRows = new Map(
-    parseMasterImportFile(kind, buffer, fileName, worksheet).rows.map((row) => [
-      row.rowNumber,
-      row,
-    ]),
-  );
   const reviewed = reviewedRows(plan, actor.id, token);
   const runId = createId();
   await prisma.masterImportRun.create({
@@ -479,12 +458,6 @@ export async function executeMasterImport(
             ) => {
               await tx.$queryRaw`SELECT id FROM users WHERE id = ${actor.id} FOR SHARE`;
               await requireMasterImportActor(actor, tx, kind);
-              if (kind === 'seasons') {
-                await tx.$queryRaw`SELECT id FROM financial_years WHERE id = ${row.input.financialYearId!} FOR SHARE`;
-                const input = await validatedInput(kind, parsedRows.get(row.rowNumber)!, tx);
-                if (JSON.stringify(input) !== JSON.stringify(row.input))
-                  throw HttpError.conflict('Financial Year changed; preview again');
-              }
               if (kind === 'retail-stores') {
                 await tx.$queryRaw`SELECT id FROM distributors WHERE id = ${row.input.distributorId!} FOR SHARE`;
                 const parent = await tx.distributor.findUnique({

@@ -22,23 +22,22 @@
 //   - never creates Styles, Sizes, StyleSizes, Style<->Factory mappings,
 //     historical Job Orders, ImportBatch, or HistoricalDocument rows
 //   - never invokes importHistoricalJobOrder
-import { prisma } from '../db/prisma.js';
 import { requireVerifiedDevDatabaseTarget, formatDevTargetReport, DevTargetGuardError } from '../modules/historical-import/dev-target-guard.js';
 import { createSeason, listSeasons } from '../modules/master-data/master-data.service.js';
 import type { CurrentUser } from '../auth/current-user.js';
 
 export class MasterPrepError extends Error {}
 
-/** The two Season masters this story needs, and the Financial Year each belongs to — derived from the source documents' own order/shipment dates (AW25: Aug-Sep 2025; SS26: Feb-Mar 2026), both of which fall inside India FY 2025-26 (Apr 2025 - Mar 2026), not invented. */
-export const REQUIRED_SEASONS: Array<{ code: string; name: string; financialYearCode: string }> = [
-  { code: 'AW25', name: 'Autumn Winter 2025', financialYearCode: '2025-26' },
-  { code: 'SS26', name: 'Spring Summer 2026', financialYearCode: '2025-26' },
+// ISS-SEASON-FY: Season has no Financial Year of its own any more — the
+// two Season masters this story needs are identified by Code alone.
+export const REQUIRED_SEASONS: Array<{ code: string; name: string }> = [
+  { code: 'AW25', name: 'Autumn Winter 2025' },
+  { code: 'SS26', name: 'Spring Summer 2026' },
 ];
 
 export interface MasterPrepPlanEntry {
   code: string;
   name: string;
-  financialYearCode: string;
   action: 'CREATE' | 'VERIFY_EXISTING';
   existingSeasonId: string | null;
 }
@@ -50,7 +49,6 @@ export async function planSeasons(): Promise<MasterPrepPlanEntry[]> {
     return {
       code: required.code,
       name: required.name,
-      financialYearCode: required.financialYearCode,
       action: match ? 'VERIFY_EXISTING' : 'CREATE',
       existingSeasonId: match?.id ?? null,
     };
@@ -73,7 +71,7 @@ export async function applySeasons(actor: CurrentUser): Promise<ApplySeasonsResu
   const plan = await planSeasons();
   console.log('Planned Season master preparation:');
   for (const entry of plan) {
-    console.log(`  ${entry.code} (${entry.name}, FY ${entry.financialYearCode}): ${entry.action}${entry.existingSeasonId ? ` [existing id ${entry.existingSeasonId}]` : ''}`);
+    console.log(`  ${entry.code} (${entry.name}): ${entry.action}${entry.existingSeasonId ? ` [existing id ${entry.existingSeasonId}]` : ''}`);
   }
   console.log('');
 
@@ -85,11 +83,7 @@ export async function applySeasons(actor: CurrentUser): Promise<ApplySeasonsResu
       verified.push({ code: entry.code, id: entry.existingSeasonId });
       continue;
     }
-    const financialYear = await prisma.financialYear.findUnique({ where: { code: entry.financialYearCode } });
-    if (!financialYear) {
-      throw new MasterPrepError(`Financial Year "${entry.financialYearCode}" does not exist in this Dev database — cannot create Season "${entry.code}"`);
-    }
-    const season = await createSeason(actor, { code: entry.code, name: entry.name, financialYearId: financialYear.id, status: 'ACTIVE' });
+    const season = await createSeason(actor, { code: entry.code, name: entry.name, status: 'ACTIVE' });
     created.push({ code: entry.code, id: season.id });
   }
 

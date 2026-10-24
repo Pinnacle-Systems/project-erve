@@ -47,7 +47,7 @@ describe('POST /styles/bulk-import/preflight and /execute', () => {
     expect(template.status).toBe(200);
     const book = XLSX.read(template.body, { type: 'buffer' });
     const header = XLSX.utils.sheet_to_json<unknown[]>(book.Sheets.Styles!, { header: 1 })[0];
-    expect(header).toContain('Financial Year');
+    expect(header).not.toContain('Financial Year');
     expect(header).toContain('Factory Name Mappings');
     const history = await request(app).get('/styles/bulk-import/history').set('Authorization', `Bearer ${token}`);
     expect(history.status).toBe(200);

@@ -9,7 +9,6 @@ import { HttpError } from '../../errors/http-error.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
-import { toCompactFinancialYearCode } from '../master-data/financial-year.util.js';
 import { getActiveStyleSizeIds } from '../master-data/style-size.util.js';
 import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 
@@ -50,7 +49,7 @@ const poInclude = {
   lines: {
     include: {
       style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
-      seasonSnapshots: { orderBy: [{ financialYear: 'asc' as const }, { name: 'asc' as const }] },
+      seasonSnapshots: { orderBy: [{ code: 'asc' as const }] },
       sizes: {
         include: { size: { select: { id: true, code: true, label: true, sortOrder: true } } },
         orderBy: { size: { sortOrder: 'asc' as const } },
@@ -72,12 +71,13 @@ function toLineView(line: PORecord['lines'][number]) {
     primaryImage: toPrimaryImageView(line.style.images),
     lineStatus: line.lineStatus,
     remarks: line.remarks,
+    // ISS-SEASON-FY: Season has no Financial Year — displayName is always
+    // just the Code.
     seasonSnapshots: line.seasonSnapshots.map((season) => ({
       seasonId: season.seasonId,
       code: season.code,
       name: season.name,
-      financialYear: season.financialYear,
-      displayName: season.displayName,
+      displayName: season.code,
     })),
     sizes: line.sizes.map((s) => ({
       id: s.id,
@@ -260,7 +260,7 @@ export async function createPurchaseOrder(
   await validateLines(input.lines);
   const styles = await prisma.style.findMany({
     where: { id: { in: input.lines.map((line) => line.styleId) } },
-    include: { season: { include: { financialYear: true } } },
+    include: { season: true },
   });
   // Every Style has a required Season (Correction 7), so this is always
   // resolvable — the map exists only to look line styles up by id.
@@ -313,8 +313,6 @@ export async function createPurchaseOrder(
                         seasonId: season.id,
                         code: season.code,
                         name: season.name,
-                        financialYear: toCompactFinancialYearCode(season.financialYear.code),
-                        displayName: `${season.code} ${toCompactFinancialYearCode(season.financialYear.code)}`,
                       },
                     ]
                   : [];
@@ -405,7 +403,7 @@ export async function updatePurchaseOrderDraft(
     if (input.lines) {
       const styles = await tx.style.findMany({
         where: { id: { in: input.lines.map((line) => line.styleId) } },
-        include: { season: { include: { financialYear: true } } },
+        include: { season: true },
       });
       // Every Style has a required Season (Correction 7), so this is always
       // resolvable — the map exists only to look line styles up by id.
@@ -430,8 +428,6 @@ export async function updatePurchaseOrderDraft(
                         seasonId: season.id,
                         code: season.code,
                         name: season.name,
-                        financialYear: toCompactFinancialYearCode(season.financialYear.code),
-                        displayName: `${season.code} ${toCompactFinancialYearCode(season.financialYear.code)}`,
                       },
                     ]
                   : [];
@@ -520,7 +516,7 @@ const styleOptionSelect = {
   styleName: true,
   lmixNumber: true,
   status: true,
-  season: { select: { code: true, financialYear: { select: { code: true } } } },
+  season: { select: { code: true } },
   images: stylePrimaryImageInclude,
 } satisfies Prisma.StyleSelect;
 
@@ -535,7 +531,7 @@ function toStyleOptionView(
     status: style.status,
     season: {
       code: style.season.code,
-      displayName: `${style.season.code} ${toCompactFinancialYearCode(style.season.financialYear.code)}`,
+      displayName: style.season.code,
     },
     primaryImage: toPrimaryImageView(style.images),
   };

@@ -4,10 +4,7 @@ import { createId } from '@erve/shared';
 import { prisma, type RoleName } from '../src/db/prisma.js';
 import { hashPassword } from '../src/auth/password.js';
 import { qualityFormDefinitionSchema } from '../src/modules/quality-forms/quality-forms.validation.js';
-import {
-  ensureFinancialYearWindow,
-  getCurrentFinancialYear,
-} from '../src/modules/master-data/financial-year.service.js';
+import { ensureFinancialYearWindow } from '../src/modules/master-data/financial-year.service.js';
 import {
   type CanonicalQualityFormDefinition,
   type SeedComponent,
@@ -192,17 +189,17 @@ const DEFAULT_STYLES: SeedStyleInput[] = [
 
 // A Style requires a Season (Correction 7: one Style, exactly one Season).
 // The sample item-master rows have no real Season of their own, so seeding
-// gives them one default Season tied to the current Financial Year rather
-// than leaving seasonId unset — dev/test fixtures need a valid, non-invented
-// value to satisfy the required relation, not a fabricated historical one.
+// gives them one default Season rather than leaving seasonId unset —
+// dev/test fixtures need a valid, non-invented value to satisfy the
+// required relation. Season has no Financial Year any more
+// (ISS-SEASON-FY); its Code is globally unique.
 async function seedDefaultSeason(): Promise<{ id: string }> {
-  const financialYear = await getCurrentFinancialYear();
-  // Season's (financialYearId, code) uniqueness is a case-insensitive
-  // expression index, not a plain Prisma @@unique — findFirst + create
-  // (rather than upsert) mirrors how master-data.service.ts's own
-  // createSeason handles this same constraint shape.
+  // Season Code uniqueness is a case-insensitive expression index, not a
+  // plain Prisma @@unique — findFirst + create (rather than upsert) mirrors
+  // how master-data.service.ts's own createSeason handles this same
+  // constraint shape.
   const existing = await prisma.season.findFirst({
-    where: { financialYearId: financialYear.id, code: 'DEFAULT' },
+    where: { code: 'DEFAULT' },
     select: { id: true },
   });
   if (existing) return existing;
@@ -211,7 +208,6 @@ async function seedDefaultSeason(): Promise<{ id: string }> {
       id: createId(),
       code: 'DEFAULT',
       name: 'Default Season',
-      financialYearId: financialYear.id,
     },
     select: { id: true },
   });

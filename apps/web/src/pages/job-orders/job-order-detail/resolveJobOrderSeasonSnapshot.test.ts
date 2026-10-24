@@ -4,7 +4,6 @@ const summer = {
   seasonId: 's1',
   code: 'SS26',
   name: 'Summer',
-  financialYear: '2026-27',
   displayName: 'SS26 Summer',
 };
 describe('recorded Season resolution', () => {
@@ -26,13 +25,12 @@ describe('recorded Season resolution', () => {
   it('exposes conflicting recorded values, including conflicts masked by equal display names', () => {
     const result = resolveJobOrderSeasonSnapshot([
       summer,
-      { ...summer, seasonId: null, code: 'AW25', name: 'Winter', financialYear: '2025-26' },
+      { ...summer, seasonId: null, code: 'AW25', name: 'Winter' },
     ]);
     expect(result.kind).toBe('conflict');
     expect(result.label).toContain('Inconsistent recorded Season');
     expect(result.label).toContain('SS26');
     expect(result.label).toContain('AW25');
     expect(result.label).toContain('Winter');
-    expect(result.label).toContain('2025-26');
   });
 });

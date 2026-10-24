@@ -173,13 +173,14 @@ export async function resetDatabase(): Promise<void> {
   await prisma.hsn.deleteMany();
   await prisma.gstRuleSet.deleteMany();
   await prisma.season.deleteMany();
-  // PO/JO/Season above all FK-reference financialYearId with onDelete:
-  // Restrict, so document_sequences and financial_years can only be cleared
-  // once those are gone. Full isolation between tests/runs — without this,
-  // a fixed test date (e.g. "2034-06-01") resolves to the same FinancialYear
-  // row and DocumentSequence state across every test and every prior run
-  // against this persistent database, since FY rows are otherwise meant to
-  // be stable, never-deleted reference data.
+  // PO/JO above (Season no longer has a Financial Year — ISS-SEASON-FY) FK-
+  // reference financialYearId with onDelete: Restrict, so document_sequences
+  // and financial_years can only be cleared once those are gone. Full
+  // isolation between tests/runs — without this, a fixed test date (e.g.
+  // "2034-06-01") resolves to the same FinancialYear row and
+  // DocumentSequence state across every test and every prior run against
+  // this persistent database, since FY rows are otherwise meant to be
+  // stable, never-deleted reference data.
   await prisma.documentSequence.deleteMany();
   await prisma.masterCodeCounter.deleteMany();
   await prisma.financialYear.deleteMany();
@@ -314,21 +315,20 @@ export async function createTestFactory(overrides?: {
 }
 
 // Every Style requires a Season (Correction 7: one Style, exactly one
-// Season) — this gives fixtures a real, valid Season to attach rather than
-// each Style-creating helper inventing its own Financial Year + Season pair.
+// Season) — this gives fixtures a real, valid Season to attach. Season has
+// no Financial Year (ISS-SEASON-FY); its Code is globally unique, so a
+// caller passing a fixed `code` across multiple tests relies on
+// resetDatabase() clearing it between them, not on this helper.
 export async function createTestSeason(overrides?: {
   code?: string;
   name?: string;
-  financialYearId?: string;
 }): Promise<{ id: string }> {
   const id = createId();
-  const financialYearId = overrides?.financialYearId ?? (await createTestFinancialYear()).id;
   await prisma.season.create({
     data: {
       id,
       code: overrides?.code ?? `T-${id.slice(-6)}`,
       name: overrides?.name ?? 'Test Season',
-      financialYearId,
     },
   });
   return { id };

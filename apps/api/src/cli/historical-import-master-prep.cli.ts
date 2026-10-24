@@ -35,7 +35,7 @@ async function main(): Promise<void> {
     const plan = await planSeasons();
     console.log('Season master-preparation plan (Dev target not yet checked — read via app services):');
     for (const entry of plan) {
-      console.log(`  ${entry.code} (${entry.name}, FY ${entry.financialYearCode}): ${entry.action}${entry.existingSeasonId ? ` [existing id ${entry.existingSeasonId}]` : ''}`);
+      console.log(`  ${entry.code} (${entry.name}): ${entry.action}${entry.existingSeasonId ? ` [existing id ${entry.existingSeasonId}]` : ''}`);
     }
     return;
   }
