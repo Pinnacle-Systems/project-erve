@@ -664,6 +664,72 @@ describe('Final Inspection batching and prepared coverage', () => {
       .expect(409);
   });
 
+  // Post-review correction 2 (ISS-048): a cancelled batch is excluded from
+  // active coverage arithmetic (correct — it never had any physical
+  // coverage), but that previously also made it disappear from
+  // `coverage.batches` entirely, so it could never be discovered or opened
+  // as a historical record. It must now be listed (clearly labeled
+  // CANCELLED) and still reachable via the existing batch-detail endpoint,
+  // while still contributing nothing to reserved/released/available
+  // quantities.
+  it('lists a cancelled physical batch as discoverable, read-only history, excluded from reserved/released/available quantities', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED' },
+    });
+    const first = (await start(f, 800).expect(201)).body.data;
+    await finalize(f, first).expect(200);
+
+    const draft = (await start(f, 40, 800).expect(201)).body.data;
+    await request(app)
+      .post(`/quality-executions/final-batches/${draft.finalBatch.id}/cancel`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({ reason: 'Created against the wrong shipment' })
+      .expect(200);
+
+    const view = await request(app)
+      .get(`/quality-executions/${first.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+
+    // Active coverage arithmetic stays exactly as if the cancelled batch
+    // never existed.
+    expect(view.body.data.coverage).toMatchObject({
+      releasedQuantity: 800,
+      reservedForFinalQuantity: 800,
+      availableForNewFinalBatch: 40,
+      passedBatches: 1,
+      failedBatches: 0,
+      hasFailedBatches: false,
+    });
+
+    const cancelledEntry = view.body.data.coverage.batches.find(
+      (batch: { id: string }) => batch.id === draft.finalBatch.id,
+    );
+    expect(cancelledEntry).toMatchObject({
+      batchNumber: 2,
+      disposition: 'CANCELLED',
+      status: 'CANCELLED',
+      inspectedQuantity: 0,
+      outcome: null,
+    });
+
+    // Reused, authorized batch-detail endpoint — no new/broad list endpoint.
+    const batchDetail = await request(app)
+      .get(`/quality-executions/final-batches/${draft.finalBatch.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(batchDetail.body.data.disposition).toBe('CANCELLED');
+    expect(batchDetail.body.data.attempts).toHaveLength(1);
+    expect(batchDetail.body.data.attempts[0]).toMatchObject({ status: 'CANCELLED' });
+
+    // The physical quantity the cancelled batch never actually reserved
+    // remains available for a genuinely new batch.
+    const next = (await start(f, 40, 800).expect(201)).body.data;
+    expect(next.finalBatch.batchNumber).toBe(3);
+  });
+
   it('reinspects the same physical batch and releases its immutable multi-size allocation exactly once', async () => {
     const f = await fixture();
     await prisma.jobOrderStageStatus.update({

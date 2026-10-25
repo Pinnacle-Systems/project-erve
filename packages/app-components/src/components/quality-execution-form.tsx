@@ -1,6 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { qualityIdentityItems, qualityPresentationSections } from '../quality-presentation.js';
-import { Button, Checkbox, DatePicker, SelectField, SelectItem, Textarea, TextField } from '@erve/primitives';
+import {
+  Button,
+  Checkbox,
+  DatePicker,
+  SelectField,
+  SelectItem,
+  Textarea,
+  TextField,
+  ValidationMessage,
+} from '@erve/primitives';
 import { calculateQualityExecutionOutcome } from '@erve/types';
 import type {
   QualityExecutionPayload,
@@ -124,6 +133,13 @@ export interface QualityExecutionFormProps {
   onSelectBatch?(batchId: string): void;
   /** True while the caller is resolving which attempt a batch switch should open. */
   batchSwitchPending?: boolean;
+  /**
+   * Set by the caller when resolving a batch switch fails (or the batch has
+   * no recorded attempts to open) — rendered next to the selector so the
+   * user stays on the previously displayed execution with a clear, visible
+   * reason, rather than the selector silently reverting with no feedback.
+   */
+  batchSwitchError?: string;
 }
 
 export function QualityExecutionForm(props: QualityExecutionFormProps) {
@@ -344,6 +360,11 @@ export function QualityExecutionForm(props: QualityExecutionFormProps) {
                 <p className="text-sm text-muted-foreground" role="status">
                   Loading selected batch…
                 </p>
+              ) : null}
+              {props.batchSwitchError ? (
+                <ValidationMessage tone="error" role="alert">
+                  {props.batchSwitchError}
+                </ValidationMessage>
               ) : null}
             </div>
           ) : null}

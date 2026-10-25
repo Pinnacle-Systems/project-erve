@@ -13,6 +13,7 @@ import type {
 } from '@erve/types';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { canViewQaExecution } from '@erve/shared';
 import {
   FinalBatchAllocationForm,
   NOT_RECORDED_LABEL,
@@ -216,6 +217,11 @@ export function FactoryTaskDetailPage() {
   // once told the correction is done. FACTORY_USER keeps read-only visibility
   // into reworkTasks below (rendered regardless of this flag).
   const canPerformQaRework = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER'));
+  // This page renders under both /job-orders/:id and /factory-tasks/:id
+  // (FACTORY_USER), but /quality-executions/:id excludes FACTORY_USER — see
+  // QA_EXECUTION_VIEW_ROLES. Gates the new attempt-history navigation so a
+  // Factory User never gets a dead-end link into a route they can't open.
+  const canViewQaExecutionDetail = Boolean(user && canViewQaExecution(user));
 
   if (task.isLoading)
     return (
@@ -547,18 +553,18 @@ export function FactoryTaskDetailPage() {
               {activity.status === 'MISSED' && <p>Not performed during Sewing</p>}
               {/* ISS-050: Final Inspection's history mixes attempts from every physical
                   batch together — its batch/attempt navigation lives on the execution
-                  detail page instead, so this list covers the non-batched checkpoints. */}
+                  detail page instead, so this list covers the non-batched checkpoints.
+                  This page renders under BOTH /job-orders/:id (ADMIN/MERCHANDISER/QA_USER)
+                  and /factory-tasks/:id (FACTORY_USER) — but /quality-executions/:id
+                  excludes FACTORY_USER (AppRoutes.tsx, QA_EXECUTION_VIEW_ROLES). A Factory
+                  User still sees every recorded attempt, just never as a dead-end link. */}
               {activity.executionMultiplicity !== 'BATCHED' &&
                 activity.executionHistory.map((cycle) => {
                   const label =
                     activity.qualityForm.executionScope === 'SIZE'
                       ? `Cycle ${cycle.attemptNumber}: ${cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size'} · Qty ${cycle.sampleQuantity} · ${cycle.status === 'DRAFT' ? 'IN PROGRESS' : cycle.outcome}`
                       : `Attempt ${cycle.attemptNumber}: ${cycle.status === 'DRAFT' ? 'IN PROGRESS' : cycle.outcome}`;
-                  return activity.qualityForm.executionScope === 'SIZE' ? (
-                    <p key={cycle.id} className="text-sm">
-                      {label}
-                    </p>
-                  ) : (
+                  return activity.qualityForm.executionScope !== 'SIZE' && canViewQaExecutionDetail ? (
                     <button
                       key={cycle.id}
                       type="button"
@@ -567,8 +573,22 @@ export function FactoryTaskDetailPage() {
                     >
                       {label}
                     </button>
+                  ) : (
+                    <p key={cycle.id} className="text-sm">
+                      {label}
+                    </p>
                   );
                 })}
+              {/* KNOWN PRE-EXISTING GAP (found while fixing the new history navigation
+                  above, not corrected here — it's a materially different, two-sided
+                  problem): this button has no role gate at all. For JOB_ORDER scope it
+                  targets /quality-executions/:id (QA_EXECUTION_VIEW_ROLES — excludes
+                  FACTORY_USER) exactly like the rows above; for SIZE scope it targets
+                  /qa/:id, which is gated by the separate QA_ROUTE_ROLES (ADMIN/QA_USER/
+                  MERCHANDISER — excludes FACTORY_USER *and* SENIOR_MANAGEMENT, unlike
+                  QA_EXECUTION_VIEW_ROLES). Reusing canViewQaExecution here would be
+                  wrong for the SIZE-scope case. Flagged for a follow-up, not fixed in
+                  this PR. */}
               {activity.execution ? (
                 <div>
                   <button

@@ -470,7 +470,8 @@ describe('FactoryTaskDetailPage ISS-050 non-batched attempt history discoverabil
     ],
   });
 
-  it('lists every recorded Inline QA attempt as a clickable row', async () => {
+  it('lists every recorded Inline QA attempt as a clickable row for a role authorized to open /quality-executions/:id', async () => {
+    authState.roles = ['QA_USER'];
     await renderTask(job({ qualityActivities: [inlineActivity()] }));
     expect(container.textContent).toContain('Attempt 1');
     const attemptButton = Array.from(container.querySelectorAll('button')).find((button) =>
@@ -479,7 +480,42 @@ describe('FactoryTaskDetailPage ISS-050 non-batched attempt history discoverabil
     expect(attemptButton).not.toBeUndefined();
   });
 
+  it('also renders a clickable row for MERCHANDISER, authorized for /quality-executions/:id', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderTask(job({ qualityActivities: [inlineActivity()] }));
+    const attemptButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.startsWith('Attempt 1'),
+    );
+    expect(attemptButton).not.toBeUndefined();
+  });
+
+  it('also renders a clickable row for SENIOR_MANAGEMENT, authorized for /quality-executions/:id', async () => {
+    authState.roles = ['SENIOR_MANAGEMENT'];
+    await renderTask(job({ qualityActivities: [inlineActivity()] }));
+    const attemptButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.startsWith('Attempt 1'),
+    );
+    expect(attemptButton).not.toBeUndefined();
+  });
+
+  // Correction 1 (post-review): this page renders under both /job-orders/:id
+  // (ADMIN/MERCHANDISER/QA_USER) and /factory-tasks/:id (FACTORY_USER), but
+  // the destination route /quality-executions/:id excludes FACTORY_USER
+  // (QA_EXECUTION_VIEW_ROLES in AppRoutes.tsx). A Factory User must still see
+  // every recorded attempt — just never as a dead-end link they can't open.
+  it('shows FACTORY_USER the same attempt history as plain read-only text, with no dead-end navigation link', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderTask(job({ qualityActivities: [inlineActivity()] }));
+    expect(container.textContent).toContain('Attempt 1');
+    expect(container.textContent).toContain('Attempt 2');
+    const attemptButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.startsWith('Attempt 1') || button.textContent?.startsWith('Attempt 2'),
+    );
+    expect(attemptButton).toBeUndefined();
+  });
+
   it('never renders PP Sample (SIZE scope) history rows as clickable — that navigation stays out of this PR', async () => {
+    authState.roles = ['QA_USER'];
     await renderTask(
       job({
         qualityActivities: [

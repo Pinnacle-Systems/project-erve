@@ -21,6 +21,7 @@ export function QualityExecutionPage() {
   const [message, setMessage] = useState('');
   const [validationErrors, setValidationErrors] = useState<QualityExecutionValidationError[]>([]);
   const [batchSwitchPending, setBatchSwitchPending] = useState(false);
+  const [batchSwitchError, setBatchSwitchError] = useState('');
   const query = useQuery({
     queryKey: ['quality-execution', executionId],
     queryFn: async () =>
@@ -94,11 +95,17 @@ export function QualityExecutionPage() {
   };
   const selectAttempt = (nextExecutionId: string) => {
     if (nextExecutionId === executionId) return;
+    setBatchSwitchError('');
     navigate(`/quality-executions/${nextExecutionId}`);
   };
+  // Correction (post-review): a failed batch lookup must never leave the
+  // user silently stuck, and must never navigate — staying on the
+  // previously displayed execution with a visible, actionable reason is the
+  // only safe outcome here.
   const selectBatch = async (batchId: string) => {
     if (batchId === query.data?.finalBatch?.id) return;
     setBatchSwitchPending(true);
+    setBatchSwitchError('');
     try {
       const batch = (
         await apiClient.get<ApiSuccessResponse<FinalQualityBatchView>>(
@@ -108,7 +115,17 @@ export function QualityExecutionPage() {
       const latestAttempt = [...batch.attempts].sort(
         (left, right) => right.attemptNumber - left.attemptNumber,
       )[0];
-      if (latestAttempt) navigate(`/quality-executions/${latestAttempt.id}`);
+      if (!latestAttempt) {
+        setBatchSwitchError('This batch has no recorded inspection attempts to open.');
+        return;
+      }
+      navigate(`/quality-executions/${latestAttempt.id}`);
+    } catch (error) {
+      const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined;
+      setBatchSwitchError(
+        api?.message ??
+          (error instanceof Error ? error.message : 'Unable to load the selected batch. Try again.'),
+      );
     } finally {
       setBatchSwitchPending(false);
     }
@@ -185,6 +202,7 @@ export function QualityExecutionPage() {
         onSelectAttempt={selectAttempt}
         onSelectBatch={(batchId) => void selectBatch(batchId)}
         batchSwitchPending={batchSwitchPending}
+        batchSwitchError={batchSwitchError}
         onStartReinspection={() =>
           batchMutation.mutateAsync({ action: 'reinspect' }).then(() => undefined)
         }

@@ -1227,7 +1227,7 @@ export interface QualityCoverageView {
     batchNumber: number;
     physicalQuantity?: number;
     inspectedQuantity: number | null;
-    status: 'DRAFT' | 'FINALIZED';
+    status: 'DRAFT' | 'FINALIZED' | 'CANCELLED';
     outcome: 'PASS' | 'FAIL' | null;
     disposition?:
       'DRAFT' | 'AWAITING_REINSPECTION' | 'RELEASED' | 'PERMANENTLY_REJECTED' | 'CANCELLED';

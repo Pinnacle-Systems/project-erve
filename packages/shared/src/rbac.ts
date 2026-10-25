@@ -52,6 +52,26 @@ export function canPerformQaOperation(user: RoleHolder): boolean {
 }
 
 /**
+ * Roles permitted to open the generic QA execution-detail route
+ * (/quality-executions/:id on both web and mobile — see each app's
+ * route guard). FACTORY_USER is deliberately excluded: it can view a Job
+ * Order's QA status/history summary (e.g. on the mobile Factory task page),
+ * but not the execution-detail screen itself. Single source of truth for
+ * both the route guard and any page that links into that route, so the two
+ * can't silently drift apart.
+ */
+export const QA_EXECUTION_VIEW_ROLES = [
+  'ADMIN',
+  'QA_USER',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+] as const satisfies readonly Role[];
+
+export function canViewQaExecution(user: RoleHolder): boolean {
+  return hasAnyRole(user, QA_EXECUTION_VIEW_ROLES);
+}
+
+/**
  * Roles that may explicitly mark a Job Order PRODUCTION_COMPLETE while
  * planned quantity/Final QA coverage is still short (deliberate stop/accept
  * of short production). This is a Merchandising business decision, not a

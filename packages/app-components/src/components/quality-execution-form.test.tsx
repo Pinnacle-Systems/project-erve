@@ -1935,5 +1935,70 @@ describe('Final Inspection mandatory rejection reason on FAIL', () => {
       expect(container.textContent).toContain('Start reinspection');
       expect(container.textContent).toContain('Mark permanently rejected');
     });
+
+    // Post-review correction 2 (ISS-048): a cancelled physical batch must
+    // still appear in the batch selector, clearly labeled, and remain
+    // selectable as read-only history — it must never be silently dropped
+    // from the list the way it previously was.
+    it('lists a cancelled physical batch in the selector, clearly labeled, and lets an authorized user open it', async () => {
+      const item = finalExecution('FINALIZED');
+      item.finalBatch = {
+        id: item.coverage!.batches[1]!.id,
+        batchNumber: 2,
+        physicalQuantity: 25,
+        disposition: 'RELEASED',
+        allocations: [],
+        attempts: [
+          {
+            id: item.id,
+            attemptNumber: 1,
+            status: 'FINALIZED',
+            outcome: 'PASS',
+            rejectionReason: null,
+            startedAt: '',
+            finalizedAt: '',
+          },
+        ],
+        release: null,
+      };
+      item.coverage = {
+        ...item.coverage!,
+        batches: [
+          ...item.coverage!.batches,
+          {
+            id: 'batch-cancelled',
+            batchNumber: 3,
+            physicalQuantity: 12,
+            inspectedQuantity: 0,
+            status: 'CANCELLED',
+            outcome: null,
+            disposition: 'CANCELLED',
+            finalizedAt: null,
+            allocations: [],
+            attemptCount: 1,
+          },
+        ],
+      };
+      const onSelectBatch = vi.fn();
+      act(() =>
+        root.render(
+          <QualityExecutionForm
+            execution={item}
+            onSave={vi.fn()}
+            onFinalize={vi.fn()}
+            onSelectBatch={onSelectBatch}
+          />,
+        ),
+      );
+      openSelect('quality-history-batch-select');
+      await flush();
+      const cancelledOption = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="option"]'),
+      ).find((item) => item.textContent?.includes('Batch 3'));
+      expect(cancelledOption?.textContent).toContain('Cancelled');
+      act(() => cancelledOption!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      await flush();
+      expect(onSelectBatch).toHaveBeenCalledWith('batch-cancelled');
+    });
   });
 });
