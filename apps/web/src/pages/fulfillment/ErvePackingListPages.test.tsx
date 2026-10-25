@@ -184,7 +184,7 @@ describe('ErvePackingListListPage', () => {
 describe('ErvePackingListCreatePage', () => {
   it('lists eligible cartons and creates a packing list from the selected carton', async () => {
     mockAuth('MERCHANDISER');
-    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [buildCarton()] } } as never);
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: { items: [buildCarton()], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } } as never);
     const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: { id: 'epl-1' } } } as never);
 
     renderAt('/fulfillment/erve-packing-lists/new', '/fulfillment/erve-packing-lists/new', <ErvePackingListCreatePage />);
@@ -211,7 +211,7 @@ describe('ErvePackingListDetailPage', () => {
     mockAuth('MERCHANDISER');
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/erve-packing-lists/epl-1') return { data: { data: buildDetail() } };
-      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
       throw new Error(`Unexpected GET: ${url}`);
     });
 
@@ -275,7 +275,7 @@ describe('ErvePackingListCreatePage Style x Size presentation (ISS-023 Phase 3)'
         lines: [{ saleOrderLineId: 'line-2', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 0, quantity: 4 }],
       }),
     ];
-    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: cartons } } as never);
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: { items: cartons, pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } } as never);
 
     renderAt('/fulfillment/erve-packing-lists/new', '/fulfillment/erve-packing-lists/new', <ErvePackingListCreatePage />);
     await flush();
@@ -323,7 +323,7 @@ describe('ErvePackingListDetailPage Style x Size presentation (ISS-023 Phase 3)'
     });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/erve-packing-lists/epl-1') return { data: { data: detail } };
-      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
       throw new Error(`Unexpected GET: ${url}`);
     });
 
@@ -345,7 +345,7 @@ describe('ErvePackingListDetailPage PDF print (Phase 6)', () => {
     mockAuth('MERCHANDISER');
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/erve-packing-lists/epl-1') return { data: { data: buildDetail() } };
-      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
       throw new Error(`Unexpected GET: ${url}`);
     });
 
@@ -361,7 +361,7 @@ describe('ErvePackingListDetailPage PDF print (Phase 6)', () => {
     mockAuth('MERCHANDISER');
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/erve-packing-lists/epl-1') return { data: { data: buildDetail() } };
-      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
       throw new Error(`Unexpected GET: ${url}`);
     });
     const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});

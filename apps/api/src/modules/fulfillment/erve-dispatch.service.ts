@@ -13,6 +13,11 @@ import { createInvoiceHandoffsForDispatch } from './invoice-handoff.service.js';
 import { resolveDistributorPricingForSnapshot } from '../price-lists/price-lookup.js';
 import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
 import {
+  decodeEligibleCartonCursor, eligibleCartonCandidateQuery, eligibleCartonContext,
+  ELIGIBLE_CARTON_SCAN_BUDGET, encodeEligibleCartonCursor,
+  type EligibleCartonCandidate,
+} from './eligible-carton-pagination.js';
+import {
   computeAvailability,
   getActualSoldQuantityForPair,
   getApprovedAwaitingReceiptQuantityForPair,
@@ -233,7 +238,7 @@ function toEligibleCartonView(carton: EligibilityCarton) {
   };
 }
 
-export async function getEligibleErveCartons(actor: CurrentUser, filters: { ervePackingListId?: string }) {
+export async function getEligibleErveCartons(actor: CurrentUser, filters: { ervePackingListId?: string; search?: string; limit?: number; cursor?: string }) {
   assertPackingListMutationAccess(actor);
 
   let matchKey: string | undefined;
@@ -249,6 +254,37 @@ export async function getEligibleErveCartons(actor: CurrentUser, filters: { erve
     }
     matchKey = packingList.destinationMatchKey ?? undefined;
     distributorId = packingList.distributorId ?? undefined;
+  }
+
+  if (filters.limit !== undefined || filters.cursor !== undefined || filters.search !== undefined) {
+    const limit = filters.limit ?? 25;
+    const search = (filters.search ?? '').trim().toLowerCase();
+    const context = eligibleCartonContext({ ervePackingListId: filters.ervePackingListId, search, distributorId, matchKey });
+    const position = filters.cursor ? decodeEligibleCartonCursor(filters.cursor, context) : undefined;
+    // One lookahead row establishes continuation; at most 200 rows are examined.
+    // No nested carton graph is fetched for candidates that fail destination matching.
+    const candidates = await prisma.$queryRaw<EligibleCartonCandidate[]>(eligibleCartonCandidateQuery({ search, distributorId, position }));
+    const ids: string[] = [];
+    let examined = 0;
+    for (const candidate of candidates) {
+      if (examined === ELIGIBLE_CARTON_SCAN_BUDGET || ids.length === limit) break;
+      examined += 1;
+      if (!matchKey || destinationMatchKeyOf(candidate) === matchKey) ids.push(candidate.id);
+    }
+    const hydrated = ids.length ? await prisma.factoryPackingCarton.findMany({ where: { id: { in: ids } }, include: eligibilityCartonInclude }) : [];
+    const byId = new Map(hydrated.map((carton) => [carton.id, carton]));
+    const items = ids.flatMap((id) => {
+      const carton = byId.get(id);
+      // Inventory is live: claims, edits, retirement or audit changes may occur
+      // between selection and hydration. Mutation endpoints remain authoritative.
+      if (!carton || carton.retiredAt || carton.ervePackingListId || carton.factoryDispatch.status !== 'READY_FOR_ERVE'
+        || !carton.lines.length || carton.audits[0]?.cartonVersion !== carton.version
+        || (distributorId && carton.destination.saleOrderDistributor.distributorId !== distributorId)
+        || (matchKey && destinationMatchKeyOf(carton.destination) !== matchKey)) return [];
+      return [toEligibleCartonView(carton)];
+    });
+    const hasMore = examined < candidates.length;
+    return { items, pageInfo: { limit, hasMore, nextCursor: hasMore ? encodeEligibleCartonCursor(candidates[examined - 1]!, context) : null } };
   }
 
   const cartons = await prisma.factoryPackingCarton.findMany({
