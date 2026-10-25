@@ -33,6 +33,7 @@ import {
 import { assertExcludableDispatchOrder, getPooledFactoryInventory } from './pooled-inventory.service.js';
 import { prisma } from '../../db/prisma.js';
 import { pooledInventoryQuerySchema } from './job-orders.validation.js';
+import { getPooledInventoryStyleOptions, pooledStyleOptionsQuerySchema } from './pooled-style-options.service.js';
 
 export const jobOrdersRouter = Router();
 jobOrdersRouter.use(requireAuth);
@@ -149,6 +150,18 @@ jobOrdersRouter.patch(
       idempotencyKey(req),
     );
     res.status(200).json(successResponse(jobOrder));
+  }),
+);
+
+jobOrdersRouter.get(
+  '/pooled-inventory/style-options',
+  requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT'),
+  asyncHandler(async (req, res) => {
+    const filters = pooledStyleOptionsQuerySchema.parse(req.query);
+    if (filters.excludeSaleOrderId) {
+      await assertExcludableDispatchOrder(prisma, req.user!, filters.factoryId, filters.excludeSaleOrderId);
+    }
+    res.status(200).json(successResponse(await getPooledInventoryStyleOptions(prisma, filters)));
   }),
 );
 

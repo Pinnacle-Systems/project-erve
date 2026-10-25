@@ -1,5 +1,8 @@
 import { useState } from 'react';
 import { LookupField, type LookupFieldWidth } from '@erve/primitives';
+import type { ApiSuccessResponse, PooledInventoryStylePage } from '@erve/types';
+import { apiClient } from '../../lib/api-client.js';
+import { usePaginatedServerLookup } from '../../lib/use-paginated-server-lookup.js';
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import type { PooledFactoryInventoryLine } from './types.js';
 
@@ -19,10 +22,7 @@ export interface DispatchOrderStyleOption {
   sizes: DispatchOrderStyleSize[];
 }
 
-// DEMO-016/DEMO-003: the Factory's pooled inventory (already fetched for
-// the page) is the sole source of "which Styles can this Dispatch Order
-// actually allocate" — grouping it client-side here means the Style picker
-// needs no separate network call or backend endpoint of its own.
+// Groups only the independently hydrated selected Style pools for previews.
 export function groupPooledStylesForFactory(pool: PooledFactoryInventoryLine[]): DispatchOrderStyleOption[] {
   const byStyle = new Map<string, DispatchOrderStyleOption>();
   for (const row of pool) {
@@ -75,32 +75,50 @@ export interface DispatchOrderStyleFieldProps {
   width?: LookupFieldWidth;
   value: DispatchOrderStyleOption | null;
   onChange: (style: DispatchOrderStyleOption | null) => void;
-  options: DispatchOrderStyleOption[];
+  factoryId: string;
+  excludeSaleOrderId?: string;
   /** Styles already chosen elsewhere on this destination — excluded so the same Style can't be picked twice. */
   excludeStyleIds?: Set<string>;
   required?: boolean;
   errorMessage?: string;
 }
 
-// Client-side filtered (the Factory's pool is already loaded in full) —
-// no server round trip, no separate style-options endpoint.
 export function DispatchOrderStyleField({
+  factoryId,
+  excludeSaleOrderId,
+  ...props
+}: DispatchOrderStyleFieldProps) {
+  // A new context remount cancels the old observer and resets panel/search.
+  return <ScopedDispatchOrderStyleField key={`${factoryId}:${excludeSaleOrderId ?? ''}`} factoryId={factoryId} excludeSaleOrderId={excludeSaleOrderId} {...props} />;
+}
+
+function ScopedDispatchOrderStyleField({
   id,
   label = 'Style',
   width = 'lg',
   value,
   onChange,
-  options,
+  factoryId,
+  excludeSaleOrderId,
   excludeStyleIds,
   required = true,
   errorMessage,
 }: DispatchOrderStyleFieldProps) {
   const [searchText, setSearchText] = useState('');
-  const available = excludeStyleIds ? options.filter((o) => !excludeStyleIds.has(o.styleId)) : options;
-  const query = searchText.trim().toLowerCase();
-  const filtered = query
-    ? available.filter((o) => `${o.styleNumber} ${o.styleName}`.toLowerCase().includes(query))
-    : available;
+  const [open, setOpen] = useState(false);
+  const lookup = usePaginatedServerLookup({
+    queryKey: ['job-orders', 'pooled-inventory', 'style-options', factoryId, excludeSaleOrderId],
+    searchText,
+    enabled: open && Boolean(factoryId),
+    getKey: (style: DispatchOrderStyleOption) => style.styleId,
+    fetchPage: async (search, cursor, signal) => {
+      const res = await apiClient.get<ApiSuccessResponse<PooledInventoryStylePage>>('/job-orders/pooled-inventory/style-options', {
+        params: { factoryId, search, excludeSaleOrderId, limit: 20, cursor }, signal,
+      });
+      return { ...res.data.data, items: res.data.data.items.map(s => ({ ...s, sizes: [] })) };
+    },
+  });
+  const filtered = lookup.options.filter(o => !excludeStyleIds?.has(o.styleId));
 
   return (
     <LookupField<DispatchOrderStyleOption>
@@ -109,20 +127,30 @@ export function DispatchOrderStyleField({
       required={required}
       errorMessage={errorMessage}
       width={width}
-      placeholder="Search Style Number or Name…"
+      placeholder="Search Style Number, LMIX or Name…"
       selectedOption={value}
       onSelect={onChange}
       searchText={searchText}
       onSearchTextChange={setSearchText}
       options={filtered}
+      keepOpenOnDialogFocus
+      onOpenChange={setOpen}
+      loading={lookup.loading}
+      searchError={lookup.isError && !lookup.isFetchNextPageError ? 'Unable to load Styles. Retry the search.' : null}
+      panelActions={lookup.isError ? (
+        <div>
+          {lookup.isFetchNextPageError && <p role="alert">Unable to load more Styles. Retry to continue.</p>}
+          <button type="button" onClick={() => { if (lookup.isFetchNextPageError) void lookup.fetchNextPage(); else void lookup.refetch(); }}>Retry</button>
+        </div>
+      ) : lookup.hasNextPage && !lookup.loading ? (
+        <button type="button" aria-disabled={lookup.isFetchingNextPage} onClick={() => { if (!lookup.isFetchingNextPage) void lookup.fetchNextPage(); }}>
+          {lookup.isFetchingNextPage ? 'Loading more…' : 'Load more'}
+        </button>
+      ) : undefined}
       getOptionKey={(style) => style.styleId}
       getOptionLabel={getStyleLabel}
       renderOption={(style) => <StyleOptionRow style={style} />}
-      emptyMessage={
-        available.length === 0
-          ? 'No Styles with pooled stock at this Factory'
-          : 'No Style matches your search'
-      }
+      emptyMessage="No eligible Styles match this search at this Factory"
     />
   );
 }

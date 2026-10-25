@@ -167,28 +167,6 @@ export function SaleOrderFormPage() {
   // the backend validates it belongs to the requested factory).
   const excludeSaleOrderId = isEdit && factoryId && factoryId === originalFactoryId ? id : undefined;
 
-  const pooledInventoryQuery = useQuery({
-    queryKey: ['job-orders', 'pooled-inventory', factoryId, excludeSaleOrderId],
-    enabled: Boolean(factoryId),
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<PooledFactoryInventoryLine[]>>(
-        '/job-orders/pooled-inventory',
-        { params: { factoryId, excludeSaleOrderId } },
-      );
-      return res.data.data;
-    },
-  });
-
-  // DEMO-016/DEMO-003: the Style picker and the computed Size-split preview
-  // are both built directly from the Factory's pooled inventory — no
-  // separate style-options endpoint. Re-grouped whenever the pool reloads
-  // (e.g. the Factory changes).
-  const pooledStyles = useMemo(
-    () => groupPooledStylesForFactory(pooledInventoryQuery.data ?? []),
-    [pooledInventoryQuery.data],
-  );
-  const pooledStyleById = useMemo(() => new Map(pooledStyles.map((s) => [s.styleId, s])), [pooledStyles]);
-
   // DEMO-016 fix: the server's eligible-Size set for the equal split is the
   // union of pooled Sizes and the Style's currently ACTIVE configured
   // Sizes (see resolveEligibleSizeIds in sale-orders.service.ts) — a
@@ -207,11 +185,27 @@ export function SaleOrderFormPage() {
     return [...ids];
   }, [distributorGroups]);
 
+  const selectedPoolQueries = useQueries({
+    queries: selectedStyleIds.map((styleId) => ({
+      queryKey: ['job-orders', 'pooled-inventory', factoryId, styleId, excludeSaleOrderId],
+      enabled: Boolean(factoryId),
+      retry: false,
+      queryFn: async ({ signal }: { signal: AbortSignal }) => {
+        const res = await apiClient.get<ApiSuccessResponse<PooledFactoryInventoryLine[]>>('/job-orders/pooled-inventory', {
+          params: { factoryId, styleId, excludeSaleOrderId }, signal,
+        });
+        return res.data.data;
+      },
+    })),
+  });
+  const pooledStyleById = new Map(selectedPoolQueries.flatMap(query => groupPooledStylesForFactory(query.data ?? [])).map(style => [style.styleId, style]));
+
   const styleMasterQueries = useQueries({
     queries: selectedStyleIds.map((styleId) => ({
       queryKey: ['styles', styleId],
-      queryFn: async () => {
-        const res = await apiClient.get<ApiSuccessResponse<StyleMasterRecord>>(`/styles/${styleId}`);
+      retry: false,
+      queryFn: async ({ signal }: { signal: AbortSignal }) => {
+        const res = await apiClient.get<ApiSuccessResponse<StyleMasterRecord>>(`/styles/${styleId}`, { signal });
         return res.data.data;
       },
     })),
@@ -231,15 +225,12 @@ export function SaleOrderFormPage() {
     return map;
   }, [selectedStyleIds, styleMasterQueries]);
 
-  // A saved line's Style may have since dropped out of the live pool (fully
-  // consumed, or never re-released) — the server always re-derives the
-  // split from the CURRENT pool, so this form must display the same
-  // current state, not a frozen one. A style that genuinely has no current
-  // pool entry still displays (by its own last-known identity) with zero
-  // pooled Sizes, which DispatchOrderQuantityGrid reports honestly rather
-  // than silently.
+  // A confirmed empty Style pool preserves saved identity while configured
+  // active Sizes still participate in the split. Pending/failed reads are
+  // handled separately below and must never be presented as zero stock.
   function resolveStyleOption(fallback: DispatchOrderStyleOption): DispatchOrderStyleOption {
-    const pooled = pooledStyleById.get(fallback.styleId) ?? { ...fallback, sizes: [] };
+    const current = pooledStyleById.get(fallback.styleId);
+    const pooled = current ? { ...current, primaryImage: current.primaryImage ?? fallback.primaryImage } : { ...fallback, sizes: [] };
     const configured = configuredActiveSizesByStyleId.get(fallback.styleId);
     if (!configured || configured.length === 0) return pooled;
     const sizesBySizeId = new Map(pooled.sizes.map((size) => [size.sizeId, size]));
@@ -743,6 +734,11 @@ export function SaleOrderFormPage() {
                                 <div className="space-y-3">
                                   {dest.lines.map((line) => {
                                     const resolvedStyle = line.style ? resolveStyleOption(line.style) : null;
+                                    const styleIndex = line.style ? selectedStyleIds.indexOf(line.style.styleId) : -1;
+                                    const poolQuery = selectedPoolQueries[styleIndex];
+                                    const masterQuery = styleMasterQueries[styleIndex];
+                                    const availabilityError = poolQuery?.isError || masterQuery?.isError;
+                                    const availabilityReady = poolQuery?.isSuccess && masterQuery?.isSuccess;
                                     return (
                                       <Panel key={line.key} className="bg-surface-muted">
                                         <div className="space-y-2">
@@ -751,7 +747,8 @@ export function SaleOrderFormPage() {
                                               id={`line-${line.key}-style`}
                                               value={line.style}
                                               onChange={(style) => updateLine(group.clientKey, dest.clientKey, line.key, { style })}
-                                              options={pooledStyles}
+                                              factoryId={factoryId}
+                                              excludeSaleOrderId={excludeSaleOrderId}
                                               excludeStyleIds={
                                                 line.style
                                                   ? new Set([...chosenStyleIds].filter((s) => s !== line.style!.styleId))
@@ -771,7 +768,14 @@ export function SaleOrderFormPage() {
                                               Remove
                                             </Button>
                                           </div>
-                                          {resolvedStyle && (
+                                          {resolvedStyle && availabilityError && (
+                                            <div role="alert">
+                                              <p>Unable to load Style availability. Quantities are unconfirmed.</p>
+                                              <Button type="button" variant="secondary" onClick={() => { void poolQuery?.refetch(); void masterQuery?.refetch(); }}>Retry availability</Button>
+                                            </div>
+                                          )}
+                                          {resolvedStyle && !availabilityError && !availabilityReady && <p role="status">Loading Style availability…</p>}
+                                          {resolvedStyle && availabilityReady && !availabilityError && (
                                             <DispatchOrderQuantityGrid style={resolvedStyle} totalQuantity={line.totalQuantity} />
                                           )}
                                         </div>
