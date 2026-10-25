@@ -248,3 +248,156 @@ describe('JobOrderQualityTab QA/inspection cross-link (UXAUTH-011)', () => {
     expect(buttons).not.toContain('Continue Inspection');
   });
 });
+
+// ISS-050: Inline QA's recorded attempts were previously invisible here —
+// the discoverability table was gated to PP Sample (SIZE scope) only, even
+// though the same executionHistory data already existed for Inline QA.
+describe('JobOrderQualityTab ISS-050 non-batched attempt history discoverability', () => {
+  const inlineHistoryEntry = (id: string, attemptNumber: number, outcome: 'PASS' | 'FAIL') => ({
+    id,
+    attemptNumber,
+    batchNumber: 1,
+    inspectedQuantity: null,
+    sampleJobOrderLineSizeId: null,
+    sampleQuantity: null,
+    sampleSizeCode: null,
+    sampleSizeLabel: null,
+    ppSampleSessionId: null,
+    ppSampleFormId: null,
+    status: 'FINALIZED',
+    outcome,
+    startedBy: { id: 'u1', name: 'QA One', email: 'qa1@test.local' },
+    finalizedBy: { id: 'u1', name: 'QA One', email: 'qa1@test.local' },
+    startedAt: '',
+    finalizedAt: '',
+  });
+  const inlineActivity = (overrides: Record<string, unknown> = {}) =>
+    finalQualityActivity({
+      processFlowVersionStageId: 'inline-quality',
+      name: 'Inline Inspection',
+      qualityForm: { id: 'inline-form', code: 'INLINE', name: 'Inline Inspection Report', executionScope: 'JOB_ORDER' },
+      executionMultiplicity: 'SINGLE',
+      executionMode: 'IN_PROCESS',
+      execution: {
+        id: 'exec-2',
+        attemptNumber: 2,
+        batchNumber: 1,
+        inspectedQuantity: null,
+        status: 'FINALIZED',
+        version: 1,
+        outcome: 'PASS',
+        startedAt: '',
+        finalizedAt: '',
+      },
+      executionHistory: [inlineHistoryEntry('exec-1', 1, 'FAIL'), inlineHistoryEntry('exec-2', 2, 'PASS')],
+      ...overrides,
+    });
+
+  it('lists every recorded Inline QA attempt and navigates to the selected one on click', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderQuality('IN_PRODUCTION', { qualityActivities: [inlineActivity()] });
+    expect(content(container)).toContain('Attempt');
+    const row = [...container.querySelectorAll('tr')].find(
+      (tr) => tr.textContent?.includes('1') && tr.textContent?.includes('FAIL'),
+    )!;
+    expect(row).not.toBeUndefined();
+    act(() => row.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const probe = container.querySelector('[data-testid="location-probe"]');
+    expect(probe?.textContent).toContain('/quality-executions/exec-1');
+  });
+
+  it('never shows attempt-history rows as clickable for PP Sample (SIZE scope) — that navigation stays out of this PR', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderQuality('IN_PRODUCTION', {
+      qualityActivities: [
+        inlineActivity({
+          name: 'PP Sample',
+          qualityForm: { id: 'pp-form', code: 'PP_SAMPLE', name: 'PP Sample Report', executionScope: 'SIZE' },
+        }),
+      ],
+    });
+    const row = [...container.querySelectorAll('tr')].find(
+      (tr) => tr.textContent?.includes('1') && tr.textContent?.includes('FAIL'),
+    )!;
+    expect(row).not.toBeUndefined();
+    act(() => row.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const probe = container.querySelector('[data-testid="location-probe"]');
+    expect(probe?.textContent).not.toContain('/quality-executions/');
+  });
+
+  it('does not render the attempt-history table for a BATCHED checkpoint (Final Inspection uses its own batch navigation)', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderQuality('IN_PRODUCTION', {
+      qualityActivities: [
+        finalQualityActivity({ executionHistory: [inlineHistoryEntry('final-exec-1', 1, 'PASS')] }),
+      ],
+    });
+    expect(content(container)).not.toContain('Attempt 1');
+  });
+});
+
+// ISS-048 final correction: a Job Order whose every physical Final batch
+// was cancelled before any inspection started has no active execution, so
+// without a distinct entry point there would be no way in at all to the
+// history selector on /quality-executions/:id.
+describe('JobOrderQualityTab ISS-048 cancelled-only history entry point', () => {
+  it('offers a distinct, read-only history entry point for an authorized role when every batch is cancelled', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderQuality('IN_PRODUCTION', {
+      qualityActivities: [
+        finalQualityActivity({ execution: null, historyEntryExecutionId: 'cancelled-exec-1' }),
+      ],
+    });
+    const button = [...container.querySelectorAll('button')].find(
+      (item) => item.textContent === 'View cancelled batch history',
+    );
+    expect(button).not.toBeUndefined();
+    act(() => button!.click());
+    const probe = container.querySelector('[data-testid="location-probe"]');
+    expect(probe?.textContent).toContain('/quality-executions/cancelled-exec-1');
+  });
+
+  it('does not offer the history entry point to an unauthorized FACTORY_USER', async () => {
+    authState.roles = ['FACTORY_USER'];
+    await renderQuality('IN_PRODUCTION', {
+      qualityActivities: [
+        finalQualityActivity({ execution: null, historyEntryExecutionId: 'cancelled-exec-1' }),
+      ],
+    });
+    const button = [...container.querySelectorAll('button')].find(
+      (item) => item.textContent === 'View cancelled batch history',
+    );
+    expect(button).toBeUndefined();
+  });
+
+  it('never shows the cancelled-history entry point while an active execution exists, even if one happens to be set', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderQuality('IN_PRODUCTION', {
+      qualityActivities: [
+        finalQualityActivity({
+          execution: { id: 'active-exec-1', status: 'FINALIZED' },
+          historyEntryExecutionId: 'cancelled-exec-1',
+        }),
+      ],
+    });
+    const historyButton = [...container.querySelectorAll('button')].find(
+      (item) => item.textContent === 'View cancelled batch history',
+    );
+    expect(historyButton).toBeUndefined();
+    const viewButton = [...container.querySelectorAll('button')].find(
+      (item) => item.textContent === 'View Inspection',
+    );
+    expect(viewButton).not.toBeUndefined();
+  });
+
+  it('offers neither button when there is no execution and no history at all', async () => {
+    authState.roles = ['MERCHANDISER'];
+    await renderQuality('IN_PRODUCTION', {
+      qualityActivities: [finalQualityActivity({ execution: null, status: 'NOT_AVAILABLE', eligible: false })],
+    });
+    const buttons = [...container.querySelectorAll('button')].map((item) => item.textContent);
+    expect(buttons).not.toContain('View cancelled batch history');
+    expect(buttons).not.toContain('View Inspection');
+    expect(buttons).not.toContain('Continue Inspection');
+  });
+});

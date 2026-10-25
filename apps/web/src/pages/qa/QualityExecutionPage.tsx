@@ -41,6 +41,8 @@ export function QualityExecutionPage() {
   const [viewingAttachment, setViewingAttachment] = useState<{ id: string; name: string } | null>(
     null,
   );
+  const [batchSwitchPending, setBatchSwitchPending] = useState(false);
+  const [batchSwitchError, setBatchSwitchError] = useState('');
   const query = useQuery({
     queryKey: ['quality-execution', executionId],
     queryFn: async () =>
@@ -64,6 +66,13 @@ export function QualityExecutionPage() {
     ...(typeof recordedContext.orderedQuantityTotal === 'number' ? [{ label: 'Job Order quantity', value: `${recordedContext.orderedQuantityTotal} pcs` }] : []),
     ...(recordedContext.seasonSnapshots?.length ? [{ label: 'Season snapshot', value: recordedContext.seasonSnapshots.map(season => season.displayName).join(', ') }] : []),
   ] : query.data ? qualityIdentityItems(query.data) : [], [recordedContext, query.data]);
+  // ISS-050: non-batched (PPM/Inline) attempt history has no field of its own
+  // on QualityExecutionView, but it's already computed server-side for the
+  // Job Order detail response this page fetches anyway for identity — reused
+  // rather than adding a new backend endpoint or projection for it.
+  const attemptHistory = recordedContext?.qualityActivities?.find(
+    (activity) => activity.processFlowVersionStageId === query.data?.processFlowActivityId,
+  )?.executionHistory;
   const mutation = useMutation({
     mutationFn: async ({
       payload,
@@ -118,6 +127,47 @@ export function QualityExecutionPage() {
   const removeAttachment = async (attachmentId: string) => {
     await apiClient.delete(`/quality-executions/attachments/${attachmentId}`);
     await query.refetch();
+  };
+  // ISS-050/048: history navigation only ever opens an execution id already
+  // surfaced by an authorized response (this execution's own batch/coverage
+  // data, or the Job Order detail this page already loaded) — it reuses the
+  // existing GET /quality-executions/:id read path and never mutates.
+  const selectAttempt = (nextExecutionId: string) => {
+    if (nextExecutionId === executionId) return;
+    setBatchSwitchError('');
+    navigate(`/quality-executions/${nextExecutionId}`);
+  };
+  // Correction (post-review): a failed batch lookup must never leave the
+  // user silently stuck, and must never navigate — staying on the
+  // previously displayed execution with a visible, actionable reason is the
+  // only safe outcome here.
+  const selectBatch = async (batchId: string) => {
+    if (batchId === query.data?.finalBatch?.id) return;
+    setBatchSwitchPending(true);
+    setBatchSwitchError('');
+    try {
+      const batch = (
+        await apiClient.get<ApiSuccessResponse<FinalQualityBatchView>>(
+          `/quality-executions/final-batches/${batchId}`,
+        )
+      ).data.data;
+      const latestAttempt = [...batch.attempts].sort(
+        (left, right) => right.attemptNumber - left.attemptNumber,
+      )[0];
+      if (!latestAttempt) {
+        setBatchSwitchError('This batch has no recorded inspection attempts to open.');
+        return;
+      }
+      navigate(`/quality-executions/${latestAttempt.id}`);
+    } catch (error) {
+      const api = isAxiosError<ApiErrorResponse>(error) ? error.response?.data.error : undefined;
+      setBatchSwitchError(
+        api?.message ??
+          (error instanceof Error ? error.message : 'Unable to load the selected batch. Try again.'),
+      );
+    } finally {
+      setBatchSwitchPending(false);
+    }
   };
   const batchMutation = useMutation({
     mutationFn: async ({
@@ -247,6 +297,11 @@ export function QualityExecutionPage() {
           onUpload={upload}
           onRemoveAttachment={removeAttachment}
           onViewAttachment={(id, name) => setViewingAttachment({ id, name })}
+          attemptHistory={attemptHistory}
+          onSelectAttempt={selectAttempt}
+          onSelectBatch={(batchId) => void selectBatch(batchId)}
+          batchSwitchPending={batchSwitchPending}
+          batchSwitchError={batchSwitchError}
           onStartReinspection={() =>
             batchMutation.mutateAsync({ action: 'reinspect' }).then(() => undefined)
           }

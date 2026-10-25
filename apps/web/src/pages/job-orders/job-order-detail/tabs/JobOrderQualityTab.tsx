@@ -373,35 +373,88 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                     Not performed during the associated Production activity.
                   </p>
                 )}
-                {activity.qualityForm.executionScope === 'SIZE' && activity.executionHistory.length > 0 && (
+                {/* ISS-050: Final Inspection's executionHistory mixes attempts from every
+                    physical batch together (batch navigation for it lives on the execution
+                    detail page instead, where batch/attempt scope stays unambiguous), so this
+                    discoverability table is for the three non-batched checkpoints only. */}
+                {activity.executionMultiplicity !== 'BATCHED' && activity.executionHistory.length > 0 && (
                   <DataTable
                     density="compact"
                     containerClassName="mt-4"
                     rowKey="id"
                     data={activity.executionHistory}
-                    columns={[
-                      { key: 'attempt', header: 'Cycle', accessor: 'attemptNumber' },
-                      {
-                        key: 'size',
-                        header: 'Sample size',
-                        render: (cycle) => cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size',
-                      },
-                      { key: 'quantity', header: 'Quantity', accessor: 'sampleQuantity', align: 'right' },
-                      {
-                        key: 'status',
-                        header: 'Result',
-                        render: (cycle) =>
-                          cycle.status === 'DRAFT' ? (
-                            <StatusBadge label="In Progress" tone="info" />
-                          ) : (
-                            <StatusBadge
-                              label={cycle.outcome ?? 'Finalized'}
-                              tone={cycle.outcome === 'PASS' ? 'success' : 'danger'}
-                            />
-                          ),
-                      },
-                    ]}
+                    onRowClick={
+                      canViewQa(user) && activity.qualityForm.executionScope !== 'SIZE'
+                        ? (cycle) => navigate(`/quality-executions/${cycle.id}`)
+                        : undefined
+                    }
+                    columns={
+                      activity.qualityForm.executionScope === 'SIZE'
+                        ? [
+                            { key: 'attempt', header: 'Cycle', accessor: 'attemptNumber' },
+                            {
+                              key: 'size',
+                              header: 'Sample size',
+                              render: (cycle) => cycle.sampleSizeCode ?? cycle.sampleSizeLabel ?? 'Size',
+                            },
+                            { key: 'quantity', header: 'Quantity', accessor: 'sampleQuantity', align: 'right' },
+                            {
+                              key: 'status',
+                              header: 'Result',
+                              render: (cycle) =>
+                                cycle.status === 'DRAFT' ? (
+                                  <StatusBadge label="In Progress" tone="info" />
+                                ) : (
+                                  <StatusBadge
+                                    label={cycle.outcome ?? 'Finalized'}
+                                    tone={cycle.outcome === 'PASS' ? 'success' : 'danger'}
+                                  />
+                                ),
+                            },
+                          ]
+                        : [
+                            { key: 'attempt', header: 'Attempt', accessor: 'attemptNumber' },
+                            {
+                              key: 'started',
+                              header: 'Started',
+                              render: (cycle) => formatDateTime(cycle.startedAt),
+                            },
+                            {
+                              key: 'status',
+                              header: 'Result',
+                              render: (cycle) =>
+                                cycle.status === 'DRAFT' ? (
+                                  <StatusBadge label="In Progress" tone="info" />
+                                ) : (
+                                  <StatusBadge
+                                    label={cycle.outcome ?? 'Finalized'}
+                                    tone={cycle.outcome === 'PASS' ? 'success' : 'danger'}
+                                  />
+                                ),
+                            },
+                          ]
+                    }
                   />
+                )}
+                {/* ISS-048 correction: when every physical Final batch was
+                    cancelled before any inspection work started, `execution`
+                    is null and none of the branches below render anything —
+                    there would be no way in to the history selector at all.
+                    historyEntryExecutionId only exists for exactly that case
+                    (never when an active execution already provides its own
+                    way in) and is deliberately presented as a distinct,
+                    read-only history entry point, never as "Continue"/"View
+                    Inspection" for an actionable record. Same role gate as
+                    that button — never broadened to FACTORY_USER. */}
+                {!activity.execution && activity.historyEntryExecutionId && canViewQa(user) && (
+                  <div className="mt-4">
+                    <Button
+                      variant="secondary"
+                      onClick={() => navigate(`/quality-executions/${activity.historyEntryExecutionId}`)}
+                    >
+                      View cancelled batch history
+                    </Button>
+                  </div>
                 )}
                 {activity.execution ? (
                   <div className="mt-4 space-y-3">

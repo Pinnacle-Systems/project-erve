@@ -13,6 +13,12 @@ let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // Radix Select (the new attempt/batch history selectors) calls
+  // scrollIntoView on open, which jsdom does not implement.
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -272,7 +278,9 @@ describe('web Quality execution workflow', () => {
     });
     await vi.waitFor(() => expect(container.textContent).toContain('Physical Final batch 3'));
     expect(container.textContent).toContain('S · Small5');
-    expect(container.textContent).toContain('Attempt 1FAIL');
+    // ISS-048: the attempt label now also surfaces its (Latest) / currently
+    // viewing status for navigation discoverability.
+    expect(container.textContent).toContain('Attempt 1 (Latest) — Currently viewingFAIL');
     expect(container.textContent).toContain('Rejection / Defect Reason: Broken zipper');
     expect(container.querySelector('input[aria-label^="Final batch quantity"]')).toBeNull();
     const reinspectButton = [...container.querySelectorAll('button')].find(
@@ -446,4 +454,347 @@ it('waits for authorized identity before enabling PDF actions', async () => {
   for (let n = 0; n < 30 && download.disabled; n++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
   expect(download.disabled).toBe(false);
   expect(container.querySelector('[data-quality-execution-header]')?.textContent).toContain('7200');
+});
+
+// ISS-050: an Inline QA attempt's full history already comes back on the Job
+// Order detail response this page fetches anyway — this covers that it's
+// correctly matched to the current activity and that selecting an earlier
+// attempt navigates to, and loads, that attempt's own persisted execution
+// (never the latest one's cached data).
+describe('ISS-050 non-batched (Inline/PPM) attempt history navigation', () => {
+  it("opens an earlier attempt's own persisted execution, not the latest one's cached data", async () => {
+    const latest: QualityExecutionView = { ...view, id: 'e1', attemptNumber: 2, status: 'FINALIZED', finalizedAt: '2026-02-01T00:00:00Z' };
+    const earlier: QualityExecutionView = { ...view, id: 'e0', attemptNumber: 1, status: 'FINALIZED', finalizedAt: '2026-01-01T00:00:00Z' };
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path === '/job-orders/j1')
+        return {
+          data: {
+            data: {
+              id: 'j1',
+              qualityActivities: [
+                {
+                  processFlowVersionStageId: 'a1',
+                  executionHistory: [
+                    { id: 'e0', attemptNumber: 1, status: 'FINALIZED', outcome: 'FAIL', startedAt: '', finalizedAt: '2026-01-01T00:00:00Z' },
+                    { id: 'e1', attemptNumber: 2, status: 'FINALIZED', outcome: 'PASS', startedAt: '', finalizedAt: '2026-02-01T00:00:00Z' },
+                  ],
+                },
+              ],
+            },
+          },
+        };
+      if (path === '/quality-executions/e0') return { data: { data: earlier } };
+      return { data: { data: latest } };
+    });
+    await act(async () => root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/quality-executions/e1']}>
+          <Routes>
+            <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ));
+    await vi.waitFor(() => expect(container.textContent).toContain('Attempt 2 (Latest)'));
+    const trigger = await vi.waitFor(() => {
+      const node = container.querySelector<HTMLButtonElement>('#quality-history-attempt-select');
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    await act(async () => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const option = await vi.waitFor(() => {
+      const node = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((item) =>
+        item.textContent?.includes('Attempt 1'),
+      );
+      expect(node).not.toBeUndefined();
+      return node!;
+    });
+    await act(async () => option.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    // Navigation changes the URL param, which re-keys the query and GETs the
+    // earlier attempt's own execution — never a client-side copy of the latest.
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/quality-executions/e0'));
+    await vi.waitFor(() => expect(container.textContent).toContain('Viewing a historical, read-only attempt'));
+    // The dropdown's own option list legitimately still lists attempt 2 as
+    // "(Latest)" — what must change is which attempt the page itself loaded.
+    const header = container.querySelector('[data-quality-execution-header]')!;
+    expect(header.textContent).toContain('Attempt 1');
+    expect(header.textContent).not.toContain('Attempt 2');
+  });
+});
+
+// ISS-048: Final Inspection's backend already retains every physical batch
+// and attempt; this covers that picking a different batch from the page
+// resolves its latest attempt via the existing final-batch detail endpoint
+// and navigates there, without calling any mutation endpoint.
+describe('ISS-048 Final Inspection physical-batch navigation', () => {
+  it('switches to a different physical batch by resolving and opening its latest attempt', async () => {
+    const batch2Execution: QualityExecutionView = {
+      ...view,
+      id: 'e1',
+      attemptNumber: 1,
+      batchNumber: 2,
+      status: 'FINALIZED',
+      coverage: {
+        preparedQuantityAuthoritative: true,
+        preparedQuantity: 72,
+        inspectedQuantity: 60,
+        remainingQuantity: 12,
+        complete: false,
+        reconciliationConflict: false,
+        state: 'IN_PROGRESS',
+        passedBatches: 1,
+        failedBatches: 0,
+        hasFailedBatches: false,
+        batches: [
+          { id: 'batch-1', batchNumber: 1, inspectedQuantity: 60, status: 'FINALIZED', outcome: 'PASS', finalizedAt: '2026-01-01T00:00:00Z' },
+          { id: 'batch-2', batchNumber: 2, inspectedQuantity: 12, status: 'FINALIZED', outcome: 'PASS', finalizedAt: '2026-02-01T00:00:00Z' },
+        ],
+      },
+      finalBatch: {
+        id: 'batch-2',
+        batchNumber: 2,
+        physicalQuantity: 12,
+        disposition: 'RELEASED',
+        allocations: [],
+        attempts: [{ id: 'e1', attemptNumber: 1, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: '2026-02-01T00:00:00Z' }],
+        release: { id: 'release-2', releasedAt: '2026-02-01T00:00:00Z', quantity: 12 },
+      },
+    };
+    const batch1Execution: QualityExecutionView = {
+      ...view,
+      id: 'e-batch1-latest',
+      attemptNumber: 1,
+      batchNumber: 1,
+      status: 'FINALIZED',
+    };
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path === '/job-orders/j1') return { data: { data: { id: 'j1' } } };
+      if (path === '/quality-executions/final-batches/batch-1')
+        return {
+          data: {
+            data: {
+              id: 'batch-1',
+              batchNumber: 1,
+              physicalQuantity: 60,
+              disposition: 'RELEASED',
+              allocations: [],
+              attempts: [
+                { id: 'e-batch1-attempt1', attemptNumber: 1, status: 'FINALIZED', outcome: 'FAIL', rejectionReason: 'Torn seam', startedAt: '', finalizedAt: '' },
+                { id: 'e-batch1-latest', attemptNumber: 2, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: '' },
+              ],
+              release: null,
+            },
+          },
+        };
+      if (path === '/quality-executions/e-batch1-latest') return { data: { data: batch1Execution } };
+      return { data: { data: batch2Execution } };
+    });
+    const post = vi.spyOn(apiClient, 'post');
+    await act(async () => root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/quality-executions/e1']}>
+          <Routes>
+            <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ));
+    const trigger = await vi.waitFor(() => {
+      const node = container.querySelector<HTMLButtonElement>('#quality-history-batch-select');
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    await act(async () => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const option = await vi.waitFor(() => {
+      const node = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((item) =>
+        item.textContent?.includes('Batch 1'),
+      );
+      expect(node).not.toBeUndefined();
+      return node!;
+    });
+    await act(async () => option.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    // Resolves via the existing, authorized final-batch detail endpoint — no
+    // new/broad batch-enumeration endpoint and no mutation call involved.
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/quality-executions/final-batches/batch-1'));
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/quality-executions/e-batch1-latest'));
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  // Correction 3 (post-review): a failed batch lookup must show a visible,
+  // actionable error, never navigate, and reliably clear the loading state —
+  // not silently leave the selector stuck or produce an unhandled rejection.
+  it('shows an accessible error and stays on the current execution when the selected batch fails to load', async () => {
+    const batch2Execution: QualityExecutionView = {
+      ...view,
+      id: 'e1',
+      attemptNumber: 1,
+      batchNumber: 2,
+      status: 'FINALIZED',
+      coverage: {
+        preparedQuantityAuthoritative: true,
+        preparedQuantity: 72,
+        inspectedQuantity: 60,
+        remainingQuantity: 12,
+        complete: false,
+        reconciliationConflict: false,
+        state: 'IN_PROGRESS',
+        passedBatches: 1,
+        failedBatches: 0,
+        hasFailedBatches: false,
+        batches: [
+          { id: 'batch-1', batchNumber: 1, inspectedQuantity: 60, status: 'FINALIZED', outcome: 'PASS', finalizedAt: '2026-01-01T00:00:00Z' },
+          { id: 'batch-2', batchNumber: 2, inspectedQuantity: 12, status: 'FINALIZED', outcome: 'PASS', finalizedAt: '2026-02-01T00:00:00Z' },
+        ],
+      },
+      finalBatch: {
+        id: 'batch-2',
+        batchNumber: 2,
+        physicalQuantity: 12,
+        disposition: 'RELEASED',
+        allocations: [],
+        attempts: [{ id: 'e1', attemptNumber: 1, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: '2026-02-01T00:00:00Z' }],
+        release: { id: 'release-2', releasedAt: '2026-02-01T00:00:00Z', quantity: 12 },
+      },
+    };
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path === '/job-orders/j1') return { data: { data: { id: 'j1' } } };
+      if (path === '/quality-executions/final-batches/batch-1') {
+        const error = new Error('Request failed with status code 500') as Error & {
+          isAxiosError?: boolean;
+          response?: unknown;
+        };
+        error.isAxiosError = true;
+        error.response = { data: { error: { message: 'Final Quality batch not found' } } };
+        throw error;
+      }
+      return { data: { data: batch2Execution } };
+    });
+    const post = vi.spyOn(apiClient, 'post');
+    await act(async () => root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/quality-executions/e1']}>
+          <Routes>
+            <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ));
+    const trigger = await vi.waitFor(() => {
+      const node = container.querySelector<HTMLButtonElement>('#quality-history-batch-select');
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    await act(async () => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const option = await vi.waitFor(() => {
+      const node = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((item) =>
+        item.textContent?.includes('Batch 1'),
+      );
+      expect(node).not.toBeUndefined();
+      return node!;
+    });
+    await act(async () => option.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/quality-executions/final-batches/batch-1'));
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+        'Final Quality batch not found',
+      ),
+    );
+    // Stays on the previously displayed execution (batch 2) — no navigation.
+    expect(container.querySelector('[data-quality-execution-header]')?.textContent).toContain(
+      'Physical batch 2',
+    );
+    expect(container.textContent).not.toContain('Loading selected batch');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('shows an accessible error, rather than doing nothing, when the selected batch has no recorded attempts', async () => {
+    const batch2Execution: QualityExecutionView = {
+      ...view,
+      id: 'e1',
+      attemptNumber: 1,
+      batchNumber: 2,
+      status: 'FINALIZED',
+      coverage: {
+        preparedQuantityAuthoritative: true,
+        preparedQuantity: 72,
+        inspectedQuantity: 60,
+        remainingQuantity: 12,
+        complete: false,
+        reconciliationConflict: false,
+        state: 'IN_PROGRESS',
+        passedBatches: 1,
+        failedBatches: 0,
+        hasFailedBatches: false,
+        batches: [
+          { id: 'batch-1', batchNumber: 1, inspectedQuantity: 0, status: 'DRAFT', outcome: null, finalizedAt: null },
+          { id: 'batch-2', batchNumber: 2, inspectedQuantity: 12, status: 'FINALIZED', outcome: 'PASS', finalizedAt: '2026-02-01T00:00:00Z' },
+        ],
+      },
+      finalBatch: {
+        id: 'batch-2',
+        batchNumber: 2,
+        physicalQuantity: 12,
+        disposition: 'RELEASED',
+        allocations: [],
+        attempts: [{ id: 'e1', attemptNumber: 1, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: '2026-02-01T00:00:00Z' }],
+        release: { id: 'release-2', releasedAt: '2026-02-01T00:00:00Z', quantity: 12 },
+      },
+    };
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path === '/job-orders/j1') return { data: { data: { id: 'j1' } } };
+      if (path === '/quality-executions/final-batches/batch-1')
+        return {
+          data: {
+            data: {
+              id: 'batch-1',
+              batchNumber: 1,
+              physicalQuantity: 20,
+              disposition: 'DRAFT',
+              allocations: [],
+              attempts: [],
+              release: null,
+            },
+          },
+        };
+      return { data: { data: batch2Execution } };
+    });
+    const post = vi.spyOn(apiClient, 'post');
+    await act(async () => root.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/quality-executions/e1']}>
+          <Routes>
+            <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ));
+    const trigger = await vi.waitFor(() => {
+      const node = container.querySelector<HTMLButtonElement>('#quality-history-batch-select');
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    await act(async () => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const option = await vi.waitFor(() => {
+      const node = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((item) =>
+        item.textContent?.includes('Batch 1'),
+      );
+      expect(node).not.toBeUndefined();
+      return node!;
+    });
+    await act(async () => option.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/quality-executions/final-batches/batch-1'));
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+        'no recorded inspection attempts',
+      ),
+    );
+    expect(container.querySelector('[data-quality-execution-header]')?.textContent).toContain(
+      'Physical batch 2',
+    );
+    expect(post).not.toHaveBeenCalled();
+  });
 });

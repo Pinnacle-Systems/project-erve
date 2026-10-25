@@ -664,6 +664,72 @@ describe('Final Inspection batching and prepared coverage', () => {
       .expect(409);
   });
 
+  // Post-review correction 2 (ISS-048): a cancelled batch is excluded from
+  // active coverage arithmetic (correct — it never had any physical
+  // coverage), but that previously also made it disappear from
+  // `coverage.batches` entirely, so it could never be discovered or opened
+  // as a historical record. It must now be listed (clearly labeled
+  // CANCELLED) and still reachable via the existing batch-detail endpoint,
+  // while still contributing nothing to reserved/released/available
+  // quantities.
+  it('lists a cancelled physical batch as discoverable, read-only history, excluded from reserved/released/available quantities', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED' },
+    });
+    const first = (await start(f, 800).expect(201)).body.data;
+    await finalize(f, first).expect(200);
+
+    const draft = (await start(f, 40, 800).expect(201)).body.data;
+    await request(app)
+      .post(`/quality-executions/final-batches/${draft.finalBatch.id}/cancel`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({ reason: 'Created against the wrong shipment' })
+      .expect(200);
+
+    const view = await request(app)
+      .get(`/quality-executions/${first.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+
+    // Active coverage arithmetic stays exactly as if the cancelled batch
+    // never existed.
+    expect(view.body.data.coverage).toMatchObject({
+      releasedQuantity: 800,
+      reservedForFinalQuantity: 800,
+      availableForNewFinalBatch: 40,
+      passedBatches: 1,
+      failedBatches: 0,
+      hasFailedBatches: false,
+    });
+
+    const cancelledEntry = view.body.data.coverage.batches.find(
+      (batch: { id: string }) => batch.id === draft.finalBatch.id,
+    );
+    expect(cancelledEntry).toMatchObject({
+      batchNumber: 2,
+      disposition: 'CANCELLED',
+      status: 'CANCELLED',
+      inspectedQuantity: 0,
+      outcome: null,
+    });
+
+    // Reused, authorized batch-detail endpoint — no new/broad list endpoint.
+    const batchDetail = await request(app)
+      .get(`/quality-executions/final-batches/${draft.finalBatch.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(batchDetail.body.data.disposition).toBe('CANCELLED');
+    expect(batchDetail.body.data.attempts).toHaveLength(1);
+    expect(batchDetail.body.data.attempts[0]).toMatchObject({ status: 'CANCELLED' });
+
+    // The physical quantity the cancelled batch never actually reserved
+    // remains available for a genuinely new batch.
+    const next = (await start(f, 40, 800).expect(201)).body.data;
+    expect(next.finalBatch.batchNumber).toBe(3);
+  });
+
   it('reinspects the same physical batch and releases its immutable multi-size allocation exactly once', async () => {
     const f = await fixture();
     await prisma.jobOrderStageStatus.update({
@@ -1499,5 +1565,169 @@ describe('Final QA / Production Completion lifecycle consistency (DEMO-013 + DEM
     expect(
       activity.executionHistory.map((attempt: { outcome: string | null }) => attempt.outcome),
     ).toEqual(expect.arrayContaining(['FAIL', 'PASS']));
+  });
+});
+
+// ISS-048 final correction: job-orders.service.ts's own Job Order activity
+// projection excludes CANCELLED executions/batches entirely (correctly, for
+// the active-execution/coverage arithmetic below), which meant a Job Order
+// whose every physical Final batch was cancelled before any inspection
+// started had no discoverable entry point at all into the history selector
+// on /quality-executions/:id. historyEntryExecutionId closes that one gap —
+// never a substitute for `execution`, only ever populated when `execution`
+// is null.
+describe('ISS-048 correction: Job Order history entry point when every Final batch is cancelled', () => {
+  async function jobOrderQualityActivity(f: Awaited<ReturnType<typeof fixture>>) {
+    const job = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    return job.body.data.qualityActivities.find(
+      (activity: { processFlowVersionStageId: string }) =>
+        activity.processFlowVersionStageId === f.final.id,
+    );
+  }
+  const cancel = (f: Awaited<ReturnType<typeof fixture>>, batchId: string) =>
+    request(app)
+      .post(`/quality-executions/final-batches/${batchId}/cancel`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send({ reason: 'Created against the wrong shipment' })
+      .expect(200);
+
+  it('exposes no history entry point and no active execution before any batch is ever created', async () => {
+    const f = await fixture();
+    const activity = await jobOrderQualityActivity(f);
+    expect(activity.execution).toBeNull();
+    expect(activity.historyEntryExecutionId ?? null).toBeNull();
+  });
+
+  it('exposes no history entry point while only active batches exist — the active execution is the only way in', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED' },
+    });
+    const first = (await start(f, 800).expect(201)).body.data;
+    await finalize(f, first).expect(200);
+    const activity = await jobOrderQualityActivity(f);
+    expect(activity.execution.id).toBe(first.id);
+    expect(activity.historyEntryExecutionId ?? null).toBeNull();
+  });
+
+  it('exposes a read-only history entry point when the one and only batch was cancelled before any inspection', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED' },
+    });
+    const draft = (await start(f, 800).expect(201)).body.data;
+    await cancel(f, draft.finalBatch.id);
+
+    const activity = await jobOrderQualityActivity(f);
+    expect(activity.execution).toBeNull();
+    expect(activity.historyEntryExecutionId).toBe(draft.id);
+
+    // The entry point must open an already-cancelled, read-only record —
+    // never the current actionable inspection.
+    const entry = await request(app)
+      .get(`/quality-executions/${activity.historyEntryExecutionId}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .expect(200);
+    expect(entry.body.data.status).toBe('CANCELLED');
+    expect(entry.body.data.finalBatch.disposition).toBe('CANCELLED');
+
+    // A cancelled execution cannot become actionable through this entry
+    // point — the existing DRAFT-only mutation guard still applies.
+    await request(app)
+      .put(`/quality-executions/${activity.historyEntryExecutionId}`)
+      .set('Authorization', `Bearer ${f.qa.token}`)
+      .send(payload(entry.body.data.version, f.outcomeId, 'PASS', undefined, f.aqlComponentId))
+      .expect(409);
+  });
+
+  it('points at the most recently created batch when multiple batches were all cancelled and none is active', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED' },
+    });
+    const draft1 = (await start(f, 800).expect(201)).body.data;
+    await cancel(f, draft1.finalBatch.id);
+    const draft2 = (await start(f, 40, 800).expect(201)).body.data;
+    await cancel(f, draft2.finalBatch.id);
+
+    const activity = await jobOrderQualityActivity(f);
+    expect(activity.execution).toBeNull();
+    expect(activity.historyEntryExecutionId).toBe(draft2.id);
+    // Neither cancelled batch ever reserved or released anything — active
+    // coverage stays exactly as if neither had been created.
+    expect(activity.coverage).toMatchObject({
+      reservedForFinalQuantity: 0,
+      releasedQuantity: 0,
+      passedBatches: 0,
+      failedBatches: 0,
+    });
+  });
+
+  it('prefers the active execution and exposes no separate history entry point when an active batch coexists with a cancelled one', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED' },
+    });
+    const cancelledDraft = (await start(f, 800).expect(201)).body.data;
+    await cancel(f, cancelledDraft.finalBatch.id);
+    const active = (await start(f, 800).expect(201)).body.data;
+    await finalize(f, active).expect(200);
+
+    const activity = await jobOrderQualityActivity(f);
+    expect(activity.execution.id).toBe(active.id);
+    expect(activity.historyEntryExecutionId ?? null).toBeNull();
+    expect(activity.coverage).toMatchObject({ releasedQuantity: 800, passedBatches: 1 });
+  });
+
+  it('lets a brand-new batch become the active execution again after every prior batch was cancelled, restoring the usual Start workflow', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED' },
+    });
+    const cancelled = (await start(f, 800).expect(201)).body.data;
+    await cancel(f, cancelled.finalBatch.id);
+    const fresh = (await start(f, 800).expect(201)).body.data;
+
+    const activity = await jobOrderQualityActivity(f);
+    expect(activity.execution.id).toBe(fresh.id);
+    expect(activity.historyEntryExecutionId ?? null).toBeNull();
+    expect(fresh.finalBatch.batchNumber).toBe(2);
+  });
+
+  it('grants the history entry point no access beyond the destination route\'s own existing role guard', async () => {
+    const f = await fixture();
+    await prisma.jobOrderStageStatus.update({
+      where: { id: f.job.stageStatuses[0]!.id },
+      data: { status: 'COMPLETED' },
+    });
+    const draft = (await start(f, 800).expect(201)).body.data;
+    await cancel(f, draft.finalBatch.id);
+    const factoryUser = await createFactoryUser(f.factory.id);
+
+    // FACTORY_USER can read the Job Order (and so could see the field)...
+    const job = await request(app)
+      .get(`/job-orders/${f.job.id}`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .expect(200);
+    const activity = job.body.data.qualityActivities.find(
+      (item: { processFlowVersionStageId: string }) => item.processFlowVersionStageId === f.final.id,
+    );
+    expect(activity.historyEntryExecutionId).toBe(draft.id);
+
+    // ...but the destination route still rejects them — the history entry
+    // point grants no new access of its own, consistent with the existing
+    // route guard (ADMIN/QA_USER/MERCHANDISER/SENIOR_MANAGEMENT only).
+    await request(app)
+      .get(`/quality-executions/${activity.historyEntryExecutionId}`)
+      .set('Authorization', `Bearer ${factoryUser.token}`)
+      .expect(403);
   });
 });

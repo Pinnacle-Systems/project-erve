@@ -1773,10 +1773,21 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
     coverage:
       execution.processFlowActivity.executionMultiplicity === 'BATCHED'
         ? (() => {
-            const batches = jobOrder.finalQualityBatches.filter(
-              (batch) =>
-                batch.processFlowActivityId === execution.processFlowActivityId &&
-                batch.disposition !== 'CANCELLED',
+            const activityBatches = jobOrder.finalQualityBatches.filter(
+              (batch) => batch.processFlowActivityId === execution.processFlowActivityId,
+            );
+            // ISS-048 correction: a CANCELLED batch never had any physical
+            // coverage (cancellation is only ever possible before any
+            // inspection work is recorded — see cancelFinalBatch's own
+            // precondition), so it must stay out of every quantity/coverage
+            // calculation below exactly as before. `batches` (active) is
+            // what every calculation in this block uses; `cancelledBatches`
+            // is appended only to the final, UI-facing `batches` array so
+            // authorized viewers can still discover and open it as read-only
+            // history.
+            const batches = activityBatches.filter((batch) => batch.disposition !== 'CANCELLED');
+            const cancelledBatches = activityBatches.filter(
+              (batch) => batch.disposition === 'CANCELLED',
             );
             const attempts = batches.flatMap((batch) => batch.executions);
             const inspectionActivityQuantity = attempts
@@ -1857,35 +1868,40 @@ function toView(execution: Execution, jobOrder: Awaited<ReturnType<typeof loadJo
               passedBatches,
               failedBatches,
               hasFailedBatches: failedBatches > 0,
-              batches: batches.map((batch) => ({
-                id: batch.id,
-                batchNumber: batch.batchNumber,
-                physicalQuantity: batch.physicalQuantity,
-                inspectedQuantity: batch.executions.some(
-                  (attempt) => attempt.status === 'FINALIZED',
-                )
-                  ? batch.physicalQuantity
-                  : 0,
-                disposition: batch.disposition,
-                status: batch.executions.some((attempt) => attempt.status === 'DRAFT')
-                  ? ('DRAFT' as const)
-                  : ('FINALIZED' as const),
-                outcome:
-                  batch.executions
-                    .filter((attempt) => attempt.status === 'FINALIZED')
-                    .sort((left, right) => right.attemptNumber - left.attemptNumber)[0]?.outcome ??
-                  null,
-                finalizedAt:
-                  batch.executions
-                    .filter((attempt) => attempt.status === 'FINALIZED')
-                    .sort((left, right) => right.attemptNumber - left.attemptNumber)[0]
-                    ?.finalizedAt?.toISOString() ?? null,
-                allocations: batch.allocations.map((allocation) => ({
-                  jobOrderLineSizeId: allocation.jobOrderLineSizeId,
-                  quantity: allocation.quantity,
+              batches: [...batches, ...cancelledBatches]
+                .sort((left, right) => left.batchNumber - right.batchNumber)
+                .map((batch) => ({
+                  id: batch.id,
+                  batchNumber: batch.batchNumber,
+                  physicalQuantity: batch.physicalQuantity,
+                  inspectedQuantity: batch.executions.some(
+                    (attempt) => attempt.status === 'FINALIZED',
+                  )
+                    ? batch.physicalQuantity
+                    : 0,
+                  disposition: batch.disposition,
+                  status:
+                    batch.disposition === 'CANCELLED'
+                      ? ('CANCELLED' as const)
+                      : batch.executions.some((attempt) => attempt.status === 'DRAFT')
+                        ? ('DRAFT' as const)
+                        : ('FINALIZED' as const),
+                  outcome:
+                    batch.executions
+                      .filter((attempt) => attempt.status === 'FINALIZED')
+                      .sort((left, right) => right.attemptNumber - left.attemptNumber)[0]
+                      ?.outcome ?? null,
+                  finalizedAt:
+                    batch.executions
+                      .filter((attempt) => attempt.status === 'FINALIZED')
+                      .sort((left, right) => right.attemptNumber - left.attemptNumber)[0]
+                      ?.finalizedAt?.toISOString() ?? null,
+                  allocations: batch.allocations.map((allocation) => ({
+                    jobOrderLineSizeId: allocation.jobOrderLineSizeId,
+                    quantity: allocation.quantity,
+                  })),
+                  attemptCount: batch.executions.length,
                 })),
-                attemptCount: batch.executions.length,
-              })),
             };
           })()
         : null,
