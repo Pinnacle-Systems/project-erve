@@ -436,6 +436,26 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                     }
                   />
                 )}
+                {/* ISS-048 correction: when every physical Final batch was
+                    cancelled before any inspection work started, `execution`
+                    is null and none of the branches below render anything —
+                    there would be no way in to the history selector at all.
+                    historyEntryExecutionId only exists for exactly that case
+                    (never when an active execution already provides its own
+                    way in) and is deliberately presented as a distinct,
+                    read-only history entry point, never as "Continue"/"View
+                    Inspection" for an actionable record. Same role gate as
+                    that button — never broadened to FACTORY_USER. */}
+                {!activity.execution && activity.historyEntryExecutionId && canViewQa(user) && (
+                  <div className="mt-4">
+                    <Button
+                      variant="secondary"
+                      onClick={() => navigate(`/quality-executions/${activity.historyEntryExecutionId}`)}
+                    >
+                      View cancelled batch history
+                    </Button>
+                  </div>
+                )}
                 {activity.execution ? (
                   <div className="mt-4 space-y-3">
                     {/* UXAUTH-011: both cross-link targets here (`/qa/:id` and

@@ -375,6 +375,21 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
         (item) => item.processFlowActivityId === activity.id && item.status !== 'CANCELLED',
       );
       const execution = executions[0];
+      // ISS-048 correction: a Job Order whose every physical Final batch has
+      // been cancelled has no active execution at all (filtered out above),
+      // so there would otherwise be no entry point into the history
+      // selector on /quality-executions/:id (which already lists every
+      // saved batch, including cancelled ones). Only populated when there
+      // is no active execution — an active one already has its own full
+      // way in, and this must never be mistaken for it.
+      const historyEntryExecutionId = execution
+        ? null
+        : (jobOrder.qualityExecutions
+            .filter((item) => item.processFlowActivityId === activity.id && item.status === 'CANCELLED')
+            .sort(
+              (left, right) =>
+                right.batchNumber - left.batchNumber || right.attemptNumber - left.attemptNumber,
+            )[0]?.id ?? null);
       const associated = activity.associatedProductionActivityId
         ? runtimeByDefinitionId.get(activity.associatedProductionActivityId)
         : undefined;
@@ -601,6 +616,7 @@ function toQualityActivityViews(jobOrder: JobOrderRecord) {
               finalizedAt: execution.finalizedAt?.toISOString() ?? null,
             }
           : null,
+        historyEntryExecutionId,
         executionHistory: executions.map((candidate) => ({
           id: candidate.id,
           attemptNumber: candidate.attemptNumber,

@@ -1013,6 +1013,19 @@ export interface JobOrderQualityActivity {
     startedAt: string;
     finalizedAt: string | null;
   } | null;
+  /**
+   * ISS-048 correction: populated only when `execution` is null (no active
+   * attempt) but at least one cancelled attempt/physical batch is on record
+   * for this activity — today this can only happen for a BATCHED (Final
+   * Inspection) activity whose every physical batch was cancelled before
+   * any inspection work started. Points at one persisted, read-only
+   * execution purely so an authorized viewer has a way in to the history
+   * selector on /quality-executions/:id (which already lists every saved
+   * batch, including cancelled ones). Never a substitute for `execution` —
+   * it must never be treated as the current actionable inspection, and no
+   * operational button/status should ever key off it.
+   */
+  historyEntryExecutionId?: string | null;
   executionHistory: Array<{
     id: string;
     attemptNumber: number;

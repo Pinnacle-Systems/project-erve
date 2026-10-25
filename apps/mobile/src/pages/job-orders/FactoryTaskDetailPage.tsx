@@ -579,6 +579,23 @@ export function FactoryTaskDetailPage() {
                     </p>
                   );
                 })}
+              {/* ISS-048 correction: when every physical Final batch was
+                  cancelled before any inspection work started, `execution`
+                  is null and nothing below renders — there would be no way
+                  in to the history selector at all. historyEntryExecutionId
+                  only exists for exactly that case and is deliberately a
+                  distinct, read-only history entry, never "Continue"/"View
+                  Inspection" for an actionable record. Same role gate as
+                  that button — never broadened to FACTORY_USER. */}
+              {!activity.execution && activity.historyEntryExecutionId && canViewQaExecutionDetail && (
+                <button
+                  type="button"
+                  className="mt-2 min-h-11 rounded border border-border px-4 text-sm"
+                  onClick={() => navigate(`/quality-executions/${activity.historyEntryExecutionId}`)}
+                >
+                  View cancelled batch history
+                </button>
+              )}
               {/* KNOWN PRE-EXISTING GAP (found while fixing the new history navigation
                   above, not corrected here — it's a materially different, two-sided
                   problem): this button has no role gate at all. For JOB_ORDER scope it
