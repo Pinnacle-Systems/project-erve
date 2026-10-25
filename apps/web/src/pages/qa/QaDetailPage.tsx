@@ -5,9 +5,12 @@ import {
   QA_CHECKLIST_ITEMS,
   type ApiSuccessResponse,
   type JobOrderAuditEntry,
+  type QaEvidenceMetadata,
   type QaInspectionDetail,
+  type QaInspectionSessionView,
 } from '@erve/types';
 import {
+  AttachmentList,
   AuditTrail,
   ErrorState,
   LoadingState,
@@ -21,9 +24,9 @@ import {
   StatusBadge,
 } from '@erve/app-components';
 import { DataTable } from '@erve/data-display';
-import { Button } from '@erve/primitives';
+import { Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { formatJobOrderAuditTitle } from '../job-orders/job-order-audit.js';
@@ -37,6 +40,161 @@ import { resolveJobOrderPrimaryStyle } from '../job-orders/resolveJobOrderPrimar
 import { StyleThumbnailCell } from '../../components/style/StyleThumbnailCell.js';
 import { StyleIdentityUnavailable } from '../../components/style/StyleIdentityUnavailable.js';
 import { QA_IDENTITY_HEADER_IMAGE_SIZE } from '../../components/style/identity-header-image-size.js';
+import { QaEvidenceGalleryDialog } from '../../components/qa/QaEvidenceGalleryDialog.js';
+
+const isCurrentSession = (session: { status: string }) =>
+  session.status === 'DRAFT' || session.status === 'REOPENED';
+
+function QaSessionHistoryCard({
+  session,
+  isCurrent,
+}: {
+  session: QaInspectionSessionView;
+  isCurrent: boolean;
+}) {
+  const [viewing, setViewing] = useState<{
+    evidence: QaEvidenceMetadata[];
+    index: number;
+    title: string;
+  } | null>(null);
+  return (
+    <Panel
+      variant="bordered"
+      padding="sm"
+      title={`Cycle ${session.cycleNumber}${session.cycleNumber > 1 ? ' · Reinspection' : ''}`}
+      description={`${session.inspector.name} · ${formatDateTime(session.finalizedAt) ?? 'Draft'}`}
+      actions={
+        <div className="flex items-center gap-2">
+          {isCurrent ? <StatusBadge label="Current" tone="draft" /> : null}
+          <StatusBadge
+            label={session.status}
+            tone={session.status === 'FINALIZED' ? 'approved' : 'draft'}
+          />
+        </div>
+      }
+    >
+      <div className={session.processFlowPpSample ? 'space-y-2' : 'space-y-3'}>
+        {session.forms.map((form) => {
+          const formEvidence = session.evidence.filter(
+            (item) => item.inspectionLineId === form.id,
+          );
+          return (
+            <Panel
+              key={form.id}
+              variant="subtle"
+              padding="sm"
+              title={`Size ${form.sizeLabel}`}
+              description={
+                session.processFlowPpSample
+                  ? `${form.styleNumber} · Sample quantity ${session.processFlowPpSample.sampleQuantity} · Decision: ${session.processFlowPpSample.decision ?? 'Pending'}`
+                  : `${form.styleNumber} · ${form.inspectedQuantity} inspected`
+              }
+              actions={
+                <StatusBadge
+                  label={form.status}
+                  tone={form.status === 'FINALIZED' ? 'approved' : 'draft'}
+                />
+              }
+            >
+              {!session.processFlowPpSample ? (
+                <DescriptionList columns={4} density="compact">
+                  <>
+                    <DescriptionList.Item label="Accepted" value={form.acceptedQuantity} />
+                    <DescriptionList.Item label="Rework" value={form.reworkQuantity} />
+                    <DescriptionList.Item
+                      label="Rejected"
+                      value={form.permanentlyRejectedQuantity}
+                    />
+                    <DescriptionList.Item label="Samples" value={form.sampleQuantity} />
+                  </>
+                </DescriptionList>
+              ) : null}
+              {session.processFlowPpSample ? (
+                <div className="mt-2">
+                  <QualityChecklist supplementaryHeading="Remarks">
+                    {form.checklist.map((item) => {
+                      const label =
+                        item.label ??
+                        QA_CHECKLIST_ITEMS.find(
+                          (definition) => definition.code === item.itemCode,
+                        )?.label ??
+                        item.itemCode.replaceAll('_', ' ');
+                      return (
+                        <QualityChecklistRow
+                          key={item.itemCode}
+                          label={label}
+                          required
+                          control={
+                            <QualityChecklistResult
+                              label={`${label} response`}
+                              choices={qaChecklistChoices(true)}
+                              value={item.status ?? ''}
+                            />
+                          }
+                          supplementary={<QualityChecklistRemark value={item.remarks} />}
+                        />
+                      );
+                    })}
+                  </QualityChecklist>
+                </div>
+              ) : form.checklist.some((item) => item.status || item.remarks) ? (
+                <ul className="mt-3 space-y-1 text-sm">
+                  {form.checklist
+                    .filter((item) => item.status || item.remarks)
+                    .map((item) => (
+                      <li key={item.itemCode}>
+                        {item.label ??
+                          QA_CHECKLIST_ITEMS.find(
+                            (definition) => definition.code === item.itemCode,
+                          )?.label ??
+                          item.itemCode.replaceAll('_', ' ')}
+                        : {item.status ?? '—'}
+                        {item.remarks ? ` · ${item.remarks}` : ''}
+                      </li>
+                    ))}
+                </ul>
+              ) : null}
+              {form.inspectionRemarks ? (
+                <p className="mt-3 text-sm">
+                  <span className="font-medium">Inspection remarks:</span>{' '}
+                  {form.inspectionRemarks}
+                </p>
+              ) : null}
+              <div className="mt-3">
+                <p className="text-xs font-medium text-muted-foreground">Evidence</p>
+                <AttachmentList
+                  density="compact"
+                  items={formEvidence.map((item) => ({
+                    id: item.id,
+                    name: item.fileName,
+                    status: 'uploaded' as const,
+                  }))}
+                  onView={(item) =>
+                    setViewing({
+                      evidence: formEvidence,
+                      index: formEvidence.findIndex((candidate) => candidate.id === item.id),
+                      title: `${form.styleNumber} · Size ${form.sizeLabel} · Cycle ${session.cycleNumber}`,
+                    })
+                  }
+                  emptyState="No evidence attached to this inspection."
+                />
+              </div>
+            </Panel>
+          );
+        })}
+      </div>
+      <QaEvidenceGalleryDialog
+        evidence={viewing?.evidence ?? []}
+        open={viewing !== null}
+        initialIndex={viewing?.index ?? 0}
+        onOpenChange={(open) => {
+          if (!open) setViewing(null);
+        }}
+        title={viewing?.title}
+      />
+    </Panel>
+  );
+}
 
 const qaTotalLabels: Record<string, string> = {
   prepared: 'Prepared',
@@ -61,6 +219,7 @@ export function QaDetailPage() {
       (await apiClient.get<ApiSuccessResponse<QaInspectionDetail>>(`/qa/job-orders/${id}`)).data
         .data,
   });
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string>();
   const audit = useQuery({
     queryKey: ['job-order-audit', id],
     queryFn: async () =>
@@ -267,113 +426,42 @@ export function QaDetailPage() {
         </Panel>
       )}
       <Panel title="Inspection history">
-        <div className={hasProcessFlowPpSample ? 'space-y-3' : 'space-y-4'}>
-          {data.sessions.map((session) => (
-            <Panel
-              key={session.id}
-              variant="bordered"
-              padding="sm"
-              title={`Cycle ${session.cycleNumber}${session.cycleNumber > 1 ? ' · Reinspection' : ''}`}
-              description={`${session.inspector.name} · ${formatDateTime(session.finalizedAt) ?? 'Draft'}`}
-              actions={
-                <StatusBadge
-                  label={session.status}
-                  tone={session.status === 'FINALIZED' ? 'approved' : 'draft'}
-                />
-              }
-            >
-              <div className={session.processFlowPpSample ? 'space-y-2' : 'space-y-3'}>
-                {session.forms.map((form) => (
-                  <Panel
-                    key={form.id}
-                    variant="subtle"
-                    padding="sm"
-                    title={`Size ${form.sizeLabel}`}
-                    description={
-                      session.processFlowPpSample
-                        ? `${form.styleNumber} · Sample quantity ${session.processFlowPpSample.sampleQuantity} · Decision: ${session.processFlowPpSample.decision ?? 'Pending'}`
-                        : `${form.styleNumber} · ${form.inspectedQuantity} inspected`
-                    }
-                    actions={
-                      <StatusBadge
-                        label={form.status}
-                        tone={form.status === 'FINALIZED' ? 'approved' : 'draft'}
-                      />
-                    }
-                  >
-                    {!session.processFlowPpSample ? (
-                      <DescriptionList columns={4} density="compact">
-                        <>
-                          <DescriptionList.Item label="Accepted" value={form.acceptedQuantity} />
-                          <DescriptionList.Item label="Rework" value={form.reworkQuantity} />
-                          <DescriptionList.Item
-                            label="Rejected"
-                            value={form.permanentlyRejectedQuantity}
-                          />
-                          <DescriptionList.Item label="Samples" value={form.sampleQuantity} />
-                        </>
-                      </DescriptionList>
-                    ) : null}
-                    {session.processFlowPpSample ? (
-                      <div className="mt-2">
-                        <QualityChecklist supplementaryHeading="Remarks">
-                          {form.checklist.map((item) => {
-                            const label =
-                              item.label ??
-                              QA_CHECKLIST_ITEMS.find(
-                                (definition) => definition.code === item.itemCode,
-                              )?.label ??
-                              item.itemCode.replaceAll('_', ' ');
-                            return (
-                              <QualityChecklistRow
-                                key={item.itemCode}
-                                label={label}
-                                required
-                                control={
-                                  <QualityChecklistResult
-                                    label={`${label} response`}
-                                    choices={qaChecklistChoices(true)}
-                                    value={item.status ?? ''}
-                                  />
-                                }
-                                supplementary={<QualityChecklistRemark value={item.remarks} />}
-                              />
-                            );
-                          })}
-                        </QualityChecklist>
-                      </div>
-                    ) : form.checklist.some((item) => item.status || item.remarks) ? (
-                      <ul className="mt-3 space-y-1 text-sm">
-                        {form.checklist
-                          .filter((item) => item.status || item.remarks)
-                          .map((item) => (
-                            <li key={item.itemCode}>
-                              {item.label ??
-                                QA_CHECKLIST_ITEMS.find(
-                                  (definition) => definition.code === item.itemCode,
-                                )?.label ??
-                                item.itemCode.replaceAll('_', ' ')}
-                              : {item.status ?? '—'}
-                              {item.remarks ? ` · ${item.remarks}` : ''}
-                            </li>
-                          ))}
-                      </ul>
-                    ) : null}
-                    {form.inspectionRemarks ? (
-                      <p className="mt-3 text-sm">
-                        <span className="font-medium">Inspection remarks:</span>{' '}
-                        {form.inspectionRemarks}
-                      </p>
-                    ) : null}
-                  </Panel>
-                ))}
-              </div>
-            </Panel>
-          ))}
-          {data.sessions.length === 0 ? (
-            <p className="text-sm italic text-muted-foreground">No inspection history available.</p>
-          ) : null}
-        </div>
+        {data.sessions.length === 0 ? (
+          <p className="text-sm italic text-muted-foreground">No inspection history available.</p>
+        ) : data.sessions.length === 1 ? (
+          <QaSessionHistoryCard
+            session={data.sessions[0]!}
+            isCurrent={isCurrentSession(data.sessions[0]!)}
+          />
+        ) : (
+          <Tabs
+            value={
+              data.sessions.some((session) => session.id === selectedHistoryId)
+                ? selectedHistoryId!
+                : (data.sessions.find((session) => isCurrentSession(session))?.id ??
+                  data.sessions.at(-1)!.id)
+            }
+            onValueChange={setSelectedHistoryId}
+          >
+            <TabsList>
+              {data.sessions.map((session) => (
+                <TabsTrigger key={session.id} value={session.id}>
+                  {`Cycle ${session.cycleNumber}`}
+                  {isCurrentSession(session)
+                    ? ' · Current'
+                    : session.processFlowPpSample?.decision
+                      ? ` · ${session.processFlowPpSample.decision}`
+                      : ''}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {data.sessions.map((session) => (
+              <TabsContent key={session.id} value={session.id} className="pt-3">
+                <QaSessionHistoryCard session={session} isCurrent={isCurrentSession(session)} />
+              </TabsContent>
+            ))}
+          </Tabs>
+        )}
       </Panel>
       <Panel title="Reinspection Handoff">
         {data.reworkTasks.length === 0 ? (
