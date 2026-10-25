@@ -660,11 +660,31 @@ describe('rendered mobile QA form workflow', () => {
     const data = detail();
     const cycleTwo = form('form-m-cycle-2', 'M', 2);
     cycleTwo.acceptedQuantity = 9;
+    data.sessions[0]!.evidence = [
+      {
+        id: 'evidence-cycle1',
+        inspectionLineId: 'form-m',
+        fileName: 'cycle1.png',
+        contentType: 'image/png',
+        sizeBytes: 1,
+        createdAt: '2026-01-01',
+      },
+    ];
     data.sessions.push({
       ...clone(data.sessions[0]),
       id: 'session-2',
       cycleNumber: 2,
       forms: [cycleTwo],
+      evidence: [
+        {
+          id: 'evidence-cycle2',
+          inspectionLineId: 'form-m-cycle-2',
+          fileName: 'cycle2.png',
+          contentType: 'image/png',
+          sizeBytes: 1,
+          createdAt: '2026-01-02',
+        },
+      ],
     });
     await renderPage(data);
     expect(container.textContent).toContain('Cycle 1');
@@ -674,6 +694,156 @@ describe('rendered mobile QA form workflow', () => {
     expect(container.textContent).toContain('Size M · DRAFT · accepted 3');
     expect(container.textContent).toContain('Size M · DRAFT · accepted 9');
     expect(container.textContent).not.toContain('form-m-cycle-2');
+    // Each cycle's own evidence is shown, and never merged with the other's.
+    expect(container.textContent).toContain('cycle1.png');
+    expect(container.textContent).toContain('cycle2.png');
+  });
+
+  it('opens historical evidence in a read-only viewer without disturbing the active draft', async () => {
+    const data = detail();
+    data.sessions.push({
+      ...clone(data.sessions[0]),
+      id: 'session-2',
+      cycleNumber: 2,
+      status: 'FINALIZED',
+      forms: [{ ...form('form-m-cycle-2', 'M', 2), status: 'FINALIZED' }],
+      evidence: [
+        {
+          id: 'evidence-cycle2',
+          inspectionLineId: 'form-m-cycle-2',
+          fileName: 'cycle2.png',
+          contentType: 'image/png',
+          sizeBytes: 1,
+          createdAt: '2026-01-02',
+        },
+      ],
+    });
+    await renderPage(data);
+
+    // Type an unsaved edit on the active (Cycle 1) Size S form.
+    await change('S accepted', '9');
+    expect((container.querySelector('[aria-label="S accepted"]') as HTMLInputElement).value).toBe(
+      '9',
+    );
+
+    const view = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'cycle2.png',
+    ) as HTMLButtonElement;
+    expect(view).toBeDefined();
+    await act(async () => view.click());
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+
+    // Viewing historical evidence must not touch the active draft.
+    expect((container.querySelector('[aria-label="S accepted"]') as HTMLInputElement).value).toBe(
+      '9',
+    );
+
+    const closeButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.getAttribute('aria-label') === 'Close viewer',
+    ) as HTMLButtonElement;
+    await act(async () => closeButton.click());
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('shows session-level evidence separately from size-level evidence without duplication or cross-cycle leakage', async () => {
+    const data = detail([form('form-m', 'M')]);
+    // Finalize Cycle 1 so it is no longer the operational/editable session —
+    // isolating this assertion to the read-only history section, which is
+    // what this correction is actually about.
+    data.sessions[0]!.status = 'FINALIZED';
+    data.sessions[0]!.forms[0]!.status = 'FINALIZED';
+    data.sessions[0]!.evidence = [
+      {
+        id: 'evidence-size-1',
+        inspectionLineId: 'form-m',
+        fileName: 'size1.png',
+        contentType: 'image/png',
+        sizeBytes: 1,
+        createdAt: '2026-01-01',
+      },
+      {
+        id: 'evidence-session-1',
+        inspectionLineId: null,
+        fileName: 'session1.png',
+        contentType: 'image/png',
+        sizeBytes: 1,
+        createdAt: '2026-01-01',
+      },
+    ];
+    data.sessions.push({
+      ...clone(data.sessions[0]),
+      id: 'session-2',
+      cycleNumber: 2,
+      status: 'FINALIZED',
+      forms: [{ ...form('form-m-cycle-2', 'M', 2), status: 'FINALIZED' }],
+      evidence: [
+        {
+          id: 'evidence-session-2',
+          inspectionLineId: null,
+          fileName: 'session2.png',
+          contentType: 'image/png',
+          sizeBytes: 1,
+          createdAt: '2026-01-02',
+        },
+      ],
+    });
+    await renderPage(data);
+
+    const text = container.textContent ?? '';
+    const occurrences = (needle: string) => text.split(needle).length - 1;
+    expect(text).toContain('Cycle evidence');
+    expect(occurrences('size1.png')).toBe(1);
+    expect(occurrences('session1.png')).toBe(1);
+    expect(occurrences('session2.png')).toBe(1);
+
+    const view = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'session1.png',
+    ) as HTMLButtonElement;
+    expect(view).toBeDefined();
+    await act(async () => view.click());
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+  it('shows historical inspection remarks per cycle without leaking into an unsaved active draft', async () => {
+    const data = detail();
+    data.sessions[0]!.forms[0]!.inspectionRemarks = 'Cycle 1 remarks for S';
+    const cycleTwo = form('form-m-cycle-2', 'M', 2);
+    cycleTwo.inspectionRemarks = 'Cycle 2 remarks for M';
+    data.sessions.push({
+      ...clone(data.sessions[0]),
+      id: 'session-2',
+      cycleNumber: 2,
+      forms: [cycleTwo],
+    });
+    await renderPage(data);
+
+    expect(container.textContent).toContain('Cycle 1 remarks for S');
+    expect(container.textContent).toContain('Cycle 2 remarks for M');
+
+    // Type an unsaved edit into the active draft's own remarks field —
+    // history reads directly from server data and must stay unaffected.
+    await change('Inspection remarks', 'Unsaved draft note');
+    expect(container.textContent).toContain('Cycle 1 remarks for S');
+    expect(container.textContent).toContain('Cycle 2 remarks for M');
+    expect(
+      (container.querySelector('[aria-label="Inspection remarks"]') as HTMLTextAreaElement).value,
+    ).toBe('Unsaved draft note');
+  });
+
+  it('omits the inspection-remarks line for a historical form with none recorded', async () => {
+    const data = detail([form('form-m', 'M')]);
+    data.sessions[0]!.forms[0]!.inspectionRemarks = null;
+    await renderPage(data);
+    expect(container.textContent).not.toContain('Inspection remarks:');
+  });
+
+  it('shows an explicit empty-evidence message for a historical cycle with no attachments', async () => {
+    const data = detail([form('form-m', 'M')]);
+    data.sessions[0]!.status = 'FINALIZED';
+    data.sessions[0]!.forms[0]!.status = 'FINALIZED';
+    data.sessions[0]!.evidence = [];
+    await renderPage(data);
+    expect(container.textContent).toContain('No evidence attached to this inspection.');
   });
 
   it('uses the same semantic read-only checklist for finalized PP Sample cycles', async () => {

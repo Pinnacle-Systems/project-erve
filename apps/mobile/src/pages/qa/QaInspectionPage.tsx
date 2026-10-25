@@ -7,6 +7,7 @@ import type {
   ApiSuccessResponse,
   QaChecklistStatus,
   QaDefectCategory,
+  QaEvidenceMetadata,
   QaInspectionDetail,
   QaSizeInspectionFormView,
 } from '@erve/types';
@@ -35,6 +36,7 @@ import {
 import { Button } from '@erve/primitives';
 import { apiClient } from '../../lib/api-client.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { QaEvidenceGalleryDialog } from '../../components/qa/QaEvidenceGalleryDialog.js';
 
 type ChecklistEntry = { status: QaChecklistStatus | ''; remarks: string };
 export type QaFormDraft = {
@@ -195,6 +197,14 @@ export function QaInspectionPage() {
   const [serverIssues, setServerIssues] = useState<string[]>([]);
   const [stale, setStale] = useState(false);
   const [pendingFinalize, setPendingFinalize] = useState<SubmitMutationVariables | null>(null);
+  // Read-only history evidence viewing state — deliberately separate from
+  // `selectedId`/`drafts` above so opening a historical cycle's evidence
+  // never touches the operational draft, selected size, or active session.
+  const [viewingHistoryEvidence, setViewingHistoryEvidence] = useState<{
+    evidence: QaEvidenceMetadata[];
+    index: number;
+    title: string;
+  } | null>(null);
   const query = useQuery({
     queryKey: ['qa-detail', id],
     queryFn: async () =>
@@ -667,52 +677,140 @@ export function QaInspectionPage() {
         </>
       )}
       <QualityExecutionSection title="Inspection history">
+        {detail.sessions.length === 0 ? <p>No inspection history available.</p> : null}
         {detail.sessions.map((session) => (
           <article key={session.id} className="border-b border-border-subtle py-2 last:border-b-0">
             <p className="text-sm font-semibold">
               Cycle {session.cycleNumber}
               {session.cycleNumber > 1 ? ' · Reinspection' : ''}
+              {session.id === displayedSession?.id ? ' · Current' : ''}
             </p>
-            {session.forms.map((form) => (
-              <div key={form.id} className="mt-1 min-w-0">
-                <p className="text-sm text-muted-foreground">
-                  {session.processFlowPpSample
-                    ? `Size ${form.sizeLabel} · ${form.styleNumber} · sample quantity ${session.processFlowPpSample.sampleQuantity} · decision ${session.processFlowPpSample.decision ?? 'pending'} · ${form.status}`
-                    : `Size ${form.sizeLabel} · ${form.status} · accepted ${form.acceptedQuantity}, rework ${form.reworkQuantity}, rejected ${form.permanentlyRejectedQuantity}`}
-                </p>
-                {session.processFlowPpSample ? (
+            <p className="text-xs text-muted-foreground">
+              {session.inspector.name} ·{' '}
+              {session.finalizedAt ? new Date(session.finalizedAt).toLocaleDateString() : 'Draft'}
+            </p>
+            {session.forms.map((form) => {
+              const formEvidence = session.evidence.filter(
+                (item) => item.inspectionLineId === form.id,
+              );
+              return (
+                <div key={form.id} className="mt-1 min-w-0">
+                  <p className="text-sm text-muted-foreground">
+                    {session.processFlowPpSample
+                      ? `Size ${form.sizeLabel} · ${form.styleNumber} · sample quantity ${session.processFlowPpSample.sampleQuantity} · decision ${session.processFlowPpSample.decision ?? 'pending'} · ${form.status}`
+                      : `Size ${form.sizeLabel} · ${form.status} · accepted ${form.acceptedQuantity}, rework ${form.reworkQuantity}, rejected ${form.permanentlyRejectedQuantity}`}
+                  </p>
+                  {session.processFlowPpSample ? (
+                    <div className="mt-1">
+                      <QualityChecklist supplementaryHeading="Remarks">
+                        {form.checklist.map((item) => {
+                          const label =
+                            item.label ??
+                            QA_CHECKLIST_ITEMS.find(
+                              (definition) => definition.code === item.itemCode,
+                            )?.label ??
+                            item.itemCode.replaceAll('_', ' ');
+                          return (
+                            <QualityChecklistRow
+                              key={item.itemCode}
+                              label={label}
+                              required
+                              control={
+                                <QualityChecklistResult
+                                  label={`${label} response`}
+                                  choices={qaChecklistChoices(true)}
+                                  value={item.status ?? ''}
+                                />
+                              }
+                              supplementary={<QualityChecklistRemark value={item.remarks} />}
+                            />
+                          );
+                        })}
+                      </QualityChecklist>
+                    </div>
+                  ) : null}
+                  {form.inspectionRemarks ? (
+                    <p className="mt-1 text-sm">
+                      <span className="font-medium">Inspection remarks:</span>{' '}
+                      {form.inspectionRemarks}
+                    </p>
+                  ) : null}
                   <div className="mt-1">
-                    <QualityChecklist supplementaryHeading="Remarks">
-                      {form.checklist.map((item) => {
-                        const label =
-                          item.label ??
-                          QA_CHECKLIST_ITEMS.find((definition) => definition.code === item.itemCode)
-                            ?.label ??
-                          item.itemCode.replaceAll('_', ' ');
-                        return (
-                          <QualityChecklistRow
-                            key={item.itemCode}
-                            label={label}
-                            required
-                            control={
-                              <QualityChecklistResult
-                                label={`${label} response`}
-                                choices={qaChecklistChoices(true)}
-                                value={item.status ?? ''}
-                              />
-                            }
-                            supplementary={<QualityChecklistRemark value={item.remarks} />}
-                          />
-                        );
-                      })}
-                    </QualityChecklist>
+                    <p className="text-xs font-medium text-muted-foreground">Evidence</p>
+                    {formEvidence.length ? (
+                      <ul className="mt-1 space-y-1">
+                        {formEvidence.map((item, index) => (
+                          <li key={item.id}>
+                            <button
+                              type="button"
+                              className="text-sm font-medium text-primary underline"
+                              onClick={() =>
+                                setViewingHistoryEvidence({
+                                  evidence: formEvidence,
+                                  index,
+                                  title: `${form.styleNumber} · Size ${form.sizeLabel} · Cycle ${session.cycleNumber}`,
+                                })
+                              }
+                            >
+                              {item.fileName}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No evidence attached to this inspection.
+                      </p>
+                    )}
                   </div>
-                ) : null}
-              </div>
-            ))}
+                </div>
+              );
+            })}
+            {(() => {
+              // qa-evidence.service.ts allows evidence with no
+              // inspectionLineId (session-level, not tied to any one size)
+              // — shown separately, never folded into an arbitrary size.
+              const sessionLevelEvidence = session.evidence.filter(
+                (item) => item.inspectionLineId === null,
+              );
+              if (sessionLevelEvidence.length === 0) return null;
+              return (
+                <div className="mt-1">
+                  <p className="text-xs font-medium text-muted-foreground">Cycle evidence</p>
+                  <ul className="mt-1 space-y-1">
+                    {sessionLevelEvidence.map((item, index) => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          className="text-sm font-medium text-primary underline"
+                          onClick={() =>
+                            setViewingHistoryEvidence({
+                              evidence: sessionLevelEvidence,
+                              index,
+                              title: `Cycle ${session.cycleNumber} evidence`,
+                            })
+                          }
+                        >
+                          {item.fileName}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
           </article>
         ))}
       </QualityExecutionSection>
+      <QaEvidenceGalleryDialog
+        evidence={viewingHistoryEvidence?.evidence ?? []}
+        open={viewingHistoryEvidence !== null}
+        initialIndex={viewingHistoryEvidence?.index ?? 0}
+        onOpenChange={(open) => {
+          if (!open) setViewingHistoryEvidence(null);
+        }}
+        title={viewingHistoryEvidence?.title}
+      />
       <ConfirmDialog
         open={pendingFinalize !== null}
         onOpenChange={(open) => {
