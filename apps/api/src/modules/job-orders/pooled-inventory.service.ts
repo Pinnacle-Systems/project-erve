@@ -2,7 +2,10 @@ import type { PooledFactoryInventoryLine } from '@erve/types';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { HttpError } from '../../errors/http-error.js';
 import type { CurrentUser } from '../../auth/current-user.js';
-import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
+import {
+  stylePrimaryImageInclude,
+  toPrimaryImageView,
+} from '../master-data/style-images.service.js';
 
 type Client = Prisma.TransactionClient | typeof prisma;
 
@@ -36,43 +39,28 @@ export async function assertExcludableDispatchOrder(
     throw HttpError.badRequest('Dispatch order does not belong to the requested factory');
   }
   const [readyFactoryDispatch, anyErveDispatch] = await Promise.all([
-    client.factoryDispatch.count({ where: { saleOrderId: excludeSaleOrderId, status: 'READY_FOR_ERVE' } }),
+    client.factoryDispatch.count({
+      where: { saleOrderId: excludeSaleOrderId, status: 'READY_FOR_ERVE' },
+    }),
     client.erveDispatch.count({ where: { saleOrderId: excludeSaleOrderId } }),
   ]);
   if (readyFactoryDispatch > 0 || anyErveDispatch > 0) {
-    throw HttpError.badRequest('This dispatch order is locked: Factory Dispatch has already occurred');
+    throw HttpError.badRequest(
+      'This dispatch order is locked: Factory Dispatch has already occurred',
+    );
   }
 }
 
-// The Phase 2.1 target fact (see the Job Order Production Plan / QA-Pooled
-// Inventory Decoupling plan §12/§29): Final-QA-passed stock is dispatch-
-// allocatable pooled inventory keyed by Factory + Style + Size, computed
-// purely via QaReleaseLine.jobOrderLineSizeId -> JobOrderLineSize ->
-// JobOrderLine -> JobOrder (factoryId, styleId) + JobOrderLineSize.sizeId.
-// Deliberately does NOT touch QaReleaseLine.purchaseOrderLineSizeId — that
-// field is an isolated legacy Sale Order compatibility bridge only (see
-// quality-executions.service.ts resolveLegacyPurchaseOrderLineSizeIds); this
-// pool is correct and complete regardless of how many source Order Sheets
-// fed each contributing Job Order.
+// Final-QA stock is pooled by Factory + Style + Size through the authoritative
+// QaReleaseLine -> JobOrderLineSize -> JobOrderLine -> JobOrder lineage.
+// ACTIVE allocations remain committed through dispatch/sale; RELEASED means
+// returned to the pool. Never subtract downstream dispatch quantities again.
 //
-// Consumption semantics: StockAllocation.status is only ever mutated in
-// sale-orders.service.ts (cancel/reject releases ACTIVE allocations back to
-// RELEASED; approve's re-allocation logic releases a superseded allocation
-// and creates a new ACTIVE one). No file under apps/api/src/modules/
-// fulfillment/* (dispatch, packing, invoice-handoff, distributor-sales-
-// report, distributor-return) ever mutates it — factory-source-
-// resolution.ts's own comment confirms the allocation ledger is never
-// touched from packing through dispatch. So an allocation that has been
-// dispatched/invoiced/sold stays ACTIVE forever (permanently committed,
-// correctly still subtracted); RELEASED exclusively means "freed back to
-// the pool." Therefore `released - ACTIVE committed` is the complete
-// formula — there is no separate "consumed" state to additionally subtract.
-//
-// Aggregation safety: released quantities and committed (ACTIVE allocation)
-// quantities are fetched as two INDEPENDENT queries and merged in memory,
-// exactly like sale-orders/inventory.service.ts's getAvailableQuantities —
-// never joined directly, which would multiply a QaReleaseLine's own
-// `quantity` once per matching StockAllocation row.
+// Aggregate releases and commitments independently before joining pool totals:
+// a raw release/allocation join would multiply released stock. Keep zero and
+// negative pools and every historical Size: Dispatch Order equal-split size
+// resolution and reporting also consume this helper. Reservation lot selection,
+// allocation ordering and locks remain in the separate helpers below.
 export async function getPooledFactoryInventory(
   client: Client,
   filters?: {
@@ -94,94 +82,92 @@ export async function getPooledFactoryInventory(
     excludeSaleOrderId?: string;
   },
 ): Promise<PooledFactoryInventoryLine[]> {
-  const releaseLines = await client.qaReleaseLine.findMany({
-    where: {
-      jobOrderLineSize: {
-        sizeId: filters?.sizeId,
-        jobOrderLine: {
-          styleId: filters?.styleId,
-          style: filters?.seasonId ? { seasonId: filters.seasonId } : undefined,
-          jobOrder: { factoryId: filters?.factoryId, recordOrigin: filters?.recordOrigin },
-        },
-      },
-    },
-    select: {
-      id: true,
-      quantity: true,
-      jobOrderLineSize: {
-        select: {
-          sizeId: true,
-          size: { select: { code: true, label: true, sortOrder: true } },
-          jobOrderLine: {
-            select: {
-              styleId: true,
-              style: { select: { styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
-              jobOrder: {
-                select: { factoryId: true, factory: { select: { code: true, name: true } } },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-
-  const committed = await client.stockAllocation.groupBy({
-    by: ['qaReleaseLineId'],
-    where: { qaReleaseLineId: { in: releaseLines.map((line) => line.id) }, status: 'ACTIVE' },
-    _sum: { quantity: true },
-  });
-  const committedByLine = new Map(committed.map((row) => [row.qaReleaseLineId, row._sum.quantity ?? 0]));
-
-  const ownCommittedByLine = filters?.excludeSaleOrderId
-    ? new Map(
-        (
-          await client.stockAllocation.groupBy({
-            by: ['qaReleaseLineId'],
-            where: {
-              qaReleaseLineId: { in: releaseLines.map((line) => line.id) },
-              status: 'ACTIVE',
-              saleOrderLine: { saleOrderId: filters.excludeSaleOrderId },
-            },
-            _sum: { quantity: true },
-          })
-        ).map((row) => [row.qaReleaseLineId, row._sum.quantity ?? 0] as const),
-      )
-    : new Map<string, number>();
-
-  const pool = new Map<string, PooledFactoryInventoryLine>();
-  for (const line of releaseLines) {
-    const jobOrderLine = line.jobOrderLineSize.jobOrderLine;
-    const jobOrder = jobOrderLine.jobOrder;
-    const key = `${jobOrder.factoryId}:${jobOrderLine.styleId}:${line.jobOrderLineSize.sizeId}`;
-    const committedQuantity = committedByLine.get(line.id) ?? 0;
-    const ownCommittedQuantity = ownCommittedByLine.get(line.id) ?? 0;
-    const availableQuantity = line.quantity - committedQuantity + ownCommittedQuantity;
-    const existing = pool.get(key);
-    if (existing) {
-      existing.releasedQuantity += line.quantity;
-      existing.committedQuantity += committedQuantity;
-      existing.availableQuantity += availableQuantity;
-      continue;
-    }
-    pool.set(key, {
-      factoryId: jobOrder.factoryId,
-      factoryCode: jobOrder.factory.code,
-      factoryName: jobOrder.factory.name,
-      styleId: jobOrderLine.styleId,
-      styleNumber: jobOrderLine.style.styleNumber,
-      styleName: jobOrderLine.style.styleName,
-      primaryImage: toPrimaryImageView(jobOrderLine.style.images),
-      sizeId: line.jobOrderLineSize.sizeId,
-      sizeCode: line.jobOrderLineSize.size.code,
-      sizeLabel: line.jobOrderLineSize.size.label,
-      sizeSortOrder: line.jobOrderLineSize.size.sortOrder,
-      releasedQuantity: line.quantity,
-      committedQuantity,
-      availableQuantity,
-    });
+  const predicates: Prisma.Sql[] = [];
+  if (filters?.factoryId !== undefined)
+    predicates.push(Prisma.sql`jo.factory_id = ${filters.factoryId}`);
+  if (filters?.styleId !== undefined)
+    predicates.push(Prisma.sql`jol.style_id = ${filters.styleId}`);
+  if (filters?.sizeId !== undefined) predicates.push(Prisma.sql`jols.size_id = ${filters.sizeId}`);
+  if (filters?.seasonId) predicates.push(Prisma.sql`s.season_id = ${filters.seasonId}`);
+  if (filters?.recordOrigin !== undefined) {
+    predicates.push(Prisma.sql`jo.record_origin = ${filters.recordOrigin}::"RecordOrigin"`);
   }
-  return [...pool.values()];
+  const where = predicates.length
+    ? Prisma.sql`WHERE ${Prisma.join(predicates, ' AND ')}`
+    : Prisma.empty;
+  const ownOrderJoin = filters?.excludeSaleOrderId
+    ? Prisma.sql`JOIN sale_order_lines sol ON sol.id = sa.sale_order_line_id`
+    : Prisma.empty;
+  const ownQuantity = filters?.excludeSaleOrderId
+    ? Prisma.sql`COALESCE(SUM(sa.quantity) FILTER (WHERE sol.sale_order_id = ${filters.excludeSaleOrderId}), 0)`
+    : Prisma.sql`0::bigint`;
+
+  const rows = await client.$queryRaw<RawPoolRow[]>(Prisma.sql`
+    WITH filtered_releases AS MATERIALIZED (
+      SELECT qrl.id, qrl.quantity, jo.factory_id, jol.style_id, jols.size_id
+      FROM qa_release_lines qrl
+      JOIN job_order_line_sizes jols ON jols.id = qrl.job_order_line_size_id
+      JOIN job_order_lines jol ON jol.id = jols.job_order_line_id
+      JOIN job_orders jo ON jo.id = jol.job_order_id
+      JOIN styles s ON s.id = jol.style_id
+      ${where}
+    ), released AS (
+      SELECT factory_id, style_id, size_id, SUM(quantity) AS quantity
+      FROM filtered_releases
+      GROUP BY factory_id, style_id, size_id
+    ), committed AS (
+      SELECT fr.factory_id, fr.style_id, fr.size_id,
+        SUM(sa.quantity) AS quantity, ${ownQuantity} AS own_quantity
+      FROM filtered_releases fr
+      JOIN stock_allocations sa ON sa.qa_release_line_id = fr.id AND sa.status = 'ACTIVE'
+      ${ownOrderJoin}
+      GROUP BY fr.factory_id, fr.style_id, fr.size_id
+    )
+    SELECT r.factory_id AS "factoryId", f.code AS "factoryCode", f.name AS "factoryName",
+      r.style_id AS "styleId", s.style_number AS "styleNumber", s.style_name AS "styleName",
+      r.size_id AS "sizeId", sz.code AS "sizeCode", sz.label AS "sizeLabel",
+      sz.sort_order AS "sizeSortOrder", r.quantity AS "releasedQuantity",
+      COALESCE(c.quantity, 0) AS "committedQuantity",
+      r.quantity - COALESCE(c.quantity, 0) + COALESCE(c.own_quantity, 0) AS "availableQuantity"
+    FROM released r
+    LEFT JOIN committed c USING (factory_id, style_id, size_id)
+    JOIN factories f ON f.id = r.factory_id
+    JOIN styles s ON s.id = r.style_id
+    JOIN sizes sz ON sz.id = r.size_id
+  `);
+
+  // SUM(int4) returns bigint. Validate every exposed total before converting;
+  // never cast sums to int4 or silently round quantities at the API boundary.
+  const pool = rows.map((row) => ({
+    ...row,
+    releasedQuantity: safeInventoryQuantity(row.releasedQuantity, 'releasedQuantity'),
+    committedQuantity: safeInventoryQuantity(row.committedQuantity, 'committedQuantity'),
+    availableQuantity: safeInventoryQuantity(row.availableQuantity, 'availableQuantity'),
+  }));
+  if (pool.length === 0) return [];
+
+  // Only distinct output Styles reach Prisma: neither historical release IDs
+  // nor per-release metadata are materialized. Reuse the established primary /
+  // fallback image ordering, in a batch rather than one query per pool row.
+  const styles = await client.style.findMany({
+    where: { id: { in: [...new Set(pool.map((row) => row.styleId))] } },
+    select: { id: true, images: stylePrimaryImageInclude },
+  });
+  const imageByStyle = new Map(styles.map((style) => [style.id, toPrimaryImageView(style.images)]));
+  return pool.map((row) => ({ ...row, primaryImage: imageByStyle.get(row.styleId) ?? null }));
+}
+
+type RawPoolRow = Omit<
+  PooledFactoryInventoryLine,
+  'primaryImage' | 'releasedQuantity' | 'committedQuantity' | 'availableQuantity'
+> & { releasedQuantity: bigint; committedQuantity: bigint; availableQuantity: bigint };
+
+function safeInventoryQuantity(value: bigint, field: string): number {
+  const quantity = Number(value);
+  if (!Number.isSafeInteger(quantity)) {
+    throw HttpError.internal(`Pooled inventory ${field} exceeds the safe integer range`);
+  }
+  return quantity;
 }
 
 export interface AvailabilityRow {
