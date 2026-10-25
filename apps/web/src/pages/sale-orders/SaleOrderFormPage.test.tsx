@@ -60,6 +60,7 @@ function triggerByLabel(labelText: string, occurrence = 0): HTMLButtonElement {
 
 async function selectOption(labelText: string, optionText: string, occurrence = 0): Promise<void> {
   await act(async () => triggerByLabel(labelText, occurrence).click());
+  await flush();
   const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
     (item) => item.textContent?.trim().includes(optionText),
   );
@@ -113,6 +114,9 @@ async function renderCreateForm() {
     }
     if (url === '/factories/options') {
       return { data: { data: [{ id: 'fac-1', code: 'FAC1', name: 'Factory One', status: 'ACTIVE' }] } };
+    }
+    if (url === '/job-orders/pooled-inventory/style-options') {
+      return { data: { data: { items: [{ styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', lmixNumber: 'LMIX-1', primaryImage: null }], pageInfo: { limit: 20, hasMore: false, nextCursor: null } } } };
     }
     if (url === '/job-orders/pooled-inventory') {
       return {
@@ -172,6 +176,41 @@ async function renderCreateForm() {
 }
 
 describe('SaleOrderFormPage destination/line repeater', () => {
+  it('never loads a full Factory pool and deduplicates selected Style hydration across destinations', async () => {
+    await renderCreateForm();
+    await selectOption('Factory', 'Factory One'); await flush();
+    expect(vi.mocked(apiClient.get).mock.calls.filter(c => c[0] === '/job-orders/pooled-inventory')).toHaveLength(0);
+    await act(async () => clickButtonByText('+ Add Style'));
+    await chooseStyle('Classic Tee'); await flush();
+    const pools = () => vi.mocked(apiClient.get).mock.calls.filter(c => c[0] === '/job-orders/pooled-inventory');
+    expect(pools()).toHaveLength(1);
+    expect(pools()[0]?.[1]?.params).toMatchObject({ factoryId: 'fac-1', styleId: 'style-1' });
+    await setNumericField('Total Quantity', '20');
+    await act(async () => clickButtonByText('+ Add Destination')); await flush();
+    const add = [...container.querySelectorAll('button')].filter(b => b.textContent?.trim() === '+ Add Style').at(-1)!;
+    await act(async () => add.click()); await flush();
+    await selectOption('Style', 'Classic Tee', 1); await flush();
+    expect(pools()).toHaveLength(1);
+    expect(textInput('Total Quantity').value).toBe('20');
+  });
+
+  it('shows hydration failure as unknown availability with an actionable retry', async () => {
+    await renderCreateForm();
+    const original = vi.mocked(apiClient.get).getMockImplementation()!;
+    let failed = true;
+    vi.mocked(apiClient.get).mockImplementation(async (...args) => {
+      if (args[0] === '/job-orders/pooled-inventory' && failed) throw new Error('offline');
+      return original(...args);
+    });
+    await selectOption('Factory', 'Factory One'); await flush();
+    await act(async () => clickButtonByText('+ Add Style')); await chooseStyle('Classic Tee'); await flush(); await flush();
+    expect(container.textContent).toContain('Unable to load Style availability');
+    expect(container.textContent).not.toContain('0 available');
+    expect(textInput('Style').value).toContain('ST-001');
+    failed = false;
+    await act(async () => clickButtonByText('Retry availability')); await flush(); await flush();
+    expect(container.textContent).toContain('100 available');
+  });
   // Regression test for a Phase 3 smoke-check finding: TextField/SelectField
   // derive their DOM id purely from the label text (see @erve/primitives),
   // so two destinations (or two Style/Size lines) rendered without an
@@ -791,9 +830,9 @@ describe('SaleOrderFormPage edit — excludeSaleOrderId tracks the original Fact
     };
   }
 
-  async function renderEditForm() {
+  async function renderEditForm(pool?: (params: Record<string, unknown>) => Promise<unknown[]>) {
     const so = makeSaleOrder();
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string, config?: { params?: Record<string, unknown> }) => {
       if (url === '/sale-orders/so-1') return { data: { data: so } };
       if (url === '/factories/options') {
         return {
@@ -805,7 +844,8 @@ describe('SaleOrderFormPage edit — excludeSaleOrderId tracks the original Fact
           },
         };
       }
-      if (url === '/job-orders/pooled-inventory') return { data: { data: [] } };
+      if (url === '/job-orders/pooled-inventory') return { data: { data: pool ? await pool(config?.params ?? {}) : [] } };
+      if (url === '/styles/style-1') return { data: { data: { sizes: [{ id: 'configured', code: 'L', label: 'Configured Large', sortOrder: 2, status: 'ACTIVE', mappingStatus: 'ACTIVE' }] } } };
       throw new Error(`Unexpected GET: ${url}`);
     });
 
@@ -833,7 +873,31 @@ describe('SaleOrderFormPage edit — excludeSaleOrderId tracks the original Fact
 
   it('sends excludeSaleOrderId while still editing at the original Factory', async () => {
     await renderEditForm();
-    expect(lastPooledInventoryParams()).toMatchObject({ factoryId: 'fac-1', excludeSaleOrderId: 'so-1' });
+    expect(lastPooledInventoryParams()).toMatchObject({ factoryId: 'fac-1', styleId: 'style-1', excludeSaleOrderId: 'so-1' });
+  });
+
+  it('retains saved zero-stock identity and configured/historical Sizes independently of discovery', async () => {
+    await renderEditForm(async () => [{ factoryId: 'fac-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'historical', sizeCode: 'OLD', sizeLabel: 'Historical exhausted', sizeSortOrder: 1, availableQuantity: 0 }]);
+    await flush();
+    expect(textInput('Style').value).toContain('ST-001');
+    expect(container.textContent).toContain('Historical exhausted');
+    expect(container.textContent).toContain('Configured Large');
+    expect(textInput('Total Quantity').value).toBe('25');
+    expect(vi.mocked(apiClient.get).mock.calls.some(c => c[0] === '/job-orders/pooled-inventory/style-options')).toBe(false);
+  });
+
+  it('ignores late old-Factory inventory and preserves draft quantities after Factory switching', async () => {
+    let resolve!: (rows: unknown[]) => void;
+    const row = (availableQuantity: number) => ({ factoryId: 'fac-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'historical', sizeCode: 'OLD', sizeLabel: 'Historical', sizeSortOrder: 1, availableQuantity });
+    await renderEditForm(async params => params.factoryId === 'fac-1' ? new Promise(r => { resolve = r; }) : [row(7)]);
+    await setNumericField('Total Quantity', '40');
+    await selectOption('Factory', 'Factory Two'); await flush(); await flush();
+    await act(async () => resolve([row(99)])); await flush();
+    expect(container.textContent).toContain('7 available');
+    expect(container.textContent).not.toContain('99 available');
+    expect(textInput('Total Quantity').value).toBe('40');
+    expect(lastPooledInventoryParams()).toMatchObject({ factoryId: 'fac-2', styleId: 'style-1' });
+    expect(lastPooledInventoryParams()?.excludeSaleOrderId).toBeUndefined();
   });
 
   it('omits excludeSaleOrderId once the user switches to a different Factory', async () => {

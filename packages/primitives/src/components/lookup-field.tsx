@@ -99,6 +99,10 @@ export interface LookupFieldProps<T> {
   loadingMessage?: ReactNode;
   /** Called whenever the results panel opens or closes. */
   onOpenChange?: (open: boolean) => void;
+  /** Optional focusable continuation/retry controls outside the listbox. */
+  panelActions?: ReactNode;
+  /** Keep option-hosted preview dialogs mounted while their portal holds focus. */
+  keepOpenOnDialogFocus?: boolean;
 }
 
 export function LookupField<T>({
@@ -129,6 +133,8 @@ export function LookupField<T>({
   emptyMessage = 'No matches',
   loadingMessage = 'Searching…',
   onOpenChange,
+  panelActions,
+  keepOpenOnDialogFocus = false,
 }: LookupFieldProps<T>) {
   const resolvedDensity = useResolvedDensity(density);
   const generatedId = useId();
@@ -146,7 +152,16 @@ export function LookupField<T>({
 
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const actionHadFocus = useRef(false);
   const [isOpen, setIsOpenState] = useState(false);
+  // A final page or successful retry can remove the focused action. Preserve
+  // keyboard operation of the appended results instead of dropping to body.
+  useLayoutEffect(() => {
+    if (isOpen && actionHadFocus.current && document.activeElement === document.body) {
+      actionHadFocus.current = false;
+      inputRef.current?.focus();
+    }
+  }, [isOpen, panelActions]);
   // Every open/close goes through here so `onOpenChange` sees transitions
   // only (never the initial closed state).
   const setIsOpen = (open: boolean) => {
@@ -314,6 +329,16 @@ export function LookupField<T>({
         return;
       }
       case 'Tab': {
+        if (!event.shiftKey && isOpen && panelActions) {
+          const action = panelRef.current?.querySelector<HTMLElement>(
+            '[data-lookup-actions] button:not(:disabled)',
+          );
+          if (action) {
+            event.preventDefault();
+            action.focus();
+            return;
+          }
+        }
         // Never prevented — focus moves on normally.
         commitOnLeave();
         return;
@@ -436,10 +461,22 @@ export function LookupField<T>({
             setIsOpen(true);
           }}
           onFocus={(event) => {
+            actionHadFocus.current = false;
             // Select the shown label so typing replaces it with a search.
             if (interactive && !isEditing) event.currentTarget.select();
           }}
-          onBlur={() => {
+          onBlur={(event) => {
+            if (
+              keepOpenOnDialogFocus &&
+              event.relatedTarget instanceof Element &&
+              event.relatedTarget.closest('[role="dialog"]')
+            )
+              return;
+            if (
+              event.relatedTarget instanceof Node &&
+              panelRef.current?.contains(event.relatedTarget)
+            )
+              return;
             if (interactive) commitOnLeave();
           }}
           onKeyDown={handleKeyDown}
@@ -480,6 +517,73 @@ export function LookupField<T>({
             // Keep focus in the textbox while clicking inside the panel, so
             // a click on an option is not preceded by a blur-commit.
             onMouseDown={(event) => event.preventDefault()}
+            onBlur={(event) => {
+              if (
+                keepOpenOnDialogFocus &&
+                event.relatedTarget instanceof Element &&
+                event.relatedTarget.closest('[role="dialog"]')
+              )
+                return;
+              if (
+                event.relatedTarget === inputRef.current ||
+                (event.relatedTarget instanceof Node &&
+                  event.currentTarget.contains(event.relatedTarget))
+              )
+                return;
+              commitOnLeave();
+            }}
+            onKeyDown={(event) => {
+              if (
+                keepOpenOnDialogFocus &&
+                event.target instanceof Element &&
+                event.target.closest('[role="dialog"]')
+              )
+                return;
+              if (
+                event.key === 'Tab' &&
+                event.target instanceof HTMLElement &&
+                event.target.closest('[data-lookup-actions]')
+              ) {
+                const controls = [
+                  ...event.currentTarget.querySelectorAll<HTMLElement>(
+                    '[data-lookup-actions] button:not(:disabled), [data-lookup-actions] a[href], [data-lookup-actions] input:not(:disabled)',
+                  ),
+                ].filter((el) => el.tabIndex >= 0);
+                const position = controls.indexOf(event.target);
+                const sibling = controls[position + (event.shiftKey ? -1 : 1)];
+                event.preventDefault();
+                if (sibling) sibling.focus();
+                else if (event.shiftKey) inputRef.current?.focus();
+                else {
+                  // The portal is at body-end. Continue from the textbox's
+                  // position in the form rather than the portal's DOM order.
+                  const formControls = [
+                    ...document.querySelectorAll<HTMLElement>(
+                      'input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), button:not(:disabled), a[href], [tabindex]',
+                    ),
+                  ].filter(
+                    (el) =>
+                      el.tabIndex >= 0 &&
+                      !panelRef.current?.contains(el) &&
+                      !el.closest('[hidden], [inert]') &&
+                      getComputedStyle(el).display !== 'none' &&
+                      getComputedStyle(el).visibility !== 'hidden',
+                  );
+                  const next = formControls[formControls.indexOf(inputRef.current!) + 1];
+                  actionHadFocus.current = false;
+                  commitOnLeave();
+                  (next ?? inputRef.current)?.focus();
+                }
+                return;
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                inputRef.current?.focus();
+                setIsOpen(false);
+              }
+              if (event.key === 'Enter') event.stopPropagation();
+            }}
           >
             <div
               id={statusId}
@@ -538,6 +642,18 @@ export function LookupField<T>({
                   );
                 })}
               </ul>
+            )}
+            {panelActions && (
+              <div
+                data-lookup-actions=""
+                className="border-t border-border p-2"
+                onFocus={() => {
+                  actionHadFocus.current = true;
+                }}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                {panelActions}
+              </div>
             )}
           </div>,
           document.body,

@@ -898,11 +898,8 @@ export interface PooledFactoryInventoryLine {
   styleId: string;
   styleNumber: string;
   styleName: string;
-  // DEMO-016/DEMO-003: the Dispatch Order Style picker and computed Size
-  // grid are built directly from this pool (the authoritative "what can
-  // this Factory actually dispatch" source), so its identity projection
-  // carries the same Primary Style Image every other Style-bearing screen
-  // uses — no separate style-options endpoint.
+  // Complete selected-Style inventory hydration and quantity previews use
+  // this pool. Bounded Style discovery uses PooledInventoryStylePage below.
   primaryImage: StylePrimaryImageView | null;
   sizeId: string;
   sizeCode: string;
@@ -911,6 +908,19 @@ export interface PooledFactoryInventoryLine {
   releasedQuantity: number;
   committedQuantity: number;
   availableQuantity: number;
+}
+
+export interface PooledInventoryStyleOption {
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  lmixNumber: string | null;
+  primaryImage: StylePrimaryImageView | null;
+}
+
+export interface PooledInventoryStylePage {
+  items: PooledInventoryStyleOption[];
+  pageInfo: { limit: number; hasMore: boolean; nextCursor: string | null };
 }
 
 // Phase 2.1: no purchaseOrderLineSizeId — the Job Order's production plan

@@ -34,6 +34,8 @@ afterEach(() => {
 });
 
 interface HarnessProps {
+  panelActions?: React.ReactNode;
+  keepOpenOnDialogFocus?: boolean;
   initial?: Item | null;
   // Simulates the consumer's search: what `options` the field receives.
   results?: (search: string) => Item[];
@@ -47,6 +49,8 @@ interface HarnessProps {
 }
 
 function Harness({
+  panelActions,
+  keepOpenOnDialogFocus,
   initial = null,
   results = (search) =>
     ITEMS.filter((item) => item.name.toLowerCase().includes(search.toLowerCase())),
@@ -63,6 +67,8 @@ function Harness({
   return (
     <ThemeProvider>
       <LookupField<Item>
+        panelActions={panelActions}
+        keepOpenOnDialogFocus={keepOpenOnDialogFocus}
         label="Thing"
         selectedOption={selected}
         onSelect={(item) => {
@@ -128,6 +134,90 @@ function key(name: string): boolean {
 }
 
 describe('LookupField', () => {
+  it.each([false, true])(
+    'retains preview-dialog focus only when opted in: %s',
+    (keepOpenOnDialogFocus) => {
+      render({ keepOpenOnDialogFocus });
+      type('a');
+      act(() => input().focus());
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', 'dialog');
+      dialog.tabIndex = 0;
+      document.body.appendChild(dialog);
+      act(() => dialog.focus());
+      expect(input().getAttribute('aria-expanded')).toBe(String(keepOpenOnDialogFocus));
+      dialog.remove();
+    },
+  );
+  it('returns from portalled actions to the input or next form control with Shift+Tab/Tab', () => {
+    render({ panelActions: <button type="button">Load more</button> });
+    const next = document.createElement('input');
+    container.appendChild(next);
+    type('a');
+    act(() => input().focus());
+    key('Tab');
+    const action = panel()!.querySelector('button')!;
+    act(() =>
+      action.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    expect(document.activeElement).toBe(input());
+    expect(panel()).not.toBeNull();
+    key('Tab');
+    act(() =>
+      action.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(document.activeElement).toBe(next);
+    expect(panel()).toBeNull();
+  });
+
+  it('restores input focus when a focused continuation or retry action disappears', () => {
+    render({ panelActions: <button type="button">Load more</button> });
+    type('a');
+    act(() => input().focus());
+    key('Tab');
+    expect(document.activeElement?.textContent).toBe('Load more');
+    render();
+    expect(document.activeElement).toBe(input());
+    expect(panel()).not.toBeNull();
+    key('Enter');
+    expect(input().value).toBe('Alpha');
+  });
+  it('keeps optional continuation actions reachable by Tab without committing or closing', () => {
+    const more = vi.fn();
+    const select = vi.fn();
+    render({
+      onSelect: select,
+      panelActions: (
+        <button type="button" onClick={more}>
+          Load more
+        </button>
+      ),
+    });
+    type('a');
+    act(() => input().focus());
+    key('Tab');
+    const action = panel()?.querySelector<HTMLButtonElement>('button');
+    expect(action?.textContent).toBe('Load more');
+    expect(document.activeElement).toBe(action);
+    act(() => action!.click());
+    expect(more).toHaveBeenCalledOnce();
+    expect(select).not.toHaveBeenCalled();
+    expect(input().getAttribute('aria-expanded')).toBe('true');
+    act(() =>
+      action!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })),
+    );
+    expect(document.activeElement).toBe(input());
+    expect(input().getAttribute('aria-expanded')).toBe('false');
+  });
   it('exposes combobox/listbox ARIA semantics tied to the highlighted option', () => {
     render();
     const combobox = input();
@@ -446,7 +536,9 @@ describe('LookupField', () => {
 
       expect(alert.textContent).toBe('Style selection is required');
       expect(combobox.getAttribute('aria-invalid')).toBe('true');
-      expect(combobox.getAttribute('aria-describedby')).toBe('lookup-style-error custom-lookup-hint');
+      expect(combobox.getAttribute('aria-describedby')).toBe(
+        'lookup-style-error custom-lookup-hint',
+      );
     });
   });
 });
