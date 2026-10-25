@@ -45,6 +45,18 @@ import { QaEvidenceGalleryDialog } from '../../components/qa/QaEvidenceGalleryDi
 const isCurrentSession = (session: { status: string }) =>
   session.status === 'DRAFT' || session.status === 'REOPENED';
 
+// The header must identify ONE authoritative operational PP Sample cycle,
+// never just "the first one with a PP Sample attached" — a finalized Cycle 1
+// followed by an active Cycle 2 must show Cycle 2. Sessions are already
+// returned oldest-first (qa.service.ts's detailInclude orderBy), so the last
+// matching entry is deterministically the latest cycle once no draft exists.
+function resolveCurrentPpSampleSession(
+  sessions: readonly QaInspectionSessionView[],
+): QaInspectionSessionView | undefined {
+  const ppSampleSessions = sessions.filter((session) => session.processFlowPpSample);
+  return ppSampleSessions.find((session) => isCurrentSession(session)) ?? ppSampleSessions.at(-1);
+}
+
 function QaSessionHistoryCard({
   session,
   isCurrent,
@@ -57,6 +69,10 @@ function QaSessionHistoryCard({
     index: number;
     title: string;
   } | null>(null);
+  // qa-evidence.service.ts allows evidence with no inspectionLineId (session-
+  // level, not tied to any one size) — shown separately, never folded into an
+  // arbitrary size's evidence list.
+  const sessionLevelEvidence = session.evidence.filter((item) => item.inspectionLineId === null);
   return (
     <Panel
       variant="bordered"
@@ -183,6 +199,26 @@ function QaSessionHistoryCard({
           );
         })}
       </div>
+      {sessionLevelEvidence.length > 0 ? (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-muted-foreground">Cycle evidence</p>
+          <AttachmentList
+            density="compact"
+            items={sessionLevelEvidence.map((item) => ({
+              id: item.id,
+              name: item.fileName,
+              status: 'uploaded' as const,
+            }))}
+            onView={(item) =>
+              setViewing({
+                evidence: sessionLevelEvidence,
+                index: sessionLevelEvidence.findIndex((candidate) => candidate.id === item.id),
+                title: `Cycle ${session.cycleNumber} evidence`,
+              })
+            }
+          />
+        </div>
+      ) : null}
       <QaEvidenceGalleryDialog
         evidence={viewing?.evidence ?? []}
         open={viewing !== null}
@@ -255,8 +291,8 @@ export function QaDetailPage() {
   const canMutate =
     user?.roles.some((role) => ['ADMIN', 'MERCHANDISER', 'QA_USER'].includes(role)) ?? false;
   const canReopen = canReopenQaForm(user?.roles);
-  const ppSampleSession = data.sessions.find((session) => session.processFlowPpSample);
-  const hasProcessFlowPpSample = Boolean(ppSampleSession);
+  const currentPpSampleSession = resolveCurrentPpSampleSession(data.sessions);
+  const hasProcessFlowPpSample = data.sessions.some((session) => session.processFlowPpSample);
   // A QA record belongs to one Job Order, which is exactly one Style by
   // business rule (server-enforced) — same invariant resolveJobOrderPrimaryStyle
   // already checks for the Job Order detail header/PDF. QaInspectionDetail's
@@ -278,7 +314,7 @@ export function QaDetailPage() {
   );
   const content = (
     <div className="space-y-5">
-      {ppSampleSession ? (
+      {currentPpSampleSession ? (
         <div className="flex justify-end">
           <PdfActionButtons
             isGenerating={pdfAction.isGenerating}
@@ -288,13 +324,13 @@ export function QaDetailPage() {
           />
         </div>
       ) : null}
-      {ppSampleSession ? (
+      {currentPpSampleSession ? (
         <QualityExecutionHeader
           compact
           title="PP Sample Checklist"
           formName="PP Sample form"
-          attemptNumber={ppSampleSession.cycleNumber}
-          status={ppSampleSession.status}
+          attemptNumber={currentPpSampleSession.cycleNumber}
+          status={currentPpSampleSession.status}
           context={`${data.jobOrderNumber} · ${data.factory.name}`}
           leadingVisual={identityVisual}
           identity={
@@ -330,7 +366,7 @@ export function QaDetailPage() {
           }
         />
       )}
-      {!ppSampleSession ? (
+      {!currentPpSampleSession ? (
         <Panel title="Inspection context">
           <DescriptionList columns={3}>
             <DescriptionList.Item label="Factory" value={data.factory.name} />
@@ -510,7 +546,7 @@ export function QaDetailPage() {
 
     </div>
   );
-  return ppSampleSession ? (
+  return currentPpSampleSession ? (
     <QualityExecutionPageShell jobOrderId={id} jobOrderNumber={data.jobOrderNumber}>
       {content}
     </QualityExecutionPageShell>

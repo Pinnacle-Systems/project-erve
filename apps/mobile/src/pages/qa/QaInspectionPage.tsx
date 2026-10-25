@@ -729,6 +729,12 @@ export function QaInspectionPage() {
                       </QualityChecklist>
                     </div>
                   ) : null}
+                  {form.inspectionRemarks ? (
+                    <p className="mt-1 text-sm">
+                      <span className="font-medium">Inspection remarks:</span>{' '}
+                      {form.inspectionRemarks}
+                    </p>
+                  ) : null}
                   <div className="mt-1">
                     <p className="text-xs font-medium text-muted-foreground">Evidence</p>
                     {formEvidence.length ? (
@@ -760,6 +766,39 @@ export function QaInspectionPage() {
                 </div>
               );
             })}
+            {(() => {
+              // qa-evidence.service.ts allows evidence with no
+              // inspectionLineId (session-level, not tied to any one size)
+              // — shown separately, never folded into an arbitrary size.
+              const sessionLevelEvidence = session.evidence.filter(
+                (item) => item.inspectionLineId === null,
+              );
+              if (sessionLevelEvidence.length === 0) return null;
+              return (
+                <div className="mt-1">
+                  <p className="text-xs font-medium text-muted-foreground">Cycle evidence</p>
+                  <ul className="mt-1 space-y-1">
+                    {sessionLevelEvidence.map((item, index) => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          className="text-sm font-medium text-primary underline"
+                          onClick={() =>
+                            setViewingHistoryEvidence({
+                              evidence: sessionLevelEvidence,
+                              index,
+                              title: `Cycle ${session.cycleNumber} evidence`,
+                            })
+                          }
+                        >
+                          {item.fileName}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
           </article>
         ))}
       </QualityExecutionSection>
