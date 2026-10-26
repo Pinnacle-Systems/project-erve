@@ -46,7 +46,9 @@ export function buildErvePackingListListViewModel(
     id: pl.id,
     ervePackingListNumber: pl.ervePackingListNumber,
     distributorName: pl.distributor?.name ?? '',
-    destinationDisplay: pl.destination.city ? `${pl.destination.city}, ${pl.destination.state ?? ''}` : '',
+    destinationDisplay:
+      pl.destination.label ||
+      (pl.destination.city ? `${pl.destination.city}, ${pl.destination.state ?? ''}` : ''),
     cartonCount: pl.cartonCount,
     totalQuantity: pl.totalQuantity,
     // DEMO-020: confidential factory/supplier provenance — null (and the
@@ -59,7 +61,7 @@ export function buildErvePackingListListViewModel(
   }));
 
   return {
-    title: 'ERVE PACKING LIST',
+    title: 'Erve Consolidated Packing List',
     subtitle: 'Destination-specific consolidation of finalized Factory Packing cartons',
     generatedAt: meta.generatedAt,
     generatedBy: meta.generatedBy,

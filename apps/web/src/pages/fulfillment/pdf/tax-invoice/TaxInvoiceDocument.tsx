@@ -17,10 +17,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottom: '1 solid #999999',
     paddingBottom: 8,
+    height: 46,
   },
   logo: { width: 120, height: 28, objectFit: 'contain' },
-  title: { fontSize: 14, fontWeight: 700, textAlign: 'right' },
-  identity: { fontSize: 9, textAlign: 'right', marginTop: 3 },
+  title: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    fontSize: 14,
+    fontWeight: 700,
+    textAlign: 'center',
+  },
+  identity: { position: 'absolute', left: 140, right: 0, top: 24, fontSize: 8, textAlign: 'right' },
   references: { fontSize: 8, lineHeight: 1.2, marginBottom: 6 },
   referenceRow: { flexDirection: 'row', marginBottom: 2 },
   referenceCell: { width: '50%', paddingRight: 8 },
@@ -28,10 +37,10 @@ const styles = StyleSheet.create({
   parties: { flexDirection: 'row', borderWidth: 0.5, borderColor: '#999999', marginBottom: 6 },
   party: { width: '50%', padding: 6, fontSize: 8, lineHeight: 1.2 },
   partyTitle: { fontWeight: 700, fontSize: 9, marginBottom: 3 },
-  image: { width: 32, height: 32, objectFit: 'contain' },
+  image: { width: 26, height: 26, objectFit: 'contain' },
   imageCaption: { fontSize: 7, color: '#666666' },
   group: { borderBottom: '0.5 solid #999999' },
-  financialSummary: { flexDirection: 'row', paddingVertical: 3 },
+  financialSummary: { flexDirection: 'row', paddingVertical: 2 },
   columnHeading: { fontSize: 7, fontWeight: 700, textAlign: 'right', paddingHorizontal: 3 },
   tableHeading: {
     flexDirection: 'row',
@@ -39,7 +48,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderBottom: '0.5 solid #999999',
   },
-  styleIdentity: { width: '26%', paddingHorizontal: 3 },
+  styleIdentity: { width: '18%', paddingHorizontal: 3 },
   colour: { fontSize: 7, lineHeight: 1.2 },
   financialValue: { fontSize: 8, textAlign: 'right' },
   styleCode: { fontSize: 8, fontWeight: 700, lineHeight: 1.2 },
@@ -48,13 +57,13 @@ const styles = StyleSheet.create({
   detailText: { fontSize: 8, lineHeight: 1.2 },
   sizeList: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 2 },
   sizeToken: { maxWidth: '100%', marginRight: 6 },
-  totals: { flexDirection: 'row', marginTop: 6, borderTop: '0.5 solid #999999', paddingTop: 4 },
+  totals: { alignItems: 'flex-end', marginTop: 6, borderTop: '0.5 solid #999999', paddingTop: 4 },
   totalColumn: { width: '50%', paddingRight: 8 },
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     fontSize: 8,
-    paddingVertical: 1,
+    paddingVertical: 0,
     gap: 5,
   },
   payable: { fontSize: 10, fontWeight: 700 },
@@ -113,11 +122,12 @@ function sizeTokens(sizes: string): string[] {
 }
 
 const financialColumns = [
-  { label: 'Image', width: '8%', left: true },
-  { label: 'Style', width: '26%', left: true },
-  { label: 'Size : Qty', width: '18%', left: true },
+  { label: 'S.No.', width: '5%', left: true },
+  { label: 'Image', width: '7%', left: true },
+  { label: 'Style', width: '18%', left: true },
+  { label: 'Size : Qty', width: '24%', left: true },
   { label: 'Qty', width: '5%' },
-  { label: 'HSN / GST', width: '13%' },
+  { label: 'HSN / GST', width: '11%' },
   { label: 'MRP (INR)', width: '9%' },
   { label: 'Rate (INR)', width: '9%' },
   { label: 'Taxable (INR)', width: '12%' },
@@ -136,7 +146,7 @@ function Sizes({ tokens }: { tokens: string[] }) {
         <View key={index} style={styles.sizeToken} wrap={false}>
           <Text style={styles.detailText}>
             {token}
-            {index < tokens.length - 1 ? ' |' : ''}
+            {index < tokens.length - 1 ? ',' : ''}
           </Text>
         </View>
       ))}
@@ -145,7 +155,15 @@ function Sizes({ tokens }: { tokens: string[] }) {
 }
 
 /** Ordinary Styles are complete table rows. Oversized identity/colour/Sizes flow below once. */
-function InvoiceGroup({ group, last }: { group: TaxInvoicePdfGroup; last: boolean }) {
+function InvoiceGroup({
+  group,
+  last,
+  serial,
+}: {
+  group: TaxInvoicePdfGroup;
+  last: boolean;
+  serial: number;
+}) {
   const tokens = sizeTokens(group.sizes);
   // Layout selection never slices or changes the issued identity or quantities.
   const flowingIdentity =
@@ -164,12 +182,15 @@ function InvoiceGroup({ group, last }: { group: TaxInvoicePdfGroup; last: boolea
         wrap={false}
         minPresenceAhead={last ? 180 : 24}
       >
-        <View style={{ width: '8%', paddingHorizontal: 3, alignItems: 'center' }}>
+        <View style={{ width: '5%', paddingHorizontal: 3 }}>
+          <Text style={styles.detailText}>{serial}</Text>
+        </View>
+        <View style={{ width: '7%', paddingHorizontal: 3, alignItems: 'center' }}>
           {'dataUri' in group.image ? (
             <Image src={group.image.dataUri} style={styles.image} />
           ) : (
             <View>
-              <PdfThumbnail image={{ placeholder: true }} width={32} height={24} />
+              <PdfThumbnail image={{ placeholder: true }} width={26} height={19} />
               <Text style={styles.imageCaption}>Missing</Text>
             </View>
           )}
@@ -185,7 +206,7 @@ function InvoiceGroup({ group, last }: { group: TaxInvoicePdfGroup; last: boolea
           )}
           {!flowingDetails && <Text style={styles.colour}>Colour: {group.colour}</Text>}
         </View>
-        <View style={{ width: '18%', paddingHorizontal: 3 }}>
+        <View style={{ width: '24%', paddingHorizontal: 3 }}>
           {flowingDetails ? (
             <Text style={styles.colour}>Size details below</Text>
           ) : (
@@ -195,7 +216,7 @@ function InvoiceGroup({ group, last }: { group: TaxInvoicePdfGroup; last: boolea
         <FinancialCell value={group.quantity} width="5%" />
         <FinancialCell
           value={`${group.hsnCode} / ${group.gstPercent}${group.gstPercent === 'Unavailable' ? '' : '%'}`}
-          width="13%"
+          width="11%"
         />
         <FinancialCell value={group.mrp} width="9%" />
         <FinancialCell value={group.rate} width="9%" />
@@ -289,12 +310,10 @@ export function TaxInvoiceDocument({
         ) : (
           <Text style={styles.bold}>ERVE INDIA</Text>
         )}
-        <View>
-          <Text style={styles.title}>Tax Invoice</Text>
-          <Text style={styles.identity}>
-            {model.invoiceNumber} | {model.invoiceDate}
-          </Text>
-        </View>
+        <Text style={styles.title}>Tax Invoice</Text>
+        <Text style={styles.identity}>
+          {model.invoiceNumber} | {model.invoiceDate}
+        </Text>
       </View>
       {model.isCancelled && (
         <View style={styles.cancelledBanner}>
@@ -306,6 +325,12 @@ export function TaxInvoiceDocument({
         </View>
       )}
       <View style={styles.references}>
+        <View style={styles.referenceRow}>
+          <Text style={[styles.referenceCell, styles.bold]}>
+            Invoice Number: {model.invoiceNumber}
+          </Text>
+          <Text style={styles.referenceCell}>Invoice Date: {model.invoiceDate}</Text>
+        </View>
         {model.references.replacesInvoiceNumber !== null && (
           <View style={styles.referenceRow}>
             <Text style={[styles.referenceCell, styles.bold]}>
@@ -376,7 +401,12 @@ export function TaxInvoiceDocument({
           ))}
         </View>
         {model.groups.map((group, index) => (
-          <InvoiceGroup key={group.id} group={group} last={index === model.groups.length - 1} />
+          <InvoiceGroup
+            key={group.id}
+            group={group}
+            serial={index + 1}
+            last={index === model.groups.length - 1}
+          />
         ))}
         <View style={styles.totals} wrap={false} minPresenceAhead={90}>
           <View style={styles.totalColumn}>
@@ -453,6 +483,8 @@ export function TaxInvoiceDocument({
         </Text>
         <Text>{model.bankDetails}</Text>
         <Text>This is a system-generated invoice.</Text>
+        <Text>No signature required</Text>
+        <Text>E.&amp;O.E.</Text>
       </View>
       <PdfFooter />
     </PdfDocument>

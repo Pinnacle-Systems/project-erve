@@ -1,7 +1,12 @@
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import type { PackingAuditQueueItem } from '../../types.js';
-import { distinctSizeColumns, groupLinesByStyle, type SizeColumn } from '../../style-size-grouping.js';
+import {
+  distinctSizeColumns,
+  groupLinesByStyle,
+  type SizeColumn,
+} from '../../style-size-grouping.js';
 import { PACKING_AUDIT_STATE_LABELS } from '../shared/fulfillmentPdfLabels.js';
 
 export type PackingAuditCartonDetailSource = PackingAuditQueueItem & { factoryDispatchId: string };
@@ -16,6 +21,7 @@ export interface PackingAuditCartonDetailStyleRow {
   styleId: string;
   styleNumber: string;
   styleName: string | null;
+  image?: PdfImageSource;
   values: Record<string, number | null>;
 }
 
@@ -54,6 +60,7 @@ export interface PackingAuditCartonDetailPdfViewModel {
 export function buildPackingAuditCartonDetailViewModel(
   carton: PackingAuditCartonDetailSource,
   meta: PackingAuditCartonDetailPdfMeta,
+  images: Map<string, PdfImageSource> = new Map(),
 ): PackingAuditCartonDetailPdfViewModel {
   const identityItems: PdfKeyValueItem[] = [
     { label: 'Carton Number', value: carton.cartonNumber },
@@ -78,6 +85,7 @@ export function buildPackingAuditCartonDetailViewModel(
       styleId: group.styleId,
       styleNumber: group.styleNumber,
       styleName: group.styleName,
+      image: images.get(group.styleId) ?? { placeholder: true },
       values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
     })),
     auditHistory: carton.auditHistory.map((entry) => ({

@@ -211,7 +211,9 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
       finish();
       finishHeader();
       expect(footers).toEqual([`Page ${p} of ${doc.numPages}`]);
-      expect(items.some((i) => 'str' in i && i.str === 'ERVE PACKING LIST')).toBe(true);
+      expect(items.some((i) => 'str' in i && i.str === 'Erve Consolidated Packing List')).toBe(
+        true,
+      );
       expect(body.length, `blank replacement page ${p}`).toBeGreaterThan(0);
       for (let a = 0; a < body.length; a++)
         for (let b = a + 1; b < body.length; b++) {
@@ -243,7 +245,8 @@ export async function verifyPackingListPdf(blob: Blob, source: ErvePackingListDe
       expect(text).not.toContain(c.saleOrder.saleOrderNumber);
       if (c.factoryDispatchNumber) expect(text).not.toContain(c.factoryDispatchNumber);
     }
-    if (source.sourceFactories) for (const f of source.sourceFactories) expect(text).not.toContain(f.name);
+    if (source.sourceFactories)
+      for (const f of source.sourceFactories) expect(text).not.toContain(f.name);
     for (const so of source.sourceDispatchOrders) expect(text).not.toContain(so.saleOrderNumber);
     for (const [section, lines] of sections) {
       const sizes = [...new Set(lines.map((l) => l.sizeCode))];
