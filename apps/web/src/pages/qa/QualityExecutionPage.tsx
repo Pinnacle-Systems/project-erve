@@ -236,6 +236,27 @@ export function QualityExecutionPage() {
         executionData?.finalBatch ? `Batch-${executionData.finalBatch.batchNumber}` : null,
       ]),
   });
+  // ISS-049: a second, independent export — every persisted Final Inspection physical batch and
+  // attempt for this Job Order, not just the one currently open. Only offered when this execution
+  // actually belongs to a Final Inspection batch (PPM/Inline never have `finalBatch`, so their PDF
+  // actions are completely unchanged — see generateQualityExecutionPdf above). Collection/evidence
+  // resolution happen only inside this callback, i.e. only once the user clicks Download/Print.
+  const generateConsolidatedFinalInspectionPdf = useCallback(async () => {
+    if (!executionData) throw new Error('Quality execution not loaded');
+    const { generateConsolidatedFinalInspectionPdfBlob } = await import(
+      './pdf/consolidated-final/generateConsolidatedFinalInspectionPdf.js'
+    );
+    return generateConsolidatedFinalInspectionPdfBlob(executionData, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+      identityItems,
+    });
+  }, [executionData, user?.name, identityItems]);
+  const consolidatedPdfAction = usePdfAction({
+    generate: generateConsolidatedFinalInspectionPdf,
+    filename: () =>
+      buildPdfFilename(['ERVE-QA', 'Final-Inspection-Consolidated', executionData?.jobOrderNumber]),
+  });
   if (query.isLoading)
     return (
       <main className="p-6" role="status">
@@ -254,14 +275,30 @@ export function QualityExecutionPage() {
         jobOrderId={query.data.jobOrderId}
         jobOrderNumber={query.data.jobOrderNumber}
         actions={
-          <PdfActionButtons
-            disabled={jobOrder.isFetching}
-            disabledHint="Loading Job Order context"
-            isGenerating={pdfAction.isGenerating}
-            error={pdfAction.error}
-            onDownload={pdfAction.handleDownload}
-            onPrint={pdfAction.handlePrint}
-          />
+          <div className="flex flex-col items-end gap-2">
+            <PdfActionButtons
+              disabled={jobOrder.isFetching}
+              disabledHint="Loading Job Order context"
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+              downloadLabel={query.data.finalBatch ? 'Download This Attempt' : 'Download PDF'}
+              printLabel={query.data.finalBatch ? 'Print This Attempt' : 'Print'}
+            />
+            {query.data.finalBatch ? (
+              <PdfActionButtons
+                disabled={jobOrder.isFetching}
+                disabledHint="Loading Job Order context"
+                isGenerating={consolidatedPdfAction.isGenerating}
+                error={consolidatedPdfAction.error}
+                onDownload={consolidatedPdfAction.handleDownload}
+                onPrint={consolidatedPdfAction.handlePrint}
+                downloadLabel="Download Consolidated Final Inspection PDF"
+                printLabel="Print Consolidated Final Inspection PDF"
+              />
+            ) : null}
+          </div>
         }
       >
         <QualityExecutionForm
