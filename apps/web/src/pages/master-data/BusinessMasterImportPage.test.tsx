@@ -105,6 +105,14 @@ describe('business import workflow', () => {
     expect(container.textContent).toContain('01234567');
     expect(container.textContent).not.toContain('Generated code');
   });
+  it('wraps actionable row errors instead of truncating their instructions', async () => {
+    const detail = 'GST Rule Set Code UNKNOWN not found; supply an existing ACTIVE code';
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: { ...plan, rows: [{ ...rows[1], detail }] } } });
+    render('hsns'); select(); act(() => button('Preview').click()); await flush();
+    const cell = Array.from(container.querySelectorAll('td')).find((element) => element.textContent === detail)!;
+    expect(cell.className).toContain('whitespace-normal');
+    expect(cell.className).toContain('break-words');
+  });
   it('downloads templates and correction-ready preview exceptions through authenticated requests', async () => {
     const blob = new Blob(['xlsx']);
     vi.mocked(apiClient.get).mockImplementation(async (url: string) => ({
@@ -193,6 +201,19 @@ describe('business import workflow', () => {
     expect(button('Preview').disabled).toBe(false);
   });
 
+  it('never offers an Instructions worksheet as import data', async () => {
+    vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: { worksheets: ['Instructions', 'Factories'] } },
+    });
+    render();
+    select('masters.xlsx');
+    await flush();
+    const options = Array.from(container.querySelectorAll('select option')).map(
+      (option) => option.textContent,
+    );
+    expect(options).toContain('Factories');
+    expect(options).not.toContain('Instructions');
+  });
   it('requires explicit worksheet selection and removes confirmation on a new upload', async () => {
     const post = vi.spyOn(apiClient, 'post').mockImplementation(async (url: string) => ({
       data: { data: url.endsWith('/worksheets') ? { worksheets: ['Cover', 'Factories'] } : plan },

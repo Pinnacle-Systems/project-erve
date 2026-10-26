@@ -102,10 +102,42 @@ function summarize(rows: MasterImportRow[]): Record<MasterImportOutcome, number>
   for (const row of rows) result[row.outcome]++;
   return result;
 }
+async function resolveImportGstRuleSet(actor: CurrentUser, code: string, db: Db): Promise<string> {
+  if (!actor.roles.some((role) => role === 'ADMIN' || role === 'ACCOUNTANT'))
+    throw HttpError.forbidden('GST Rule Set Code assignment requires ADMIN or ACCOUNTANT');
+  const matches = (await db.gstRuleSet.findMany()).filter(
+    (rule) => normalized(rule.code) === normalized(code),
+  );
+  if (!matches.length)
+    throw HttpError.badRequest(
+      `GST Rule Set Code "${code}" not found; supply an existing ACTIVE code`,
+    );
+  if (matches.length !== 1)
+    throw HttpError.badRequest(`GST Rule Set Code "${code}" is ambiguous; use a unique code`);
+  if (matches[0]!.status !== 'ACTIVE')
+    throw HttpError.badRequest(
+      `GST Rule Set Code "${code}" is inactive; select an ACTIVE rule set`,
+    );
+  return matches[0]!.id;
+}
+async function revalidateImportHsnAssignment(
+  actor: CurrentUser,
+  row: MasterImportRow,
+  tx: Prisma.TransactionClient,
+) {
+  if (!row.input.gstRuleSetId) return;
+  await tx.$queryRaw`SELECT id FROM gst_rule_sets WHERE id = ${row.input.gstRuleSetId} FOR SHARE`;
+  const code = Object.entries(row.raw).find(
+    ([header]) => normalized(header) === 'GST RULE SET CODE',
+  )?.[1];
+  if (!code || (await resolveImportGstRuleSet(actor, code, tx)) !== row.input.gstRuleSetId)
+    throw HttpError.conflict('GST Rule Set Code changed; preview again');
+}
 async function validatedInput(
   kind: MasterImportKind,
   parsed: ParsedMasterImportRow,
   db: Db,
+  actor: CurrentUser,
 ): Promise<Record<string, string | null>> {
   if (parsed.error) throw HttpError.badRequest(parsed.error);
   const strings = (input: Record<string, unknown>) =>
@@ -127,16 +159,19 @@ async function validatedInput(
       createSizeSchema.parse({ ...parsed.input, status: parsed.input.status ?? 'ACTIVE' }),
     );
   }
-  if (kind === 'hsns')
+  if (kind === 'hsns') {
+    const gstRuleSetId = parsed.input.gstRuleSetCode
+      ? await resolveImportGstRuleSet(actor, parsed.input.gstRuleSetCode, db)
+      : undefined;
     return strings(
-      createHsnSchema
-        .omit({ gstRuleSetId: true })
-        .parse({
-          ...parsed.input,
-          description: parsed.input.description ?? null,
-          status: parsed.input.status ?? 'ACTIVE',
-        }),
+      createHsnSchema.parse({
+        ...parsed.input,
+        description: parsed.input.description ?? null,
+        status: parsed.input.status ?? 'ACTIVE',
+        ...(gstRuleSetId ? { gstRuleSetId } : {}),
+      }),
     );
+  }
   if (kind === 'factories') return createFactorySchema.parse(parsed.input);
   if (kind === 'distributors') {
     if (!parsed.input.purchaseMode) {
@@ -344,7 +379,7 @@ export async function planMasterImport(
       outcome: 'REJECTED',
     };
     try {
-      const input = await validatedInput(kind, source, prisma);
+      const input = await validatedInput(kind, source, prisma, actor);
       const businessIdentity = identity(kind, input);
       row = {
         ...row,
@@ -458,6 +493,12 @@ export async function executeMasterImport(
             ) => {
               await tx.$queryRaw`SELECT id FROM users WHERE id = ${actor.id} FOR SHARE`;
               await requireMasterImportActor(actor, tx, kind);
+              if (kind === 'hsns')
+                await revalidateImportHsnAssignment(
+                  await requireMasterImportActor(actor, tx, kind),
+                  row,
+                  tx,
+                );
               if (kind === 'retail-stores') {
                 await tx.$queryRaw`SELECT id FROM distributors WHERE id = ${row.input.distributorId!} FOR SHARE`;
                 const parent = await tx.distributor.findUnique({
@@ -495,11 +536,7 @@ export async function executeMasterImport(
             else if (kind === 'sizes')
               await createSize(actor, createSizeSchema.parse(row.input), options);
             else if (kind === 'hsns')
-              await createHsn(
-                actor,
-                createHsnSchema.omit({ gstRuleSetId: true }).parse(row.input),
-                options,
-              );
+              await createHsn(actor, createHsnSchema.parse(row.input), options);
             else await createRetailStore(actor, createRetailStoreSchema.parse(row.input), options);
             rows.push(row);
             continue;
@@ -539,6 +576,12 @@ export async function executeMasterImport(
               await tx.$queryRaw`SELECT id FROM hsns WHERE id = ${row.masterId!} FOR UPDATE`;
             else
               await tx.$queryRaw`SELECT id FROM retail_stores WHERE id = ${row.masterId!} FOR UPDATE`;
+            if (kind === 'hsns')
+              await revalidateImportHsnAssignment(
+                await requireMasterImportActor(actor, tx, kind),
+                row,
+                tx,
+              );
             const current = await classify(kind, row, tx);
             if (current.outcome !== 'SKIP_EXISTING')
               throw HttpError.conflict('Existing master changed; preview again');

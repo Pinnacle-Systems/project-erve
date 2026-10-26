@@ -38,6 +38,15 @@ describe('reference master parsing', () => {
     ).rows;
     expect(rows[0]?.error).toMatch(/numeric.*leading zero/i);
   });
+  it('accepts the optional GST Rule Set Code without coercion', () => {
+    expect(
+      parseMasterImportFile(
+        'hsns',
+        Buffer.from('HSN Code,GST Rule Set Code\n01234567,001-GST\n'),
+        'h.csv',
+      ).rows[0]?.input,
+    ).toEqual({ code: '01234567', gstRuleSetCode: '001-GST' });
+  });
   it('rejects unexpected statutory configuration columns', () => {
     expect(() =>
       parseMasterImportFile(

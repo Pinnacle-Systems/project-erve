@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
-import { parseMasterImportFile, buildMasterImportWorkbook, buildMasterImportTemplate, masterImportHeaders, masterImportWorksheets } from './master-import.parser.js';
+import {
+  parseMasterImportFile,
+  buildMasterImportWorkbook,
+  buildMasterImportTemplate,
+  listMasterImportWorksheets,
+  masterImportHeaders,
+  masterImportWorksheets,
+} from './master-import.parser.js';
 
 function book(sheets: Record<string, unknown[][]>) {
   const wb = XLSX.utils.book_new();
@@ -16,8 +23,11 @@ describe('downloadable business master templates (ISS-036)', () => {
     factories: { Name: 'Factory One' },
     distributors: { Name: 'Distributor One', GSTIN: '22AAAAA0000A1Z5' },
     'retail-stores': {
-      Name: 'Retail Store', 'Address Line 1': '123 Example Road', City: 'Chennai',
-      State: 'Tamil Nadu', 'Postal Code': '600001',
+      Name: 'Retail Store',
+      'Address Line 1': '123 Example Road',
+      City: 'Chennai',
+      State: 'Tamil Nadu',
+      'Postal Code': '600001',
     },
   };
 
@@ -25,16 +35,51 @@ describe('downloadable business master templates (ISS-036)', () => {
     'exports %s with business-only headers and accepts a filled-in copy',
     (kind) => {
       const workbook = XLSX.read(buildMasterImportTemplate(kind), { type: 'buffer' });
-      expect(workbook.SheetNames).toEqual([masterImportWorksheets[kind]]);
+      expect(workbook.SheetNames).toEqual([masterImportWorksheets[kind], 'Instructions']);
+      expect(listMasterImportWorksheets(buildMasterImportTemplate(kind), 'template.xlsx')).toEqual([
+        masterImportWorksheets[kind],
+      ]);
+      expect(() =>
+        parseMasterImportFile(
+          kind,
+          buildMasterImportTemplate(kind),
+          'template.xlsx',
+          'Instructions',
+        ),
+      ).toThrow(/instruction/i);
+      expect(
+        parseMasterImportFile(
+          kind,
+          buildMasterImportTemplate(kind),
+          'template.xlsx',
+          masterImportWorksheets[kind],
+        ).rows,
+      ).toEqual([]);
+      expect(
+        XLSX.utils.sheet_to_json(workbook.Sheets.Instructions!, { header: 1 }).length,
+      ).toBeGreaterThan(5);
       const sheet = workbook.Sheets[masterImportWorksheets[kind]]!;
-      const header = (XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 })[0] ?? []).map(String);
-      expect(header).toEqual(masterImportHeaders[kind].filter((name) => !['Source Key', 'Source Provenance'].includes(name)));
+      const header = (XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 })[0] ?? []).map(
+        String,
+      );
+      expect(header).toEqual(
+        masterImportHeaders[kind].filter(
+          (name) => !['Source Key', 'Source Provenance'].includes(name),
+        ),
+      );
       expect(header).not.toContain('Source Key');
       expect(header).not.toContain('Source Provenance');
       const example = samples[kind] as Record<string, string>;
-      XLSX.utils.sheet_add_aoa(sheet, [header.map((name) => example[name] ?? '')], { origin: 'A2' });
+      XLSX.utils.sheet_add_aoa(sheet, [header.map((name) => example[name] ?? '')], {
+        origin: 'A2',
+      });
       const filled = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
-      const parsed = parseMasterImportFile(kind, filled, 'filled-template.xlsx', masterImportWorksheets[kind]);
+      const parsed = parseMasterImportFile(
+        kind,
+        filled,
+        'filled-template.xlsx',
+        masterImportWorksheets[kind],
+      );
       expect(parsed.rows).toHaveLength(1);
       expect(parsed.rows[0]?.sourceKey).toBeUndefined();
       for (const [headerName, value] of Object.entries(example)) {
@@ -43,13 +88,34 @@ describe('downloadable business master templates (ISS-036)', () => {
     },
   );
 
+  it('rejects renamed instructions and their CSV export instead of treating guidance as records', () => {
+    const workbook = XLSX.read(buildMasterImportTemplate('factories'), { type: 'buffer' });
+    const csv = XLSX.utils.sheet_to_csv(workbook.Sheets.Instructions!);
+    expect(() => parseMasterImportFile('factories', Buffer.from(csv), 'instructions.csv')).toThrow(
+      /Instruction/,
+    );
+    workbook.Sheets.Factories = workbook.Sheets.Instructions!;
+    expect(() =>
+      parseMasterImportFile(
+        'factories',
+        XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }),
+        'renamed.xlsx',
+        'Factories',
+      ),
+    ).toThrow(/Instruction/);
+  });
   it('continues to accept legacy source-key columns without changing provenance parsing', () => {
-    const parsed = parseMasterImportFile('factories', book({
-      Factories: [
-        ['Name', 'Source Key', 'Source Provenance'],
-        ['Factory One', 'external-factory-01', 'historical upload'],
-      ],
-    }), 'legacy.xlsx', 'Factories');
+    const parsed = parseMasterImportFile(
+      'factories',
+      book({
+        Factories: [
+          ['Name', 'Source Key', 'Source Provenance'],
+          ['Factory One', 'external-factory-01', 'historical upload'],
+        ],
+      }),
+      'legacy.xlsx',
+      'Factories',
+    );
     expect(parsed.rows[0]?.sourceKey).toBe('external-factory-01');
     expect(parsed.rows[0]?.raw['Source Provenance']).toBe('historical upload');
   });

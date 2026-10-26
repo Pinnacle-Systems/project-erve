@@ -31,7 +31,14 @@ export const masterImportHeaders: Record<MasterImportKind, string[]> = {
     'Source Key',
     'Source Provenance',
   ],
-  hsns: ['HSN Code', 'Description', 'Status', 'Source Key', 'Source Provenance'],
+  hsns: [
+    'HSN Code',
+    'Description',
+    'Status',
+    'GST Rule Set Code',
+    'Source Key',
+    'Source Provenance',
+  ],
   factories: ['Name', ...common, 'Source Key', 'Source Provenance'],
   distributors: ['Name', 'GSTIN', 'Purchase Mode', ...common, 'Source Key', 'Source Provenance'],
   'retail-stores': [
@@ -59,7 +66,69 @@ export function buildMasterImportTemplate(kind: MasterImportKind): Buffer {
   const userHeaders = masterImportHeaders[kind].filter(
     (header) => header !== 'Source Key' && header !== 'Source Provenance',
   );
-  return buildMasterImportWorkbook(userHeaders, [], masterImportWorksheets[kind]);
+  const book = XLSX.read(buildMasterImportWorkbook(userHeaders, [], masterImportWorksheets[kind]), {
+    type: 'buffer',
+  });
+  const examples: Record<MasterImportKind, string[]> = {
+    seasons: [
+      'Season Code: AW26',
+      'Season Name: Winter 2026',
+      'Barcode Serial: optional integer 1 to 99999; blank stays NULL',
+    ],
+    sizes: [
+      'Size Code: M',
+      'Size Label: Medium',
+      'Size Type: ALPHA, NUMERIC, AGE, WAIST or FREE_SIZE',
+      'Sort Order: required non-negative integer, e.g. 2',
+    ],
+    hsns: [
+      'HSN Code: 01234567 (exactly 8 digits stored as text)',
+      'Description: optional approved business description',
+      'GST Rule Set Code: optional existing unique ACTIVE code; only ADMIN or ACCOUNTANT may assign it',
+    ],
+    factories: [
+      'Name: Example Factory',
+      'Address Line 1: 123 Example Road',
+      'Phone: store as text to preserve leading zeroes',
+    ],
+    distributors: [
+      'Name: Example Distributor',
+      'GSTIN: 22AAAAA0000A1Z5',
+      'Purchase Mode: OUTRIGHT or SALE_RETURN',
+    ],
+    'retail-stores': [
+      'Name: Example Store',
+      'Distributor Name / GSTIN / Purchase Mode: identify one ACTIVE parent distributor',
+      'Address Line 1, City, State and Postal Code: required',
+    ],
+  };
+  const instructions = [
+    ['ERVE MASTER IMPORT INSTRUCTIONS - DO NOT IMPORT'],
+    [
+      'Enter records only on the ' +
+        masterImportWorksheets[kind] +
+        ' worksheet, below its unchanged header row.',
+    ],
+    [
+      'This Instructions worksheet contains examples only; never copy these rows into the data worksheet.',
+    ],
+    [
+      'Select the data worksheet when uploading XLSX. Legacy CSV and XLSX headers remain supported.',
+    ],
+    [
+      'Blank rows are ignored. Preview, correct row errors, then confirm eligible records. Existing records are never automatically updated.',
+    ],
+    ['Keep identifiers, postal codes and phone numbers as text. Do not enter formulas.'],
+    ...(kind === 'seasons' || kind === 'sizes' || kind === 'hsns'
+      ? [['Status: ACTIVE or INACTIVE; blank defaults to ACTIVE.']]
+      : []),
+    ...examples[kind].map((example) => [example]),
+    ['Examples above are illustrative; confirm business values before importing.'],
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(instructions);
+  sheet['!cols'] = [{ wch: 125 }];
+  XLSX.utils.book_append_sheet(book, sheet, 'Instructions');
+  return XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }
 
 const fields: Record<string, string> = {
@@ -71,6 +140,7 @@ const fields: Record<string, string> = {
   'size type': 'sizeType',
   'sort order': 'sortOrder',
   'hsn code': 'code',
+  'gst rule set code': 'gstRuleSetCode',
   description: 'description',
   name: 'name',
   gstin: 'gstin',
@@ -118,7 +188,11 @@ function readImportWorkbook(buffer: Buffer, fileName: string) {
   }
 }
 export function listMasterImportWorksheets(buffer: Buffer, fileName: string): string[] {
-  return /\.csv$/i.test(fileName) ? [] : readImportWorkbook(buffer, fileName).SheetNames;
+  return /\.csv$/i.test(fileName)
+    ? []
+    : readImportWorkbook(buffer, fileName).SheetNames.filter(
+        (name) => normHeader(name) !== 'instructions',
+      );
 }
 export function parseMasterImportFile(
   kind: MasterImportKind,
@@ -130,6 +204,10 @@ export function parseMasterImportFile(
   const csv = /\.csv$/i.test(fileName);
   if (!csv && !worksheet) throw HttpError.badRequest('Select an explicit worksheet');
   const selected = csv ? workbook.SheetNames[0]! : worksheet!;
+  if (normHeader(selected) === 'instructions')
+    throw HttpError.badRequest(
+      'Instructions worksheets cannot be imported; select the data worksheet',
+    );
   const sheet = workbook.Sheets[selected];
   if (!sheet) throw HttpError.badRequest('Selected worksheet does not exist');
   const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1');
@@ -143,15 +221,22 @@ export function parseMasterImportFile(
     blankrows: true,
   });
   const headers = (physical[0] ?? []).map((cell) => String(cell).trim());
+  if (headers.some((header) => header.includes('ERVE MASTER IMPORT INSTRUCTIONS')))
+    throw HttpError.badRequest('Instruction rows cannot be imported; select the data worksheet');
   const normalizedHeaders = headers.map(normHeader);
   const semantic = normalizedHeaders
     .filter(Boolean)
     .map((header) => (Object.hasOwn(fields, header) ? fields[header] : header));
   if (new Set(semantic).size !== semantic.length)
     throw HttpError.badRequest('Duplicate import headers');
-  if (kind === 'hsns' && normalizedHeaders.some((header) => /gst|rule.?set/i.test(header)))
+  if (
+    kind === 'hsns' &&
+    normalizedHeaders.some(
+      (header) => header !== 'gst rule set code' && /gst|rule.?set/i.test(header),
+    )
+  )
     throw HttpError.badRequest(
-      'GST Rule Set assignment is outside HSN bulk import; remove GST configuration columns',
+      'Only GST Rule Set Code is supported for HSN assignment; remove other GST configuration columns',
     );
   const required =
     kind === 'seasons'

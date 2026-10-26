@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createId } from '@erve/shared';
-import { prisma } from '../../db/prisma.js';
+import { prisma, type Prisma } from '../../db/prisma.js';
 import { currentUserSelect, toCurrentUser } from '../../auth/current-user.js';
 import { createTestUser, resetDatabase } from '../../test/helpers.js';
 import { planMasterImport, executeMasterImport } from './master-import.service.js';
@@ -76,6 +76,158 @@ describe('reference master import persistence', () => {
       await expect(
         planMasterImport(user, kind, Buffer.from('Name\nX'), 'm.csv'),
       ).rejects.toMatchObject({ statusCode: 403 });
+  });
+  it('associates a unique active Rule Set, audits it and retries without updating existing HSNs', async () => {
+    const user = await actor('ACCOUNTANT');
+    const rule = await prisma.gstRuleSet.create({
+      data: { id: createId(), code: 'GST-APPAREL', name: 'Apparel' },
+    });
+    const file = Buffer.from('HSN Code,Description,GST Rule Set Code\n01234567,Text,gst-apparel\n');
+    const plan = await planMasterImport(user, 'hsns', file, 'h.csv');
+    expect(plan.rows[0]?.input.gstRuleSetId).toBe(rule.id);
+    const done = await executeMasterImport(
+      user,
+      'hsns',
+      file,
+      'h.csv',
+      undefined,
+      plan.confirmationToken,
+    );
+    expect(done.summary.CREATE).toBe(1);
+    expect(await prisma.hsn.findFirst()).toMatchObject({ gstRuleSetId: rule.id });
+    expect(
+      (await executeMasterImport(user, 'hsns', file, 'h.csv', undefined, plan.confirmationToken))
+        .summary.SKIP_EXISTING,
+    ).toBe(1);
+    expect(
+      (
+        await planMasterImport(
+          user,
+          'hsns',
+          Buffer.from(files.hsns.replace('INACTIVE', 'ACTIVE')),
+          'h.csv',
+        )
+      ).summary.SKIP_EXISTING,
+    ).toBe(1);
+    expect(await prisma.auditLog.findFirst({ where: { action: 'HSN_CREATED' } })).toMatchObject({
+      metadata: { gstRuleSetId: rule.id },
+    });
+    await prisma.gstRuleSet.create({ data: { id: createId(), code: 'OTHER', name: 'Other' } });
+    const changed = await planMasterImport(user, 'hsns', Buffer.from('HSN Code,Description,GST Rule Set Code\n01234567,Text,OTHER\n'), 'h.csv');
+    expect(changed.summary.NEEDS_REVIEW).toBe(1);
+    expect(await prisma.hsn.findFirst()).toMatchObject({ gstRuleSetId: rule.id });
+  });
+  it('gates assignments during preview but keeps legacy Merchandiser imports', async () => {
+    const user = await actor('MERCHANDISER');
+    const plan = await planMasterImport(
+      user,
+      'hsns',
+      Buffer.from('HSN Code,GST Rule Set Code\n01234567,APPAREL\n'),
+      'h.csv',
+    );
+    expect(plan.rows[0]).toMatchObject({
+      outcome: 'REJECTED',
+      detail: expect.stringMatching(/ADMIN.*ACCOUNTANT/),
+    });
+    expect(
+      (await planMasterImport(user, 'hsns', Buffer.from(files.hsns), 'h.csv')).summary.CREATE,
+    ).toBe(1);
+  });
+  it('reports missing, inactive and ambiguous codes and revalidates references at execute', async () => {
+    const user = await actor();
+    const rule = await prisma.gstRuleSet.create({
+      data: { id: createId(), code: 'APPAREL', name: 'Apparel' },
+    });
+    const file = Buffer.from('HSN Code,GST Rule Set Code\n01234567,APPAREL\n');
+    const plan = await planMasterImport(user, 'hsns', file, 'h.csv');
+    await prisma.gstRuleSet.update({ where: { id: rule.id }, data: { status: 'INACTIVE' } });
+    expect(
+      (await executeMasterImport(user, 'hsns', file, 'h.csv', undefined, plan.confirmationToken))
+        .rows[0]?.detail,
+    ).toMatch(/inactive/i);
+    expect(await prisma.hsn.count()).toBe(0);
+    expect(
+      (
+        await planMasterImport(
+          user,
+          'hsns',
+          Buffer.from('HSN Code,GST Rule Set Code\n01234567,MISSING\n'),
+          'h.csv',
+        )
+      ).rows[0]?.detail,
+    ).toMatch(/not found/i);
+    await prisma.gstRuleSet.update({ where: { id: rule.id }, data: { status: 'ACTIVE' } });
+    await prisma.gstRuleSet.create({ data: { id: createId(), code: 'apparel', name: 'Other' } });
+    expect((await planMasterImport(user, 'hsns', file, 'h.csv')).rows[0]?.detail).toMatch(
+      /ambiguous/i,
+    );
+  });
+  it.each(['reference', 'authority'] as const)(
+    'rechecks %s inside the creation transaction and rolls back',
+    async (change) => {
+      const user = await actor('ACCOUNTANT');
+      const rule = await prisma.gstRuleSet.create({
+        data: { id: createId(), code: 'APPAREL', name: 'Apparel' },
+      });
+      const file = Buffer.from('HSN Code,GST Rule Set Code\n01234567,APPAREL\n');
+      const plan = await planMasterImport(user, 'hsns', file, 'h.csv');
+      const recordAuditLog = audit.recordAuditLog;
+      vi.spyOn(audit, 'recordAuditLog').mockImplementationOnce(async (entry, tx) => {
+        await recordAuditLog(entry, tx);
+        const transaction = tx as Prisma.TransactionClient;
+        if (change === 'reference')
+          await transaction.gstRuleSet.update({
+            where: { id: rule.id },
+            data: { status: 'INACTIVE' },
+          });
+        else {
+          const role = await transaction.role.findUniqueOrThrow({
+            where: { name: 'MERCHANDISER' },
+          });
+          await transaction.userRole.deleteMany({ where: { userId: user.id } });
+          await transaction.userRole.create({
+            data: { id: createId(), userId: user.id, roleId: role.id },
+          });
+        }
+      });
+      const result = await executeMasterImport(
+        user,
+        'hsns',
+        file,
+        'h.csv',
+        undefined,
+        plan.confirmationToken,
+      );
+      expect(result.summary.FAILED).toBe(1);
+      expect(result.rows[0]?.detail).toMatch(
+        change === 'reference' ? /inactive/i : /ADMIN.*ACCOUNTANT/,
+      );
+      expect(await prisma.hsn.count()).toBe(0);
+      expect(await prisma.masterImportSource.count()).toBe(0);
+      expect(await prisma.auditLog.count({ where: { action: 'HSN_CREATED' } })).toBe(0);
+    },
+  );
+  it('rechecks finance permission after preview when operational import permission remains', async () => {
+    const user = await actor('ACCOUNTANT');
+    await prisma.gstRuleSet.create({ data: { id: createId(), code: 'APPAREL', name: 'Apparel' } });
+    const file = Buffer.from('HSN Code,GST Rule Set Code\n01234567,APPAREL\n');
+    const plan = await planMasterImport(user, 'hsns', file, 'h.csv');
+    const role = await prisma.role.findUniqueOrThrow({ where: { name: 'MERCHANDISER' } });
+    await prisma.userRole.deleteMany({ where: { userId: user.id } });
+    await prisma.userRole.create({ data: { id: createId(), userId: user.id, roleId: role.id } });
+    const done = await executeMasterImport(
+      user,
+      'hsns',
+      file,
+      'h.csv',
+      undefined,
+      plan.confirmationToken,
+    );
+    expect(done.rows[0]).toMatchObject({
+      outcome: 'REJECTED',
+      detail: expect.stringMatching(/ADMIN.*ACCOUNTANT/),
+    });
+    expect(await prisma.hsn.count()).toBe(0);
   });
   // ISS-SEASON-FY: Season Code is globally unique, case-insensitive.
   it('rejects a duplicate Season Code within one upload and detects a globally held Barcode Serial across different codes', async () => {
