@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { QualityExecutionView } from '@erve/types';
 import { apiClient } from '../../../../lib/api-client.js';
 import {
   ConsolidatedFinalInspectionError,
@@ -26,6 +27,52 @@ function mockApi(batchesById: Record<string, unknown>, attemptsById: Record<stri
     }
     throw new Error(`Unexpected URL in test: ${url}`);
   });
+}
+
+/**
+ * Like `mockApi`, but every `GET /quality-executions/:seedId` call (there are exactly 3 for the
+ * §13B regression fixture: the initial fresh fetch, the attempt-level fetch batch 1's own
+ * attempts collection makes for this same id, then the end-of-collection recheck — in that fixed
+ * order) is answered by `sequence(callNumber)` instead of a static map entry, so a test can make
+ * only the *last* (recheck) call return different data.
+ */
+function mockApiWithSeedSequence(
+  seedId: string,
+  sequence: (callNumber: number) => unknown,
+  batchesById: Record<string, unknown>,
+  attemptsById: Record<string, unknown>,
+) {
+  let seedCallCount = 0;
+  vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    const batchMatch = /\/quality-executions\/final-batches\/(.+)$/.exec(url);
+    if (batchMatch) {
+      const batch = batchesById[batchMatch[1]!];
+      if (!batch) throw Object.assign(new Error('not found'), { response: { status: 404 } });
+      return { data: { data: batch } };
+    }
+    const executionMatch = /\/quality-executions\/([^/]+)$/.exec(url);
+    const id = executionMatch![1]!;
+    if (id === seedId) {
+      seedCallCount += 1;
+      return { data: { data: sequence(seedCallCount) } };
+    }
+    const execution = attemptsById[id];
+    if (!execution) throw Object.assign(new Error('not found'), { response: { status: 404 } });
+    return { data: { data: execution } };
+  });
+  return () => seedCallCount;
+}
+
+/** Returns the unchanged `base` execution for the first two calls (the initial fresh fetch and
+ * the attempt-level fetch this same id receives while its own batch is collected), then applies
+ * `modifyCoverage` only for the third — the end-of-collection recheck — simulating a concurrent
+ * change that lands strictly between collection starting and collection finishing. */
+function unchangedThenModifiedCoverage(
+  base: QualityExecutionView,
+  modifyCoverage: (coverage: NonNullable<QualityExecutionView['coverage']>) => QualityExecutionView['coverage'],
+) {
+  return (callNumber: number): QualityExecutionView =>
+    callNumber <= 2 ? base : { ...base, coverage: modifyCoverage(base.coverage!) };
 }
 
 describe('collectConsolidatedFinalInspectionData', () => {
@@ -401,35 +448,117 @@ describe('collectConsolidatedFinalInspectionData', () => {
 
     it('a concurrent batch/coverage change between the fresh fetch and the end-of-collection recheck rejects the export', async () => {
       const fixture = makeRegressionFixture();
-      let seedCallCount = 0;
-      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
-        const batchMatch = /\/quality-executions\/final-batches\/(.+)$/.exec(url);
-        if (batchMatch) return { data: { data: fixture.batchesById[batchMatch[1]!] } };
-        const executionMatch = /\/quality-executions\/([^/]+)$/.exec(url);
-        const id = executionMatch![1]!;
-        if (id === fixture.seedExecution.id) {
-          seedCallCount += 1;
-          // The first two calls (the initial fresh fetch, then the attempt-level fetch this same
-          // id receives while its own batch's attempts are collected) see the unchanged fixture;
-          // only the final end-of-collection recheck — guaranteed to be the 3rd and last call to
-          // this id — simulates another user releasing more stock in the meantime.
-          if (seedCallCount <= 2) return { data: { data: fixture.seedExecution } };
-          return {
-            data: {
-              data: {
-                ...fixture.seedExecution,
-                coverage: { ...fixture.seedExecution.coverage!, releasedQuantity: 999 },
-              },
-            },
-          };
-        }
-        return { data: { data: fixture.attemptExecutions[id] } };
-      });
+      const getSeedCallCount = mockApiWithSeedSequence(
+        fixture.seedExecution.id,
+        unchangedThenModifiedCoverage(fixture.seedExecution, (coverage) => ({ ...coverage, releasedQuantity: 999 })),
+        fixture.batchesById,
+        fixture.attemptExecutions,
+      );
 
       await expect(collectConsolidatedFinalInspectionData(fixture.seedExecution)).rejects.toThrow(
         ConsolidatedFinalInspectionError,
       );
-      expect(seedCallCount).toBe(3);
+      expect(getSeedCallCount()).toBe(3);
+    });
+
+    // ISS-049 follow-up (independent review round 3): the fingerprint above only covered 6
+    // aggregate quantities and a handful of batch fields — every other coverage/reconciliation
+    // field `ConsolidatedFinalInspectionDocument` actually prints (preparedQuantity/
+    // preparedQuantityAuthoritative, remainingQuantity, state, finalQaComplete,
+    // reconciliationConflict) could change mid-collection and escape detection. These cover each
+    // of those fields individually, plus the fingerprint's own order-independence and identity
+    // re-check.
+    it('finalQaComplete flipping false → true with no quantity change is still rejected', async () => {
+      const fixture = makeRegressionFixture();
+      fixture.seedExecution.coverage = { ...fixture.seedExecution.coverage!, finalQaComplete: false };
+      const getSeedCallCount = mockApiWithSeedSequence(
+        fixture.seedExecution.id,
+        unchangedThenModifiedCoverage(fixture.seedExecution, (coverage) => ({ ...coverage, finalQaComplete: true })),
+        fixture.batchesById,
+        fixture.attemptExecutions,
+      );
+
+      await expect(collectConsolidatedFinalInspectionData(fixture.seedExecution)).rejects.toThrow(
+        ConsolidatedFinalInspectionError,
+      );
+      expect(getSeedCallCount()).toBe(3);
+    });
+
+    it('preparedQuantity/remainingQuantity changing while every release total stays identical is still rejected', async () => {
+      const fixture = makeRegressionFixture();
+      mockApiWithSeedSequence(
+        fixture.seedExecution.id,
+        unchangedThenModifiedCoverage(fixture.seedExecution, (coverage) => ({
+          ...coverage,
+          preparedQuantity: (coverage.preparedQuantity ?? 0) + 1,
+          remainingQuantity: (coverage.remainingQuantity ?? 0) + 1,
+        })),
+        fixture.batchesById,
+        fixture.attemptExecutions,
+      );
+
+      await expect(collectConsolidatedFinalInspectionData(fixture.seedExecution)).rejects.toThrow(
+        ConsolidatedFinalInspectionError,
+      );
+    });
+
+    it('reconciliationConflict changing with no release-total change is still rejected', async () => {
+      const fixture = makeRegressionFixture();
+      mockApiWithSeedSequence(
+        fixture.seedExecution.id,
+        unchangedThenModifiedCoverage(fixture.seedExecution, (coverage) => ({
+          ...coverage,
+          reconciliationConflict: !coverage.reconciliationConflict,
+        })),
+        fixture.batchesById,
+        fixture.attemptExecutions,
+      );
+
+      await expect(collectConsolidatedFinalInspectionData(fixture.seedExecution)).rejects.toThrow(
+        ConsolidatedFinalInspectionError,
+      );
+    });
+
+    it('an unchanged report snapshot passes the broadened end-of-collection check — no false positive', async () => {
+      const fixture = makeRegressionFixture();
+      mockApi(fixture.batchesById, fixture.attemptExecutions);
+
+      const result = await collectConsolidatedFinalInspectionData(fixture.seedExecution);
+      expect(result.batches).toHaveLength(3);
+    });
+
+    it('reordered batches in the recheck response still compare equal — the fingerprint is order-independent', async () => {
+      const fixture = makeRegressionFixture();
+      mockApiWithSeedSequence(
+        fixture.seedExecution.id,
+        unchangedThenModifiedCoverage(fixture.seedExecution, (coverage) => ({
+          ...coverage,
+          batches: [...coverage.batches].reverse(),
+        })),
+        fixture.batchesById,
+        fixture.attemptExecutions,
+      );
+
+      const result = await collectConsolidatedFinalInspectionData(fixture.seedExecution);
+      expect(result.batches).toHaveLength(3);
+    });
+
+    it('a final recheck reporting a different Job Order than the initial fresh fetch is rejected', async () => {
+      const fixture = makeRegressionFixture();
+      const getSeedCallCount = mockApiWithSeedSequence(
+        fixture.seedExecution.id,
+        (callNumber) =>
+          callNumber <= 2
+            ? fixture.seedExecution
+            : { ...fixture.seedExecution, jobOrderId: 'some-other-job-order' },
+        fixture.batchesById,
+        fixture.attemptExecutions,
+      );
+
+      await expect(collectConsolidatedFinalInspectionData(fixture.seedExecution)).rejects.toThrow(
+        ConsolidatedFinalInspectionError,
+      );
+      expect(getSeedCallCount()).toBe(3);
     });
   });
 

@@ -171,13 +171,18 @@ export async function collectConsolidatedFinalInspectionData(
   }));
 
   // Lightweight end-of-collection consistency check (never a new snapshot/versioning framework):
-  // re-fetch the same execution id once more and compare coverage fingerprints. Collection above
-  // can take real time (one fetch per batch, one per attempt); if someone else finalized a new
-  // attempt, cancelled/released/reinspected a batch, or changed coverage totals while it ran, the
-  // batches/figures gathered above no longer describe one consistent moment — reject rather than
-  // print a report mixing old and new state.
+  // re-fetch the same execution id once more, re-validate its identity, and compare a structured
+  // fingerprint of every coverage/reconciliation field the document actually prints (see
+  // `buildCoverageFingerprint`). Collection above can take real wall-clock time (one fetch per
+  // batch, one per attempt); if someone else finalized a new attempt, cancelled/released/
+  // reinspected a batch, or changed any printed total while it ran, the batches/figures gathered
+  // above no longer describe one consistent moment — reject rather than print a report mixing old
+  // and new state. This only detects a change up to the moment of this recheck; a change landing
+  // after it (while the PDF itself renders) is accepted as an inherent limit of a point-in-time
+  // check, not something this lightweight recheck is meant to close.
   const recheckExecution = await fetchFreshExecution(cachedExecution.id);
-  if (coverageFingerprint(seedExecution.coverage) !== coverageFingerprint(recheckExecution.coverage)) {
+  assertSameIdentity(recheckExecution, seedExecution);
+  if (!coverageFingerprintsEqual(seedExecution.coverage, recheckExecution.coverage)) {
     throw new ConsolidatedFinalInspectionError(
       'Final Inspection records for this Job Order changed while this report was being prepared. Please try again.',
     );
@@ -210,27 +215,88 @@ function assertSameIdentity(fresh: QualityExecutionView, cached: QualityExecutio
   }
 }
 
-/** A deterministic, order-independent string summary of everything the consolidated report's
- * batch discovery and Section D reconciliation read from `coverage` — used only to detect change
- * between two fetches of the same execution id, never persisted or compared across executions. */
-function coverageFingerprint(coverage: QualityExecutionView['coverage']): string {
-  if (!coverage) return 'null';
-  const batches = [...coverage.batches]
-    .sort((left, right) => left.batchNumber - right.batchNumber)
-    .map(
-      (batch) =>
-        `${batch.id}:${batch.batchNumber}:${batch.physicalQuantity ?? ''}:${batch.status}:${batch.outcome ?? ''}:${batch.disposition ?? ''}:${batch.finalizedAt ?? ''}:${batch.attemptCount ?? ''}`,
-    )
-    .join('|');
-  const totals = [
-    coverage.reservedForFinalQuantity,
-    coverage.releasedQuantity,
-    coverage.permanentlyRejectedQuantity,
-    coverage.awaitingReinspectionQuantity,
-    coverage.resolvedPhysicalCoverage,
-    coverage.inspectedPhysicalCoverage,
-  ].join(',');
-  return `${batches}::${totals}`;
+interface CoverageFingerprintBatch {
+  id: string;
+  batchNumber: number;
+  physicalQuantity: number | null;
+  inspectedQuantity: number | null;
+  status: string;
+  outcome: string | null;
+  disposition: string | null;
+  finalizedAt: string | null;
+  attemptCount: number | null;
+  allocations: Array<{ jobOrderLineSizeId: string; quantity: number }>;
+}
+
+/** Every authoritative coverage/reconciliation field `ConsolidatedFinalInspectionDocument`
+ * actually prints (Section A's summary table + Section D), plus the batch-summary fields that
+ * drive which fetches batch discovery makes. A plain, explicitly-keyed object rather than ad hoc
+ * string concatenation, so adding a newly-displayed field later is a one-line addition here, not a
+ * re-derivation of an opaque string format. */
+interface CoverageFingerprint {
+  preparedQuantityAuthoritative: boolean;
+  preparedQuantity: number | null;
+  reservedForFinalQuantity: number | null;
+  inspectedPhysicalCoverage: number | null;
+  physicalFinalCoverage: number | null;
+  resolvedPhysicalCoverage: number | null;
+  releasedQuantity: number | null;
+  permanentlyRejectedQuantity: number | null;
+  awaitingReinspectionQuantity: number | null;
+  remainingQuantity: number | null;
+  reconciliationConflict: boolean;
+  state: string;
+  finalQaComplete: boolean | null;
+  batches: CoverageFingerprintBatch[];
+}
+
+/** Builds the structured fingerprint used only to detect change between two fetches of the same
+ * execution id (never persisted, never compared across different executions/Job Orders). Batches
+ * — and each batch's own allocations — are sorted by a stable key first, so two fetches reporting
+ * the identical set in a different order still compare equal. */
+function buildCoverageFingerprint(coverage: QualityExecutionView['coverage']): CoverageFingerprint | null {
+  if (!coverage) return null;
+  return {
+    preparedQuantityAuthoritative: coverage.preparedQuantityAuthoritative,
+    preparedQuantity: coverage.preparedQuantity ?? null,
+    reservedForFinalQuantity: coverage.reservedForFinalQuantity ?? null,
+    inspectedPhysicalCoverage: coverage.inspectedPhysicalCoverage ?? null,
+    physicalFinalCoverage: coverage.physicalFinalCoverage ?? null,
+    resolvedPhysicalCoverage: coverage.resolvedPhysicalCoverage ?? null,
+    releasedQuantity: coverage.releasedQuantity ?? null,
+    permanentlyRejectedQuantity: coverage.permanentlyRejectedQuantity ?? null,
+    awaitingReinspectionQuantity: coverage.awaitingReinspectionQuantity ?? null,
+    remainingQuantity: coverage.remainingQuantity ?? null,
+    reconciliationConflict: coverage.reconciliationConflict,
+    state: coverage.state,
+    finalQaComplete: coverage.finalQaComplete ?? null,
+    batches: [...coverage.batches]
+      .sort((left, right) => left.batchNumber - right.batchNumber)
+      .map((batch) => ({
+        id: batch.id,
+        batchNumber: batch.batchNumber,
+        physicalQuantity: batch.physicalQuantity ?? null,
+        inspectedQuantity: batch.inspectedQuantity ?? null,
+        status: batch.status,
+        outcome: batch.outcome ?? null,
+        disposition: batch.disposition ?? null,
+        finalizedAt: batch.finalizedAt ?? null,
+        attemptCount: batch.attemptCount ?? null,
+        allocations: [...(batch.allocations ?? [])]
+          .sort((left, right) => left.jobOrderLineSizeId.localeCompare(right.jobOrderLineSizeId))
+          .map((allocation) => ({
+            jobOrderLineSizeId: allocation.jobOrderLineSizeId,
+            quantity: allocation.quantity,
+          })),
+      })),
+  };
+}
+
+function coverageFingerprintsEqual(
+  left: QualityExecutionView['coverage'],
+  right: QualityExecutionView['coverage'],
+): boolean {
+  return JSON.stringify(buildCoverageFingerprint(left)) === JSON.stringify(buildCoverageFingerprint(right));
 }
 
 function assertOwnership(
