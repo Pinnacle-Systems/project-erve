@@ -28,8 +28,10 @@ export interface ConsolidatedFinalBatchSnapshot {
 }
 
 export interface ConsolidatedFinalInspectionSnapshot {
-  /** The execution the user was viewing when they requested the consolidated export — supplies
-   * Job Order/Style identity and the authoritative `coverage` used for Section D reconciliation. */
+  /** A *freshly fetched* `GET /quality-executions/:id` response for the execution the user was
+   * viewing (same id, re-checked against the caller's own cached copy) — never the caller's cached
+   * object. Supplies Job Order/Style identity and the authoritative `coverage` used for Section D
+   * reconciliation, both as of the moment collection started. */
   seedExecution: QualityExecutionView;
   jobOrderId: string;
   processFlowActivityId: string;
@@ -48,15 +50,30 @@ export interface ConsolidatedFinalInspectionSnapshot {
  * execution PDF already uses, to obtain that attempt's own sections/responses/attachments (the
  * batch-detail endpoint only returns attempt summaries, never full form content).
  *
- * Every fetched batch and attempt is validated against the seed execution's own jobOrderId/
+ * `cachedExecution` is only ever used for its identity (id/jobOrderId/processFlowActivityId) — the
+ * caller's already-rendered, potentially stale, page state. Discovery and reconciliation always
+ * run against a *fresh* `GET /quality-executions/:id` fetched here (another user may have created,
+ * cancelled, reinspected, or released a physical batch since the page loaded), and that fresh
+ * response's identity is checked against `cachedExecution`'s before it's trusted — never falls back
+ * to the cached object's own `coverage`/`finalBatch`.
+ *
+ * Every fetched batch and attempt is validated against the fresh seed's own jobOrderId/
  * processFlowActivityId before being trusted (never relies on batch numbers or client-supplied ids
  * alone) — a mismatch throws `ConsolidatedFinalInspectionError` rather than silently including
  * foreign data. Network/authorization failures throw the same way: a required inspection record
  * (as opposed to an optional evidence image) never degrades to a placeholder.
+ *
+ * Finally, because batch/attempt fetches below take real wall-clock time, a lightweight
+ * end-of-collection recheck re-fetches the seed execution once more and compares a coverage
+ * fingerprint against the one collection started with — a concurrent change mid-collection rejects
+ * the export rather than silently rendering a report that mixes two different moments in time.
  */
 export async function collectConsolidatedFinalInspectionData(
-  seedExecution: QualityExecutionView,
+  cachedExecution: QualityExecutionView,
 ): Promise<ConsolidatedFinalInspectionSnapshot> {
+  const seedExecution = await fetchFreshExecution(cachedExecution.id);
+  assertSameIdentity(seedExecution, cachedExecution);
+
   if (!seedExecution.finalBatch) {
     throw new ConsolidatedFinalInspectionError(
       'This inspection record is not part of a Final Inspection physical batch.',
@@ -153,7 +170,67 @@ export async function collectConsolidatedFinalInspectionData(
       }),
   }));
 
+  // Lightweight end-of-collection consistency check (never a new snapshot/versioning framework):
+  // re-fetch the same execution id once more and compare coverage fingerprints. Collection above
+  // can take real time (one fetch per batch, one per attempt); if someone else finalized a new
+  // attempt, cancelled/released/reinspected a batch, or changed coverage totals while it ran, the
+  // batches/figures gathered above no longer describe one consistent moment — reject rather than
+  // print a report mixing old and new state.
+  const recheckExecution = await fetchFreshExecution(cachedExecution.id);
+  if (coverageFingerprint(seedExecution.coverage) !== coverageFingerprint(recheckExecution.coverage)) {
+    throw new ConsolidatedFinalInspectionError(
+      'Final Inspection records for this Job Order changed while this report was being prepared. Please try again.',
+    );
+  }
+
   return { seedExecution, jobOrderId, processFlowActivityId, batches };
+}
+
+async function fetchFreshExecution(executionId: string): Promise<QualityExecutionView> {
+  try {
+    return (
+      await apiClient.get<ApiSuccessResponse<QualityExecutionView>>(`/quality-executions/${executionId}`)
+    ).data.data;
+  } catch {
+    throw new ConsolidatedFinalInspectionError(
+      'Unable to load the current Final Inspection record. The consolidated report could not be completed.',
+    );
+  }
+}
+
+function assertSameIdentity(fresh: QualityExecutionView, cached: QualityExecutionView): void {
+  if (
+    fresh.id !== cached.id ||
+    fresh.jobOrderId !== cached.jobOrderId ||
+    fresh.processFlowActivityId !== cached.processFlowActivityId
+  ) {
+    throw new ConsolidatedFinalInspectionError(
+      'The Final Inspection record changed identity while refreshing. The consolidated report could not be completed safely.',
+    );
+  }
+}
+
+/** A deterministic, order-independent string summary of everything the consolidated report's
+ * batch discovery and Section D reconciliation read from `coverage` — used only to detect change
+ * between two fetches of the same execution id, never persisted or compared across executions. */
+function coverageFingerprint(coverage: QualityExecutionView['coverage']): string {
+  if (!coverage) return 'null';
+  const batches = [...coverage.batches]
+    .sort((left, right) => left.batchNumber - right.batchNumber)
+    .map(
+      (batch) =>
+        `${batch.id}:${batch.batchNumber}:${batch.physicalQuantity ?? ''}:${batch.status}:${batch.outcome ?? ''}:${batch.disposition ?? ''}:${batch.finalizedAt ?? ''}:${batch.attemptCount ?? ''}`,
+    )
+    .join('|');
+  const totals = [
+    coverage.reservedForFinalQuantity,
+    coverage.releasedQuantity,
+    coverage.permanentlyRejectedQuantity,
+    coverage.awaitingReinspectionQuantity,
+    coverage.resolvedPhysicalCoverage,
+    coverage.inspectedPhysicalCoverage,
+  ].join(',');
+  return `${batches}::${totals}`;
 }
 
 function assertOwnership(

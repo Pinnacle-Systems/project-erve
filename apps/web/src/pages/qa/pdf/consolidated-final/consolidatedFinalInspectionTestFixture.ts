@@ -116,14 +116,7 @@ export function makeAttemptExecution(options: MakeAttemptExecutionOptions): Qual
  * reconciliation example uses to prove the report prints 72, never 132.
  */
 export function makeRegressionFixture() {
-  const seedExecution = makeAttemptExecution({
-    id: 'batch1-attempt2',
-    finalBatchId: 'batch-1',
-    batchNumber: 1,
-    attemptNumber: 2,
-    outcomeValue: 'PASS',
-  });
-  seedExecution.coverage = {
+  const coverage: QualityExecutionView['coverage'] = {
     preparedQuantityAuthoritative: true,
     preparedQuantity: 72,
     inspectedQuantity: 72,
@@ -276,6 +269,10 @@ export function makeRegressionFixture() {
         },
       ],
     }),
+    // This is also the §13B fixture's seed execution (the one the user was "viewing" when they
+    // requested the export) — its own `coverage` is set below, once, so the object the mocked
+    // `GET /quality-executions/batch1-attempt2` returns is identical to `seedExecution` and a
+    // fresh re-fetch of it is trivially consistent in every "happy path" collector test.
     'batch1-attempt2': makeAttemptExecution({
       id: 'batch1-attempt2',
       finalBatchId: 'batch-1',
@@ -326,6 +323,12 @@ export function makeRegressionFixture() {
   };
 
   const batchesById: Record<string, FinalQualityBatchView> = { 'batch-1': batch1, 'batch-2': batch2, 'batch-3': batch3 };
+
+  // Same object the mocked `GET /quality-executions/batch1-attempt2` serves from
+  // `attemptExecutions` — a fresh re-fetch of the seed is therefore identical to the seed itself
+  // in every test that doesn't deliberately simulate a concurrent change.
+  const seedExecution = attemptExecutions['batch1-attempt2']!;
+  seedExecution.coverage = coverage;
 
   return {
     seedExecution,

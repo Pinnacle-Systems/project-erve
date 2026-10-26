@@ -32,12 +32,14 @@ describe('collectConsolidatedFinalInspectionData', () => {
   it('rejects a seed execution with no finalBatch (PPM/Inline never offer this export)', async () => {
     const seed = makeAttemptExecution({ id: 'e1', finalBatchId: 'b1', batchNumber: 1, attemptNumber: 1 });
     seed.finalBatch = null;
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: seed } });
     await expect(collectConsolidatedFinalInspectionData(seed)).rejects.toThrow(ConsolidatedFinalInspectionError);
   });
 
   it('rejects a seed execution with no coverage', async () => {
     const seed = makeAttemptExecution({ id: 'e1', finalBatchId: 'b1', batchNumber: 1, attemptNumber: 1 });
     seed.coverage = null;
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: seed } });
     await expect(collectConsolidatedFinalInspectionData(seed)).rejects.toThrow(ConsolidatedFinalInspectionError);
   });
 
@@ -56,6 +58,7 @@ describe('collectConsolidatedFinalInspectionData', () => {
       hasFailedBatches: false,
       batches: [],
     };
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: seed } });
     await expect(collectConsolidatedFinalInspectionData(seed)).rejects.toThrow(ConsolidatedFinalInspectionError);
   });
 
@@ -89,7 +92,11 @@ describe('collectConsolidatedFinalInspectionData', () => {
         },
       ],
     };
-    mockApi({ b1: batch }, { 'b1-attempt-1': attempt });
+    // The seed's own id ('b1-attempt-1') is also the id of the one attempt inside batch `b1` —
+    // register `seed` (the version carrying the custom coverage), not the plain `attempt`, so the
+    // fresh seed fetch and the end-of-collection recheck both see the coverage this test asserts
+    // against, exactly as the real `GET /quality-executions/:id` would.
+    mockApi({ b1: batch }, { 'b1-attempt-1': seed });
 
     const result = await collectConsolidatedFinalInspectionData(seed);
     expect(result.batches).toHaveLength(1);
@@ -167,7 +174,7 @@ describe('collectConsolidatedFinalInspectionData', () => {
         },
       ],
     };
-    mockApi({ b1: batch }, { 'b1-attempt-1': attempt });
+    mockApi({ b1: batch }, { 'b1-attempt-1': seed });
 
     const result = await collectConsolidatedFinalInspectionData(seed);
     expect(result.batches[0]!.attempts[0]!.status).toBe('DRAFT');
@@ -213,6 +220,217 @@ describe('collectConsolidatedFinalInspectionData', () => {
     await expect(collectConsolidatedFinalInspectionData(fixture.seedExecution)).rejects.toThrow(
       ConsolidatedFinalInspectionError,
     );
+  });
+
+  // ISS-049 follow-up: discovery/reconciliation must always use a *fresh* fetch, never the
+  // caller's cached execution — another user may have created/cancelled/reinspected/released a
+  // physical batch since the page loaded.
+  describe('freshness — never trusts the caller-supplied execution for discovery/reconciliation', () => {
+    const BATCH_1_ENTRY = {
+      id: 'b1',
+      batchNumber: 1,
+      physicalQuantity: 60,
+      inspectedQuantity: 60,
+      status: 'FINALIZED' as const,
+      outcome: 'PASS' as const,
+      disposition: 'RELEASED' as const,
+      finalizedAt: null,
+      allocations: [],
+      attemptCount: 1,
+    };
+    const BATCH_2_ENTRY = {
+      id: 'b2',
+      batchNumber: 2,
+      physicalQuantity: 12,
+      inspectedQuantity: 12,
+      status: 'FINALIZED' as const,
+      outcome: 'PASS' as const,
+      disposition: 'RELEASED' as const,
+      finalizedAt: null,
+      allocations: [],
+      attemptCount: 1,
+    };
+
+    it('cached execution reflects only Batch 1, but the fresh export-time response already has Batch 1 + Batch 2 — both are collected', async () => {
+      const cached = makeAttemptExecution({ id: 'e1', finalBatchId: 'b1', batchNumber: 1, attemptNumber: 1 });
+      cached.coverage = {
+        preparedQuantityAuthoritative: true,
+        preparedQuantity: 60,
+        inspectedQuantity: 60,
+        remainingQuantity: 0,
+        complete: true,
+        reconciliationConflict: false,
+        state: 'COMPLETE',
+        passedBatches: 1,
+        failedBatches: 0,
+        hasFailedBatches: false,
+        batches: [BATCH_1_ENTRY],
+      };
+      const fresh = makeAttemptExecution({ id: 'e1', finalBatchId: 'b1', batchNumber: 1, attemptNumber: 1 });
+      fresh.coverage = {
+        preparedQuantityAuthoritative: true,
+        preparedQuantity: 72,
+        inspectedQuantity: 72,
+        reservedForFinalQuantity: 72,
+        releasedQuantity: 72,
+        remainingQuantity: 0,
+        complete: true,
+        reconciliationConflict: false,
+        state: 'COMPLETE',
+        passedBatches: 2,
+        failedBatches: 0,
+        hasFailedBatches: false,
+        batches: [BATCH_1_ENTRY, BATCH_2_ENTRY],
+      };
+      const batch1 = makeFinalBatchView({
+        id: 'b1',
+        batchNumber: 1,
+        physicalQuantity: 60,
+        attempts: [{ id: 'e1', attemptNumber: 1, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: null }],
+      });
+      const batch2 = makeFinalBatchView({
+        id: 'b2',
+        batchNumber: 2,
+        physicalQuantity: 12,
+        attempts: [{ id: 'e2', attemptNumber: 1, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: null }],
+      });
+      const attempt2 = makeAttemptExecution({ id: 'e2', finalBatchId: 'b2', batchNumber: 2, attemptNumber: 1 });
+      mockApi({ b1: batch1, b2: batch2 }, { e1: fresh, e2: attempt2 });
+
+      const result = await collectConsolidatedFinalInspectionData(cached);
+      expect(result.batches.map((b) => b.batch.id)).toEqual(['b1', 'b2']);
+    });
+
+    it('cached coverage shows 60 released; the fresh response shows 72 — the snapshot reports 72, never the stale 60', async () => {
+      const cached = makeAttemptExecution({ id: 'e1', finalBatchId: 'b1', batchNumber: 1, attemptNumber: 1 });
+      cached.coverage = {
+        preparedQuantityAuthoritative: true,
+        preparedQuantity: 60,
+        inspectedQuantity: 60,
+        releasedQuantity: 60,
+        remainingQuantity: 0,
+        complete: true,
+        reconciliationConflict: false,
+        state: 'COMPLETE',
+        passedBatches: 1,
+        failedBatches: 0,
+        hasFailedBatches: false,
+        batches: [BATCH_1_ENTRY],
+      };
+      const fresh = makeAttemptExecution({ id: 'e1', finalBatchId: 'b1', batchNumber: 1, attemptNumber: 1 });
+      fresh.coverage = {
+        preparedQuantityAuthoritative: true,
+        preparedQuantity: 72,
+        inspectedQuantity: 72,
+        reservedForFinalQuantity: 72,
+        releasedQuantity: 72,
+        remainingQuantity: 0,
+        complete: true,
+        reconciliationConflict: false,
+        state: 'COMPLETE',
+        passedBatches: 2,
+        failedBatches: 0,
+        hasFailedBatches: false,
+        batches: [BATCH_1_ENTRY, BATCH_2_ENTRY],
+      };
+      const batch1 = makeFinalBatchView({
+        id: 'b1',
+        batchNumber: 1,
+        physicalQuantity: 60,
+        attempts: [{ id: 'e1', attemptNumber: 1, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: null }],
+      });
+      const batch2 = makeFinalBatchView({
+        id: 'b2',
+        batchNumber: 2,
+        physicalQuantity: 12,
+        attempts: [{ id: 'e2', attemptNumber: 1, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: null }],
+      });
+      const attempt2 = makeAttemptExecution({ id: 'e2', finalBatchId: 'b2', batchNumber: 2, attemptNumber: 1 });
+      mockApi({ b1: batch1, b2: batch2 }, { e1: fresh, e2: attempt2 });
+
+      const result = await collectConsolidatedFinalInspectionData(cached);
+      expect(result.seedExecution.coverage!.releasedQuantity).toBe(72);
+    });
+
+    it('a failed/forbidden fresh fetch aborts immediately — never falls back to the cached execution for batch discovery', async () => {
+      const cached = makeAttemptExecution({ id: 'e1', finalBatchId: 'b1', batchNumber: 1, attemptNumber: 1 });
+      cached.coverage = {
+        preparedQuantityAuthoritative: true,
+        preparedQuantity: 60,
+        inspectedQuantity: 60,
+        remainingQuantity: 0,
+        complete: true,
+        reconciliationConflict: false,
+        state: 'COMPLETE',
+        passedBatches: 1,
+        failedBatches: 0,
+        hasFailedBatches: false,
+        batches: [BATCH_1_ENTRY],
+      };
+      const get = vi
+        .spyOn(apiClient, 'get')
+        .mockRejectedValue(Object.assign(new Error('Forbidden'), { response: { status: 403 } }));
+
+      await expect(collectConsolidatedFinalInspectionData(cached)).rejects.toThrow(ConsolidatedFinalInspectionError);
+      // Only the fresh seed fetch was ever attempted — the cached batch list was never consulted.
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(get).toHaveBeenCalledWith('/quality-executions/e1');
+    });
+
+    it('a fresh response reporting a different execution id/Job Order/activity than the cached one is rejected', async () => {
+      const cached = makeAttemptExecution({
+        id: 'e1',
+        jobOrderId: 'jo-1',
+        processFlowActivityId: 'activity-final-1',
+        finalBatchId: 'b1',
+        batchNumber: 1,
+        attemptNumber: 1,
+      });
+      const freshWrongJobOrder = makeAttemptExecution({
+        id: 'e1',
+        jobOrderId: 'some-other-job-order',
+        processFlowActivityId: 'activity-final-1',
+        finalBatchId: 'b1',
+        batchNumber: 1,
+        attemptNumber: 1,
+      });
+      vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: freshWrongJobOrder } });
+
+      await expect(collectConsolidatedFinalInspectionData(cached)).rejects.toThrow(ConsolidatedFinalInspectionError);
+    });
+
+    it('a concurrent batch/coverage change between the fresh fetch and the end-of-collection recheck rejects the export', async () => {
+      const fixture = makeRegressionFixture();
+      let seedCallCount = 0;
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+        const batchMatch = /\/quality-executions\/final-batches\/(.+)$/.exec(url);
+        if (batchMatch) return { data: { data: fixture.batchesById[batchMatch[1]!] } };
+        const executionMatch = /\/quality-executions\/([^/]+)$/.exec(url);
+        const id = executionMatch![1]!;
+        if (id === fixture.seedExecution.id) {
+          seedCallCount += 1;
+          // The first two calls (the initial fresh fetch, then the attempt-level fetch this same
+          // id receives while its own batch's attempts are collected) see the unchanged fixture;
+          // only the final end-of-collection recheck — guaranteed to be the 3rd and last call to
+          // this id — simulates another user releasing more stock in the meantime.
+          if (seedCallCount <= 2) return { data: { data: fixture.seedExecution } };
+          return {
+            data: {
+              data: {
+                ...fixture.seedExecution,
+                coverage: { ...fixture.seedExecution.coverage!, releasedQuantity: 999 },
+              },
+            },
+          };
+        }
+        return { data: { data: fixture.attemptExecutions[id] } };
+      });
+
+      await expect(collectConsolidatedFinalInspectionData(fixture.seedExecution)).rejects.toThrow(
+        ConsolidatedFinalInspectionError,
+      );
+      expect(seedCallCount).toBe(3);
+    });
   });
 
   it('never fetches more than the bounded concurrency limit of batches/attempts at once', async () => {
