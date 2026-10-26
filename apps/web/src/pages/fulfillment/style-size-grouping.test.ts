@@ -3,7 +3,9 @@ import {
   distinctSizeColumns,
   groupFinancialLinesByStyle,
   groupLinesByStyle,
+  groupReceiptLinesByStyle,
   type FinancialStyleSizeLine,
+  type ReceiptTraceableLine,
   type StyleSizeQuantityLine,
 } from './style-size-grouping.js';
 
@@ -283,5 +285,71 @@ describe('groupFinancialLinesByStyle (ISS-010 Factory Invoice financial grouping
 
   it('returns an empty array for no lines', () => {
     expect(groupFinancialLinesByStyle([])).toEqual([]);
+  });
+});
+
+function makeReceiptLine(overrides: Partial<ReceiptTraceableLine> = {}): ReceiptTraceableLine {
+  return {
+    saleOrderLineId: 'sol-1',
+    styleNumber: 'ST-001',
+    styleName: 'Classic Tee',
+    sizeCode: 'M',
+    sizeLabel: 'Medium',
+    quantity: 10,
+    ...overrides,
+  };
+}
+
+describe('groupReceiptLinesByStyle (ISS-080)', () => {
+  it('groups one Style with multiple Sizes under a single group, in original order', () => {
+    const lines = [
+      makeReceiptLine({ saleOrderLineId: 'sol-s', sizeCode: 'S', sizeLabel: 'Small', quantity: 5 }),
+      makeReceiptLine({ saleOrderLineId: 'sol-m', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10 }),
+      makeReceiptLine({ saleOrderLineId: 'sol-l', sizeCode: 'L', sizeLabel: 'Large', quantity: 8 }),
+    ];
+    const groups = groupReceiptLinesByStyle(lines);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.lines.map((line) => line.sizeCode)).toEqual(['S', 'M', 'L']);
+    expect(groups[0]!.dispatchedSubtotal).toBe(23);
+  });
+
+  it('keeps multiple Styles as separate groups, in first-appearance order, never mixing their lines', () => {
+    const lines = [
+      makeReceiptLine({ saleOrderLineId: 'sol-a1', styleNumber: 'ST-A', styleName: 'Style A', sizeCode: 'M' }),
+      makeReceiptLine({ saleOrderLineId: 'sol-b1', styleNumber: 'ST-B', styleName: 'Style B', sizeCode: 'M' }),
+      makeReceiptLine({ saleOrderLineId: 'sol-a2', styleNumber: 'ST-A', styleName: 'Style A', sizeCode: 'L' }),
+    ];
+    const groups = groupReceiptLinesByStyle(lines);
+    expect(groups.map((g) => g.styleNumber)).toEqual(['ST-A', 'ST-B']);
+    expect(groups[0]!.lines.map((l) => l.saleOrderLineId)).toEqual(['sol-a1', 'sol-a2']);
+    expect(groups[1]!.lines.map((l) => l.saleOrderLineId)).toEqual(['sol-b1']);
+  });
+
+  it('never merges duplicate Style+Size source lines — each original saleOrderLineId stays its own traceable entry', () => {
+    const lines = [
+      makeReceiptLine({ saleOrderLineId: 'sol-dup-1', sizeCode: 'M', quantity: 10 }),
+      makeReceiptLine({ saleOrderLineId: 'sol-dup-2', sizeCode: 'M', quantity: 6 }),
+    ];
+    const groups = groupReceiptLinesByStyle(lines);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.lines).toHaveLength(2);
+    expect(groups[0]!.lines.map((l) => l.saleOrderLineId)).toEqual(['sol-dup-1', 'sol-dup-2']);
+    expect(groups[0]!.dispatchedSubtotal).toBe(16);
+  });
+
+  it('reconciles each group dispatchedSubtotal exactly to the sum of its underlying lines', () => {
+    const lines = [
+      makeReceiptLine({ saleOrderLineId: 'sol-1', styleNumber: 'ST-A', quantity: 4 }),
+      makeReceiptLine({ saleOrderLineId: 'sol-2', styleNumber: 'ST-A', quantity: 11 }),
+      makeReceiptLine({ saleOrderLineId: 'sol-3', styleNumber: 'ST-B', quantity: 7 }),
+    ];
+    const groups = groupReceiptLinesByStyle(lines);
+    const total = groups.reduce((sum, g) => sum + g.dispatchedSubtotal, 0);
+    expect(total).toBe(lines.reduce((sum, l) => sum + l.quantity, 0));
+    expect(groups.find((g) => g.styleNumber === 'ST-A')!.dispatchedSubtotal).toBe(15);
+  });
+
+  it('returns an empty array for no lines', () => {
+    expect(groupReceiptLinesByStyle([])).toEqual([]);
   });
 });

@@ -191,6 +191,81 @@ async function clickConfirmDelivery() {
   await act(async () => button!.click());
 }
 
+describe('ISS-080: receipt entry grouped by Style then Size', () => {
+  it('groups one Style with multiple Sizes under one Style header with a reconciling subtotal', async () => {
+    const dispatch = buildDispatch({
+      status: 'DISPATCHED',
+      version: 3,
+      invoiceHandoffs: [
+        { invoiceHandoffId: 'ih-s', saleOrderLineId: 'sol-s', purchaseMode: 'OUTRIGHT', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'S', sizeLabel: 'Small', quantity: 5, status: 'PENDING_TALLY', tallyInvoiceNumber: null, tallyInvoiceDate: null },
+        { invoiceHandoffId: 'ih-m', saleOrderLineId: 'sol-m', purchaseMode: 'OUTRIGHT', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, status: 'PENDING_TALLY', tallyInvoiceNumber: null, tallyInvoiceDate: null },
+      ],
+    });
+    await renderPage(async (url: string) => {
+      if (url === '/erve-dispatches/ed-1') return { data: { data: dispatch } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    expect(content()).toContain('ST-001');
+    expect(content()).toContain('Classic Tee');
+    expect(content()).toContain('Dispatched 15');
+    expect(content()).toContain('Received 15');
+    const quantities = container.querySelectorAll<HTMLInputElement>('input[type="number"]');
+    expect(quantities).toHaveLength(2);
+  });
+
+  it('keeps two Styles as separate groups that never mix their Size rows', async () => {
+    const dispatch = buildDeliveryDispatch('PENDING_TALLY');
+    await renderPage(async (url: string) => {
+      if (url === '/erve-dispatches/ed-1') return { data: { data: dispatch } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    expect(content()).toContain('STYLE-OUT');
+    expect(content()).toContain('STYLE-SR');
+    const groups = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="number"]')).map(
+      (input) => input.closest('.p-3')?.textContent ?? '',
+    );
+    expect(groups[0]).toContain('STYLE-OUT');
+    expect(groups[0]).not.toContain('STYLE-SR');
+    expect(groups[1]).toContain('STYLE-SR');
+    expect(groups[1]).not.toContain('STYLE-OUT');
+  });
+
+  it('preserves two duplicate Style+Size source lines as individually traceable, independently editable rows', async () => {
+    const dispatch = buildDispatch({
+      status: 'DISPATCHED',
+      version: 9,
+      invoiceHandoffs: [
+        { invoiceHandoffId: 'ih-dup-1', saleOrderLineId: 'sol-dup-1', purchaseMode: 'OUTRIGHT', styleNumber: 'ST-DUP', styleName: 'Duplicate Style', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, status: 'PENDING_TALLY', tallyInvoiceNumber: null, tallyInvoiceDate: null },
+        { invoiceHandoffId: 'ih-dup-2', saleOrderLineId: 'sol-dup-2', purchaseMode: 'OUTRIGHT', styleNumber: 'ST-DUP', styleName: 'Duplicate Style', sizeCode: 'M', sizeLabel: 'Medium', quantity: 6, status: 'PENDING_TALLY', tallyInvoiceNumber: null, tallyInvoiceDate: null },
+      ],
+    });
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: dispatch } });
+    await renderPage(async (url: string) => {
+      if (url === '/erve-dispatches/ed-1') return { data: { data: dispatch } };
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    const quantities = container.querySelectorAll<HTMLInputElement>('input[type="number"]');
+    expect(quantities).toHaveLength(2);
+    expect(quantities[0]!.value).toBe('10');
+    expect(quantities[1]!.value).toBe('6');
+    expect(content()).toContain('Dispatched 16');
+
+    changeInput(quantities[0]!, '9');
+    await clickConfirmDelivery();
+    expect(patch).toHaveBeenCalledExactlyOnceWith('/erve-dispatches/ed-1/delivery', {
+      expectedVersion: 9,
+      lines: [
+        { saleOrderLineId: 'sol-dup-1', receivedQuantity: 9 },
+        { saleOrderLineId: 'sol-dup-2', receivedQuantity: 6 },
+      ],
+      remarks: undefined,
+    });
+  });
+});
+
 describe('ErveDispatchDetailPage load error handling (UXAUTH-018)', () => {
   it('shows an error state, not a not-found/empty state, when the request fails', async () => {
     await renderPage(async () => {
