@@ -109,7 +109,7 @@ async function renderPage(packingList: ErvePackingListDetail, role: Role = 'ADMI
   mockAuth(role);
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
     if (url === '/erve-packing-lists/epl-1') return { data: { data: packingList } };
-    if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: eligibleCartons } };
+    if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: { items: eligibleCartons, pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
     throw new Error(`Unexpected GET: ${url}`);
   });
 
@@ -473,7 +473,7 @@ describe('ISS-053 Style thumbnails — Cartons and Style/Size Summary', () => {
     const imageRequests: string[] = [];
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
       if (url === '/erve-packing-lists/epl-1') return { data: { data: packingList } };
-      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: [] } };
+      if (url === '/erve-packing-lists/eligible-cartons') return { data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } };
       if (url.includes('/images/')) {
         imageRequests.push(url);
         return { data: new Blob(['fake-image-bytes'], { type: 'image/jpeg' }) };

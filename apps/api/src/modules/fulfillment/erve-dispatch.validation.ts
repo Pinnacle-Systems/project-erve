@@ -18,6 +18,14 @@ export const listErvePackingListsQuerySchema = z.object({
 
 export const listEligibleCartonsQuerySchema = z.object({
   ervePackingListId: z.string().trim().optional(),
+  search: z
+    .string()
+    .trim()
+    .max(256)
+    .refine((value) => !value.includes('\u0000'), 'Search must not contain null characters')
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  cursor: z.string().trim().min(1).max(1024).optional(),
 });
 
 export const recordErveDispatchSchema = z.object({
@@ -36,9 +44,12 @@ export const updateErveDispatchLrSchema = z
     vehicleNumber: z.string().trim().max(100).optional().nullable(),
     lrNumber: z.string().trim().max(100).optional().nullable(),
   })
-  .refine((v) => v.transporter !== undefined || v.vehicleNumber !== undefined || v.lrNumber !== undefined, {
-    message: 'At least one of transporter, vehicleNumber or lrNumber is required',
-  });
+  .refine(
+    (v) => v.transporter !== undefined || v.vehicleNumber !== undefined || v.lrNumber !== undefined,
+    {
+      message: 'At least one of transporter, vehicleNumber or lrNumber is required',
+    },
+  );
 
 export const confirmErveDispatchDeliverySchema = z.object({
   expectedVersion: z.number().int().nonnegative(),

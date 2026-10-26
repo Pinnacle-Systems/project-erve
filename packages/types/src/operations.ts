@@ -553,6 +553,9 @@ export interface EligibleErveCartonView {
   lines: Array<{ saleOrderLineId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; sizeSortOrder?: number; quantity: number }>;
 }
 
+/** Live inventory discovery; an empty page can still have a continuation cursor. */
+export type EligibleErveCartonPage = PaginatedResponse<EligibleErveCartonView>;
+
 /**
  * A carton consolidated into one Erve Packing List — the physical authority for the Consolidated
  * Packing List (Phase 6 plan §7/§8). factory/factoryDispatchId/factoryDispatchNumber are confidential

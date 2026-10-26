@@ -1,0 +1,225 @@
+{
+  "assertions": [
+    {
+      "caseId": "create-bounded",
+      "description": "Create starts with one bounded page",
+      "status": "PASS",
+      "timestamp": "2026-10-25T08:55:26.865Z"
+    },
+    {
+      "caseId": "create-retained",
+      "description": "Search preserves two selected cartons, 16 pieces, two Factories and two Dispatch Orders",
+      "status": "PASS",
+      "timestamp": "2026-10-25T08:55:27.773Z"
+    },
+    {
+      "caseId": "create-success",
+      "description": "Real Create submits retained cartons from two Dispatch Orders",
+      "status": "PASS",
+      "timestamp": "2026-10-25T08:55:28.822Z"
+    },
+    {
+      "caseId": "add-empty-continuation",
+      "description": "OPEN Add Cartons offers continuation after an empty 200-candidate batch",
+      "status": "PASS",
+      "timestamp": "2026-10-25T08:55:32.775Z"
+    },
+    {
+      "caseId": "add-retry",
+      "description": "Failed continuation retries the same cursor",
+      "status": "PASS",
+      "timestamp": "2026-10-25T08:55:33.296Z"
+    },
+    {
+      "caseId": "add-retained-empty",
+      "description": "Add selection and 16-piece summary persist with no visible results",
+      "status": "PASS",
+      "timestamp": "2026-10-25T08:55:34.314Z"
+    },
+    {
+      "caseId": "add-success",
+      "description": "Real Add clears selection and refreshes list detail",
+      "status": "PASS",
+      "timestamp": "2026-10-25T08:55:34.835Z"
+    }
+  ],
+  "runtimeErrors": [],
+  "requests": [
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "search": "",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "search": "",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "search": "bench-ctn-11999",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "search": "bench-ctn-11999",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "search": "bench-ctn-10050",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "search": "bench-ctn-10050",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "search": "bench-ctn-10050",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S4B7VRAG1A64D8M9SKRSCF",
+        "search": "",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S4B7VRAG1A64D8M9SKRSCF",
+        "search": "",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "",
+        "limit": "25",
+        "cursor": "eyJ2IjoxLCJhdCI6IjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIsImlkIjoiYmVuY2gtY2FydG9uLTEwMjYyIiwiY29udGV4dCI6IjQzNGNjMzU1MTQ4M2Y2Zjg3N2I0NDM3ZjNmNzM3ZWM2MDJjYjUwOTg4OTFmMGZiMmUzNDA5NWQwZjk2ZjAxM2IifQ"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "",
+        "limit": "25",
+        "cursor": "eyJ2IjoxLCJhdCI6IjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIsImlkIjoiYmVuY2gtY2FydG9uLTEwMjYyIiwiY29udGV4dCI6IjQzNGNjMzU1MTQ4M2Y2Zjg3N2I0NDM3ZjNmNzM3ZWM2MDJjYjUwOTg4OTFmMGZiMmUzNDA5NWQwZjk2ZjAxM2IifQ"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "",
+        "limit": "25",
+        "cursor": "eyJ2IjoxLCJhdCI6IjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIsImlkIjoiYmVuY2gtY2FydG9uLTEwMjYyIiwiY29udGV4dCI6IjQzNGNjMzU1MTQ4M2Y2Zjg3N2I0NDM3ZjNmNzM3ZWM2MDJjYjUwOTg4OTFmMGZiMmUzNDA5NWQwZjk2ZjAxM2IifQ"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "",
+        "limit": "25",
+        "cursor": "eyJ2IjoxLCJhdCI6IjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIsImlkIjoiYmVuY2gtY2FydG9uLTEwMjYyIiwiY29udGV4dCI6IjQzNGNjMzU1MTQ4M2Y2Zjg3N2I0NDM3ZjNmNzM3ZWM2MDJjYjUwOTg4OTFmMGZiMmUzNDA5NWQwZjk2ZjAxM2IifQ"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "",
+        "limit": "25",
+        "cursor": "eyJ2IjoxLCJhdCI6IjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIsImlkIjoiYmVuY2gtY2FydG9uLTEwNDczIiwiY29udGV4dCI6IjQzNGNjMzU1MTQ4M2Y2Zjg3N2I0NDM3ZjNmNzM3ZWM2MDJjYjUwOTg4OTFmMGZiMmUzNDA5NWQwZjk2ZjAxM2IifQ"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "",
+        "limit": "25",
+        "cursor": "eyJ2IjoxLCJhdCI6IjIwMjYtMDEtMDFUMDA6MDA6MDAuMDAwWiIsImlkIjoiYmVuY2gtY2FydG9uLTEwNDczIiwiY29udGV4dCI6IjQzNGNjMzU1MTQ4M2Y2Zjg3N2I0NDM3ZjNmNzM3ZWM2MDJjYjUwOTg4OTFmMGZiMmUzNDA5NWQwZjk2ZjAxM2IifQ"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "bench-ctn-11985",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "bench-ctn-11985",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "no-such-carton",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "no-such-carton",
+        "limit": "25"
+      }
+    },
+    {
+      "path": "/erve-packing-lists/eligible-cartons",
+      "params": {
+        "ervePackingListId": "01M5S3YZFX5RAR5F6YDP59CJKJ",
+        "search": "no-such-carton",
+        "limit": "25"
+      }
+    }
+  ],
+  "injectedFailure": true
+}

@@ -2,7 +2,12 @@ import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { ConfirmDialog, createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
+import {
+  ConfirmDialog,
+  createEnterToNextHandler,
+  PageHeader,
+  StatusBadge,
+} from '@erve/app-components';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, LoadingState, EmptyState, ErrorState } from '@erve/data-display';
@@ -17,6 +22,11 @@ import { canMutateErveDispatches } from '../../auth/permissions.js';
 import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
 import type { StyleSizeGridRow } from '../../components/style-size-grid/types.js';
 import { distinctSizeColumns, groupLinesByStyle, withSizeIdentity } from './style-size-grouping.js';
+import { useEligibleErveCartons } from './use-eligible-erve-cartons.js';
+import {
+  EligibleCartonSearch,
+  EligibleCartonContinuation,
+} from './EligibleCartonDiscoveryControls.js';
 import type {
   EligibleErveCartonView,
   ErvePackingListCartonView,
@@ -30,7 +40,9 @@ import type {
 // pattern in PackingListPage.tsx). `styleId` is already the real Style UUID (ISS-053) — never
 // substitute styleNumber, which would break StyleThumbnailCell's authenticated image fetch.
 function cartonStyleSizeRows(carton: ErvePackingListCartonView): StyleSizeGridRow[] {
-  const primaryImageByStyle = new Map(carton.lines.map((line) => [line.styleId, line.primaryImage] as const));
+  const primaryImageByStyle = new Map(
+    carton.lines.map((line) => [line.styleId, line.primaryImage] as const),
+  );
   return groupLinesByStyle(carton.lines.map(withSizeIdentity)).map((group) => ({
     styleId: group.styleId,
     styleNumber: group.styleNumber,
@@ -61,7 +73,8 @@ function cartonHeading(carton: ErvePackingListCartonView): string {
   if (carton.factory) parts.push(carton.factory.name);
   parts.push(carton.saleOrder.saleOrderNumber);
   const segments = [parts.join(' — ')];
-  if (carton.factoryDispatchNumber) segments.push(`Factory Packing List ${carton.factoryDispatchNumber}`);
+  if (carton.factoryDispatchNumber)
+    segments.push(`Factory Packing List ${carton.factoryDispatchNumber}`);
   return segments.join(' — ');
 }
 
@@ -72,8 +85,12 @@ const STATUS_LABEL: Record<ErvePackingListDetail['status'], string> = {
 };
 
 export function ErvePackingListDetailPage() {
-  const [finalizeOpen, setFinalizeOpen] = useState(false);
   const { id } = useParams();
+  return <ErvePackingListDetailContent key={id} id={id!} />;
+}
+
+function ErvePackingListDetailContent({ id }: { id: string }) {
+  const [finalizeOpen, setFinalizeOpen] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -91,43 +108,43 @@ export function ErvePackingListDetailPage() {
   const [lrNumber, setLrNumber] = useState('');
   const [remarks, setRemarks] = useState('');
   const [formError, setFormError] = useState('');
-  const [addSelected, setAddSelected] = useState<Set<string>>(new Set());
+  const [addSelected, setAddSelected] = useState<Map<string, EligibleErveCartonView>>(new Map());
 
   const query = useQuery({
     queryKey: ['erve-packing-list', id],
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<ErvePackingListDetail>>(`/erve-packing-lists/${id}`);
+      const res = await apiClient.get<ApiSuccessResponse<ErvePackingListDetail>>(
+        `/erve-packing-lists/${id}`,
+      );
       return res.data.data;
     },
   });
   const packingList = query.data;
   const isOpen = packingList?.status === 'OPEN';
 
-  const eligibleQuery = useQuery({
-    enabled: isOpen && canMutate,
-    queryKey: ['erve-packing-lists', 'eligible-cartons', id],
-    queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<EligibleErveCartonView[]>>('/erve-packing-lists/eligible-cartons', {
-        params: { ervePackingListId: id },
-      });
-      return res.data.data;
-    },
-  });
+  const discovery = useEligibleErveCartons(id, isOpen && canMutate);
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ['erve-packing-list', id] });
-    void queryClient.invalidateQueries({ queryKey: ['erve-packing-lists', 'eligible-cartons', id] });
+    void queryClient.resetQueries({ queryKey: ['erve-packing-lists', 'eligible-cartons'] });
   }
 
   const addCartonsMutation = useMutation({
-    mutationFn: async () => {
-      await apiClient.post(`/erve-packing-lists/${id}/cartons`, { cartonIds: [...addSelected] });
+    mutationFn: async ({
+      packingListId,
+      cartonIds,
+    }: {
+      packingListId: string;
+      cartonIds: string[];
+    }) => {
+      await apiClient.post(`/erve-packing-lists/${packingListId}/cartons`, { cartonIds });
     },
     onSuccess: () => {
-      setAddSelected(new Set());
+      setAddSelected(new Map());
       invalidate();
     },
-    onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to add the selected cartons.')),
+    onError: (caught) =>
+      setFormError(getApiErrorMessage(caught, 'Unable to add the selected cartons.')),
   });
 
   const removeCartonMutation = useMutation({
@@ -146,7 +163,8 @@ export function ErvePackingListDetailPage() {
       setFinalizeOpen(false);
       invalidate();
     },
-    onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to finalize this Erve Packing List.')),
+    onError: (caught) =>
+      setFormError(getApiErrorMessage(caught, 'Unable to finalize this Erve Packing List.')),
   });
 
   const dispatchMutation = useMutation({
@@ -165,21 +183,26 @@ export function ErvePackingListDetailPage() {
       invalidate();
       navigate(`/fulfillment/erve-dispatches/${created.id}`);
     },
-    onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to record this dispatch.')),
+    onError: (caught) =>
+      setFormError(getApiErrorMessage(caught, 'Unable to record this dispatch.')),
   });
 
-  const eligibleForAdd = useMemo(() => eligibleQuery.data ?? [], [eligibleQuery.data]);
+  const eligibleForAdd = discovery.cartons;
   const totalAddQuantity = useMemo(
-    () => eligibleForAdd.filter((c) => addSelected.has(c.id)).reduce((sum, c) => sum + c.totalQuantity, 0),
-    [eligibleForAdd, addSelected],
+    () => [...addSelected.values()].reduce((sum, c) => sum + c.totalQuantity, 0),
+    [addSelected],
   );
 
   const generateErvePackingListDetailPdf = useCallback(async () => {
     if (!packingList) throw new Error('Erve Packing List not loaded');
     // Dynamically imported so @react-pdf/renderer and the document code load only when a user
     // actually clicks Download/Print, not as part of the app's initial bundle.
-    const { generateErvePackingListDetailPdfBlob } = await import('./pdf/erve-packing-list/generateErvePackingListDetailPdf.js');
-    return generateErvePackingListDetailPdfBlob(packingList, { generatedAt: new Date().toISOString(), generatedBy: user?.name });
+    const { generateErvePackingListDetailPdfBlob } =
+      await import('./pdf/erve-packing-list/generateErvePackingListDetailPdf.js');
+    return generateErvePackingListDetailPdfBlob(packingList, {
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
   }, [packingList, user?.name]);
 
   const pdfAction = usePdfAction({
@@ -202,14 +225,33 @@ export function ErvePackingListDetailPage() {
         status={
           <StatusBadge
             label={STATUS_LABEL[packingList.status]}
-            tone={packingList.status === 'DISPATCHED' ? 'approved' : packingList.status === 'FINALIZED' ? 'pending' : 'draft'}
+            tone={
+              packingList.status === 'DISPATCHED'
+                ? 'approved'
+                : packingList.status === 'FINALIZED'
+                  ? 'pending'
+                  : 'draft'
+            }
           />
         }
-        primaryAction={isOpen && canMutate ? (
-          <Button onClick={() => { setFormError(''); setFinalizeOpen(true); }} disabled={packingList.cartonCount === 0 || addCartonsMutation.isPending || removeCartonMutation.isPending} loading={finalizeMutation.isPending}>
-            Finalize Packing List
-          </Button>
-        ) : undefined}
+        primaryAction={
+          isOpen && canMutate ? (
+            <Button
+              onClick={() => {
+                setFormError('');
+                setFinalizeOpen(true);
+              }}
+              disabled={
+                packingList.cartonCount === 0 ||
+                addCartonsMutation.isPending ||
+                removeCartonMutation.isPending
+              }
+              loading={finalizeMutation.isPending}
+            >
+              Finalize Packing List
+            </Button>
+          ) : undefined
+        }
         secondaryActions={
           <>
             <PdfActionButtons
@@ -234,30 +276,71 @@ export function ErvePackingListDetailPage() {
         cancelLabel="Keep Editing"
         loading={finalizeMutation.isPending}
         error={formError || undefined}
-        onConfirm={() => { if (!finalizeMutation.isPending && !addCartonsMutation.isPending && !removeCartonMutation.isPending && packingList.cartonCount > 0) finalizeMutation.mutate(); }}
+        onConfirm={() => {
+          if (
+            !finalizeMutation.isPending &&
+            !addCartonsMutation.isPending &&
+            !removeCartonMutation.isPending &&
+            packingList.cartonCount > 0
+          )
+            finalizeMutation.mutate();
+        }}
       />
       {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
 
       <div className="space-y-6">
         <Panel title="Erve India Consolidated Packing List">
           <DescriptionList columns={4}>
-            <DescriptionList.Item label="Distributor" value={packingList.distributor?.name ?? '—'} />
-            {packingList.destination.storeCode && <DescriptionList.Item label="Store Code" value={packingList.destination.storeCode} />}
-            {packingList.destination.gstin && <DescriptionList.Item label="Destination GSTIN" value={packingList.destination.gstin} />}
+            <DescriptionList.Item
+              label="Distributor"
+              value={packingList.distributor?.name ?? '—'}
+            />
+            {packingList.destination.storeCode && (
+              <DescriptionList.Item label="Store Code" value={packingList.destination.storeCode} />
+            )}
+            {packingList.destination.gstin && (
+              <DescriptionList.Item
+                label="Destination GSTIN"
+                value={packingList.destination.gstin}
+              />
+            )}
             <DescriptionList.Item
               label="Destination"
-              value={[packingList.destination.addressLine1, packingList.destination.addressLine2, packingList.destination.city, packingList.destination.state, packingList.destination.postalCode]
+              value={[
+                packingList.destination.addressLine1,
+                packingList.destination.addressLine2,
+                packingList.destination.city,
+                packingList.destination.state,
+                packingList.destination.postalCode,
+              ]
                 .filter(Boolean)
                 .join(', ')}
             />
             <DescriptionList.Item label="Created By" value={packingList.createdBy.name} />
-            <DescriptionList.Item label="Created At" value={new Date(packingList.createdAt).toLocaleString()} />
-            <DescriptionList.Item label="Cartons" value={packingList.cartonCount.toLocaleString()} />
-            <DescriptionList.Item label="Total Quantity" value={packingList.totalQuantity.toLocaleString()} />
+            <DescriptionList.Item
+              label="Created At"
+              value={new Date(packingList.createdAt).toLocaleString()}
+            />
+            <DescriptionList.Item
+              label="Cartons"
+              value={packingList.cartonCount.toLocaleString()}
+            />
+            <DescriptionList.Item
+              label="Total Quantity"
+              value={packingList.totalQuantity.toLocaleString()}
+            />
             {packingList.sourceFactories && (
-              <DescriptionList.Item label="Source Factories" value={packingList.sourceFactories.map((f) => f.name).join(', ') || '—'} />
+              <DescriptionList.Item
+                label="Source Factories"
+                value={packingList.sourceFactories.map((f) => f.name).join(', ') || '—'}
+              />
             )}
-            <DescriptionList.Item label="Source Dispatch Orders" value={packingList.sourceDispatchOrders.map((s) => s.saleOrderNumber).join(', ') || '—'} />
+            <DescriptionList.Item
+              label="Source Dispatch Orders"
+              value={
+                packingList.sourceDispatchOrders.map((s) => s.saleOrderNumber).join(', ') || '—'
+              }
+            />
           </DescriptionList>
         </Panel>
 
@@ -281,8 +364,12 @@ export function ErvePackingListDetailPage() {
                       </Button>
                     )}
                   </div>
-                  {carton.packageDetails && <div className="text-sm text-muted-foreground">{carton.packageDetails}</div>}
-                  <div className="mt-1 text-sm text-muted-foreground">Total Qty: {carton.totalQuantity.toLocaleString()}</div>
+                  {carton.packageDetails && (
+                    <div className="text-sm text-muted-foreground">{carton.packageDetails}</div>
+                  )}
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    Total Qty: {carton.totalQuantity.toLocaleString()}
+                  </div>
                   <div className="mt-2">
                     <StyleSizeGrid
                       columns={distinctSizeColumns(carton.lines.map(withSizeIdentity))}
@@ -309,11 +396,8 @@ export function ErvePackingListDetailPage() {
 
       {isOpen && canMutate && (
         <Panel title="Add Cartons">
-          {eligibleQuery.isLoading ? (
-            <LoadingState label="Loading eligible cartons" />
-          ) : eligibleForAdd.length === 0 ? (
-            <EmptyState title="Nothing eligible" description="No further cartons for this destination and Distributor are available." />
-          ) : (
+          <EligibleCartonSearch discovery={discovery} />
+          {eligibleForAdd.length > 0 && (
             <>
               <DataTable
                 rowKey="id"
@@ -326,11 +410,12 @@ export function ErvePackingListDetailPage() {
                       <input
                         type="checkbox"
                         checked={addSelected.has(r.id)}
+                        disabled={addCartonsMutation.isPending || finalizeMutation.isPending}
                         onChange={() =>
                           setAddSelected((current) => {
-                            const next = new Set(current);
+                            const next = new Map(current);
                             if (next.has(r.id)) next.delete(r.id);
-                            else next.add(r.id);
+                            else next.set(r.id, r);
                             return next;
                           })
                         }
@@ -340,18 +425,70 @@ export function ErvePackingListDetailPage() {
                   },
                   { key: 'carton', header: 'Carton #', accessor: 'cartonNumber' },
                   { key: 'factory', header: 'Factory', render: (r) => r.factory.name },
-                  { key: 'dispatchOrder', header: 'Dispatch Order', render: (r) => r.saleOrder.saleOrderNumber },
-                  { key: 'qty', header: 'Pieces', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },
+                  {
+                    key: 'dispatchOrder',
+                    header: 'Dispatch Order',
+                    render: (r) => r.saleOrder.saleOrderNumber,
+                  },
+                  {
+                    key: 'qty',
+                    header: 'Pieces',
+                    align: 'right',
+                    render: (r) => r.totalQuantity.toLocaleString(),
+                  },
                 ]}
               />
-              <div className="mt-3 flex items-center justify-between">
-                <div className="text-sm text-muted-foreground">Selected: {addSelected.size} cartons · {totalAddQuantity.toLocaleString()} pieces</div>
-                <Button onClick={() => addCartonsMutation.mutate()} disabled={addSelected.size === 0} loading={addCartonsMutation.isPending}>
-                  Add Selected Cartons
-                </Button>
-              </div>
             </>
           )}
+          <EligibleCartonContinuation discovery={discovery} />
+          <ul aria-label="Selected cartons" className="mt-3 space-y-1">
+            {[...addSelected.values()].map((carton) => (
+              <li key={carton.id} className="flex items-center gap-3">
+                <span>
+                  {carton.cartonNumber} · {carton.totalQuantity.toLocaleString()} pieces
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  density="compact"
+                  aria-label={`Remove selected carton ${carton.cartonNumber}`}
+                  disabled={addCartonsMutation.isPending}
+                  onClick={() =>
+                    setAddSelected((current) => {
+                      const next = new Map(current);
+                      next.delete(carton.id);
+                      return next;
+                    })
+                  }
+                >
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex items-center justify-between">
+            <div className="text-sm text-muted-foreground">
+              Selected: {addSelected.size} cartons · {totalAddQuantity.toLocaleString()} pieces
+            </div>
+            <Button
+              type="button"
+              onClick={() => {
+                setFormError('');
+                addCartonsMutation.mutate({
+                  packingListId: id,
+                  cartonIds: [...addSelected.keys()],
+                });
+              }}
+              disabled={
+                addSelected.size === 0 ||
+                finalizeMutation.isPending ||
+                removeCartonMutation.isPending
+              }
+              loading={addCartonsMutation.isPending}
+            >
+              Add Selected Cartons
+            </Button>
+          </div>
         </Panel>
       )}
 
@@ -359,14 +496,39 @@ export function ErvePackingListDetailPage() {
         <Panel title="Record Erve Dispatch">
           <div onKeyDown={createEnterToNextHandler()}>
             <div className="flex flex-wrap gap-3">
-              <DatePicker label="Dispatch Date" value={dispatchDate} onValueChange={(value) => setDispatchDate(value ?? '')} width="sm" />
-              <TextField label="Transporter (optional)" value={transporter} onChange={(e) => setTransporter(e.target.value)} />
-              <TextField label="Vehicle Number (optional)" value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} />
-              <TextField label="LR Number (optional)" value={lrNumber} onChange={(e) => setLrNumber(e.target.value)} />
-              <TextField label="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+              <DatePicker
+                label="Dispatch Date"
+                value={dispatchDate}
+                onValueChange={(value) => setDispatchDate(value ?? '')}
+                width="sm"
+              />
+              <TextField
+                label="Transporter (optional)"
+                value={transporter}
+                onChange={(e) => setTransporter(e.target.value)}
+              />
+              <TextField
+                label="Vehicle Number (optional)"
+                value={vehicleNumber}
+                onChange={(e) => setVehicleNumber(e.target.value)}
+              />
+              <TextField
+                label="LR Number (optional)"
+                value={lrNumber}
+                onChange={(e) => setLrNumber(e.target.value)}
+              />
+              <TextField
+                label="Remarks (optional)"
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+              />
             </div>
             <div className="mt-3 flex justify-end">
-              <Button onClick={() => dispatchMutation.mutate()} disabled={!dispatchDate} loading={dispatchMutation.isPending}>
+              <Button
+                onClick={() => dispatchMutation.mutate()}
+                disabled={!dispatchDate}
+                loading={dispatchMutation.isPending}
+              >
                 Record Dispatch
               </Button>
             </div>
