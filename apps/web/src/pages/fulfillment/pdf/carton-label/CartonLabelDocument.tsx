@@ -17,7 +17,12 @@ const styles = StyleSheet.create({
 
 const styleRowColumns: PdfTableColumn<CartonLabelStyleRow>[] = [
   { key: 'styleDisplay', header: 'Style', width: '45%', value: (row) => row.styleDisplay },
-  { key: 'sizeBreakdown', header: 'Size Breakdown', width: '35%', value: (row) => row.sizeBreakdown },
+  {
+    key: 'sizeBreakdown',
+    header: 'Size Breakdown',
+    width: '35%',
+    value: (row) => row.sizeBreakdown,
+  },
   { key: 'quantity', header: 'Total', width: '20%', align: 'right', value: (row) => row.quantity },
 ];
 
@@ -34,7 +39,7 @@ export function CartonLabelDocument({ viewModel }: CartonLabelDocumentProps) {
   return (
     <PdfDocument orientation="portrait">
       <PdfHeader title={viewModel.title} subtitle={viewModel.subtitle} />
-      <PdfMetaSection generatedAt={viewModel.generatedAt} generatedBy={viewModel.generatedBy} />
+      <PdfMetaSection generatedAt={viewModel.generatedAt} />
 
       <View style={styles.identityBlock}>
         <Text style={styles.cartonNumber}>Carton {viewModel.cartonNumber}</Text>

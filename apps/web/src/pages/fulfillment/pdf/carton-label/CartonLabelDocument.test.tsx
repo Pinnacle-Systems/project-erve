@@ -6,21 +6,25 @@ import type { CartonLabelPdfViewModel } from './buildCartonLabelViewModel.js';
 function makeViewModel(overrides: Partial<CartonLabelPdfViewModel> = {}): CartonLabelPdfViewModel {
   return {
     title: 'CARTON LABEL',
-    subtitle: 'Carton C1 — EISO/26-27/0001 · Factory One',
+    subtitle: 'Carton C1 — EISO/26-27/0001',
     generatedAt: '2026-09-15T10:00:00Z',
-    generatedBy: 'Test Factory User',
     cartonNumber: 'C1',
     destinationName: 'Store 1',
     identityItems: [
       { label: 'Dispatch Order', value: 'EISO/26-27/0001' },
-      { label: 'Factory', value: 'Factory One' },
-      { label: 'Factory Dispatch', value: 'EIFD/26-27/0001' },
       { label: 'Distributor', value: 'Distributor One' },
       { label: 'Destination', value: 'Store 1' },
       { label: 'Address', value: '123 Test Street, Chennai, TN, India' },
     ],
     totalQuantity: 10,
-    styleRows: [{ id: 'style-1', styleDisplay: 'ST-001 — Classic Tee', sizeBreakdown: 'Medium: 10', quantity: 10 }],
+    styleRows: [
+      {
+        id: 'style-1',
+        styleDisplay: 'ST-001 — Classic Tee',
+        sizeBreakdown: 'Medium: 10',
+        quantity: 10,
+      },
+    ],
     ...overrides,
   };
 }
@@ -38,7 +42,6 @@ describe('CartonLabelDocument', () => {
         viewModel={makeViewModel({
           identityItems: [
             { label: 'Dispatch Order', value: 'EISO/26-27/0001' },
-            { label: 'Factory', value: 'Factory One' },
             { label: 'Distributor', value: 'A Very Long Distributor Legal Name Private Limited' },
             { label: 'Destination', value: 'Flagship Store, Block C' },
             {
@@ -54,9 +57,16 @@ describe('CartonLabelDocument', () => {
   });
 
   it('renders a carton with many Style rows without hanging', async () => {
-    const styleRows = Array.from({ length: 25 }, (_, i) => ({ id: `style-${i}`, styleDisplay: `ST-${i}`, sizeBreakdown: 'M: 5', quantity: 5 }));
+    const styleRows = Array.from({ length: 25 }, (_, i) => ({
+      id: `style-${i}`,
+      styleDisplay: `ST-${i}`,
+      sizeBreakdown: 'M: 5',
+      quantity: 5,
+    }));
     const blob = await Promise.race([
-      pdf(<CartonLabelDocument viewModel={makeViewModel({ styleRows, totalQuantity: 125 })} />).toBlob(),
+      pdf(
+        <CartonLabelDocument viewModel={makeViewModel({ styleRows, totalQuantity: 125 })} />,
+      ).toBlob(),
       new Promise<never>((_resolve, reject) =>
         setTimeout(() => reject(new Error('PDF generation hung on a multi-line carton')), 8000),
       ),
@@ -74,7 +84,14 @@ describe('CartonLabelDocument', () => {
     const blob = await pdf(
       <CartonLabelDocument
         viewModel={makeViewModel({
-          styleRows: [{ id: 'style-1', styleDisplay: 'ST-001 — A Very Long Style Name That Could Wrap Across Lines', sizeBreakdown, quantity: 78 }],
+          styleRows: [
+            {
+              id: 'style-1',
+              styleDisplay: 'ST-001 — A Very Long Style Name That Could Wrap Across Lines',
+              sizeBreakdown,
+              quantity: 78,
+            },
+          ],
           totalQuantity: 78,
         })}
       />,
@@ -87,8 +104,18 @@ describe('CartonLabelDocument', () => {
       <CartonLabelDocument
         viewModel={makeViewModel({
           styleRows: [
-            { id: 'style-1', styleDisplay: 'ST-001 — Classic Tee', sizeBreakdown: 'S: 3 · M: 4 · L: 2', quantity: 9 },
-            { id: 'style-2', styleDisplay: 'ST-002 — Polo', sizeBreakdown: 'M: 2 · L: 2', quantity: 4 },
+            {
+              id: 'style-1',
+              styleDisplay: 'ST-001 — Classic Tee',
+              sizeBreakdown: 'S: 3 · M: 4 · L: 2',
+              quantity: 9,
+            },
+            {
+              id: 'style-2',
+              styleDisplay: 'ST-002 — Polo',
+              sizeBreakdown: 'M: 2 · L: 2',
+              quantity: 4,
+            },
           ],
           totalQuantity: 13,
         })}

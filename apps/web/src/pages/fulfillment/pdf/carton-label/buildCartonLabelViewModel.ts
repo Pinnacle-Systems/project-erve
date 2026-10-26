@@ -27,7 +27,6 @@ export interface CartonLabelPdfViewModel {
   title: string;
   subtitle: string;
   generatedAt: string;
-  generatedBy?: string | null;
   cartonNumber: string;
   destinationName: string;
   identityItems: PdfKeyValueItem[];
@@ -52,6 +51,8 @@ function formatAddress(destination: PackingListDestinationView): string {
  * Pure, synchronous, no HTTP — maps the already-loaded (server-persisted) Factory Packing List
  * carton + its owning destination into the plain view-model CartonLabelDocument renders.
  * Field-by-field allowlist, never `...carton`/`...destination`.
+ * ISS-074: external labels omit factory identity/references and generating-user identity;
+ * the source records retain authorized internal provenance unchanged.
  *
  * The destination is always the carton's owning Dispatch-Order destination record (full address
  * captured at Dispatch-Order creation) — never a live Distributor/master address lookup, which
@@ -64,32 +65,34 @@ function formatAddress(destination: PackingListDestinationView): string {
  * Sizes in the same carton prints once with a compact Size Breakdown
  * ("S: 3 · M: 4 · L: 2") rather than repeating the Style on separate rows.
  */
-export function buildCartonLabelViewModel(source: CartonLabelSource, meta: CartonLabelPdfMeta): CartonLabelPdfViewModel {
-  const { carton, destination, saleOrderNumber, factoryName, factoryDispatchNumber } = source;
+export function buildCartonLabelViewModel(
+  source: CartonLabelSource,
+  meta: CartonLabelPdfMeta,
+): CartonLabelPdfViewModel {
+  const { carton, destination, saleOrderNumber } = source;
   const destinationName = destination.label ?? `${destination.city}, ${destination.state}`;
 
-  const identityItems: PdfKeyValueItem[] = [
-    { label: 'Dispatch Order', value: saleOrderNumber },
-    { label: 'Factory', value: factoryName },
-  ];
-  if (factoryDispatchNumber) identityItems.push({ label: 'Factory Dispatch', value: factoryDispatchNumber });
+  const identityItems: PdfKeyValueItem[] = [{ label: 'Dispatch Order', value: saleOrderNumber }];
   identityItems.push({ label: 'Distributor', value: destination.distributor.name });
   identityItems.push({ label: 'Destination', value: destinationName });
 
   const address = formatAddress(destination);
   if (address) identityItems.push({ label: 'Address', value: address });
-  if (destination.contactName) identityItems.push({ label: 'Contact', value: destination.contactName });
-  if (destination.contactPhone) identityItems.push({ label: 'Contact Phone', value: destination.contactPhone });
+  if (destination.contactName)
+    identityItems.push({ label: 'Contact', value: destination.contactName });
+  if (destination.contactPhone)
+    identityItems.push({ label: 'Contact Phone', value: destination.contactPhone });
 
-  if (carton.netWeight) identityItems.push({ label: 'Net Weight', value: `${carton.netWeight} kg` });
-  if (carton.grossWeight) identityItems.push({ label: 'Gross Weight', value: `${carton.grossWeight} kg` });
+  if (carton.netWeight)
+    identityItems.push({ label: 'Net Weight', value: `${carton.netWeight} kg` });
+  if (carton.grossWeight)
+    identityItems.push({ label: 'Gross Weight', value: `${carton.grossWeight} kg` });
   if (carton.dimensions) identityItems.push({ label: 'Dimensions', value: carton.dimensions });
 
   return {
     title: 'CARTON LABEL',
-    subtitle: `Carton ${carton.cartonNumber} — ${saleOrderNumber} · ${factoryName}`,
+    subtitle: `Carton ${carton.cartonNumber} — ${saleOrderNumber}`,
     generatedAt: meta.generatedAt,
-    generatedBy: meta.generatedBy,
     cartonNumber: carton.cartonNumber,
     destinationName,
     identityItems,
@@ -97,7 +100,9 @@ export function buildCartonLabelViewModel(source: CartonLabelSource, meta: Carto
     styleRows: groupLinesByStyle(carton.lines).map((group) => ({
       id: group.styleId,
       styleDisplay: `${group.styleNumber} — ${group.styleName}`,
-      sizeBreakdown: group.sizeEntries.map((entry) => `${entry.sizeLabel}: ${entry.quantity}`).join(' · '),
+      sizeBreakdown: group.sizeEntries
+        .map((entry) => `${entry.sizeLabel}: ${entry.quantity}`)
+        .join(' · '),
       quantity: group.totalQuantity,
     })),
   };
