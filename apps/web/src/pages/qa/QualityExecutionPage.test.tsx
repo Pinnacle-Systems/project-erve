@@ -798,3 +798,138 @@ describe('ISS-048 Final Inspection physical-batch navigation', () => {
     expect(post).not.toHaveBeenCalled();
   });
 });
+
+// ISS-049: a second, independent "Consolidated Final Inspection PDF" export, offered only for
+// executions that actually belong to a Final Inspection physical batch — PPM/Inline keep their
+// single, unchanged PDF action pair.
+describe('ISS-049 Consolidated Final Inspection PDF action', () => {
+  const finalExecution: QualityExecutionView = {
+    ...view,
+    id: 'e1',
+    activityName: 'Final Inspection',
+    attemptNumber: 1,
+    batchNumber: 2,
+    status: 'FINALIZED',
+    coverage: {
+      preparedQuantityAuthoritative: true,
+      preparedQuantity: 72,
+      inspectedQuantity: 72,
+      remainingQuantity: 0,
+      complete: true,
+      reconciliationConflict: false,
+      state: 'COMPLETE',
+      passedBatches: 2,
+      failedBatches: 0,
+      hasFailedBatches: false,
+      batches: [
+        { id: 'batch-1', batchNumber: 1, physicalQuantity: 60, inspectedQuantity: 60, status: 'FINALIZED', outcome: 'PASS', disposition: 'RELEASED', finalizedAt: '2026-01-01T00:00:00Z' },
+        { id: 'batch-2', batchNumber: 2, physicalQuantity: 12, inspectedQuantity: 12, status: 'FINALIZED', outcome: 'PASS', disposition: 'RELEASED', finalizedAt: '2026-02-01T00:00:00Z' },
+      ],
+    },
+    finalBatch: {
+      id: 'batch-2',
+      batchNumber: 2,
+      physicalQuantity: 12,
+      disposition: 'RELEASED',
+      allocations: [],
+      attempts: [{ id: 'e1', attemptNumber: 1, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: '2026-02-01T00:00:00Z' }],
+      release: { id: 'release-2', releasedAt: '2026-02-01T00:00:00Z', quantity: 12 },
+    },
+  };
+
+  async function renderAt(executionId: string, get: (url: string) => Promise<unknown>) {
+    vi.spyOn(apiClient, 'get').mockImplementation(get as typeof apiClient.get);
+    await act(async () =>
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={[`/quality-executions/${executionId}`]}>
+            <Routes>
+              <Route path="/quality-executions/:executionId" element={<QualityExecutionPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      ),
+    );
+    // Two sequential queries run on mount (the execution, then the dependent Job Order identity
+    // query) — settle both before any test interacts with the DOM, so a captured button reference
+    // is never invalidated by a later re-render (the Job Order query completing toggles `disabled`
+    // on these very actions).
+    for (let n = 0; n < 30; n++) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      });
+    }
+  }
+
+  it('offers both "Download This Attempt" and "Download Consolidated Final Inspection PDF" for a Final Inspection execution', async () => {
+    const get = vi.fn(async (url: string) => {
+      if (url === '/job-orders/j1') return { data: { data: { id: 'j1' } } };
+      return { data: { data: finalExecution } };
+    });
+    await renderAt('e1', get);
+
+    const buttons = [...container.querySelectorAll('button')].map((b) => b.textContent);
+    expect(buttons).toContain('Download This Attempt');
+    expect(buttons).toContain('Print This Attempt');
+    expect(buttons).toContain('Download Consolidated Final Inspection PDF');
+    expect(buttons).toContain('Print Consolidated Final Inspection PDF');
+  });
+
+  it('never offers the Consolidated Final Inspection PDF action for a PPM/Inline execution (no finalBatch)', async () => {
+    const get = vi.fn(async () => ({ data: { data: view } }));
+    await renderAt('e1', get);
+
+    const buttons = [...container.querySelectorAll('button')].map((b) => b.textContent);
+    expect(buttons).toContain('Download PDF');
+    expect(buttons).toContain('Print');
+    expect(buttons).not.toContain('Download Consolidated Final Inspection PDF');
+    expect(buttons).not.toContain('Print Consolidated Final Inspection PDF');
+  });
+
+  it('shows a recoverable error, never a partial/crashed page, when a physical batch fails to load during consolidation', async () => {
+    const get = vi.fn(async (url: string) => {
+      if (url === '/job-orders/j1') return { data: { data: { id: 'j1' } } };
+      if (url === '/quality-executions/final-batches/batch-1') throw new Error('network error');
+      if (url === '/quality-executions/final-batches/batch-2')
+        return {
+          data: {
+            data: {
+              id: 'batch-2',
+              jobOrderId: 'j1',
+              processFlowActivityId: 'a1',
+              batchNumber: 2,
+              physicalQuantity: 12,
+              disposition: 'RELEASED',
+              allocations: [],
+              attempts: [{ id: 'e1', attemptNumber: 1, status: 'FINALIZED', outcome: 'PASS', rejectionReason: null, startedAt: '', finalizedAt: '2026-02-01T00:00:00Z' }],
+              release: { id: 'release-2', releasedAt: '2026-02-01T00:00:00Z', quantity: 12 },
+            },
+          },
+        };
+      return { data: { data: finalExecution } };
+    });
+    await renderAt('e1', get);
+
+    const consolidatedButton = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Download Consolidated Final Inspection PDF',
+    )!;
+    await act(async () => consolidatedButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    // The collection/network round-trip (and its rejection) happens asynchronously after the
+    // click — poll with a generous timeout rather than a fixed sleep, so this isn't flaky under
+    // CI/parallel-test contention.
+    await vi.waitFor(
+      () => {
+        const alert = [...container.querySelectorAll('[role="alert"]')].find((node) =>
+          node.textContent?.includes('PDF generation failed'),
+        );
+        expect(alert).toBeDefined();
+      },
+      { timeout: 10000, interval: 20 },
+    );
+    // The page itself — and the independent "This Attempt" export — remain fully usable.
+    expect(container.querySelector('[data-quality-execution-shell="true"]')).not.toBeNull();
+    expect(
+      [...container.querySelectorAll('button')].find((b) => b.textContent === 'Download This Attempt'),
+    ).toBeDefined();
+  }, 20000);
+});
