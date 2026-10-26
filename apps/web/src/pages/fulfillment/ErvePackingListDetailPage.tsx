@@ -221,7 +221,15 @@ function ErvePackingListDetailContent({ id }: { id: string }) {
     <div className="space-y-6">
       <PageHeader
         title={packingList.ervePackingListNumber}
-        subtitle={`${packingList.distributor?.name ?? '—'} · ${packingList.destination.city ?? '—'}, ${packingList.destination.state ?? ''}`}
+        subtitle={[
+          packingList.distributor?.name,
+          packingList.destination.label ||
+            [packingList.destination.city, packingList.destination.state]
+              .filter(Boolean)
+              .join(', '),
+        ]
+          .filter(Boolean)
+          .join(' � ')}
         status={
           <StatusBadge
             label={STATUS_LABEL[packingList.status]}

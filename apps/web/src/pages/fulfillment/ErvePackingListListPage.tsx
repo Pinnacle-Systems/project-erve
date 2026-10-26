@@ -9,7 +9,10 @@ import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import { canMutateErveDispatches, canViewErveFactoryProvenanceField } from '../../auth/permissions.js';
+import {
+  canMutateErveDispatches,
+  canViewErveFactoryProvenanceField,
+} from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import type { ErvePackingListSummary } from './types.js';
 
@@ -44,8 +47,12 @@ export function ErvePackingListListPage() {
   const generateErvePackingListListPdf = useCallback(async () => {
     // Dynamically imported so @react-pdf/renderer and the document code load only when a user
     // actually clicks Download/Print, not as part of the app's initial bundle.
-    const { generateErvePackingListListPdfBlob } = await import('./pdf/erve-packing-list/generateErvePackingListListPdf.js');
-    return generateErvePackingListListPdfBlob({ generatedAt: new Date().toISOString(), generatedBy: user?.name });
+    const { generateErvePackingListListPdfBlob } =
+      await import('./pdf/erve-packing-list/generateErvePackingListListPdf.js');
+    return generateErvePackingListListPdfBlob({
+      generatedAt: new Date().toISOString(),
+      generatedBy: user?.name,
+    });
   }, [user?.name]);
 
   const pdfAction = usePdfAction({
@@ -61,7 +68,10 @@ export function ErvePackingListListPage() {
   // regardless of what the client-side role check would otherwise predict.
   // The role check is used only as a fallback while the list is empty, so
   // an authorized role with zero packing lists doesn't lose the column.
-  const hasProvenance = items.length > 0 ? items.some((item) => item.sourceFactories !== undefined) : canViewErveFactoryProvenanceField(user);
+  const hasProvenance =
+    items.length > 0
+      ? items.some((item) => item.sourceFactories !== undefined)
+      : canViewErveFactoryProvenanceField(user);
 
   return (
     <div className="space-y-6">
@@ -77,13 +87,19 @@ export function ErvePackingListListPage() {
               onPrint={pdfAction.handlePrint}
             />
             {canMutateErveDispatches(user) && (
-              <Button onClick={() => navigate('/fulfillment/erve-packing-lists/new')}>Create Erve Packing List</Button>
+              <Button onClick={() => navigate('/fulfillment/erve-packing-lists/new')}>
+                Create Erve Packing List
+              </Button>
             )}
           </>
         }
       />
 
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter Erve Packing Lists by status">
+      <div
+        className="flex flex-wrap gap-2"
+        role="group"
+        aria-label="Filter Erve Packing Lists by status"
+      >
         {STATUS_TABS.map((tab) => (
           <Button
             key={tab.value}
@@ -106,20 +122,58 @@ export function ErvePackingListListPage() {
             rowKey="id"
             data={items}
             onRowClick={(row) => navigate(`/fulfillment/erve-packing-lists/${row.id}`)}
-            emptyState={<EmptyState title={status === 'ALL' ? 'No Erve Packing Lists yet' : 'No Erve Packing Lists match this status.'} />}
+            emptyState={
+              <EmptyState
+                title={
+                  status === 'ALL'
+                    ? 'No Erve Packing Lists yet'
+                    : 'No Erve Packing Lists match this status.'
+                }
+              />
+            }
             error={
               query.isError ? (
-                <ErrorState title="Unable to load Erve Packing Lists" description={query.error.message} />
+                <ErrorState
+                  title="Unable to load Erve Packing Lists"
+                  description={query.error.message}
+                />
               ) : undefined
             }
             columns={[
               { key: 'number', header: 'Packing List #', accessor: 'ervePackingListNumber' },
-              { key: 'distributor', header: 'Distributor', render: (r) => r.distributor?.name ?? '—' },
-              { key: 'destination', header: 'Destination', render: (r) => (r.destination.city ? `${r.destination.city}, ${r.destination.state}` : '—') },
-              { key: 'cartons', header: 'Cartons', align: 'right', render: (r) => r.cartonCount.toLocaleString() },
-              { key: 'qty', header: 'Pieces', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },
+              {
+                key: 'distributor',
+                header: 'Distributor',
+                render: (r) => r.distributor?.name ?? '—',
+              },
+              {
+                key: 'destination',
+                header: 'Destination',
+                render: (r) =>
+                  r.destination.label ||
+                  (r.destination.city ? `${r.destination.city}, ${r.destination.state}` : '—'),
+              },
+              {
+                key: 'cartons',
+                header: 'Cartons',
+                align: 'right',
+                render: (r) => r.cartonCount.toLocaleString(),
+              },
+              {
+                key: 'qty',
+                header: 'Pieces',
+                align: 'right',
+                render: (r) => r.totalQuantity.toLocaleString(),
+              },
               ...(hasProvenance
-                ? [{ key: 'factories', header: 'Factories', align: 'right' as const, render: (r: ErvePackingListSummary) => r.sourceFactories?.length ?? 0 }]
+                ? [
+                    {
+                      key: 'factories',
+                      header: 'Factories',
+                      align: 'right' as const,
+                      render: (r: ErvePackingListSummary) => r.sourceFactories?.length ?? 0,
+                    },
+                  ]
                 : []),
               {
                 key: 'status',
@@ -127,7 +181,13 @@ export function ErvePackingListListPage() {
                 render: (r) => (
                   <StatusBadge
                     label={STATUS_LABEL[r.status]}
-                    tone={r.status === 'DISPATCHED' ? 'approved' : r.status === 'FINALIZED' ? 'pending' : 'draft'}
+                    tone={
+                      r.status === 'DISPATCHED'
+                        ? 'approved'
+                        : r.status === 'FINALIZED'
+                          ? 'pending'
+                          : 'draft'
+                    }
                   />
                 ),
               },

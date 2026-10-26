@@ -34,14 +34,17 @@ function makePackingList(overrides: Partial<ErvePackingListSummary> = {}): ErveP
 
 describe('buildErvePackingListListViewModel', () => {
   it('maps rows with distributor/destination text, counts, and status label', () => {
-    const vm = buildErvePackingListListViewModel([makePackingList()], { generatedAt: '2026-07-01T10:00:00Z', generatedBy: 'Test User' });
+    const vm = buildErvePackingListListViewModel([makePackingList()], {
+      generatedAt: '2026-07-01T10:00:00Z',
+      generatedBy: 'Test User',
+    });
 
     expect(vm.totalCount).toBe(1);
     expect(vm.rows[0]).toEqual({
       id: 'epl-1',
       ervePackingListNumber: 'EIPL/26-27/0001',
       distributorName: 'Acme Distributors',
-      destinationDisplay: 'Mumbai, Maharashtra',
+      destinationDisplay: 'Mumbai Warehouse',
       cartonCount: 2,
       totalQuantity: 50,
       sourceFactoryCount: 1,
@@ -77,7 +80,12 @@ describe('buildErvePackingListListViewModel', () => {
 
   it('handles a missing distributor/destination gracefully', () => {
     const vm = buildErvePackingListListViewModel(
-      [makePackingList({ distributor: null, destination: { ...makePackingList().destination, city: null, state: null } })],
+      [
+        makePackingList({
+          distributor: null,
+          destination: { ...makePackingList().destination, label: null, city: null, state: null },
+        }),
+      ],
       { generatedAt: '2026-07-01T10:00:00Z' },
     );
 
@@ -86,8 +94,14 @@ describe('buildErvePackingListListViewModel', () => {
   });
 
   it('does not leak unrelated/internal properties into the printable view model', () => {
-    const packingList = { ...makePackingList(), internalId: 'secret-internal', rawSnapshotJson: '{}' } as ErvePackingListSummary;
-    const vm = buildErvePackingListListViewModel([packingList], { generatedAt: '2026-07-01T10:00:00Z' });
+    const packingList = {
+      ...makePackingList(),
+      internalId: 'secret-internal',
+      rawSnapshotJson: '{}',
+    } as ErvePackingListSummary;
+    const vm = buildErvePackingListListViewModel([packingList], {
+      generatedAt: '2026-07-01T10:00:00Z',
+    });
     const serialized = JSON.stringify(vm);
     expect(serialized).not.toContain('internalId');
     expect(serialized).not.toContain('rawSnapshotJson');
@@ -103,7 +117,9 @@ describe('buildErvePackingListListViewModel', () => {
   it('maps sourceFactoryCount to null (not 0 or a throw) when the source record lacks provenance', () => {
     const full = makePackingList();
     const { sourceFactories: _sourceFactories, ...withoutProvenance } = full;
-    const vm = buildErvePackingListListViewModel([withoutProvenance], { generatedAt: '2026-07-01T10:00:00Z' });
+    const vm = buildErvePackingListListViewModel([withoutProvenance], {
+      generatedAt: '2026-07-01T10:00:00Z',
+    });
     expect(vm.rows[0]?.sourceFactoryCount).toBeNull();
   });
 });

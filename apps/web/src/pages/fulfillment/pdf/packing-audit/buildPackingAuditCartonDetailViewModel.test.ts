@@ -4,7 +4,9 @@ import {
   type PackingAuditCartonDetailSource,
 } from './buildPackingAuditCartonDetailViewModel.js';
 
-function makeCarton(overrides: Partial<PackingAuditCartonDetailSource> = {}): PackingAuditCartonDetailSource {
+function makeCarton(
+  overrides: Partial<PackingAuditCartonDetailSource> = {},
+): PackingAuditCartonDetailSource {
   return {
     id: 'carton-1',
     cartonNumber: 'C1',
@@ -22,21 +24,56 @@ function makeCarton(overrides: Partial<PackingAuditCartonDetailSource> = {}): Pa
     createdAt: '2026-09-01T00:00:00.000Z',
     updatedAt: '2026-09-01T00:00:00.000Z',
     lines: [
-      { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, currentDestinationId: 'dest-1' },
+      {
+        saleOrderLineId: 'line-1',
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'Classic Tee',
+        primaryImage: null,
+        sizeId: 'size-1',
+        sizeCode: 'M',
+        sizeLabel: 'Medium',
+        quantity: 10,
+        currentDestinationId: 'dest-1',
+      },
     ],
     auditHistory: [],
     factoryDispatchNumber: 'EIFD/26-27/0001',
     factory: { id: 'f1', code: 'F1', name: 'Factory One' },
     saleOrder: { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001' },
-    destination: { id: 'dest-1', label: 'Store 1', city: 'Chennai', state: 'TN', distributor: { id: 'd1', code: 'D1', name: 'Distributor One' } },
+    destination: {
+      id: 'dest-1',
+      label: 'Store 1',
+      city: 'Chennai',
+      state: 'TN',
+      distributor: { id: 'd1', code: 'D1', name: 'Distributor One' },
+    },
     factoryDispatchId: 'fd-1',
     ...overrides,
   };
 }
 
 describe('buildPackingAuditCartonDetailViewModel', () => {
+  it('attaches resolved images by Style UUID without changing quantities or audit history', () => {
+    const carton = makeCarton();
+    const plain = buildPackingAuditCartonDetailViewModel(carton, { generatedAt: '2026-09-15' });
+    const image = { dataUri: 'data:image/png;base64,AA==' };
+    const illustrated = buildPackingAuditCartonDetailViewModel(
+      carton,
+      { generatedAt: '2026-09-15' },
+      new Map([['style-1', image]]),
+    );
+    expect(illustrated.styleRows[0]?.image).toEqual(image);
+    expect({ ...illustrated, styleRows: plain.styleRows }).toEqual(plain);
+    expect(illustrated.styleRows.map(({ image: _image, ...row }) => row)).toEqual(
+      plain.styleRows.map(({ image: _image, ...row }) => row),
+    );
+  });
+
   it('maps carton identity including Distributor/Destination context', () => {
-    const vm = buildPackingAuditCartonDetailViewModel(makeCarton(), { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildPackingAuditCartonDetailViewModel(makeCarton(), {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     expect(vm.identityItems).toEqual([
       { label: 'Carton Number', value: 'C1' },
       { label: 'Dispatch Order', value: 'EISO/26-27/0001' },
@@ -49,32 +86,97 @@ describe('buildPackingAuditCartonDetailViewModel', () => {
 
   it('falls back to city when the destination has no label', () => {
     const vm = buildPackingAuditCartonDetailViewModel(
-      makeCarton({ destination: { id: 'dest-1', label: null, city: 'Chennai', state: 'TN', distributor: { id: 'd1', code: 'D1', name: 'Distributor One' } } }),
+      makeCarton({
+        destination: {
+          id: 'dest-1',
+          label: null,
+          city: 'Chennai',
+          state: 'TN',
+          distributor: { id: 'd1', code: 'D1', name: 'Distributor One' },
+        },
+      }),
       { generatedAt: '2026-09-15T10:00:00Z' },
     );
     expect(vm.identityItems.find((i) => i.label === 'Destination')?.value).toBe('Chennai');
   });
 
   it('maps carton contents as a Style x Size matrix and total quantity', () => {
-    const vm = buildPackingAuditCartonDetailViewModel(makeCarton(), { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildPackingAuditCartonDetailViewModel(makeCarton(), {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     expect(vm.sizeColumns).toEqual([{ sizeId: 'size-1', sizeCode: 'M' }]);
-    expect(vm.styleRows).toEqual([{ styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 10 } }]);
+    expect(vm.styleRows).toEqual([
+      {
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'Classic Tee',
+        image: { placeholder: true },
+        values: { 'size-1': 10 },
+      },
+    ]);
     expect(vm.totalQuantity).toBe(10);
   });
 
   it('groups a carton with multiple Sizes of the same Style into one Style x Size row (ISS-023 Phase 2), reconciling to the carton total', () => {
     const carton = makeCarton({
       lines: [
-        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'S', sizeLabel: 'Small', quantity: 3, currentDestinationId: 'dest-1' },
-        { saleOrderLineId: 'line-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-2', sizeCode: 'M', sizeLabel: 'Medium', quantity: 4, currentDestinationId: 'dest-1' },
-        { saleOrderLineId: 'line-3', styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', primaryImage: null, sizeId: 'size-3', sizeCode: 'L', sizeLabel: 'Large', quantity: 5, currentDestinationId: 'dest-1' },
+        {
+          saleOrderLineId: 'line-1',
+          styleId: 'style-1',
+          styleNumber: 'ST-001',
+          styleName: 'Classic Tee',
+          primaryImage: null,
+          sizeId: 'size-1',
+          sizeCode: 'S',
+          sizeLabel: 'Small',
+          quantity: 3,
+          currentDestinationId: 'dest-1',
+        },
+        {
+          saleOrderLineId: 'line-2',
+          styleId: 'style-1',
+          styleNumber: 'ST-001',
+          styleName: 'Classic Tee',
+          primaryImage: null,
+          sizeId: 'size-2',
+          sizeCode: 'M',
+          sizeLabel: 'Medium',
+          quantity: 4,
+          currentDestinationId: 'dest-1',
+        },
+        {
+          saleOrderLineId: 'line-3',
+          styleId: 'style-2',
+          styleNumber: 'ST-002',
+          styleName: 'Polo',
+          primaryImage: null,
+          sizeId: 'size-3',
+          sizeCode: 'L',
+          sizeLabel: 'Large',
+          quantity: 5,
+          currentDestinationId: 'dest-1',
+        },
       ],
       totalQuantity: 12,
     });
-    const vm = buildPackingAuditCartonDetailViewModel(carton, { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildPackingAuditCartonDetailViewModel(carton, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     expect(vm.styleRows).toEqual([
-      { styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', values: { 'size-1': 3, 'size-2': 4 } },
-      { styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', values: { 'size-3': 5 } },
+      {
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'Classic Tee',
+        image: { placeholder: true },
+        values: { 'size-1': 3, 'size-2': 4 },
+      },
+      {
+        styleId: 'style-2',
+        styleNumber: 'ST-002',
+        styleName: 'Polo',
+        image: { placeholder: true },
+        values: { 'size-3': 5 },
+      },
     ]);
     const reconciled = vm.styleRows.reduce(
       (sum, row) => sum + Object.values(row.values).reduce((s: number, v) => s + (v ?? 0), 0),
@@ -84,9 +186,12 @@ describe('buildPackingAuditCartonDetailViewModel', () => {
   });
 
   it('maps retired and destinationMismatch flags', () => {
-    const vm = buildPackingAuditCartonDetailViewModel(makeCarton({ retired: true, destinationMismatch: true }), {
-      generatedAt: '2026-09-15T10:00:00Z',
-    });
+    const vm = buildPackingAuditCartonDetailViewModel(
+      makeCarton({ retired: true, destinationMismatch: true }),
+      {
+        generatedAt: '2026-09-15T10:00:00Z',
+      },
+    );
     expect(vm.retired).toBe(true);
     expect(vm.destinationMismatch).toBe(true);
   });
@@ -95,24 +200,54 @@ describe('buildPackingAuditCartonDetailViewModel', () => {
     const carton = makeCarton({
       auditState: 'NEEDS_REINSPECTION',
       auditHistory: [
-        { cartonVersion: 1, inspectedById: 'qa-1', inspectedByName: 'QA One', inspectedAt: '2026-09-01T00:00:00.000Z', remarks: 'looks good' },
-        { cartonVersion: 2, inspectedById: 'qa-2', inspectedByName: 'QA Two', inspectedAt: '2026-09-05T00:00:00.000Z', remarks: null },
+        {
+          cartonVersion: 1,
+          inspectedById: 'qa-1',
+          inspectedByName: 'QA One',
+          inspectedAt: '2026-09-01T00:00:00.000Z',
+          remarks: 'looks good',
+        },
+        {
+          cartonVersion: 2,
+          inspectedById: 'qa-2',
+          inspectedByName: 'QA Two',
+          inspectedAt: '2026-09-05T00:00:00.000Z',
+          remarks: null,
+        },
       ],
     });
-    const vm = buildPackingAuditCartonDetailViewModel(carton, { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildPackingAuditCartonDetailViewModel(carton, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     expect(vm.auditHistory).toHaveLength(2);
-    expect(vm.auditHistory[0]).toMatchObject({ cartonVersion: 1, inspectedByName: 'QA One', remarks: 'looks good' });
-    expect(vm.auditHistory[1]).toMatchObject({ cartonVersion: 2, inspectedByName: 'QA Two', remarks: null });
+    expect(vm.auditHistory[0]).toMatchObject({
+      cartonVersion: 1,
+      inspectedByName: 'QA One',
+      remarks: 'looks good',
+    });
+    expect(vm.auditHistory[1]).toMatchObject({
+      cartonVersion: 2,
+      inspectedByName: 'QA Two',
+      remarks: null,
+    });
   });
 
   it('never invents a PASS/FAIL audit outcome', () => {
-    const vm = buildPackingAuditCartonDetailViewModel(makeCarton(), { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildPackingAuditCartonDetailViewModel(makeCarton(), {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     expect(JSON.stringify(vm).toLowerCase()).not.toMatch(/\bpass\b|\bfail\b/);
   });
 
   it('does not leak unrelated/internal properties into the printable view model', () => {
-    const carton = { ...makeCarton(), __internalDebugFlag: true, someAuditInternal: 'secret' } as PackingAuditCartonDetailSource;
-    const vm = buildPackingAuditCartonDetailViewModel(carton, { generatedAt: '2026-09-15T10:00:00Z' });
+    const carton = {
+      ...makeCarton(),
+      __internalDebugFlag: true,
+      someAuditInternal: 'secret',
+    } as PackingAuditCartonDetailSource;
+    const vm = buildPackingAuditCartonDetailViewModel(carton, {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     const serialized = JSON.stringify(vm);
     expect(serialized).not.toContain('__internalDebugFlag');
     expect(serialized).not.toContain('someAuditInternal');
@@ -122,7 +257,9 @@ describe('buildPackingAuditCartonDetailViewModel', () => {
     // buildPackingAuditCartonDetailViewModel's signature takes no "draft remarks" parameter at all;
     // this test locks in that the only remarks text that can ever appear come from auditHistory
     // entries, which are the server-persisted record, not the page's local useState draft.
-    const vm = buildPackingAuditCartonDetailViewModel(makeCarton(), { generatedAt: '2026-09-15T10:00:00Z' });
+    const vm = buildPackingAuditCartonDetailViewModel(makeCarton(), {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     expect(vm.auditHistory).toEqual([]);
   });
 });

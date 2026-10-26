@@ -46,6 +46,17 @@ async function render(invoice = issuedTaxInvoiceFixture(), imageDataUri?: string
   };
 }
 describe('issued Tax Invoice PDF document', () => {
+  it('prints issued number first, serials, comma-separated saved sizes and declarations', async () => {
+    const result = await render(iss032TaxInvoiceFixture(2));
+    expect(result.text.indexOf('Invoice Number:')).toBeLessThan(
+      result.text.indexOf('Dispatch Orders:'),
+    );
+    expect(result.text).toContain('S.No.');
+    expect(result.text).toContain('E.&O.E.');
+    expect(result.text).toMatch(/system-generated invoice\.[\s\S]*No signature required/);
+    expect(result.text).not.toContain(' |\n');
+  });
+
   it('keeps each financial entry with its own Style name on the laid-out page', async () => {
     const invoice = iss032TaxInvoiceFixture(14);
     for (const line of invoice.documentSnapshot!.lines)

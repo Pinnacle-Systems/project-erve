@@ -1,7 +1,10 @@
 import { pdf } from '@react-pdf/renderer';
 import { describe, expect, it } from 'vitest';
 import { ErvePackingListListDocument } from './ErvePackingListListDocument.js';
-import type { ErvePackingListListPdfRow, ErvePackingListListPdfViewModel } from './buildErvePackingListListViewModel.js';
+import type {
+  ErvePackingListListPdfRow,
+  ErvePackingListListPdfViewModel,
+} from './buildErvePackingListListViewModel.js';
 
 function makeRow(overrides: Partial<ErvePackingListListPdfRow> = {}): ErvePackingListListPdfRow {
   return {
@@ -21,7 +24,7 @@ function makeRow(overrides: Partial<ErvePackingListListPdfRow> = {}): ErvePackin
 
 function makeViewModel(rows: ErvePackingListListPdfRow[]): ErvePackingListListPdfViewModel {
   return {
-    title: 'ERVE PACKING LIST',
+    title: 'Erve Consolidated Packing List',
     subtitle: 'Destination-specific consolidation of finalized Factory Packing cartons',
     generatedAt: '2026-09-16T10:00:00Z',
     generatedBy: 'Test Admin',
@@ -38,24 +41,34 @@ describe('ErvePackingListListDocument', () => {
   });
 
   it('renders a single row without throwing', async () => {
-    const blob = await pdf(<ErvePackingListListDocument viewModel={makeViewModel([makeRow()])} />).toBlob();
+    const blob = await pdf(
+      <ErvePackingListListDocument viewModel={makeViewModel([makeRow()])} />,
+    ).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 
   it('renders a row consolidated across multiple Factories/Dispatch Orders without throwing', async () => {
     const rows = [makeRow({ sourceFactoryCount: 3, sourceDispatchOrderCount: 4 })];
-    const blob = await pdf(<ErvePackingListListDocument viewModel={makeViewModel(rows)} />).toBlob();
+    const blob = await pdf(
+      <ErvePackingListListDocument viewModel={makeViewModel(rows)} />,
+    ).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 
   it('renders many rows spanning multiple API and PDF pages without throwing', async () => {
     const rows = Array.from({ length: 120 }, (_, i) =>
-      makeRow({ id: `epl-${i}`, ervePackingListNumber: `EIPL/26-27/${String(i).padStart(4, '0')}` }),
+      makeRow({
+        id: `epl-${i}`,
+        ervePackingListNumber: `EIPL/26-27/${String(i).padStart(4, '0')}`,
+      }),
     );
     const blob = await Promise.race([
       pdf(<ErvePackingListListDocument viewModel={makeViewModel(rows)} />).toBlob(),
       new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('PDF generation hung on a long Erve Packing List list')), 8000),
+        setTimeout(
+          () => reject(new Error('PDF generation hung on a long Erve Packing List list')),
+          8000,
+        ),
       ),
     ]);
     expect(blob.size).toBeGreaterThan(0);
@@ -68,8 +81,13 @@ describe('ErvePackingListListDocument', () => {
   // check in this component, drops the whole "Factories" column rather than
   // printing a blank/null cell) in that case.
   it('renders without throwing when every row lacks factory/supplier provenance', async () => {
-    const rows = [makeRow({ sourceFactoryCount: null }), makeRow({ id: 'epl-2', sourceFactoryCount: null })];
-    const blob = await pdf(<ErvePackingListListDocument viewModel={makeViewModel(rows)} />).toBlob();
+    const rows = [
+      makeRow({ sourceFactoryCount: null }),
+      makeRow({ id: 'epl-2', sourceFactoryCount: null }),
+    ];
+    const blob = await pdf(
+      <ErvePackingListListDocument viewModel={makeViewModel(rows)} />,
+    ).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 });

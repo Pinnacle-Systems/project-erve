@@ -369,3 +369,49 @@ it('preserves newline-rich Size labels and all six quantities without clipping t
   for (const page of result.pages) for (const item of page.items) expect(item.y).toBeLessThan(827);
   expect(invoice).toEqual(original);
 }, 20000);
+
+it('keeps sequential financial-group serials across pages and flowing detail continuations', async () => {
+  const invoice = iss032TaxInvoiceFixture(28);
+  invoice.documentSnapshot!.lines[0]!.style.styleName = 'Saved long identity '.repeat(30);
+  const result = await rendered(invoice);
+  expect(result.pages.length).toBeGreaterThanOrEqual(3);
+  const directory = process.env.BATCH8_PDF_EVIDENCE_DIR ?? '.artifacts/walkthrough-b/tax';
+  await fs.mkdir(directory, { recursive: true });
+  await fs.writeFile(path.join(directory, 'three-pages.pdf'), result.bytes);
+  const serials = result.pages.flatMap((page) =>
+    page.items
+      .filter((item) => item.x < 50 && /^\d{1,2}$/.test(item.text))
+      .map((item) => Number(item.text)),
+  );
+  expect(serials).toEqual(Array.from({ length: 28 }, (_, index) => index + 1));
+  for (const page of result.pages) {
+    expect(page.items.some((item) => item.text === 'Tax Invoice')).toBe(true);
+    expect(page.items.some((item) => item.text === 'S.No.')).toBe(true);
+  }
+  expect(result.text.match(/Final payable/g)).toHaveLength(1);
+}, 30000);
+
+it('centers the heading independently of a long issued number and vertically stacks authoritative totals', async () => {
+  const invoice = issuedTaxInvoiceFixture();
+  invoice.invoiceNumber = 'SYNTHETIC/ISSUED/VERY-LONG-INVOICE-NUMBER/2026-27/000000001';
+  const result = await rendered(invoice);
+  const page = result.pages[0]!;
+  const title = page.items.find((item) => item.text === 'Tax Invoice')!;
+  expect(title.x + title.width / 2).toBeCloseTo(page.width! / 2, 1);
+  const identity = page.items.find((item) => item.text.includes(invoice.invoiceNumber!))!;
+  expect(identity.y - identity.height).toBeGreaterThan(title.y);
+  const totals = [
+    'Taxable value',
+    'CGST',
+    'SGST',
+    'Total GST',
+    'Grand total (before round-off)',
+    'Round-off adjustment',
+    'Final payable',
+  ];
+  const rows = totals.map((label) => page.items.find((item) => item.text === label)!);
+  for (let index = 1; index < rows.length; index++) {
+    expect(rows[index]!.y).toBeGreaterThan(rows[index - 1]!.y);
+    expect(rows[index]!.x).toBeCloseTo(rows[0]!.x, 1);
+  }
+}, 20000);

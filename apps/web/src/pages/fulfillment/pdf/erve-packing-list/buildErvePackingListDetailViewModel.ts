@@ -2,7 +2,12 @@ import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 import { ERVE_PACKING_LIST_STATUS_LABELS } from '../shared/fulfillmentPdfLabels.js';
-import { distinctSizeColumns, groupLinesByStyle, withSizeIdentity, type SizeColumn } from '../../style-size-grouping.js';
+import {
+  distinctSizeColumns,
+  groupLinesByStyle,
+  withSizeIdentity,
+  type SizeColumn,
+} from '../../style-size-grouping.js';
 import type { ErvePackingListDetail } from '../../types.js';
 
 export interface ErvePackingListDetailPdfMeta {
@@ -56,7 +61,14 @@ export interface ErvePackingListDetailPdfViewModel {
 }
 
 function toStyleRows(
-  lines: Array<{ styleId: string; styleNumber: string; styleName: string; sizeCode: string; sizeLabel: string; quantity: number }>,
+  lines: Array<{
+    styleId: string;
+    styleNumber: string;
+    styleName: string;
+    sizeCode: string;
+    sizeLabel: string;
+    quantity: number;
+  }>,
   images: Map<string, PdfImageSource>,
 ): ErvePackingListDetailStyleRow[] {
   return groupLinesByStyle(lines.map(withSizeIdentity)).map((group) => ({
@@ -96,7 +108,10 @@ export function buildErvePackingListDetailViewModel(
     { label: 'Created By', value: packingList.createdBy.name },
     { label: 'Created At', value: formatPdfDateTime(packingList.createdAt) },
     { label: 'Finalized By', value: packingList.finalizedBy?.name },
-    { label: 'Finalized At', value: packingList.finalizedAt ? formatPdfDateTime(packingList.finalizedAt) : null },
+    {
+      label: 'Finalized At',
+      value: packingList.finalizedAt ? formatPdfDateTime(packingList.finalizedAt) : null,
+    },
     { label: 'Cartons', value: packingList.cartonCount },
     { label: 'Total Quantity', value: packingList.totalQuantity },
     // ISS-054: internal factory provenance (Source Factories) and EISO
@@ -108,8 +123,12 @@ export function buildErvePackingListDetailViewModel(
   ];
 
   const destinationItems: PdfKeyValueItem[] = [
-    ...(packingList.destination.storeCode ? [{ label: 'Store Code', value: packingList.destination.storeCode }] : []),
-    ...(packingList.destination.gstin ? [{ label: 'Destination GSTIN', value: packingList.destination.gstin }] : []),
+    ...(packingList.destination.storeCode
+      ? [{ label: 'Store Code', value: packingList.destination.storeCode }]
+      : []),
+    ...(packingList.destination.gstin
+      ? [{ label: 'Destination GSTIN', value: packingList.destination.gstin }]
+      : []),
     { label: 'Destination', value: packingList.destination.label },
     {
       label: 'Address',
@@ -150,7 +169,7 @@ export function buildErvePackingListDetailViewModel(
   }));
 
   return {
-    title: 'ERVE PACKING LIST',
+    title: 'Erve Consolidated Packing List',
     subtitle: `${packingList.ervePackingListNumber} — ${packingList.distributor?.name ?? ''}`,
     generatedAt: meta.generatedAt,
     generatedBy: meta.generatedBy,
