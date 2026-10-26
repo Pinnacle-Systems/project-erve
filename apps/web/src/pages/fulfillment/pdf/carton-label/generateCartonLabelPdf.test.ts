@@ -1,3 +1,6 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { describe, expect, it } from 'vitest';
 import { generateCartonLabelPdfBlob } from './generateCartonLabelPdf.js';
 import type { CartonLabelSource } from './buildCartonLabelViewModel.js';
@@ -21,14 +24,27 @@ function makeCarton(overrides: Partial<FactoryPackingCartonView> = {}): FactoryP
     createdAt: '2026-09-01T00:00:00.000Z',
     updatedAt: '2026-09-01T00:00:00.000Z',
     lines: [
-      { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, currentDestinationId: 'dest-1' },
+      {
+        saleOrderLineId: 'line-1',
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'Classic Tee',
+        primaryImage: null,
+        sizeId: 'size-1',
+        sizeCode: 'M',
+        sizeLabel: 'Medium',
+        quantity: 10,
+        currentDestinationId: 'dest-1',
+      },
     ],
     auditHistory: [],
     ...overrides,
   };
 }
 
-function makeDestination(overrides: Partial<PackingListDestinationView> = {}): PackingListDestinationView {
+function makeDestination(
+  overrides: Partial<PackingListDestinationView> = {},
+): PackingListDestinationView {
   return {
     id: 'dest-1',
     distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
@@ -63,16 +79,89 @@ function makeSource(overrides: Partial<CartonLabelSource> = {}): CartonLabelSour
 
 describe('generateCartonLabelPdfBlob', () => {
   it('generates a PDF blob for a currently Inspected carton', async () => {
-    const blob = await generateCartonLabelPdfBlob(makeSource(), { generatedAt: '2026-09-15T10:00:00Z' });
+    const blob = await generateCartonLabelPdfBlob(makeSource(), {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
     expect(blob.size).toBeGreaterThan(0);
     expect(blob.type).toBe('application/pdf');
   });
+
+  it.each([1, 35])(
+    'redacts factory provenance from actual PDF text and metadata with %s Style rows',
+    async (count) => {
+      const carton = makeCarton();
+      carton.lines = Array.from({ length: count }, (_, index) => ({
+        ...carton.lines[0]!,
+        styleId: `style-${index}`,
+        styleNumber: `STYLE-${index}`,
+      }));
+      carton.totalQuantity = count * 10;
+      const source = makeSource({
+        carton,
+        factoryName: 'SECRET-FACTORY-NAME',
+        factoryDispatchNumber: 'SECRET-FACTORY-REF',
+      });
+      const before = JSON.stringify(source);
+      const blob = await generateCartonLabelPdfBlob(source, {
+        generatedAt: '2026-09-15T10:00:00Z',
+        generatedBy: 'SECRET-FACTORY-OPERATOR',
+      });
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const task = getDocument({ data: bytes.slice(), useSystemFonts: true });
+      try {
+        const document = await task.promise;
+        const pages = [];
+        for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
+          const page = await document.getPage(pageNumber);
+          pages.push(
+            (await page.getTextContent()).items
+              .flatMap((item) => ('str' in item ? [item.str] : []))
+              .join(' '),
+          );
+        }
+        const text = pages.join(' ');
+        const metadata = await document.getMetadata();
+        const exposed = text + JSON.stringify(metadata);
+        expect(exposed).not.toMatch(/SECRET-FACTORY|Factory Dispatch|Factory One/);
+        for (const required of [
+          'Carton C1',
+          'EISO/26-27/0001',
+          'Distributor One',
+          'Store 1',
+          '123 Test Street',
+          'Chennai',
+          'TN',
+          'India',
+          'Medium: 10',
+          `Total: ${count * 10}`,
+        ]) {
+          expect(text).toContain(required);
+        }
+        for (let index = 0; index < count; index++) expect(text).toContain(`STYLE-${index}`);
+        expect(document.numPages).toBe(count === 1 ? 1 : 2);
+        expect(JSON.stringify(source)).toBe(before);
+        if (process.env.CARTON_LABEL_EVIDENCE_DIR) {
+          const directory = resolve(process.env.CARTON_LABEL_EVIDENCE_DIR);
+          await mkdir(directory, { recursive: true });
+          await writeFile(resolve(directory, `carton-${count}-styles.pdf`), bytes);
+          await writeFile(
+            resolve(directory, `carton-${count}-styles.json`),
+            JSON.stringify({ pages, metadata }, null, 2),
+          );
+        }
+      } finally {
+        await task.destroy();
+      }
+    },
+  );
 
   it.each(['NOT_INSPECTED', 'NEEDS_REINSPECTION'] as const)(
     'refuses to generate a label for a %s carton — labels must come from confirmed/audited data',
     async (auditState) => {
       await expect(
-        generateCartonLabelPdfBlob(makeSource({ carton: makeCarton({ auditState }) }), { generatedAt: '2026-09-15T10:00:00Z' }),
+        generateCartonLabelPdfBlob(makeSource({ carton: makeCarton({ auditState }) }), {
+          generatedAt: '2026-09-15T10:00:00Z',
+        }),
       ).rejects.toThrow(/Inspected/);
     },
   );
