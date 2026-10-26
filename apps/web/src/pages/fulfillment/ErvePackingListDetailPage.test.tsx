@@ -127,6 +127,21 @@ async function renderPage(packingList: ErvePackingListDetail, role: Role = 'ADMI
   await vi.waitFor(() => expect(content()).not.toContain('Loading Erve Packing List'));
 }
 
+describe('ErvePackingListDetailPage subtitle separator', () => {
+  it.each([
+    { label: 'Central Store', destination: 'Central Store' },
+    { label: null, destination: 'Chennai, TN' },
+  ])('uses a middle dot before $destination without replacement characters', async ({ label, destination }) => {
+    const packingList = buildPackingList();
+    packingList.destination.label = label;
+    await renderPage(packingList, 'SENIOR_MANAGEMENT');
+
+    const subtitle = container.querySelector('h1')?.parentElement?.parentElement?.querySelector('p');
+    expect(subtitle?.textContent).toBe(`Distributor One · ${destination}`);
+    expect(subtitle?.textContent).not.toContain('\uFFFD');
+  });
+});
+
 // UXAUTH-007 baseline: before this fix, an OPEN EIPL rendered every mutation
 // control (Add Cartons panel incl. its eligible-cartons support query,
 // per-carton Remove, Finalize) purely from packingList.status === 'OPEN',

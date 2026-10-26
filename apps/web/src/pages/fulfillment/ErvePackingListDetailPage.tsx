@@ -229,7 +229,7 @@ function ErvePackingListDetailContent({ id }: { id: string }) {
               .join(', '),
         ]
           .filter(Boolean)
-          .join(' � ')}
+          .join(' · ')}
         status={
           <StatusBadge
             label={STATUS_LABEL[packingList.status]}
