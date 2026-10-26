@@ -140,6 +140,54 @@ function orderEntries<T extends { sizeId: string }>(entries: T[], columns: SizeC
   return entries.sort((a, b) => positions.get(a.sizeId)! - positions.get(b.sizeId)!);
 }
 
+export interface ReceiptTraceableLine {
+  saleOrderLineId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeCode: string;
+  sizeLabel: string;
+  quantity: number;
+}
+
+export interface ReceiptStyleGroup<T> {
+  styleNumber: string;
+  styleName: string;
+  lines: T[];
+  dispatchedSubtotal: number;
+}
+
+/**
+ * Groups receipt-confirmation lines by Style while preserving every original
+ * line individually — unlike `groupLinesByStyle`/`groupFinancialLinesByStyle`,
+ * duplicate Style+Size lines are never summed into one entry. ISS-080's
+ * goods-receipt entry screen needs exactly one editable input per original
+ * `saleOrderLineId` (the identity `PATCH /erve-dispatches/:id/delivery` keys
+ * its submission on), so collapsing lines would either drop a line's own
+ * input or silently merge two distinct received-quantity edits.
+ *
+ * Sizes are not re-sorted — they keep the order the API already returned
+ * them in. `ErveDispatchInvoiceHandoffSummary` carries no `sizeSortOrder`,
+ * and this grouping is presentation-only, so it must not invent a new Size
+ * ordering without a real source of truth for it.
+ */
+export function groupReceiptLinesByStyle<T extends ReceiptTraceableLine>(lines: T[]): ReceiptStyleGroup<T>[] {
+  const order: string[] = [];
+  const groups = new Map<string, ReceiptStyleGroup<T>>();
+
+  for (const line of lines) {
+    let group = groups.get(line.styleNumber);
+    if (!group) {
+      group = { styleNumber: line.styleNumber, styleName: line.styleName, lines: [], dispatchedSubtotal: 0 };
+      groups.set(line.styleNumber, group);
+      order.push(line.styleNumber);
+    }
+    group.lines.push(line);
+    group.dispatchedSubtotal += line.quantity;
+  }
+
+  return order.map((styleNumber) => groups.get(styleNumber)!);
+}
+
 export interface FinancialStyleSizeLine {
   id: string;
   styleId: string;

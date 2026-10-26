@@ -13,6 +13,7 @@ import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
 import { canMutateErveDispatches } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
+import { groupReceiptLinesByStyle } from './style-size-grouping.js';
 import type { ErveDispatchView } from './types.js';
 
 export function ErveDispatchDetailPage() {
@@ -189,24 +190,45 @@ export function ErveDispatchDetailPage() {
             transporter did not use the delivery link. Defaults to the full dispatched quantity; reduce a line to record a
             shortage (remarks become required).
           </p>
-          <div className="space-y-3">
-            {dispatch.invoiceHandoffs.map((h) => (
-              <div key={h.saleOrderLineId} className="flex items-center gap-3">
-                <span className="w-56 text-sm">
-                  {h.styleNumber} / {h.sizeLabel} (dispatched {h.quantity.toLocaleString()})
-                </span>
-                <input
-                  type="number"
-                  min={0}
-                  max={h.quantity}
-                  className="w-24 rounded border border-[var(--erp-border)] px-2 py-1 text-sm"
-                  value={receivedQuantities[h.saleOrderLineId] ?? String(h.quantity)}
-                  onChange={(e) =>
-                    setReceivedQuantities((current) => ({ ...current, [h.saleOrderLineId]: e.target.value }))
-                  }
-                />
-              </div>
-            ))}
+          <div className="space-y-4">
+            {groupReceiptLinesByStyle(dispatch.invoiceHandoffs).map((group) => {
+              const receivedSubtotal = group.lines.reduce(
+                (sum, line) => sum + Number(receivedQuantities[line.saleOrderLineId] ?? line.quantity),
+                0,
+              );
+              return (
+                <div key={group.styleNumber} className="rounded border border-[var(--erp-border)] p-3">
+                  <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="font-medium">
+                      {group.styleNumber} — {group.styleName}
+                    </span>
+                    <span className="text-sm text-[var(--erp-muted-fg)]">
+                      Dispatched {group.dispatchedSubtotal.toLocaleString()} · Received {receivedSubtotal.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {group.lines.map((h) => (
+                      <div key={h.saleOrderLineId} className="flex flex-wrap items-center gap-3">
+                        <span className="w-20 text-sm">{h.sizeLabel}</span>
+                        <span className="w-36 text-sm text-[var(--erp-muted-fg)]">
+                          dispatched {h.quantity.toLocaleString()}
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={h.quantity}
+                          className="w-24 rounded border border-[var(--erp-border)] px-2 py-1 text-sm"
+                          value={receivedQuantities[h.saleOrderLineId] ?? String(h.quantity)}
+                          onChange={(e) =>
+                            setReceivedQuantities((current) => ({ ...current, [h.saleOrderLineId]: e.target.value }))
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
             <TextField label="Delivery Remarks (required if any line is short)" value={deliveryRemarks} onChange={(e) => setDeliveryRemarks(e.target.value)} />
           </div>
           <div className="mt-3 flex justify-end">
