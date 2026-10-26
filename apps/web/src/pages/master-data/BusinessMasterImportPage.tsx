@@ -110,6 +110,7 @@ function ImportRows({ rows, kind }: { rows: MasterImportRow[]; kind: MasterImpor
           {
             key: 'detail',
             header: 'Detail',
+            className: 'whitespace-normal break-words',
             render: (row) => [row.detail, ...(row.warnings ?? [])].filter(Boolean).join(' '),
           },
         ]}
@@ -193,7 +194,10 @@ function ImportWorkflow({ kind }: { kind: MasterImportKind }) {
         )
       ).data.data.worksheets;
     },
-    onSuccess: setSheets,
+    onSuccess: (names) =>
+      setSheets(
+        names.filter((name) => name.normalize('NFKC').trim().toLowerCase() !== 'instructions'),
+      ),
     onError: fail,
   });
   const preview = useMutation({
@@ -320,7 +324,7 @@ function ImportWorkflow({ kind }: { kind: MasterImportKind }) {
             : kind === 'sizes'
               ? 'Supply the original Size Code, label, valid Size Type and integer Sort Order. Existing metadata is never changed.'
               : kind === 'hsns'
-                ? 'Store HSN Code as text with exactly 8 digits, preserving leading zeroes. GST Rule Set assignment is outside this import.'
+                ? 'HSN Code: exactly 8 digits stored as text. Optional GST Rule Set Code must identify one ACTIVE rule set; assignment requires ADMIN or ACCOUNTANT.'
                 : 'Internal codes are generated automatically. Missing Purchase Modes and uncertain Distributor matches require review.'}{' '}
           Files may contain up to 10,000 rows.
         </p>
