@@ -29,7 +29,6 @@ const styles = StyleSheet.create({
     fontWeight: 700,
     textAlign: 'center',
   },
-  identity: { position: 'absolute', left: 140, right: 0, top: 24, fontSize: 8, textAlign: 'right' },
   references: { fontSize: 8, lineHeight: 1.2, marginBottom: 6 },
   referenceRow: { flexDirection: 'row', marginBottom: 2 },
   referenceCell: { width: '50%', paddingRight: 8 },
@@ -312,9 +311,6 @@ export function TaxInvoiceDocument({
           <Text style={styles.bold}>ERVE INDIA</Text>
         )}
         <Text style={styles.title}>Tax Invoice</Text>
-        <Text style={styles.identity}>
-          {model.invoiceNumber} | {model.invoiceDate}
-        </Text>
       </View>
       {model.isCancelled && (
         <View style={styles.cancelledBanner}>
@@ -326,6 +322,12 @@ export function TaxInvoiceDocument({
         </View>
       )}
       <View style={styles.references}>
+        <View style={styles.referenceRow}>
+          <Text style={[styles.referenceCell, styles.bold]}>
+            Invoice Number: {model.invoiceNumber}
+          </Text>
+          <Text style={styles.referenceCell}>Invoice Date: {model.invoiceDate}</Text>
+        </View>
         {model.references.replacesInvoiceNumber !== null && (
           <View style={styles.referenceRow}>
             <Text style={[styles.referenceCell, styles.bold]}>
