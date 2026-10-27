@@ -294,7 +294,7 @@ describe('QaInspectionForm', () => {
     const remarks = row.querySelector('textarea[aria-label$=" remarks"]') as HTMLTextAreaElement;
     expect(remarks).not.toBeNull();
     expect(remarks.getAttribute('rows')).toBe('2');
-    const next = 'First observation\\nSecond observation';
+    const next = 'First observation\nSecond observation';
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
       setter.call(remarks, next);
