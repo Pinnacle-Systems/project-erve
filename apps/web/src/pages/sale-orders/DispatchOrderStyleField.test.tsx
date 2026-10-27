@@ -39,8 +39,11 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   change.mockReset();
 });
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount());
+  // Radix FocusScope dispatches its unmount autofocus event on a zero-delay timer.
+  // Keep this test's jsdom Event globals alive until that cleanup completes.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
   client.clear();
   container.remove();
   vi.restoreAllMocks();
@@ -235,4 +238,11 @@ it('opens the authenticated original-image viewer without selecting the Style', 
   expect(change).not.toHaveBeenCalled();
   expect(get.mock.calls.some((c) => c[0] === '/styles/s1/images')).toBe(true);
   expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+
+  // Close the viewer while jsdom is still mounted so Radix can restore focus.
+  await act(async () => {
+    document.querySelector<HTMLButtonElement>('[aria-label="Close viewer"]')!.click();
+  });
+  await flush();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
