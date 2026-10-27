@@ -92,6 +92,42 @@ function finalizeIssueSummary(blockers: FinalizeBlockers): string[] {
   return lines;
 }
 
+/**
+ * ISS-098: Visible, conservative preflight blockers for a Draft Factory Packing
+ * List. The backend's transaction remains the authority for finalization and
+ * checks fresh data, including reconciliation that cannot be verified here.
+ */
+function packingFinalizeReadiness(packingList: PackingListView): string[] {
+  const cartons = packingList.destinations.flatMap((destination) =>
+    destination.cartons.filter((carton) => !carton.retired),
+  );
+  const lines = packingList.destinations.flatMap((destination) => destination.lines);
+  const notInspected = cartons.filter((carton) => carton.auditState === 'NOT_INSPECTED').length;
+  const reinspection = cartons.filter((carton) => carton.auditState === 'NEEDS_REINSPECTION').length;
+  const missingMetadata = cartons.filter((carton) =>
+    carton.netWeight == null || carton.grossWeight == null || !carton.dimensions?.trim(),
+  ).length;
+  const emptyCartons = cartons.filter((carton) => carton.lines.length === 0).length;
+  const mismatchedCartons = cartons.filter((carton) => carton.destinationMismatch).length;
+  const underPacked = lines.filter((line) => line.packedQuantity < line.requiredQuantity).length;
+  const overPacked = lines.filter((line) => line.packedQuantity > line.requiredQuantity).length;
+  const issues: string[] = [];
+
+  if (notInspected + reinspection > 0) {
+    const count = notInspected + reinspection;
+    issues.push(`Waiting for Packing Audit: ${count} carton${count === 1 ? '' : 's'} (${notInspected} not inspected, ${reinspection} needing reinspection). Ask QA to complete the audit.`);
+  }
+  if (underPacked > 0) issues.push(`Packing incomplete: ${underPacked} Size ${underPacked === 1 ? 'quantity is' : 'quantities are'} below the required quantity.`);
+  if (overPacked > 0) issues.push(`Packing exceeds the required quantity for ${overPacked} Size ${overPacked === 1 ? 'entry' : 'entries'}.`);
+  if (missingMetadata > 0) issues.push(`Complete Net Weight, Gross Weight and Dimensions for ${missingMetadata} carton${missingMetadata === 1 ? '' : 's'}.`);
+  if (emptyCartons > 0) issues.push(`${emptyCartons} carton${emptyCartons === 1 ? ' is' : 's are'} empty; add contents or remove the carton.`);
+  if (mismatchedCartons > 0) issues.push(`${mismatchedCartons} carton${mismatchedCartons === 1 ? ' has' : 's have'} a destination mismatch.`);
+  if (cartons.length === 0 && lines.some((line) => line.requiredQuantity > 0)) {
+    issues.push('No cartons recorded. Add cartons before finalizing.');
+  }
+  return issues;
+}
+
 interface ShellProps {
   fetchUrl: string;
   queryKey: unknown[];
@@ -186,6 +222,9 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
 
   function submitCarton(destinationId: string, edit = false) {
     if (savingCartonRef.current || !canSaveCarton(destinationId, edit) || (!edit && !cartonNumber.trim())) return;
+    if (!edit && !packingList?.destinations.find((destination) => destination.id === destinationId)?.lines.some(
+      (line) => line.packedQuantity < line.requiredQuantity,
+    )) return;
     savingCartonRef.current = true;
     if (edit) editCartonMutation.mutate();
     else addCartonMutation.mutate(destinationId);
@@ -367,6 +406,8 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
   const dispatch = packingList.factoryDispatch;
   const isDraft = !dispatch || dispatch.status === 'DRAFT';
   const canFinalize = Boolean(dispatch) && isDraft;
+  const finalizeBlockers = packingFinalizeReadiness(packingList);
+  const finalizeDisabled = finalizeBlockers.length > 0 || query.isFetching || finalizeMutation.isPending;
 
   return (
     <div className="space-y-6">
@@ -408,13 +449,26 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
         }
         primaryAction={
           canMutate && canFinalize && dispatch ? (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-3">
               <Button variant="destructive" onClick={() => setAbandonOpen(true)}>
                 Abandon
               </Button>
-              <Button onClick={() => finalizeMutation.mutate()} loading={finalizeMutation.isPending}>
-                Finalize (Ready for Erve)
-              </Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button
+                  onClick={() => finalizeMutation.mutate()}
+                  disabled={finalizeDisabled}
+                  loading={finalizeMutation.isPending}
+                >
+                  Finalize (Ready for Erve)
+                </Button>
+                {query.isFetching ? (
+                  <span role="status" className="text-xs text-muted-foreground">Refreshing packing status…</span>
+                ) : finalizeBlockers.length > 0 ? (
+                  <div role="status" className="max-w-sm space-y-1 text-right text-xs text-muted-foreground">
+                    {finalizeBlockers.map((reason) => <div key={reason}>{reason}</div>)}
+                  </div>
+                ) : null}
+              </div>
             </div>
           ) : undefined
         }
@@ -593,7 +647,13 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
 
               {isDraft && canMutate && (
                 <div className="rounded-md border border-dashed border-border p-3">
-                  {addingForDestination === destination.id ? (
+                  {!destination.lines.some((line) => line.packedQuantity < line.requiredQuantity) ? (
+                    <p className="text-sm text-muted-foreground">
+                      {destination.lines.length === 0
+                        ? 'No quantities are assigned to this destination.'
+                        : 'All required quantities for this destination are packed. Edit or delete/retire an existing carton to make corrections.'}
+                    </p>
+                  ) : addingForDestination === destination.id ? (
                     <div className="space-y-3" onKeyDown={createEnterToNextHandler()}>
                       <p className="text-xs text-muted-foreground">Net Weight, Gross Weight, and Dimensions can be entered later, but are required before finalizing the Factory Packing List.</p>
                       <div className="flex flex-wrap gap-3">
