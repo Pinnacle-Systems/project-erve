@@ -287,6 +287,23 @@ function responseControl(label: string) {
 }
 
 describe('QaInspectionForm', () => {
+  it('top-aligns checklist remarks with each inspection point and supports multiline entry', async () => {
+    await renderForm();
+    const row = container.querySelector('[data-quality-checklist-row="true"]') as HTMLElement;
+    expect(row.className).toContain('items-start');
+    const remarks = row.querySelector('textarea[aria-label$=" remarks"]') as HTMLTextAreaElement;
+    expect(remarks).not.toBeNull();
+    expect(remarks.getAttribute('rows')).toBe('2');
+    const next = 'First observation\\nSecond observation';
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(remarks, next);
+      remarks.dispatchEvent(new Event('input', { bubbles: true }));
+      remarks.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(remarks.value).toBe(next);
+  });
+
   it('uses compact spacing between PP Sample inspection sections without changing form controls', async () => {
     await renderForm();
     const section = Array.from(container.querySelectorAll('[data-quality-execution-section="true"]')).find(
