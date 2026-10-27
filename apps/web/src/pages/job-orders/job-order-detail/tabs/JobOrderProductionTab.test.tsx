@@ -226,11 +226,15 @@ describe('ISS-020 Prepared Quantity editing and saving', () => {
       input.blur();
     });
     let resolveSave!: (value: never) => void;
-    vi.spyOn(apiClient, 'post').mockImplementation(() => new Promise((resolve) => { resolveSave = resolve; }));
+    const post = vi.spyOn(apiClient, 'post').mockImplementation(() => new Promise((resolve) => { resolveSave = resolve; }));
     act(() => saveButton().click());
-    expect(getActiveTabPanel(container).textContent).toContain('Saving prepared quantities…');
+    // React Query starts the mutation asynchronously; wait for the pending
+    // render rather than assuming it commits in the click event's act().
+    await vi.waitFor(() => {
+      expect(post).toHaveBeenCalledOnce();
+      expect(getActiveTabPanel(container).querySelector('[role="status"]')?.textContent).toContain('Saving prepared quantities…');
+    });
     expect(getActiveTabPanel(container).textContent).not.toContain('Saved');
-    expect(getActiveTabPanel(container).querySelector('[role="status"]')?.textContent).toContain('Saving');
 
     await act(async () => resolveSave({ data: { data: mockJobOrder('PRODUCTION_COMPLETE') } } as never));
     await vi.waitFor(() =>
