@@ -394,15 +394,22 @@ it('keeps sequential financial-group serials across pages and flowing detail con
   expect(result.text.match(/Final payable/g)).toHaveLength(1);
 }, 30000);
 
-it('centers the heading independently of a long issued number and vertically stacks authoritative totals', async () => {
+it('centers the heading with a long issued number in the first labelled reference row and vertically stacks totals', async () => {
   const invoice = issuedTaxInvoiceFixture();
   invoice.invoiceNumber = 'SYNTHETIC/ISSUED/VERY-LONG-INVOICE-NUMBER/2026-27/000000001';
   const result = await rendered(invoice);
   const page = result.pages[0]!;
   const title = page.items.find((item) => item.text === 'Tax Invoice')!;
   expect(title.x + title.width / 2).toBeCloseTo(page.width! / 2, 1);
-  const identity = page.items.find((item) => item.text.includes(invoice.invoiceNumber!))!;
-  expect(identity.y - identity.height).toBeGreaterThan(title.y);
+  const numberLabel = page.items.find((item) => item.text.includes('Invoice Number:'))!;
+  const dateLabel = page.items.find((item) => item.text.includes('Invoice Date:'))!;
+  expect(numberLabel).toBeDefined();
+  expect(dateLabel).toBeDefined();
+  expect(numberLabel.y - numberLabel.height).toBeGreaterThan(title.y);
+  expect(dateLabel.y - dateLabel.height).toBeGreaterThan(title.y);
+  expect(numberLabel.x).toBeLessThan(dateLabel.x);
+  expect(result.text.match(/Invoice Number:/g)).toHaveLength(1);
+  expect(result.text.match(/Invoice Date:/g)).toHaveLength(1);
   const totals = [
     'Taxable value',
     'CGST',
