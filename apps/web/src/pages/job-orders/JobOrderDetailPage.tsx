@@ -395,7 +395,7 @@ export function JobOrderDetailPage() {
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium">Commercial terms / disclaimer</p>
-            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-control border border-border-subtle bg-surface-muted p-3 text-sm font-sans">
+            <pre className="whitespace-pre-wrap break-words rounded-control border border-border-subtle bg-surface-muted p-3 text-sm font-sans">
               {jobOrder.disclaimerText || 'No disclaimer recorded'}
             </pre>
           </div>
