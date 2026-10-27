@@ -673,7 +673,7 @@ describe('Batch 4 Factory Packing readiness (ISS-098 / ISS-099)', () => {
     const finalize = buttonByText('Finalize (Ready for Erve)')!;
     expect(finalize.disabled).toBe(true);
     expect(finalize.parentElement?.textContent).toContain('Packing incomplete: 1 Size quantity');
-    expect(finalize.parentElement?.textContent).toContain('Complete Net Weight, Gross Weight and Dimensions for 1 carton');
+    expect(finalize.parentElement?.textContent).toContain('Missing packing details: Carton C1: Dimensions.');
 
     const ready = structuredClone(partial);
     ready.destinations[0]!.lines[0]!.packedQuantity = 10;
